@@ -1,28 +1,14 @@
-"""MCP proxy: forwards JSON-RPC requests to Composio Tool Router."""
+"""MCP proxy: executes Composio tool calls on behalf of authenticated users."""
 
+import json
 import logging
 
-import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Request, status
 
-from app.services.composio import (
-    get_composio_session,
-    invalidate_composio_session,
-    verify_proxy_token,
-)
+from app.services.composio import get_composio_client, verify_proxy_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
-
-# Shared HTTP client for proxying
-_http_client: httpx.AsyncClient | None = None
-
-
-def _get_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
-    return _http_client
 
 
 def _extract_user_id(request: Request) -> str:
@@ -39,50 +25,83 @@ def _extract_user_id(request: Request) -> str:
 
 @router.post("/proxy")
 async def mcp_proxy_post(request: Request):
-    """Forward JSON-RPC POST to Composio Tool Router."""
+    """Handle MCP JSON-RPC requests using Composio SDK directly."""
     user_id = _extract_user_id(request)
 
-    body = await request.body()
-    mcp_url, mcp_headers = await get_composio_session(user_id)
+    body = await request.json()
+    method = body.get("method", "")
+    params = body.get("params", {})
+    rpc_id = body.get("id", 1)
 
-    client = _get_client()
+    try:
+        if method == "tools/list":
+            result = await _handle_tools_list(user_id)
+        elif method == "tools/call":
+            result = await _handle_tools_call(user_id, params)
+        else:
+            return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
 
-    # Forward request
-    headers = {k: v for k, v in mcp_headers.items() if v is not None}
-    headers["Content-Type"] = "application/json"
-
-    resp = await client.post(mcp_url, content=body, headers=headers)
-
-    # On auth failure, refresh session and retry once
-    if resp.status_code in (401, 403):
-        invalidate_composio_session(user_id)
-        mcp_url, mcp_headers = await get_composio_session(user_id, force_refresh=True)
-        headers = {k: v for k, v in mcp_headers.items() if v is not None}
-        headers["Content-Type"] = "application/json"
-        resp = await client.post(mcp_url, content=body, headers=headers)
-
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type", "application/json"),
-    )
+        return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+    except Exception as e:
+        logger.exception(f"MCP proxy error: {e}")
+        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32000, "message": str(e)}}
 
 
-@router.get("/proxy")
-async def mcp_proxy_sse(request: Request):
-    """Forward SSE GET to Composio Tool Router."""
-    user_id = _extract_user_id(request)
+async def _handle_tools_list(user_id: str) -> dict:
+    """List available tools for the user's connected accounts."""
+    from starlette.concurrency import run_in_threadpool
 
-    mcp_url, mcp_headers = await get_composio_session(user_id)
+    client = get_composio_client()
 
-    client = _get_client()
-    headers = {k: v for k, v in mcp_headers.items() if v is not None}
-    headers["Accept"] = "text/event-stream"
+    def _list():
+        # Get user's connected accounts to determine available apps
+        accounts = client.connected_accounts.get(entity_ids=[user_id], active=True)
+        if not isinstance(accounts, list):
+            accounts = [accounts] if accounts else []
 
-    resp = await client.get(mcp_url, headers=headers)
+        app_names = list(set(a.appName for a in accounts if a.appName))
+        if not app_names:
+            return {"tools": []}
 
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type", "text/event-stream"),
-    )
+        # Get tools for connected apps
+        tools = []
+        for app_name in app_names:
+            try:
+                app_tools = client.actions.get(apps=[app_name])
+                if not isinstance(app_tools, list):
+                    app_tools = [app_tools] if app_tools else []
+                for t in app_tools:
+                    tools.append({
+                        "name": t.name if hasattr(t, "name") else str(t),
+                        "description": getattr(t, "description", "")[:200],
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to list tools for {app_name}: {e}")
+
+        return {"tools": tools}
+
+    return await run_in_threadpool(_list)
+
+
+async def _handle_tools_call(user_id: str, params: dict) -> dict:
+    """Execute a tool call via Composio."""
+    from starlette.concurrency import run_in_threadpool
+
+    tool_name = params.get("name", "")
+    arguments = params.get("arguments", {})
+
+    if not tool_name:
+        raise ValueError("Missing tool name")
+
+    client = get_composio_client()
+
+    def _call():
+        result = client.actions.execute(
+            action=tool_name,
+            params=arguments,
+            entity_id=user_id,
+        )
+        return result
+
+    result = await run_in_threadpool(_call)
+    return {"content": [{"type": "text", "text": json.dumps(result, default=str)}]}

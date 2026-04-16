@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import jwt
 from composio import Composio
@@ -15,7 +14,6 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _client: Composio | None = None
-_session_cache: dict[str, tuple[str, dict[str, str | None]]] = {}
 
 
 def get_composio_client() -> Composio:
@@ -49,40 +47,20 @@ def verify_proxy_token(token: str) -> str:
     return payload["user_id"]
 
 
-async def get_composio_session(
-    user_id: str, *, force_refresh: bool = False
-) -> tuple[str, dict[str, str | None]]:
-    """Get Composio Tool Router MCP session for a user. Returns (mcp_url, headers)."""
-    if not force_refresh and user_id in _session_cache:
-        return _session_cache[user_id]
-
-    client = get_composio_client()
-
-    def _create_session():
-        session = client.connected_accounts.create_session(user_id=user_id)
-        return session.mcp.url, dict(session.mcp.headers) if session.mcp.headers else {}
-
-    url, headers = await run_in_threadpool(_create_session)
-    _session_cache[user_id] = (url, headers)
-    return url, headers
-
-
-def invalidate_composio_session(user_id: str) -> None:
-    _session_cache.pop(user_id, None)
-
-
 async def get_connected_accounts(user_id: str) -> list[dict]:
     """List connected accounts for a user."""
     client = get_composio_client()
 
     def _list():
-        accounts = client.connected_accounts.list(user_id=user_id)
+        accounts = client.connected_accounts.get(entity_ids=[user_id])
+        if not isinstance(accounts, list):
+            accounts = [accounts] if accounts else []
         return [
             {
                 "id": str(a.id),
-                "app_name": a.app_name,
-                "status": getattr(a, "status", "unknown"),
-                "created_at": str(getattr(a, "created_at", "")),
+                "app_name": a.appName,
+                "status": a.status,
+                "created_at": str(a.createdAt) if a.createdAt else "",
             }
             for a in accounts
         ]
@@ -96,10 +74,13 @@ async def create_connect_link(user_id: str, app_name: str) -> dict:
 
     def _create():
         result = client.connected_accounts.initiate(
-            user_id=user_id,
-            app_name=app_name,
+            integration_id=app_name,
+            entity_id=user_id,
         )
-        return {"connect_url": result.redirect_url, "id": str(result.id)}
+        return {
+            "connect_url": result.redirectUrl,
+            "id": str(result.connectedAccountId),
+        }
 
     return await run_in_threadpool(_create)
 
@@ -109,7 +90,7 @@ async def disconnect_account(connected_account_id: str) -> bool:
     client = get_composio_client()
 
     def _disconnect():
-        client.connected_accounts.remove(id=connected_account_id)
+        client.http_client.delete(f"/v1/connectedAccounts/{connected_account_id}")
         return True
 
     try:
@@ -124,19 +105,23 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
     client = get_composio_client()
 
     def _list():
-        apps = client.apps.list()
+        apps = client.apps.get()
+        if not isinstance(apps, list):
+            apps = [apps] if apps else []
         result = []
         for app in apps:
-            name = getattr(app, "name", "") or ""
-            display = getattr(app, "display_name", name) or name
-            logo = getattr(app, "logo", "") or ""
+            name = app.name or ""
+            display = app.key or name
+            logo = app.logo or ""
+            desc = app.description or ""
             if search and search.lower() not in name.lower() and search.lower() not in display.lower():
                 continue
             result.append({
                 "name": name,
                 "display_name": display,
                 "logo": logo,
+                "description": desc[:200] if desc else "",
             })
-        return sorted(result, key=lambda x: x["display_name"])
+        return sorted(result, key=lambda x: x["display_name"].lower())
 
     return await run_in_threadpool(_list)
