@@ -1,6 +1,6 @@
+import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
 import type { SyncState } from "@clawdi-cloud/shared/types";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
@@ -8,55 +8,30 @@ import { ApiClient } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 
 function getEnvIdByAgent(agentType: string): string | null {
-	const path = join(getClawdiDir(), "environments", `${agentType}.json`);
-	if (!existsSync(path)) return null;
-	return JSON.parse(readFileSync(path, "utf-8")).id;
+	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
+	if (!existsSync(envPath)) return null;
+	return JSON.parse(readFileSync(envPath, "utf-8")).id;
 }
 
 function getSyncState(): SyncState {
-	const path = join(getClawdiDir(), "sync.json");
-	if (!existsSync(path)) return {};
-	return JSON.parse(readFileSync(path, "utf-8"));
+	const syncPath = join(getClawdiDir(), "sync.json");
+	if (!existsSync(syncPath)) return {};
+	return JSON.parse(readFileSync(syncPath, "utf-8"));
 }
 
 function saveSyncState(state: SyncState) {
-	const path = join(getClawdiDir(), "sync.json");
-	writeFileSync(path, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+	const syncPath = join(getClawdiDir(), "sync.json");
+	writeFileSync(syncPath, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
 }
 
-const UP_MODULES = ["sessions", "skills"] as const;
-const DOWN_MODULES = ["skills"] as const;
+const UP_MODULES = [
+	{ value: "sessions", label: "Sessions", hint: "agent conversation history" },
+	{ value: "skills", label: "Skills", hint: "SKILL.md files" },
+];
 
-async function selectAndConfirmModules(
-	rl: ReturnType<typeof createInterface>,
-	available: readonly string[],
-	direction: "upload" | "download",
-): Promise<string[]> {
-	console.log(chalk.cyan(`\nSelect modules to ${direction}:`));
-	const selected: string[] = [];
-	for (const mod of available) {
-		const answer = await rl.question(chalk.cyan(`  ${mod}? [Y/n] `));
-		if (answer.toLowerCase() !== "n") {
-			selected.push(mod);
-		}
-	}
-	if (selected.length === 0) {
-		console.log(chalk.gray("\nNo modules selected."));
-		return [];
-	}
-
-	// Summary + confirm
-	console.log(chalk.white(`\n  Will ${direction}:`));
-	for (const mod of selected) {
-		console.log(chalk.white(`    - ${mod}`));
-	}
-	const confirm = await rl.question(chalk.cyan(`\n  Proceed? [Y/n] `));
-	if (confirm.toLowerCase() === "n") {
-		console.log(chalk.gray("Cancelled."));
-		return [];
-	}
-	return selected;
-}
+const DOWN_MODULES = [
+	{ value: "skills", label: "Skills", hint: "pull SKILL.md to agent directories" },
+];
 
 export async function syncUp(opts: {
 	modules?: string;
@@ -82,26 +57,39 @@ export async function syncUp(opts: {
 		return;
 	}
 
-	// If --modules specified, use directly; otherwise ask
 	let modules: string[];
 	if (opts.modules) {
 		modules = opts.modules.split(",");
 	} else {
-		const rl = createInterface({ input: process.stdin, output: process.stdout });
-		try {
-			modules = await selectAndConfirmModules(rl, UP_MODULES, "upload");
-		} finally {
-			rl.close();
+		const selected = await p.multiselect({
+			message: "Select modules to upload",
+			options: UP_MODULES,
+			initialValues: UP_MODULES.map((m) => m.value),
+		});
+		if (p.isCancel(selected)) {
+			p.cancel("Cancelled.");
+			return;
 		}
-		if (modules.length === 0) return;
+		modules = selected;
+
+		if (modules.length === 0) {
+			console.log(chalk.gray("No modules selected."));
+			return;
+		}
+
+		const ok = await p.confirm({ message: `Upload ${modules.join(", ")}?` });
+		if (p.isCancel(ok) || !ok) {
+			p.cancel("Cancelled.");
+			return;
+		}
 	}
 
-	console.log();
 	const syncState = getSyncState();
 	const api = opts.dryRun ? null : new ApiClient();
 
 	if (modules.includes("sessions")) {
-		console.log(chalk.cyan("Syncing sessions..."));
+		const spin = p.spinner();
+		spin.start("Collecting sessions...");
 
 		const since = opts.since
 			? new Date(opts.since)
@@ -113,9 +101,9 @@ export async function syncUp(opts: {
 		const sessions = await adapter.collectSessions(since, projectFilter);
 
 		if (sessions.length === 0) {
-			console.log(chalk.gray("  No new sessions to sync."));
+			spin.stop("No new sessions to sync.");
 		} else if (opts.dryRun) {
-			console.log(chalk.yellow(`  Would upload ${sessions.length} sessions (dry run)`));
+			spin.stop(`Would upload ${sessions.length} sessions (dry run)`);
 			for (const s of sessions.slice(0, 5)) {
 				console.log(
 					chalk.gray(
@@ -127,6 +115,7 @@ export async function syncUp(opts: {
 				console.log(chalk.gray(`    ... and ${sessions.length - 5} more`));
 			}
 		} else {
+			spin.message(`Uploading ${sessions.length} sessions...`);
 			const batch = sessions.map((s) => ({
 				environment_id: envId,
 				local_session_id: s.localSessionId,
@@ -148,9 +137,9 @@ export async function syncUp(opts: {
 				const result = await api!.post<{ synced: number }>("/api/sessions/batch", {
 					sessions: batch,
 				});
-				console.log(chalk.green(`  ✓ Synced ${result.synced} sessions`));
+				spin.stop(`Synced ${result.synced} sessions`);
 			} catch (e: any) {
-				console.log(chalk.red(`  Failed: ${e.message}`));
+				spin.stop(`Failed: ${e.message}`);
 				return;
 			}
 		}
@@ -161,13 +150,16 @@ export async function syncUp(opts: {
 	}
 
 	if (modules.includes("skills")) {
-		console.log(chalk.cyan("Syncing skills..."));
+		const spin = p.spinner();
+		spin.start("Collecting skills...");
 		const skills = await adapter.collectSkills();
+
 		if (skills.length === 0) {
-			console.log(chalk.gray("  No skills found."));
+			spin.stop("No skills found.");
 		} else if (opts.dryRun) {
-			console.log(chalk.yellow(`  Would upload ${skills.length} skills (dry run)`));
+			spin.stop(`Would upload ${skills.length} skills (dry run)`);
 		} else {
+			spin.message(`Uploading ${skills.length} skills...`);
 			try {
 				const result = await api!.post<{ synced: number }>("/api/skills/batch", {
 					skills: skills.map((s) => ({
@@ -176,9 +168,9 @@ export async function syncUp(opts: {
 						content: s.content,
 					})),
 				});
-				console.log(chalk.green(`  ✓ Synced ${result.synced} skills`));
+				spin.stop(`Synced ${result.synced} skills`);
 			} catch (e: any) {
-				console.log(chalk.red(`  Failed: ${e.message}`));
+				spin.stop(`Failed: ${e.message}`);
 			}
 		}
 
@@ -201,60 +193,71 @@ export async function syncDown(opts: { modules?: string; dryRun?: boolean }) {
 	const adapter = new ClaudeCodeAdapter();
 	const api = new ApiClient();
 
-	// If --modules specified, use directly; otherwise ask
 	let modules: string[];
 	if (opts.modules) {
 		modules = opts.modules.split(",");
 	} else {
-		const rl = createInterface({ input: process.stdin, output: process.stdout });
-		try {
-			modules = await selectAndConfirmModules(rl, DOWN_MODULES, "download");
-		} finally {
-			rl.close();
+		const selected = await p.multiselect({
+			message: "Select modules to download",
+			options: DOWN_MODULES,
+			initialValues: DOWN_MODULES.map((m) => m.value),
+		});
+		if (p.isCancel(selected)) {
+			p.cancel("Cancelled.");
+			return;
 		}
-		if (modules.length === 0) return;
+		modules = selected;
+
+		if (modules.length === 0) {
+			console.log(chalk.gray("No modules selected."));
+			return;
+		}
+
+		const ok = await p.confirm({ message: `Download ${modules.join(", ")}?` });
+		if (p.isCancel(ok) || !ok) {
+			p.cancel("Cancelled.");
+			return;
+		}
 	}
 
-	console.log();
-
 	if (modules.includes("skills")) {
-		console.log(chalk.cyan("Pulling skills from cloud..."));
+		const spin = p.spinner();
+		spin.start("Pulling skills from cloud...");
+
 		try {
 			const skills = await api.get<Array<{ skill_key: string; name: string; content?: string }>>(
 				"/api/skills?include_content=true",
 			);
 
 			if (skills.length === 0) {
-				console.log(chalk.gray("  No skills in cloud."));
+				spin.stop("No skills in cloud.");
 			} else if (opts.dryRun) {
-				console.log(chalk.yellow(`  Would download ${skills.length} skills (dry run)`));
+				spin.stop(`Would download ${skills.length} skills (dry run)`);
 			} else {
+				spin.stop(`Found ${skills.length} skills`);
+
 				let pulled = 0;
-				const rl = createInterface({ input: process.stdin, output: process.stdout });
-				try {
-					for (const skill of skills) {
-						if (!skill.content) continue;
-						const dest = adapter.getSkillPath(skill.skill_key);
-						if (existsSync(dest)) {
-							const answer = await rl.question(
-								chalk.yellow(`    ${skill.skill_key} already exists. Overwrite? [y/N] `),
-							);
-							if (answer.toLowerCase() !== "y") {
-								console.log(chalk.gray(`    ${skill.skill_key} skipped`));
-								continue;
-							}
+				for (const skill of skills) {
+					if (!skill.content) continue;
+					const dest = adapter.getSkillPath(skill.skill_key);
+					if (existsSync(dest)) {
+						const overwrite = await p.confirm({
+							message: `${skill.skill_key} already exists. Overwrite?`,
+							initialValue: false,
+						});
+						if (p.isCancel(overwrite) || !overwrite) {
+							console.log(chalk.gray(`    ${skill.skill_key} skipped`));
+							continue;
 						}
-						await adapter.writeSkill(skill.skill_key, skill.content);
-						console.log(chalk.gray(`    ${skill.skill_key} → ${dest}`));
-						pulled++;
 					}
-				} finally {
-					rl.close();
+					await adapter.writeSkill(skill.skill_key, skill.content);
+					console.log(chalk.gray(`    ${skill.skill_key} → ${dest}`));
+					pulled++;
 				}
-				console.log(chalk.green(`  ✓ Pulled ${pulled} skills`));
+				p.outro(`Pulled ${pulled} skills`);
 			}
 		} catch (e: any) {
-			console.log(chalk.red(`  Failed: ${e.message}`));
+			spin.stop(`Failed: ${e.message}`);
 		}
 	}
 }
