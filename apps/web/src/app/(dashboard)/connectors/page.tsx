@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Link2Off, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -90,7 +90,6 @@ export default function ConnectorsPage() {
     return items;
   }, [availableApps, deferredQuery, connectedNames]);
 
-  // Reset page on search
   const prevQuery = useDeferredValue(deferredQuery);
   if (prevQuery !== deferredQuery && page !== 0) setPage(0);
 
@@ -98,13 +97,13 @@ export default function ConnectorsPage() {
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
-    <div className="max-w-5xl space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold">Connectors</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Connect third-party services. Tools become available in any agent
-            via MCP.
+            Connect apps and enable capabilities for your AI agent.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -115,7 +114,7 @@ export default function ConnectorsPage() {
           )}
           {(connections?.length ?? 0) > 0 && (
             <span className="bg-primary/10 px-3 py-1 rounded-full text-xs font-semibold text-primary">
-              {connections!.length} connected
+              {connections!.length} active
             </span>
           )}
         </div>
@@ -155,86 +154,101 @@ export default function ConnectorsPage() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {paged.map((app: any) => {
-              const isConnected = connectedNames.has(app.name);
-              const connection = connections?.find(
-                (c: any) => c.app_name === app.name,
-              );
-              return (
-                <div
-                  key={app.name}
-                  className={cn(
-                    "group flex h-[72px] items-center gap-3 rounded-xl border bg-card px-3 transition-all hover:border-border hover:shadow-sm",
-                    isConnected && "border-primary/20",
-                  )}
-                >
-                  {/* Icon */}
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-                    {app.logo ? (
-                      <img
-                        src={app.logo}
-                        alt=""
-                        className="size-5 rounded"
-                        onError={(e) => {
-                          const t = e.target as HTMLImageElement;
-                          t.style.display = "none";
-                          t.parentElement!.textContent =
-                            app.display_name?.[0] ?? "?";
-                        }}
-                      />
-                    ) : (
-                      <span className="text-sm font-semibold text-muted-foreground">
-                        {app.display_name?.[0] ?? "?"}
-                      </span>
+          <div className="rounded-xl border border-border overflow-hidden bg-card">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              {paged.map((app: any, idx: number) => {
+                const isConnected = connectedNames.has(app.name);
+                const connection = connections?.find(
+                  (c: any) => c.app_name === app.name,
+                );
+                const col = idx % 3;
+                const row = Math.floor(idx / 3);
+                return (
+                  <div
+                    key={app.name}
+                    className={cn(
+                      "group flex items-start gap-3 px-4 py-4 transition-colors hover:bg-accent/30",
+                      col < 2 && "lg:border-r border-border",
+                      row < Math.ceil(paged.length / 3) - 1 && "border-b border-border",
                     )}
-                  </div>
-
-                  {/* Text */}
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-semibold leading-tight">
-                      {app.display_name}
-                    </span>
-                    {app.description && (
-                      <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-muted-foreground">
-                        {app.description}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Action */}
-                  {isConnected ? (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Check className="size-3.5 text-green-600 dark:text-green-400" />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          connection && disconnectApp.mutate(connection.id)
-                        }
-                        className="p-1 text-muted-foreground hover:text-destructive rounded-md opacity-0 group-hover:opacity-100 transition-all"
-                        title="Disconnect"
-                      >
-                        <Link2Off className="size-3" />
-                      </button>
+                  >
+                    {/* Logo */}
+                    <div className="shrink-0 mt-0.5">
+                      {app.logo ? (
+                        <img
+                          src={app.logo}
+                          alt=""
+                          className="size-8 rounded"
+                          onError={(e) => {
+                            const t = e.target as HTMLImageElement;
+                            t.style.display = "none";
+                            const fallback = document.createElement("div");
+                            fallback.className =
+                              "size-8 rounded bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground";
+                            fallback.textContent =
+                              app.display_name?.[0] ?? "?";
+                            t.parentElement!.appendChild(fallback);
+                          }}
+                        />
+                      ) : (
+                        <div className="size-8 rounded bg-muted flex items-center justify-center text-xs font-semibold text-muted-foreground">
+                          {app.display_name?.[0] ?? "?"}
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => connectApp.mutate(app.name)}
-                      disabled={connectApp.isPending}
-                      className="shrink-0 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
-                    >
-                      Connect
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+
+                    {/* Content */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold truncate">
+                          {app.display_name}
+                        </span>
+                        {isConnected && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-green-600 dark:text-green-400 font-medium">
+                            <Check className="size-2.5" />
+                            Connected
+                          </span>
+                        )}
+                      </div>
+                      {app.description && (
+                        <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                          {app.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Action */}
+                    <div className="shrink-0 pt-0.5">
+                      {isConnected ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            connection && disconnectApp.mutate(connection.id)
+                          }
+                          className="text-[11px] text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          Disconnect
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectApp.mutate(app.name)}
+                          disabled={connectApp.isPending}
+                          className="rounded-lg bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+                        >
+                          Connect
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">
                 {page * PAGE_SIZE + 1}–
                 {Math.min((page + 1) * PAGE_SIZE, filtered.length)} of{" "}
