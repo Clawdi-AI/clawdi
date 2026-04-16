@@ -24,16 +24,40 @@ function saveSyncState(state: SyncState) {
 	writeFileSync(path, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
 }
 
-const DEFAULT_UP_MODULES = ["sessions", "skills"];
-const DEFAULT_DOWN_MODULES = ["skills"];
+const UP_MODULES = ["sessions", "skills"] as const;
+const DOWN_MODULES = ["skills"] as const;
 
-export async function syncUp(opts: { modules?: string; since?: string; project?: string; all?: boolean; dryRun?: boolean }) {
+async function selectModules(
+	rl: ReturnType<typeof createInterface>,
+	available: readonly string[],
+	direction: "upload" | "download",
+): Promise<string[]> {
+	console.log(chalk.cyan(`\nSelect modules to ${direction}:`));
+	const selected: string[] = [];
+	for (const mod of available) {
+		const answer = await rl.question(chalk.cyan(`  ${mod}? [Y/n] `));
+		if (answer.toLowerCase() !== "n") {
+			selected.push(mod);
+		}
+	}
+	if (selected.length === 0) {
+		console.log(chalk.gray("No modules selected."));
+	}
+	return selected;
+}
+
+export async function syncUp(opts: {
+	modules?: string;
+	since?: string;
+	project?: string;
+	all?: boolean;
+	dryRun?: boolean;
+}) {
 	if (!opts.dryRun && !isLoggedIn()) {
 		console.log(chalk.red("Not logged in. Run `clawdi login` first."));
 		return;
 	}
 
-	// Determine adapter
 	const adapter = new ClaudeCodeAdapter();
 	if (!(await adapter.detect())) {
 		console.log(chalk.red("Claude Code not detected on this machine."));
@@ -46,7 +70,21 @@ export async function syncUp(opts: { modules?: string; since?: string; project?:
 		return;
 	}
 
-	const modules = opts.modules?.split(",") ?? DEFAULT_UP_MODULES;
+	// If --modules specified, use directly; otherwise ask
+	let modules: string[];
+	if (opts.modules) {
+		modules = opts.modules.split(",");
+	} else {
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		try {
+			modules = await selectModules(rl, UP_MODULES, "upload");
+		} finally {
+			rl.close();
+		}
+		if (modules.length === 0) return;
+	}
+
+	console.log();
 	const syncState = getSyncState();
 	const api = opts.dryRun ? null : new ApiClient();
 
@@ -59,7 +97,6 @@ export async function syncUp(opts: { modules?: string; since?: string; project?:
 				? new Date(syncState.sessions.lastSyncedAt)
 				: undefined;
 
-		// Default to cwd, --all for everything, --project for specific path
 		const projectFilter = opts.all ? undefined : (opts.project ?? process.cwd());
 		const sessions = await adapter.collectSessions(since, projectFilter);
 
@@ -96,7 +133,7 @@ export async function syncUp(opts: { modules?: string; since?: string; project?:
 			}));
 
 			try {
-				const result = await api.post<{ synced: number }>("/api/sessions/batch", {
+				const result = await api!.post<{ synced: number }>("/api/sessions/batch", {
 					sessions: batch,
 				});
 				console.log(chalk.green(`  ✓ Synced ${result.synced} sessions`));
@@ -120,7 +157,7 @@ export async function syncUp(opts: { modules?: string; since?: string; project?:
 			console.log(chalk.yellow(`  Would upload ${skills.length} skills (dry run)`));
 		} else {
 			try {
-				const result = await api.post<{ synced: number }>("/api/skills/batch", {
+				const result = await api!.post<{ synced: number }>("/api/skills/batch", {
 					skills: skills.map((s) => ({
 						skill_key: s.skillKey,
 						name: s.name,
@@ -149,9 +186,24 @@ export async function syncDown(opts: { modules?: string; dryRun?: boolean }) {
 		return;
 	}
 
-	const modules = opts.modules?.split(",") ?? DEFAULT_DOWN_MODULES;
-	const api = new ApiClient();
 	const adapter = new ClaudeCodeAdapter();
+	const api = new ApiClient();
+
+	// If --modules specified, use directly; otherwise ask
+	let modules: string[];
+	if (opts.modules) {
+		modules = opts.modules.split(",");
+	} else {
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		try {
+			modules = await selectModules(rl, DOWN_MODULES, "download");
+		} finally {
+			rl.close();
+		}
+		if (modules.length === 0) return;
+	}
+
+	console.log();
 
 	if (modules.includes("skills")) {
 		console.log(chalk.cyan("Pulling skills from cloud..."));
