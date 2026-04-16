@@ -43,11 +43,6 @@ async function pickModules(
 		initialValues: available.map((m) => m.value),
 	});
 	if (p.isCancel(selected) || selected.length === 0) return null;
-
-	const ok = await p.confirm({
-		message: `${direction === "upload" ? "Upload" : "Download"} ${selected.join(", ")}?`,
-	});
-	if (p.isCancel(ok) || !ok) return null;
 	return selected;
 }
 
