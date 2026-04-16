@@ -89,7 +89,7 @@ export function AppSidebar() {
       <div className="relative border-t border-sidebar-border" ref={menuRef}>
         {/* Popup menu */}
         {menuOpen && (
-          <div className="absolute bottom-full left-2 right-2 mb-1 bg-popover border border-border rounded-lg shadow-lg py-1 z-50">
+          <div className="absolute bottom-full left-2 right-2 mb-1 bg-popover border border-border rounded-lg shadow-lg py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
             <Link
               href="/settings"
               onClick={() => setMenuOpen(false)}
