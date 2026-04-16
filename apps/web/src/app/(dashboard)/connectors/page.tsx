@@ -163,7 +163,7 @@ export default function ConnectorsPage() {
               return (
                 <div
                   key={app.name}
-                  className="group flex h-20 items-center gap-4 rounded-xl border bg-card px-4 transition-all hover:border-foreground/15 hover:bg-accent/40"
+                  className="group flex h-20 items-center gap-4 rounded-xl border border-border bg-card px-4 transition-all hover:bg-accent/40"
                 >
                   {/* Icon */}
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted">
