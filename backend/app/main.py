@@ -8,6 +8,7 @@ from app.routes.memories import router as memories_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.skills import router as skills_router
+from app.routes.vault import router as vault_router
 
 app = FastAPI(title=settings.app_name)
 
@@ -25,6 +26,7 @@ app.include_router(dashboard_router)
 app.include_router(skills_router)
 app.include_router(memories_router)
 app.include_router(settings_router)
+app.include_router(vault_router)
 
 
 @app.get("/health")
