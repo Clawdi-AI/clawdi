@@ -1,13 +1,10 @@
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
-from app.models.memory import Memory
+from app.services.memory_provider import get_memory_provider
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
@@ -32,30 +29,12 @@ async def list_memories(
     category: str | None = Query(default=None),
     q: str | None = Query(default=None),
 ):
-    query = select(Memory).where(Memory.user_id == auth.user_id)
-
-    if category:
-        query = query.where(Memory.category == category)
+    provider = await get_memory_provider(str(auth.user_id), db)
 
     if q:
-        query = query.where(Memory.content.ilike(f"%{q}%"))
+        return await provider.search(str(auth.user_id), q, limit=limit)
 
-    query = query.order_by(Memory.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(query)
-    memories = result.scalars().all()
-
-    return [
-        {
-            "id": str(m.id),
-            "content": m.content,
-            "category": m.category,
-            "source": m.source,
-            "tags": m.tags,
-            "access_count": m.access_count,
-            "created_at": m.created_at.isoformat(),
-        }
-        for m in memories
-    ]
+    return await provider.list_all(str(auth.user_id), limit=limit, offset=offset, category=category)
 
 
 @router.post("")
@@ -64,17 +43,11 @@ async def create_memory(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
-    memory = Memory(
-        user_id=auth.user_id,
-        content=body.content,
-        category=body.category,
-        source=body.source,
-        tags=body.tags,
+    provider = await get_memory_provider(str(auth.user_id), db)
+    return await provider.add(
+        str(auth.user_id), body.content,
+        category=body.category, source=body.source, tags=body.tags,
     )
-    db.add(memory)
-    await db.commit()
-    await db.refresh(memory)
-    return {"id": str(memory.id)}
 
 
 @router.post("/batch")
@@ -83,19 +56,14 @@ async def batch_create_memories(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
+    provider = await get_memory_provider(str(auth.user_id), db)
     synced = 0
     for m in body.memories:
-        memory = Memory(
-            user_id=auth.user_id,
-            content=m.content,
-            category=m.category,
-            source=m.source,
-            tags=m.tags,
+        await provider.add(
+            str(auth.user_id), m.content,
+            category=m.category, source=m.source, tags=m.tags,
         )
-        db.add(memory)
         synced += 1
-
-    await db.commit()
     return {"synced": synced}
 
 
@@ -105,13 +73,6 @@ async def delete_memory(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
-    result = await db.execute(
-        select(Memory).where(Memory.id == memory_id, Memory.user_id == auth.user_id)
-    )
-    memory = result.scalar_one_or_none()
-    if not memory:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-
-    await db.delete(memory)
-    await db.commit()
+    provider = await get_memory_provider(str(auth.user_id), db)
+    await provider.delete(str(auth.user_id), memory_id)
     return {"status": "deleted"}

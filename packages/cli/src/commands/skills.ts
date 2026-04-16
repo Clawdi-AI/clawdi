@@ -42,6 +42,26 @@ export async function skillsAdd(path: string) {
 	console.log(chalk.green(`✓ Uploaded ${result.skill_key} (v${result.version})`));
 }
 
+export async function skillsInstall(repoInput: string) {
+	requireAuth();
+	const api = new ApiClient();
+
+	// Parse "owner/repo" or "owner/repo/path"
+	const parts = repoInput.replace(/^https?:\/\/github\.com\//, "").split("/");
+	const repo = `${parts[0]}/${parts[1]}`;
+	const path = parts.length > 2 ? parts.slice(2).join("/") : undefined;
+
+	try {
+		const result = await api.post<{ skill_key: string; name: string; repo: string; version: number }>(
+			"/api/skills/install",
+			{ repo, path },
+		);
+		console.log(chalk.green(`✓ Installed ${result.name} from ${result.repo} (v${result.version})`));
+	} catch (e: any) {
+		console.log(chalk.red(`Failed to install: ${e.message}`));
+	}
+}
+
 export async function skillsRm(key: string) {
 	requireAuth();
 	const api = new ApiClient();

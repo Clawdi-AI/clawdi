@@ -10,3 +10,8 @@ class SkillCreate(BaseModel):
 
 class SkillBatchRequest(BaseModel):
     skills: list[SkillCreate]
+
+
+class SkillInstallRequest(BaseModel):
+    repo: str          # owner/repo
+    path: str | None = None  # subdirectory within repo

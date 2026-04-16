@@ -8,7 +8,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.skill import Skill
-from app.schemas.skill import SkillBatchRequest, SkillCreate
+from app.schemas.skill import SkillBatchRequest, SkillCreate, SkillInstallRequest
 from app.services.file_store import LocalFileStore
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -200,3 +200,59 @@ async def delete_skill(
     skill.is_active = False
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/install")
+async def install_skill(
+    body: SkillInstallRequest,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+):
+    from app.services.skill_installer import fetch_skill_from_github
+
+    try:
+        fetched = await fetch_skill_from_github(body.repo, body.path)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+
+    content_hash = _content_hash(fetched.content)
+    skill_key = fetched.name.lower().replace(" ", "-")
+    file_key = f"skills/{auth.user_id}/{skill_key}.md"
+    await file_store.put(file_key, fetched.content.encode("utf-8"))
+
+    # Upsert
+    result = await db.execute(
+        select(Skill).where(Skill.user_id == auth.user_id, Skill.skill_key == skill_key)
+    )
+    skill = result.scalar_one_or_none()
+
+    if skill:
+        skill.name = fetched.name
+        skill.description = fetched.description
+        skill.content_hash = content_hash
+        skill.file_key = file_key
+        skill.source = "marketplace"
+        skill.source_repo = body.repo
+        skill.is_active = True
+        skill.version = skill.version + 1
+    else:
+        skill = Skill(
+            user_id=auth.user_id,
+            skill_key=skill_key,
+            name=fetched.name,
+            description=fetched.description,
+            content_hash=content_hash,
+            file_key=file_key,
+            source="marketplace",
+            source_repo=body.repo,
+        )
+        db.add(skill)
+
+    await db.commit()
+    return {
+        "skill_key": skill_key,
+        "name": fetched.name,
+        "description": fetched.description,
+        "repo": body.repo,
+        "version": skill.version,
+    }

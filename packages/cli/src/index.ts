@@ -111,6 +111,14 @@ skillsCmd
 	});
 
 skillsCmd
+	.command("install <repo>")
+	.description("Install a skill from skills.sh (owner/repo)")
+	.action(async (repo) => {
+		const { skillsInstall } = await import("./commands/skills.js");
+		await skillsInstall(repo);
+	});
+
+skillsCmd
 	.command("rm <key>")
 	.description("Remove a skill")
 	.action(async (key) => {
