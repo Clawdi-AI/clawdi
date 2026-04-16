@@ -202,10 +202,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return skills;
 	}
 
+	getSkillPath(key: string): string {
+		return join(CLAUDE_DIR, "skills", key, "SKILL.md");
+	}
+
 	async writeSkill(key: string, content: string): Promise<void> {
-		const skillsDir = join(homedir(), ".clawdi", "cache", "skills");
-		mkdirSync(skillsDir, { recursive: true });
-		writeFileSync(join(skillsDir, `${key}.md`), content);
+		const skillDir = join(CLAUDE_DIR, "skills", key);
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), content);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

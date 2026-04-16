@@ -31,6 +31,7 @@ export interface AgentAdapter {
 	collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]>;
 	collectSkills(): Promise<RawSkill[]>;
 
+	getSkillPath(key: string): string;
 	writeSkill(key: string, content: string): Promise<void>;
 
 	buildRunCommand(args: string[], env: Record<string, string>): string[];
