@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, cpSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { AGENT_TYPES, AGENT_LABELS, type AgentType } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
@@ -33,6 +33,8 @@ export async function setup(opts: { agent?: string }) {
 			return;
 		}
 		await registerEnv(api, opts.agent as AgentType, null, machineId, machineName);
+		await registerMcpServer(opts.agent as AgentType);
+		await installBuiltinSkill(opts.agent as AgentType);
 		return;
 	}
 
@@ -79,6 +81,7 @@ export async function setup(opts: { agent?: string }) {
 	for (const { adapter, version } of toRegister) {
 		await registerEnv(api, adapter.agentType, version, machineId, machineName);
 		await registerMcpServer(adapter.agentType);
+		await installBuiltinSkill(adapter.agentType);
 	}
 }
 
@@ -112,10 +115,47 @@ async function registerEnv(
 	}
 }
 
+async function installBuiltinSkill(agentType: AgentType) {
+	if (agentType !== "claude_code") return;
+
+	const homedir = (await import("node:os")).homedir();
+	const targetDir = join(homedir, ".claude", "skills", "clawdi");
+	const sourceDir = resolve(import.meta.dirname, "../../skills/clawdi");
+	const targetSkillMd = join(targetDir, "SKILL.md");
+
+	if (!existsSync(sourceDir)) {
+		console.log(chalk.yellow("⚠ Built-in skill not found, skipping."));
+		return;
+	}
+
+	if (existsSync(targetSkillMd)) {
+		console.log(chalk.gray("✓ Clawdi skill already installed"));
+		return;
+	}
+
+	try {
+		mkdirSync(targetDir, { recursive: true });
+		cpSync(sourceDir, targetDir, { recursive: true });
+		console.log(chalk.green("✓ Clawdi skill installed in Claude Code"));
+	} catch {
+		console.log(chalk.yellow("⚠ Could not install Clawdi skill."));
+	}
+}
+
 async function registerMcpServer(agentType: AgentType) {
 	if (agentType !== "claude_code") return;
 
-	// Find the CLI entry point
+	// Check if already registered
+	try {
+		const list = execSync("claude mcp list", { encoding: "utf-8", stdio: "pipe" });
+		if (list.includes("clawdi:")) {
+			console.log(chalk.gray("✓ MCP server already registered"));
+			return;
+		}
+	} catch {
+		// claude command not found or failed, try registering anyway
+	}
+
 	const cliPath = resolve(import.meta.dirname, "../../src/index.ts");
 	const mcpConfig = JSON.stringify({
 		type: "stdio",

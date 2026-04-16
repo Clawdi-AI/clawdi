@@ -4,7 +4,7 @@ import {
   BarChart3,
   Brain,
   ChevronUp,
-  Clock,
+
   Key,
   LayoutDashboard,
   LogOut,
@@ -32,7 +32,6 @@ const navItems = [
   { href: "/skills", label: "Skills", icon: Sparkles },
   { href: "/vault", label: "Vault", icon: Key },
   { href: "/connectors", label: "Connectors", icon: Plug },
-  { href: "/cron", label: "Cron Jobs", icon: Clock },
 ];
 
 export function AppSidebar() {

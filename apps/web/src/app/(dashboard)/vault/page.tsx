@@ -2,9 +2,19 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Key, Plus, Trash2, Upload } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Key,
+  Loader2,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export default function VaultPage() {
   const { getToken } = useAuth();
@@ -45,31 +55,41 @@ export default function VaultPage() {
   });
 
   return (
-    <div className="max-w-5xl space-y-8">
-      <h1 className="text-2xl font-bold">Vault</h1>
-      <p className="text-sm text-muted-foreground">
-        Encrypted secrets synced to your agents via{" "}
-        <code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi run</code>.
-        Values are never visible in the browser.
-      </p>
+    <div className="space-y-5">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold">Vault</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Encrypted secrets synced to your agents via{" "}
+          <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+            clawdi run
+          </code>
+          . Values are AES-256-GCM encrypted at rest.
+        </p>
+      </div>
 
       {/* Create vault */}
       <div className="flex gap-2">
         <input
           type="text"
           value={newVaultSlug}
-          onChange={(e) => setNewVaultSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+          onChange={(e) =>
+            setNewVaultSlug(
+              e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+            )
+          }
           placeholder="New vault name (e.g. ai-keys, prod)"
           className="flex-1 border border-input bg-background rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && newVaultSlug) createVault.mutate(newVaultSlug);
+            if (e.key === "Enter" && newVaultSlug)
+              createVault.mutate(newVaultSlug);
           }}
         />
         <button
           type="button"
           onClick={() => newVaultSlug && createVault.mutate(newVaultSlug)}
           disabled={!newVaultSlug || createVault.isPending}
-          className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           <Plus className="size-4" />
           Create
@@ -78,7 +98,15 @@ export default function VaultPage() {
 
       {/* Vault list */}
       {isLoading ? (
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="space-y-4">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card p-4 space-y-3">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-48" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+          ))}
+        </div>
       ) : vaults?.length ? (
         <div className="space-y-4">
           {vaults.map((v: any) => (
@@ -86,39 +114,114 @@ export default function VaultPage() {
               key={v.id}
               vault={v}
               onDelete={() => deleteVault.mutate(v.slug)}
+              isDeleting={deleteVault.isPending}
             />
           ))}
         </div>
       ) : (
-        <p className="text-muted-foreground text-sm">
+        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
           No vaults yet. Create one above or run{" "}
-          <code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi vault set KEY</code>
-        </p>
+          <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+            clawdi vault set KEY
+          </code>
+        </div>
       )}
     </div>
   );
 }
 
-function VaultCard({ vault, onDelete }: { vault: any; onDelete: () => void }) {
+function VaultCard({
+  vault,
+  onDelete,
+  isDeleting,
+}: {
+  vault: any;
+  onDelete: () => void;
+  isDeleting: boolean;
+}) {
   const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [showValues, setShowValues] = useState<Set<string>>(new Set());
+
   const { data: items } = useQuery({
     queryKey: ["vault-items", vault.slug],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      return apiFetch<Record<string, string[]>>(`/api/vault/${vault.slug}/items`, token);
+      return apiFetch<Record<string, string[]>>(
+        `/api/vault/${vault.slug}/items`,
+        token,
+      );
+    },
+  });
+
+  const upsertItem = useMutation({
+    mutationFn: async ({
+      key,
+      value,
+    }: {
+      key: string;
+      value: string;
+    }) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return apiFetch<any>(`/api/vault/${vault.slug}/items`, token, {
+        method: "PUT",
+        body: JSON.stringify({ section: "", fields: { [key]: value } }),
+      });
+    },
+    onSuccess: () => {
+      setNewKey("");
+      setNewValue("");
+      setAdding(false);
+      queryClient.invalidateQueries({
+        queryKey: ["vault-items", vault.slug],
+      });
+    },
+  });
+
+  const deleteItem = useMutation({
+    mutationFn: async (fieldName: string) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return apiFetch<any>(`/api/vault/${vault.slug}/items`, token, {
+        method: "DELETE",
+        body: JSON.stringify({ section: "", fields: [fieldName] }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["vault-items", vault.slug],
+      });
     },
   });
 
   const allFields = items
     ? Object.entries(items).flatMap(([section, fields]) =>
-        fields.map((f) => (section === "(default)" ? f : `${section}/${f}`)),
+        fields.map((f) => ({
+          key: section === "(default)" ? f : `${section}/${f}`,
+          name: f,
+          section: section === "(default)" ? "" : section,
+        })),
       )
     : [];
 
+  const toggleShow = (key: string) => {
+    setShowValues((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   return (
-    <div className="bg-card border border-border rounded-lg">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+    <div className="rounded-lg border bg-card">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-2">
           <Key className="size-4 text-primary" />
           <span className="font-medium text-sm">{vault.slug}</span>
@@ -126,23 +229,129 @@ function VaultCard({ vault, onDelete }: { vault: any; onDelete: () => void }) {
             {allFields.length} {allFields.length === 1 ? "key" : "keys"}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-muted rounded-md transition-colors"
-        >
-          <Trash2 className="size-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setAdding(!adding)}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+          >
+            <Plus className="size-3.5" />
+            Add Key
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isDeleting}
+            className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-muted rounded-md transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
       </div>
-      {allFields.length > 0 && (
-        <div className="px-4 py-2 space-y-1">
-          {allFields.map((f) => (
-            <div key={f} className="flex items-center justify-between text-sm py-0.5">
-              <span className="font-mono text-xs">{f}</span>
-              <span className="text-xs text-muted-foreground">••••••••</span>
+
+      {/* Add key form */}
+      {adding && (
+        <div className="px-4 py-3 border-b bg-muted/30">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newKey}
+              onChange={(e) =>
+                setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))
+              }
+              placeholder="KEY_NAME"
+              className="flex-1 border border-input bg-background rounded-md px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+              autoFocus
+            />
+            <input
+              type="password"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+              placeholder="secret value"
+              className="flex-1 border border-input bg-background rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newKey && newValue)
+                  upsertItem.mutate({ key: newKey, value: newValue });
+              }}
+            />
+            <button
+              type="button"
+              onClick={() =>
+                newKey &&
+                newValue &&
+                upsertItem.mutate({ key: newKey, value: newValue })
+              }
+              disabled={!newKey || !newValue || upsertItem.isPending}
+              className="inline-flex items-center gap-1 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {upsertItem.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Plus className="size-3" />
+              )}
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(false);
+                setNewKey("");
+                setNewValue("");
+              }}
+              className="p-1.5 text-muted-foreground hover:bg-muted rounded-md transition-colors"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Keys list */}
+      {allFields.length > 0 ? (
+        <div>
+          {allFields.map((f, i) => (
+            <div
+              key={f.key}
+              className={cn(
+                "flex items-center justify-between px-4 py-2.5",
+                i > 0 && "border-t",
+              )}
+            >
+              <span className="font-mono text-xs">{f.key}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground mr-1">
+                  {showValues.has(f.key) ? "(encrypted)" : "••••••••"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => toggleShow(f.key)}
+                  className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
+                  title={showValues.has(f.key) ? "Hide" : "Show hint"}
+                >
+                  {showValues.has(f.key) ? (
+                    <EyeOff className="size-3.5" />
+                  ) : (
+                    <Eye className="size-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteItem.mutate(f.name)}
+                  disabled={deleteItem.isPending}
+                  className="p-1 text-muted-foreground hover:text-destructive rounded transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
+      ) : (
+        !adding && (
+          <div className="px-4 py-4 text-center text-xs text-muted-foreground">
+            No keys yet. Click "Add Key" to add one.
+          </div>
+        )
       )}
     </div>
   );
