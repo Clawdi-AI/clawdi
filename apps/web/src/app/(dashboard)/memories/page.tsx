@@ -19,7 +19,7 @@ import {
 import { useDeferredValue, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
   { value: "", label: "All" },
@@ -37,20 +37,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   decision: "bg-green-500/10 text-green-700 dark:text-green-400",
   context: "bg-rose-500/10 text-rose-700 dark:text-rose-400",
 };
-
-function relativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
 
 export default function MemoriesPage() {
   const { getToken } = useAuth();
