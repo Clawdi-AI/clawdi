@@ -27,7 +27,7 @@ function saveSyncState(state: SyncState) {
 const UP_MODULES = ["sessions", "skills"] as const;
 const DOWN_MODULES = ["skills"] as const;
 
-async function selectModules(
+async function selectAndConfirmModules(
 	rl: ReturnType<typeof createInterface>,
 	available: readonly string[],
 	direction: "upload" | "download",
@@ -41,7 +41,19 @@ async function selectModules(
 		}
 	}
 	if (selected.length === 0) {
-		console.log(chalk.gray("No modules selected."));
+		console.log(chalk.gray("\nNo modules selected."));
+		return [];
+	}
+
+	// Summary + confirm
+	console.log(chalk.white(`\n  Will ${direction}:`));
+	for (const mod of selected) {
+		console.log(chalk.white(`    - ${mod}`));
+	}
+	const confirm = await rl.question(chalk.cyan(`\n  Proceed? [Y/n] `));
+	if (confirm.toLowerCase() === "n") {
+		console.log(chalk.gray("Cancelled."));
+		return [];
 	}
 	return selected;
 }
@@ -77,7 +89,7 @@ export async function syncUp(opts: {
 	} else {
 		const rl = createInterface({ input: process.stdin, output: process.stdout });
 		try {
-			modules = await selectModules(rl, UP_MODULES, "upload");
+			modules = await selectAndConfirmModules(rl, UP_MODULES, "upload");
 		} finally {
 			rl.close();
 		}
@@ -196,7 +208,7 @@ export async function syncDown(opts: { modules?: string; dryRun?: boolean }) {
 	} else {
 		const rl = createInterface({ input: process.stdin, output: process.stdout });
 		try {
-			modules = await selectModules(rl, DOWN_MODULES, "download");
+			modules = await selectAndConfirmModules(rl, DOWN_MODULES, "download");
 		} finally {
 			rl.close();
 		}
