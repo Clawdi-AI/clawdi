@@ -13,6 +13,7 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "@clawdi-cloud/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
     "ora": "^8.2.0"

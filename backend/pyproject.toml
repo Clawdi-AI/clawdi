@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "aiofiles>=24.1",
     "psycopg2-binary>=2.9.11",
+    "composio-core>=0.7.21",
 ]
 
 [tool.pdm.scripts]

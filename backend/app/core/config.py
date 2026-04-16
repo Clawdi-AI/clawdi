@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     clerk_pem_public_key: str = ""
 
     vault_encryption_key: str = ""
+    encryption_key: str = ""  # For JWT signing (MCP proxy tokens)
+
+    composio_api_key: str = ""
 
     file_store_type: str = "local"
     file_store_local_path: str = "./data/files"

@@ -1,9 +1,10 @@
 import chalk from "chalk";
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { AGENT_TYPES, AGENT_LABELS, type AgentType } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import type { AgentAdapter } from "../adapters/base";
@@ -77,6 +78,7 @@ export async function setup(opts: { agent?: string }) {
 	console.log();
 	for (const { adapter, version } of toRegister) {
 		await registerEnv(api, adapter.agentType, version, machineId, machineName);
+		await registerMcpServer(adapter.agentType);
 	}
 }
 
@@ -107,5 +109,27 @@ async function registerEnv(
 		console.log(chalk.green(`✓ ${AGENT_LABELS[agentType]} registered`));
 	} catch (e: any) {
 		console.log(chalk.red(`  Failed to register ${AGENT_LABELS[agentType]}: ${e.message}`));
+	}
+}
+
+async function registerMcpServer(agentType: AgentType) {
+	if (agentType !== "claude_code") return;
+
+	// Find the CLI entry point
+	const cliPath = resolve(import.meta.dirname, "../../src/index.ts");
+	const mcpConfig = JSON.stringify({
+		type: "stdio",
+		command: "bun",
+		args: ["run", cliPath, "mcp"],
+	});
+
+	try {
+		execSync(`claude mcp add-json clawdi '${mcpConfig}' --scope user`, {
+			stdio: "pipe",
+		});
+		console.log(chalk.green("✓ MCP server registered in Claude Code"));
+	} catch {
+		console.log(chalk.yellow("⚠ Could not auto-register MCP server."));
+		console.log(chalk.gray(`  Run manually: claude mcp add-json clawdi '${mcpConfig}' --scope user`));
 	}
 }

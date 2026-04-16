@@ -161,6 +161,14 @@ memoriesCmd
 	});
 
 program
+	.command("mcp")
+	.description("Start MCP server (stdio transport, used by agents)")
+	.action(async () => {
+		const { startMcpServer } = await import("./mcp/server.js");
+		await startMcpServer();
+	});
+
+program
 	.command("run")
 	.description("Run a command with vault secrets injected")
 	.argument("<command...>", "Command to run")
