@@ -180,25 +180,21 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 		const skills: RawSkill[] = [];
 
-		function scanDir(dir: string) {
-			for (const entry of readdirSync(dir, { withFileTypes: true })) {
-				if (entry.isDirectory()) {
-					scanDir(join(dir, entry.name));
-				} else if (entry.name.endsWith(".md")) {
-					const filePath = join(dir, entry.name);
-					const content = readFileSync(filePath, "utf-8");
-					const name = basename(entry.name, ".md");
-					skills.push({
-						skillKey: name,
-						name,
-						content,
-						filePath,
-					});
-				}
-			}
+		// Each skill is a directory containing SKILL.md
+		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const skillMd = join(skillsDir, entry.name, "SKILL.md");
+			if (!existsSync(skillMd)) continue;
+
+			const content = readFileSync(skillMd, "utf-8");
+			skills.push({
+				skillKey: entry.name,
+				name: entry.name,
+				content,
+				filePath: skillMd,
+			});
 		}
 
-		scanDir(skillsDir);
 		return skills;
 	}
 
