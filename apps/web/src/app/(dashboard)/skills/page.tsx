@@ -13,25 +13,26 @@ export default function SkillsPage() {
 
   return (
     <div className="max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Skills</h1>
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          {(["my", "marketplace"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                "px-3 py-1.5 rounded-md text-sm transition-colors",
-                tab === t
-                  ? "bg-background text-foreground shadow-sm font-medium"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t === "my" ? "My Skills" : "Marketplace"}
-            </button>
-          ))}
-        </div>
+      <h1 className="text-2xl font-bold">Skills</h1>
+      <div className="flex items-center gap-4 border-b border-border">
+        {(["my", "marketplace"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={cn(
+              "pb-2.5 text-sm transition-colors relative",
+              tab === t
+                ? "text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t === "my" ? "My Skills" : "Marketplace"}
+            {tab === t && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
+            )}
+          </button>
+        ))}
       </div>
 
       {tab === "my" ? <MySkills /> : <Marketplace />}
