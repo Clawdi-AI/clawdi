@@ -1,35 +1,199 @@
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, basename } from "node:path";
 import type { AgentAdapter, RawSession, RawSkill } from "./base";
+
+const CLAUDE_DIR = join(homedir(), ".claude");
+const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
+
+interface SessionJsonlEntry {
+	type?: string;
+	message?: {
+		role?: string;
+		model?: string;
+		content?: string | Array<{ type: string; text?: string }>;
+		usage?: {
+			input_tokens?: number;
+			output_tokens?: number;
+			cache_read_input_tokens?: number;
+		};
+	};
+	timestamp?: string;
+	sessionId?: string;
+	cwd?: string;
+	version?: string;
+}
 
 export class ClaudeCodeAdapter implements AgentAdapter {
 	readonly agentType = "claude_code" as const;
 
 	async detect(): Promise<boolean> {
-		// Check if ~/.claude/ exists
-		const { existsSync } = await import("node:fs");
-		const { homedir } = await import("node:os");
-		return existsSync(`${homedir()}/.claude`);
+		return existsSync(CLAUDE_DIR);
 	}
 
 	async getVersion(): Promise<string | null> {
-		// TODO: run `claude --version` and parse
-		return null;
+		try {
+			const { execSync } = await import("node:child_process");
+			return execSync("claude --version", { encoding: "utf-8" }).trim();
+		} catch {
+			return null;
+		}
 	}
 
 	async collectSessions(since?: Date): Promise<RawSession[]> {
-		// TODO: scan ~/.claude/projects/*/*.jsonl, parse metadata
-		return [];
+		if (!existsSync(PROJECTS_DIR)) return [];
+
+		const sessions: RawSession[] = [];
+		const projectDirs = readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter((d) =>
+			d.isDirectory(),
+		);
+
+		for (const projectDir of projectDirs) {
+			const projectPath = join(PROJECTS_DIR, projectDir.name);
+			const jsonlFiles = readdirSync(projectPath).filter((f) => f.endsWith(".jsonl"));
+
+			for (const file of jsonlFiles) {
+				const filePath = join(projectPath, file);
+				const sessionId = basename(file, ".jsonl");
+
+				try {
+					const parsed = this.parseSessionJsonl(filePath, projectDir.name);
+					if (!parsed) continue;
+
+					if (since && parsed.startedAt < since) continue;
+
+					sessions.push({ ...parsed, localSessionId: sessionId, rawFilePath: filePath });
+				} catch {
+					// Skip unparseable sessions
+				}
+			}
+		}
+
+		return sessions;
+	}
+
+	private parseSessionJsonl(
+		filePath: string,
+		projectDirName: string,
+	): Omit<RawSession, "localSessionId" | "rawFilePath"> | null {
+		const content = readFileSync(filePath, "utf-8");
+		const lines = content.split("\n").filter(Boolean);
+		if (lines.length < 3) return null;
+
+		let messageCount = 0;
+		let inputTokens = 0;
+		let outputTokens = 0;
+		let cacheReadTokens = 0;
+		let startedAt: Date | null = null;
+		let endedAt: Date | null = null;
+		let model: string | null = null;
+		const modelsUsed = new Set<string>();
+		let projectPath: string | null = null;
+		let firstUserMessage: string | null = null;
+
+		for (const line of lines) {
+			try {
+				const entry: SessionJsonlEntry = JSON.parse(line);
+				const msg = entry.message;
+				const role = msg?.role;
+
+				if (entry.timestamp) {
+					const ts = new Date(entry.timestamp);
+					if (!startedAt) startedAt = ts;
+					endedAt = ts;
+				}
+
+				if (entry.cwd && !projectPath) {
+					projectPath = entry.cwd;
+				}
+
+				if (role === "user" || role === "assistant") {
+					messageCount++;
+				}
+
+				if (role === "user" && !firstUserMessage) {
+					const c = msg?.content;
+					if (typeof c === "string") {
+						firstUserMessage = c.slice(0, 200);
+					} else if (Array.isArray(c)) {
+						const textBlock = c.find((b) => b.type === "text" && b.text);
+						if (textBlock?.text) {
+							firstUserMessage = textBlock.text.slice(0, 200);
+						}
+					}
+				}
+
+				if (role === "assistant" && msg?.model) {
+					modelsUsed.add(msg.model);
+					model = msg.model;
+				}
+
+				if (msg?.usage) {
+					inputTokens += msg.usage.input_tokens ?? 0;
+					outputTokens += msg.usage.output_tokens ?? 0;
+					cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
+				}
+			} catch {
+				// Skip unparseable lines
+			}
+		}
+
+		if (!startedAt || messageCount === 0) return null;
+
+		const durationSeconds = endedAt
+			? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
+			: null;
+
+		return {
+			projectPath,
+			startedAt,
+			endedAt,
+			messageCount,
+			inputTokens,
+			outputTokens,
+			cacheReadTokens,
+			model,
+			modelsUsed: [...modelsUsed],
+			summary: firstUserMessage,
+			durationSeconds,
+		};
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		// TODO: scan ~/.claude/skills/
-		return [];
+		const skillsDir = join(CLAUDE_DIR, "skills");
+		if (!existsSync(skillsDir)) return [];
+
+		const skills: RawSkill[] = [];
+
+		function scanDir(dir: string) {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (entry.isDirectory()) {
+					scanDir(join(dir, entry.name));
+				} else if (entry.name.endsWith(".md")) {
+					const filePath = join(dir, entry.name);
+					const content = readFileSync(filePath, "utf-8");
+					const name = basename(entry.name, ".md");
+					skills.push({
+						skillKey: name,
+						name,
+						content,
+						filePath,
+					});
+				}
+			}
+		}
+
+		scanDir(skillsDir);
+		return skills;
 	}
 
 	async writeSkill(key: string, content: string): Promise<void> {
-		// TODO: write to ~/.clawdi/skills/{key}.md
+		const skillsDir = join(homedir(), ".clawdi", "cache", "skills");
+		mkdirSync(skillsDir, { recursive: true });
+		writeFileSync(join(skillsDir, `${key}.md`), content);
 	}
 
-	buildRunCommand(args: string[], env: Record<string, string>): string[] {
+	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
 		return ["claude", ...args];
 	}
 }
