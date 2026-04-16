@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
-import { clearAuth, getAuth, getConfig, isLoggedIn, setAuth, setConfig } from "../lib/config";
+import { clearAuth, getAuth, getConfig, isLoggedIn, setAuth } from "../lib/config";
 
 export async function login() {
 	if (isLoggedIn()) {
@@ -10,18 +10,13 @@ export async function login() {
 		return;
 	}
 
+	const config = getConfig();
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 	try {
-		const apiUrl =
-			(await rl.question(chalk.cyan("API URL (default: http://localhost:8000): "))) ||
-			"http://localhost:8000";
-		setConfig({ apiUrl });
-
-		console.log();
 		console.log(chalk.white("To get an API key:"));
 		console.log(chalk.gray("  1. Go to the Clawdi Cloud dashboard"));
-		console.log(chalk.gray("  2. Navigate to Settings → API Keys"));
+		console.log(chalk.gray("  2. Open user menu → API Keys"));
 		console.log(chalk.gray("  3. Create a new key and copy it"));
 		console.log();
 
@@ -32,7 +27,7 @@ export async function login() {
 		}
 
 		// Verify the key works
-		const res = await fetch(`${apiUrl}/api/auth/me`, {
+		const res = await fetch(`${config.apiUrl}/api/auth/me`, {
 			headers: { Authorization: `Bearer ${apiKey.trim()}` },
 		});
 
@@ -46,7 +41,7 @@ export async function login() {
 
 		console.log();
 		console.log(chalk.green(`✓ Logged in as ${me.email || me.name || me.id}`));
-		console.log(chalk.gray(`  Credentials saved to ~/.clawdi/auth.json`));
+		console.log(chalk.gray("  Credentials saved to ~/.clawdi/auth.json"));
 	} finally {
 		rl.close();
 	}
