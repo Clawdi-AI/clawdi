@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { basename, join } from "node:path";
 import { AGENT_LABELS } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
@@ -105,17 +106,32 @@ export async function skillsInstall(repoInput: string) {
 	}
 	const skillKey = skillName.toLowerCase().replace(/\s+/g, "-");
 
-	// 2. Write to all registered agents' skill directories
+	// 2. Write to registered agents' skill directories
 	const adapters = getRegisteredAdapters();
 	if (adapters.length === 0) {
 		console.log(chalk.yellow("No agents registered. Run `clawdi setup` first."));
 		console.log(chalk.gray("Skill will only be saved to cloud."));
-	}
-
-	for (const adapter of adapters) {
+	} else if (adapters.length === 1) {
+		// Single agent — install directly
+		const adapter = adapters[0];
 		await adapter.writeSkill(skillKey, content);
-		const skillPath = adapter.getSkillPath(skillKey);
-		console.log(chalk.green(`  ✓ ${AGENT_LABELS[adapter.agentType]} → ${skillPath}`));
+		console.log(chalk.green(`  ✓ ${AGENT_LABELS[adapter.agentType]} → ${adapter.getSkillPath(skillKey)}`));
+	} else {
+		// Multiple agents — ask for each
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		try {
+			for (const adapter of adapters) {
+				const answer = await rl.question(
+					chalk.cyan(`  Install to ${AGENT_LABELS[adapter.agentType]}? [Y/n] `),
+				);
+				if (answer.toLowerCase() !== "n") {
+					await adapter.writeSkill(skillKey, content);
+					console.log(chalk.green(`  ✓ ${AGENT_LABELS[adapter.agentType]} → ${adapter.getSkillPath(skillKey)}`));
+				}
+			}
+		} finally {
+			rl.close();
+		}
 	}
 
 	// 3. Upload to cloud for cross-device sync

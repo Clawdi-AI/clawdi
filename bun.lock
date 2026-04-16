@@ -14,6 +14,7 @@
       "name": "web",
       "version": "0.1.0",
       "dependencies": {
+        "@clawdi-cloud/shared": "workspace:*",
         "@clerk/nextjs": "^7.2.1",
         "@clerk/themes": "^2.4.57",
         "@tanstack/react-query": "^5.99.0",
