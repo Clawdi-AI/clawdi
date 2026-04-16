@@ -19,9 +19,11 @@ function formatNumber(n: number): string {
 
 function Card({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg px-4 py-3">
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className="text-xl font-semibold mt-1">{value}</div>
+    <div className="bg-card border border-border rounded-lg px-4 py-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-xl font-semibold mt-1 text-card-foreground">
+        {value}
+      </div>
     </div>
   );
 }
@@ -33,14 +35,8 @@ export function StatsCards({ stats }: { stats: Stats }) {
       <Card label="Messages" value={formatNumber(stats.total_messages)} />
       <Card label="Total tokens" value={formatNumber(stats.total_tokens)} />
       <Card label="Active days" value={String(stats.active_days)} />
-      <Card
-        label="Current streak"
-        value={`${stats.current_streak}d`}
-      />
-      <Card
-        label="Longest streak"
-        value={`${stats.longest_streak}d`}
-      />
+      <Card label="Current streak" value={`${stats.current_streak}d`} />
+      <Card label="Longest streak" value={`${stats.longest_streak}d`} />
       <Card label="Peak hour" value={`${stats.peak_hour}:00`} />
       <Card
         label="Favorite model"

@@ -7,25 +7,23 @@ interface ContributionDay {
 }
 
 const LEVEL_COLORS = [
-  "bg-neutral-100",
-  "bg-emerald-200",
-  "bg-emerald-400",
-  "bg-emerald-500",
-  "bg-emerald-700",
+  "bg-secondary",
+  "bg-primary/25",
+  "bg-primary/50",
+  "bg-primary/75",
+  "bg-primary",
 ];
 
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
   if (!data.length) {
     return (
-      <div className="text-sm text-neutral-400">No activity data yet.</div>
+      <div className="text-sm text-muted-foreground">No activity data yet.</div>
     );
   }
 
-  // Group by week (columns), 7 rows per column
   const weeks: ContributionDay[][] = [];
   let currentWeek: ContributionDay[] = [];
 
-  // Pad the first week to align to Sunday
   const firstDate = new Date(data[0].date);
   const startPad = firstDate.getDay();
   for (let i = 0; i < startPad; i++) {
@@ -44,7 +42,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto pb-2">
       <div className="flex gap-[3px]">
         {weeks.map((week, wi) => (
           <div key={wi} className="flex flex-col gap-[3px]">
@@ -59,6 +57,13 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
             ))}
           </div>
         ))}
+      </div>
+      <div className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
+        <span>Less</span>
+        {LEVEL_COLORS.map((c, i) => (
+          <div key={i} className={`w-[11px] h-[11px] rounded-sm ${c}`} />
+        ))}
+        <span>More</span>
       </div>
     </div>
   );
