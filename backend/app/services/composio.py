@@ -73,8 +73,17 @@ async def create_connect_link(user_id: str, app_name: str) -> dict:
     client = get_composio_client()
 
     def _create():
+        # Get or create integration for this app
+        integrations = client.integrations.get(app_name=app_name)
+        if isinstance(integrations, list) and integrations:
+            integration_id = str(integrations[0].id)
+        else:
+            # Create a new integration
+            integration = client.integrations.create(app_name=app_name, use_composio_auth=True)
+            integration_id = str(integration.id)
+
         result = client.connected_accounts.initiate(
-            integration_id=app_name,
+            integration_id=integration_id,
             entity_id=user_id,
         )
         return {

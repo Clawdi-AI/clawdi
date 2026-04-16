@@ -2,7 +2,8 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Plug, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -157,12 +158,10 @@ export default function ConnectorsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {paged.map((app: any) => {
               const isConnected = connectedNames.has(app.name);
-              const connection = connections?.find(
-                (c: any) => c.app_name === app.name,
-              );
               return (
-                <div
+                <Link
                   key={app.name}
+                  href={`/connectors/${app.name}`}
                   className="group flex h-20 items-center gap-4 rounded-xl border border-border bg-card px-4 transition-all hover:bg-accent/40"
                 >
                   {/* Icon */}
@@ -202,21 +201,11 @@ export default function ConnectorsPage() {
                     )}
                   </div>
 
-                  {/* Status / Action */}
-                  {isConnected ? (
+                  {/* Connected indicator */}
+                  {isConnected && (
                     <Check className="size-4 shrink-0 text-green-600 dark:text-green-400" />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => connectApp.mutate(app.name)}
-                      disabled={connectApp.isPending}
-                      className="shrink-0 flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-none hover:opacity-90 disabled:opacity-50 transition-opacity"
-                    >
-                      <Plug className="size-3.5" />
-                      Connect
-                    </button>
                   )}
-                </div>
+                </Link>
               );
             })}
           </div>
