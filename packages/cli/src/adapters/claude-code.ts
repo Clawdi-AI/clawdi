@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:f
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import * as tar from "tar";
-import type { AgentAdapter, RawSession, RawSkill } from "./base";
+import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
@@ -106,6 +106,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
 		let firstUserMessage: string | null = null;
+		const messages: SessionMessage[] = [];
 
 		for (const line of lines) {
 			try {
@@ -125,6 +126,26 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 				if (role === "user" || role === "assistant") {
 					messageCount++;
+
+					// Extract text content for messages
+					const c = msg?.content;
+					let text = "";
+					if (typeof c === "string") {
+						text = c;
+					} else if (Array.isArray(c)) {
+						text = c
+							.filter((b) => b.type === "text" && b.text)
+							.map((b) => b.text!)
+							.join("\n");
+					}
+					if (text) {
+						messages.push({
+							role: role as "user" | "assistant",
+							content: text,
+							model: role === "assistant" ? msg?.model : undefined,
+							timestamp: entry.timestamp,
+						});
+					}
 				}
 
 				if (role === "user" && !firstUserMessage) {
@@ -171,6 +192,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			model,
 			modelsUsed: [...modelsUsed],
 			summary: firstUserMessage,
+			messages,
 			durationSeconds,
 		};
 	}

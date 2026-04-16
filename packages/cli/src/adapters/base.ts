@@ -1,5 +1,12 @@
 import type { AgentType } from "@clawdi-cloud/shared/consts";
 
+export interface SessionMessage {
+	role: "user" | "assistant";
+	content: string;
+	model?: string;
+	timestamp?: string;
+}
+
 export interface RawSession {
 	localSessionId: string;
 	projectPath: string | null;
@@ -13,6 +20,7 @@ export interface RawSession {
 	modelsUsed: string[];
 	durationSeconds: number | null;
 	summary: string | null;
+	messages: SessionMessage[];
 	rawFilePath: string;
 }
 

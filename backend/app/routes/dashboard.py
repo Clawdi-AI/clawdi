@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
+from app.models.memory import Memory
 from app.models.session import Session
+from app.models.skill import Skill
+from app.models.vault import Vault, VaultItem
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -65,6 +68,39 @@ async def get_stats(
     # Streaks
     current_streak, longest_streak = await _calc_streaks(db, auth.user_id)
 
+    # Module counts
+    skills_count = (await db.execute(
+        select(func.count(Skill.id)).where(Skill.user_id == auth.user_id, Skill.is_active == True)
+    )).scalar() or 0
+
+    memories_count = (await db.execute(
+        select(func.count(Memory.id)).where(Memory.user_id == auth.user_id)
+    )).scalar() or 0
+
+    vault_count = (await db.execute(
+        select(func.count(Vault.id)).where(Vault.user_id == auth.user_id)
+    )).scalar() or 0
+
+    vault_keys_count = 0
+    vault_ids = (await db.execute(
+        select(Vault.id).where(Vault.user_id == auth.user_id)
+    )).scalars().all()
+    if vault_ids:
+        vault_keys_count = (await db.execute(
+            select(func.count(VaultItem.id)).where(VaultItem.vault_id.in_(vault_ids))
+        )).scalar() or 0
+
+    # Connectors (Composio) — best-effort, don't fail if unavailable
+    connectors_count = 0
+    try:
+        from app.services.composio import get_connected_accounts
+        from app.core.config import settings
+        if settings.composio_api_key:
+            accounts = await get_connected_accounts(str(auth.user_id))
+            connectors_count = len(accounts)
+    except Exception:
+        pass
+
     return {
         "total_sessions": total_sessions,
         "total_messages": total_messages,
@@ -74,6 +110,11 @@ async def get_stats(
         "longest_streak": longest_streak,
         "peak_hour": peak_hour,
         "favorite_model": favorite_model,
+        "skills_count": skills_count,
+        "memories_count": memories_count,
+        "vault_count": vault_count,
+        "vault_keys_count": vault_keys_count,
+        "connectors_count": connectors_count,
     }
 
 

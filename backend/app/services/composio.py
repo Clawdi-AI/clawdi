@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -180,6 +181,32 @@ async def get_app_tools(app_name: str) -> list[dict]:
     return await run_in_threadpool(_list)
 
 
+def _extract_display_name(slug: str, description: str) -> str:
+    """Extract human-readable name from description or slug.
+
+    Description usually starts with the product name, e.g.:
+    "Gmail is Google's email service..." → "Gmail"
+    "Google Calendar is a time management tool..." → "Google Calendar"
+    """
+    if description:
+        m = re.match(
+            r"^(.+?)\s+(?:is|are|provides?|enables?|offers?|centralizes?|merges?|automates?|extends?|integrates?|streamlines?)\s",
+            description,
+            re.IGNORECASE,
+        )
+        if m:
+            name = m.group(1).strip().rstrip(",")
+            # Sanity check: not too long and not the whole sentence
+            if 1 <= len(name) <= 40:
+                return name
+
+    # Fallback: clean up the slug
+    clean = slug.lstrip("_-")
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", clean)
+    spaced = spaced.replace("_", " ").replace("-", " ")
+    return spaced.title()
+
+
 async def get_available_apps(search: str | None = None) -> list[dict]:
     """List available Composio apps."""
     client = get_composio_client()
@@ -191,7 +218,7 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
         result = []
         for app in apps:
             key = app.key or app.name or ""
-            display = app.name or key
+            display = _extract_display_name(key, app.description or "")
             logo = app.logo or ""
             desc = app.description or ""
             if search and search.lower() not in key.lower() and search.lower() not in display.lower():

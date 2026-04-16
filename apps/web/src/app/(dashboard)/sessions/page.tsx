@@ -2,7 +2,23 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
+import { Zap } from "lucide-react";
+import Link from "next/link";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+function relativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
 
 export default function SessionsPage() {
   const { getToken } = useAuth();
@@ -17,51 +33,83 @@ export default function SessionsPage() {
   });
 
   return (
-    <div className="max-w-5xl space-y-6">
-      <h1 className="text-2xl font-bold">Sessions</h1>
+    <div className="space-y-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Sessions</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Agent conversation history synced from your machines.
+          </p>
+        </div>
+        {sessions && (
+          <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+            {sessions.length} session{sessions.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
 
       {isLoading ? (
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="rounded-lg border">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className={cn("px-4 py-3 space-y-1.5", i > 0 && "border-t")}
+            >
+              <Skeleton className="h-4 w-64" />
+              <div className="flex gap-2">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-3 w-12" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : sessions?.length ? (
-        <div className="border border-border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Summary</th>
-                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Project</th>
-                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Model</th>
-                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Messages</th>
-                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Tokens</th>
-                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((s: any) => (
-                <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2.5 max-w-xs truncate">
-                    {s.summary || s.local_session_id.slice(0, 8)}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
+        <div className="rounded-lg border">
+          {sessions.map((s: any, i: number) => (
+            <Link
+              key={s.id}
+              href={`/sessions/${s.id}`}
+              className={cn(
+                "flex items-center justify-between px-4 py-3 hover:bg-accent/40 transition-colors",
+                i > 0 && "border-t",
+              )}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate">
+                  {s.summary || s.local_session_id.slice(0, 8)}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs text-muted-foreground">
                     {s.project_path?.split("/").pop() ?? "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {s.model?.replace("claude-", "") ?? "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{s.message_count}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                  </span>
+                  {s.model && (
+                    <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                      {s.model.replace("claude-", "")}
+                    </span>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    {s.message_count} msgs
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    <Zap className="inline size-3" />{" "}
                     {((s.input_tokens + s.output_tokens) / 1000).toFixed(1)}k
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                    {new Date(s.started_at).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs text-muted-foreground ml-4 shrink-0">
+                {relativeTime(s.started_at)}
+              </span>
+            </Link>
+          ))}
         </div>
       ) : (
-        <div className="text-muted-foreground">
-          No sessions yet. Run <code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to sync.
+        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No sessions yet. Run{" "}
+          <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+            clawdi sync up
+          </code>{" "}
+          to sync.
         </div>
       )}
     </div>

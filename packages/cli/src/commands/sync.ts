@@ -156,6 +156,29 @@ export async function syncUp(opts: {
 				})),
 			});
 			spin2.stop(`Synced ${result.synced} session${result.synced === 1 ? "" : "s"}`);
+
+			// Upload session content (messages) for new sessions
+			if (result.synced > 0) {
+				const spin2b = p.spinner();
+				spin2b.start("Uploading session content...");
+				let uploaded = 0;
+				for (const s of sessions) {
+					if (s.messages.length === 0) continue;
+					try {
+						const content = Buffer.from(JSON.stringify(s.messages), "utf-8");
+						await api.uploadFile(
+							`/api/sessions/${s.localSessionId}/upload`,
+							{},
+							content,
+							`${s.localSessionId}.json`,
+						);
+						uploaded++;
+					} catch {
+						// Session might already exist, skip
+					}
+				}
+				spin2b.stop(`Uploaded ${uploaded} session content${uploaded === 1 ? "" : "s"}`);
+			}
 		} catch (e: any) {
 			spin2.stop(`Failed: ${e.message}`);
 		}

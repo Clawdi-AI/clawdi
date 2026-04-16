@@ -1,16 +1,21 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
 from app.schemas.session import EnvironmentCreate, SessionBatchRequest
+from app.services.file_store import LocalFileStore
 
 router = APIRouter(tags=["sessions"])
+
+file_store = LocalFileStore(settings.file_store_local_path)
 
 
 @router.post("/api/environments")
@@ -133,23 +138,101 @@ async def list_sessions(
 
     result = await db.execute(q)
     sessions = result.scalars().all()
-    return [
-        {
-            "id": str(s.id),
-            "local_session_id": s.local_session_id,
-            "project_path": s.project_path,
-            "started_at": s.started_at.isoformat(),
-            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-            "duration_seconds": s.duration_seconds,
-            "message_count": s.message_count,
-            "input_tokens": s.input_tokens,
-            "output_tokens": s.output_tokens,
-            "cache_read_tokens": s.cache_read_tokens,
-            "model": s.model,
-            "models_used": s.models_used,
-            "summary": s.summary,
-            "tags": s.tags,
-            "status": s.status,
-        }
-        for s in sessions
-    ]
+    return [_session_to_dict(s) for s in sessions]
+
+
+@router.get("/api/sessions/{session_id}")
+async def get_session_detail(
+    session_id: str,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+):
+    result = await db.execute(
+        select(Session).where(
+            Session.user_id == auth.user_id,
+            Session.id == uuid.UUID(session_id),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+
+    data = _session_to_dict(session)
+    data["has_content"] = bool(session.file_key)
+    return data
+
+
+@router.post("/api/sessions/{local_session_id}/upload")
+async def upload_session_content(
+    local_session_id: str,
+    file: UploadFile = File(...),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+):
+    """Upload session messages JSON to FileStore."""
+    result = await db.execute(
+        select(Session).where(
+            Session.user_id == auth.user_id,
+            Session.local_session_id == local_session_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+
+    data = await file.read()
+    fk = f"sessions/{auth.user_id}/{local_session_id}.json"
+    await file_store.put(fk, data)
+
+    session.file_key = fk
+    await db.commit()
+
+    return {"status": "uploaded", "file_key": fk}
+
+
+@router.get("/api/sessions/{session_id}/content")
+async def get_session_content(
+    session_id: str,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+):
+    """Read session messages from FileStore."""
+    result = await db.execute(
+        select(Session).where(
+            Session.user_id == auth.user_id,
+            Session.id == uuid.UUID(session_id),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+
+    if not session.file_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
+
+    try:
+        data = await file_store.get(session.file_key)
+    except Exception:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found")
+
+    return Response(content=data, media_type="application/json")
+
+
+def _session_to_dict(s: Session) -> dict:
+    return {
+        "id": str(s.id),
+        "local_session_id": s.local_session_id,
+        "project_path": s.project_path,
+        "started_at": s.started_at.isoformat(),
+        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+        "duration_seconds": s.duration_seconds,
+        "message_count": s.message_count,
+        "input_tokens": s.input_tokens,
+        "output_tokens": s.output_tokens,
+        "cache_read_tokens": s.cache_read_tokens,
+        "model": s.model,
+        "models_used": s.models_used,
+        "summary": s.summary,
+        "tags": s.tags,
+        "status": s.status,
+    }
