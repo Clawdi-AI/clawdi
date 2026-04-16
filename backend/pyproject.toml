@@ -1,0 +1,32 @@
+[project]
+name = "clawdi-cloud-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic-settings>=2.0",
+    "pyjwt[crypto]>=2.10",
+    "cryptography>=44.0",
+    "redis>=5.2",
+    "httpx>=0.28",
+    "python-multipart>=0.0.20",
+    "aiofiles>=24.1",
+]
+
+[tool.pdm.scripts]
+dev = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+migrate = "alembic upgrade head"
+lint = "ruff check ."
+format = "ruff format ."
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

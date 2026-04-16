@@ -1,0 +1,22 @@
+node_modules/
+.next/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.clawdi.env
+
+# File Store (local dev)
+data/
+
+# OS
+.DS_Store
