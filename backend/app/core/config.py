@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5432/clawdi_cloud"
+    database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi_cloud"
     redis_url: str = "redis://localhost:6379/0"
 
     clerk_pem_public_key: str = ""
