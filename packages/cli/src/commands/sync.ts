@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
 import type { SyncState } from "@clawdi-cloud/shared/types";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
@@ -162,11 +163,26 @@ export async function syncDown(opts: { modules?: string; dryRun?: boolean }) {
 				console.log(chalk.yellow(`  Would download ${skills.length} skills (dry run)`));
 			} else {
 				let pulled = 0;
-				for (const skill of skills) {
-					if (!skill.content) continue;
-					await adapter.writeSkill(skill.skill_key, skill.content);
-					console.log(chalk.gray(`    ${skill.skill_key} → ${adapter.getSkillPath(skill.skill_key)}`));
-					pulled++;
+				const rl = createInterface({ input: process.stdin, output: process.stdout });
+				try {
+					for (const skill of skills) {
+						if (!skill.content) continue;
+						const dest = adapter.getSkillPath(skill.skill_key);
+						if (existsSync(dest)) {
+							const answer = await rl.question(
+								chalk.yellow(`    ${skill.skill_key} already exists. Overwrite? [y/N] `),
+							);
+							if (answer.toLowerCase() !== "y") {
+								console.log(chalk.gray(`    ${skill.skill_key} skipped`));
+								continue;
+							}
+						}
+						await adapter.writeSkill(skill.skill_key, skill.content);
+						console.log(chalk.gray(`    ${skill.skill_key} → ${dest}`));
+						pulled++;
+					}
+				} finally {
+					rl.close();
 				}
 				console.log(chalk.green(`  ✓ Pulled ${pulled} skills`));
 			}
