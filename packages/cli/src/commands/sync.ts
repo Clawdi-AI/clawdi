@@ -24,20 +24,20 @@ function saveSyncState(state: SyncState) {
 }
 
 export async function syncUp(opts: { modules?: string; since?: string; dryRun?: boolean }) {
-	if (!isLoggedIn()) {
+	if (!opts.dryRun && !isLoggedIn()) {
 		console.log(chalk.red("Not logged in. Run `clawdi login` first."));
 		return;
 	}
 
 	const envId = getCurrentEnvId();
-	if (!envId) {
+	if (!opts.dryRun && !envId) {
 		console.log(chalk.red("No environment registered. Run `clawdi setup` first."));
 		return;
 	}
 
 	const modules = opts.modules?.split(",") ?? ["sessions"];
 	const syncState = getSyncState();
-	const api = new ApiClient();
+	const api = opts.dryRun ? null : new ApiClient();
 
 	// Determine adapter from current env
 	const adapter = new ClaudeCodeAdapter();
