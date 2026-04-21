@@ -75,12 +75,12 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_search",
-		"Search the user's long-term memory across all their agents for prior context — facts, preferences, decisions, patterns, past work, personal details. Call this PROACTIVELY at the START of any task whenever the user mentions a person, place, project, repo, technology, past issue, or their own preference — even when they don't explicitly ask to search memory. Also call it when the user says things like 'as I mentioned', 'like last time', 'you know', or references something by name. Do NOT call for generic programming questions with no user-specific context.",
+		"ALWAYS call this BEFORE answering any question that references the user's own context — their preferences, projects, past decisions, named entities, or work history. A missed hit costs the user's trust every subsequent turn; a call that returns empty costs ~100ms. Bias toward calling. Works in any language — pass the user's query through as-is.\n\nMUST call when the user's message contains ANY of these signals (in English, Chinese, or any other language):\n- First-person self-reference in a question about themselves: possessives like \"my\", verbs of habit like \"I usually\", \"I prefer\", \"I always\"\n- Preference / habit questions, even phrased abstractly: \"what do I usually use for X\", \"how do I normally do Y\", \"what's my preferred tool for Z\" — these MUST trigger even when no specific entity is named\n- Callbacks to past context: \"like last time\", \"as I mentioned\", \"you know the one\", \"we discussed before\", \"what was that X\"\n- Named entities specific to this user: their project / repo / service / team / tool name, or a person by name\n- Any reference to a past bug, decision, investigation, meeting, or design choice\n\nExample queries to pass (choose whichever phrasing fits; language does not matter): \"user's name\", \"coding style preference\", \"command-line tools the user uses\", \"how we fixed the login bug\", \"Clerk auth decision reasoning\", \"project architecture\".\n\nDo NOT call for pure textbook / generic programming questions with zero user-specific signal (e.g. \"how does async/await work\", \"what is the time complexity of quicksort\").\n\nWhen in doubt, CALL IT. Zero results is cheap; a missed memory makes you look amnesic.",
 		{
 			query: z
 				.string()
 				.describe(
-					"Natural-language query or entity name. Examples: \"user's name\", \"coding style preference\", \"how we fixed the login bug\", \"deployment pipeline\", \"what editor does the user prefer\".",
+					"Natural-language query in any language — the search does semantic matching, no keyword optimization needed. Pass the user's own phrasing (translation not required) or a short rewrite that captures intent. Examples: \"user's name\", \"coding style preference\", \"command-line tools the user prefers\", \"how we fixed the login bug\", \"Clerk auth reasoning\", \"project architecture\".",
 				),
 			limit: z
 				.number()
@@ -119,12 +119,12 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_add",
-		"Store a durable memory for cross-agent recall. Use AFTER you learn something non-obvious about the user or their project that a future session would benefit from knowing: a preference they expressed, a non-trivial bug you fixed with its root cause, an architecture decision and its reasoning, a recurring pattern or team convention, or when the user explicitly says 'remember this'. Do NOT save trivia obvious from the code, or generic programming facts.",
+		"Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something (\"remember this\", \"save this\", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just \"bug fixed\"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. \"user prefers pnpm over npm\")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details (\"the user asked about X today\")\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today's conversation. Content language should match the user's primary language for that context.",
 		{
 			content: z
 				.string()
 				.describe(
-					"The memory content. Write it as a standalone sentence that makes sense in isolation (include names/context, not just pronouns). Examples: \"The user prefers rg over grep and fd over find.\", \"We chose Clerk over Auth0 because the team already had a Clerk account.\", \"The login bug on 2026-04-15 was caused by a stale JWT cache in the middleware.\"",
+					"The memory content. Standalone sentence that makes sense in isolation. Examples: \"The user prefers rg over grep and fd over find.\", \"We chose Clerk over Auth0 because the team already had a Clerk account.\", \"The login bug on 2026-04-15 was caused by a stale JWT cache in the authentication middleware.\"",
 				),
 			category: z
 				.enum([

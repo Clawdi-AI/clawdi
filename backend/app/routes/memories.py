@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.memory import Memory
-from app.models.user import UserSetting
 from app.services.embedding import resolve_embedder
 from app.services.memory_provider import get_memory_provider
 
@@ -95,22 +94,18 @@ async def embed_backfill(
 ):
     """Compute embeddings for the caller's memories that lack one.
 
-    Used after the user enables a semantic-search mode (local / api) or
-    switches embedding providers. Uses the embedder chosen by the user's
-    current settings.
+    Used after the deployment's embedder becomes available (first-time
+    install, or a model change). Uses the deployment-configured embedder
+    (env vars; see `app.core.config.Settings.memory_embedding_*`).
 
     With `force=true`, re-embeds rows that already have embeddings too
     (useful after changing the embedding model).
     """
-    result = await db.execute(
-        select(UserSetting).where(UserSetting.user_id == auth.user_id)
-    )
-    setting = result.scalar_one_or_none()
-    embedder = resolve_embedder((setting.settings if setting else {}) or {})
+    embedder = resolve_embedder()
     if embedder is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No embedding provider configured. Set memory_embedding to 'local' or 'api' in settings.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No embedding provider available. Check MEMORY_EMBEDDING_MODE and related env vars on the backend.",
         )
 
     # Snapshot the IDs of rows we intend to process. Iterating via offset

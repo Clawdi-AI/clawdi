@@ -158,15 +158,20 @@ async function installBuiltinSkill(agentType: AgentType) {
 		return;
 	}
 
-	if (existsSync(join(targetDir, "SKILL.md"))) {
-		console.log(chalk.gray("✓ Clawdi skill already installed"));
-		return;
-	}
+	const alreadyInstalled = existsSync(join(targetDir, "SKILL.md"));
 
 	try {
 		mkdirSync(targetDir, { recursive: true });
-		cpSync(sourceDir, targetDir, { recursive: true });
-		console.log(chalk.green(`✓ Clawdi skill installed in ${label}`));
+		// Always overwrite — the bundled skill content evolves with each CLI
+		// release (better trigger language, new tool descriptions), and users
+		// who ran setup once should get those improvements on re-run without
+		// having to manually delete the old copy.
+		cpSync(sourceDir, targetDir, { recursive: true, force: true });
+		console.log(
+			chalk.green(
+				`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`,
+			),
+		);
 	} catch {
 		console.log(chalk.yellow("⚠ Could not install Clawdi skill."));
 	}

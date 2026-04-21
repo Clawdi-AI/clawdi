@@ -27,7 +27,7 @@ async def get_settings(
     data = setting.settings if setting else {}
     # Mask sensitive values
     safe = {**data}
-    for key in ("mem0_api_key", "memory_embedding_api_key"):
+    for key in ("mem0_api_key",):
         if key in safe and safe[key]:
             safe[key] = safe[key][:8] + "..."
     return safe

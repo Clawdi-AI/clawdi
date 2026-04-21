@@ -1,22 +1,21 @@
-"""Embedding backends for the Builtin memory provider.
+"""Embedding backend for the Builtin memory provider.
 
-Two modes, chosen per-user via settings.memory_embedding:
+Configured at deployment level via environment variables (see
+`app.core.config.Settings.memory_embedding_*`). End users never see this
+choice — they just get working semantic search.
 
-- "local" — fastembed ONNX, ~1GB paraphrase-multilingual-mpnet-base-v2
-  (768 dim, 50+ languages, symmetric). First call downloads the model;
-  subsequent calls load from disk. No API key required; CPU-only
-  inference via onnxruntime.
+- "local" (default) — fastembed ONNX, ~1GB paraphrase-multilingual-
+  mpnet-base-v2 (768 dim, 50+ languages, symmetric). First call
+  downloads the model; subsequent calls load from disk. No API key
+  needed; CPU-only inference via onnxruntime.
 
-  (Why not intfloat/multilingual-e5-base? fastembed's curated list
-  doesn't include it; mpnet-base-v2 is the strongest 768-dim multilingual
-  option available without pulling sentence-transformers + PyTorch.)
+- "api" — OpenAI-compatible embeddings. Set MEMORY_EMBEDDING_API_KEY,
+  optionally MEMORY_EMBEDDING_BASE_URL (e.g. https://openrouter.ai/api/v1)
+  and MEMORY_EMBEDDING_MODEL. `dimensions=768` is passed to the API so
+  the on-disk vector column stays dimension-compatible with local mode.
 
-- "api" — OpenAI-compatible embeddings. Default OpenAI
-  `text-embedding-3-small` with `dimensions=768` (Matryoshka truncation)
-  so the on-disk vector column is dimension-compatible with local mode.
-  Override base_url for OpenRouter or any other OpenAI-compatible endpoint.
-
-"off" — no embedder, search falls back to FTS + trigram only.
+If mode is misconfigured, embedding is disabled and search falls back
+to FTS + trigram inside BuiltinProvider.
 """
 
 from __future__ import annotations
@@ -24,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Protocol
+
+from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -79,41 +80,42 @@ class ApiEmbedder:
 
     async def embed(self, text: str) -> list[float]:
         # `dimensions=768` truncates via Matryoshka (supported by
-        # text-embedding-3-*). Providers that don't support it will surface
-        # an explicit error, which is preferable to silently mismatched dims.
+        # text-embedding-3-*). Providers that don't support it will
+        # surface an explicit error rather than silently mismatch dims.
         resp = await self.client.embeddings.create(
             input=text, model=self.model, dimensions=EMBEDDING_DIM,
         )
         return list(resp.data[0].embedding)
 
 
-def resolve_embedder(settings: dict) -> Embedder | None:
-    """Pick an Embedder based on user settings.
+def resolve_embedder() -> Embedder | None:
+    """Pick the Embedder based on deployment settings (env vars).
 
-    Returns None when embedding is disabled or misconfigured. Callers
-    should treat None as "fall back to FTS/trigram only".
+    Returns None only when the configured mode fails to initialize
+    (e.g. api mode without a key). Callers should treat None as
+    "fall back to FTS + trigram only".
     """
-    mode = (settings or {}).get("memory_embedding", "off")
-    if mode == "off":
-        return None
+    mode = (settings.memory_embedding_mode or "local").lower()
+
     if mode == "local":
         try:
             return LocalEmbedder.get()
         except Exception as e:
-            log.warning("memory_embedding=local failed to initialize: %s", e)
+            log.warning("LocalEmbedder failed to initialize: %s", e)
             return None
+
     if mode == "api":
-        key = settings.get("memory_embedding_api_key", "")
-        if not key:
+        if not settings.memory_embedding_api_key:
             log.warning(
-                "memory_embedding=api but memory_embedding_api_key is empty; "
+                "MEMORY_EMBEDDING_MODE=api but MEMORY_EMBEDDING_API_KEY is empty; "
                 "search will fall back to FTS + trigram.",
             )
             return None
         return ApiEmbedder(
-            api_key=key,
-            base_url=settings.get("memory_embedding_base_url") or None,
-            model=settings.get("memory_embedding_model") or "text-embedding-3-small",
+            api_key=settings.memory_embedding_api_key,
+            base_url=settings.memory_embedding_base_url or None,
+            model=settings.memory_embedding_model,
         )
-    log.warning("memory_embedding has unknown value %r; treating as off", mode)
+
+    log.warning("MEMORY_EMBEDDING_MODE=%r is unknown; disabling embedder", mode)
     return None

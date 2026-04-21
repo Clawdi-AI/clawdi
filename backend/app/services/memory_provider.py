@@ -119,40 +119,37 @@ class BuiltinProvider:
             rows = (await self.db.execute(sql, {**params, "min_score": 0.0})).mappings().all()
         return [_row_to_search_dict(r, score_key="combined_score") for r in rows]
 
-    # Cosine distance threshold for vector search. For
-    # `paraphrase-multilingual-mpnet-base-v2`, empirically measured on
-    # representative memories + natural-language queries:
-    #   - legitimate semantic matches:  0.36 – 0.55 similarity
-    #   - cross-lingual paraphrase:     ~0.47 similarity
-    #   - near-duplicate / same-topic:  0.77 – 0.82 similarity
-    #   - unrelated noise:              0.02 – 0.29 similarity
-    # A floor of similarity ≥ 0.35 (distance ≤ 0.65) cleanly separates
-    # signal from noise while preserving cross-lingual recall. Re-tune
-    # if quality complaints surface.
-    VECTOR_DISTANCE_THRESHOLD = 0.65
+    # Cosine-distance thresholds for vector search. Empirically on
+    # `paraphrase-multilingual-mpnet-base-v2`, the legitimate-match band
+    # (sim 0.22 – 0.55) overlaps the noise band (sim 0.06 – 0.29) for
+    # short abstract queries paired with narrowly-phrased memories —
+    # there is no single threshold that cleanly separates them.
+    #
+    # Mirroring the FTS strict/relaxed pattern: try the strict floor
+    # first; if that returns nothing, fall back to a permissive floor
+    # so the user sees "kinda related" rather than nothing. MMR +
+    # temporal-decay ranking in _merge_hybrid put noise at the bottom
+    # when legitimate matches also exist, so the relaxed pass doesn't
+    # pollute common cases.
+    VECTOR_DISTANCE_STRICT = 0.70   # sim ≥ 0.30 — high-confidence matches
+    VECTOR_DISTANCE_RELAXED = 0.80  # sim ≥ 0.20 — fallback when strict empty
 
     async def _search_vector(self, user_id: str, query: str, limit: int,
                              category: str | None) -> list[dict]:
         """pgvector cosine-distance nearest neighbors among rows with embeddings.
 
-        Applies an absolute similarity floor so queries unrelated to any
-        stored memory return empty instead of "the three least-distant rows".
+        Strict threshold first; if empty, retry with a relaxed threshold
+        so abstract queries against narrowly-phrased memories still surface
+        something rather than a pure "not found".
         """
         q_vec = await self.embedder.embed(query)
-        distance = Memory.embedding.cosine_distance(q_vec)
-        stmt = (
-            select(Memory, distance.label("distance"))
-            .where(
-                Memory.user_id == uuid.UUID(user_id),
-                Memory.embedding.is_not(None),
-                distance < self.VECTOR_DISTANCE_THRESHOLD,
-            )
-            .order_by(distance)
-            .limit(limit)
+        rows = await self._run_vector_search(
+            user_id, q_vec, limit, category, self.VECTOR_DISTANCE_STRICT,
         )
-        if category:
-            stmt = stmt.where(Memory.category == category)
-        rows = (await self.db.execute(stmt)).all()
+        if not rows:
+            rows = await self._run_vector_search(
+                user_id, q_vec, limit, category, self.VECTOR_DISTANCE_RELAXED,
+            )
         out: list[dict] = []
         for mem, dist in rows:
             d = _memory_to_dict(mem)
@@ -161,6 +158,29 @@ class BuiltinProvider:
             d["vector_score"] = sim
             out.append(d)
         return out
+
+    async def _run_vector_search(
+        self,
+        user_id: str,
+        q_vec: list[float],
+        limit: int,
+        category: str | None,
+        max_distance: float,
+    ):
+        distance = Memory.embedding.cosine_distance(q_vec)
+        stmt = (
+            select(Memory, distance.label("distance"))
+            .where(
+                Memory.user_id == uuid.UUID(user_id),
+                Memory.embedding.is_not(None),
+                distance < max_distance,
+            )
+            .order_by(distance)
+            .limit(limit)
+        )
+        if category:
+            stmt = stmt.where(Memory.category == category)
+        return (await self.db.execute(stmt)).all()
 
     async def list_all(self, user_id: str, limit: int = 50, offset: int = 0,
                        category: str | None = None) -> list[dict]:
@@ -397,11 +417,12 @@ def _merge_hybrid(
 
 
 async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
-    """Resolve the memory provider for a user based on their settings.
+    """Resolve the memory provider for a user.
 
-    - `memory_provider == "mem0"` + valid `mem0_api_key`  → Mem0Provider.
-    - Otherwise BuiltinProvider, possibly augmented with an Embedder based
-      on `memory_embedding` (`off` | `local` | `api`).
+    Per-user choice: `memory_provider == "mem0"` (with a valid `mem0_api_key`)
+    routes to Mem0Provider. Everything else goes to BuiltinProvider, whose
+    embedder is picked from deployment-level env config (see
+    `app.services.embedding.resolve_embedder`).
     """
     from app.models.user import UserSetting
 
@@ -411,16 +432,13 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     setting = result.scalar_one_or_none()
     s = (setting.settings if setting else {}) or {}
 
-    provider_name = s.get("memory_provider", "builtin")
-
-    if provider_name == "mem0":
+    if s.get("memory_provider") == "mem0":
         api_key = s.get("mem0_api_key", "")
         if not api_key:
             log.warning(
                 "memory_provider=mem0 but mem0_api_key missing; falling back to builtin."
             )
-            return BuiltinProvider(db, embedder=resolve_embedder(s))
+            return BuiltinProvider(db, embedder=resolve_embedder())
         return Mem0Provider(api_key=api_key)
 
-    # Default path: BuiltinProvider, optionally augmented with an embedder.
-    return BuiltinProvider(db, embedder=resolve_embedder(s))
+    return BuiltinProvider(db, embedder=resolve_embedder())

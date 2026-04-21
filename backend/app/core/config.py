@@ -23,5 +23,16 @@ class Settings(BaseSettings):
     file_store_s3_bucket: str = ""
     file_store_s3_region: str = ""
 
+    # Memory embedder for the Builtin memory provider.
+    # - "local": run paraphrase-multilingual-mpnet-base-v2 via fastembed
+    #   (ONNX, ~1GB download on first use, no API key needed). Default.
+    # - "api":   call an OpenAI-compatible embeddings endpoint. Set
+    #   memory_embedding_api_key, and optionally memory_embedding_base_url
+    #   (e.g. https://openrouter.ai/api/v1) and memory_embedding_model.
+    memory_embedding_mode: str = "local"
+    memory_embedding_api_key: str = ""
+    memory_embedding_base_url: str = ""
+    memory_embedding_model: str = "text-embedding-3-small"
+
 
 settings = Settings()
