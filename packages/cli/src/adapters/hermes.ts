@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { Database } from "bun:sqlite";
 import * as tar from "tar";
+import { getExtraSkillPaths } from "../lib/config";
+import { dedupeByKey, scanFlatSkillsDir } from "../lib/skill-scan";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const HERMES_DIR = process.env.HERMES_HOME || join(homedir(), ".hermes");
@@ -124,11 +126,17 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
-
 		const skills: RawSkill[] = [];
-		this._scanSkillsDir(SKILLS_DIR, skills);
-		return skills;
+		if (existsSync(SKILLS_DIR)) {
+			this._scanSkillsDir(SKILLS_DIR, skills);
+		}
+		// Extras are scanned one level deep — nested category layouts (Hermes's
+		// native form) are only assumed for the default SKILLS_DIR. Users who
+		// need nesting in extras can add each category path explicitly.
+		for (const extra of getExtraSkillPaths(this.agentType)) {
+			skills.push(...scanFlatSkillsDir(extra));
+		}
+		return dedupeByKey(skills);
 	}
 
 	/**

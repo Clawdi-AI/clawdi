@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
+import { getExtraSkillPaths } from "../lib/config";
+import { dedupeByKey, scanFlatSkillsDir } from "../lib/skill-scan";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const OPENCLAW_DIR = process.env.OPENCLAW_STATE_DIR || join(homedir(), ".openclaw");
@@ -206,28 +208,11 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
-
-		const skills: RawSkill[] = [];
-		for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
-			const dirPath = join(SKILLS_DIR, entry.name);
-			const skillMd = join(dirPath, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-
-			const content = readFileSync(skillMd, "utf-8");
-			const fileCount = readdirSync(dirPath, { recursive: true }).length;
-
-			skills.push({
-				skillKey: entry.name,
-				name: entry.name,
-				content,
-				filePath: skillMd,
-				directoryPath: dirPath,
-				isDirectory: fileCount > 1,
-			});
+		const skills = scanFlatSkillsDir(SKILLS_DIR);
+		for (const extra of getExtraSkillPaths(this.agentType)) {
+			skills.push(...scanFlatSkillsDir(extra));
 		}
-		return skills;
+		return dedupeByKey(skills);
 	}
 
 	getSkillPath(key: string): string {

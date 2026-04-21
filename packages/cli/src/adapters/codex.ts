@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, statSync, typ
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
+import { getExtraSkillPaths } from "../lib/config";
+import { dedupeByKey, scanFlatSkillsDir } from "../lib/skill-scan";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const CODEX_DIR = process.env.CODEX_HOME || join(homedir(), ".codex");
@@ -229,30 +231,12 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
-
-		const skills: RawSkill[] = [];
-		for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
-			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
-			if (entry.name.startsWith(".")) continue;
-			const dirPath = join(SKILLS_DIR, entry.name);
-			const skillMd = join(dirPath, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-
-			const content = readFileSync(skillMd, "utf-8");
-			const fileCount = readdirSync(dirPath, { recursive: true }).length;
-
-			skills.push({
-				skillKey: entry.name,
-				name: entry.name,
-				content,
-				filePath: skillMd,
-				directoryPath: dirPath,
-				isDirectory: fileCount > 1,
-			});
+		// Skip `.system/` — Codex's built-in skills, not user-authored.
+		const skills = scanFlatSkillsDir(SKILLS_DIR, { skipDotDirs: true });
+		for (const extra of getExtraSkillPaths(this.agentType)) {
+			skills.push(...scanFlatSkillsDir(extra, { skipDotDirs: true }));
 		}
-		return skills;
+		return dedupeByKey(skills);
 	}
 
 	getSkillPath(key: string): string {

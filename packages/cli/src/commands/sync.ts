@@ -463,8 +463,9 @@ export async function syncUp(opts: {
 	if (skills.length > 0) {
 		console.log(chalk.cyan(`→ Uploading ${skills.length} skills...`));
 		let synced = 0;
-		try {
-			for (const skill of skills) {
+		const failed: { key: string; error: string }[] = [];
+		for (const skill of skills) {
+			try {
 				const tarBytes = await tarSkillDir(skill.directoryPath);
 				await api.uploadFile(
 					"/api/skills/upload",
@@ -473,10 +474,15 @@ export async function syncUp(opts: {
 					`${skill.skillKey}.tar.gz`,
 				);
 				synced++;
+			} catch (e: any) {
+				failed.push({ key: skill.skillKey, error: e?.message ?? String(e) });
 			}
-			console.log(chalk.green(`  ✓ Synced ${synced} skill${synced === 1 ? "" : "s"}`));
-		} catch (e: any) {
-			console.log(chalk.red(`  ✗ Failed after ${synced} skills: ${e.message}`));
+		}
+		console.log(
+			chalk.green(`  ✓ Synced ${synced}/${skills.length} skill${skills.length === 1 ? "" : "s"}`),
+		);
+		for (const f of failed) {
+			console.log(chalk.red(`  ✗ ${f.key}: ${f.error}`));
 		}
 		syncState.skills = { lastSyncedAt: new Date().toISOString() };
 	}

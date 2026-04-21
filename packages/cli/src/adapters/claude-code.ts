@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:f
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import * as tar from "tar";
+import { getExtraSkillPaths } from "../lib/config";
+import { dedupeByKey, scanFlatSkillsDir } from "../lib/skill-scan";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -195,32 +197,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		const skillsDir = join(CLAUDE_DIR, "skills");
-		if (!existsSync(skillsDir)) return [];
-
-		const skills: RawSkill[] = [];
-
-		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
-			const dirPath = join(skillsDir, entry.name);
-			const skillMd = join(dirPath, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-
-			const content = readFileSync(skillMd, "utf-8");
-			// Check if directory has more than just SKILL.md
-			const fileCount = readdirSync(dirPath, { recursive: true }).length;
-
-			skills.push({
-				skillKey: entry.name,
-				name: entry.name,
-				content,
-				filePath: skillMd,
-				directoryPath: dirPath,
-				isDirectory: fileCount > 1,
-			});
+		const skills = scanFlatSkillsDir(join(CLAUDE_DIR, "skills"));
+		for (const extra of getExtraSkillPaths(this.agentType)) {
+			skills.push(...scanFlatSkillsDir(extra));
 		}
-
-		return skills;
+		return dedupeByKey(skills);
 	}
 
 	getSkillPath(key: string): string {

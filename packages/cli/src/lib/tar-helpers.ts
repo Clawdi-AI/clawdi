@@ -10,7 +10,22 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 
 	const chunks: Buffer[] = [];
 	await tar
-		.create({ gzip: true, cwd: parentDir }, [dirName])
+		.create(
+			{
+				gzip: true,
+				cwd: parentDir,
+				// Resolve symlinks at archive time so plugin-installed skills (which
+				// use a symlink into a shared bundle) ship their real contents, and
+				// the server's "no symlinks in tarball" rule is upheld without
+				// rejecting the whole skill.
+				follow: true,
+				filter: (path) => {
+					const parts = path.split("/");
+					return !parts.includes("node_modules") && !parts.includes(".git");
+				},
+			},
+			[dirName],
+		)
 		.on("data", (chunk: Buffer) => chunks.push(chunk))
 		.promise();
 	return Buffer.concat(chunks);

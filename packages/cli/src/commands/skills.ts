@@ -1,14 +1,21 @@
 import chalk from "chalk";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { AGENT_LABELS } from "@clawdi-cloud/shared/consts";
+import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
 import { HermesAdapter } from "../adapters/hermes";
 import { OpenClawAdapter } from "../adapters/openclaw";
 import type { AgentAdapter } from "../adapters/base";
 import { ApiClient } from "../lib/api-client";
-import { getClawdiDir, isLoggedIn } from "../lib/config";
+import {
+	addExtraSkillPath,
+	getClawdiDir,
+	isKnownAgent,
+	isLoggedIn,
+	listExtraSkillPaths,
+	removeExtraSkillPath,
+} from "../lib/config";
 import { tarSkillDir, tarSingleFile } from "../lib/tar-helpers";
 
 function requireAuth() {
@@ -132,4 +139,59 @@ export async function skillsRm(key: string) {
 	const api = new ApiClient();
 	await api.delete(`/api/skills/${key}`);
 	console.log(chalk.green(`✓ Removed ${key}`));
+}
+
+function unknownAgentMessage(agent: string): void {
+	console.log(chalk.red(`Unknown agent: ${agent}`));
+	console.log(chalk.gray(`  Valid: ${AGENT_TYPES.join(", ")}`));
+}
+
+export function skillSourceList() {
+	const all = listExtraSkillPaths();
+	const entries = Object.entries(all) as [AgentType, string[]][];
+	if (entries.length === 0) {
+		console.log(chalk.gray("No extra skill paths configured."));
+		console.log(
+			chalk.gray(
+				"  Add one with: clawdi skill source add <agent> <path>\n" +
+					"  Supported agents: " +
+					AGENT_TYPES.join(", "),
+			),
+		);
+		return;
+	}
+	for (const [agent, paths] of entries) {
+		console.log(chalk.cyan(AGENT_LABELS[agent] ?? agent));
+		for (const p of paths ?? []) {
+			const marker = existsSync(p) ? chalk.green("✓") : chalk.yellow("!");
+			const note = existsSync(p) ? "" : chalk.gray(" (missing)");
+			console.log(`  ${marker} ${p}${note}`);
+		}
+	}
+}
+
+export function skillSourceAdd(agent: string, path: string) {
+	if (!isKnownAgent(agent)) {
+		unknownAgentMessage(agent);
+		process.exit(1);
+	}
+	const resolved = resolve(path);
+	if (!existsSync(resolved)) {
+		console.log(chalk.yellow(`Warning: ${resolved} does not exist (added anyway).`));
+	}
+	addExtraSkillPath(agent, resolved);
+	console.log(chalk.green(`✓ Added ${resolved} to ${agent} skill sources`));
+}
+
+export function skillSourceRemove(agent: string, path: string) {
+	if (!isKnownAgent(agent)) {
+		unknownAgentMessage(agent);
+		process.exit(1);
+	}
+	const removed = removeExtraSkillPath(agent, path);
+	if (!removed) {
+		console.log(chalk.yellow(`${path} was not configured for ${agent}.`));
+		process.exit(1);
+	}
+	console.log(chalk.green(`✓ Removed ${path} from ${agent} skill sources`));
 }

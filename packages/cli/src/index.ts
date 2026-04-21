@@ -164,6 +164,35 @@ skillsCmd
 		await skillsRm(key);
 	});
 
+const skillSourceCmd = skillsCmd
+	.command("source")
+	.description("Manage extra skill scan paths per agent");
+
+skillSourceCmd
+	.command("list")
+	.description("List configured extra skill paths")
+	.action(async () => {
+		const { skillSourceList } = await import("./commands/skills.js");
+		skillSourceList();
+	});
+
+skillSourceCmd
+	.command("add <agent> <path>")
+	.description("Add an extra skill directory for an agent")
+	.action(async (agent, path) => {
+		const { skillSourceAdd } = await import("./commands/skills.js");
+		skillSourceAdd(agent, path);
+	});
+
+skillSourceCmd
+	.command("remove <agent> <path>")
+	.alias("rm")
+	.description("Remove an extra skill directory for an agent")
+	.action(async (agent, path) => {
+		const { skillSourceRemove } = await import("./commands/skills.js");
+		skillSourceRemove(agent, path);
+	});
+
 const memoriesCmd = program
 	.command("memory")
 	.alias("mem")
