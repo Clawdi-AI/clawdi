@@ -6,7 +6,7 @@ import { Zap } from "lucide-react";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionsPage() {
   const { getToken } = useAuth();
@@ -65,7 +65,7 @@ export default function SessionsPage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium truncate">
-                  {s.summary || s.local_session_id.slice(0, 8)}
+                  {formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   {s.agent_type && (

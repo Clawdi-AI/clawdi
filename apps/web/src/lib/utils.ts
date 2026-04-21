@@ -22,3 +22,25 @@ export function formatNumber(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
+
+const COMMAND_TAG_RE = /<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>/g;
+
+/**
+ * Turn a raw session summary into something readable for list rows and headers.
+ *
+ * Claude Code slash commands come through as XML-tagged user messages like
+ *   <command-message>foo</command-message><command-name>/foo</command-name><command-args>bar</command-args>
+ * which look awful rendered raw. Collapse them to `/foo bar`.
+ */
+export function formatSessionSummary(summary: string | null | undefined): string {
+  if (!summary) return "";
+  const nameMatch = summary.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (nameMatch) {
+    const argsMatch = summary.match(/<command-args>([\s\S]*?)<\/command-args>/);
+    const name = nameMatch[1].trim();
+    const args = argsMatch?.[1].trim();
+    const remaining = summary.replace(COMMAND_TAG_RE, "").trim();
+    return [name, args, remaining].filter(Boolean).join(" ");
+  }
+  return summary;
+}

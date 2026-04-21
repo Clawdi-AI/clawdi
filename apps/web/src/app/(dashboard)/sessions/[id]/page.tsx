@@ -2,14 +2,15 @@
 
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Clock, Hash, MessageSquare, Zap } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 interface SessionMessage {
   role: "user" | "assistant";
@@ -88,7 +89,7 @@ export default function SessionDetailPage() {
       {/* Header */}
       <div>
         <h1 className="text-lg font-semibold tracking-tight">
-          {session.summary || session.local_session_id.slice(0, 12)}
+          {formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)}
         </h1>
         <p className="text-xs text-muted-foreground mt-1">
           {session.project_path || "No project path"} · {relativeTime(session.started_at)}
@@ -234,14 +235,86 @@ function MessageBlock({
         </div>
 
         {/* Message body */}
-        {isUser ? (
-          <div className="text-sm whitespace-pre-wrap">{message.content}</div>
-        ) : (
-          <div className="text-sm">
-            <Markdown content={message.content} />
-          </div>
-        )}
+        <div className="text-sm">
+          {isUser ? <UserMessageBody content={message.content} /> : <Markdown content={message.content} />}
+        </div>
       </div>
+    </div>
+  );
+}
+
+// Matches Claude Code's slash command envelope:
+//   <command-message>name</command-message>
+//   <command-name>/name</command-name>
+//   <command-args>…</command-args>
+const COMMAND_TAG_RE = /<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>/g;
+
+function parseSlashCommand(content: string): {
+  name: string;
+  args?: string;
+  remaining: string;
+} | null {
+  const nameMatch = content.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (!nameMatch) return null;
+  const argsMatch = content.match(/<command-args>([\s\S]*?)<\/command-args>/);
+  const remaining = content.replace(COMMAND_TAG_RE, "").trim();
+  return {
+    name: nameMatch[1].trim(),
+    args: argsMatch?.[1].trim() || undefined,
+    remaining,
+  };
+}
+
+// Claude Code's slash command expansion arrives as a user message whose body
+// is the skill's SKILL.md content — typically starts with "Base directory for this skill:".
+function isSkillExpansion(content: string): boolean {
+  return /^Base directory for this skill:/i.test(content.trimStart());
+}
+
+function UserMessageBody({ content }: { content: string }) {
+  const cmd = parseSlashCommand(content);
+  if (cmd) {
+    return (
+      <div className="space-y-2">
+        <SlashCommandPill name={cmd.name} args={cmd.args} />
+        {cmd.remaining && <Markdown content={cmd.remaining} />}
+      </div>
+    );
+  }
+  if (isSkillExpansion(content)) {
+    return <CollapsibleBlock label="Skill context" content={content} />;
+  }
+  return <Markdown content={content} />;
+}
+
+function SlashCommandPill({ name, args }: { name: string; args?: string }) {
+  return (
+    <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 font-mono text-xs">
+      <Terminal className="size-3 shrink-0 text-primary" />
+      <span className="font-medium text-primary">{name}</span>
+      {args && <span className="break-all text-muted-foreground">{args}</span>}
+    </div>
+  );
+}
+
+function CollapsibleBlock({ label, content }: { label: string; content: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-dashed border-border/70 bg-muted/20">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+        <span>{label}</span>
+        {!open && <span className="text-[10px] opacity-60">({content.length.toLocaleString()} chars)</span>}
+      </button>
+      {open && (
+        <div className="border-t border-border/50 px-3 py-2">
+          <Markdown content={content} />
+        </div>
+      )}
     </div>
   );
 }

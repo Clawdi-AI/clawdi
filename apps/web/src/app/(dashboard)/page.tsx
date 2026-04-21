@@ -16,7 +16,7 @@ import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import { cn, formatNumber, relativeTime } from "@/lib/utils";
+import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function DashboardPage() {
   const { getToken } = useAuth();
@@ -159,7 +159,7 @@ export default function DashboardPage() {
               >
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate">
-                    {s.summary || s.local_session_id.slice(0, 8)}
+                    {formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-xs text-muted-foreground">
