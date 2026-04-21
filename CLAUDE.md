@@ -9,7 +9,6 @@ apps/web/          Next.js 15 dashboard (Clerk auth, shadcn/ui, Tailwind v4)
 packages/cli/      CLI tool (TypeScript, Bun)
 packages/shared/   Shared types, constants, utilities
 backend/           Python FastAPI backend (async PostgreSQL, Clerk JWT)
-infra/             Docker Compose, Dockerfile
 docs/              Documentation, plans, scenarios
 ```
 
@@ -48,35 +47,32 @@ pdm lint                 # Ruff lint
 pdm format               # Ruff format
 ```
 
-### Infrastructure
-
-```bash
-docker compose -f infra/docker-compose.yml up -d   # Start PostgreSQL + Redis
-```
-
 ## Tech Stack
 
 - **Web**: Next.js 15, React 19, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand, Clerk
 - **CLI**: TypeScript, Bun, Commander
 - **Backend**: FastAPI, SQLAlchemy 2.0 async, asyncpg, Alembic, Pydantic Settings
-- **Database**: PostgreSQL (structured data + metadata)
+- **Database**: PostgreSQL with `pgvector` (embeddings) and `pg_trgm` (fuzzy search)
 - **File Store**: S3/R2/local filesystem (sessions JSONL, skills MD)
-- **Cache**: Redis
+- **Embeddings**: fastembed (local ONNX) or OpenAI-compatible API
 - **Tooling**: Bun, Turbo, Biome, Ruff, TypeScript strict mode
+
+PostgreSQL setup (including `pgvector` + `pg_trgm`) is documented in `README.md`.
 
 ## Architecture
 
-- **Storage split**: PG for metadata, File Store (S3/R2) for file-type data (sessions, skills)
-- **Provider pattern**: Memory uses pluggable providers (Mem0, Cognee, built-in pgvector)
+- **Storage split**: PG for metadata, File Store (S3/R2/local) for file-type data (sessions, skills)
+- **Provider pattern**: Memory uses pluggable providers (Builtin pgvector, Mem0)
 - **Dual auth**: Clerk JWT for web dashboard, ApiKey for CLI
 - **Vault secrets never reach the web**: `vault/resolve` endpoint only accepts ApiKey (CLI)
 - **Vault data model**: Three-level Jingui-style (Vault → Section → Field), `clawdi://` URI references
+- **Two encryption keys**: `VAULT_ENCRYPTION_KEY` (AES-256-GCM for vault data at rest) and `ENCRYPTION_KEY` (HS256 for MCP proxy JWTs) — kept separate for key separation
 - **Sync state is client-side**: stored in `~/.clawdi/sync.json`, server API is stateless
-- **Agent adapters**: each agent (Claude Code, Codex, OpenClaw, Hermes) has its own adapter
+- **Agent adapters**: each agent (Claude Code, Codex, OpenClaw, Hermes) has its own adapter in `packages/cli/src/adapters/`
 
 ## Data Model
 
-Core tables: User, AgentEnvironment, Session, Skill, Vault, VaultItem, ApiKey, CronJob, Channel, UserSetting
+Core tables: User, UserSetting, AgentEnvironment, Session, Skill, Memory, Vault, VaultItem, ApiKey
 
 ## Conventions
 
