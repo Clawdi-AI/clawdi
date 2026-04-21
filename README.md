@@ -213,7 +213,11 @@ clawdi memory add "<content>"         # store a memory
 clawdi memory rm <id>                 # delete by id
 ```
 
-**How memory works in your agent**: after `clawdi setup`, your agent has the `memory_search` and `memory_add` MCP tools plus a `clawdi` skill that tells it when to use them. In a new Claude Code (or Codex) session, asking questions like "what do I usually use for X?" or "we discussed before how to …" should auto-trigger `memory_search`.
+**How memory works in your agent**: after `clawdi setup`, your agent has three MCP tools plus a `clawdi` skill that tells it when to use them:
+
+- `memory_search` — called automatically when you reference your own context. "What do I usually use for X?" or "we discussed before how to …" auto-triggers it.
+- `memory_add` — called automatically when you say "remember this" or when the agent learns a durable preference / decision.
+- `memory_extract` — batch-propose memories from the current conversation. Say "extract memories" at the end of a session; the agent lists up to 5 candidates, you confirm, and only then are they saved. Works the same across Claude Code / Codex / Hermes / OpenClaw.
 
 ### Vault (secrets)
 

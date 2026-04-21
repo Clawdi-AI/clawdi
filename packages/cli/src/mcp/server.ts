@@ -13,6 +13,44 @@ interface McpTool {
 	};
 }
 
+const MEMORY_EXTRACT_INSTRUCTIONS = `Review the CURRENT conversation silently and propose up to 5 durable memories worth saving for future sessions. Pick the highest-signal. Fewer is better — a confident 1-2 beats 5 mediocre. Do not fabricate candidates to fill the list.
+
+Dedup first, silently: for each candidate, call memory_search on its key topic and drop any that already have a clear match stored.
+
+If nothing qualifies — either because no candidate was durable, or because every candidate was already saved — reply "nothing worth extracting" (or "everything useful is already saved") and stop.
+
+Otherwise, present the surviving candidates to the user as a numbered list. For each: [category] full-sentence content, using proper nouns, not pronouns. Example:
+
+  Found 3 candidate memories:
+  1. [preference] The user prefers rg over grep and fd over find for searching files in their codebase.
+  2. [decision] Clawdi chose Clerk for auth because the team already had a Clerk account.
+  3. [pattern] All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+
+  Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
+
+Wait for the user's reply. Do NOT call memory_add yet.
+
+On approval, call memory_add once per approved memory, using the category and content from the candidate (with any edits the user asked for). Then print a bullet summary with the stored IDs so the user can delete individual ones later:
+
+  Saved:
+  - [preference] abc12345 — The user prefers rg over grep...
+  - [pattern]    def67890 — All code comments must be in English.
+
+Do NOT narrate your internal workflow to the user ("running dedup", "moving to present", "STEP 1"). The user should see only the candidate list, their own reply, and the final save summary — nothing else.
+
+What qualifies as durable:
+- User preferences / habits (tools, style, workflow)
+- Architecture / design decisions and their reasoning
+- Recurring patterns, team conventions, pitfalls worked through
+- Named entities specific to the user: project, repo, service, teammate, tool they named
+- Anything the user explicitly asked you to remember
+
+Does NOT qualify:
+- One-off debugging details with no broader lesson
+- Code snippets (unless they demonstrate a preferred pattern)
+- Anything readable from the current code state
+- Conversational noise or meta-commentary`;
+
 export async function startMcpServer() {
 	if (!isLoggedIn()) {
 		process.stderr.write("Not logged in. Run `clawdi login` first.\n");
@@ -164,6 +202,15 @@ export async function startMcpServer() {
 				};
 			}
 		},
+	);
+
+	server.tool(
+		"memory_extract",
+		"Propose durable long-term memories from the CURRENT conversation, list them to the user, and save only what they approve. Call this when the user asks to 'extract memories', 'save what we discussed', 'remember this conversation', or any equivalent phrasing (in any language). The tool returns instructions — follow them exactly: list up to 5 candidates first, wait for the user's confirmation, then call memory_add on the approved ones. Do not narrate your internal workflow. This tool inspects your active conversation context — it does NOT read any external file or database.",
+		{},
+		async () => ({
+			content: [{ type: "text" as const, text: MEMORY_EXTRACT_INSTRUCTIONS }],
+		}),
 	);
 
 	// --- Dynamically registered connector tools (from Composio via backend) ---

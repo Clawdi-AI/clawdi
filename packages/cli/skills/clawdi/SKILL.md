@@ -9,10 +9,11 @@ You have access to Clawdi Cloud tools via the `clawdi` MCP server. Use them aggr
 
 ## Memory
 
-Two tools for cross-agent memory:
+Three tools for cross-agent memory:
 
 - `memory_search` — Search long-term memory by natural-language query (any language).
 - `memory_add` — Save a durable memory for cross-agent recall. Categories: `fact` (technical facts, API details, config values), `preference` (user preferences, coding style, workflow choices), `pattern` (recurring patterns, pitfalls, team conventions), `decision` (architecture decisions and their reasoning), `context` (project context, deadlines, ongoing work).
+- `memory_extract` — Batch-extract durable memories from the CURRENT conversation. Call this when the user says "extract memories", "save what we discussed", "remember this conversation", or equivalent. The tool returns instructions that walk you through a list-then-confirm flow using `memory_search` and `memory_add` — follow them exactly, including **waiting for the user's approval before writing anything**. Never skip the confirmation step, never save more than 5 memories in one invocation, and do not narrate your internal workflow to the user.
 
 ### When to search — bias toward calling
 

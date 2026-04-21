@@ -97,6 +97,49 @@ $ clawdi memory rm <memory-id>                # delete
 
 **Categories**: when Claude saves a memory it picks one of `fact` / `preference` / `pattern` / `decision` / `context`. You can filter from the CLI or the dashboard.
 
+#### Batch extraction at end of a conversation
+
+After a long working session it's often clearer what's worth saving than in the moment. Say "extract memories" and Claude will batch-propose up to 5 durable memories from the current conversation — **without saving any of them yet**. You confirm, then they're saved:
+
+```
+You: extract memories from this conversation
+
+Claude: → memory_extract()
+        → memory_search("package manager preference")
+          [empty]
+        → memory_search("auth provider decision")
+          [empty]
+        → memory_search("English comments convention")
+          [empty]
+
+        Found 3 candidate memories:
+        1. [preference] The user prefers pnpm over npm in the clawdi-cloud monorepo.
+        2. [decision]   Clawdi chose Clerk for auth because the team already had a Clerk account.
+        3. [pattern]    All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+
+        Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
+
+You: save 1 and 3
+
+Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi-cloud monorepo.", category: "preference" })
+          ✓ abc12345
+        → memory_add({ content: "All code comments in clawdi-cloud must be in English (per CLAUDE.md).", category: "pattern" })
+          ✓ def67890
+
+        Saved:
+        - [preference] abc12345 — The user prefers pnpm over npm...
+        - [pattern]    def67890 — All code comments must be in English.
+```
+
+Behavior:
+
+- **Hard cap of 5** candidates per invocation. Even in a very long conversation Claude picks the highest-signal.
+- **Dedup built in** — Claude runs `memory_search` per candidate first; anything already stored is dropped silently, so repeated calls don't grow duplicates.
+- **Nothing is saved before you approve.** You can say `save all`, pick indices, rephrase (`edit 2 to say ...`), or `cancel`.
+- **IDs are printed** — to undo a specific save: `clawdi memory rm <id>`.
+
+Works the same under Codex / Hermes / OpenClaw when their MCP connection to Clawdi is active.
+
 ### B. Vault — inject secrets at runtime without putting them on disk
 
 Store a secret once:
