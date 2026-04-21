@@ -233,10 +233,19 @@ export class CodexAdapter implements AgentAdapter {
 
 		const skills: RawSkill[] = [];
 		for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			const dirPath = join(SKILLS_DIR, entry.name);
+			// Follow symlinks that resolve to directories (plugin-installed skills).
+			let isDir = entry.isDirectory();
+			if (!isDir && entry.isSymbolicLink()) {
+				try {
+					isDir = statSync(dirPath).isDirectory();
+				} catch {
+					isDir = false;
+				}
+			}
+			if (!isDir) continue;
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
