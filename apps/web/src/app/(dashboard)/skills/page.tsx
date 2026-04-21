@@ -154,7 +154,7 @@ export default function SkillsPage() {
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
             No skills installed yet. Install from below or run{" "}
             <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-              clawdi skills install owner/repo
+              clawdi skill install owner/repo
             </code>
           </div>
         )}

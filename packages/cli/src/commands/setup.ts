@@ -7,12 +7,19 @@ import { writeFileSync, mkdirSync, cpSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { AGENT_TYPES, AGENT_LABELS, type AgentType } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
+import { CodexAdapter } from "../adapters/codex";
 import { HermesAdapter } from "../adapters/hermes";
+import { OpenClawAdapter } from "../adapters/openclaw";
 import type { AgentAdapter } from "../adapters/base";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 
-const allAdapters: AgentAdapter[] = [new ClaudeCodeAdapter(), new HermesAdapter()];
+const allAdapters: AgentAdapter[] = [
+	new ClaudeCodeAdapter(),
+	new HermesAdapter(),
+	new OpenClawAdapter(),
+	new CodexAdapter(),
+];
 
 export async function setup(opts: { agent?: string }) {
 	if (!isLoggedIn()) {
@@ -128,6 +135,15 @@ async function installBuiltinSkill(agentType: AgentType) {
 		const hermesHome = process.env.HERMES_HOME || join(homedir, ".hermes");
 		targetDir = join(hermesHome, "skills", "clawdi");
 		label = "Hermes";
+	} else if (agentType === "openclaw") {
+		const openclawDir = process.env.OPENCLAW_STATE_DIR || join(homedir, ".openclaw");
+		const openclawAgentId = process.env.OPENCLAW_AGENT_ID || "main";
+		targetDir = join(openclawDir, "agents", openclawAgentId, "skills", "clawdi");
+		label = "OpenClaw";
+	} else if (agentType === "codex") {
+		const codexHome = process.env.CODEX_HOME || join(homedir, ".codex");
+		targetDir = join(codexHome, "skills", "clawdi");
+		label = "Codex";
 	} else {
 		return;
 	}
@@ -159,6 +175,12 @@ async function installBuiltinSkill(agentType: AgentType) {
 async function registerMcpServer(agentType: AgentType) {
 	if (agentType === "hermes") {
 		return registerHermesMcp();
+	}
+	if (agentType === "openclaw") {
+		return registerOpenClawMcp();
+	}
+	if (agentType === "codex") {
+		return registerCodexMcp();
 	}
 	if (agentType !== "claude_code") return;
 
@@ -204,34 +226,86 @@ async function registerHermesMcp() {
 	const { readFileSync: readFs, writeFileSync: writeFs } = await import("node:fs");
 	const content = readFs(configPath, "utf-8");
 
-	// Check if clawdi MCP is already configured
-	if (content.includes("clawdi:") && content.includes("mcp_servers")) {
+	// Clawdi entry already present under mcp_servers.
+	if (/^mcp_servers:/m.test(content) && /^\s+clawdi:/m.test(content)) {
 		console.log(chalk.gray("✓ MCP server already registered in Hermes"));
 		return;
 	}
 
-	// Append clawdi MCP server config
-	const mcpBlock = `
-mcp_servers:
-  clawdi:
-    command: "clawdi"
-    args: ["mcp"]
-`;
+	const clawdiChild = `  clawdi:\n    command: "clawdi"\n    args: ["mcp"]`;
+	const newSection = `mcp_servers:\n${clawdiChild}\n`;
 
 	try {
-		if (content.includes("mcp_servers:")) {
-			// Replace mcp_servers line (handles both "mcp_servers: {}" and "mcp_servers:\n")
-			const updated = content.replace(
-				/^mcp_servers:.*$/m,
-				`mcp_servers:\n  clawdi:\n    command: "clawdi"\n    args: ["mcp"]`,
-			);
-			writeFs(configPath, updated);
+		const HEADER_RE = /^mcp_servers:\s*(.*)$/m;
+		const headerMatch = content.match(HEADER_RE);
+
+		let updated: string;
+		if (!headerMatch) {
+			// No mcp_servers section at all — append a fresh block.
+			updated = `${content.trimEnd()}\n\n${newSection}`;
 		} else {
-			// Append new section
-			writeFs(configPath, content.trimEnd() + "\n" + mcpBlock);
+			const inlineValue = (headerMatch[1] ?? "").trim();
+			if (inlineValue.startsWith("{") && inlineValue !== "{}") {
+				// Inline flow map with existing entries — too risky to patch.
+				throw new Error("mcp_servers uses inline flow map; edit config.yaml manually.");
+			}
+			// For empty map ({}, ~, null) or block map with children:
+			// replace the header line with a block-style header followed by our child.
+			// The regex's `m` flag anchors to line start, avoiding false matches like
+			// `other_mcp_servers:`. Existing block children after the header line are
+			// preserved because only the matched line is substituted.
+			updated = content.replace(HEADER_RE, `mcp_servers:\n${clawdiChild}`);
 		}
+
+		writeFs(configPath, updated);
 		console.log(chalk.green("✓ MCP server registered in Hermes"));
-	} catch {
-		console.log(chalk.yellow("⚠ Could not register MCP server in Hermes config."));
+	} catch (e: any) {
+		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${e.message}`));
+		console.log(chalk.gray(`  Edit ${configPath} and add under mcp_servers:`));
+		console.log(chalk.gray(clawdiChild));
 	}
+}
+
+function registerCodexMcp() {
+	const cliPath = resolve(import.meta.dirname, "../../src/index.ts");
+
+	try {
+		const list = execSync("codex mcp list", { encoding: "utf-8", stdio: "pipe" });
+		if (/^\s*clawdi\b/m.test(list) || list.includes("clawdi ")) {
+			console.log(chalk.gray("✓ MCP server already registered in Codex"));
+			return;
+		}
+	} catch {
+		// codex not on PATH or subcommand failed — fall through and try `add` anyway.
+	}
+
+	try {
+		execSync(`codex mcp add clawdi -- bun run ${cliPath} mcp`, { stdio: "pipe" });
+		console.log(chalk.green("✓ MCP server registered in Codex"));
+	} catch {
+		console.log(chalk.yellow("⚠ Could not auto-register MCP server in Codex."));
+		console.log(
+			chalk.gray(`  Run manually: codex mcp add clawdi -- bun run ${cliPath} mcp`),
+		);
+	}
+}
+
+function registerOpenClawMcp() {
+	// OpenClaw's ACP bridge rejects per-session mcpServers and delegates MCP
+	// registration to whatever downstream agent it wraps (typically Claude Code
+	// via --mcp-config). There's no clawdi-safe config file to patch here.
+	console.log(chalk.yellow("⚠ OpenClaw has no native MCP registration point."));
+	console.log(
+		chalk.gray(
+			"  If you also run `clawdi setup --agent claude_code` on this machine,",
+		),
+	);
+	console.log(
+		chalk.gray("  OpenClaw will inherit the clawdi MCP server through Claude Code."),
+	);
+	console.log(
+		chalk.gray(
+			"  Otherwise, add the clawdi MCP server to your OpenClaw gateway config manually.",
+		),
+	);
 }

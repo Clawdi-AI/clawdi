@@ -37,7 +37,7 @@ export class HermesAdapter implements AgentAdapter {
 	async getVersion(): Promise<string | null> {
 		try {
 			const { execSync } = await import("node:child_process");
-			const output = execSync("hermes --version", { encoding: "utf-8" }).trim();
+			const output = execSync("hermes --version", { encoding: "utf-8", stdio: "pipe" }).trim();
 			// Hermes outputs multi-line version info, take first line only
 			return output.split("\n")[0] || null;
 		} catch {
@@ -96,7 +96,10 @@ export class HermesAdapter implements AgentAdapter {
 
 				sessions.push({
 					localSessionId: row.id,
-					projectPath: row.source ? `hermes/${row.source}` : "hermes",
+					// Hermes sessions have no filesystem cwd — `row.source` is a channel/origin
+					// tag (e.g. "telegram"), not a path. Leave null so the dashboard doesn't
+					// render a fake "hermes/..." project.
+					projectPath: null,
 					startedAt,
 					endedAt,
 					messageCount: row.message_count ?? messages.length,
@@ -108,7 +111,9 @@ export class HermesAdapter implements AgentAdapter {
 					durationSeconds,
 					summary,
 					messages,
-					rawFilePath: STATE_DB,
+					// The DB is shared across sessions — anchor to the row id so the pointer
+					// identifies the specific session rather than the whole store.
+					rawFilePath: `${STATE_DB}#${row.id}`,
 				});
 			}
 

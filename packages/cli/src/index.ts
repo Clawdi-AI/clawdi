@@ -50,6 +50,7 @@ syncCmd
 	.option("--since <date>", "Only sync data after this date")
 	.option("--project <path>", "Sync a specific project (default: current directory)")
 	.option("--all", "Sync all projects")
+	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
 	.option("--dry-run", "Preview without uploading")
 	.action(async (opts) => {
 		const { syncUp } = await import("./commands/sync.js");
@@ -60,6 +61,7 @@ syncCmd
 	.command("down")
 	.description("Pull cloud data to local")
 	.option("--modules <modules>", "Comma-separated: skills,memories")
+	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
 	.option("--dry-run", "Preview without downloading")
 	.action(async (opts) => {
 		const { syncDown } = await import("./commands/sync.js");
@@ -92,7 +94,7 @@ vaultCmd
 		await vaultImport(file);
 	});
 
-const skillsCmd = program.command("skills").description("Manage skills");
+const skillsCmd = program.command("skill").description("Manage skills");
 
 skillsCmd
 	.command("list")
@@ -126,7 +128,10 @@ skillsCmd
 		await skillsRm(key);
 	});
 
-const memoriesCmd = program.command("memories").description("Manage memories");
+const memoriesCmd = program
+	.command("memory")
+	.alias("mem")
+	.description("Manage memories");
 
 memoriesCmd
 	.command("list")

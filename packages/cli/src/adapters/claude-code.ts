@@ -35,7 +35,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	async getVersion(): Promise<string | null> {
 		try {
 			const { execSync } = await import("node:child_process");
-			return execSync("claude --version", { encoding: "utf-8" }).trim();
+			return execSync("claude --version", { encoding: "utf-8", stdio: "pipe" }).trim();
 		} catch {
 			return null;
 		}
@@ -96,7 +96,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		const lines = content.split("\n").filter(Boolean);
 		if (lines.length < 3) return null;
 
-		let messageCount = 0;
 		let inputTokens = 0;
 		let outputTokens = 0;
 		let cacheReadTokens = 0;
@@ -125,8 +124,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				}
 
 				if (role === "user" || role === "assistant") {
-					messageCount++;
-
 					// Extract text content for messages
 					const c = msg?.content;
 					let text = "";
@@ -175,7 +172,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			}
 		}
 
-		if (!startedAt || messageCount === 0) return null;
+		if (!startedAt || messages.length === 0) return null;
 
 		const durationSeconds = endedAt
 			? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
@@ -185,7 +182,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			projectPath,
 			startedAt,
 			endedAt,
-			messageCount,
+			messageCount: messages.length,
 			inputTokens,
 			outputTokens,
 			cacheReadTokens,

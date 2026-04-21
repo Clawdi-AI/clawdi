@@ -1,8 +1,11 @@
 import chalk from "chalk";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { AGENT_LABELS } from "@clawdi-cloud/shared/consts";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
+import { CodexAdapter } from "../adapters/codex";
+import { HermesAdapter } from "../adapters/hermes";
+import { OpenClawAdapter } from "../adapters/openclaw";
 import type { AgentAdapter } from "../adapters/base";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
@@ -22,6 +25,9 @@ function getRegisteredAdapters(): AgentAdapter[] {
 	const adapters: AgentAdapter[] = [];
 	for (const file of readdirSync(envDir)) {
 		if (file === "claude_code.json") adapters.push(new ClaudeCodeAdapter());
+		else if (file === "hermes.json") adapters.push(new HermesAdapter());
+		else if (file === "openclaw.json") adapters.push(new OpenClawAdapter());
+		else if (file === "codex.json") adapters.push(new CodexAdapter());
 	}
 	return adapters;
 }
@@ -110,7 +116,8 @@ export async function skillsInstall(repoInput: string) {
 
 			for (const adapter of adapters) {
 				await adapter.writeSkillArchive(installResult.skill_key, tarBytes);
-				console.log(chalk.green(`  ✓ ${AGENT_LABELS[adapter.agentType]} → ~/.claude/skills/${installResult.skill_key}/ (${installResult.file_count} files)`));
+				const skillDir = dirname(adapter.getSkillPath(installResult.skill_key));
+				console.log(chalk.green(`  ✓ ${AGENT_LABELS[adapter.agentType]} → ${skillDir}/ (${installResult.file_count} files)`));
 			}
 		} catch (e: any) {
 			console.log(chalk.yellow(`  ⚠ Local install failed: ${e.message}`));

@@ -242,7 +242,7 @@ export default function MemoriesPage() {
         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
           {searchQuery || category
             ? "No memories match your search."
-            : 'No memories yet. Add one above or use `clawdi memories add "..."`'}
+            : 'No memories yet. Add one above or use `clawdi memory add "..."`'}
         </div>
       )}
     </div>
