@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { Database } from "bun:sqlite";
@@ -137,8 +137,17 @@ export class HermesAdapter implements AgentAdapter {
 	 */
 	private _scanSkillsDir(dir: string, results: RawSkill[]): void {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			const fullPath = join(dir, entry.name);
+			// Follow symlinks that resolve to directories (plugin-installed skills).
+			let isDir = entry.isDirectory();
+			if (!isDir && entry.isSymbolicLink()) {
+				try {
+					isDir = statSync(fullPath).isDirectory();
+				} catch {
+					isDir = false;
+				}
+			}
+			if (!isDir) continue;
 			const skillMd = join(fullPath, "SKILL.md");
 
 			if (existsSync(skillMd)) {

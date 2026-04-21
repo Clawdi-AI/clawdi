@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import * as tar from "tar";
@@ -201,8 +201,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		const skills: RawSkill[] = [];
 
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			const dirPath = join(skillsDir, entry.name);
+			// Accept real directories AND symlinks that resolve to directories (plugin-installed skills).
+			let isDir = entry.isDirectory();
+			if (!isDir && entry.isSymbolicLink()) {
+				try {
+					isDir = statSync(dirPath).isDirectory();
+				} catch {
+					isDir = false;
+				}
+			}
+			if (!isDir) continue;
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 

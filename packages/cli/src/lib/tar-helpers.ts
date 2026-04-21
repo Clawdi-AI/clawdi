@@ -10,7 +10,18 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 
 	const chunks: Buffer[] = [];
 	await tar
-		.create({ gzip: true, cwd: parentDir }, [dirName])
+		.create(
+			{
+				gzip: true,
+				cwd: parentDir,
+				follow: true,
+				filter: (path) => {
+					const parts = path.split("/");
+					return !parts.includes("node_modules") && !parts.includes(".git");
+				},
+			},
+			[dirName],
+		)
 		.on("data", (chunk: Buffer) => chunks.push(chunk))
 		.promise();
 	return Buffer.concat(chunks);
