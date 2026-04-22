@@ -45,7 +45,7 @@ async def list_skills(
 ):
     result = await db.execute(
         select(Skill)
-        .where(Skill.user_id == auth.user_id, Skill.is_active == True)
+        .where(Skill.user_id == auth.user_id, Skill.is_active)
         .order_by(Skill.skill_key)
     )
     skills = result.scalars().all()
@@ -88,7 +88,7 @@ async def get_skill(
         select(Skill).where(
             Skill.user_id == auth.user_id,
             Skill.skill_key == skill_key,
-            Skill.is_active == True,
+            Skill.is_active,
         )
     )
     skill = result.scalar_one_or_none()
@@ -187,7 +187,7 @@ async def download_skill(
         select(Skill).where(
             Skill.user_id == auth.user_id,
             Skill.skill_key == skill_key,
-            Skill.is_active == True,
+            Skill.is_active,
         )
     )
     skill = result.scalar_one_or_none()
@@ -223,9 +223,7 @@ async def delete_skill(
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(
-        select(Skill).where(
-            Skill.user_id == auth.user_id, Skill.skill_key == skill_key
-        )
+        select(Skill).where(Skill.user_id == auth.user_id, Skill.skill_key == skill_key)
     )
     skill = result.scalar_one_or_none()
     if not skill:

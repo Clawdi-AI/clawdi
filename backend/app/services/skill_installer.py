@@ -50,9 +50,7 @@ async def fetch_skill_from_github(repo: str, path: str | None = None) -> SkillPa
             # Fallback: just the SKILL.md as a single-file archive
             skill_md_content = await _fetch_single_skill_md(client, repo, branch, skill_dir)
             if not skill_md_content:
-                raise ValueError(
-                    f"No SKILL.md found in {repo}" + (f"/{path}" if path else "")
-                )
+                raise ValueError(f"No SKILL.md found in {repo}" + (f"/{path}" if path else ""))
             skill_key = path or repo.split("/")[-1]
             tar_bytes, file_count = tar_from_content(skill_key, skill_md_content)
 
@@ -73,11 +71,13 @@ async def _resolve_skill_path(repo: str, path: str | None) -> tuple[str, str]:
     """Resolve the skill directory path and branch."""
     search_paths: list[str] = []
     if path:
-        search_paths.extend([
-            f"skills/{path}",
-            path,
-            f".claude/skills/{path}",
-        ])
+        search_paths.extend(
+            [
+                f"skills/{path}",
+                path,
+                f".claude/skills/{path}",
+            ]
+        )
     else:
         search_paths.append("")
 
@@ -117,11 +117,13 @@ async def _list_github_dir(
     files: list[dict] = []
     for item in data:
         if item["type"] == "file":
-            files.append({
-                "path": item["path"],
-                "download_url": item["download_url"],
-                "size": item.get("size", 0),
-            })
+            files.append(
+                {
+                    "path": item["path"],
+                    "download_url": item["download_url"],
+                    "size": item.get("size", 0),
+                }
+            )
         elif item["type"] == "dir":
             sub_files = await _list_github_dir(client, repo, item["path"], branch)
             files.extend(sub_files)
@@ -180,5 +182,3 @@ async def _fetch_single_skill_md(
     if resp.status_code == 200:
         return resp.text
     return None
-
-

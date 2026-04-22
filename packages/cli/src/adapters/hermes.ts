@@ -1,13 +1,32 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import { Database } from "bun:sqlite";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
 const HERMES_DIR = process.env.HERMES_HOME || join(homedir(), ".hermes");
 const STATE_DB = join(HERMES_DIR, "state.db");
 const SKILLS_DIR = join(HERMES_DIR, "skills");
+
+interface HermesSessionRow {
+	id: string;
+	source: string | null;
+	model: string | null;
+	title: string | null;
+	started_at: number;
+	ended_at: number | null;
+	message_count: number | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens: number | null;
+}
+
+interface HermesMessageRow {
+	role: string;
+	content: string;
+	timestamp: number;
+}
 
 /**
  * Extract a plain model name string from Hermes model field.
@@ -18,7 +37,7 @@ function parseModelField(raw: string | null): string | null {
 	if (!raw) return null;
 	if (raw.startsWith("{")) {
 		try {
-			const obj = JSON.parse(raw);
+			const obj = JSON.parse(raw) as { default?: string; model?: string };
 			return obj.default || obj.model || null;
 		} catch {
 			return raw;
@@ -52,13 +71,15 @@ export class HermesAdapter implements AgentAdapter {
 		try {
 			const sinceEpoch = since ? since.getTime() / 1000 : 0;
 
-			const rows = db.query(`
+			const rows = db
+				.query(`
 					SELECT id, source, model, title, started_at, ended_at,
 					       message_count, input_tokens, output_tokens, cache_read_tokens
 					FROM sessions
 					WHERE started_at >= ?
 					ORDER BY started_at DESC
-				`).all(sinceEpoch) as any[];
+				`)
+				.all(sinceEpoch) as HermesSessionRow[];
 
 			const msgStmt = db.query(`
 				SELECT role, content, timestamp
@@ -77,11 +98,11 @@ export class HermesAdapter implements AgentAdapter {
 					? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
 					: null;
 
-				const msgRows = msgStmt.all(row.id) as any[];
+				const msgRows = msgStmt.all(row.id) as HermesMessageRow[];
 				const messages: SessionMessage[] = msgRows.map((m) => ({
 					role: m.role as "user" | "assistant",
 					content: m.content,
-					model: m.role === "assistant" ? model ?? undefined : undefined,
+					model: m.role === "assistant" ? (model ?? undefined) : undefined,
 					timestamp: new Date(m.timestamp * 1000).toISOString(),
 				}));
 
@@ -173,11 +194,13 @@ export class HermesAdapter implements AgentAdapter {
 		}
 		mkdirSync(targetDir, { recursive: true });
 
-		await tar.extract({
-			cwd: SKILLS_DIR,
-			gzip: true,
-			filter: (path) => !path.includes("..") && !path.startsWith("/"),
-		}).end(tarGzBytes);
+		await tar
+			.extract({
+				cwd: SKILLS_DIR,
+				gzip: true,
+				filter: (path) => !path.includes("..") && !path.startsWith("/"),
+			})
+			.end(tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

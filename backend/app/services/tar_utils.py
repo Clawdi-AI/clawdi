@@ -32,31 +32,23 @@ def validate_tar(data: bytes) -> int:
             for member in tf:
                 # Reject symlinks
                 if member.issym() or member.islnk():
-                    raise TarValidationError(
-                        f"Symlinks not allowed: {member.name}"
-                    )
+                    raise TarValidationError(f"Symlinks not allowed: {member.name}")
 
                 # Reject absolute paths
                 if member.name.startswith("/"):
-                    raise TarValidationError(
-                        f"Absolute paths not allowed: {member.name}"
-                    )
+                    raise TarValidationError(f"Absolute paths not allowed: {member.name}")
 
                 # Reject path traversal
                 parts = PurePosixPath(member.name).parts
                 if ".." in parts:
-                    raise TarValidationError(
-                        f"Path traversal not allowed: {member.name}"
-                    )
+                    raise TarValidationError(f"Path traversal not allowed: {member.name}")
 
                 if member.isfile():
                     file_count += 1
                     total_size += member.size
 
                 if file_count > MAX_FILES:
-                    raise TarValidationError(
-                        f"Too many files: exceeds {MAX_FILES}"
-                    )
+                    raise TarValidationError(f"Too many files: exceeds {MAX_FILES}")
                 if total_size > MAX_DECOMPRESSED_BYTES:
                     raise TarValidationError(
                         f"Decompressed size exceeds {MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from composio import Composio
@@ -34,7 +34,7 @@ def create_proxy_token(user_id: str) -> str:
     payload = {
         "sub": "mcp",
         "user_id": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "exp": datetime.now(UTC) + timedelta(days=30),
     }
     return jwt.encode(payload, key, algorithm="HS256")
 
@@ -221,14 +221,20 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
             display = _extract_display_name(key, app.description or "")
             logo = app.logo or ""
             desc = app.description or ""
-            if search and search.lower() not in key.lower() and search.lower() not in display.lower():
+            if (
+                search
+                and search.lower() not in key.lower()
+                and search.lower() not in display.lower()
+            ):
                 continue
-            result.append({
-                "name": key,
-                "display_name": display,
-                "logo": logo,
-                "description": desc[:200] if desc else "",
-            })
+            result.append(
+                {
+                    "name": key,
+                    "display_name": display,
+                    "logo": logo,
+                    "description": desc[:200] if desc else "",
+                }
+            )
         return sorted(result, key=lambda x: x["display_name"].lower())
 
     return await run_in_threadpool(_list)

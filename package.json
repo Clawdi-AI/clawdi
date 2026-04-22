@@ -1,20 +1,47 @@
 {
-  "name": "clawdi-cloud",
-  "private": true,
-  "workspaces": ["apps/*", "packages/*"],
-  "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "typecheck": "turbo typecheck",
-    "check": "biome ci .",
-    "check:fix": "biome check --write .",
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --write .",
-    "format": "biome format --write ."
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.0.0",
-    "turbo": "^2.5.0",
-    "typescript": "^5.9.0"
-  }
+	"name": "clawdi-cloud",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"catalog": {
+		"react": "19.2.4",
+		"react-dom": "19.2.4",
+		"@types/react": "^19.2.0",
+		"@types/react-dom": "^19.2.0",
+		"typescript": "^5.9.0",
+		"zod": "^4.3.6",
+		"tailwindcss": "^4.2.0",
+		"@tailwindcss/postcss": "^4.2.0",
+		"@tanstack/react-query": "^5.99.0",
+		"next": "16.2.4",
+		"next-themes": "^0.4.6",
+		"lucide-react": "^1.8.0",
+		"tailwind-merge": "^3.5.0",
+		"clsx": "^2.1.1"
+	},
+	"scripts": {
+		"dev": "turbo dev",
+		"build": "turbo build",
+		"typecheck": "turbo typecheck",
+		"test": "turbo test",
+		"check": "biome ci .",
+		"check:fix": "biome check --write .",
+		"lint": "biome lint .",
+		"lint:fix": "biome lint --write .",
+		"format": "biome format --write .",
+		"prepare": "lefthook install"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.12",
+		"lefthook": "^2.1.6",
+		"turbo": "^2.9.6",
+		"typescript": "catalog:"
+	},
+	"engines": {
+		"node": ">=22",
+		"bun": ">=1.3.0"
+	},
+	"packageManager": "bun@1.3.13"
 }

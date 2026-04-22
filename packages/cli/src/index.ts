@@ -164,10 +164,7 @@ skillsCmd
 		await skillsRm(key);
 	});
 
-const memoriesCmd = program
-	.command("memory")
-	.alias("mem")
-	.description("Manage memories");
+const memoriesCmd = program.command("memory").alias("mem").description("Manage memories");
 
 memoriesCmd
 	.command("list")

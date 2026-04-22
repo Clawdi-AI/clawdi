@@ -1,9 +1,9 @@
-import chalk from "chalk";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import readline from "node:readline";
 import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import type { SyncState } from "@clawdi-cloud/shared/types";
+import chalk from "chalk";
 import type { AgentAdapter, RawSession, RawSkill } from "../adapters/base";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
@@ -20,7 +20,7 @@ function askYesNo(message: string, def = true): Promise<boolean> {
 	stdout.write(`${chalk.cyan(message)} ${chalk.gray(hint)} `);
 
 	if (!stdin.isTTY) {
-		stdout.write((def ? "y" : "n") + "\n");
+		stdout.write(`${def ? "y" : "n"}\n`);
 		return Promise.resolve(def);
 	}
 
@@ -44,7 +44,7 @@ function askYesNo(message: string, def = true): Promise<boolean> {
 			}
 			if (key === "\r" || key === "\n") {
 				cleanup();
-				stdout.write((def ? "y" : "n") + "\n");
+				stdout.write(`${def ? "y" : "n"}\n`);
 				resolve(def);
 				return;
 			}
@@ -88,8 +88,7 @@ function runInteractiveSelect<T extends string>(
 		}
 		const lines: string[] = [];
 		lines.push(chalk.cyan(message));
-		for (let i = 0; i < options.length; i++) {
-			const opt = options[i]!;
+		options.forEach((opt, i) => {
 			const active = i === cursor;
 			const selected = initiallySelected.has(opt.value);
 			const pointer = active ? chalk.cyan("▸") : " ";
@@ -102,14 +101,14 @@ function runInteractiveSelect<T extends string>(
 					: chalk.gray("○");
 			const label = opt.value.padEnd(labelWidth);
 			const coloredLabel = active ? chalk.white(label) : chalk.gray(label);
-			const hint = opt.hint ? "  " + chalk.gray(opt.hint) : "";
+			const hint = opt.hint ? `  ${chalk.gray(opt.hint)}` : "";
 			lines.push(`${pointer} ${mark} ${coloredLabel}${hint}`);
-		}
+		});
 		const footer = multi
 			? "↑↓ move · space toggle · enter confirm · ctrl-c cancel"
 			: "↑↓ move · enter confirm · ctrl-c cancel";
 		lines.push(chalk.gray(`  ${footer}`));
-		stdout.write(lines.join("\n") + "\n");
+		stdout.write(`${lines.join("\n")}\n`);
 		linesRendered = lines.length;
 	};
 
@@ -135,17 +134,20 @@ function runInteractiveSelect<T extends string>(
 			if (key === "\r" || key === "\n") {
 				cleanup();
 				if (!multi) {
-					resolve(new Set([options[cursor]!.value]));
+					const opt = options[cursor];
+					resolve(opt ? new Set([opt.value]) : new Set());
 				} else {
 					resolve(initiallySelected);
 				}
 				return;
 			}
 			if (multi && key === " ") {
-				const v = options[cursor]!.value;
-				if (initiallySelected.has(v)) initiallySelected.delete(v);
-				else initiallySelected.add(v);
-				render();
+				const opt = options[cursor];
+				if (opt) {
+					if (initiallySelected.has(opt.value)) initiallySelected.delete(opt.value);
+					else initiallySelected.add(opt.value);
+					render();
+				}
 				return;
 			}
 			if (key === "\x1B[A" || key === "k") {
@@ -194,7 +196,10 @@ function parseModules(
 	available: Array<{ value: string }>,
 ): string[] | null {
 	if (!input) return available.map((o) => o.value);
-	const chosen = input.split(",").map((s) => s.trim()).filter(Boolean);
+	const chosen = input
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
 	const valid = new Set(available.map((o) => o.value));
 	const invalid = chosen.filter((c) => !valid.has(c));
 	if (invalid.length > 0) {
@@ -250,7 +255,10 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 
 	// 2. Prefer registered environments.
 	const registered = listRegisteredAgentTypes().filter((t) => adapterForType(t));
-	if (registered.length === 1) return adapterForType(registered[0]!);
+	if (registered.length === 1) {
+		const first = registered[0];
+		return first ? adapterForType(first) : null;
+	}
 	if (registered.length > 1) {
 		const picked = await askOne<AgentType>(
 			"Multiple agents registered. Select one:",
@@ -270,7 +278,7 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 		await Promise.all(allAdapters.map(async (a) => ((await a.detect()) ? a : null)))
 	).filter((a): a is AgentAdapter => a !== null);
 	if (detected.length === 0) return null;
-	if (detected.length === 1) return detected[0]!;
+	if (detected.length === 1) return detected[0] ?? null;
 	const picked = await askOne<AgentType>(
 		"Multiple agents detected. Select one:",
 		detected.map((a) => ({ value: a.agentType, label: AGENT_LABELS[a.agentType] })),
@@ -286,7 +294,7 @@ function getSyncState(): SyncState {
 
 function saveSyncState(state: SyncState) {
 	const syncPath = join(getClawdiDir(), "sync.json");
-	writeFileSync(syncPath, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+	writeFileSync(syncPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
 }
 
 const UP_MODULES = [
@@ -358,9 +366,7 @@ export async function syncUp(opts: {
 		modules.includes("sessions") &&
 		projectFilter !== undefined
 	) {
-		console.log(
-			chalk.yellow("⚠ Hermes does not support project filtering; syncing all sessions."),
-		);
+		console.log(chalk.yellow("⚠ Hermes does not support project filtering; syncing all sessions."));
 		console.log(chalk.gray("  Use --all to suppress this notice."));
 	}
 
@@ -454,8 +460,9 @@ export async function syncUp(opts: {
 					chalk.green(`  ✓ Uploaded ${uploaded} session content${uploaded === 1 ? "" : "s"}`),
 				);
 			}
-		} catch (e: any) {
-			console.log(chalk.red(`  ✗ Failed: ${e.message}`));
+		} catch (e: unknown) {
+			const message = e instanceof Error ? e.message : String(e);
+			console.log(chalk.red(`  ✗ Failed: ${message}`));
 		}
 		syncState.sessions = { lastSyncedAt: new Date().toISOString() };
 	}
@@ -475,8 +482,9 @@ export async function syncUp(opts: {
 				synced++;
 			}
 			console.log(chalk.green(`  ✓ Synced ${synced} skill${synced === 1 ? "" : "s"}`));
-		} catch (e: any) {
-			console.log(chalk.red(`  ✗ Failed after ${synced} skills: ${e.message}`));
+		} catch (e: unknown) {
+			const message = e instanceof Error ? e.message : String(e);
+			console.log(chalk.red(`  ✗ Failed after ${synced} skills: ${message}`));
 		}
 		syncState.skills = { lastSyncedAt: new Date().toISOString() };
 	}
@@ -580,8 +588,9 @@ export async function syncDown(opts: { modules?: string; dryRun?: boolean; agent
 			const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
 			console.log(chalk.gray(`  ${skill.skill_key} → ${skillDir}/ (${tarBytes.length} bytes)`));
 			pulled++;
-		} catch (e: any) {
-			console.log(chalk.yellow(`  ${skill.skill_key} failed: ${e.message}`));
+		} catch (e: unknown) {
+			const message = e instanceof Error ? e.message : String(e);
+			console.log(chalk.yellow(`  ${skill.skill_key} failed: ${message}`));
 		}
 	}
 	console.log();

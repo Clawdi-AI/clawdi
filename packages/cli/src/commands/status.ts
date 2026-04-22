@@ -1,7 +1,7 @@
-import chalk from "chalk";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
+import chalk from "chalk";
+import { getAuth, getClawdiDir, getConfig } from "../lib/config";
 
 export async function status() {
 	const config = getConfig();
@@ -10,14 +10,14 @@ export async function status() {
 	console.log();
 
 	// Auth
-	if (isLoggedIn()) {
-		const auth = getAuth()!;
+	const auth = getAuth();
+	if (auth) {
 		console.log(chalk.green("  Auth:    ✓ logged in"));
 		console.log(chalk.gray(`  User:    ${auth.email || auth.userId || "unknown"}`));
 		console.log(chalk.gray(`  API:     ${config.apiUrl}`));
 	} else {
 		console.log(chalk.red("  Auth:    ✗ not logged in"));
-		console.log(chalk.gray('  Run `clawdi login` to authenticate.'));
+		console.log(chalk.gray("  Run `clawdi login` to authenticate."));
 	}
 
 	console.log();

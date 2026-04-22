@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, text
@@ -20,7 +20,7 @@ async def get_stats(
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
 ):
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     result = await db.execute(
         select(
@@ -69,32 +69,37 @@ async def get_stats(
     current_streak, longest_streak = await _calc_streaks(db, auth.user_id)
 
     # Module counts
-    skills_count = (await db.execute(
-        select(func.count(Skill.id)).where(Skill.user_id == auth.user_id, Skill.is_active == True)
-    )).scalar() or 0
+    skills_count = (
+        await db.execute(
+            select(func.count(Skill.id)).where(Skill.user_id == auth.user_id, Skill.is_active)
+        )
+    ).scalar() or 0
 
-    memories_count = (await db.execute(
-        select(func.count(Memory.id)).where(Memory.user_id == auth.user_id)
-    )).scalar() or 0
+    memories_count = (
+        await db.execute(select(func.count(Memory.id)).where(Memory.user_id == auth.user_id))
+    ).scalar() or 0
 
-    vault_count = (await db.execute(
-        select(func.count(Vault.id)).where(Vault.user_id == auth.user_id)
-    )).scalar() or 0
+    vault_count = (
+        await db.execute(select(func.count(Vault.id)).where(Vault.user_id == auth.user_id))
+    ).scalar() or 0
 
     vault_keys_count = 0
-    vault_ids = (await db.execute(
-        select(Vault.id).where(Vault.user_id == auth.user_id)
-    )).scalars().all()
+    vault_ids = (
+        (await db.execute(select(Vault.id).where(Vault.user_id == auth.user_id))).scalars().all()
+    )
     if vault_ids:
-        vault_keys_count = (await db.execute(
-            select(func.count(VaultItem.id)).where(VaultItem.vault_id.in_(vault_ids))
-        )).scalar() or 0
+        vault_keys_count = (
+            await db.execute(
+                select(func.count(VaultItem.id)).where(VaultItem.vault_id.in_(vault_ids))
+            )
+        ).scalar() or 0
 
     # Connectors (Composio) — best-effort, don't fail if unavailable
     connectors_count = 0
     try:
-        from app.services.composio import get_connected_accounts
         from app.core.config import settings
+        from app.services.composio import get_connected_accounts
+
         if settings.composio_api_key:
             accounts = await get_connected_accounts(str(auth.user_id))
             connectors_count = len(accounts)
@@ -124,7 +129,7 @@ async def get_contribution_graph(
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
 ):
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     result = await db.execute(
         select(
@@ -143,7 +148,7 @@ async def get_contribution_graph(
 
     contributions = []
     current = since.date()
-    end = datetime.now(timezone.utc).date()
+    end = datetime.now(UTC).date()
     while current <= end:
         count = day_map.get(str(current), 0)
         level = 0
@@ -174,7 +179,7 @@ async def _calc_streaks(db: AsyncSession, user_id) -> tuple[int, int]:
     if not dates:
         return 0, 0
 
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     current_streak = 0
     if dates[0] >= today - timedelta(days=1):
         current_streak = 1

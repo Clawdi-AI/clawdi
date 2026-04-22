@@ -1,9 +1,9 @@
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,9 +30,7 @@ class AuthContext:
         return self.user.id
 
 
-async def _auth_via_api_key(
-    token: str, db: AsyncSession
-) -> AuthContext | None:
+async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if not token.startswith(API_KEY_PREFIX):
         return None
 
@@ -44,11 +42,11 @@ async def _auth_via_api_key(
         return None
     if api_key.revoked_at:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
-    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
 
     # Update last_used_at
-    api_key.last_used_at = datetime.now(timezone.utc)
+    api_key.last_used_at = datetime.now(UTC)
     await db.commit()
 
     result = await db.execute(select(User).where(User.id == api_key.user_id))
@@ -59,11 +57,11 @@ async def _auth_via_api_key(
     return AuthContext(user=user, api_key=api_key)
 
 
-async def _auth_via_clerk_jwt(
-    token: str, db: AsyncSession
-) -> AuthContext | None:
+async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
     if not settings.clerk_pem_public_key:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured"
+        )
 
     try:
         payload = jwt.decode(

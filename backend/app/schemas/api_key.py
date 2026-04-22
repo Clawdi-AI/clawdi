@@ -21,4 +21,5 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeyCreated(ApiKeyResponse):
     """Returned only on creation — includes the raw key (shown once)."""
+
     raw_key: str

@@ -1,5 +1,5 @@
-import chalk from "chalk";
 import { spawn } from "node:child_process";
+import chalk from "chalk";
 import { ApiClient } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
@@ -20,12 +20,13 @@ export async function run(args: string[]) {
 
 	try {
 		vaultEnv = await api.post<Record<string, string>>("/api/vault/resolve");
-	} catch (e: any) {
-		if (e.message.includes("403")) {
+	} catch (e: unknown) {
+		const message = e instanceof Error ? e.message : String(e);
+		if (message.includes("403")) {
 			console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
 			process.exit(1);
 		}
-		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${e.message}`));
+		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${message}`));
 		console.log(chalk.gray("  Running without vault injection."));
 	}
 

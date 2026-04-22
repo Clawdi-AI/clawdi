@@ -11,7 +11,8 @@ export const FEATURED_SKILLS: FeaturedSkill[] = [
 		repo: "anthropics/skills",
 		path: "frontend-design",
 		name: "Frontend Design",
-		description: "Create distinctive, production-grade frontend interfaces that reject generic AI aesthetics",
+		description:
+			"Create distinctive, production-grade frontend interfaces that reject generic AI aesthetics",
 		installs: "300K",
 	},
 	{

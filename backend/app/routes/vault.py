@@ -123,13 +123,15 @@ async def upsert_vault_items(
             item.encrypted_value = ciphertext
             item.nonce = nonce
         else:
-            db.add(VaultItem(
-                vault_id=vault.id,
-                section=body.section,
-                item_name=field_name,
-                encrypted_value=ciphertext,
-                nonce=nonce,
-            ))
+            db.add(
+                VaultItem(
+                    vault_id=vault.id,
+                    section=body.section,
+                    item_name=field_name,
+                    encrypted_value=ciphertext,
+                    nonce=nonce,
+                )
+            )
 
     await db.commit()
     return {"status": "ok", "fields": len(body.fields)}
@@ -168,16 +170,12 @@ async def resolve_vault(
     db: AsyncSession = Depends(get_session),
 ):
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth)."""
-    result = await db.execute(
-        select(Vault).where(Vault.user_id == auth.user_id)
-    )
+    result = await db.execute(select(Vault).where(Vault.user_id == auth.user_id))
     vaults = result.scalars().all()
 
     env: dict[str, str] = {}
     for vault in vaults:
-        items_result = await db.execute(
-            select(VaultItem).where(VaultItem.vault_id == vault.id)
-        )
+        items_result = await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id))
         for item in items_result.scalars().all():
             plaintext = decrypt(item.encrypted_value, item.nonce)
             # Build env var name: SECTION_FIELDNAME (uppercase)
@@ -191,9 +189,7 @@ async def resolve_vault(
 
 
 async def _get_vault(user_id, slug: str, db: AsyncSession) -> Vault:
-    result = await db.execute(
-        select(Vault).where(Vault.user_id == user_id, Vault.slug == slug)
-    )
+    result = await db.execute(select(Vault).where(Vault.user_id == user_id, Vault.slug == slug))
     vault = result.scalar_one_or_none()
     if not vault:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")

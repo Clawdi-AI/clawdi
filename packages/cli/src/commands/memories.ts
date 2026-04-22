@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { ApiClient } from "../lib/api-client";
+import type { MemoryRecord } from "../lib/api-types";
 import { isLoggedIn } from "../lib/config";
 
 function requireAuth() {
@@ -12,7 +13,7 @@ function requireAuth() {
 export async function memoriesList() {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<any[]>("/api/memories");
+	const memories = await api.get<MemoryRecord[]>("/api/memories");
 
 	if (memories.length === 0) {
 		console.log(chalk.gray("No memories stored."));
@@ -31,7 +32,7 @@ export async function memoriesList() {
 export async function memoriesSearch(query: string) {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<any[]>(`/api/memories?q=${encodeURIComponent(query)}`);
+	const memories = await api.get<MemoryRecord[]>(`/api/memories?q=${encodeURIComponent(query)}`);
 
 	if (memories.length === 0) {
 		console.log(chalk.gray(`No memories matching "${query}".`));

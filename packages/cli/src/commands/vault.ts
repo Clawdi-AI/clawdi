@@ -1,6 +1,6 @@
+import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { readFileSync } from "node:fs";
 import { ApiClient } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
@@ -32,7 +32,7 @@ export async function vaultSet(key: string) {
 		// Already exists — fine
 	}
 
-	await api.request("/api/vault/" + vaultSlug + "/items", {
+	await api.request(`/api/vault/${vaultSlug}/items`, {
 		method: "PUT",
 		body: JSON.stringify({ section, fields: { [field]: value } }),
 	});
@@ -83,7 +83,10 @@ export async function vaultImport(file: string) {
 		const key = line.slice(0, eqIdx).trim();
 		let value = line.slice(eqIdx + 1).trim();
 		// Remove surrounding quotes
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+		if (
+			(value.startsWith('"') && value.endsWith('"')) ||
+			(value.startsWith("'") && value.endsWith("'"))
+		) {
 			value = value.slice(1, -1);
 		}
 		fields[key] = value;

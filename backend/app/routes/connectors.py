@@ -83,10 +83,14 @@ async def get_mcp_config(auth: AuthContext = Depends(get_auth)):
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
     token = create_proxy_token(str(auth.user_id))
-    base_url = str(settings.cors_origins[0]).rstrip("/") if settings.cors_origins else "http://localhost:8000"
+    (
+        str(settings.cors_origins[0]).rstrip("/")
+        if settings.cors_origins
+        else "http://localhost:8000"
+    )
 
     return {
-        "mcp_url": f"http://localhost:8000/api/mcp/proxy",
+        "mcp_url": "http://localhost:8000/api/mcp/proxy",
         "mcp_token": token,
     }
 

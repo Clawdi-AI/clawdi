@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +37,7 @@ async def register_environment(
     if env:
         env.machine_name = body.machine_name
         env.agent_version = body.agent_version
-        env.last_seen_at = datetime.now(timezone.utc)
+        env.last_seen_at = datetime.now(UTC)
         await db.commit()
         return {"id": str(env.id)}
 
@@ -48,7 +48,7 @@ async def register_environment(
         agent_type=body.agent_type,
         agent_version=body.agent_version,
         os=body.os,
-        last_seen_at=datetime.now(timezone.utc),
+        last_seen_at=datetime.now(UTC),
     )
     db.add(env)
     await db.commit()

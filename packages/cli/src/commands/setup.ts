@@ -1,16 +1,16 @@
-import chalk from "chalk";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { createInterface } from "node:readline/promises";
-import { writeFileSync, mkdirSync, cpSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { AGENT_TYPES, AGENT_LABELS, type AgentType } from "@clawdi-cloud/shared/consts";
+import { createInterface } from "node:readline/promises";
+import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
+import chalk from "chalk";
+import type { AgentAdapter } from "../adapters/base";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
 import { HermesAdapter } from "../adapters/hermes";
 import { OpenClawAdapter } from "../adapters/openclaw";
-import type { AgentAdapter } from "../adapters/base";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 
@@ -113,13 +113,14 @@ async function registerEnv(
 		mkdirSync(envDir, { recursive: true });
 		writeFileSync(
 			join(envDir, `${agentType}.json`),
-			JSON.stringify({ id: env.id, agentType, machineId, machineName }, null, 2) + "\n",
+			`${JSON.stringify({ id: env.id, agentType, machineId, machineName }, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
 
 		console.log(chalk.green(`✓ ${AGENT_LABELS[agentType]} registered`));
-	} catch (e: any) {
-		console.log(chalk.red(`  Failed to register ${AGENT_LABELS[agentType]}: ${e.message}`));
+	} catch (e: unknown) {
+		const message = e instanceof Error ? e.message : String(e);
+		console.log(chalk.red(`  Failed to register ${AGENT_LABELS[agentType]}: ${message}`));
 	}
 }
 
@@ -168,9 +169,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 		// having to manually delete the old copy.
 		cpSync(sourceDir, targetDir, { recursive: true, force: true });
 		console.log(
-			chalk.green(
-				`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`,
-			),
+			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
 		);
 	} catch {
 		console.log(chalk.yellow("⚠ Could not install Clawdi skill."));
@@ -214,7 +213,9 @@ async function registerMcpServer(agentType: AgentType) {
 		console.log(chalk.green("✓ MCP server registered in Claude Code"));
 	} catch {
 		console.log(chalk.yellow("⚠ Could not auto-register MCP server."));
-		console.log(chalk.gray(`  Run manually: claude mcp add-json clawdi '${mcpConfig}' --scope user`));
+		console.log(
+			chalk.gray(`  Run manually: claude mcp add-json clawdi '${mcpConfig}' --scope user`),
+		);
 	}
 }
 
@@ -264,8 +265,9 @@ async function registerHermesMcp() {
 
 		writeFs(configPath, updated);
 		console.log(chalk.green("✓ MCP server registered in Hermes"));
-	} catch (e: any) {
-		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${e.message}`));
+	} catch (e: unknown) {
+		const message = e instanceof Error ? e.message : String(e);
+		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${message}`));
 		console.log(chalk.gray(`  Edit ${configPath} and add under mcp_servers:`));
 		console.log(chalk.gray(clawdiChild));
 	}
@@ -289,9 +291,7 @@ function registerCodexMcp() {
 		console.log(chalk.green("✓ MCP server registered in Codex"));
 	} catch {
 		console.log(chalk.yellow("⚠ Could not auto-register MCP server in Codex."));
-		console.log(
-			chalk.gray(`  Run manually: codex mcp add clawdi -- bun run ${cliPath} mcp`),
-		);
+		console.log(chalk.gray(`  Run manually: codex mcp add clawdi -- bun run ${cliPath} mcp`));
 	}
 }
 
@@ -300,17 +300,9 @@ function registerOpenClawMcp() {
 	// registration to whatever downstream agent it wraps (typically Claude Code
 	// via --mcp-config). There's no clawdi-safe config file to patch here.
 	console.log(chalk.yellow("⚠ OpenClaw has no native MCP registration point."));
+	console.log(chalk.gray("  If you also run `clawdi setup --agent claude_code` on this machine,"));
+	console.log(chalk.gray("  OpenClaw will inherit the clawdi MCP server through Claude Code."));
 	console.log(
-		chalk.gray(
-			"  If you also run `clawdi setup --agent claude_code` on this machine,",
-		),
-	);
-	console.log(
-		chalk.gray("  OpenClaw will inherit the clawdi MCP server through Claude Code."),
-	);
-	console.log(
-		chalk.gray(
-			"  Otherwise, add the clawdi MCP server to your OpenClaw gateway config manually.",
-		),
+		chalk.gray("  Otherwise, add the clawdi MCP server to your OpenClaw gateway config manually."),
 	);
 }

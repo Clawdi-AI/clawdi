@@ -21,12 +21,21 @@ dependencies = [
     "fastembed>=0.3",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "aiosqlite>=0.20",
+    "ruff>=0.9",
+]
+
 [tool.pdm.scripts]
 dev = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 start = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
 migrate = "alembic upgrade head"
 lint = "ruff check ."
 format = "ruff format ."
+test = "pytest -q"
 
 [tool.ruff]
 target-version = "py312"
@@ -34,3 +43,12 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = [
+    # asyncpg emits these on some platforms — harmless.
+    "ignore::DeprecationWarning:asyncpg",
+]

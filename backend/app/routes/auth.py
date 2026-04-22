@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from datetime import UTC
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -57,9 +58,7 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(
-        select(ApiKey)
-        .where(ApiKey.user_id == auth.user_id)
-        .order_by(ApiKey.created_at.desc())
+        select(ApiKey).where(ApiKey.user_id == auth.user_id).order_by(ApiKey.created_at.desc())
     )
     keys = result.scalars().all()
     return [
@@ -82,7 +81,7 @@ async def revoke_api_key(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == auth.user_id)
@@ -91,7 +90,7 @@ async def revoke_api_key(
     if not api_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
 
-    api_key.revoked_at = datetime.now(timezone.utc)
+    api_key.revoked_at = datetime.now(UTC)
     await db.commit()
     return {"status": "revoked"}
 

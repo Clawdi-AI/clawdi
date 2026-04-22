@@ -39,7 +39,11 @@ async def mcp_proxy_post(request: Request):
         elif method == "tools/call":
             result = await _handle_tools_call(user_id, params)
         else:
-            return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
+            return {
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "error": {"code": -32601, "message": f"Unknown method: {method}"},
+            }
 
         return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
     except Exception as e:
@@ -75,6 +79,7 @@ async def _handle_tools_call(user_id: str, params: dict) -> dict:
 
         # Resolve the Action enum and find matching connected account
         from composio.client import Action
+
         action = Action(tool_name)
         action_data = action.load()
         app_name = action_data.app
@@ -86,7 +91,9 @@ async def _handle_tools_call(user_id: str, params: dict) -> dict:
                 break
 
         if not connected_account_id and not action_data.no_auth:
-            raise ValueError(f"No connected account for {app_name}. Connect it in the dashboard first.")
+            raise ValueError(
+                f"No connected account for {app_name}. Connect it in the dashboard first."
+            )
 
         result = client.actions.execute(
             action=action,

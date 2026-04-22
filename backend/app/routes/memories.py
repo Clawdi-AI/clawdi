@@ -52,8 +52,11 @@ async def create_memory(
 ):
     provider = await get_memory_provider(str(auth.user_id), db)
     return await provider.add(
-        str(auth.user_id), body.content,
-        category=body.category, source=body.source, tags=body.tags,
+        str(auth.user_id),
+        body.content,
+        category=body.category,
+        source=body.source,
+        tags=body.tags,
     )
 
 
@@ -67,8 +70,11 @@ async def batch_create_memories(
     synced = 0
     for m in body.memories:
         await provider.add(
-            str(auth.user_id), m.content,
-            category=m.category, source=m.source, tags=m.tags,
+            str(auth.user_id),
+            m.content,
+            category=m.category,
+            source=m.source,
+            tags=m.tags,
         )
         synced += 1
     return {"synced": synced}
@@ -105,7 +111,10 @@ async def embed_backfill(
     if embedder is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No embedding provider available. Check MEMORY_EMBEDDING_MODE and related env vars on the backend.",
+            detail=(
+                "No embedding provider available. "
+                "Check MEMORY_EMBEDDING_MODE and related env vars on the backend."
+            ),
         )
 
     # Snapshot the IDs of rows we intend to process. Iterating via offset
@@ -124,10 +133,8 @@ async def embed_backfill(
     processed = 0
     failed = 0
     for i in range(0, len(target_ids), batch_size):
-        chunk_ids = target_ids[i:i + batch_size]
-        chunk = (
-            await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))
-        ).scalars().all()
+        chunk_ids = target_ids[i : i + batch_size]
+        chunk = (await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))).scalars().all()
         for mem in chunk:
             try:
                 vec = await embedder.embed(mem.content)

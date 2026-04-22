@@ -19,9 +19,7 @@ async def get_settings(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
-    result = await db.execute(
-        select(UserSetting).where(UserSetting.user_id == auth.user_id)
-    )
+    result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
     setting = result.scalar_one_or_none()
 
     data = setting.settings if setting else {}
@@ -39,9 +37,7 @@ async def update_settings(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ):
-    result = await db.execute(
-        select(UserSetting).where(UserSetting.user_id == auth.user_id)
-    )
+    result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
     setting = result.scalar_one_or_none()
 
     if setting:

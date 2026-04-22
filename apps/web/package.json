@@ -1,44 +1,49 @@
 {
-  "name": "web",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "@clawdi-cloud/shared": "workspace:*",
-    "@clerk/nextjs": "^7.2.1",
-    "@clerk/themes": "^2.4.57",
-    "@tanstack/react-query": "^5.99.0",
-    "clsx": "^2.1.1",
-    "lucide-react": "^1.8.0",
-    "next": "16.2.4",
-    "next-themes": "^0.4.6",
-    "radix-ui": "^1.4.3",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "react-markdown": "^10.1.0",
-    "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.5.0",
-    "tw-animate-css": "^1.4.0"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "tailwindcss": "^4",
-    "typescript": "^5"
-  },
-  "ignoreScripts": [
-    "sharp",
-    "unrs-resolver"
-  ],
-  "trustedDependencies": [
-    "sharp",
-    "unrs-resolver"
-  ]
+	"name": "web",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"start": "next start",
+		"typecheck": "next typegen && tsc --noEmit --incremental false",
+		"lint": "biome ci --linter-enabled=true --formatter-enabled=false src",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@clawdi-cloud/shared": "workspace:*",
+		"@clerk/nextjs": "^7.2.1",
+		"@clerk/themes": "^2.4.57",
+		"@tanstack/react-query": "catalog:",
+		"class-variance-authority": "^0.7.1",
+		"clsx": "catalog:",
+		"lucide-react": "catalog:",
+		"next": "catalog:",
+		"next-themes": "catalog:",
+		"radix-ui": "^1.4.3",
+		"react": "catalog:",
+		"react-dom": "catalog:",
+		"react-markdown": "^10.1.0",
+		"remark-breaks": "^4.0.0",
+		"remark-gfm": "^4.0.1",
+		"tailwind-merge": "catalog:",
+		"tw-animate-css": "^1.4.0"
+	},
+	"devDependencies": {
+		"@tailwindcss/postcss": "catalog:",
+		"@types/bun": "^1.3.13",
+		"@types/node": "^22.0.0",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"tailwindcss": "catalog:",
+		"typescript": "catalog:"
+	},
+	"ignoreScripts": [
+		"sharp",
+		"unrs-resolver"
+	],
+	"trustedDependencies": [
+		"sharp",
+		"unrs-resolver"
+	]
 }

@@ -19,10 +19,7 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 /**
  * Create a tar.gz buffer wrapping a single file as {key}/SKILL.md.
  */
-export async function tarSingleFile(
-	skillKey: string,
-	content: string,
-): Promise<Buffer> {
+export async function tarSingleFile(skillKey: string, content: string): Promise<Buffer> {
 	const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");
 	const { tmpdir } = await import("node:os");
 	const { join } = await import("node:path");

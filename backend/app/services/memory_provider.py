@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy import select, text
@@ -18,14 +18,22 @@ log = logging.getLogger(__name__)
 
 
 class MemoryProvider(Protocol):
-    async def add(self, user_id: str, content: str, category: str = "fact",
-                  source: str = "manual", tags: list[str] | None = None) -> dict: ...
+    async def add(
+        self,
+        user_id: str,
+        content: str,
+        category: str = "fact",
+        source: str = "manual",
+        tags: list[str] | None = None,
+    ) -> dict: ...
 
-    async def search(self, user_id: str, query: str, limit: int = 50,
-                     category: str | None = None) -> list[dict]: ...
+    async def search(
+        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+    ) -> list[dict]: ...
 
-    async def list_all(self, user_id: str, limit: int = 50, offset: int = 0,
-                       category: str | None = None) -> list[dict]: ...
+    async def list_all(
+        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+    ) -> list[dict]: ...
 
     async def delete(self, user_id: str, memory_id: str) -> None: ...
 
@@ -42,8 +50,14 @@ class BuiltinProvider:
         self.db = db
         self.embedder = embedder
 
-    async def add(self, user_id: str, content: str, category: str = "fact",
-                  source: str = "manual", tags: list[str] | None = None) -> dict:
+    async def add(
+        self,
+        user_id: str,
+        content: str,
+        category: str = "fact",
+        source: str = "manual",
+        tags: list[str] | None = None,
+    ) -> dict:
         vec: list[float] | None = None
         if self.embedder is not None:
             try:
@@ -67,8 +81,9 @@ class BuiltinProvider:
         await self.db.refresh(memory)
         return {"id": str(memory.id)}
 
-    async def search(self, user_id: str, query: str, limit: int = 50,
-                     category: str | None = None) -> list[dict]:
+    async def search(
+        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+    ) -> list[dict]:
         fts_rows = await self._search_fts(user_id, query, limit, category)
         if self.embedder is None:
             return [_strip_scores(r) for r in fts_rows]
@@ -82,15 +97,19 @@ class BuiltinProvider:
         merged = _merge_hybrid(vec_rows, fts_rows, limit)
         return [_strip_scores(r) for r in merged]
 
-    async def _search_fts(self, user_id: str, query: str, limit: int,
-                          category: str | None) -> list[dict]:
+    async def _search_fts(
+        self, user_id: str, query: str, limit: int, category: str | None
+    ) -> list[dict]:
         """FTS + trigram hybrid with strict/relaxed score floor.
 
         Internal rows keep `combined_score` for downstream merge.
         """
         params = {
-            "uid": uuid.UUID(user_id), "q": query,
-            "pattern": f"%{query}%", "cat": category, "lim": limit,
+            "uid": uuid.UUID(user_id),
+            "q": query,
+            "pattern": f"%{query}%",
+            "cat": category,
+            "lim": limit,
         }
         sql = text("""
             WITH candidates AS (
@@ -131,11 +150,12 @@ class BuiltinProvider:
     # temporal-decay ranking in _merge_hybrid put noise at the bottom
     # when legitimate matches also exist, so the relaxed pass doesn't
     # pollute common cases.
-    VECTOR_DISTANCE_STRICT = 0.70   # sim ≥ 0.30 — high-confidence matches
+    VECTOR_DISTANCE_STRICT = 0.70  # sim ≥ 0.30 — high-confidence matches
     VECTOR_DISTANCE_RELAXED = 0.80  # sim ≥ 0.20 — fallback when strict empty
 
-    async def _search_vector(self, user_id: str, query: str, limit: int,
-                             category: str | None) -> list[dict]:
+    async def _search_vector(
+        self, user_id: str, query: str, limit: int, category: str | None
+    ) -> list[dict]:
         """pgvector cosine-distance nearest neighbors among rows with embeddings.
 
         Strict threshold first; if empty, retry with a relaxed threshold
@@ -144,11 +164,19 @@ class BuiltinProvider:
         """
         q_vec = await self.embedder.embed(query)
         rows = await self._run_vector_search(
-            user_id, q_vec, limit, category, self.VECTOR_DISTANCE_STRICT,
+            user_id,
+            q_vec,
+            limit,
+            category,
+            self.VECTOR_DISTANCE_STRICT,
         )
         if not rows:
             rows = await self._run_vector_search(
-                user_id, q_vec, limit, category, self.VECTOR_DISTANCE_RELAXED,
+                user_id,
+                q_vec,
+                limit,
+                category,
+                self.VECTOR_DISTANCE_RELAXED,
             )
         out: list[dict] = []
         for mem, dist in rows:
@@ -182,8 +210,9 @@ class BuiltinProvider:
             stmt = stmt.where(Memory.category == category)
         return (await self.db.execute(stmt)).all()
 
-    async def list_all(self, user_id: str, limit: int = 50, offset: int = 0,
-                       category: str | None = None) -> list[dict]:
+    async def list_all(
+        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+    ) -> list[dict]:
         q = select(Memory).where(Memory.user_id == uuid.UUID(user_id))
         if category:
             q = q.where(Memory.category == category)
@@ -209,10 +238,17 @@ class Mem0Provider:
 
     def __init__(self, api_key: str):
         from mem0 import MemoryClient
+
         self.client = MemoryClient(api_key=api_key)
 
-    async def add(self, user_id: str, content: str, category: str = "fact",
-                  source: str = "manual", tags: list[str] | None = None) -> dict:
+    async def add(
+        self,
+        user_id: str,
+        content: str,
+        category: str = "fact",
+        source: str = "manual",
+        tags: list[str] | None = None,
+    ) -> dict:
         result = self.client.add(
             [{"role": "user", "content": content}],
             user_id=user_id,
@@ -221,8 +257,9 @@ class Mem0Provider:
         mem_id = result[0]["id"] if result else str(uuid.uuid4())
         return {"id": mem_id}
 
-    async def search(self, user_id: str, query: str, limit: int = 50,
-                     category: str | None = None) -> list[dict]:
+    async def search(
+        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+    ) -> list[dict]:
         results = self.client.search(query, user_id=user_id, limit=limit)
         items = results.get("results", results) if isinstance(results, dict) else results
         out = []
@@ -232,18 +269,21 @@ class Mem0Provider:
             meta = r.get("metadata", {}) or {}
             if category and meta.get("category") != category:
                 continue
-            out.append({
-                "id": r.get("id", ""),
-                "content": r.get("memory", ""),
-                "category": meta.get("category", "fact"),
-                "source": "mem0",
-                "tags": meta.get("tags"),
-                "created_at": r.get("created_at", ""),
-            })
+            out.append(
+                {
+                    "id": r.get("id", ""),
+                    "content": r.get("memory", ""),
+                    "category": meta.get("category", "fact"),
+                    "source": "mem0",
+                    "tags": meta.get("tags"),
+                    "created_at": r.get("created_at", ""),
+                }
+            )
         return out
 
-    async def list_all(self, user_id: str, limit: int = 50, offset: int = 0,
-                       category: str | None = None) -> list[dict]:
+    async def list_all(
+        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+    ) -> list[dict]:
         results = self.client.get_all(user_id=user_id)
         items = results if isinstance(results, list) else results.get("results", [])
         if category:
@@ -257,7 +297,7 @@ class Mem0Provider:
                 "tags": r.get("metadata", {}).get("tags"),
                 "created_at": r.get("created_at", ""),
             }
-            for r in items[offset:offset + limit]
+            for r in items[offset : offset + limit]
         ]
 
     async def delete(self, user_id: str, memory_id: str) -> None:
@@ -340,7 +380,7 @@ def _apply_temporal_decay(
 
     OpenClaw's `temporal-decay.ts` formula: e^(-ln(2)/halflife * age).
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for rid, r in rows_by_id.items():
         created_at = _parse_iso_ts(r.get("created_at"))
         if created_at is None:
@@ -402,10 +442,7 @@ def _merge_hybrid(
 
     scores: dict = {}
     for rid in by_id:
-        scores[rid] = (
-            vector_weight * vec_norm.get(rid, 0.0)
-            + text_weight * fts_norm.get(rid, 0.0)
-        )
+        scores[rid] = vector_weight * vec_norm.get(rid, 0.0) + text_weight * fts_norm.get(rid, 0.0)
 
     _apply_temporal_decay(scores, by_id)
 
@@ -426,18 +463,14 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     """
     from app.models.user import UserSetting
 
-    result = await db.execute(
-        select(UserSetting).where(UserSetting.user_id == uuid.UUID(user_id))
-    )
+    result = await db.execute(select(UserSetting).where(UserSetting.user_id == uuid.UUID(user_id)))
     setting = result.scalar_one_or_none()
     s = (setting.settings if setting else {}) or {}
 
     if s.get("memory_provider") == "mem0":
         api_key = s.get("mem0_api_key", "")
         if not api_key:
-            log.warning(
-                "memory_provider=mem0 but mem0_api_key missing; falling back to builtin."
-            )
+            log.warning("memory_provider=mem0 but mem0_api_key missing; falling back to builtin.")
             return BuiltinProvider(db, embedder=resolve_embedder())
         return Mem0Provider(api_key=api_key)
 
