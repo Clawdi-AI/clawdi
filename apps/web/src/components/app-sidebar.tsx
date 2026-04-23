@@ -28,6 +28,8 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
 	DropdownMenuSeparator,
 	DropdownMenuSub,
 	DropdownMenuSubContent,
@@ -187,18 +189,20 @@ export function AppSidebar() {
 											Theme
 										</DropdownMenuSubTrigger>
 										<DropdownMenuSubContent>
-											<DropdownMenuItem onClick={() => setTheme("light")}>
-												<Sun />
-												Light
-											</DropdownMenuItem>
-											<DropdownMenuItem onClick={() => setTheme("dark")}>
-												<Moon />
-												Dark
-											</DropdownMenuItem>
-											<DropdownMenuItem onClick={() => setTheme("system")}>
-												<Monitor />
-												System
-											</DropdownMenuItem>
+											<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+												<DropdownMenuRadioItem value="light">
+													<Sun />
+													Light
+												</DropdownMenuRadioItem>
+												<DropdownMenuRadioItem value="dark">
+													<Moon />
+													Dark
+												</DropdownMenuRadioItem>
+												<DropdownMenuRadioItem value="system">
+													<Monitor />
+													System
+												</DropdownMenuRadioItem>
+											</DropdownMenuRadioGroup>
 										</DropdownMenuSubContent>
 									</DropdownMenuSub>
 									<DropdownMenuSeparator />
