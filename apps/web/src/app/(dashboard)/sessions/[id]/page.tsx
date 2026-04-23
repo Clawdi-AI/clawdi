@@ -3,7 +3,6 @@
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import {
-	ArrowLeft,
 	ChevronRight,
 	Clock,
 	Hash,
@@ -13,35 +12,24 @@ import {
 	Zap,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch, apiUrl } from "@/lib/api";
+import type { SessionDetail } from "@/lib/api-schemas";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
+// Parsed shape of a single message inside the content JSONL file — not part
+// of the backend API schema, so we keep this local.
 interface SessionMessage {
 	role: "user" | "assistant";
 	content: string;
 	model?: string;
 	timestamp?: string;
-}
-
-// Shape returned by the FastAPI /api/sessions/{id} endpoint — snake_case.
-interface SessionDetail {
-	id: string;
-	local_session_id: string;
-	summary: string | null;
-	agent_type: string | null;
-	project_path: string | null;
-	model: string | null;
-	message_count: number;
-	input_tokens: number | null;
-	output_tokens: number | null;
-	started_at: string;
-	duration_seconds: number | null;
-	has_content: boolean;
 }
 
 function formatDuration(seconds: number | null): string {
@@ -88,8 +76,7 @@ export default function SessionDetailPage() {
 
 	if (isSessionLoading) {
 		return (
-			<div className="mx-auto max-w-5xl space-y-5 px-4 py-4 md:px-6 md:py-6">
-				<BackLink />
+			<div className="space-y-5">
 				<DetailSkeleton />
 			</div>
 		);
@@ -97,8 +84,7 @@ export default function SessionDetailPage() {
 
 	if (!session) {
 		return (
-			<div className="mx-auto max-w-5xl space-y-5 px-4 py-4 md:px-6 md:py-6">
-				<BackLink />
+			<div className="space-y-5">
 				<p className="text-muted-foreground">Session not found.</p>
 			</div>
 		);
@@ -107,9 +93,7 @@ export default function SessionDetailPage() {
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 
 	return (
-		<div className="mx-auto max-w-5xl space-y-5 px-4 py-4 md:px-6 md:py-6">
-			<BackLink />
-
+		<div className="space-y-5">
 			{/* Header */}
 			<div>
 				<h1 className="text-lg font-semibold tracking-tight">
@@ -123,18 +107,18 @@ export default function SessionDetailPage() {
 			{/* Stats bar */}
 			<div className="flex flex-wrap items-center gap-3">
 				{session.agent_type && (
-					<span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+					<Badge variant="secondary">
 						{session.agent_type === "claude_code"
 							? "Claude Code"
 							: session.agent_type === "hermes"
 								? "Hermes"
 								: session.agent_type}
-					</span>
+					</Badge>
 				)}
 				{session.model && (
-					<span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+					<Badge variant="outline" className="border-primary/30 text-primary">
 						{session.model.replace("claude-", "")}
-					</span>
+					</Badge>
 				)}
 				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
 				<Stat icon={Zap} label={`${formatTokens(totalTokens)} tokens`} />
@@ -145,7 +129,7 @@ export default function SessionDetailPage() {
 			</div>
 
 			{/* Divider */}
-			<div className="h-px bg-border" />
+			<Separator />
 
 			{/* Messages */}
 			{session.has_content ? (
@@ -188,18 +172,6 @@ export default function SessionDetailPage() {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-function BackLink() {
-	return (
-		<Link
-			href="/sessions"
-			className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-		>
-			<ArrowLeft className="size-4" />
-			Sessions
-		</Link>
-	);
-}
 
 function Stat({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
 	return (
@@ -327,17 +299,18 @@ function CollapsibleBlock({ label, content }: { label: string; content: string }
 	const [open, setOpen] = useState(false);
 	return (
 		<div className="rounded-md border border-dashed border-border/70 bg-muted/20">
-			<button
-				type="button"
+			<Button
+				variant="ghost"
+				size="sm"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+				className="h-auto w-full justify-start rounded-md px-2.5 py-1.5 text-xs font-normal text-muted-foreground hover:text-foreground"
 			>
 				<ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
 				<span>{label}</span>
 				{!open && (
 					<span className="text-[10px] opacity-60">({content.length.toLocaleString()} chars)</span>
 				)}
-			</button>
+			</Button>
 			{open && (
 				<div className="border-t border-border/50 px-3 py-2">
 					<Markdown content={content} />
@@ -357,7 +330,7 @@ function DetailSkeleton() {
 				<Skeleton className="h-4 w-24" />
 				<Skeleton className="h-4 w-20" />
 			</div>
-			<div className="h-px bg-border" />
+			<Separator />
 			<MessagesSkeleton />
 		</div>
 	);

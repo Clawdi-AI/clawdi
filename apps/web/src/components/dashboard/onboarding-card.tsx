@@ -2,6 +2,7 @@
 
 import { Check, Copy, Rocket, Terminal } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 function getAgentPrompt() {
@@ -46,16 +47,14 @@ function useCopy(duration = 2000) {
 function CopyButton({ text, className }: { text: string; className?: string }) {
 	const { copied, copy } = useCopy();
 	return (
-		<button
-			type="button"
+		<Button
+			variant="ghost"
+			size="icon-xs"
 			onClick={() => copy(text)}
-			className={cn(
-				"p-1 text-muted-foreground hover:text-foreground rounded transition-colors",
-				className,
-			)}
+			className={cn("text-muted-foreground hover:text-foreground", className)}
 		>
 			{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-		</button>
+		</Button>
 	);
 }
 
@@ -77,11 +76,11 @@ export function OnboardingCard() {
 
 			{/* Tabs */}
 			<div className="flex border-b px-6">
-				<button
-					type="button"
+				<Button
+					variant="ghost"
 					onClick={() => setTab("agent")}
 					className={cn(
-						"flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+						"h-auto gap-1.5 rounded-none border-b-2 px-4 py-2 text-sm font-medium -mb-px hover:bg-transparent",
 						tab === "agent"
 							? "border-primary text-foreground"
 							: "border-transparent text-muted-foreground hover:text-foreground",
@@ -89,12 +88,12 @@ export function OnboardingCard() {
 				>
 					<Rocket className="size-3.5" />
 					Send to Agent
-				</button>
-				<button
-					type="button"
+				</Button>
+				<Button
+					variant="ghost"
 					onClick={() => setTab("cli")}
 					className={cn(
-						"flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+						"h-auto gap-1.5 rounded-none border-b-2 px-4 py-2 text-sm font-medium -mb-px hover:bg-transparent",
 						tab === "cli"
 							? "border-primary text-foreground"
 							: "border-transparent text-muted-foreground hover:text-foreground",
@@ -102,7 +101,7 @@ export function OnboardingCard() {
 				>
 					<Terminal className="size-3.5" />
 					Manual Setup
-				</button>
+				</Button>
 			</div>
 
 			{/* Content */}
@@ -124,12 +123,14 @@ function AgentTab() {
 			{/* Prompt box */}
 			<div className="relative rounded-lg border bg-muted/30 p-4">
 				<pre className="text-sm whitespace-pre-wrap pr-8 font-mono">{prompt}</pre>
-				<button
-					type="button"
+				<Button
+					variant="outline"
+					size="xs"
 					onClick={() => copy(prompt)}
 					className={cn(
-						"absolute top-3 right-3 inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-						copied ? "bg-green-500/10 text-green-600" : "bg-background border hover:bg-muted",
+						"absolute top-3 right-3",
+						copied &&
+							"border-transparent bg-green-500/10 text-green-600 hover:bg-green-500/10 hover:text-green-600",
 					)}
 				>
 					{copied ? (
@@ -141,7 +142,7 @@ function AgentTab() {
 							<Copy className="size-3" /> Copy
 						</>
 					)}
-				</button>
+				</Button>
 			</div>
 
 			{/* Steps */}

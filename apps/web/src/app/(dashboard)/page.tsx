@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ContributionDay, DashboardStats, SessionListItem } from "@/lib/api-schemas";
@@ -54,7 +55,10 @@ export default function DashboardPage() {
 
 	return (
 		<div className="space-y-6">
-			<h1 className="text-2xl font-bold">Overview</h1>
+			<PageHeader
+				title="Overview"
+				description="Your agents at a glance — activity, usage, and recent sessions."
+			/>
 
 			{/* Onboarding for new users */}
 			{!statsLoading && isNewUser && <OnboardingCard />}

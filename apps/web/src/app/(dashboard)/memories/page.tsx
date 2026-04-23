@@ -4,7 +4,10 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { useDeferredValue, useState } from "react";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
 	Select,
@@ -98,27 +101,24 @@ export default function MemoriesPage() {
 
 	return (
 		<div className="space-y-5">
-			{/* Header */}
-			<div className="flex items-start justify-between">
-				<div>
-					<h1 className="text-2xl font-bold">Memories</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Cross-agent recall. Memories are searchable from any agent via MCP.
-					</p>
-				</div>
-				<div className="flex items-center gap-2">
-					{memories && (
-						<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-							{memories.length} memor{memories.length === 1 ? "y" : "ies"}
-						</span>
-					)}
-					<ProviderSwitch
-						provider={provider}
-						onSwitch={(p) => updateSettings.mutate({ memory_provider: p })}
-						isPending={updateSettings.isPending}
-					/>
-				</div>
-			</div>
+			<PageHeader
+				title="Memories"
+				description="Cross-agent recall. Memories are searchable from any agent via MCP."
+				actions={
+					<>
+						{memories && (
+							<Badge variant="secondary">
+								{memories.length} memor{memories.length === 1 ? "y" : "ies"}
+							</Badge>
+						)}
+						<ProviderSwitch
+							provider={provider}
+							onSwitch={(p) => updateSettings.mutate({ memory_provider: p })}
+							isPending={updateSettings.isPending}
+						/>
+					</>
+				}
+			/>
 
 			{/* Mem0 API Key config */}
 			{provider === "mem0" && !hasMem0Key && (
@@ -289,31 +289,39 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 	const [apiKey, setApiKey] = useState("");
 
 	return (
-		<div className="rounded-lg border bg-card p-4">
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-				<Key className="size-3.5" />
-				Mem0 Configuration
-			</h3>
-			<p className="text-xs text-muted-foreground mb-3">
-				Enter your Mem0 API key to use semantic memory search.
-			</p>
-			<div className="flex gap-2">
-				<Input
-					type="password"
-					value={apiKey}
-					onChange={(e) => setApiKey(e.target.value)}
-					placeholder="m0-..."
-					className="flex-1 h-8 text-xs font-mono"
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && apiKey) onSave(apiKey);
-					}}
-				/>
-				<Button size="sm" onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
-					{isPending ? <Loader2 className="size-3 animate-spin" /> : <Key className="size-3" />}
-					Save
-				</Button>
-			</div>
-		</div>
+		<Card className="gap-2 py-4">
+			<CardHeader className="px-4">
+				<CardTitle className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					<Key className="size-3.5" />
+					Mem0 Configuration
+				</CardTitle>
+			</CardHeader>
+			<CardContent className="px-4">
+				<p className="text-xs text-muted-foreground mb-3">
+					Enter your Mem0 API key to use semantic memory search.
+				</p>
+				<div className="flex gap-2">
+					<Input
+						type="password"
+						value={apiKey}
+						onChange={(e) => setApiKey(e.target.value)}
+						placeholder="m0-..."
+						className="flex-1 h-8 text-xs font-mono"
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && apiKey) onSave(apiKey);
+						}}
+					/>
+					<Button
+						size="sm"
+						onClick={() => apiKey && onSave(apiKey)}
+						disabled={!apiKey || isPending}
+					>
+						{isPending ? <Loader2 className="size-3 animate-spin" /> : <Key className="size-3" />}
+						Save
+					</Button>
+				</div>
+			</CardContent>
+		</Card>
 	);
 }
 

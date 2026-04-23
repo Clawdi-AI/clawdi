@@ -6,24 +6,15 @@ import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import type { ConnectorApp, ConnectorConnection } from "@/lib/api-schemas";
 
 const PAGE_SIZE = 30;
-
-// API response shapes.
-interface ConnectionSummary {
-	id: string;
-	app_name: string;
-	status?: string;
-}
-
-interface AvailableApp {
-	name: string;
-	display_name: string;
-	description?: string;
-	logo?: string;
-}
 
 function ConnectorCardSkeleton() {
 	return (
@@ -48,7 +39,7 @@ export default function ConnectorsPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectionSummary[]>("/api/connectors", token);
+			return apiFetch<ConnectorConnection[]>("/api/connectors", token);
 		},
 	});
 
@@ -57,7 +48,7 @@ export default function ConnectorsPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<AvailableApp[]>("/api/connectors/available", token);
+			return apiFetch<ConnectorApp[]>("/api/connectors/available", token);
 		},
 	});
 
@@ -73,9 +64,9 @@ export default function ConnectorsPage() {
 			const q = deferredQuery.toLowerCase();
 			items = items.filter(
 				(a) =>
-					a.name?.toLowerCase().includes(q) ||
-					a.display_name?.toLowerCase().includes(q) ||
-					a.description?.toLowerCase().includes(q),
+					a.name.toLowerCase().includes(q) ||
+					a.display_name.toLowerCase().includes(q) ||
+					a.description.toLowerCase().includes(q),
 			);
 		}
 		items.sort((a, b) => {
@@ -94,46 +85,36 @@ export default function ConnectorsPage() {
 
 	return (
 		<div className="space-y-5">
-			{/* Header */}
-			<div className="flex items-start justify-between">
-				<div>
-					<h1 className="text-2xl font-bold">Connectors</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Connect apps and enable capabilities for your AI agent.
-					</p>
-				</div>
-				<div className="flex items-center gap-2">
-					{availableApps && (
-						<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-							{availableApps.length} available
-						</span>
-					)}
-					{connections && connections.length > 0 && (
-						<span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-							{connections.length} active
-						</span>
-					)}
-				</div>
-			</div>
+			<PageHeader
+				title="Connectors"
+				description="Connect apps and enable capabilities for your AI agent."
+				actions={
+					<>
+						{availableApps && <Badge variant="secondary">{availableApps.length} available</Badge>}
+						{connections && connections.length > 0 && <Badge>{connections.length} active</Badge>}
+					</>
+				}
+			/>
 
 			{/* Search */}
 			<div className="relative">
-				<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-				<input
+				<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground z-10" />
+				<Input
 					type="text"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}
 					placeholder="Search connectors..."
-					className="w-full border border-input bg-background rounded-xl pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+					className="rounded-xl pl-9 pr-9"
 				/>
 				{query && (
-					<button
-						type="button"
+					<Button
+						variant="ghost"
+						size="icon-sm"
 						onClick={() => setQuery("")}
-						className="absolute right-2 top-1/2 -translate-y-1/2 size-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+						className="absolute right-1 top-1/2 -translate-y-1/2"
 					>
 						<X className="size-4" />
-					</button>
+					</Button>
 				)}
 			</div>
 
@@ -190,25 +171,27 @@ export default function ConnectorsPage() {
 								{filtered.length}
 							</span>
 							<div className="flex items-center gap-1">
-								<button
-									type="button"
+								<Button
+									variant="outline"
+									size="icon-sm"
 									onClick={() => setPage((p) => Math.max(0, p - 1))}
 									disabled={page === 0}
-									className="size-8 flex items-center justify-center rounded-lg border text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+									className="text-muted-foreground"
 								>
 									<ChevronLeft className="size-4" />
-								</button>
+								</Button>
 								<span className="px-3 text-xs text-muted-foreground">
 									{page + 1} / {totalPages}
 								</span>
-								<button
-									type="button"
+								<Button
+									variant="outline"
+									size="icon-sm"
 									onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
 									disabled={page >= totalPages - 1}
-									className="size-8 flex items-center justify-center rounded-lg border text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+									className="text-muted-foreground"
 								>
 									<ChevronRight className="size-4" />
-								</button>
+								</Button>
 							</div>
 						</div>
 					)}

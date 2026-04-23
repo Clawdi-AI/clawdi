@@ -4,6 +4,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { Zap } from "lucide-react";
 import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -23,19 +25,17 @@ export default function SessionsPage() {
 
 	return (
 		<div className="space-y-5">
-			<div className="flex items-start justify-between">
-				<div>
-					<h1 className="text-2xl font-bold">Sessions</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Agent conversation history synced from your machines.
-					</p>
-				</div>
-				{sessions && (
-					<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-						{sessions.length} session{sessions.length === 1 ? "" : "s"}
-					</span>
-				)}
-			</div>
+			<PageHeader
+				title="Sessions"
+				description="Agent conversation history synced from your machines."
+				actions={
+					sessions ? (
+						<Badge variant="secondary">
+							{sessions.length} session{sessions.length === 1 ? "" : "s"}
+						</Badge>
+					) : null
+				}
+			/>
 
 			{isLoading ? (
 				<div className="rounded-lg border">

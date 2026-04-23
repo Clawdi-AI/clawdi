@@ -4,6 +4,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Key, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,22 +53,17 @@ export default function VaultPage() {
 
 	return (
 		<div className="space-y-5">
-			{/* Header */}
-			<div className="flex items-start justify-between">
-				<div>
-					<h1 className="text-2xl font-bold">Vault</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Encrypted secrets synced to your agents via{" "}
-						<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi run</code>. Values are
-						AES-256-GCM encrypted at rest.
-					</p>
-				</div>
-				{vaults && (
-					<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-						{vaults.length} vault{vaults.length === 1 ? "" : "s"}
-					</span>
-				)}
-			</div>
+			<PageHeader
+				title="Vault"
+				description="Encrypted secrets synced to your agents via `clawdi run`. Values are AES-256-GCM encrypted at rest."
+				actions={
+					vaults ? (
+						<Badge variant="secondary">
+							{vaults.length} vault{vaults.length === 1 ? "" : "s"}
+						</Badge>
+					) : null
+				}
+			/>
 
 			{/* Create vault */}
 			<div className="flex gap-2">

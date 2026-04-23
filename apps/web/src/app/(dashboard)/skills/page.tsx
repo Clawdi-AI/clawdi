@@ -14,6 +14,8 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,20 +81,17 @@ export default function SkillsPage() {
 
 	return (
 		<div className="space-y-6">
-			{/* Header */}
-			<div className="flex items-start justify-between">
-				<div>
-					<h1 className="text-2xl font-bold">Skills</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Portable agent instructions synced across machines.
-					</p>
-				</div>
-				{skills && (
-					<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-						{skills.length} skill{skills.length === 1 ? "" : "s"}
-					</span>
-				)}
-			</div>
+			<PageHeader
+				title="Skills"
+				description="Portable agent instructions synced across machines."
+				actions={
+					skills ? (
+						<Badge variant="secondary">
+							{skills.length} skill{skills.length === 1 ? "" : "s"}
+						</Badge>
+					) : null
+				}
+			/>
 
 			{/* My Skills */}
 			<section>
@@ -225,9 +224,9 @@ export default function SkillsPage() {
 									<div className="flex items-center gap-2">
 										<Sparkles className="size-3.5 text-primary shrink-0" />
 										<span className="font-medium text-sm">{skill.name}</span>
-										<span className="text-[10px] rounded-full bg-muted px-1.5 py-0.5 text-muted-foreground">
+										<Badge variant="secondary" className="text-[10px]">
 											{skill.installs}
-										</span>
+										</Badge>
 									</div>
 									<p className="text-xs text-muted-foreground mt-1 line-clamp-2">
 										{skill.description}
