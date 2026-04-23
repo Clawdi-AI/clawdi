@@ -1,4 +1,7 @@
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,15 +21,43 @@ from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.skills import router as skills_router
 from app.routes.vault import router as vault_router
+from app.services.embedding import LocalEmbedder
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 init_sentry()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """ASGI lifespan — warm slow singletons at startup so the first request
+    path isn't the one that pays for them.
+
+    Fastembed downloads ~1GB on first `memory add` otherwise. We kick the
+    load off the main thread so it doesn't block startup itself; if it
+    finishes before the first embedding call, that call is fast.
+    """
+    if settings.memory_embedding_mode.lower() == "local":
+
+        async def _warm() -> None:
+            try:
+                await asyncio.to_thread(LocalEmbedder.get)
+                log.info("Local embedder warmed.")
+            except Exception as e:  # noqa: BLE001 — never block startup on embedder
+                log.warning("Local embedder warmup failed: %s", e)
+
+        # Fire-and-forget — let FastAPI serve health checks while it downloads.
+        asyncio.create_task(_warm())
+
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     # Hide interactive docs in production unless explicitly enabled.
     docs_url="/docs" if settings.environment != "production" else None,
     redoc_url="/redoc" if settings.environment != "production" else None,
+    lifespan=lifespan,
 )
 
 # Middleware is added in innermost-to-outermost order. Starlette wraps each

@@ -44,8 +44,9 @@ class Settings(BaseSettings):
 
     composio_api_key: str = ""
 
-    # File store is always local filesystem; S3/R2 can be added later when
-    # we actually need multi-node deploys.
+    # File store selection. `local` is the only implementation today; S3/R2
+    # plug in here without touching routes (see services/file_store.get_file_store).
+    file_store_type: str = "local"
     file_store_local_path: str = "./data/files"
 
     # Memory embedder for the Builtin memory provider.

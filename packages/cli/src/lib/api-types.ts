@@ -1,33 +1,15 @@
-// Response shapes returned by the Clawdi Cloud backend.
-// Keep these in sync with backend/app/routes/ and backend/app/services/.
+/**
+ * Re-exports of the shared OpenAPI-generated types under the CLI's legacy
+ * names. Keeps the backend schema as the single source of truth — no more
+ * hand-maintained shadow interfaces.
+ */
 
-export interface MemoryRecord {
-	id: string;
-	content: string;
-	category: string;
-	source: string;
-	tags: string[] | null;
-	access_count: number;
-	created_at: string;
-}
+import type {
+	Memory,
+	SkillSummary as SharedSkillSummary,
+	SkillDetail,
+} from "@clawdi-cloud/shared/api";
 
-export interface SkillRecord {
-	id: string;
-	skill_key: string;
-	name: string;
-	description: string | null;
-	version: number;
-	source: string;
-	source_repo: string | null;
-	agent_types: string[] | null;
-	file_count: number;
-	content_hash: string | null;
-	is_active: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface SkillSummary {
-	skill_key: string;
-	name: string;
-}
+export type MemoryRecord = Memory;
+export type SkillRecord = SkillDetail;
+export type SkillSummary = SharedSkillSummary;

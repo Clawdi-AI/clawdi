@@ -77,3 +77,18 @@ class SessionDetailResponse(SessionListItemResponse):
 class SessionUploadResponse(BaseModel):
     status: Literal["uploaded"]
     file_key: str
+
+
+class SessionMessageResponse(BaseModel):
+    """One agent message inside a session content file.
+
+    Mirrors the shape the CLI writes via `clawdi sync up` — the JSON stored
+    in the file store is a list of these. Declared here so it lives in the
+    OpenAPI schema and flows through to generated TS types; keeps the frontend
+    from having to maintain a parallel interface.
+    """
+
+    role: Literal["user", "assistant"]
+    content: str
+    model: str | None = None
+    timestamp: datetime | None = None

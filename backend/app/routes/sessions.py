@@ -19,13 +19,14 @@ from app.schemas.session import (
     SessionBatchResponse,
     SessionDetailResponse,
     SessionListItemResponse,
+    SessionMessageResponse,
     SessionUploadResponse,
 )
-from app.services.file_store import LocalFileStore
+from app.services.file_store import get_file_store
 
 router = APIRouter(tags=["sessions"])
 
-file_store = LocalFileStore(settings.file_store_local_path)
+file_store = get_file_store()
 
 
 @router.post("/api/environments")
@@ -218,8 +219,10 @@ async def get_session_content(
     session_id: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
-    """Read session messages from FileStore."""
+) -> list[SessionMessageResponse]:
+    """Read session messages from FileStore, typed as SessionMessageResponse[]."""
+    import json
+
     result = await db.execute(
         select(Session).where(
             Session.user_id == auth.user_id,
@@ -238,7 +241,15 @@ async def get_session_content(
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found")
 
-    return Response(content=data, media_type="application/json")
+    try:
+        raw = json.loads(data)
+    except json.JSONDecodeError:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Malformed session content")
+
+    if not isinstance(raw, list):
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Session content must be a list")
+
+    return [SessionMessageResponse.model_validate(m) for m in raw]
 
 
 def _session_to_response(s: Session, agent_type: str | None = None) -> SessionListItemResponse:

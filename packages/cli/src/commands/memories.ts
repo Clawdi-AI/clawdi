@@ -21,7 +21,7 @@ export async function memoriesList() {
 	}
 
 	for (const m of memories) {
-		const date = new Date(m.created_at).toLocaleDateString();
+		const date = m.created_at ? new Date(m.created_at).toLocaleDateString() : "—";
 		console.log(
 			`  ${chalk.gray(m.id.slice(0, 8))}  ${chalk.white(m.content.slice(0, 80))}  ${chalk.gray(m.category)}  ${chalk.gray(date)}`,
 		);

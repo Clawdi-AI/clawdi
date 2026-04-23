@@ -17,7 +17,7 @@ from app.schemas.skill import (
     SkillSummaryResponse,
     SkillUploadResponse,
 )
-from app.services.file_store import LocalFileStore
+from app.services.file_store import get_file_store
 from app.services.tar_utils import (
     TarValidationError,
     extract_skill_md,
@@ -28,7 +28,7 @@ from app.services.tar_utils import (
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-file_store = LocalFileStore(settings.file_store_local_path)
+file_store = get_file_store()
 
 
 def _content_hash(data: bytes) -> str:

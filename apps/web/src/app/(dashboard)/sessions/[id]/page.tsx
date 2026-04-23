@@ -20,18 +20,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch, apiUrl } from "@/lib/api";
-import type { SessionDetail } from "@/lib/api-schemas";
+import { apiFetch } from "@/lib/api";
+import type { SessionDetail, SessionMessage } from "@/lib/api-schemas";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
-
-// Parsed shape of a single message inside the content JSONL file — not part
-// of the backend API schema, so we keep this local.
-interface SessionMessage {
-	role: "user" | "assistant";
-	content: string;
-	model?: string;
-	timestamp?: string;
-}
 
 function formatDuration(seconds: number | null): string {
 	if (!seconds) return "-";
@@ -66,13 +57,7 @@ export default function SessionDetailPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			const res = await fetch(apiUrl(`/api/sessions/${id}/content`), {
-				headers: { Authorization: `Bearer ${token}` },
-			});
-			if (!res.ok) return null;
-			const data: unknown = await res.json();
-			if (!Array.isArray(data)) return null;
-			return data as SessionMessage[];
+			return apiFetch<SessionMessage[]>(`/api/sessions/${id}/content`, token);
 		},
 		enabled: !!session?.has_content,
 	});
