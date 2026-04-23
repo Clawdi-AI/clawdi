@@ -219,12 +219,10 @@ function MessageBlock({
 				<div className="flex items-center gap-2 mb-1">
 					<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
 					{!isUser && message.model && (
-						<span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-							{message.model.replace("claude-", "")}
-						</span>
+						<Badge variant="secondary">{message.model.replace("claude-", "")}</Badge>
 					)}
 					{message.timestamp && (
-						<span className="text-[10px] text-muted-foreground">
+						<span className="text-xs text-muted-foreground">
 							{new Date(message.timestamp).toLocaleTimeString([], {
 								hour: "2-digit",
 								minute: "2-digit",
@@ -313,7 +311,9 @@ function CollapsibleBlock({ label, content }: { label: string; content: string }
 				<ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
 				<span>{label}</span>
 				{!open && (
-					<span className="text-[10px] opacity-60">({content.length.toLocaleString()} chars)</span>
+					<span className="text-xs text-muted-foreground">
+						({content.length.toLocaleString()} chars)
+					</span>
 				)}
 			</Button>
 			{open && (

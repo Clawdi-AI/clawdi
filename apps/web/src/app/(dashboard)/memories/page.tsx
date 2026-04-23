@@ -2,10 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { apiFetch } from "@/lib/api";
 import type { Memory, UserSettings } from "@/lib/api-schemas";
 import { cn, relativeTime } from "@/lib/utils";
@@ -32,12 +34,15 @@ const CATEGORIES = [
 	{ value: "context", label: "Context" },
 ] as const;
 
+// Semantic color overlay. Applied via cn() to the shadcn Badge — we don't
+// modify the Badge primitive itself, just extend its classes for the data-viz
+// category distinction (fact/preference/pattern/decision/context).
 const CATEGORY_COLORS: Record<string, string> = {
-	fact: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-	preference: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
-	pattern: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-	decision: "bg-green-500/10 text-green-700 dark:text-green-400",
-	context: "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+	fact: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-transparent",
+	preference: "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-transparent",
+	pattern: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-transparent",
+	decision: "bg-green-500/10 text-green-700 dark:text-green-400 border-transparent",
+	context: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-transparent",
 };
 
 export default function MemoriesPage() {
@@ -47,7 +52,6 @@ export default function MemoriesPage() {
 	const [category, setCategory] = useState("");
 	const deferredQuery = useDeferredValue(searchQuery);
 
-	// --- Settings (provider) ---
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
 		queryFn: async () => {
@@ -77,8 +81,11 @@ export default function MemoriesPage() {
 		},
 	});
 
-	// --- Memories ---
-	const { data: memories, isLoading } = useQuery({
+	const {
+		data: memories,
+		isLoading,
+		error,
+	} = useQuery({
 		queryKey: ["memories", deferredQuery, category],
 		queryFn: async () => {
 			const token = await getToken();
@@ -107,80 +114,91 @@ export default function MemoriesPage() {
 				description="Searchable knowledge available to every connected agent via MCP."
 				actions={
 					<>
-						{memories && (
+						{memories ? (
 							<Badge variant="secondary">
 								{memories.length} memor{memories.length === 1 ? "y" : "ies"}
 							</Badge>
-						)}
-						<ProviderSwitch
-							provider={provider}
-							onSwitch={(p) => updateSettings.mutate({ memory_provider: p })}
-							isPending={updateSettings.isPending}
-						/>
+						) : null}
+						<ToggleGroup
+							type="single"
+							value={provider}
+							onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
+							disabled={updateSettings.isPending}
+							variant="outline"
+							size="sm"
+						>
+							<ToggleGroupItem value="builtin">
+								<Database />
+								Built-in
+							</ToggleGroupItem>
+							<ToggleGroupItem value="mem0">
+								<Brain />
+								Mem0
+							</ToggleGroupItem>
+						</ToggleGroup>
 					</>
 				}
 			/>
 
-			{/* Mem0 API Key config */}
-			{provider === "mem0" && !hasMem0Key && (
+			{provider === "mem0" && !hasMem0Key ? (
 				<Mem0KeyForm
 					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
 					isPending={updateSettings.isPending}
 				/>
-			)}
+			) : null}
 
-			{/* Add memory */}
 			<AddMemoryForm />
 
-			{/* Search + Category filter */}
 			<div className="flex flex-col gap-3">
 				<div className="relative">
-					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground z-10" />
+					<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 						placeholder="Search memories..."
-						className="rounded-xl pl-9 pr-9"
+						className="pl-9 pr-9"
 					/>
-					{searchQuery && (
+					{searchQuery ? (
 						<Button
 							variant="ghost"
 							size="icon-sm"
 							onClick={() => setSearchQuery("")}
 							className="absolute right-1 top-1/2 -translate-y-1/2"
+							aria-label="Clear search"
 						>
 							<X className="size-4" />
 						</Button>
-					)}
+					) : null}
 				</div>
-				<div className="flex flex-wrap items-center gap-2">
+				<ToggleGroup
+					type="single"
+					value={category}
+					onValueChange={(v) => setCategory(v)}
+					variant="outline"
+					size="sm"
+				>
 					{CATEGORIES.map((c) => (
-						<button
-							key={c.value}
-							type="button"
-							onClick={() => setCategory(c.value)}
-							className={cn(
-								"rounded-full px-3 py-1 text-xs font-medium border transition-colors",
-								category === c.value
-									? "bg-primary text-primary-foreground border-primary"
-									: "border-border text-muted-foreground hover:bg-muted",
-							)}
-						>
+						<ToggleGroupItem key={c.value || "all"} value={c.value}>
 							{c.label}
-						</button>
+						</ToggleGroupItem>
 					))}
-				</div>
+				</ToggleGroup>
 			</div>
 
-			{/* Memory list */}
-			{isLoading ? (
+			{error ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load memories</AlertTitle>
+					<AlertDescription>{(error as Error).message}</AlertDescription>
+				</Alert>
+			) : isLoading ? (
 				<div className="space-y-2">
 					{Array.from({ length: 4 }).map((_, i) => (
 						<div key={i} className="rounded-lg border bg-card px-4 py-3 space-y-2">
 							<Skeleton className="h-4 w-3/4" />
 							<div className="flex gap-2">
-								<Skeleton className="h-3 w-14 rounded-full" />
-								<Skeleton className="h-3 w-20" />
+								<Skeleton className="h-4 w-14" />
+								<Skeleton className="h-4 w-20" />
 							</div>
 						</div>
 					))}
@@ -194,26 +212,21 @@ export default function MemoriesPage() {
 						>
 							<div className="min-w-0 flex-1">
 								<p className="text-sm">{m.content}</p>
-								<div className="flex items-center gap-2 mt-1.5">
-									<span
-										className={cn(
-											"inline-flex h-5 items-center rounded-full px-2 text-xs font-medium",
-											CATEGORY_COLORS[m.category] || "bg-muted text-muted-foreground",
-										)}
-									>
+								<div className="mt-1.5 flex flex-wrap items-center gap-2">
+									<Badge variant="secondary" className={cn(CATEGORY_COLORS[m.category])}>
 										{m.category}
-									</span>
+									</Badge>
 									<span className="text-xs text-muted-foreground">{m.source}</span>
 									{m.tags?.map((t) => (
 										<span key={t} className="text-xs text-muted-foreground">
 											#{t}
 										</span>
 									))}
-									{m.created_at && (
+									{m.created_at ? (
 										<span className="text-xs text-muted-foreground">
 											{relativeTime(m.created_at)}
 										</span>
-									)}
+									) : null}
 								</div>
 							</div>
 							<Button
@@ -221,7 +234,8 @@ export default function MemoriesPage() {
 								size="icon-sm"
 								onClick={() => deleteMemory.mutate(m.id)}
 								disabled={deleteMemory.isPending}
-								className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive shrink-0"
+								className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+								aria-label="Delete memory"
 							>
 								<Trash2 className="size-3.5" />
 							</Button>
@@ -241,66 +255,18 @@ export default function MemoriesPage() {
 	);
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function ProviderSwitch({
-	provider,
-	onSwitch,
-	isPending,
-}: {
-	provider: string;
-	onSwitch: (p: string) => void;
-	isPending: boolean;
-}) {
-	return (
-		<div className="flex items-center gap-0.5 rounded-lg border p-0.5">
-			<button
-				type="button"
-				onClick={() => onSwitch("builtin")}
-				disabled={isPending}
-				className={cn(
-					"inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition-colors",
-					provider === "builtin"
-						? "bg-primary text-primary-foreground"
-						: "text-muted-foreground hover:bg-muted",
-				)}
-			>
-				<Database className="size-3" />
-				Built-in
-			</button>
-			<button
-				type="button"
-				onClick={() => onSwitch("mem0")}
-				disabled={isPending}
-				className={cn(
-					"inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition-colors",
-					provider === "mem0"
-						? "bg-primary text-primary-foreground"
-						: "text-muted-foreground hover:bg-muted",
-				)}
-			>
-				<Brain className="size-3" />
-				Mem0
-			</button>
-		</div>
-	);
-}
-
 function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isPending: boolean }) {
 	const [apiKey, setApiKey] = useState("");
-
 	return (
-		<Card className="gap-2 py-4">
-			<CardHeader className="px-4">
-				<CardTitle className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					<Key className="size-3.5" />
+		<Card>
+			<CardHeader>
+				<CardTitle className="flex items-center gap-2 text-sm">
+					<Key className="size-4" />
 					Mem0 Configuration
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="px-4">
-				<p className="text-xs text-muted-foreground mb-3">
+			<CardContent className="space-y-3">
+				<p className="text-sm text-muted-foreground">
 					Enter your Mem0 API key to use semantic memory search.
 				</p>
 				<div className="flex gap-2">
@@ -309,17 +275,13 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 						value={apiKey}
 						onChange={(e) => setApiKey(e.target.value)}
 						placeholder="m0-..."
-						className="flex-1 h-8 text-xs font-mono"
+						className="flex-1 font-mono"
 						onKeyDown={(e) => {
 							if (e.key === "Enter" && apiKey) onSave(apiKey);
 						}}
 					/>
-					<Button
-						size="sm"
-						onClick={() => apiKey && onSave(apiKey)}
-						disabled={!apiKey || isPending}
-					>
-						{isPending ? <Loader2 className="size-3 animate-spin" /> : <Key className="size-3" />}
+					<Button onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
+						{isPending ? <Loader2 className="animate-spin" /> : <Key />}
 						Save
 					</Button>
 				</div>
@@ -341,11 +303,7 @@ function AddMemoryForm() {
 			if (!token) throw new Error("Not authenticated");
 			return apiFetch<unknown>("/api/memories", token, {
 				method: "POST",
-				body: JSON.stringify({
-					content,
-					category: addCategory,
-					source: "web",
-				}),
+				body: JSON.stringify({ content, category: addCategory, source: "web" }),
 			});
 		},
 		onSuccess: () => {
@@ -362,62 +320,59 @@ function AddMemoryForm() {
 				onClick={() => setOpen(true)}
 				className="border-dashed text-muted-foreground"
 			>
-				<Plus className="size-4" />
+				<Plus />
 				Add Memory
 			</Button>
 		);
 	}
 
 	return (
-		<div className="rounded-lg border bg-card p-4 space-y-3">
-			<Textarea
-				value={content}
-				onChange={(e) => setContent(e.target.value)}
-				placeholder="What should your agents remember?"
-				rows={3}
-				className="resize-none"
-			/>
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-2">
-					<span className="text-xs text-muted-foreground">Category:</span>
-					<Select value={addCategory} onValueChange={setAddCategory}>
-						<SelectTrigger size="sm" className="text-xs">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{CATEGORIES.filter((c) => c.value).map((c) => (
-								<SelectItem key={c.value} value={c.value}>
-									{c.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+		<Card>
+			<CardContent className="space-y-3">
+				<Textarea
+					value={content}
+					onChange={(e) => setContent(e.target.value)}
+					placeholder="What should your agents remember?"
+					rows={3}
+					className="resize-none"
+					autoFocus
+				/>
+				<div className="flex items-center justify-between gap-2">
+					<div className="flex items-center gap-2">
+						<span className="text-sm text-muted-foreground">Category</span>
+						<Select value={addCategory} onValueChange={setAddCategory}>
+							<SelectTrigger size="sm" className="w-32">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{CATEGORIES.filter((c) => c.value).map((c) => (
+									<SelectItem key={c.value} value={c.value}>
+										{c.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+					<div className="flex items-center gap-2">
+						<Button
+							variant="ghost"
+							onClick={() => {
+								setOpen(false);
+								setContent("");
+							}}
+						>
+							Cancel
+						</Button>
+						<Button
+							onClick={() => content.trim() && createMemory.mutate()}
+							disabled={!content.trim() || createMemory.isPending}
+						>
+							{createMemory.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+							Add
+						</Button>
+					</div>
 				</div>
-				<div className="flex items-center gap-2">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => {
-							setOpen(false);
-							setContent("");
-						}}
-					>
-						Cancel
-					</Button>
-					<Button
-						size="sm"
-						onClick={() => content.trim() && createMemory.mutate()}
-						disabled={!content.trim() || createMemory.isPending}
-					>
-						{createMemory.isPending ? (
-							<Loader2 className="size-3 animate-spin" />
-						) : (
-							<Plus className="size-3" />
-						)}
-						Add
-					</Button>
-				</div>
-			</div>
-		</div>
+			</CardContent>
+		</Card>
 	);
 }

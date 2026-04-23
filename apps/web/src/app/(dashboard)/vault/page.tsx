@@ -2,10 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Key, Loader2, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,11 @@ export default function VaultPage() {
 	const queryClient = useQueryClient();
 	const [newVaultSlug, setNewVaultSlug] = useState("");
 
-	const { data: vaults, isLoading } = useQuery({
+	const {
+		data: vaults,
+		isLoading,
+		error,
+	} = useQuery({
 		queryKey: ["vaults"],
 		queryFn: async () => {
 			const token = await getToken();
@@ -72,7 +77,7 @@ export default function VaultPage() {
 					value={newVaultSlug}
 					onChange={(e) => setNewVaultSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
 					placeholder="New vault name (e.g. ai-keys, prod)"
-					className="flex-1 rounded-xl"
+					className="flex-1"
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && newVaultSlug) createVault.mutate(newVaultSlug);
 					}}
@@ -80,12 +85,19 @@ export default function VaultPage() {
 				<Button
 					onClick={() => newVaultSlug && createVault.mutate(newVaultSlug)}
 					disabled={!newVaultSlug || createVault.isPending}
-					className="rounded-lg"
 				>
-					<Plus className="size-4" />
+					<Plus />
 					Create
 				</Button>
 			</div>
+
+			{error ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load vaults</AlertTitle>
+					<AlertDescription>{(error as Error).message}</AlertDescription>
+				</Alert>
+			) : null}
 
 			{/* Vault list */}
 			{isLoading ? (

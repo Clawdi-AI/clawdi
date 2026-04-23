@@ -4,6 +4,7 @@ import { FEATURED_SKILLS } from "@clawdi-cloud/shared/consts";
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	AlertCircle,
 	Check,
 	Download,
 	ExternalLink,
@@ -16,8 +17,10 @@ import {
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
@@ -30,7 +33,11 @@ export default function SkillsPage() {
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 
-	const { data: skills, isLoading } = useQuery({
+	const {
+		data: skills,
+		isLoading,
+		error,
+	} = useQuery({
 		queryKey: ["skills"],
 		queryFn: async () => {
 			const token = await getToken();
@@ -94,61 +101,64 @@ export default function SkillsPage() {
 				}
 			/>
 
-			{/* My Skills */}
-			<section>
-				<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-					Installed
-				</h2>
-				{isLoading ? (
-					<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+			<section className="space-y-3">
+				<h2 className="text-sm font-semibold text-muted-foreground">Installed</h2>
+				{error ? (
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Failed to load skills</AlertTitle>
+						<AlertDescription>{(error as Error).message}</AlertDescription>
+					</Alert>
+				) : isLoading ? (
+					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{Array.from({ length: 4 }).map((_, i) => (
-							<div key={i} className="rounded-lg border bg-card p-4 space-y-2">
-								<Skeleton className="h-4 w-32" />
-								<Skeleton className="h-3 w-48" />
-								<Skeleton className="h-3 w-24" />
-							</div>
+							<Card key={i}>
+								<CardContent className="space-y-2">
+									<Skeleton className="h-4 w-32" />
+									<Skeleton className="h-4 w-48" />
+									<Skeleton className="h-4 w-24" />
+								</CardContent>
+							</Card>
 						))}
 					</div>
 				) : skills?.length ? (
-					<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{skills.map((s) => (
-							<div
-								key={s.id}
-								className="group flex items-start justify-between rounded-lg border bg-card p-4"
-							>
-								<div className="min-w-0">
-									<div className="flex items-center gap-2">
-										<Sparkles className="size-3.5 text-primary shrink-0" />
-										<span className="font-medium text-sm">{s.skill_key}</span>
-										<Badge variant="outline" className="h-5 font-normal">
-											v{s.version}
-										</Badge>
-										{s.file_count ? (
-											<span className="text-xs text-muted-foreground">
-												{s.file_count} file{s.file_count === 1 ? "" : "s"}
-											</span>
+							<Card key={s.id} className="group">
+								<CardContent className="flex items-start justify-between gap-3">
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<Sparkles className="size-4 shrink-0 text-primary" />
+											<span className="truncate text-sm font-medium">{s.skill_key}</span>
+											<Badge variant="outline">v{s.version}</Badge>
+											{s.file_count ? (
+												<span className="text-xs text-muted-foreground">
+													{s.file_count} file{s.file_count === 1 ? "" : "s"}
+												</span>
+											) : null}
+										</div>
+										{s.description ? (
+											<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+												{s.description}
+											</p>
 										) : null}
-									</div>
-									{s.description && (
-										<p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-											{s.description}
+										<p className="mt-2 text-xs text-muted-foreground">
+											{s.source}
+											{s.source_repo ? ` · ${s.source_repo}` : ""}
 										</p>
-									)}
-									<div className="text-xs text-muted-foreground mt-1.5">
-										{s.source}
-										{s.source_repo && <span> · {s.source_repo}</span>}
 									</div>
-								</div>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									onClick={() => deleteSkill.mutate(s.skill_key)}
-									disabled={deleteSkill.isPending}
-									className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive shrink-0"
-								>
-									<Trash2 className="size-3.5" />
-								</Button>
-							</div>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										onClick={() => deleteSkill.mutate(s.skill_key)}
+										disabled={deleteSkill.isPending}
+										className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+										aria-label="Uninstall skill"
+									>
+										<Trash2 className="size-4" />
+									</Button>
+								</CardContent>
+							</Card>
 						))}
 					</div>
 				) : (
@@ -156,7 +166,7 @@ export default function SkillsPage() {
 						description={
 							<>
 								No skills installed yet. Install from below or run{" "}
-								<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+								<code className="rounded bg-muted px-1.5 py-0.5 text-xs">
 									clawdi skill install owner/repo
 								</code>
 							</>
@@ -165,26 +175,22 @@ export default function SkillsPage() {
 				)}
 			</section>
 
-			{/* Marketplace */}
-			<section>
-				<div className="flex items-center justify-between mb-3">
-					<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Marketplace
-					</h2>
+			<section className="space-y-3">
+				<div className="flex items-center justify-between">
+					<h2 className="text-sm font-semibold text-muted-foreground">Marketplace</h2>
 					<a
 						href="https://skills.sh"
 						target="_blank"
 						rel="noopener noreferrer"
-						className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5 transition-colors"
+						className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
 					>
 						skills.sh <ExternalLink className="size-3" />
 					</a>
 				</div>
 
-				{/* Custom install */}
-				<div className="flex gap-2 mb-3">
+				<div className="flex gap-2">
 					<div className="relative flex-1">
-						<Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
+						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
 							value={customRepo}
 							onChange={(e) => {
@@ -192,77 +198,67 @@ export default function SkillsPage() {
 								setInstallError(null);
 							}}
 							placeholder="Install from GitHub: owner/repo/path..."
-							className="rounded-xl pl-9"
+							className="pl-9"
 							onKeyDown={(e) => {
 								if (e.key === "Enter") handleCustomInstall();
 							}}
 						/>
 					</div>
-					<Button
-						onClick={handleCustomInstall}
-						disabled={!customRepo.trim() || !!installing}
-						className="rounded-lg"
-					>
-						{installing && customRepo ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Plus className="size-4" />
-						)}
+					<Button onClick={handleCustomInstall} disabled={!customRepo.trim() || !!installing}>
+						{installing && customRepo ? <Loader2 className="animate-spin" /> : <Plus />}
 						Install
 					</Button>
 				</div>
-				{installError && <p className="text-xs text-destructive mb-3">{installError}</p>}
+				{installError ? (
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Install failed</AlertTitle>
+						<AlertDescription>{installError}</AlertDescription>
+					</Alert>
+				) : null}
 
-				{/* Featured skills */}
-				<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+				<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 					{FEATURED_SKILLS.map((skill) => {
 						const key = `${skill.repo}/${skill.path || ""}`;
 						const skillKey = skill.name.toLowerCase().replace(/\s+/g, "-");
 						const isInstalled = installedKeys.has(skillKey);
 						const isInstalling = installing === key;
 						return (
-							<div
-								key={key}
-								className="flex items-start justify-between rounded-lg border bg-card p-4"
-							>
-								<div className="min-w-0 flex-1">
-									<div className="flex items-center gap-2">
-										<Sparkles className="size-3.5 text-primary shrink-0" />
-										<span className="font-medium text-sm">{skill.name}</span>
-										<Badge variant="secondary" className="h-5 font-normal">
-											{skill.installs}
-										</Badge>
+							<Card key={key}>
+								<CardContent className="flex items-start justify-between gap-3">
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<Sparkles className="size-4 shrink-0 text-primary" />
+											<span className="truncate text-sm font-medium">{skill.name}</span>
+											<Badge variant="secondary">{skill.installs}</Badge>
+										</div>
+										<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+											{skill.description}
+										</p>
+										<p className="mt-2 text-xs text-muted-foreground">
+											{skill.repo}
+											{skill.path ? `/${skill.path}` : ""}
+										</p>
 									</div>
-									<p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-										{skill.description}
-									</p>
-									<div className="text-xs text-muted-foreground mt-1.5">
-										{skill.repo}
-										{skill.path ? `/${skill.path}` : ""}
-									</div>
-								</div>
-								{isInstalled ? (
-									<span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 px-2 py-1 shrink-0 ml-3">
-										<Check className="size-3" />
-										Installed
-									</span>
-								) : (
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() => installSkill(skill.repo, skill.path)}
-										disabled={isInstalling}
-										className="shrink-0 ml-3 text-xs"
-									>
-										{isInstalling ? (
-											<Loader2 className="size-3 animate-spin" />
-										) : (
-											<Download className="size-3" />
-										)}
-										Install
-									</Button>
-								)}
-							</div>
+									{isInstalled ? (
+										<Button variant="ghost" size="sm" disabled className="shrink-0">
+											<Check />
+											Installed
+										</Button>
+									) : (
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => installSkill(skill.repo, skill.path)}
+											disabled={isInstalling}
+											className="shrink-0"
+										>
+											{isInstalling ? <Loader2 className="animate-spin" /> : <Download />}
+											Install
+										</Button>
+									)}
+								</CardContent>
+							</Card>
 						);
 					})}
 				</div>

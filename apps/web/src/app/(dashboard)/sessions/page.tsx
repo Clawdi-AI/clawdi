@@ -2,9 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
+import { AlertCircle } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -12,7 +14,11 @@ import type { SessionListItem } from "@/lib/api-schemas";
 export default function SessionsPage() {
 	const { getToken } = useAuth();
 
-	const { data: sessions, isLoading } = useQuery({
+	const {
+		data: sessions,
+		isLoading,
+		error,
+	} = useQuery({
 		queryKey: ["sessions"],
 		queryFn: async () => {
 			const token = await getToken();
@@ -35,7 +41,13 @@ export default function SessionsPage() {
 				}
 			/>
 
-			{isLoading ? (
+			{error ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load sessions</AlertTitle>
+					<AlertDescription>{(error as Error).message}</AlertDescription>
+				</Alert>
+			) : isLoading ? (
 				<div className="divide-y rounded-lg border bg-card">
 					{Array.from({ length: 6 }).map((_, i) => (
 						<SessionRowSkeleton key={i} />
@@ -52,7 +64,7 @@ export default function SessionsPage() {
 					description={
 						<>
 							No sessions yet. Run{" "}
-							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to
+							<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> to
 							sync.
 						</>
 					}

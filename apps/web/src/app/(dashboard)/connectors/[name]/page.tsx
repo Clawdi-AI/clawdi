@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ConnectorApp, ConnectorConnection, ConnectorTool } from "@/lib/api-schemas";
@@ -115,11 +116,8 @@ export default function ConnectorDetailPage() {
 					<div className="flex items-center gap-2">
 						<h1 className="text-lg font-semibold tracking-tight">{displayName}</h1>
 						{isConnected && (
-							<Badge
-								variant="outline"
-								className="gap-1 border-green-500/30 bg-green-500/10 text-[10px] text-green-600 dark:text-green-400"
-							>
-								<Check className="size-2.5" />
+							<Badge variant="secondary">
+								<Check />
 								Connected
 							</Badge>
 						)}
@@ -221,8 +219,8 @@ export default function ConnectorDetailPage() {
 								"Complete authentication in the popup window",
 								"Return here to verify connection",
 							].map((step, i) => (
-								<li key={step} className="flex items-start gap-3">
-									<span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
+								<li key={step} className="flex items-center gap-3">
+									<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
 										{i + 1}
 									</span>
 									<span className="text-sm">{step}</span>
@@ -343,14 +341,14 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 					<span className="font-normal text-muted-foreground/60">({tools.length})</span>
 				</h2>
 				{tools.length > 8 && (
-					<div className="relative w-48">
-						<Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-						<input
+					<div className="relative w-56">
+						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+						<Input
 							type="text"
 							placeholder="Search..."
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
-							className="h-7 w-full rounded-md border border-input bg-background pl-8 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+							className="pl-9"
 						/>
 					</div>
 				)}
@@ -368,7 +366,7 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 							<div className="flex items-center gap-2">
 								<span className="truncate text-sm font-medium">{tool.display_name}</span>
 								{tool.is_deprecated && (
-									<Badge variant="outline" className="shrink-0 text-[10px] text-muted-foreground">
+									<Badge variant="outline" className="shrink-0">
 										deprecated
 									</Badge>
 								)}
