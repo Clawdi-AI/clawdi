@@ -8,6 +8,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.memory import Memory
 from app.schemas.memory import (
+    EmbedBackfillResponse,
     MemoryCreate,
     MemoryCreatedResponse,
     MemoryDeleteResponse,
@@ -86,7 +87,7 @@ async def embed_backfill(
     batch_size: int = Query(default=32, ge=1, le=200),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> EmbedBackfillResponse:
     """Compute embeddings for the caller's memories that lack one.
 
     Used after the deployment's embedder becomes available (first-time
@@ -133,4 +134,4 @@ async def embed_backfill(
                 log.warning("backfill embed failed for %s: %s", mem.id, e)
                 failed += 1
         await db.commit()
-    return {"processed": processed, "failed": failed}
+    return EmbedBackfillResponse(processed=processed, failed=failed)

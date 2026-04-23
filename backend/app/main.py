@@ -29,13 +29,13 @@ app = FastAPI(
     redoc_url="/redoc" if settings.environment != "production" else None,
 )
 
-# Request-ID first so every downstream log + error response carries the
-# correlation id all the way through CORS and route handlers.
-app.add_middleware(RequestIDMiddleware)
-
-# CORS: named methods + headers instead of "*" so the browser blocks
-# anything unexpected. Credentials stay on because we pass a Clerk session
-# cookie / Authorization bearer.
+# Middleware is added in innermost-to-outermost order. Starlette wraps each
+# subsequent `add_middleware` call around the previous stack, so the LAST
+# call becomes the OUTERMOST handler seeing the request first. We want:
+#
+#   request → RequestID → CORS → route → CORS → RequestID → response
+#
+# so a CORS-rejected preflight still carries X-Request-ID on the way back out.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -52,6 +52,7 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
     max_age=600,
 )
+app.add_middleware(RequestIDMiddleware)
 
 app.include_router(auth_router)
 app.include_router(sessions_router)

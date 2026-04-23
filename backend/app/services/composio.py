@@ -1,20 +1,29 @@
-"""Composio integration service for connector management and MCP proxy."""
+"""Composio integration service for connector management and MCP proxy.
+
+The composio package initializes a filesystem cache directory at import time,
+which breaks cold starts in read-only / sandboxed environments. We defer the
+import until the first actual call site so tests and health checks can run
+without a writable home dir.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import jwt
-from composio import Composio
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 
+if TYPE_CHECKING:
+    from composio import Composio
+
 logger = logging.getLogger(__name__)
 
-_client: Composio | None = None
+_client: Any = None
 
 
 def get_composio_client() -> Composio:
@@ -22,6 +31,9 @@ def get_composio_client() -> Composio:
     if _client is None:
         if not settings.composio_api_key:
             raise RuntimeError("COMPOSIO_API_KEY not configured")
+        # Import lazily: see module docstring.
+        from composio import Composio
+
         _client = Composio(api_key=settings.composio_api_key)
     return _client
 

@@ -26,3 +26,8 @@ class MemoryCreatedResponse(BaseModel):
 
 class MemoryDeleteResponse(BaseModel):
     status: Literal["deleted"]
+
+
+class EmbedBackfillResponse(BaseModel):
+    processed: int
+    failed: int

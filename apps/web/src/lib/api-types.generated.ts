@@ -810,6 +810,13 @@ export interface components {
             /** Connectors Count */
             connectors_count: number;
         };
+        /** EmbedBackfillResponse */
+        EmbedBackfillResponse: {
+            /** Processed */
+            processed: number;
+            /** Failed */
+            failed: number;
+        };
         /** EnvironmentCreate */
         EnvironmentCreate: {
             /** Machine Id */
@@ -1964,7 +1971,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EmbedBackfillResponse"];
                 };
             };
             /** @description Validation Error */
