@@ -27,9 +27,20 @@ export async function apiFetch<T>(path: string, token: string, options?: Request
 		const body = await res.text();
 		let detail = body;
 		try {
-			// FastAPI puts the human message in `detail`; surface just that.
+			// FastAPI puts the human message in `detail`. 4xx from pydantic validation
+			// returns it as an array of {loc, msg, type} objects — join into a readable line.
 			const parsed = JSON.parse(body);
-			if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+			if (parsed && typeof parsed.detail === "string") {
+				detail = parsed.detail;
+			} else if (parsed && Array.isArray(parsed.detail)) {
+				detail = parsed.detail
+					.map((e: { loc?: unknown[]; msg?: string }) => {
+						const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
+						return loc ? `${loc}: ${e.msg ?? ""}` : (e.msg ?? "");
+					})
+					.filter(Boolean)
+					.join("; ");
+			}
 		} catch {
 			// body wasn't JSON — fall back to the raw text
 		}

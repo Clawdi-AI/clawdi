@@ -102,6 +102,17 @@ async def list_vault_sections(
     return VaultSectionsResponse(items)
 
 
+async def _load_items_by_name(db: AsyncSession, vault_id, section: str) -> dict[str, VaultItem]:
+    """Batch-prefetch all vault items for a vault+section keyed by item_name."""
+    result = await db.execute(
+        select(VaultItem).where(
+            VaultItem.vault_id == vault_id,
+            VaultItem.section == section,
+        )
+    )
+    return {item.item_name: item for item in result.scalars().all()}
+
+
 @router.put("/{slug}/items")
 async def upsert_vault_items(
     slug: str,
@@ -110,17 +121,7 @@ async def upsert_vault_items(
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
     vault = await _get_vault(auth.user_id, slug, db)
-
-    # Batch-prefetch all existing items for this vault+section in one query.
-    existing_result = await db.execute(
-        select(VaultItem).where(
-            VaultItem.vault_id == vault.id,
-            VaultItem.section == body.section,
-        )
-    )
-    existing_by_name: dict[str, VaultItem] = {
-        item.item_name: item for item in existing_result.scalars().all()
-    }
+    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
         ciphertext, nonce = encrypt(plaintext)
@@ -151,17 +152,7 @@ async def delete_vault_items(
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
     vault = await _get_vault(auth.user_id, slug, db)
-
-    # Batch-prefetch all existing items for this vault+section in one query.
-    existing_result = await db.execute(
-        select(VaultItem).where(
-            VaultItem.vault_id == vault.id,
-            VaultItem.section == body.section,
-        )
-    )
-    existing_by_name: dict[str, VaultItem] = {
-        item.item_name: item for item in existing_result.scalars().all()
-    }
+    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name in body.fields:
         item = existing_by_name.get(field_name)

@@ -43,7 +43,7 @@ function CodeBlock({ className, children, ...props }: ComponentPropsWithoutRef<"
 				<button
 					type="button"
 					onClick={() => copy(code)}
-					aria-label="Copy code"
+					aria-label={`Copy ${lang ?? "code"}`}
 					className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
 				>
 					{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}

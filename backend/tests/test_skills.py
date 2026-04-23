@@ -67,8 +67,6 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient):
         tf.addfile(info, io.BytesIO(payload))
 
     files = {"file": ("nomanifest.tar.gz", buf.getvalue(), "application/gzip")}
-    r = await client.post(
-        "/api/skills/upload", data={"skill_key": "no-manifest"}, files=files
-    )
+    r = await client.post("/api/skills/upload", data={"skill_key": "no-manifest"}, files=files)
     assert r.status_code == 400, r.text
     assert "SKILL.md" in r.text

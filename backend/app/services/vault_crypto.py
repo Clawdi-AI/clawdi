@@ -1,6 +1,7 @@
 """AES-256-GCM encryption for vault secrets."""
 
 import base64
+import binascii
 import os
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -56,14 +57,27 @@ def decrypt_field(value: str) -> str:
 
     If *value* does not start with the ``enc:`` prefix it is returned as-is
     (legacy plaintext pass-through for transparent migration).
+
+    Raises :class:`ValueError` on malformed input (bad base64, truncated blob,
+    or authentication failure) so callers can decide whether to 500, fall
+    back, or log — without ever silently returning garbage.
     """
     if not value.startswith(_ENC_PREFIX):
         # Legacy plaintext — return unchanged so old rows keep working.
         return value
-    blob = base64.b64decode(value[len(_ENC_PREFIX) :])
+    try:
+        blob = base64.b64decode(value[len(_ENC_PREFIX) :], validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError("malformed encrypted field (invalid base64)") from e
+    if len(blob) < 13:
+        # 12-byte nonce + at least 1 byte of ciphertext required.
+        raise ValueError("malformed encrypted field (truncated blob)")
     nonce = blob[:12]
     ciphertext = blob[12:]
-    return decrypt(ciphertext, nonce)
+    try:
+        return decrypt(ciphertext, nonce)
+    except Exception as e:  # AESGCM raises InvalidTag on tamper, ValueError on length
+        raise ValueError("malformed encrypted field (authentication failed)") from e
 
 
 def is_encrypted_field(value: str) -> bool:

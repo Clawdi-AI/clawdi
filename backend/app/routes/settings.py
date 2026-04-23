@@ -11,7 +11,7 @@ from app.schemas.settings import (
     SettingsUpdate,
     SettingsUpdateResponse,
 )
-from app.services.vault_crypto import decrypt_field, encrypt_field, is_encrypted_field
+from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -22,27 +22,16 @@ _SECRET_MASK = "••••••••"
 def _encrypt_secrets(data: dict) -> dict:
     """Return a copy of *data* with secret fields encrypted.
 
-    Only string values are encrypted; non-strings (e.g. None, bool) are left
-    as-is so existing schema validation keeps working.
-    """
-    out = dict(data)
-    for key in SECRET_FIELDS:
-        value = out.get(key)
-        if isinstance(value, str) and value and not is_encrypted_field(value):
-            out[key] = encrypt_field(value)
-    return out
-
-
-def _decrypt_secrets(data: dict) -> dict:
-    """Return a copy of *data* with secret fields decrypted (for internal use).
-
-    Handles both encrypted values (``enc:…``) and legacy plaintext transparently.
+    Always encrypts string secret values (including those that happen to start
+    with the ``enc:`` prefix) — trusting a client-supplied prefix would let an
+    attacker PATCH raw ciphertext that the server would store verbatim and
+    then 500 on every subsequent decrypt.
     """
     out = dict(data)
     for key in SECRET_FIELDS:
         value = out.get(key)
         if isinstance(value, str) and value:
-            out[key] = decrypt_field(value)
+            out[key] = encrypt_field(value)
     return out
 
 
@@ -83,19 +72,29 @@ async def update_settings(
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
     setting = result.scalar_one_or_none()
 
-    # Encrypt secret fields in the incoming patch before persisting.
-    encrypted_patch = _encrypt_secrets(body.settings)
+    # Step 1: drop mask-echoed secrets from the client's patch — if the form
+    # round-tripped the masked GET response, those fields must not overwrite
+    # the real stored value. Must happen BEFORE encryption: otherwise the
+    # mask gets encrypted and no longer compares equal to _SECRET_MASK.
+    raw_patch = {
+        k: v
+        for k, v in body.settings.items()
+        if not (k in SECRET_FIELDS and isinstance(v, str) and v == _SECRET_MASK)
+    }
+
+    # Step 2: encrypt any remaining secret fields the client actually wants to set.
+    encrypted_patch = _encrypt_secrets(raw_patch)
 
     if setting:
-        # Merge: incoming patch wins over stored values.
-        # If the user sends the mask placeholder back (e.g. unchanged form field),
-        # skip updating that key so the stored secret is preserved.
         current = dict(setting.settings)
-        for k, v in encrypted_patch.items():
-            if k in SECRET_FIELDS and v == _SECRET_MASK:
-                # Client echoed the mask — do not overwrite the real stored value.
-                continue
-            current[k] = v
+        current.update(encrypted_patch)
+        # Step 3: transparent migration — if an existing row still holds a
+        # legacy plaintext secret, encrypt it on the first PATCH that touches
+        # the row. Guarded by is_encrypted_field so we never double-encrypt.
+        for key in SECRET_FIELDS:
+            stored = current.get(key)
+            if isinstance(stored, str) and stored and not is_encrypted_field(stored):
+                current[key] = encrypt_field(stored)
         setting.settings = current
     else:
         setting = UserSetting(user_id=auth.user_id, settings=encrypted_patch)

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import Memory
 from app.services.embedding import Embedder, resolve_embedder
+from app.services.vault_crypto import decrypt_field
 
 log = logging.getLogger(__name__)
 
@@ -472,11 +473,14 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         if not raw_key:
             log.warning("memory_provider=mem0 but mem0_api_key missing; falling back to builtin.")
             return BuiltinProvider(db, embedder=resolve_embedder())
-        # Decrypt if the key was stored via encrypt_field (enc: prefix); legacy
-        # plaintext values are returned unchanged by decrypt_field.
-        from app.services.vault_crypto import decrypt_field
-
-        api_key = decrypt_field(raw_key)
+        # Decrypt if stored with enc: prefix; legacy plaintext passes through.
+        # Fall back to builtin on any decrypt failure so a single corrupt row
+        # doesn't 500 every memory request for that user.
+        try:
+            api_key = decrypt_field(raw_key)
+        except ValueError as e:
+            log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
+            return BuiltinProvider(db, embedder=resolve_embedder())
         return Mem0Provider(api_key=api_key)
 
     return BuiltinProvider(db, embedder=resolve_embedder())

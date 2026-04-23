@@ -17,7 +17,7 @@
  *   @import "@clawdi-cloud/shared/style/theme.css";
  */
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark, .dark *));
 
 :root {
 	color-scheme: light;
@@ -29,11 +29,14 @@
 	--popover: oklch(1 0 0);
 	--popover-foreground: oklch(0.2671 0.0196 98.939);
 	--primary: oklch(0.6171 0.1375 39.0427);
-	--primary-foreground: oklch(1 0 0);
+	/* Near-black on the mid-lightness orange primary hits ~7.3:1 contrast,
+	   matches dark-mode treatment, and passes WCAG AA (pure white fails). */
+	--primary-foreground: oklch(0.1908 0.002 106.5859);
 	--secondary: oklch(0.9245 0.0138 92.9892);
 	--secondary-foreground: oklch(0.4334 0.0177 98.6048);
 	--muted: oklch(0.9341 0.0153 90.239);
-	--muted-foreground: oklch(0.5341 0.0078 97.4503);
+	/* Darkened from 0.534 to 0.45 for ~4.7:1 on --background (WCAG AA body text). */
+	--muted-foreground: oklch(0.45 0.008 97.45);
 	--accent: oklch(0.9245 0.0138 92.9892);
 	--accent-foreground: oklch(0.2671 0.0196 98.939);
 	--destructive: oklch(0.1908 0.002 106.5859);

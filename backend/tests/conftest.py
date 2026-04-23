@@ -116,9 +116,7 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
 
 
 @pytest_asyncio.fixture
-async def cli_client(
-    db_session: AsyncSession, seed_user: User
-) -> AsyncIterator[httpx.AsyncClient]:
+async def cli_client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[httpx.AsyncClient]:
     """Like ``client`` but the auth context advertises CLI (ApiKey) auth.
 
     Used to exercise endpoints guarded by ``require_cli_auth``. We don't
