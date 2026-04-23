@@ -19,6 +19,7 @@ dependencies = [
     "pgvector>=0.2.5",
     "openai>=1.40",
     "fastembed>=0.3",
+    "sentry-sdk[fastapi]>=2.23",
 ]
 
 [dependency-groups]

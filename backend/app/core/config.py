@@ -5,10 +5,25 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     app_name: str = "clawdi-cloud"
+    environment: str = "development"  # development | staging | production
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Externally reachable URL for THIS backend. Used when the backend embeds
+    # its own URL into payloads it hands to other processes (MCP client config,
+    # invitation links, webhooks). Dev default is localhost; in prod set to
+    # e.g. https://api.clawdi.example.
+    public_api_url: str = "http://localhost:8000"
+
     database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi_cloud"
+
+    # Request limits — in-memory sliding window; no Redis.
+    disable_rate_limits: bool = False
+
+    # Observability (both optional; no-op if not set)
+    sentry_dsn: str = ""
+    sentry_environment: str = ""  # falls back to `environment` if empty
+    sentry_traces_sample_rate: float = 0.0
 
     clerk_pem_public_key: str = ""
 
