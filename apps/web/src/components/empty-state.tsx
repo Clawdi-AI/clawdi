@@ -7,26 +7,35 @@ interface EmptyStateProps {
 	title?: string;
 	description?: ReactNode;
 	action?: ReactNode;
+	/** When set, wraps in a rounded muted tile. Default is flat — just centered text. */
+	bordered?: boolean;
 	className?: string;
 }
 
 /**
- * Dashed-border empty state tile. Single component replaces ~10 inline
- * `<div className="rounded-lg border border-dashed p-6 text-center ...">`
- * duplicates across pages. Icon + title + description + optional action
- * slot is the canonical shadcn-ish pattern for "nothing here yet".
+ * Centered empty-state message. Flat by default — a minimal hint, not a
+ * heavy dashed box. Opt-in `bordered` switches it to a subtle bordered tile
+ * for cases where the surrounding layout needs visible structure.
  */
-export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+	icon: Icon,
+	title,
+	description,
+	action,
+	bordered = false,
+	className,
+}: EmptyStateProps) {
 	return (
 		<div
 			className={cn(
-				"mx-auto flex max-w-md flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-card p-8 text-center",
+				"mx-auto flex max-w-md flex-col items-center justify-center gap-2 py-8 text-center",
+				bordered && "rounded-lg border border-dashed bg-muted/20",
 				className,
 			)}
 		>
 			{Icon ? <Icon className="size-8 text-muted-foreground/60" aria-hidden /> : null}
 			{title ? <p className="text-sm font-medium">{title}</p> : null}
-			{description ? <p className="max-w-sm text-sm text-muted-foreground">{description}</p> : null}
+			{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
 			{action ? <div className="mt-2">{action}</div> : null}
 		</div>
 	);

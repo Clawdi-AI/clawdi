@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Zap } from "lucide-react";
+import { ArrowUpRight, MessageSquare, Zap } from "lucide-react";
 import Link from "next/link";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
@@ -49,7 +49,7 @@ export default function DashboardPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionListItem[]>("/api/sessions?limit=5", token);
+			return apiFetch<SessionListItem[]>("/api/sessions?limit=8", token);
 		},
 	});
 
@@ -71,12 +71,12 @@ export default function DashboardPage() {
 				</div>
 			) : null}
 
-			{/* Activity heatmap + Recent sessions — side-by-side on large screens */}
-			<div className="grid gap-4 px-4 lg:grid-cols-2 lg:gap-6 lg:px-6">
+			{/* Activity — full-width heatmap, needs 53 columns of breathing room */}
+			<div className="px-4 lg:px-6">
 				<Card>
 					<CardHeader>
 						<CardTitle>Activity</CardTitle>
-						<CardDescription>Sessions per day, last 12 months.</CardDescription>
+						<CardDescription>Sessions per day across the last 12 months.</CardDescription>
 					</CardHeader>
 					<CardContent>
 						{contribLoading ? (
@@ -86,11 +86,14 @@ export default function DashboardPage() {
 						) : null}
 					</CardContent>
 				</Card>
+			</div>
 
-				<Card className="flex flex-col">
+			{/* Recent sessions — full-width, rich rows */}
+			<div className="px-4 lg:px-6">
+				<Card>
 					<CardHeader className="border-b">
 						<CardTitle>Recent sessions</CardTitle>
-						<CardDescription>Latest syncs from connected agents.</CardDescription>
+						<CardDescription>Latest syncs from your connected agents.</CardDescription>
 						<CardAction>
 							<Button asChild variant="ghost" size="sm">
 								<Link href="/sessions">
@@ -100,16 +103,16 @@ export default function DashboardPage() {
 							</Button>
 						</CardAction>
 					</CardHeader>
-					<CardContent className="flex-1 p-0">
+					<CardContent className="p-0">
 						{sessionsLoading ? (
 							<div className="divide-y">
-								{Array.from({ length: 3 }).map((_, i) => (
+								{Array.from({ length: 4 }).map((_, i) => (
 									<div key={i} className="flex items-center justify-between gap-4 px-6 py-4">
 										<div className="min-w-0 flex-1 space-y-2">
-											<Skeleton className="h-4 w-40" />
-											<Skeleton className="h-3 w-28" />
+											<Skeleton className="h-4 w-64" />
+											<Skeleton className="h-3 w-48" />
 										</div>
-										<Skeleton className="h-3 w-10" />
+										<Skeleton className="h-3 w-16" />
 									</div>
 								))}
 							</div>
@@ -119,21 +122,32 @@ export default function DashboardPage() {
 									<Link
 										key={s.id}
 										href={`/sessions/${s.id}`}
-										className="flex items-center justify-between gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
+										className="flex items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-accent/50"
 									>
 										<div className="min-w-0 flex-1">
 											<div className="truncate text-sm font-medium">
 												{formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
 											</div>
-											<div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+											<div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+												{s.agent_type ? (
+													<Badge variant="outline" className="font-normal">
+														{s.agent_type === "claude_code"
+															? "Claude Code"
+															: s.agent_type === "hermes"
+																? "Hermes"
+																: s.agent_type}
+													</Badge>
+												) : null}
 												<span className="truncate">
 													{s.project_path?.split("/").pop() ?? "no project"}
 												</span>
 												{s.model ? (
-													<Badge variant="secondary" className="font-normal">
-														{s.model.replace("claude-", "")}
-													</Badge>
+													<span className="truncate">{s.model.replace("claude-", "")}</span>
 												) : null}
+												<span className="flex items-center gap-1">
+													<MessageSquare className="size-3" />
+													{s.message_count}
+												</span>
 												<span className="flex items-center gap-1">
 													<Zap className="size-3" />
 													{((s.input_tokens + s.output_tokens) / 1000).toFixed(1)}k
@@ -147,16 +161,15 @@ export default function DashboardPage() {
 								))}
 							</div>
 						) : (
-							<div className="p-4">
-								<EmptyState
-									description={
-										<>
-											No sessions yet. Run{" "}
-											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>
-										</>
-									}
-								/>
-							</div>
+							<EmptyState
+								description={
+									<>
+										No sessions yet. Run{" "}
+										<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
+										on a connected agent to populate this list.
+									</>
+								}
+							/>
 						)}
 					</CardContent>
 				</Card>
