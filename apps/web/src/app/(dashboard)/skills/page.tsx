@@ -84,7 +84,7 @@ export default function SkillsPage() {
 		<div className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
-				description="Portable agent instructions synced across machines."
+				description="Agent instructions synced across your machines."
 				actions={
 					skills ? (
 						<Badge variant="secondary">

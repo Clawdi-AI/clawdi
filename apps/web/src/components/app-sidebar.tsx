@@ -8,14 +8,18 @@ import {
 	Key,
 	LayoutDashboard,
 	LogOut,
+	Monitor,
+	Moon,
 	Plug,
 	Settings,
 	Sparkles,
+	Sun,
 	User,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTheme } from "next-themes";
 import { useState } from "react";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,6 +29,9 @@ import {
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -55,6 +62,7 @@ export function AppSidebar() {
 	const { signOut } = useClerk();
 	const { user } = useUser();
 	const { isMobile } = useSidebar();
+	const { theme, setTheme } = useTheme();
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [settingsSection, setSettingsSection] = useState<"general" | "profile" | "api-keys">(
 		"general",
@@ -173,6 +181,26 @@ export function AppSidebar() {
 										<Key />
 										API Keys
 									</DropdownMenuItem>
+									<DropdownMenuSub>
+										<DropdownMenuSubTrigger>
+											{theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
+											Theme
+										</DropdownMenuSubTrigger>
+										<DropdownMenuSubContent>
+											<DropdownMenuItem onClick={() => setTheme("light")}>
+												<Sun />
+												Light
+											</DropdownMenuItem>
+											<DropdownMenuItem onClick={() => setTheme("dark")}>
+												<Moon />
+												Dark
+											</DropdownMenuItem>
+											<DropdownMenuItem onClick={() => setTheme("system")}>
+												<Monitor />
+												System
+											</DropdownMenuItem>
+										</DropdownMenuSubContent>
+									</DropdownMenuSub>
 									<DropdownMenuSeparator />
 									<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
 										<LogOut />

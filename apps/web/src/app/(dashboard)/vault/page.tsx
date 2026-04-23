@@ -55,8 +55,8 @@ export default function VaultPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
-				title="Vault"
-				description="Encrypted secrets synced to your agents via `clawdi run`. Values are AES-256-GCM encrypted at rest."
+				title="Vaults"
+				description="Encrypted secrets your agents can access with clawdi run."
 				actions={
 					vaults ? (
 						<Badge variant="secondary">

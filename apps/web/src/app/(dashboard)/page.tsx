@@ -76,7 +76,7 @@ export default function DashboardPage() {
 				<Card>
 					<CardHeader>
 						<CardTitle>Activity</CardTitle>
-						<CardDescription>Sessions per day across the last 12 months.</CardDescription>
+						<CardDescription>Sessions per day in the last 12 months.</CardDescription>
 					</CardHeader>
 					<CardContent>
 						{contribLoading ? (
@@ -93,7 +93,7 @@ export default function DashboardPage() {
 				<Card>
 					<CardHeader className="border-b">
 						<CardTitle>Recent sessions</CardTitle>
-						<CardDescription>Latest syncs from your connected agents.</CardDescription>
+						<CardDescription>Latest agent syncs.</CardDescription>
 						<CardAction>
 							<Button asChild variant="ghost" size="sm">
 								<Link href="/sessions">

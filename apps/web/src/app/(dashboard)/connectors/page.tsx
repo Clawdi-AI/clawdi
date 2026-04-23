@@ -88,7 +88,7 @@ export default function ConnectorsPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Connectors"
-				description="Connect apps and enable capabilities for your AI agent."
+				description="Connect apps so your agents can use external tools."
 				actions={
 					<>
 						{availableApps && <Badge variant="secondary">{availableApps.length} available</Badge>}
