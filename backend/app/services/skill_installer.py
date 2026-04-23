@@ -166,17 +166,31 @@ async def _download_and_tar(
             if file_count >= MAX_FILES:
                 raise ValueError(f"Skill repo has too many files (>{MAX_FILES})")
 
-            resp = await client.get(f["download_url"])
-            if resp.status_code != 200:
-                logger.warning(f"Failed to download {f['path']}: {resp.status_code}")
-                continue
+            # Stream the download so a malicious repo serving a multi-GB blob
+            # can't buffer it into memory before we reject it. We stop reading
+            # the moment cumulative size would exceed the cap.
+            chunks: list[bytes] = []
+            file_size = 0
+            try:
+                async with client.stream("GET", f["download_url"]) as resp:
+                    if resp.status_code != 200:
+                        logger.warning(
+                            f"Failed to download {f['path']}: {resp.status_code}"
+                        )
+                        continue
+                    async for chunk in resp.aiter_bytes():
+                        file_size += len(chunk)
+                        if total_size + file_size > MAX_DECOMPRESSED_BYTES:
+                            raise ValueError(
+                                f"Skill repo exceeds "
+                                f"{MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"
+                            )
+                        chunks.append(chunk)
+            except ValueError:
+                raise
 
-            content = resp.content
-            total_size += len(content)
-            if total_size > MAX_DECOMPRESSED_BYTES:
-                raise ValueError(
-                    f"Skill repo exceeds {MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"
-                )
+            content = b"".join(chunks)
+            total_size += file_size
 
             # Relative path within the skill directory
             rel_path = f["path"][prefix_len:] if prefix_len else f["path"]

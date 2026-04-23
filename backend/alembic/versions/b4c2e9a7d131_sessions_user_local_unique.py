@@ -23,13 +23,15 @@ def upgrade() -> None:
     # Deduplicate any existing rows before taking the unique constraint.
     # Keep the oldest row per (user_id, local_session_id) — that's the one
     # the duplicate-skip path in the old route would have preserved anyway.
+    # `id` is used as a tiebreaker so ties on `created_at` don't leave a
+    # pair of duplicates that would break the constraint creation below.
     op.execute(
         """
         DELETE FROM sessions a
         USING sessions b
         WHERE a.user_id = b.user_id
           AND a.local_session_id = b.local_session_id
-          AND a.created_at > b.created_at
+          AND (a.created_at, a.id) > (b.created_at, b.id)
         """
     )
     op.create_unique_constraint(

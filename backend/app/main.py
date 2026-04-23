@@ -37,6 +37,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     load off the main thread so it doesn't block startup itself; if it
     finishes before the first embedding call, that call is fast.
     """
+    background: set[asyncio.Task[None]] = set()
+
     if settings.memory_embedding_mode.lower() == "local":
 
         async def _warm() -> None:
@@ -46,10 +48,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             except Exception as e:  # noqa: BLE001 — never block startup on embedder
                 log.warning("Local embedder warmup failed: %s", e)
 
-        # Fire-and-forget — let FastAPI serve health checks while it downloads.
-        asyncio.create_task(_warm())
+        # Hold a strong reference — asyncio.create_task returns a weak-ref'd
+        # Task and the GC can reap it mid-flight otherwise. Python docs
+        # explicitly warn about this pattern.
+        task = asyncio.create_task(_warm(), name="embedder-warm")
+        background.add(task)
+        task.add_done_callback(background.discard)
 
-    yield
+    try:
+        yield
+    finally:
+        # On shutdown, cancel anything still running and wait for it so we
+        # don't leak a task into whatever signal handler runs next.
+        for t in background:
+            t.cancel()
+        if background:
+            await asyncio.gather(*background, return_exceptions=True)
 
 
 app = FastAPI(
