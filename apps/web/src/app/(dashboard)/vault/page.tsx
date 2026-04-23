@@ -164,12 +164,20 @@ function VaultCard({
 	});
 
 	const upsertItem = useMutation({
-		mutationFn: async ({ key, value }: { key: string; value: string }) => {
+		mutationFn: async ({
+			section,
+			key,
+			value,
+		}: {
+			section: string;
+			key: string;
+			value: string;
+		}) => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
 			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
 				method: "PUT",
-				body: JSON.stringify({ section: "", fields: { [key]: value } }),
+				body: JSON.stringify({ section, fields: { [key]: value } }),
 			});
 		},
 		onSuccess: () => {
@@ -184,12 +192,12 @@ function VaultCard({
 	});
 
 	const deleteItem = useMutation({
-		mutationFn: async (fieldName: string) => {
+		mutationFn: async ({ section, name }: { section: string; name: string }) => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
 			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
 				method: "DELETE",
-				body: JSON.stringify({ section: "", fields: [fieldName] }),
+				body: JSON.stringify({ section, fields: [name] }),
 			});
 		},
 		onSuccess: () => {
@@ -271,12 +279,14 @@ function VaultCard({
 							className="flex-1"
 							onKeyDown={(e) => {
 								if (e.key === "Enter" && newKey && newValue)
-									upsertItem.mutate({ key: newKey, value: newValue });
+									upsertItem.mutate({ section: "", key: newKey, value: newValue });
 							}}
 						/>
 						<Button
 							onClick={() =>
-								newKey && newValue && upsertItem.mutate({ key: newKey, value: newValue })
+								newKey &&
+								newValue &&
+								upsertItem.mutate({ section: "", key: newKey, value: newValue })
 							}
 							disabled={!newKey || !newValue || upsertItem.isPending}
 						>
@@ -316,7 +326,7 @@ function VaultCard({
 								<Button
 									variant="ghost"
 									size="icon-xs"
-									onClick={() => deleteItem.mutate(f.name)}
+									onClick={() => deleteItem.mutate({ section: f.section, name: f.name })}
 									disabled={deleteItem.isPending}
 									className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
 									aria-label={`Delete key ${f.key}`}

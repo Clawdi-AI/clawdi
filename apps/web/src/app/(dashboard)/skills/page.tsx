@@ -58,7 +58,7 @@ export default function SkillsPage() {
 		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
 	});
 
-	const installSkill = async (repo: string, path?: string) => {
+	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
 		const key = `${repo}/${path || ""}`;
 		setInstalling(key);
 		setInstallError(null);
@@ -70,8 +70,10 @@ export default function SkillsPage() {
 				body: JSON.stringify({ repo, path }),
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
+			return true;
 		} catch (e: unknown) {
-			setInstallError(e instanceof Error ? e.message : String(e));
+			setInstallError(errorMessage(e));
+			return false;
 		} finally {
 			setInstalling(null);
 		}
@@ -84,10 +86,14 @@ export default function SkillsPage() {
 		if (parts.length < 2) return;
 		const repo = `${parts[0]}/${parts[1]}`;
 		const path = parts.length > 2 ? parts.slice(2).join("/") : undefined;
-		await installSkill(repo, path);
-		if (!installError) setCustomRepo("");
+		const ok = await installSkill(repo, path);
+		if (ok) setCustomRepo("");
 	};
 
+	// Match marketplace entries against installed skills by their declared
+	// `skillKey` (which is what the backend stores as `skill_key` after install).
+	// Slugifying the display name is unreliable — it can drift from the
+	// SKILL.md frontmatter that the backend actually uses.
 	const installedKeys = new Set(skills?.map((s) => s.skill_key) ?? []);
 
 	return (
@@ -223,8 +229,7 @@ export default function SkillsPage() {
 				<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 					{FEATURED_SKILLS.map((skill) => {
 						const key = `${skill.repo}/${skill.path || ""}`;
-						const skillKey = skill.name.toLowerCase().replace(/\s+/g, "-");
-						const isInstalled = installedKeys.has(skillKey);
+						const isInstalled = installedKeys.has(skill.skillKey);
 						const isInstalling = installing === key;
 						return (
 							<Card key={key}>
@@ -233,7 +238,6 @@ export default function SkillsPage() {
 										<div className="flex items-center gap-2">
 											<Sparkles className="size-4 shrink-0 text-primary" />
 											<span className="truncate text-sm font-medium">{skill.name}</span>
-											<Badge variant="secondary">{skill.installs}</Badge>
 										</div>
 										<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
 											{skill.description}

@@ -1,6 +1,8 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+// `/skill.md` must be publicly reachable — fresh AI agents fetch it during
+// the "Send to Agent" onboarding flow and have no Clerk session yet.
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/skill.md"]);
 
 export default clerkMiddleware(async (auth, request) => {
 	if (!isPublicRoute(request)) {
@@ -10,7 +12,7 @@ export default clerkMiddleware(async (auth, request) => {
 
 export const config = {
 	matcher: [
-		"/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+		"/((?!_next|[^?]*\\.(?:html?|md|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
 		"/(api|trpc)(.*)",
 	],
 };

@@ -1,8 +1,23 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @field_validator("vault_encryption_key", "encryption_key", mode="before")
+    @classmethod
+    def _strip_dotenv_comment_placeholders(cls, v: object) -> object:
+        # Some .env parsers (including pydantic-settings' dotenv reader) greedily
+        # swallow the trailing comment when a value line looks like
+        #   VAULT_ENCRYPTION_KEY=  # Generate with: ...
+        # producing the literal string "# Generate with: ..." as the value.
+        # That passes hex-decoding later with a cryptic error. Normalise it
+        # back to the empty string so downstream code treats the key as
+        # "not configured" and fails loudly at first use.
+        if isinstance(v, str) and v.strip().startswith("#"):
+            return ""
+        return v
 
     app_name: str = "clawdi-cloud"
     environment: str = "development"  # development | staging | production

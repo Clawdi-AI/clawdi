@@ -14,10 +14,12 @@ Strategy:
 from __future__ import annotations
 
 import os
+import secrets
 import uuid
 from collections.abc import AsyncIterator
 
 import httpx
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -29,6 +31,26 @@ from app.main import app
 from app.models.user import User
 
 TEST_DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_crypto_keys():
+    """Make sure vault/JWT keys are valid for the test run.
+
+    The dev ``.env`` ships with placeholder values (comment-only); leaving
+    them in place makes vault_crypto / MCP proxy tests blow up at decrypt
+    time with cryptic errors. Override with per-run random keys so tests
+    never accidentally use prod keys either.
+    """
+    prev_vault = settings.vault_encryption_key
+    prev_jwt = settings.encryption_key
+    settings.vault_encryption_key = secrets.token_hex(32)
+    settings.encryption_key = secrets.token_hex(32)
+    try:
+        yield
+    finally:
+        settings.vault_encryption_key = prev_vault
+        settings.encryption_key = prev_jwt
 
 
 @pytest_asyncio.fixture
@@ -82,6 +104,36 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
 
     async def _override_get_auth() -> AuthContext:
         return AuthContext(user=seed_user)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def cli_client(
+    db_session: AsyncSession, seed_user: User
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Like ``client`` but the auth context advertises CLI (ApiKey) auth.
+
+    Used to exercise endpoints guarded by ``require_cli_auth``. We don't
+    persist a real ApiKey row because ``require_cli_auth`` only checks the
+    ``is_cli`` flag — a placeholder ApiKey object is enough.
+    """
+    from app.models.api_key import ApiKey
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_get_auth() -> AuthContext:
+        # ApiKey instance is not persisted; only ``is_cli`` branching matters
+        # to the routes we exercise. See app.core.auth.require_cli_auth.
+        return AuthContext(user=seed_user, api_key=ApiKey(user_id=seed_user.id))
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
