@@ -1,13 +1,19 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { Database } from "bun:sqlite";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import { SKIP_DIRS, getHermesHome } from "./paths";
 
-const HERMES_DIR = process.env.HERMES_HOME || join(homedir(), ".hermes");
-const STATE_DB = join(HERMES_DIR, "state.db");
-const SKILLS_DIR = join(HERMES_DIR, "skills");
+function hermesDir() {
+	return getHermesHome();
+}
+function stateDbPath() {
+	return join(hermesDir(), "state.db");
+}
+function skillsDir() {
+	return join(hermesDir(), "skills");
+}
 
 /**
  * Extract a plain model name string from Hermes model field.
@@ -31,7 +37,7 @@ export class HermesAdapter implements AgentAdapter {
 	readonly agentType = "hermes" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(HERMES_DIR);
+		return existsSync(hermesDir());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -46,9 +52,9 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(since?: Date, _projectFilter?: string): Promise<RawSession[]> {
-		if (!existsSync(STATE_DB)) return [];
+		if (!existsSync(stateDbPath())) return [];
 
-		const db = new Database(STATE_DB, { readonly: true });
+		const db = new Database(stateDbPath(), { readonly: true });
 		try {
 			const sinceEpoch = since ? since.getTime() / 1000 : 0;
 
@@ -113,7 +119,7 @@ export class HermesAdapter implements AgentAdapter {
 					messages,
 					// The DB is shared across sessions — anchor to the row id so the pointer
 					// identifies the specific session rather than the whole store.
-					rawFilePath: `${STATE_DB}#${row.id}`,
+					rawFilePath: `${stateDbPath()}#${row.id}`,
 				});
 			}
 
@@ -124,10 +130,10 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
+		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
-		this._scanSkillsDir(SKILLS_DIR, skills);
+		this._scanSkillsDir(skillsDir(), skills);
 		return skills;
 	}
 
@@ -138,12 +144,13 @@ export class HermesAdapter implements AgentAdapter {
 	private _scanSkillsDir(dir: string, results: RawSkill[]): void {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
 
 			if (existsSync(skillMd)) {
 				const content = readFileSync(skillMd, "utf-8");
-				const skillKey = relative(SKILLS_DIR, fullPath);
+				const skillKey = relative(skillsDir(), fullPath);
 				const fileCount = readdirSync(fullPath, { recursive: true }).length;
 
 				results.push({
@@ -162,11 +169,11 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	getSkillPath(key: string): string {
-		return join(SKILLS_DIR, key, "SKILL.md");
+		return join(skillsDir(), key, "SKILL.md");
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(SKILLS_DIR, key);
+		const targetDir = join(skillsDir(), key);
 
 		if (existsSync(targetDir)) {
 			rmSync(targetDir, { recursive: true, force: true });
@@ -174,7 +181,7 @@ export class HermesAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await tar.extract({
-			cwd: SKILLS_DIR,
+			cwd: skillsDir(),
 			gzip: true,
 			filter: (path) => !path.includes("..") && !path.startsWith("/"),
 		}).end(tarGzBytes);

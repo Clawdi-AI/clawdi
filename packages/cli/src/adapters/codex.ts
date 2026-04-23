@@ -1,12 +1,18 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, statSync, type Dirent } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import { SKIP_DIRS, getCodexHome } from "./paths";
 
-const CODEX_DIR = process.env.CODEX_HOME || join(homedir(), ".codex");
-const SESSIONS_DIR = join(CODEX_DIR, "sessions");
-const SKILLS_DIR = join(CODEX_DIR, "skills");
+function codexDir() {
+	return getCodexHome();
+}
+function sessionsDir() {
+	return join(codexDir(), "sessions");
+}
+function skillsDir() {
+	return join(codexDir(), "skills");
+}
 
 interface SessionLine {
 	timestamp?: string;
@@ -85,7 +91,7 @@ export class CodexAdapter implements AgentAdapter {
 	readonly agentType = "codex" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(CODEX_DIR);
+		return existsSync(codexDir());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -99,7 +105,7 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
-		if (!existsSync(SESSIONS_DIR)) return [];
+		if (!existsSync(sessionsDir())) return [];
 
 		let absFilter: string | null = null;
 		if (projectFilter) {
@@ -107,7 +113,7 @@ export class CodexAdapter implements AgentAdapter {
 			absFilter = resolve(projectFilter);
 		}
 
-		const files = collectJsonlFiles(SESSIONS_DIR, since);
+		const files = collectJsonlFiles(sessionsDir(), since);
 		const sessions: RawSession[] = [];
 
 		for (const filePath of files) {
@@ -229,14 +235,15 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
+		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
-		for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
-			const dirPath = join(SKILLS_DIR, entry.name);
+			if (SKIP_DIRS.has(entry.name)) continue;
+			const dirPath = join(skillsDir(), entry.name);
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
@@ -256,11 +263,11 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	getSkillPath(key: string): string {
-		return join(SKILLS_DIR, key, "SKILL.md");
+		return join(skillsDir(), key, "SKILL.md");
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(SKILLS_DIR, key);
+		const targetDir = join(skillsDir(), key);
 		if (existsSync(targetDir)) {
 			rmSync(targetDir, { recursive: true, force: true });
 		}
@@ -268,7 +275,7 @@ export class CodexAdapter implements AgentAdapter {
 
 		await tar
 			.extract({
-				cwd: SKILLS_DIR,
+				cwd: skillsDir(),
 				gzip: true,
 				filter: (path) => !path.includes("..") && !path.startsWith("/"),
 			})

@@ -1,11 +1,18 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import { SKIP_DIRS, getClaudeHome } from "./paths";
 
-const CLAUDE_DIR = join(homedir(), ".claude");
-const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
+function claudeDir() {
+	return getClaudeHome();
+}
+function projectsDir() {
+	return join(claudeDir(), "projects");
+}
+function skillsDirFor() {
+	return join(claudeDir(), "skills");
+}
 
 interface SessionJsonlEntry {
 	type?: string;
@@ -29,7 +36,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	readonly agentType = "claude_code" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(CLAUDE_DIR);
+		return existsSync(claudeDir());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -50,10 +57,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
-		if (!existsSync(PROJECTS_DIR)) return [];
+		if (!existsSync(projectsDir())) return [];
 
 		const sessions: RawSession[] = [];
-		let projectDirs = readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter((d) =>
+		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
 			d.isDirectory(),
 		);
 
@@ -65,7 +72,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		}
 
 		for (const projectDir of projectDirs) {
-			const projectPath = join(PROJECTS_DIR, projectDir.name);
+			const projectPath = join(projectsDir(), projectDir.name);
 			const jsonlFiles = readdirSync(projectPath).filter((f) => f.endsWith(".jsonl"));
 
 			for (const file of jsonlFiles) {
@@ -195,13 +202,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		const skillsDir = join(CLAUDE_DIR, "skills");
+		const skillsDir = join(claudeDir(), "skills");
 		if (!existsSync(skillsDir)) return [];
 
 		const skills: RawSkill[] = [];
 
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
 			const dirPath = join(skillsDir, entry.name);
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
@@ -224,11 +232,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	}
 
 	getSkillPath(key: string): string {
-		return join(CLAUDE_DIR, "skills", key, "SKILL.md");
+		return join(claudeDir(), "skills", key, "SKILL.md");
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const skillsDir = join(CLAUDE_DIR, "skills");
+		const skillsDir = join(claudeDir(), "skills");
 		const targetDir = join(skillsDir, key);
 
 		if (existsSync(targetDir)) {

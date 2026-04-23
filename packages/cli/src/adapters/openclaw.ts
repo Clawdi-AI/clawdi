@@ -1,15 +1,27 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import { SKIP_DIRS, getOpenClawHome } from "./paths";
 
-const OPENCLAW_DIR = process.env.OPENCLAW_STATE_DIR || join(homedir(), ".openclaw");
-const AGENT_ID = process.env.OPENCLAW_AGENT_ID || "main";
-const AGENT_DIR = join(OPENCLAW_DIR, "agents", AGENT_ID);
-const SESSIONS_DIR = join(AGENT_DIR, "sessions");
-const SESSIONS_INDEX = join(SESSIONS_DIR, "sessions.json");
-const SKILLS_DIR = join(AGENT_DIR, "skills");
+function openclawDir() {
+	return getOpenClawHome();
+}
+function agentId() {
+	return process.env.OPENCLAW_AGENT_ID || "main";
+}
+function agentDir() {
+	return join(openclawDir(), "agents", agentId());
+}
+function sessionsDir() {
+	return join(agentDir(), "sessions");
+}
+function sessionsIndexPath() {
+	return join(sessionsDir(), "sessions.json");
+}
+function skillsDir() {
+	return join(agentDir(), "skills");
+}
 
 interface SessionEntry {
 	sessionId: string;
@@ -57,7 +69,7 @@ export class OpenClawAdapter implements AgentAdapter {
 	readonly agentType = "openclaw" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(OPENCLAW_DIR);
+		return existsSync(openclawDir());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -78,11 +90,11 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
-		if (!existsSync(SESSIONS_INDEX)) return [];
+		if (!existsSync(sessionsIndexPath())) return [];
 
 		let index: Record<string, SessionEntry>;
 		try {
-			index = JSON.parse(readFileSync(SESSIONS_INDEX, "utf-8"));
+			index = JSON.parse(readFileSync(sessionsIndexPath(), "utf-8"));
 		} catch {
 			return [];
 		}
@@ -107,8 +119,8 @@ export class OpenClawAdapter implements AgentAdapter {
 			}
 
 			const transcriptPath = entry.sessionFile
-				? join(SESSIONS_DIR, entry.sessionFile)
-				: join(SESSIONS_DIR, `${sessionId}.jsonl`);
+				? join(sessionsDir(), entry.sessionFile)
+				: join(sessionsDir(), `${sessionId}.jsonl`);
 
 			const messages: SessionMessage[] = [];
 			let startedAt: Date | null = null;
@@ -198,7 +210,7 @@ export class OpenClawAdapter implements AgentAdapter {
 				durationSeconds,
 				summary,
 				messages,
-				rawFilePath: existsSync(transcriptPath) ? transcriptPath : SESSIONS_INDEX,
+				rawFilePath: existsSync(transcriptPath) ? transcriptPath : sessionsIndexPath(),
 			});
 		}
 
@@ -206,12 +218,13 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
+		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
-		for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
-			const dirPath = join(SKILLS_DIR, entry.name);
+			if (SKIP_DIRS.has(entry.name)) continue;
+			const dirPath = join(skillsDir(), entry.name);
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
@@ -231,11 +244,11 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	getSkillPath(key: string): string {
-		return join(SKILLS_DIR, key, "SKILL.md");
+		return join(skillsDir(), key, "SKILL.md");
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(SKILLS_DIR, key);
+		const targetDir = join(skillsDir(), key);
 		if (existsSync(targetDir)) {
 			rmSync(targetDir, { recursive: true, force: true });
 		}
@@ -243,7 +256,7 @@ export class OpenClawAdapter implements AgentAdapter {
 
 		await tar
 			.extract({
-				cwd: SKILLS_DIR,
+				cwd: skillsDir(),
 				gzip: true,
 				filter: (path) => !path.includes("..") && !path.startsWith("/"),
 			})
