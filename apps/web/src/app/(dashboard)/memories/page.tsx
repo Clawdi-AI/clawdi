@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { useDeferredValue, useState } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -228,11 +229,13 @@ export default function MemoriesPage() {
 					))}
 				</div>
 			) : (
-				<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-					{searchQuery || category
-						? "No memories match your search."
-						: 'No memories yet. Add one above or use `clawdi memory add "..."`'}
-				</div>
+				<EmptyState
+					description={
+						searchQuery || category
+							? "No memories match your search."
+							: 'No memories yet. Add one above or use `clawdi memory add "..."`'
+					}
+				/>
 			)}
 		</div>
 	);

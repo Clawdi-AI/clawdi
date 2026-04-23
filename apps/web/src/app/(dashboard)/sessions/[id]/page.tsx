@@ -14,6 +14,7 @@ import {
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -157,13 +158,17 @@ export default function SessionDetailPage() {
 					<EmptyContent />
 				)
 			) : (
-				<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-					Content not synced yet. Run{" "}
-					<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-						clawdi sync up --modules sessions
-					</code>{" "}
-					to upload session content.
-				</div>
+				<EmptyState
+					description={
+						<>
+							Content not synced yet. Run{" "}
+							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+								clawdi sync up --modules sessions
+							</code>{" "}
+							to upload session content.
+						</>
+					}
+				/>
 			)}
 		</div>
 	);
@@ -358,9 +363,5 @@ function MessagesSkeleton() {
 }
 
 function EmptyContent() {
-	return (
-		<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-			No messages in this session.
-		</div>
-	);
+	return <EmptyState description="No messages in this session." />;
 }

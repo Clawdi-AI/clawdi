@@ -6,6 +6,7 @@ import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -126,11 +127,13 @@ export default function ConnectorsPage() {
 					))}
 				</div>
 			) : filtered.length === 0 ? (
-				<div className="rounded-lg border border-dashed bg-card p-6 text-center text-sm text-muted-foreground">
-					{query
-						? `No connectors matching "${query}"`
-						: "No connectors available. Configure COMPOSIO_API_KEY."}
-				</div>
+				<EmptyState
+					description={
+						query
+							? `No connectors matching "${query}"`
+							: "No connectors available. Configure COMPOSIO_API_KEY."
+					}
+				/>
 			) : (
 				<>
 					<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

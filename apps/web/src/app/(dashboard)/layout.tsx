@@ -9,15 +9,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 		<SidebarProvider>
 			<AppSidebar />
 			<SidebarInset>
-				<header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-					<SidebarTrigger className="-ml-1" />
-					<Separator orientation="vertical" className="mr-2 h-4" />
-					<AppBreadcrumb />
-					<div className="ml-auto flex items-center gap-2">
+				<header className="flex h-16 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+					<div className="flex items-center gap-2 px-4">
+						<SidebarTrigger className="-ml-1" />
+						<Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+						<AppBreadcrumb />
+					</div>
+					<div className="ml-auto flex items-center gap-2 px-4">
 						<ThemeToggle />
 					</div>
 				</header>
-				<div className="mx-auto w-full max-w-7xl p-4 md:p-6">{children}</div>
+				<div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-4 p-4 md:p-6">
+					{children}
+				</div>
 			</SidebarInset>
 		</SidebarProvider>
 	);

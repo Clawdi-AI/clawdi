@@ -6,6 +6,7 @@ import { Check, Link2Off, Loader2, Lock, Plug, PlugZap, Search, Shield } from "l
 import { useParams } from "next/navigation";
 import { useDeferredValue, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -158,9 +159,9 @@ export default function ConnectorDetailPage() {
 				</div>
 
 				{activeConnections.length === 0 ? (
-					<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-						No connected accounts yet.
-						<div className="mt-3">
+					<EmptyState
+						description="No connected accounts yet."
+						action={
 							<Button onClick={() => connectApp.mutate()} disabled={connectApp.isPending}>
 								{connectApp.isPending ? (
 									<Loader2 className="size-3.5 animate-spin" />
@@ -169,8 +170,8 @@ export default function ConnectorDetailPage() {
 								)}
 								{connectApp.isPending ? "Connecting..." : "Connect"}
 							</Button>
-						</div>
-					</div>
+						}
+					/>
 				) : (
 					<div className="flex flex-col gap-2">
 						{activeConnections.map((c) => (

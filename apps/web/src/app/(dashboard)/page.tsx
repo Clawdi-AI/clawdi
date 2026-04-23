@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
@@ -190,10 +191,15 @@ export default function DashboardPage() {
 						))}
 					</div>
 				) : (
-					<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-						No sessions yet. Run{" "}
-						<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to sync.
-					</div>
+					<EmptyState
+						description={
+							<>
+								No sessions yet. Run{" "}
+								<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to
+								sync.
+							</>
+						}
+					/>
 				)}
 			</div>
 		</div>

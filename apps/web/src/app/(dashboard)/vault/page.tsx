@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Key, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,10 +110,14 @@ export default function VaultPage() {
 					))}
 				</div>
 			) : (
-				<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-					No vaults yet. Create one above or run{" "}
-					<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi vault set KEY</code>
-				</div>
+				<EmptyState
+					description={
+						<>
+							No vaults yet. Create one above or run{" "}
+							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi vault set KEY</code>
+						</>
+					}
+				/>
 			)}
 		</div>
 	);

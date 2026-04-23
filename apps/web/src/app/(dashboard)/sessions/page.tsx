@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { Zap } from "lucide-react";
 import Link from "next/link";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,10 +98,15 @@ export default function SessionsPage() {
 					))}
 				</div>
 			) : (
-				<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-					No sessions yet. Run{" "}
-					<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to sync.
-				</div>
+				<EmptyState
+					description={
+						<>
+							No sessions yet. Run{" "}
+							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to
+							sync.
+						</>
+					}
+				/>
 			)}
 		</div>
 	);

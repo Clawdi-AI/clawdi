@@ -14,6 +14,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -151,12 +152,16 @@ export default function SkillsPage() {
 						))}
 					</div>
 				) : (
-					<div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-						No skills installed yet. Install from below or run{" "}
-						<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-							clawdi skill install owner/repo
-						</code>
-					</div>
+					<EmptyState
+						description={
+							<>
+								No skills installed yet. Install from below or run{" "}
+								<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+									clawdi skill install owner/repo
+								</code>
+							</>
+						}
+					/>
 				)}
 			</section>
 
