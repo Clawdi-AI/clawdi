@@ -31,10 +31,13 @@ import {
 	Sidebar,
 	SidebarContent,
 	SidebarFooter,
+	SidebarGroup,
+	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
+	SidebarRail,
 	useSidebar,
 } from "@/components/ui/sidebar";
 
@@ -51,7 +54,7 @@ export function AppSidebar() {
 	const pathname = usePathname();
 	const { signOut } = useClerk();
 	const { user } = useUser();
-	const { state } = useSidebar();
+	const { isMobile } = useSidebar();
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [settingsSection, setSettingsSection] = useState<"general" | "profile" | "api-keys">(
 		"general",
@@ -65,16 +68,21 @@ export function AppSidebar() {
 	return (
 		<>
 			<Sidebar collapsible="icon">
+				{/* Brand — logo already has its own colors, no filled background */}
 				<SidebarHeader>
 					<SidebarMenu>
 						<SidebarMenuItem>
 							<SidebarMenuButton size="lg" asChild>
 								<Link href="/">
-									<div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-										<Image src="/clawdi.svg" alt="" width={20} height={20} />
-									</div>
-									<div className="grid flex-1 text-left text-sm leading-tight">
-										<span className="truncate font-semibold">Clawdi Cloud</span>
+									<Image
+										src="/clawdi.svg"
+										alt=""
+										width={32}
+										height={32}
+										className="size-8 shrink-0"
+									/>
+									<div className="grid flex-1 text-left leading-tight">
+										<span className="truncate text-sm font-semibold">Clawdi Cloud</span>
 										<span className="truncate text-xs text-muted-foreground">
 											iCloud for AI Agents
 										</span>
@@ -86,22 +94,25 @@ export function AppSidebar() {
 				</SidebarHeader>
 
 				<SidebarContent>
-					<SidebarMenu>
-						{navItems.map((item) => {
-							const active =
-								pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-							return (
-								<SidebarMenuItem key={item.href}>
-									<SidebarMenuButton asChild isActive={active} tooltip={item.label}>
-										<Link href={item.href}>
-											<item.icon className="size-4" />
-											<span>{item.label}</span>
-										</Link>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-							);
-						})}
-					</SidebarMenu>
+					<SidebarGroup>
+						<SidebarGroupLabel>Workspace</SidebarGroupLabel>
+						<SidebarMenu>
+							{navItems.map((item) => {
+								const active =
+									pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+								return (
+									<SidebarMenuItem key={item.href}>
+										<SidebarMenuButton asChild isActive={active} tooltip={item.label}>
+											<Link href={item.href}>
+												<item.icon />
+												<span>{item.label}</span>
+											</Link>
+										</SidebarMenuButton>
+									</SidebarMenuItem>
+								);
+							})}
+						</SidebarMenu>
+					</SidebarGroup>
 				</SidebarContent>
 
 				<SidebarFooter>
@@ -117,7 +128,7 @@ export function AppSidebar() {
 											{user?.imageUrl ? (
 												<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
 											) : null}
-											<AvatarFallback className="rounded-lg bg-primary text-primary-foreground">
+											<AvatarFallback className="rounded-lg">
 												{user?.fullName?.[0] ?? "U"}
 											</AvatarFallback>
 										</Avatar>
@@ -132,7 +143,7 @@ export function AppSidebar() {
 								</DropdownMenuTrigger>
 								<DropdownMenuContent
 									className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
-									side={state === "collapsed" ? "right" : "top"}
+									side={isMobile ? "bottom" : "right"}
 									align="end"
 									sideOffset={4}
 								>
@@ -142,7 +153,7 @@ export function AppSidebar() {
 												{user?.imageUrl ? (
 													<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
 												) : null}
-												<AvatarFallback className="rounded-lg bg-primary text-primary-foreground">
+												<AvatarFallback className="rounded-lg">
 													{user?.fullName?.[0] ?? "U"}
 												</AvatarFallback>
 											</Avatar>
@@ -156,20 +167,20 @@ export function AppSidebar() {
 									</DropdownMenuLabel>
 									<DropdownMenuSeparator />
 									<DropdownMenuItem onClick={() => openSettings("general")}>
-										<Settings className="size-4" />
+										<Settings />
 										Settings
 									</DropdownMenuItem>
 									<DropdownMenuItem onClick={() => openSettings("profile")}>
-										<User className="size-4" />
+										<User />
 										Profile
 									</DropdownMenuItem>
 									<DropdownMenuItem onClick={() => openSettings("api-keys")}>
-										<Key className="size-4" />
+										<Key />
 										API Keys
 									</DropdownMenuItem>
 									<DropdownMenuSeparator />
 									<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
-										<LogOut className="size-4" />
+										<LogOut />
 										Sign out
 									</DropdownMenuItem>
 								</DropdownMenuContent>
@@ -177,6 +188,8 @@ export function AppSidebar() {
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarFooter>
+
+				<SidebarRail />
 			</Sidebar>
 
 			<SettingsDialog
