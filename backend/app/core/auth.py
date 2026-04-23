@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -17,6 +17,11 @@ bearer_scheme = HTTPBearer()
 logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX = "clawdi_"
+
+# Only touch api_key.last_used_at if the previous update was at least this
+# long ago. Every authenticated CLI request used to write+commit the row,
+# which becomes write-lock contention on a hot key at scale.
+LAST_USED_THROTTLE = timedelta(minutes=1)
 
 
 class AuthContext:
@@ -45,9 +50,12 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
 
-    # Update last_used_at
-    api_key.last_used_at = datetime.now(UTC)
-    await db.commit()
+    # Throttle last_used_at writes: once per LAST_USED_THROTTLE per key.
+    now = datetime.now(UTC)
+    last = api_key.last_used_at
+    if last is None or (now - last) > LAST_USED_THROTTLE:
+        api_key.last_used_at = now
+        await db.commit()
 
     result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
