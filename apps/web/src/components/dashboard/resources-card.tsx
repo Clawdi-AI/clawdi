@@ -1,7 +1,7 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { ArrowRight, Brain, Key, Plug, Sparkles } from "lucide-react";
+import { Brain, ChevronRight, Key, Plug, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +13,7 @@ type Resource = {
 	label: string;
 	count: number;
 	href: string;
-	/** Copy shown when count === 0 — should read as a call to action. */
+	/** Copy shown inline with the count when count === 0 — calls the user to act. */
 	emptyCta: string;
 };
 
@@ -24,21 +24,21 @@ function buildResources(stats: DashboardStats): Resource[] {
 			label: "Memories",
 			count: stats.memories_count ?? 0,
 			href: "/memories",
-			emptyCta: "Add your first memory",
+			emptyCta: "Add your first",
 		},
 		{
 			icon: Sparkles,
 			label: "Skills",
 			count: stats.skills_count ?? 0,
 			href: "/skills",
-			emptyCta: "Browse the marketplace",
+			emptyCta: "Browse marketplace",
 		},
 		{
 			icon: Key,
 			label: "Vault keys",
 			count: stats.vault_keys_count ?? 0,
 			href: "/vault",
-			emptyCta: "Create your first key",
+			emptyCta: "Create your first",
 		},
 		{
 			icon: Plug,
@@ -55,7 +55,7 @@ export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) 
 		<Card>
 			<CardHeader>
 				<CardTitle>Resources</CardTitle>
-				<CardDescription>Shared with every connected agent.</CardDescription>
+				<CardDescription>Shared across every connected agent.</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
 				<div className="divide-y">
@@ -90,12 +90,9 @@ function ResourceRow({ resource }: { resource: Resource }) {
 			<span
 				className={cn("text-sm tabular-nums", empty ? "text-muted-foreground" : "font-semibold")}
 			>
-				{empty ? (
-					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-				) : (
-					formatNumber(resource.count)
-				)}
+				{formatNumber(resource.count)}
 			</span>
+			<ChevronRight className="size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
 		</Link>
 	);
 }

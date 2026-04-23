@@ -1,9 +1,17 @@
 "use client";
 
-import { Laptop } from "lucide-react";
+import { Laptop, Plus } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Environment } from "@/lib/api-schemas";
 import { relativeTime } from "@/lib/utils";
@@ -33,14 +41,20 @@ export function AgentsCard({
 }) {
 	const activeCount = environments?.filter((e) => isActive(e.last_seen_at)).length ?? 0;
 	const total = environments?.length ?? 0;
+	const mostRecent = environments
+		?.map((e) => e.last_seen_at)
+		.filter((t): t is string => Boolean(t))
+		.sort((a, b) => b.localeCompare(a))[0];
 
 	let description: string;
 	if (total === 0) {
 		description = "Run `clawdi login` on a machine to register your first agent.";
 	} else if (activeCount > 0) {
 		description = `${activeCount} active now · ${total} total`;
+	} else if (mostRecent) {
+		description = `${total} agents · last sync ${relativeTime(mostRecent)}`;
 	} else {
-		description = `${total} registered · none active right now`;
+		description = `${total} agents`;
 	}
 
 	return (
@@ -48,6 +62,14 @@ export function AgentsCard({
 			<CardHeader>
 				<CardTitle>Agents</CardTitle>
 				<CardDescription>{description}</CardDescription>
+				<CardAction>
+					<Button asChild variant="outline" size="sm">
+						<a href="#add-agent">
+							<Plus />
+							Add
+						</a>
+					</Button>
+				</CardAction>
 			</CardHeader>
 			<CardContent>
 				{isLoading ? (

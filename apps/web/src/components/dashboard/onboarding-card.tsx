@@ -75,7 +75,7 @@ function StepNumber({ n }: { n: number }) {
 
 export function OnboardingCard() {
 	return (
-		<Card>
+		<Card id="add-agent" className="scroll-mt-20">
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
 					<Rocket className="size-5 text-primary" />

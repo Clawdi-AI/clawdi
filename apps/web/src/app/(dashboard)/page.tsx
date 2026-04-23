@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
@@ -10,6 +10,7 @@ import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
 import { Button } from "@/components/ui/button";
 import {
@@ -76,7 +77,8 @@ export default function DashboardPage() {
 			: null;
 
 	return (
-		<div className="px-4 lg:px-6">
+		<div className="space-y-5 px-4 lg:px-6">
+			<PageHeader title="Overview" description="Your agent cloud at a glance." />
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity */}
 				<div className="space-y-4 lg:col-span-2">
@@ -107,7 +109,7 @@ export default function DashboardPage() {
 								<Button asChild variant="ghost" size="sm">
 									<Link href="/sessions">
 										View all
-										<ArrowUpRight />
+										<ArrowRight />
 									</Link>
 								</Button>
 							</CardAction>
