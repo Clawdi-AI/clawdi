@@ -5,8 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
+import { MachinesCard } from "@/components/dashboard/machines-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
-import { SectionCards } from "@/components/dashboard/section-cards";
+import { ResourcesCard } from "@/components/dashboard/resources-card";
+import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { EmptyState } from "@/components/empty-state";
 import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,14 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import type { ContributionDay, DashboardStats, SessionListItem } from "@/lib/api-schemas";
+import type {
+	ContributionDay,
+	DashboardStats,
+	Environment,
+	SessionListItem,
+} from "@/lib/api-schemas";
+
+const RECENT_SESSIONS_LIMIT = 5;
 
 export default function DashboardPage() {
 	const { getToken } = useAuth();
@@ -31,6 +40,15 @@ export default function DashboardPage() {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
 			return apiFetch<DashboardStats>("/api/dashboard/stats", token);
+		},
+	});
+
+	const { data: environments, isLoading: envsLoading } = useQuery({
+		queryKey: ["environments"],
+		queryFn: async () => {
+			const token = await getToken();
+			if (!token) throw new Error("Not authenticated");
+			return apiFetch<Environment[]>("/api/environments", token);
 		},
 	});
 
@@ -48,7 +66,7 @@ export default function DashboardPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionListItem[]>("/api/sessions?limit=8", token);
+			return apiFetch<SessionListItem[]>(`/api/sessions?limit=${RECENT_SESSIONS_LIMIT}`, token);
 		},
 	});
 
@@ -58,24 +76,24 @@ export default function DashboardPage() {
 		(stats.memories_count ?? 0) === 0 &&
 		(stats.skills_count ?? 0) === 0;
 
+	const streakLine =
+		stats && stats.current_streak > 0
+			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
+			: null;
+
 	return (
-		<>
-			{/* Stat cards — dashboard-01 SectionCards pattern */}
-			<SectionCards stats={stats} />
+		<div className="grid gap-4 px-4 lg:grid-cols-3 lg:px-6">
+			{/* Left column: what's happening */}
+			<div className="space-y-4 lg:col-span-2">
+				<MachinesCard environments={environments} isLoading={envsLoading} />
 
-			{/* Onboarding only for truly empty accounts */}
-			{isNewUser ? (
-				<div className="px-4 lg:px-6">
-					<OnboardingCard />
-				</div>
-			) : null}
-
-			{/* Activity — full-width heatmap, needs 53 columns of breathing room */}
-			<div className="px-4 lg:px-6">
 				<Card>
 					<CardHeader>
 						<CardTitle>Activity</CardTitle>
-						<CardDescription>Sessions per day in the last 12 months.</CardDescription>
+						<CardDescription>
+							Sessions per day in the last 12 months
+							{streakLine ? ` · ${streakLine}` : ""}
+						</CardDescription>
 					</CardHeader>
 					<CardContent>
 						{contribLoading ? (
@@ -85,14 +103,11 @@ export default function DashboardPage() {
 						) : null}
 					</CardContent>
 				</Card>
-			</div>
 
-			{/* Recent sessions — full-width, rich rows */}
-			<div className="px-4 lg:px-6">
 				<Card>
 					<CardHeader className="border-b">
 						<CardTitle>Recent sessions</CardTitle>
-						<CardDescription>Latest agent syncs.</CardDescription>
+						<CardDescription>Latest syncs from your agents.</CardDescription>
 						<CardAction>
 							<Button asChild variant="ghost" size="sm">
 								<Link href="/sessions">
@@ -105,7 +120,7 @@ export default function DashboardPage() {
 					<CardContent className="p-0">
 						{sessionsLoading ? (
 							<div className="divide-y">
-								{Array.from({ length: 4 }).map((_, i) => (
+								{Array.from({ length: 3 }).map((_, i) => (
 									<SessionRowSkeleton key={i} />
 								))}
 							</div>
@@ -122,7 +137,7 @@ export default function DashboardPage() {
 									<>
 										No sessions yet. Run{" "}
 										<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
-										on a connected agent to populate this list.
+										on a connected machine.
 									</>
 								}
 							/>
@@ -130,6 +145,13 @@ export default function DashboardPage() {
 					</CardContent>
 				</Card>
 			</div>
-		</>
+
+			{/* Right column: what you have / what to do */}
+			<div className="space-y-4">
+				<ResourcesCard stats={stats} />
+				<ThisWeekCard stats={stats} contribution={contribution} />
+				{isNewUser ? <OnboardingCard /> : null}
+			</div>
+		</div>
 	);
 }
