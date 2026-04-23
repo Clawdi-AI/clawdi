@@ -81,12 +81,7 @@ export function AppSidebar() {
 										height={32}
 										className="size-8 shrink-0"
 									/>
-									<div className="grid flex-1 text-left leading-tight">
-										<span className="truncate text-sm font-semibold">Clawdi Cloud</span>
-										<span className="truncate text-xs text-muted-foreground">
-											iCloud for AI Agents
-										</span>
-									</div>
+									<span className="truncate text-base font-semibold">Clawdi Cloud</span>
 								</Link>
 							</SidebarMenuButton>
 						</SidebarMenuItem>

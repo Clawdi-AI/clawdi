@@ -53,26 +53,30 @@ export default function DashboardPage() {
 		},
 	});
 
-	const isNewUser = stats && stats.total_sessions === 0;
+	const isNewUser =
+		stats &&
+		stats.total_sessions === 0 &&
+		(stats.memories_count ?? 0) === 0 &&
+		(stats.skills_count ?? 0) === 0;
 
 	return (
 		<>
 			{/* Stat cards — dashboard-01 SectionCards pattern */}
 			<SectionCards stats={stats} />
 
-			{/* Onboarding for zero-state users */}
+			{/* Onboarding only for truly empty accounts */}
 			{isNewUser ? (
 				<div className="px-4 lg:px-6">
 					<OnboardingCard />
 				</div>
 			) : null}
 
-			{/* Activity heatmap */}
-			<div className="px-4 lg:px-6">
+			{/* Activity heatmap + Recent sessions — side-by-side on large screens */}
+			<div className="grid gap-4 px-4 lg:grid-cols-2 lg:gap-6 lg:px-6">
 				<Card>
 					<CardHeader>
 						<CardTitle>Activity</CardTitle>
-						<CardDescription>Sessions per day across the last 12 months.</CardDescription>
+						<CardDescription>Sessions per day, last 12 months.</CardDescription>
 					</CardHeader>
 					<CardContent>
 						{contribLoading ? (
@@ -82,14 +86,11 @@ export default function DashboardPage() {
 						) : null}
 					</CardContent>
 				</Card>
-			</div>
 
-			{/* Recent sessions */}
-			<div className="px-4 lg:px-6">
-				<Card>
+				<Card className="flex flex-col">
 					<CardHeader className="border-b">
 						<CardTitle>Recent sessions</CardTitle>
-						<CardDescription>Latest syncs from your connected agents.</CardDescription>
+						<CardDescription>Latest syncs from connected agents.</CardDescription>
 						<CardAction>
 							<Button asChild variant="ghost" size="sm">
 								<Link href="/sessions">
@@ -99,16 +100,16 @@ export default function DashboardPage() {
 							</Button>
 						</CardAction>
 					</CardHeader>
-					<CardContent className="p-0">
+					<CardContent className="flex-1 p-0">
 						{sessionsLoading ? (
 							<div className="divide-y">
 								{Array.from({ length: 3 }).map((_, i) => (
 									<div key={i} className="flex items-center justify-between gap-4 px-6 py-4">
 										<div className="min-w-0 flex-1 space-y-2">
-											<Skeleton className="h-4 w-56" />
-											<Skeleton className="h-3 w-40" />
+											<Skeleton className="h-4 w-40" />
+											<Skeleton className="h-3 w-28" />
 										</div>
-										<Skeleton className="h-3 w-14" />
+										<Skeleton className="h-3 w-10" />
 									</div>
 								))}
 							</div>
@@ -118,13 +119,13 @@ export default function DashboardPage() {
 									<Link
 										key={s.id}
 										href={`/sessions/${s.id}`}
-										className="flex items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-accent/40"
+										className="flex items-center justify-between gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
 									>
 										<div className="min-w-0 flex-1">
 											<div className="truncate text-sm font-medium">
 												{formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
 											</div>
-											<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+											<div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
 												<span className="truncate">
 													{s.project_path?.split("/").pop() ?? "no project"}
 												</span>
@@ -133,7 +134,6 @@ export default function DashboardPage() {
 														{s.model.replace("claude-", "")}
 													</Badge>
 												) : null}
-												<span>{s.message_count} msgs</span>
 												<span className="flex items-center gap-1">
 													<Zap className="size-3" />
 													{((s.input_tokens + s.output_tokens) / 1000).toFixed(1)}k
@@ -147,13 +147,12 @@ export default function DashboardPage() {
 								))}
 							</div>
 						) : (
-							<div className="p-6">
+							<div className="p-4">
 								<EmptyState
 									description={
 										<>
 											No sessions yet. Run{" "}
-											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
-											to sync.
+											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>
 										</>
 									}
 								/>
