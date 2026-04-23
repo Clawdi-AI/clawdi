@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { useDeferredValue, useState } from "react";
+import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -11,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -23,16 +25,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { apiFetch } from "@/lib/api";
 import type { Memory, UserSettings } from "@/lib/api-schemas";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
-	{ value: "", label: "All" },
+	{ value: "all", label: "All" },
 	{ value: "fact", label: "Fact" },
 	{ value: "preference", label: "Preference" },
 	{ value: "pattern", label: "Pattern" },
 	{ value: "decision", label: "Decision" },
 	{ value: "context", label: "Context" },
 ] as const;
+
+// "all" is a local UI sentinel; the API uses an empty category string to mean
+// "no filter". Keep them separate so ToggleGroup can render a selected state
+// for the All chip (Radix does not treat "" as a selected value).
+const ALL = "all";
 
 // Semantic color overlay. Applied via cn() to the shadcn Badge — we don't
 // modify the Badge primitive itself, just extend its classes for the data-viz
@@ -49,8 +56,9 @@ export default function MemoriesPage() {
 	const { getToken } = useAuth();
 	const queryClient = useQueryClient();
 	const [searchQuery, setSearchQuery] = useState("");
-	const [category, setCategory] = useState("");
+	const [category, setCategory] = useState<string>(ALL);
 	const deferredQuery = useDeferredValue(searchQuery);
+	const apiCategory = category === ALL ? "" : category;
 
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
@@ -79,6 +87,7 @@ export default function MemoriesPage() {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
+		onError: (e) => toast.error("Failed to update settings", { description: errorMessage(e) }),
 	});
 
 	const {
@@ -86,13 +95,13 @@ export default function MemoriesPage() {
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["memories", deferredQuery, category],
+		queryKey: ["memories", deferredQuery, apiCategory],
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
 			const params = new URLSearchParams();
 			if (deferredQuery) params.set("q", deferredQuery);
-			if (category) params.set("category", category);
+			if (apiCategory) params.set("category", apiCategory);
 			const qs = params.toString();
 			return apiFetch<Memory[]>(`/api/memories${qs ? `?${qs}` : ""}`, token);
 		},
@@ -105,6 +114,7 @@ export default function MemoriesPage() {
 			return apiFetch<unknown>(`/api/memories/${id}`, token, { method: "DELETE" });
 		},
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
+		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
 	});
 
 	return (
@@ -173,12 +183,12 @@ export default function MemoriesPage() {
 				<ToggleGroup
 					type="single"
 					value={category}
-					onValueChange={(v) => setCategory(v)}
+					onValueChange={(v) => v && setCategory(v)}
 					variant="outline"
 					size="sm"
 				>
 					{CATEGORIES.map((c) => (
-						<ToggleGroupItem key={c.value || "all"} value={c.value}>
+						<ToggleGroupItem key={c.value} value={c.value}>
 							{c.label}
 						</ToggleGroupItem>
 					))}
@@ -189,7 +199,7 @@ export default function MemoriesPage() {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Failed to load memories</AlertTitle>
-					<AlertDescription>{(error as Error).message}</AlertDescription>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading ? (
 				<div className="space-y-2">
@@ -245,7 +255,7 @@ export default function MemoriesPage() {
 			) : (
 				<EmptyState
 					description={
-						searchQuery || category
+						searchQuery || apiCategory
 							? "No memories match your search."
 							: 'No memories yet. Add one above or use `clawdi memory add "..."`'
 					}
@@ -311,6 +321,7 @@ function AddMemoryForm() {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
+		onError: (e) => toast.error("Failed to add memory", { description: errorMessage(e) }),
 	});
 
 	if (!open) {
@@ -329,23 +340,31 @@ function AddMemoryForm() {
 	return (
 		<Card>
 			<CardContent className="space-y-3">
-				<Textarea
-					value={content}
-					onChange={(e) => setContent(e.target.value)}
-					placeholder="What should your agents remember?"
-					rows={3}
-					className="resize-none"
-					autoFocus
-				/>
+				<div className="space-y-1.5">
+					<Label htmlFor="memory-content" className="sr-only">
+						Memory content
+					</Label>
+					<Textarea
+						id="memory-content"
+						value={content}
+						onChange={(e) => setContent(e.target.value)}
+						placeholder="What should your agents remember?"
+						rows={3}
+						className="resize-none"
+						autoFocus
+					/>
+				</div>
 				<div className="flex items-center justify-between gap-2">
 					<div className="flex items-center gap-2">
-						<span className="text-sm text-muted-foreground">Category</span>
+						<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
+							Category
+						</Label>
 						<Select value={addCategory} onValueChange={setAddCategory}>
-							<SelectTrigger size="sm" className="w-32">
+							<SelectTrigger id="memory-category" size="sm" className="w-32">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								{CATEGORIES.filter((c) => c.value).map((c) => (
+								{CATEGORIES.filter((c) => c.value !== ALL).map((c) => (
 									<SelectItem key={c.value} value={c.value}>
 										{c.label}
 									</SelectItem>

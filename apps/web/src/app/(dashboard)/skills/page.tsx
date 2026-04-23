@@ -15,6 +15,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { SkillSummary } from "@/lib/api-schemas";
+import { errorMessage } from "@/lib/utils";
 
 export default function SkillsPage() {
 	const { getToken } = useAuth();
@@ -53,6 +55,7 @@ export default function SkillsPage() {
 			return apiFetch<unknown>(`/api/skills/${key}`, token, { method: "DELETE" });
 		},
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills"] }),
+		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
 	});
 
 	const installSkill = async (repo: string, path?: string) => {
@@ -107,7 +110,7 @@ export default function SkillsPage() {
 					<Alert variant="destructive">
 						<AlertCircle />
 						<AlertTitle>Failed to load skills</AlertTitle>
-						<AlertDescription>{(error as Error).message}</AlertDescription>
+						<AlertDescription>{errorMessage(error)}</AlertDescription>
 					</Alert>
 				) : isLoading ? (
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -241,10 +244,10 @@ export default function SkillsPage() {
 										</p>
 									</div>
 									{isInstalled ? (
-										<Button variant="ghost" size="sm" disabled className="shrink-0">
+										<Badge variant="secondary" className="shrink-0">
 											<Check />
 											Installed
-										</Button>
+										</Badge>
 									) : (
 										<Button
 											variant="outline"

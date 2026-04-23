@@ -2,6 +2,7 @@ import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (
@@ -28,6 +29,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 					</div>
 				</div>
 			</SidebarInset>
+			<Toaster />
 		</SidebarProvider>
 	);
 }

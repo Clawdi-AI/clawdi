@@ -4,7 +4,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2Off, Loader2, Lock, Plug, PlugZap, Search, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ConnectorApp, ConnectorConnection, ConnectorTool } from "@/lib/api-schemas";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -56,6 +57,15 @@ export default function ConnectorDetailPage() {
 		},
 	});
 
+	// Track OAuth polling timers so we can clean up on unmount.
+	const pollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+	useEffect(() => {
+		return () => {
+			for (const t of pollTimers.current) clearTimeout(t);
+			pollTimers.current = [];
+		};
+	}, []);
+
 	const connectApp = useMutation({
 		mutationFn: async () => {
 			const token = await getToken();
@@ -65,20 +75,22 @@ export default function ConnectorDetailPage() {
 				token,
 				{ method: "POST", body: JSON.stringify({}) },
 			);
-			window.open(result.connect_url, "_blank");
+			window.open(result.connect_url, "_blank", "noopener,noreferrer");
 		},
 		onSuccess: () => {
 			// Poll for connection status — user may take time to complete OAuth
 			let attempts = 0;
 			const poll = () => {
 				if (attempts++ >= 12) return;
-				setTimeout(() => {
+				const id = setTimeout(() => {
 					queryClient.invalidateQueries({ queryKey: ["connections"] });
 					poll();
 				}, 5000);
+				pollTimers.current.push(id);
 			};
 			poll();
 		},
+		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
 	});
 
 	const disconnectApp = useMutation({
@@ -90,6 +102,7 @@ export default function ConnectorDetailPage() {
 			});
 		},
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
+		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
 	});
 
 	const app = apps?.find((a) => a.name === name);

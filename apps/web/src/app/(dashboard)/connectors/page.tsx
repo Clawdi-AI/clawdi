@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ConnectorApp, ConnectorConnection } from "@/lib/api-schemas";
+import { errorMessage } from "@/lib/utils";
 
 const PAGE_SIZE = 30;
 
@@ -86,8 +87,10 @@ export default function ConnectorsPage() {
 		return items;
 	}, [availableApps, deferredQuery, connectedNames]);
 
-	const prevQuery = useDeferredValue(deferredQuery);
-	if (prevQuery !== deferredQuery && page !== 0) setPage(0);
+	// Reset pagination whenever the debounced query changes.
+	useEffect(() => {
+		setPage(0);
+	}, [deferredQuery]);
 
 	const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
 	const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -135,7 +138,7 @@ export default function ConnectorsPage() {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Failed to load connectors</AlertTitle>
-					<AlertDescription>{(error as Error).message}</AlertDescription>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading ? (
 				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

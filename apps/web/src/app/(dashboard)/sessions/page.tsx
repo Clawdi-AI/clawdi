@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { errorMessage } from "@/lib/utils";
 
 export default function SessionsPage() {
 	const { getToken } = useAuth();
@@ -45,7 +46,7 @@ export default function SessionsPage() {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Failed to load sessions</AlertTitle>
-					<AlertDescription>{(error as Error).message}</AlertDescription>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading ? (
 				<div className="divide-y rounded-lg border bg-card">

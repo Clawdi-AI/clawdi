@@ -4,16 +4,18 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Key, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { Vault, VaultItems } from "@/lib/api-schemas";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 export default function VaultPage() {
 	const { getToken } = useAuth();
@@ -46,6 +48,7 @@ export default function VaultPage() {
 			setNewVaultSlug("");
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
 		},
+		onError: (e) => toast.error("Failed to create vault", { description: errorMessage(e) }),
 	});
 
 	const deleteVault = useMutation({
@@ -55,6 +58,7 @@ export default function VaultPage() {
 			return apiFetch<unknown>(`/api/vault/${slug}`, token, { method: "DELETE" });
 		},
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
+		onError: (e) => toast.error("Failed to delete vault", { description: errorMessage(e) }),
 	});
 
 	return (
@@ -95,7 +99,7 @@ export default function VaultPage() {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Failed to load vaults</AlertTitle>
-					<AlertDescription>{(error as Error).message}</AlertDescription>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : null}
 
@@ -176,6 +180,7 @@ function VaultCard({
 				queryKey: ["vault-items", vault.slug],
 			});
 		},
+		onError: (e) => toast.error("Failed to save key", { description: errorMessage(e) }),
 	});
 
 	const deleteItem = useMutation({
@@ -192,6 +197,7 @@ function VaultCard({
 				queryKey: ["vault-items", vault.slug],
 			});
 		},
+		onError: (e) => toast.error("Failed to delete key", { description: errorMessage(e) }),
 	});
 
 	const allFields = items
@@ -232,6 +238,7 @@ function VaultCard({
 						onClick={onDelete}
 						disabled={isDeleting}
 						className="text-muted-foreground opacity-0 group-hover/vault:opacity-100 hover:text-destructive"
+						aria-label="Delete vault"
 					>
 						<Trash2 className="size-3.5" />
 					</Button>
@@ -240,49 +247,53 @@ function VaultCard({
 
 			{/* Add key form */}
 			{adding && (
-				<div className="px-4 py-3 border-b bg-muted/30">
+				<div className="border-b bg-muted/30 px-4 py-3">
 					<div className="flex gap-2">
+						<Label htmlFor={`key-${vault.slug}`} className="sr-only">
+							Key name
+						</Label>
 						<Input
+							id={`key-${vault.slug}`}
 							value={newKey}
 							onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
 							placeholder="KEY_NAME"
-							className="flex-1 h-8 text-xs font-mono"
+							className="flex-1 font-mono"
 						/>
+						<Label htmlFor={`value-${vault.slug}`} className="sr-only">
+							Secret value
+						</Label>
 						<Input
+							id={`value-${vault.slug}`}
 							type="password"
 							value={newValue}
 							onChange={(e) => setNewValue(e.target.value)}
 							placeholder="secret value"
-							className="flex-1 h-8 text-xs"
+							className="flex-1"
 							onKeyDown={(e) => {
 								if (e.key === "Enter" && newKey && newValue)
 									upsertItem.mutate({ key: newKey, value: newValue });
 							}}
 						/>
 						<Button
-							size="sm"
 							onClick={() =>
 								newKey && newValue && upsertItem.mutate({ key: newKey, value: newValue })
 							}
 							disabled={!newKey || !newValue || upsertItem.isPending}
 						>
-							{upsertItem.isPending ? (
-								<Loader2 className="size-3 animate-spin" />
-							) : (
-								<Plus className="size-3" />
-							)}
+							{upsertItem.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
 							Save
 						</Button>
 						<Button
 							variant="ghost"
-							size="icon-sm"
+							size="icon"
 							onClick={() => {
 								setAdding(false);
 								setNewKey("");
 								setNewValue("");
 							}}
+							aria-label="Cancel"
 						>
-							<X className="size-3.5" />
+							<X />
 						</Button>
 					</div>
 				</div>
@@ -308,6 +319,7 @@ function VaultCard({
 									onClick={() => deleteItem.mutate(f.name)}
 									disabled={deleteItem.isPending}
 									className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
+									aria-label={`Delete key ${f.key}`}
 								>
 									<Trash2 className="size-3.5" />
 								</Button>

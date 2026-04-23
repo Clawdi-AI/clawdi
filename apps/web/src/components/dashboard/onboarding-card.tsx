@@ -2,10 +2,11 @@
 
 import { Check, Copy, Rocket, Terminal } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 function getAgentPrompt() {
 	const origin = typeof window !== "undefined" ? window.location.origin : "https://cloud.clawdi.ai";
@@ -38,10 +39,13 @@ const CLI_STEPS = [
 function useCopy(duration = 2000) {
 	const [copied, setCopied] = useState(false);
 	const copy = (text: string) => {
-		navigator.clipboard.writeText(text).then(() => {
-			setCopied(true);
-			setTimeout(() => setCopied(false), duration);
-		});
+		navigator.clipboard
+			.writeText(text)
+			.then(() => {
+				setCopied(true);
+				setTimeout(() => setCopied(false), duration);
+			})
+			.catch((e) => toast.error("Copy failed", { description: errorMessage(e) }));
 	};
 	return { copied, copy };
 }

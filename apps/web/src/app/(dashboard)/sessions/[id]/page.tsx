@@ -70,7 +70,9 @@ export default function SessionDetailPage() {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			if (!res.ok) return null;
-			return res.json() as Promise<SessionMessage[]>;
+			const data: unknown = await res.json();
+			if (!Array.isArray(data)) return null;
+			return data as SessionMessage[];
 		},
 		enabled: !!session?.has_content,
 	});
