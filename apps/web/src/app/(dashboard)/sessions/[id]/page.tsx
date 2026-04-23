@@ -18,7 +18,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiUrl } from "@/lib/api";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 interface SessionMessage {
@@ -77,10 +77,9 @@ export default function SessionDetailPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			const res = await fetch(
-				`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/sessions/${id}/content`,
-				{ headers: { Authorization: `Bearer ${token}` } },
-			);
+			const res = await fetch(apiUrl(`/api/sessions/${id}/content`), {
+				headers: { Authorization: `Bearer ${token}` },
+			});
 			if (!res.ok) return null;
 			return res.json() as Promise<SessionMessage[]>;
 		},

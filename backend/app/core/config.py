@@ -17,9 +17,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi_cloud"
 
-    # Request limits — in-memory sliding window; no Redis.
-    disable_rate_limits: bool = False
-
     # Observability (both optional; no-op if not set)
     sentry_dsn: str = ""
     sentry_environment: str = ""  # falls back to `environment` if empty
@@ -32,10 +29,9 @@ class Settings(BaseSettings):
 
     composio_api_key: str = ""
 
-    file_store_type: str = "local"
+    # File store is always local filesystem; S3/R2 can be added later when
+    # we actually need multi-node deploys.
     file_store_local_path: str = "./data/files"
-    file_store_s3_bucket: str = ""
-    file_store_s3_region: str = ""
 
     # Memory embedder for the Builtin memory provider.
     # - "local": run paraphrase-multilingual-mpnet-base-v2 via fastembed

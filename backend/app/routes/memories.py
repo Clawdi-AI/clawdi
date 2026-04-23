@@ -23,10 +23,6 @@ class MemoryCreate(BaseModel):
     tags: list[str] | None = None
 
 
-class MemoryBatchRequest(BaseModel):
-    memories: list[MemoryCreate]
-
-
 @router.get("")
 async def list_memories(
     auth: AuthContext = Depends(get_auth),
@@ -58,26 +54,6 @@ async def create_memory(
         source=body.source,
         tags=body.tags,
     )
-
-
-@router.post("/batch")
-async def batch_create_memories(
-    body: MemoryBatchRequest,
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-):
-    provider = await get_memory_provider(str(auth.user_id), db)
-    synced = 0
-    for m in body.memories:
-        await provider.add(
-            str(auth.user_id),
-            m.content,
-            category=m.category,
-            source=m.source,
-            tags=m.tags,
-        )
-        synced += 1
-    return {"synced": synced}
 
 
 @router.delete("/{memory_id}")

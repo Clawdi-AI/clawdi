@@ -10,7 +10,6 @@ from app.services.composio import (
     get_app_tools,
     get_available_apps,
     get_connected_accounts,
-    get_connected_tools,
 )
 
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
@@ -65,15 +64,6 @@ async def disconnect(
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
     return {"status": "disconnected"}
-
-
-@router.get("/connected-tools")
-async def list_connected_tools(auth: AuthContext = Depends(get_auth)):
-    """List all tools from user's active connected apps."""
-    if not settings.composio_api_key:
-        return []
-    tools = await get_connected_tools(str(auth.user_id))
-    return tools
 
 
 @router.get("/mcp-config")
