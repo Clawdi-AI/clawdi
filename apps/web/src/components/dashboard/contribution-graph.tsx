@@ -2,9 +2,12 @@
 
 import type { ContributionDay } from "@/lib/api-schemas";
 
+// A theme-agnostic density ramp. Empty days use a faint tint of `--primary`
+// so the heatmap reads the same way across light/dark modes regardless of
+// what role `--secondary` or `--muted` happen to play in any given palette.
 const LEVEL_COLORS = [
-	"bg-secondary",
-	"bg-primary/25",
+	"bg-primary/10",
+	"bg-primary/30",
 	"bg-primary/50",
 	"bg-primary/75",
 	"bg-primary",
