@@ -10,6 +10,7 @@ from app.models.memory import Memory
 from app.models.session import Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultItem
+from app.schemas.dashboard import ContributionDayResponse, DashboardStatsResponse
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -19,7 +20,7 @@ async def get_stats(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
-):
+) -> DashboardStatsResponse:
     since = datetime.now(UTC) - timedelta(days=days)
 
     result = await db.execute(
@@ -106,21 +107,21 @@ async def get_stats(
     except Exception:
         pass
 
-    return {
-        "total_sessions": total_sessions,
-        "total_messages": total_messages,
-        "total_tokens": total_tokens,
-        "active_days": active_days,
-        "current_streak": current_streak,
-        "longest_streak": longest_streak,
-        "peak_hour": peak_hour,
-        "favorite_model": favorite_model,
-        "skills_count": skills_count,
-        "memories_count": memories_count,
-        "vault_count": vault_count,
-        "vault_keys_count": vault_keys_count,
-        "connectors_count": connectors_count,
-    }
+    return DashboardStatsResponse(
+        total_sessions=total_sessions,
+        total_messages=total_messages,
+        total_tokens=total_tokens,
+        active_days=active_days,
+        current_streak=current_streak,
+        longest_streak=longest_streak,
+        peak_hour=peak_hour,
+        favorite_model=favorite_model,
+        skills_count=skills_count,
+        memories_count=memories_count,
+        vault_count=vault_count,
+        vault_keys_count=vault_keys_count,
+        connectors_count=connectors_count,
+    )
 
 
 @router.get("/contribution")
@@ -128,7 +129,7 @@ async def get_contribution_graph(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
-):
+) -> list[ContributionDayResponse]:
     since = datetime.now(UTC) - timedelta(days=days)
 
     result = await db.execute(
@@ -146,7 +147,7 @@ async def get_contribution_graph(
     day_map = {str(r[0]): int(r[1]) for r in rows}
     max_count = max(day_map.values()) if day_map else 1
 
-    contributions = []
+    contributions: list[ContributionDayResponse] = []
     current = since.date()
     end = datetime.now(UTC).date()
     while current <= end:
@@ -162,7 +163,7 @@ async def get_contribution_graph(
                 level = 3
             else:
                 level = 4
-        contributions.append({"date": str(current), "count": count, "level": level})
+        contributions.append(ContributionDayResponse(date=current, count=count, level=level))
         current += timedelta(days=1)
 
     return contributions

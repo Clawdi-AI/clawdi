@@ -17,39 +17,8 @@ import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import type { ContributionDay, DashboardStats, SessionListItem } from "@/lib/api-schemas";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
-
-// Shape returned by the FastAPI /api/dashboard/stats endpoint — snake_case.
-interface DashboardStatsResponse {
-	total_sessions: number;
-	total_messages: number;
-	total_tokens: number;
-	active_days: number;
-	current_streak: number;
-	favorite_model: string | null;
-	skills_count?: number;
-	memories_count?: number;
-	vault_keys_count?: number;
-	connectors_count?: number;
-}
-
-interface ContributionDayResponse {
-	date: string;
-	count: number;
-	level: 0 | 1 | 2 | 3 | 4;
-}
-
-interface RecentSession {
-	id: string;
-	local_session_id: string;
-	summary: string | null;
-	project_path: string | null;
-	model: string | null;
-	message_count: number;
-	input_tokens: number;
-	output_tokens: number;
-	started_at: string;
-}
 
 export default function DashboardPage() {
 	const { getToken } = useAuth();
@@ -59,7 +28,7 @@ export default function DashboardPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<DashboardStatsResponse>("/api/dashboard/stats", token);
+			return apiFetch<DashboardStats>("/api/dashboard/stats", token);
 		},
 	});
 
@@ -68,7 +37,7 @@ export default function DashboardPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ContributionDayResponse[]>("/api/dashboard/contribution", token);
+			return apiFetch<ContributionDay[]>("/api/dashboard/contribution", token);
 		},
 	});
 
@@ -77,7 +46,7 @@ export default function DashboardPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<RecentSession[]>("/api/sessions?limit=5", token);
+			return apiFetch<SessionListItem[]>("/api/sessions?limit=5", token);
 		},
 	});
 

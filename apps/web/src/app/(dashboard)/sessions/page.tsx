@@ -6,21 +6,8 @@ import { Zap } from "lucide-react";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
+import type { SessionListItem } from "@/lib/api-schemas";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
-
-// Shape returned by the FastAPI /api/sessions endpoint — snake_case.
-interface SessionListItem {
-	id: string;
-	local_session_id: string;
-	summary: string | null;
-	agent_type: string | null;
-	project_path: string | null;
-	model: string | null;
-	message_count: number;
-	input_tokens: number;
-	output_tokens: number;
-	started_at: string;
-}
 
 export default function SessionsPage() {
 	const { getToken } = useAuth();

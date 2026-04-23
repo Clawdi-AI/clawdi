@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -23,3 +24,7 @@ class ApiKeyCreated(ApiKeyResponse):
     """Returned only on creation — includes the raw key (shown once)."""
 
     raw_key: str
+
+
+class ApiKeyRevokeResponse(BaseModel):
+    status: Literal["revoked"]

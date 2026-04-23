@@ -10,7 +10,16 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
-from app.schemas.session import EnvironmentCreate, SessionBatchRequest
+from app.schemas.session import (
+    EnvironmentCreate,
+    EnvironmentCreatedResponse,
+    EnvironmentResponse,
+    SessionBatchRequest,
+    SessionBatchResponse,
+    SessionDetailResponse,
+    SessionListItemResponse,
+    SessionUploadResponse,
+)
 from app.services.file_store import LocalFileStore
 
 router = APIRouter(tags=["sessions"])
@@ -23,7 +32,7 @@ async def register_environment(
     body: EnvironmentCreate,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> EnvironmentCreatedResponse:
     # Check if environment already exists for this user + machine
     result = await db.execute(
         select(AgentEnvironment).where(
@@ -39,7 +48,7 @@ async def register_environment(
         env.agent_version = body.agent_version
         env.last_seen_at = datetime.now(UTC)
         await db.commit()
-        return {"id": str(env.id)}
+        return EnvironmentCreatedResponse(id=str(env.id))
 
     env = AgentEnvironment(
         user_id=auth.user_id,
@@ -53,14 +62,14 @@ async def register_environment(
     db.add(env)
     await db.commit()
     await db.refresh(env)
-    return {"id": str(env.id)}
+    return EnvironmentCreatedResponse(id=str(env.id))
 
 
 @router.get("/api/environments")
 async def list_environments(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> list[EnvironmentResponse]:
     result = await db.execute(
         select(AgentEnvironment)
         .where(AgentEnvironment.user_id == auth.user_id)
@@ -68,14 +77,14 @@ async def list_environments(
     )
     envs = result.scalars().all()
     return [
-        {
-            "id": str(e.id),
-            "machine_name": e.machine_name,
-            "agent_type": e.agent_type,
-            "agent_version": e.agent_version,
-            "os": e.os,
-            "last_seen_at": e.last_seen_at.isoformat() if e.last_seen_at else None,
-        }
+        EnvironmentResponse(
+            id=str(e.id),
+            machine_name=e.machine_name,
+            agent_type=e.agent_type,
+            agent_version=e.agent_version,
+            os=e.os,
+            last_seen_at=e.last_seen_at,
+        )
         for e in envs
     ]
 
@@ -85,7 +94,7 @@ async def batch_create_sessions(
     body: SessionBatchRequest,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SessionBatchResponse:
     synced = 0
     for s in body.sessions:
         # Skip duplicates by local_session_id
@@ -120,7 +129,7 @@ async def batch_create_sessions(
         synced += 1
 
     await db.commit()
-    return {"synced": synced}
+    return SessionBatchResponse(synced=synced)
 
 
 @router.get("/api/sessions")
@@ -130,7 +139,7 @@ async def list_sessions(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
     since: datetime | None = Query(default=None),
-):
+) -> list[SessionListItemResponse]:
     q = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -141,7 +150,7 @@ async def list_sessions(
     q = q.order_by(Session.started_at.desc()).limit(limit).offset(offset)
 
     result = await db.execute(q)
-    return [_session_to_dict(s, agent_type) for s, agent_type in result.all()]
+    return [_session_to_response(s, agent_type) for s, agent_type in result.all()]
 
 
 @router.get("/api/sessions/{session_id}")
@@ -149,7 +158,7 @@ async def get_session_detail(
     session_id: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SessionDetailResponse:
     result = await db.execute(
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -163,9 +172,10 @@ async def get_session_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
     session, agent_type = row
-    data = _session_to_dict(session, agent_type)
-    data["has_content"] = bool(session.file_key)
-    return data
+    return SessionDetailResponse(
+        **_session_to_response(session, agent_type).model_dump(),
+        has_content=bool(session.file_key),
+    )
 
 
 @router.post("/api/sessions/{local_session_id}/upload")
@@ -174,7 +184,7 @@ async def upload_session_content(
     file: UploadFile = File(...),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
     result = await db.execute(
         select(Session).where(
@@ -193,7 +203,7 @@ async def upload_session_content(
     session.file_key = fk
     await db.commit()
 
-    return {"status": "uploaded", "file_key": fk}
+    return SessionUploadResponse(status="uploaded", file_key=fk)
 
 
 @router.get("/api/sessions/{session_id}/content")
@@ -224,22 +234,22 @@ async def get_session_content(
     return Response(content=data, media_type="application/json")
 
 
-def _session_to_dict(s: Session, agent_type: str | None = None) -> dict:
-    return {
-        "id": str(s.id),
-        "local_session_id": s.local_session_id,
-        "project_path": s.project_path,
-        "agent_type": agent_type,
-        "started_at": s.started_at.isoformat(),
-        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-        "duration_seconds": s.duration_seconds,
-        "message_count": s.message_count,
-        "input_tokens": s.input_tokens,
-        "output_tokens": s.output_tokens,
-        "cache_read_tokens": s.cache_read_tokens,
-        "model": s.model,
-        "models_used": s.models_used,
-        "summary": s.summary,
-        "tags": s.tags,
-        "status": s.status,
-    }
+def _session_to_response(s: Session, agent_type: str | None = None) -> SessionListItemResponse:
+    return SessionListItemResponse(
+        id=str(s.id),
+        local_session_id=s.local_session_id,
+        project_path=s.project_path,
+        agent_type=agent_type,
+        started_at=s.started_at,
+        ended_at=s.ended_at,
+        duration_seconds=s.duration_seconds,
+        message_count=s.message_count,
+        input_tokens=s.input_tokens,
+        output_tokens=s.output_tokens,
+        cache_read_tokens=s.cache_read_tokens,
+        model=s.model,
+        models_used=s.models_used,
+        summary=s.summary,
+        tags=s.tags,
+        status=s.status,
+    )

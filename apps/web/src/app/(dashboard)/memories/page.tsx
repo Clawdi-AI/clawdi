@@ -4,8 +4,19 @@ import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { useDeferredValue, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
+import type { Memory, UserSettings } from "@/lib/api-schemas";
 import { cn, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
@@ -25,23 +36,6 @@ const CATEGORY_COLORS: Record<string, string> = {
 	context: "bg-rose-500/10 text-rose-700 dark:text-rose-400",
 };
 
-// Shape returned by the FastAPI /api/memories endpoint — snake_case.
-interface MemoryItem {
-	id: string;
-	content: string;
-	category: string;
-	source: string;
-	tags?: string[];
-	created_at: string;
-}
-
-// Shape returned by the FastAPI /api/settings endpoint.
-interface UserSettings {
-	memory_provider?: string;
-	mem0_api_key?: string;
-	[key: string]: unknown;
-}
-
 export default function MemoriesPage() {
 	const { getToken } = useAuth();
 	const queryClient = useQueryClient();
@@ -59,8 +53,10 @@ export default function MemoriesPage() {
 		},
 	});
 
-	const provider = settings?.memory_provider || "builtin";
-	const hasMem0Key = settings?.mem0_api_key && settings.mem0_api_key !== "";
+	const provider =
+		typeof settings?.memory_provider === "string" ? settings.memory_provider : "builtin";
+	const mem0Key = typeof settings?.mem0_api_key === "string" ? settings.mem0_api_key : "";
+	const hasMem0Key = mem0Key !== "";
 
 	const updateSettings = useMutation({
 		mutationFn: async (patch: Record<string, string>) => {
@@ -87,7 +83,7 @@ export default function MemoriesPage() {
 			if (deferredQuery) params.set("q", deferredQuery);
 			if (category) params.set("category", category);
 			const qs = params.toString();
-			return apiFetch<MemoryItem[]>(`/api/memories${qs ? `?${qs}` : ""}`, token);
+			return apiFetch<Memory[]>(`/api/memories${qs ? `?${qs}` : ""}`, token);
 		},
 	});
 
@@ -138,22 +134,22 @@ export default function MemoriesPage() {
 			{/* Search + Category filter */}
 			<div className="flex flex-col gap-3">
 				<div className="relative">
-					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-					<input
-						type="text"
+					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground z-10" />
+					<Input
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 						placeholder="Search memories..."
-						className="w-full border border-input bg-background rounded-xl pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+						className="rounded-xl pl-9 pr-9"
 					/>
 					{searchQuery && (
-						<button
-							type="button"
+						<Button
+							variant="ghost"
+							size="icon-sm"
 							onClick={() => setSearchQuery("")}
-							className="absolute right-2 top-1/2 -translate-y-1/2 size-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+							className="absolute right-1 top-1/2 -translate-y-1/2"
 						>
 							<X className="size-4" />
-						</button>
+						</Button>
 					)}
 				</div>
 				<div className="flex flex-wrap items-center gap-2">
@@ -207,24 +203,27 @@ export default function MemoriesPage() {
 										{m.category}
 									</span>
 									<span className="text-xs text-muted-foreground">{m.source}</span>
-									{m.tags?.map((t: string) => (
+									{m.tags?.map((t) => (
 										<span key={t} className="text-xs text-muted-foreground">
 											#{t}
 										</span>
 									))}
-									<span className="text-xs text-muted-foreground">
-										{relativeTime(m.created_at)}
-									</span>
+									{m.created_at && (
+										<span className="text-xs text-muted-foreground">
+											{relativeTime(m.created_at)}
+										</span>
+									)}
 								</div>
 							</div>
-							<button
-								type="button"
+							<Button
+								variant="ghost"
+								size="icon-sm"
 								onClick={() => deleteMemory.mutate(m.id)}
 								disabled={deleteMemory.isPending}
-								className="p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-muted rounded-md transition-all shrink-0 disabled:opacity-50"
+								className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive shrink-0"
 							>
 								<Trash2 className="size-3.5" />
-							</button>
+							</Button>
 						</div>
 					))}
 				</div>
@@ -299,25 +298,20 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 				Enter your Mem0 API key to use semantic memory search.
 			</p>
 			<div className="flex gap-2">
-				<input
+				<Input
 					type="password"
 					value={apiKey}
 					onChange={(e) => setApiKey(e.target.value)}
 					placeholder="m0-..."
-					className="flex-1 border border-input bg-background rounded-md px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+					className="flex-1 h-8 text-xs font-mono"
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && apiKey) onSave(apiKey);
 					}}
 				/>
-				<button
-					type="button"
-					onClick={() => apiKey && onSave(apiKey)}
-					disabled={!apiKey || isPending}
-					className="inline-flex items-center gap-1 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-				>
+				<Button size="sm" onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
 					{isPending ? <Loader2 className="size-3 animate-spin" /> : <Key className="size-3" />}
 					Save
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -352,57 +346,57 @@ function AddMemoryForm() {
 
 	if (!open) {
 		return (
-			<button
-				type="button"
+			<Button
+				variant="outline"
 				onClick={() => setOpen(true)}
-				className="inline-flex items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+				className="border-dashed text-muted-foreground"
 			>
 				<Plus className="size-4" />
 				Add Memory
-			</button>
+			</Button>
 		);
 	}
 
 	return (
 		<div className="rounded-lg border bg-card p-4 space-y-3">
-			<textarea
+			<Textarea
 				value={content}
 				onChange={(e) => setContent(e.target.value)}
 				placeholder="What should your agents remember?"
 				rows={3}
-				className="w-full border border-input bg-background rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+				className="resize-none"
 			/>
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-2">
 					<span className="text-xs text-muted-foreground">Category:</span>
-					<select
-						value={addCategory}
-						onChange={(e) => setAddCategory(e.target.value)}
-						className="border border-input bg-background rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-					>
-						{CATEGORIES.filter((c) => c.value).map((c) => (
-							<option key={c.value} value={c.value}>
-								{c.label}
-							</option>
-						))}
-					</select>
+					<Select value={addCategory} onValueChange={setAddCategory}>
+						<SelectTrigger size="sm" className="text-xs">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{CATEGORIES.filter((c) => c.value).map((c) => (
+								<SelectItem key={c.value} value={c.value}>
+									{c.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
 				</div>
 				<div className="flex items-center gap-2">
-					<button
-						type="button"
+					<Button
+						variant="ghost"
+						size="sm"
 						onClick={() => {
 							setOpen(false);
 							setContent("");
 						}}
-						className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
 					>
 						Cancel
-					</button>
-					<button
-						type="button"
+					</Button>
+					<Button
+						size="sm"
 						onClick={() => content.trim() && createMemory.mutate()}
 						disabled={!content.trim() || createMemory.isPending}
-						className="inline-flex items-center gap-1 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
 					>
 						{createMemory.isPending ? (
 							<Loader2 className="size-3 animate-spin" />
@@ -410,7 +404,7 @@ function AddMemoryForm() {
 							<Plus className="size-3" />
 						)}
 						Add
-					</button>
+					</Button>
 				</div>
 			</div>
 		</div>

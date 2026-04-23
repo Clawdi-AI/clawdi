@@ -1,10 +1,6 @@
 "use client";
 
-interface ContributionDay {
-	date: string;
-	count: number;
-	level: 0 | 1 | 2 | 3 | 4;
-}
+import type { ContributionDay } from "@/lib/api-schemas";
 
 const LEVEL_COLORS = [
 	"bg-secondary",
@@ -13,6 +9,13 @@ const LEVEL_COLORS = [
 	"bg-primary/75",
 	"bg-primary",
 ];
+
+/** Clamp the server-provided level into the [0, 4] palette range. */
+function clampLevel(level: number): number {
+	if (level < 0) return 0;
+	if (level > 4) return 4;
+	return Math.trunc(level);
+}
 
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	if (!data.length) {
@@ -47,7 +50,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 						{week.map((day, di) => (
 							<div
 								key={di}
-								className={`w-[11px] h-[11px] rounded-sm ${day.date ? LEVEL_COLORS[day.level] : "bg-transparent"}`}
+								className={`w-[11px] h-[11px] rounded-sm ${day.date ? LEVEL_COLORS[clampLevel(day.level)] : "bg-transparent"}`}
 								title={day.date ? `${day.date}: ${day.count} sessions` : undefined}
 							/>
 						))}

@@ -14,19 +14,11 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-
-// Shape returned by the FastAPI /api/skills endpoint — snake_case.
-interface SkillListItem {
-	id: string;
-	skill_key: string;
-	description: string | null;
-	version: number;
-	source: string;
-	source_repo?: string;
-	file_count?: number;
-}
+import type { SkillSummary } from "@/lib/api-schemas";
 
 export default function SkillsPage() {
 	const { getToken } = useAuth();
@@ -40,7 +32,7 @@ export default function SkillsPage() {
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SkillListItem[]>("/api/skills", token);
+			return apiFetch<SkillSummary[]>("/api/skills", token);
 		},
 	});
 
@@ -131,11 +123,11 @@ export default function SkillsPage() {
 										<span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
 											v{s.version}
 										</span>
-										{s.file_count && (
+										{s.file_count ? (
 											<span className="text-[10px] text-muted-foreground">
 												{s.file_count} file{s.file_count === 1 ? "" : "s"}
 											</span>
-										)}
+										) : null}
 									</div>
 									{s.description && (
 										<p className="text-xs text-muted-foreground mt-1 line-clamp-2">
@@ -147,14 +139,15 @@ export default function SkillsPage() {
 										{s.source_repo && <span> · {s.source_repo}</span>}
 									</div>
 								</div>
-								<button
-									type="button"
+								<Button
+									variant="ghost"
+									size="icon-sm"
 									onClick={() => deleteSkill.mutate(s.skill_key)}
 									disabled={deleteSkill.isPending}
-									className="p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-muted rounded-md transition-all shrink-0 disabled:opacity-50"
+									className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive shrink-0"
 								>
 									<Trash2 className="size-3.5" />
-								</button>
+								</Button>
 							</div>
 						))}
 					</div>
@@ -187,26 +180,24 @@ export default function SkillsPage() {
 				{/* Custom install */}
 				<div className="flex gap-2 mb-3">
 					<div className="relative flex-1">
-						<Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-						<input
-							type="text"
+						<Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
+						<Input
 							value={customRepo}
 							onChange={(e) => {
 								setCustomRepo(e.target.value);
 								setInstallError(null);
 							}}
 							placeholder="Install from GitHub: owner/repo/path..."
-							className="w-full border border-input bg-background rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+							className="rounded-xl pl-9"
 							onKeyDown={(e) => {
 								if (e.key === "Enter") handleCustomInstall();
 							}}
 						/>
 					</div>
-					<button
-						type="button"
+					<Button
 						onClick={handleCustomInstall}
 						disabled={!customRepo.trim() || !!installing}
-						className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+						className="rounded-lg"
 					>
 						{installing && customRepo ? (
 							<Loader2 className="size-4 animate-spin" />
@@ -214,7 +205,7 @@ export default function SkillsPage() {
 							<Plus className="size-4" />
 						)}
 						Install
-					</button>
+					</Button>
 				</div>
 				{installError && <p className="text-xs text-destructive mb-3">{installError}</p>}
 
@@ -252,11 +243,12 @@ export default function SkillsPage() {
 										Installed
 									</span>
 								) : (
-									<button
-										type="button"
+									<Button
+										variant="outline"
+										size="sm"
 										onClick={() => installSkill(skill.repo, skill.path)}
 										disabled={isInstalling}
-										className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border rounded-md hover:bg-muted transition-colors shrink-0 ml-3 disabled:opacity-50"
+										className="shrink-0 ml-3 text-xs"
 									>
 										{isInstalling ? (
 											<Loader2 className="size-3 animate-spin" />
@@ -264,7 +256,7 @@ export default function SkillsPage() {
 											<Download className="size-3" />
 										)}
 										Install
-									</button>
+									</Button>
 								)}
 							</div>
 						);

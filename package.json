@@ -36,6 +36,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.12",
 		"lefthook": "^2.1.6",
+		"openapi-typescript": "^7.13.0",
 		"turbo": "^2.9.6",
 		"typescript": "catalog:"
 	},
