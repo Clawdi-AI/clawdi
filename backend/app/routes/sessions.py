@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
@@ -95,41 +96,47 @@ async def batch_create_sessions(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SessionBatchResponse:
-    synced = 0
-    for s in body.sessions:
-        # Skip duplicates by local_session_id
-        result = await db.execute(
-            select(Session).where(
-                Session.user_id == auth.user_id,
-                Session.local_session_id == s.local_session_id,
-            )
-        )
-        if result.scalar_one_or_none():
-            continue
+    """Ingest a batch of sessions from a CLI sync.
 
-        session = Session(
-            user_id=auth.user_id,
-            environment_id=uuid.UUID(s.environment_id),
-            local_session_id=s.local_session_id,
-            project_path=s.project_path,
-            started_at=s.started_at,
-            ended_at=s.ended_at,
-            duration_seconds=s.duration_seconds,
-            message_count=s.message_count,
-            input_tokens=s.input_tokens,
-            output_tokens=s.output_tokens,
-            cache_read_tokens=s.cache_read_tokens,
-            model=s.model,
-            models_used=s.models_used,
-            summary=s.summary,
-            tags=s.tags,
-            status=s.status,
-        )
-        db.add(session)
-        synced += 1
+    Relies on the `uq_sessions_user_local` unique constraint plus Postgres
+    `ON CONFLICT DO NOTHING` for idempotency — safe under concurrent
+    invocations and a single round-trip to the DB regardless of batch size.
+    """
+    if not body.sessions:
+        return SessionBatchResponse(synced=0)
 
+    rows = [
+        {
+            "user_id": auth.user_id,
+            "environment_id": uuid.UUID(s.environment_id),
+            "local_session_id": s.local_session_id,
+            "project_path": s.project_path,
+            "started_at": s.started_at,
+            "ended_at": s.ended_at,
+            "duration_seconds": s.duration_seconds,
+            "message_count": s.message_count,
+            "input_tokens": s.input_tokens,
+            "output_tokens": s.output_tokens,
+            "cache_read_tokens": s.cache_read_tokens,
+            "model": s.model,
+            "models_used": s.models_used,
+            "summary": s.summary,
+            "tags": s.tags,
+            "status": s.status,
+        }
+        for s in body.sessions
+    ]
+
+    stmt = (
+        pg_insert(Session)
+        .values(rows)
+        .on_conflict_do_nothing(constraint="uq_sessions_user_local")
+        .returning(Session.id)
+    )
+    result = await db.execute(stmt)
+    inserted = result.scalars().all()
     await db.commit()
-    return SessionBatchResponse(synced=synced)
+    return SessionBatchResponse(synced=len(inserted))
 
 
 @router.get("/api/sessions")

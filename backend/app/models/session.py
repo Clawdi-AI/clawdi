@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,9 @@ class AgentEnvironment(Base, TimestampMixin):
 
 class Session(Base, TimestampMixin):
     __tablename__ = "sessions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "local_session_id", name="uq_sessions_user_local"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)

@@ -65,7 +65,19 @@ async def disconnect(
     connection_id: str,
     auth: AuthContext = Depends(get_auth),
 ) -> ConnectorDisconnectResponse:
-    """Disconnect a connected account."""
+    """Disconnect a connected account.
+
+    Ownership guard: Composio identifies connections by id globally, so we
+    must confirm the connection belongs to this user before deleting it —
+    otherwise any authenticated user could delete anyone else's integration.
+    """
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+
+    accounts = await get_connected_accounts(str(auth.user_id))
+    if not any(a.get("id") == connection_id for a in accounts):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
+
     success = await disconnect_account(connection_id)
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")

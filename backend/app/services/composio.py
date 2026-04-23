@@ -38,25 +38,36 @@ def get_composio_client() -> Composio:
     return _client
 
 
+def _jwt_signing_key() -> str:
+    """Return the MCP proxy JWT signing key.
+
+    We deliberately do NOT fall back to `vault_encryption_key` — that would
+    merge two key purposes (data-at-rest AES-GCM + proxy token HS256) into a
+    single secret. A compromise of the fallback leaks both the vault
+    contents AND the ability to mint MCP proxy tokens. Keep them separate.
+    """
+    key = settings.encryption_key
+    if not key:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not configured. Generate a 32-byte hex value and "
+            "set it in backend/.env — it must be distinct from VAULT_ENCRYPTION_KEY."
+        )
+    return key
+
+
 def create_proxy_token(user_id: str) -> str:
     """Create a JWT for MCP proxy authentication."""
-    key = settings.encryption_key or settings.vault_encryption_key
-    if not key:
-        raise RuntimeError("No encryption key configured for JWT signing")
     payload = {
         "sub": "mcp",
         "user_id": user_id,
         "exp": datetime.now(UTC) + timedelta(days=30),
     }
-    return jwt.encode(payload, key, algorithm="HS256")
+    return jwt.encode(payload, _jwt_signing_key(), algorithm="HS256")
 
 
 def verify_proxy_token(token: str) -> str:
     """Verify MCP proxy JWT, return user_id."""
-    key = settings.encryption_key or settings.vault_encryption_key
-    if not key:
-        raise RuntimeError("No encryption key configured")
-    payload = jwt.decode(token, key, algorithms=["HS256"])
+    payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
     return payload["user_id"]
 
 
