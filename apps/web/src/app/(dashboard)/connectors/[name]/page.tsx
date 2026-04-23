@@ -219,13 +219,14 @@ export default function ConnectorDetailPage() {
 			{/* Info Sections — matches clawdi ConnectorInfoSections */}
 			<div className="flex flex-col gap-4">
 				{/* Setup Steps */}
-				<Card className="gap-3 py-4">
-					<CardHeader className="px-4">
-						<CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-							<PlugZap className="size-3.5" /> Setup Steps
+				<Card>
+					<CardHeader>
+						<CardTitle className="flex items-center gap-2">
+							<PlugZap className="size-4" />
+							Setup Steps
 						</CardTitle>
 					</CardHeader>
-					<CardContent className="px-4">
+					<CardContent>
 						<ol className="flex flex-col gap-2">
 							{[
 								"Click Connect to authorize access",
@@ -244,13 +245,14 @@ export default function ConnectorDetailPage() {
 				</Card>
 
 				{/* Permissions */}
-				<Card className="gap-3 py-4">
-					<CardHeader className="px-4">
-						<CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-							<Shield className="size-3.5" /> Permissions
+				<Card>
+					<CardHeader>
+						<CardTitle className="flex items-center gap-2">
+							<Shield className="size-4" />
+							Permissions
 						</CardTitle>
 					</CardHeader>
-					<CardContent className="px-4">
+					<CardContent>
 						<ul className="flex flex-col gap-2">
 							{["Read data from your account", "Perform actions on your behalf"].map((perm) => (
 								<li key={perm} className="flex items-center gap-2 text-sm">
@@ -293,8 +295,8 @@ function DetailSkeleton() {
 				</div>
 			</div>
 			{/* Info sections */}
-			<Card className="gap-3 py-4">
-				<CardContent className="space-y-3 px-4">
+			<Card>
+				<CardContent className="space-y-3">
 					<Skeleton className="h-3.5 w-24" />
 					<div className="space-y-2">
 						<Skeleton className="h-4 w-56" />

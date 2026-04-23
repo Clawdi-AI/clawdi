@@ -79,6 +79,7 @@ export default function DashboardPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader title="Overview" description="Your agent cloud at a glance." />
+
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity */}
 				<div className="space-y-4 lg:col-span-2">
@@ -101,7 +102,7 @@ export default function DashboardPage() {
 						</CardContent>
 					</Card>
 
-					<Card>
+					<Card className="gap-0 pb-0">
 						<CardHeader className="border-b">
 							<CardTitle>Recent sessions</CardTitle>
 							<CardDescription>Latest syncs from your agents.</CardDescription>
@@ -143,11 +144,12 @@ export default function DashboardPage() {
 					</Card>
 				</div>
 
-				{/* Right column — inventory, KPIs, and the permanent Add-an-agent panel */}
+				{/* Right column — primary action (Add an agent) on top, then
+				    inventory + weekly KPIs below. */}
 				<div className="space-y-4">
+					<OnboardingCard />
 					<ResourcesCard stats={stats} />
 					<ThisWeekCard stats={stats} contribution={contribution} />
-					<OnboardingCard />
 				</div>
 			</div>
 		</div>

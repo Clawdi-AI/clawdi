@@ -1,15 +1,23 @@
 "use client";
 
 import { Check, Copy, Rocket, Terminal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, errorMessage } from "@/lib/utils";
 
-function getAgentPrompt() {
-	const origin = typeof window !== "undefined" ? window.location.origin : "https://cloud.clawdi.ai";
+// Fallback origin used during SSR and on the first client render before the
+// useEffect fires, so server and client markup match. The real origin is
+// swapped in post-mount.
+const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
+
+function useAgentPrompt() {
+	const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
+	useEffect(() => {
+		setOrigin(window.location.origin);
+	}, []);
 	return `Read ${origin}/skill.md and follow the instructions to connect to Clawdi Cloud.`;
 }
 
@@ -75,7 +83,7 @@ function StepNumber({ n }: { n: number }) {
 
 export function OnboardingCard() {
 	return (
-		<Card id="add-agent" className="scroll-mt-20">
+		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
 					<Rocket className="size-5 text-primary" />
@@ -111,7 +119,7 @@ export function OnboardingCard() {
 
 function AgentTab() {
 	const { copied, copy } = useCopy();
-	const prompt = getAgentPrompt();
+	const prompt = useAgentPrompt();
 
 	return (
 		<div className="space-y-4">

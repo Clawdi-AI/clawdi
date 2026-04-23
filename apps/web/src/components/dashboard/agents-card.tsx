@@ -1,17 +1,9 @@
 "use client";
 
-import { Laptop, Plus } from "lucide-react";
+import { Laptop } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Environment } from "@/lib/api-schemas";
 import { relativeTime } from "@/lib/utils";
@@ -62,14 +54,6 @@ export function AgentsCard({
 			<CardHeader>
 				<CardTitle>Agents</CardTitle>
 				<CardDescription>{description}</CardDescription>
-				<CardAction>
-					<Button asChild variant="outline" size="sm">
-						<a href="#add-agent">
-							<Plus />
-							Add
-						</a>
-					</Button>
-				</CardAction>
 			</CardHeader>
 			<CardContent>
 				{isLoading ? (

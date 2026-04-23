@@ -52,8 +52,8 @@ function buildResources(stats: DashboardStats): Resource[] {
 
 export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) {
 	return (
-		<Card>
-			<CardHeader>
+		<Card className="gap-0 pb-0">
+			<CardHeader className="border-b">
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>Shared across every connected agent.</CardDescription>
 			</CardHeader>

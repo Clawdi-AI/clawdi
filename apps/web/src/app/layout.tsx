@@ -2,15 +2,16 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const geistSans = Geist({
-	variable: "--font-geist-sans",
+const fontSans = Geist({
+	variable: "--font-sans",
 	subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-	variable: "--font-geist-mono",
+const fontMono = Geist_Mono({
+	variable: "--font-mono",
 	subsets: ["latin"],
 });
 
@@ -26,12 +27,14 @@ export default function RootLayout({
 }>) {
 	return (
 		<ClerkProvider>
-			<html
-				lang="en"
-				className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-				suppressHydrationWarning
-			>
-				<body className="min-h-full flex flex-col">
+			<html lang="en" className="h-full" suppressHydrationWarning>
+				<body
+					className={cn(
+						fontSans.variable,
+						fontMono.variable,
+						"flex min-h-full flex-col antialiased",
+					)}
+				>
 					<Providers>{children}</Providers>
 				</body>
 			</html>
