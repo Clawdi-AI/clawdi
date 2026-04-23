@@ -1,17 +1,9 @@
 "use client";
 
-import { Laptop, Plus } from "lucide-react";
+import { Laptop } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Environment } from "@/lib/api-schemas";
 import { relativeTime } from "@/lib/utils";
@@ -32,7 +24,7 @@ function isActive(lastSeenAt: string | null | undefined): boolean {
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
 }
 
-export function MachinesCard({
+export function AgentsCard({
 	environments,
 	isLoading,
 }: {
@@ -44,30 +36,18 @@ export function MachinesCard({
 
 	let description: string;
 	if (total === 0) {
-		description = "Connect your first machine to start syncing.";
+		description = "Run `clawdi login` on a machine to register your first agent.";
 	} else if (activeCount > 0) {
-		description = `${activeCount} active now · ${total} connected`;
+		description = `${activeCount} active now · ${total} total`;
 	} else {
-		description = `${total} connected · none active right now`;
+		description = `${total} registered · none active right now`;
 	}
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Machines</CardTitle>
+				<CardTitle>Agents</CardTitle>
 				<CardDescription>{description}</CardDescription>
-				<CardAction>
-					<Button variant="ghost" size="sm" asChild>
-						<a
-							href="https://github.com/Clawdi-AI/clawdi-cloud/blob/main/README.md#quick-start"
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							<Plus />
-							Connect
-						</a>
-					</Button>
-				</CardAction>
 			</CardHeader>
 			<CardContent>
 				{isLoading ? (
@@ -85,18 +65,18 @@ export function MachinesCard({
 				) : environments?.length ? (
 					<div className="grid gap-2 sm:grid-cols-2">
 						{environments.map((env) => (
-							<MachineTile key={env.id} env={env} />
+							<AgentTile key={env.id} env={env} />
 						))}
 					</div>
 				) : (
-					<EmptyState description="No machines connected yet. Run `clawdi login` on a dev machine to register it." />
+					<EmptyState description="No agents registered yet. Use the Add an agent panel below to connect your first machine." />
 				)}
 			</CardContent>
 		</Card>
 	);
 }
 
-function MachineTile({ env }: { env: Environment }) {
+function AgentTile({ env }: { env: Environment }) {
 	const active = isActive(env.last_seen_at);
 	return (
 		<div className="flex items-center gap-3 rounded-md border p-3">

@@ -4,8 +4,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
+import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
-import { MachinesCard } from "@/components/dashboard/machines-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
@@ -70,87 +70,83 @@ export default function DashboardPage() {
 		},
 	});
 
-	const isNewUser =
-		stats &&
-		stats.total_sessions === 0 &&
-		(stats.memories_count ?? 0) === 0 &&
-		(stats.skills_count ?? 0) === 0;
-
 	const streakLine =
 		stats && stats.current_streak > 0
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
 	return (
-		<div className="grid gap-4 px-4 lg:grid-cols-3 lg:px-6">
-			{/* Left column: what's happening */}
-			<div className="space-y-4 lg:col-span-2">
-				<MachinesCard environments={environments} isLoading={envsLoading} />
+		<div className="px-4 lg:px-6">
+			<div className="grid gap-4 lg:grid-cols-3">
+				{/* Left column — live status + activity */}
+				<div className="space-y-4 lg:col-span-2">
+					<AgentsCard environments={environments} isLoading={envsLoading} />
 
-				<Card>
-					<CardHeader>
-						<CardTitle>Activity</CardTitle>
-						<CardDescription>
-							Sessions per day in the last 12 months
-							{streakLine ? ` · ${streakLine}` : ""}
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						{contribLoading ? (
-							<Skeleton className="h-28 w-full rounded-md" />
-						) : contribution ? (
-							<ContributionGraph data={contribution} />
-						) : null}
-					</CardContent>
-				</Card>
+					<Card>
+						<CardHeader>
+							<CardTitle>Activity</CardTitle>
+							<CardDescription>
+								Sessions per day in the last 12 months
+								{streakLine ? ` · ${streakLine}` : ""}
+							</CardDescription>
+						</CardHeader>
+						<CardContent>
+							{contribLoading ? (
+								<Skeleton className="h-28 w-full rounded-md" />
+							) : contribution ? (
+								<ContributionGraph data={contribution} />
+							) : null}
+						</CardContent>
+					</Card>
 
-				<Card>
-					<CardHeader className="border-b">
-						<CardTitle>Recent sessions</CardTitle>
-						<CardDescription>Latest syncs from your agents.</CardDescription>
-						<CardAction>
-							<Button asChild variant="ghost" size="sm">
-								<Link href="/sessions">
-									View all
-									<ArrowUpRight />
-								</Link>
-							</Button>
-						</CardAction>
-					</CardHeader>
-					<CardContent className="p-0">
-						{sessionsLoading ? (
-							<div className="divide-y">
-								{Array.from({ length: 3 }).map((_, i) => (
-									<SessionRowSkeleton key={i} />
-								))}
-							</div>
-						) : sessions?.length ? (
-							<div className="divide-y">
-								{sessions.map((s) => (
-									<SessionRow key={s.id} session={s} />
-								))}
-							</div>
-						) : (
-							<EmptyState
-								className="py-6"
-								description={
-									<>
-										No sessions yet. Run{" "}
-										<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
-										on a connected machine.
-									</>
-								}
-							/>
-						)}
-					</CardContent>
-				</Card>
-			</div>
+					<Card>
+						<CardHeader className="border-b">
+							<CardTitle>Recent sessions</CardTitle>
+							<CardDescription>Latest syncs from your agents.</CardDescription>
+							<CardAction>
+								<Button asChild variant="ghost" size="sm">
+									<Link href="/sessions">
+										View all
+										<ArrowUpRight />
+									</Link>
+								</Button>
+							</CardAction>
+						</CardHeader>
+						<CardContent className="p-0">
+							{sessionsLoading ? (
+								<div className="divide-y">
+									{Array.from({ length: 3 }).map((_, i) => (
+										<SessionRowSkeleton key={i} />
+									))}
+								</div>
+							) : sessions?.length ? (
+								<div className="divide-y">
+									{sessions.map((s) => (
+										<SessionRow key={s.id} session={s} />
+									))}
+								</div>
+							) : (
+								<EmptyState
+									className="py-6"
+									description={
+										<>
+											No sessions yet. Run{" "}
+											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
+											on a connected agent.
+										</>
+									}
+								/>
+							)}
+						</CardContent>
+					</Card>
+				</div>
 
-			{/* Right column: what you have / what to do */}
-			<div className="space-y-4">
-				<ResourcesCard stats={stats} />
-				<ThisWeekCard stats={stats} contribution={contribution} />
-				{isNewUser ? <OnboardingCard /> : null}
+				{/* Right column — inventory, KPIs, and the permanent Add-an-agent panel */}
+				<div className="space-y-4">
+					<ResourcesCard stats={stats} />
+					<ThisWeekCard stats={stats} contribution={contribution} />
+					<OnboardingCard />
+				</div>
 			</div>
 		</div>
 	);

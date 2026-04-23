@@ -79,9 +79,11 @@ export function OnboardingCard() {
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
 					<Rocket className="size-5 text-primary" />
-					Get Started
+					Add an agent
 				</CardTitle>
-				<CardDescription>Connect your AI agent to Clawdi Cloud in seconds.</CardDescription>
+				<CardDescription>
+					Connect another machine or agent type — works for Claude Code, Codex, Hermes and OpenClaw.
+				</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<Tabs defaultValue="agent">

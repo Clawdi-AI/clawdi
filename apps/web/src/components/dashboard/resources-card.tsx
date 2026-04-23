@@ -3,7 +3,7 @@
 import type { LucideIcon } from "lucide-react";
 import { ArrowRight, Brain, Key, Plug, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
 import { cn, formatNumber } from "@/lib/utils";
@@ -54,7 +54,8 @@ export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Your cloud</CardTitle>
+				<CardTitle>Resources</CardTitle>
+				<CardDescription>Shared with every connected agent.</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
 				<div className="divide-y">
