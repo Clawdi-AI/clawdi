@@ -110,16 +110,21 @@ async def upsert_vault_items(
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
     vault = await _get_vault(auth.user_id, slug, db)
+
+    # Batch-prefetch all existing items for this vault+section in one query.
+    existing_result = await db.execute(
+        select(VaultItem).where(
+            VaultItem.vault_id == vault.id,
+            VaultItem.section == body.section,
+        )
+    )
+    existing_by_name: dict[str, VaultItem] = {
+        item.item_name: item for item in existing_result.scalars().all()
+    }
+
     for field_name, plaintext in body.fields.items():
         ciphertext, nonce = encrypt(plaintext)
-        existing = await db.execute(
-            select(VaultItem).where(
-                VaultItem.vault_id == vault.id,
-                VaultItem.section == body.section,
-                VaultItem.item_name == field_name,
-            )
-        )
-        item = existing.scalar_one_or_none()
+        item = existing_by_name.get(field_name)
         if item:
             item.encrypted_value = ciphertext
             item.nonce = nonce
@@ -146,15 +151,20 @@ async def delete_vault_items(
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
     vault = await _get_vault(auth.user_id, slug, db)
-    for field_name in body.fields:
-        result = await db.execute(
-            select(VaultItem).where(
-                VaultItem.vault_id == vault.id,
-                VaultItem.section == body.section,
-                VaultItem.item_name == field_name,
-            )
+
+    # Batch-prefetch all existing items for this vault+section in one query.
+    existing_result = await db.execute(
+        select(VaultItem).where(
+            VaultItem.vault_id == vault.id,
+            VaultItem.section == body.section,
         )
-        item = result.scalar_one_or_none()
+    )
+    existing_by_name: dict[str, VaultItem] = {
+        item.item_name: item for item in existing_result.scalars().all()
+    }
+
+    for field_name in body.fields:
+        item = existing_by_name.get(field_name)
         if item:
             await db.delete(item)
 

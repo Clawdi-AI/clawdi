@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -72,12 +73,12 @@ async def create_memory(
 
 @router.delete("/{memory_id}")
 async def delete_memory(
-    memory_id: str,
+    memory_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> MemoryDeleteResponse:
     provider = await get_memory_provider(str(auth.user_id), db)
-    await provider.delete(str(auth.user_id), memory_id)
+    await provider.delete(str(auth.user_id), str(memory_id))
     return MemoryDeleteResponse(status="deleted")
 
 

@@ -52,7 +52,11 @@ export default function SessionDetailPage() {
 		},
 	});
 
-	const { data: messages, isLoading: isContentLoading } = useQuery({
+	const {
+		data: messages,
+		isLoading: isContentLoading,
+		isError: isContentError,
+	} = useQuery({
 		queryKey: ["session-content", id],
 		queryFn: async () => {
 			const token = await getToken();
@@ -123,6 +127,8 @@ export default function SessionDetailPage() {
 			{session.has_content ? (
 				isContentLoading ? (
 					<MessagesSkeleton />
+				) : isContentError ? (
+					<ContentFetchError />
 				) : messages?.length ? (
 					<div className="space-y-6">
 						{messages.map((msg, i) => (
@@ -351,4 +357,10 @@ function MessagesSkeleton() {
 
 function EmptyContent() {
 	return <EmptyState description="No messages in this session." />;
+}
+
+function ContentFetchError() {
+	return (
+		<EmptyState description="Failed to load session content. Check your connection and try refreshing." />
+	);
 }

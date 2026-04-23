@@ -468,10 +468,15 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     s = (setting.settings if setting else {}) or {}
 
     if s.get("memory_provider") == "mem0":
-        api_key = s.get("mem0_api_key", "")
-        if not api_key:
+        raw_key = s.get("mem0_api_key", "")
+        if not raw_key:
             log.warning("memory_provider=mem0 but mem0_api_key missing; falling back to builtin.")
             return BuiltinProvider(db, embedder=resolve_embedder())
+        # Decrypt if the key was stored via encrypt_field (enc: prefix); legacy
+        # plaintext values are returned unchanged by decrypt_field.
+        from app.services.vault_crypto import decrypt_field
+
+        api_key = decrypt_field(raw_key)
         return Mem0Provider(api_key=api_key)
 
     return BuiltinProvider(db, embedder=resolve_embedder())

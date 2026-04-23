@@ -25,11 +25,11 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
 
     body = (await client.get("/api/settings")).json()
     assert body["memory_provider"] == "mem0"
-    # Mask rule is documented in app.routes.settings — 8 chars + ellipsis.
+    # Secret fields must be masked — the actual key value must never be returned.
     masked = body["mem0_api_key"]
     assert masked != "mem0_live_supersecret"
-    assert masked.endswith("...")
-    assert masked.startswith("mem0_liv")
+    # The mask sentinel defined in app.routes.settings._SECRET_MASK.
+    assert masked == "••••••••"
 
 
 @pytest.mark.asyncio

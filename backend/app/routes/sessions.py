@@ -1,14 +1,13 @@
 import uuid
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
 from app.schemas.session import (
@@ -163,7 +162,7 @@ async def list_sessions(
 
 @router.get("/api/sessions/{session_id}")
 async def get_session_detail(
-    session_id: str,
+    session_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
@@ -172,7 +171,7 @@ async def get_session_detail(
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(
             Session.user_id == auth.user_id,
-            Session.id == uuid.UUID(session_id),
+            Session.id == session_id,
         )
     )
     row = result.first()
@@ -216,7 +215,7 @@ async def upload_session_content(
 
 @router.get("/api/sessions/{session_id}/content")
 async def get_session_content(
-    session_id: str,
+    session_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[SessionMessageResponse]:
@@ -226,7 +225,7 @@ async def get_session_content(
     result = await db.execute(
         select(Session).where(
             Session.user_id == auth.user_id,
-            Session.id == uuid.UUID(session_id),
+            Session.id == session_id,
         )
     )
     session = result.scalar_one_or_none()

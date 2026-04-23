@@ -174,16 +174,13 @@ async def _download_and_tar(
             try:
                 async with client.stream("GET", f["download_url"]) as resp:
                     if resp.status_code != 200:
-                        logger.warning(
-                            f"Failed to download {f['path']}: {resp.status_code}"
-                        )
+                        logger.warning(f"Failed to download {f['path']}: {resp.status_code}")
                         continue
                     async for chunk in resp.aiter_bytes():
                         file_size += len(chunk)
                         if total_size + file_size > MAX_DECOMPRESSED_BYTES:
                             raise ValueError(
-                                f"Skill repo exceeds "
-                                f"{MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"
+                                f"Skill repo exceeds {MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"
                             )
                         chunks.append(chunk)
             except ValueError:

@@ -210,9 +210,10 @@ program
 	.command("run")
 	.description("Run a command with vault secrets injected")
 	.argument("<command...>", "Command to run")
-	.action(async (args) => {
+	.option("--allow-missing-vault", "Continue even if vault secrets cannot be fetched")
+	.action(async (args, opts) => {
 		const { run } = await import("./commands/run.js");
-		await run(args);
+		await run(args, opts);
 	});
 
 program.parse();

@@ -60,6 +60,4 @@ def get_file_store() -> FileStore:
     kind = getattr(settings, "file_store_type", "local")
     if kind == "local":
         return LocalFileStore(settings.file_store_local_path)
-    raise RuntimeError(
-        f"Unknown FILE_STORE_TYPE={kind!r}. Only 'local' is implemented so far."
-    )
+    raise RuntimeError(f"Unknown FILE_STORE_TYPE={kind!r}. Only 'local' is implemented so far.")

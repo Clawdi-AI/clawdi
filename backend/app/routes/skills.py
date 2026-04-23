@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.config import settings
 from app.core.database import get_session
 from app.models.skill import Skill
 from app.schemas.skill import (
