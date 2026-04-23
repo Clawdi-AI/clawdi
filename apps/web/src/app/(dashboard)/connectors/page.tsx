@@ -85,7 +85,7 @@ export default function ConnectorsPage() {
 	const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Connectors"
 				description="Connect apps and enable capabilities for your AI agent."

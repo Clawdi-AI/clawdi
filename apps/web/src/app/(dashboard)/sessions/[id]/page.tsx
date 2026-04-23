@@ -77,7 +77,7 @@ export default function SessionDetailPage() {
 
 	if (isSessionLoading) {
 		return (
-			<div className="space-y-5">
+			<div className="space-y-5 px-4 lg:px-6">
 				<DetailSkeleton />
 			</div>
 		);
@@ -85,7 +85,7 @@ export default function SessionDetailPage() {
 
 	if (!session) {
 		return (
-			<div className="space-y-5">
+			<div className="space-y-5 px-4 lg:px-6">
 				<p className="text-muted-foreground">Session not found.</p>
 			</div>
 		);
@@ -94,7 +94,7 @@ export default function SessionDetailPage() {
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 px-4 lg:px-6">
 			{/* Header */}
 			<div>
 				<h1 className="text-lg font-semibold tracking-tight">

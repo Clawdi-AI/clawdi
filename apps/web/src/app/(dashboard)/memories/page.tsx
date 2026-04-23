@@ -101,7 +101,7 @@ export default function MemoriesPage() {
 	});
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Memories"
 				description="Cross-agent recall. Memories are searchable from any agent via MCP."

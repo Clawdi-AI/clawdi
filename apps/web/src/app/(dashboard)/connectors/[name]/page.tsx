@@ -100,14 +100,14 @@ export default function ConnectorDetailPage() {
 
 	if (isLoading) {
 		return (
-			<div className="flex flex-col gap-4">
+			<div className="flex flex-col gap-4 px-4 lg:px-6">
 				<DetailSkeleton />
 			</div>
 		);
 	}
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col gap-4 px-4 lg:px-6">
 			{/* Header — matches clawdi ConnectorHeader */}
 			<div className="flex items-start gap-5">
 				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />

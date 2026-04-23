@@ -2,30 +2,31 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import {
-	BarChart3,
-	Brain,
-	Key,
-	type LucideIcon,
-	MessageSquare,
-	Plug,
-	Sparkles,
-	Zap,
-} from "lucide-react";
+import { ArrowUpRight, Zap } from "lucide-react";
 import Link from "next/link";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { SectionCards } from "@/components/dashboard/section-cards";
 import { EmptyState } from "@/components/empty-state";
-import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ContributionDay, DashboardStats, SessionListItem } from "@/lib/api-schemas";
-import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import { formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function DashboardPage() {
 	const { getToken } = useAuth();
 
-	const { data: stats, isLoading: statsLoading } = useQuery({
+	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: async () => {
 			const token = await getToken();
@@ -43,7 +44,7 @@ export default function DashboardPage() {
 		},
 	});
 
-	const { data: sessions } = useQuery({
+	const { data: sessions, isLoading: sessionsLoading } = useQuery({
 		queryKey: ["recent-sessions"],
 		queryFn: async () => {
 			const token = await getToken();
@@ -55,187 +56,112 @@ export default function DashboardPage() {
 	const isNewUser = stats && stats.total_sessions === 0;
 
 	return (
-		<div className="space-y-6">
-			<PageHeader
-				title="Overview"
-				description="Your agents at a glance — activity, usage, and recent sessions."
-			/>
+		<>
+			{/* Stat cards — dashboard-01 SectionCards pattern */}
+			<SectionCards stats={stats} />
 
-			{/* Onboarding for new users */}
-			{!statsLoading && isNewUser && <OnboardingCard />}
-
-			{/* Module stats */}
-			{statsLoading ? (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-					{Array.from({ length: 6 }).map((_, i) => (
-						<div key={i} className="rounded-lg border bg-card px-4 py-3 space-y-2">
-							<Skeleton className="h-3 w-16" />
-							<Skeleton className="h-6 w-10" />
-						</div>
-					))}
-				</div>
-			) : stats ? (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-					<ModuleCard
-						href="/sessions"
-						icon={BarChart3}
-						label="Sessions"
-						value={formatNumber(stats.total_sessions)}
-					/>
-					<ModuleCard
-						href="/sessions"
-						icon={MessageSquare}
-						label="Messages"
-						value={formatNumber(stats.total_messages)}
-					/>
-					<ModuleCard
-						href="/skills"
-						icon={Sparkles}
-						label="Skills"
-						value={String(stats.skills_count ?? 0)}
-					/>
-					<ModuleCard
-						href="/memories"
-						icon={Brain}
-						label="Memories"
-						value={String(stats.memories_count ?? 0)}
-					/>
-					<ModuleCard
-						href="/vault"
-						icon={Key}
-						label="Vault Keys"
-						value={String(stats.vault_keys_count ?? 0)}
-					/>
-					<ModuleCard
-						href="/connectors"
-						icon={Plug}
-						label="Connectors"
-						value={String(stats.connectors_count ?? 0)}
-					/>
+			{/* Onboarding for zero-state users */}
+			{isNewUser ? (
+				<div className="px-4 lg:px-6">
+					<OnboardingCard />
 				</div>
 			) : null}
 
-			{/* Session stats row */}
-			{stats && (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					<StatCard label="Total tokens" value={formatNumber(stats.total_tokens)} />
-					<StatCard label="Active days" value={String(stats.active_days)} />
-					<StatCard label="Current streak" value={`${stats.current_streak}d`} />
-					<StatCard
-						label="Favorite model"
-						value={stats.favorite_model?.replace("claude-", "") ?? "-"}
-					/>
-				</div>
-			)}
-
-			{/* Activity graph */}
-			<div>
-				<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-					Activity
-				</h2>
-				{contribLoading ? (
-					<Skeleton className="h-28 w-full rounded-lg" />
-				) : contribution ? (
-					<ContributionGraph data={contribution} />
-				) : null}
+			{/* Activity heatmap */}
+			<div className="px-4 lg:px-6">
+				<Card>
+					<CardHeader>
+						<CardTitle>Activity</CardTitle>
+						<CardDescription>Sessions per day across the last 12 months.</CardDescription>
+					</CardHeader>
+					<CardContent>
+						{contribLoading ? (
+							<Skeleton className="h-28 w-full rounded-md" />
+						) : contribution ? (
+							<ContributionGraph data={contribution} />
+						) : null}
+					</CardContent>
+				</Card>
 			</div>
 
-			{/* Recent Sessions */}
-			<div>
-				<div className="flex items-center justify-between mb-3">
-					<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Recent Sessions
-					</h2>
-					<Link
-						href="/sessions"
-						className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-					>
-						View all
-					</Link>
-				</div>
-				{sessions?.length ? (
-					<div className="rounded-lg border">
-						{sessions.map((s, i) => (
-							<Link
-								key={s.id}
-								href={`/sessions/${s.id}`}
-								className={cn(
-									"flex items-center justify-between px-4 py-3 hover:bg-accent/40 transition-colors",
-									i > 0 && "border-t",
-								)}
-							>
-								<div className="min-w-0 flex-1">
-									<div className="text-sm font-medium truncate">
-										{formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
+			{/* Recent sessions */}
+			<div className="px-4 lg:px-6">
+				<Card>
+					<CardHeader className="border-b">
+						<CardTitle>Recent sessions</CardTitle>
+						<CardDescription>Latest syncs from your connected agents.</CardDescription>
+						<CardAction>
+							<Button asChild variant="ghost" size="sm">
+								<Link href="/sessions">
+									View all
+									<ArrowUpRight />
+								</Link>
+							</Button>
+						</CardAction>
+					</CardHeader>
+					<CardContent className="p-0">
+						{sessionsLoading ? (
+							<div className="divide-y">
+								{Array.from({ length: 3 }).map((_, i) => (
+									<div key={i} className="flex items-center justify-between gap-4 px-6 py-4">
+										<div className="min-w-0 flex-1 space-y-2">
+											<Skeleton className="h-4 w-56" />
+											<Skeleton className="h-3 w-40" />
+										</div>
+										<Skeleton className="h-3 w-14" />
 									</div>
-									<div className="flex items-center gap-2 mt-0.5">
-										<span className="text-xs text-muted-foreground">
-											{s.project_path?.split("/").pop() ?? "-"}
+								))}
+							</div>
+						) : sessions?.length ? (
+							<div className="divide-y">
+								{sessions.map((s) => (
+									<Link
+										key={s.id}
+										href={`/sessions/${s.id}`}
+										className="flex items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-accent/40"
+									>
+										<div className="min-w-0 flex-1">
+											<div className="truncate text-sm font-medium">
+												{formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8)}
+											</div>
+											<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+												<span className="truncate">
+													{s.project_path?.split("/").pop() ?? "no project"}
+												</span>
+												{s.model ? (
+													<Badge variant="secondary" className="font-normal">
+														{s.model.replace("claude-", "")}
+													</Badge>
+												) : null}
+												<span>{s.message_count} msgs</span>
+												<span className="flex items-center gap-1">
+													<Zap className="size-3" />
+													{((s.input_tokens + s.output_tokens) / 1000).toFixed(1)}k
+												</span>
+											</div>
+										</div>
+										<span className="shrink-0 text-xs text-muted-foreground">
+											{relativeTime(s.started_at)}
 										</span>
-										{s.model && (
-											<span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-												{s.model.replace("claude-", "")}
-											</span>
-										)}
-										<span className="text-xs text-muted-foreground">{s.message_count} msgs</span>
-										<span className="text-xs text-muted-foreground">
-											<Zap className="inline size-3" />{" "}
-											{((s.input_tokens + s.output_tokens) / 1000).toFixed(1)}k
-										</span>
-									</div>
-								</div>
-								<span className="text-xs text-muted-foreground ml-4 shrink-0">
-									{relativeTime(s.started_at)}
-								</span>
-							</Link>
-						))}
-					</div>
-				) : (
-					<EmptyState
-						description={
-							<>
-								No sessions yet. Run{" "}
-								<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi sync up</code> to
-								sync.
-							</>
-						}
-					/>
-				)}
+									</Link>
+								))}
+							</div>
+						) : (
+							<div className="p-6">
+								<EmptyState
+									description={
+										<>
+											No sessions yet. Run{" "}
+											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
+											to sync.
+										</>
+									}
+								/>
+							</div>
+						)}
+					</CardContent>
+				</Card>
 			</div>
-		</div>
-	);
-}
-
-function ModuleCard({
-	href,
-	icon: Icon,
-	label,
-	value,
-}: {
-	href: string;
-	icon: LucideIcon;
-	label: string;
-	value: string;
-}) {
-	return (
-		<Link
-			href={href}
-			className="rounded-lg border bg-card px-4 py-3 hover:border-foreground/15 hover:bg-accent/40 transition-all"
-		>
-			<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-				<Icon className="size-3.5" />
-				{label}
-			</div>
-			<div className="text-xl font-semibold mt-1">{value}</div>
-		</Link>
-	);
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-	return (
-		<div className="rounded-lg border bg-card px-4 py-3">
-			<div className="text-xs text-muted-foreground">{label}</div>
-			<div className="text-lg font-semibold mt-1">{value}</div>
-		</div>
+		</>
 	);
 }

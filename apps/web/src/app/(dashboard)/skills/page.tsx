@@ -81,7 +81,7 @@ export default function SkillsPage() {
 	const installedKeys = new Set(skills?.map((s) => s.skill_key) ?? []);
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
 				description="Portable agent instructions synced across machines."

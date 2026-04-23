@@ -25,7 +25,7 @@ export default function SessionsPage() {
 	});
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Sessions"
 				description="Agent conversation history synced from your machines."

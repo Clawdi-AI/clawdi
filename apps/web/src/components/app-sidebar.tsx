@@ -67,7 +67,7 @@ export function AppSidebar() {
 
 	return (
 		<>
-			<Sidebar collapsible="icon">
+			<Sidebar collapsible="icon" variant="inset">
 				{/* Brand — logo already has its own colors, no filled background */}
 				<SidebarHeader>
 					<SidebarMenu>

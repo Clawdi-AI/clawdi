@@ -6,21 +6,30 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<SidebarProvider>
+		<SidebarProvider
+			style={
+				{
+					"--sidebar-width": "calc(var(--spacing) * 72)",
+					"--header-height": "calc(var(--spacing) * 12)",
+				} as React.CSSProperties
+			}
+		>
 			<AppSidebar />
 			<SidebarInset>
-				<header className="flex h-16 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-					<div className="flex items-center gap-2 px-4">
+				<header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+					<div className="flex items-center gap-2 px-4 lg:px-6">
 						<SidebarTrigger className="-ml-1" />
-						<Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+						<Separator orientation="vertical" className="mx-2 data-[orientation=vertical]:h-4" />
 						<AppBreadcrumb />
 					</div>
-					<div className="ml-auto flex items-center gap-2 px-4">
+					<div className="ml-auto flex items-center gap-2 px-4 lg:px-6">
 						<ThemeToggle />
 					</div>
 				</header>
-				<div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-4 p-4 md:p-6">
-					{children}
+				<div className="flex flex-1 flex-col">
+					<div className="@container/main flex flex-1 flex-col gap-2">
+						<div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">{children}</div>
+					</div>
 				</div>
 			</SidebarInset>
 		</SidebarProvider>
