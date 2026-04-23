@@ -192,10 +192,11 @@ function VaultCard({
 			)
 		: [];
 
+	const hasBody = adding || allFields.length > 0;
 	return (
 		<div className="group/vault rounded-lg border bg-card">
 			{/* Header */}
-			<div className="flex items-center justify-between px-4 py-3 border-b">
+			<div className={cn("flex items-center justify-between px-4 py-3", hasBody && "border-b")}>
 				<div className="flex items-center gap-2">
 					<Key className="size-4 text-primary" />
 					<span className="font-medium text-sm">{vault.slug}</span>
@@ -275,8 +276,8 @@ function VaultCard({
 				</div>
 			)}
 
-			{/* Keys list */}
-			{allFields.length > 0 ? (
+			{/* Keys list — hide body entirely when empty; header still invites action */}
+			{allFields.length > 0 && (
 				<div>
 					{allFields.map((f, i) => (
 						<div
@@ -302,12 +303,6 @@ function VaultCard({
 						</div>
 					))}
 				</div>
-			) : (
-				!adding && (
-					<div className="px-4 py-4 text-center text-xs text-muted-foreground">
-						No keys yet. Click "Add Key" to add one.
-					</div>
-				)
 			)}
 		</div>
 	);

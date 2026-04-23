@@ -197,7 +197,7 @@ export default function MemoriesPage() {
 								<div className="flex items-center gap-2 mt-1.5">
 									<span
 										className={cn(
-											"text-[10px] font-medium px-1.5 py-0.5 rounded-full",
+											"inline-flex h-5 items-center rounded-full px-2 text-xs font-medium",
 											CATEGORY_COLORS[m.category] || "bg-muted text-muted-foreground",
 										)}
 									>

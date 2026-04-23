@@ -120,11 +120,11 @@ export default function SkillsPage() {
 									<div className="flex items-center gap-2">
 										<Sparkles className="size-3.5 text-primary shrink-0" />
 										<span className="font-medium text-sm">{s.skill_key}</span>
-										<span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+										<Badge variant="outline" className="h-5 font-normal">
 											v{s.version}
-										</span>
+										</Badge>
 										{s.file_count ? (
-											<span className="text-[10px] text-muted-foreground">
+											<span className="text-xs text-muted-foreground">
 												{s.file_count} file{s.file_count === 1 ? "" : "s"}
 											</span>
 										) : null}
@@ -134,7 +134,7 @@ export default function SkillsPage() {
 											{s.description}
 										</p>
 									)}
-									<div className="text-[10px] text-muted-foreground mt-1.5">
+									<div className="text-xs text-muted-foreground mt-1.5">
 										{s.source}
 										{s.source_repo && <span> · {s.source_repo}</span>}
 									</div>
@@ -229,20 +229,20 @@ export default function SkillsPage() {
 									<div className="flex items-center gap-2">
 										<Sparkles className="size-3.5 text-primary shrink-0" />
 										<span className="font-medium text-sm">{skill.name}</span>
-										<Badge variant="secondary" className="text-[10px]">
+										<Badge variant="secondary" className="h-5 font-normal">
 											{skill.installs}
 										</Badge>
 									</div>
 									<p className="text-xs text-muted-foreground mt-1 line-clamp-2">
 										{skill.description}
 									</p>
-									<div className="text-[10px] text-muted-foreground mt-1.5">
+									<div className="text-xs text-muted-foreground mt-1.5">
 										{skill.repo}
 										{skill.path ? `/${skill.path}` : ""}
 									</div>
 								</div>
 								{isInstalled ? (
-									<span className="inline-flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400 px-2 py-1 shrink-0 ml-3">
+									<span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 px-2 py-1 shrink-0 ml-3">
 										<Check className="size-3" />
 										Installed
 									</span>
