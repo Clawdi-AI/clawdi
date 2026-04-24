@@ -2,13 +2,15 @@
 
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Key, Plus, Settings, Trash2, User } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
 	DialogContent,
@@ -25,7 +27,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { type ApiError, apiFetch } from "@/lib/api";
 import type { ApiKey, ApiKeyCreated } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
@@ -56,12 +57,9 @@ export function SettingsDialog({
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent
-				className="flex h-[min(680px,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+				className="flex h-[85vh] max-h-[640px] w-[calc(100%-1rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:h-[560px] sm:max-h-[85vh] sm:max-w-3xl"
 				showCloseButton
 			>
-				{/* Accessible title + description live in the sidebar column visually;
-				    the radix-required DialogTitle/Description are visually hidden so
-				    the header row stays clean. */}
 				<DialogHeader className="sr-only">
 					<DialogTitle>Settings</DialogTitle>
 					<DialogDescription>
@@ -69,35 +67,31 @@ export function SettingsDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="grid min-h-0 flex-1 grid-cols-[200px_1fr]">
-					{/* Left column — section nav, styled like a sidebar. */}
-					<nav aria-label="Settings sections" className="flex flex-col border-r bg-muted/30 p-3">
-						<div className="mb-3 px-2">
-							<div className="text-sm font-semibold">Settings</div>
-						</div>
-						<div className="flex flex-col gap-0.5">
-							{SECTIONS.map((s) => (
-								<button
-									key={s.id}
-									type="button"
-									onClick={() => setSection(s.id)}
-									className={cn(
-										"flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-left transition-colors",
-										section === s.id
-											? "bg-background font-medium text-foreground shadow-sm"
-											: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-									)}
-								>
-									<s.icon className="size-4" />
-									{s.label}
-								</button>
-							))}
-						</div>
+				<div className="flex min-h-0 flex-1 flex-col sm:grid sm:grid-cols-[200px_1fr]">
+					<nav
+						aria-label="Settings sections"
+						className="flex shrink-0 gap-1 border-b p-2 overflow-x-auto sm:flex-col sm:border-r sm:border-b-0 sm:p-3 sm:overflow-x-visible"
+					>
+						{SECTIONS.map((s) => (
+							<button
+								key={s.id}
+								type="button"
+								onClick={() => setSection(s.id)}
+								className={cn(
+									"flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-left transition-colors",
+									section === s.id
+										? "bg-accent text-accent-foreground"
+										: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+								)}
+							>
+								<s.icon className="size-4" />
+								{s.label}
+							</button>
+						))}
 					</nav>
 
-					{/* Right column — scrollable panel. */}
-					<div className="flex min-w-0 flex-col overflow-y-auto">
-						<div className="flex flex-col gap-6 px-8 py-6">
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+						<div className="flex flex-col gap-6 px-6 py-6">
 							{section === "general" ? <GeneralPanel /> : null}
 							{section === "profile" ? <ProfilePanel /> : null}
 							{section === "api-keys" ? <ApiKeysPanel /> : null}
@@ -131,12 +125,8 @@ function GeneralPanel() {
 
 	return (
 		<>
-			<PanelHeader
-				title="General"
-				description="App-wide preferences for your Clawdi Cloud dashboard."
-			/>
-
-			<div className="flex items-center justify-between border-t pt-4">
+			<PanelHeader title="General" />
+			<div className="flex items-center justify-between">
 				<div className="space-y-0.5">
 					<Label htmlFor="settings-theme">Theme</Label>
 					<p className="text-xs text-muted-foreground">
@@ -168,12 +158,8 @@ function ProfilePanel() {
 
 	return (
 		<>
-			<PanelHeader
-				title="Profile"
-				description="Edit your name and avatar from the Clerk-hosted user profile."
-			/>
-
-			<div className="flex items-center gap-4 border-t pt-4">
+			<PanelHeader title="Profile" />
+			<div className="flex items-center gap-4">
 				<Avatar className="size-14">
 					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
 					<AvatarFallback>{initial}</AvatarFallback>
@@ -238,6 +224,71 @@ function ApiKeysPanel() {
 		onError: (e: ApiError) => toast.error("Couldn't revoke key", { description: e.detail }),
 	});
 
+	const columns = useMemo<ColumnDef<ApiKey>[]>(
+		() => [
+			{
+				accessorKey: "label",
+				header: "Label",
+				cell: ({ row }) => (
+					<div className="flex items-center gap-2">
+						<span className="font-medium">{row.original.label}</span>
+						{row.original.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
+					</div>
+				),
+			},
+			{
+				accessorKey: "key_prefix",
+				header: "Prefix",
+				cell: ({ row }) => (
+					<span className="font-mono text-xs text-muted-foreground">
+						{row.original.key_prefix}…
+					</span>
+				),
+			},
+			{
+				accessorKey: "created_at",
+				header: "Created",
+				cell: ({ row }) => (
+					<span className="text-xs text-muted-foreground">
+						{new Date(row.original.created_at).toLocaleDateString()}
+					</span>
+				),
+			},
+			{
+				accessorKey: "last_used_at",
+				header: "Last used",
+				cell: ({ row }) =>
+					row.original.last_used_at ? (
+						<span className="text-xs text-muted-foreground">
+							{new Date(row.original.last_used_at).toLocaleDateString()}
+						</span>
+					) : (
+						<span className="text-xs text-muted-foreground">—</span>
+					),
+			},
+			{
+				id: "actions",
+				header: "",
+				cell: ({ row }) =>
+					!row.original.revoked_at ? (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							onClick={() => revokeKey.mutate(row.original.id)}
+							disabled={revokeKey.isPending}
+							aria-label="Revoke key"
+							className="text-muted-foreground hover:text-destructive"
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					) : null,
+				size: 40,
+			},
+		],
+		[revokeKey],
+	);
+
 	return (
 		<>
 			<PanelHeader
@@ -301,48 +352,12 @@ function ApiKeysPanel() {
 				</div>
 			) : null}
 
-			{/* Key list */}
-			{isLoading ? (
-				<div className="space-y-2">
-					{[1, 2].map((i) => (
-						<Skeleton key={i} className="h-14 w-full" />
-					))}
-				</div>
-			) : keys?.length ? (
-				<div className="divide-y rounded-lg border">
-					{keys.map((k) => (
-						<div key={k.id} className="flex items-center justify-between gap-3 px-4 py-3">
-							<div className="min-w-0">
-								<div className="flex items-center gap-2 text-sm font-medium">
-									<span className="truncate">{k.label}</span>
-									{k.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
-								</div>
-								<div className="mt-0.5 truncate text-xs text-muted-foreground">
-									{k.key_prefix}… · Created {new Date(k.created_at).toLocaleDateString()}
-									{k.last_used_at
-										? ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`
-										: ""}
-								</div>
-							</div>
-							{!k.revoked_at ? (
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									onClick={() => revokeKey.mutate(k.id)}
-									disabled={revokeKey.isPending}
-									aria-label="Revoke key"
-									className="text-muted-foreground hover:text-destructive"
-								>
-									<Trash2 />
-								</Button>
-							) : null}
-						</div>
-					))}
-				</div>
-			) : (
-				<p className="text-sm text-muted-foreground">No API keys yet.</p>
-			)}
+			<DataTable
+				columns={columns}
+				data={keys ?? []}
+				isLoading={isLoading}
+				emptyMessage="No API keys yet."
+			/>
 		</>
 	);
 }

@@ -4,36 +4,31 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
-import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
-import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
+import { sessionColumns } from "@/components/sessions/session-columns";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type {
 	ContributionDay,
 	DashboardStats,
 	Environment,
-	SessionListItem,
+	PaginatedSessions,
 } from "@/lib/api-schemas";
 
-const RECENT_SESSIONS_LIMIT = 5;
+const RECENT_SESSIONS_LIMIT = 15;
 
 export default function DashboardPage() {
 	const { getToken } = useAuth();
+	const router = useRouter();
 
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -62,14 +57,15 @@ export default function DashboardPage() {
 		},
 	});
 
-	const { data: sessions, isLoading: sessionsLoading } = useQuery({
+	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
 		queryKey: ["recent-sessions"],
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionListItem[]>(`/api/sessions?limit=${RECENT_SESSIONS_LIMIT}`, token);
+			return apiFetch<PaginatedSessions>(`/api/sessions?page_size=${RECENT_SESSIONS_LIMIT}`, token);
 		},
 	});
+	const sessions = sessionsPage?.items;
 
 	const streakLine =
 		stats && stats.current_streak > 0
@@ -112,47 +108,33 @@ export default function DashboardPage() {
 						</CardContent>
 					</Card>
 
-					<Card className="gap-0 pb-0">
-						<CardHeader className="border-b">
-							<CardTitle>Recent sessions</CardTitle>
-							<CardDescription>Latest syncs from your agents.</CardDescription>
-							<CardAction>
-								<Button asChild variant="ghost" size="sm">
-									<Link href="/sessions">
-										View all
-										<ArrowRight />
-									</Link>
-								</Button>
-							</CardAction>
-						</CardHeader>
-						<CardContent className="p-0">
-							{sessionsLoading ? (
-								<div className="divide-y">
-									{Array.from({ length: 3 }).map((_, i) => (
-										<SessionRowSkeleton key={i} />
-									))}
-								</div>
-							) : sessions?.length ? (
-								<div className="divide-y">
-									{sessions.map((s) => (
-										<SessionRow key={s.id} session={s} />
-									))}
-								</div>
-							) : (
-								<EmptyState
-									fillHeight={false}
-									className="py-6"
-									description={
-										<>
-											No sessions yet. Run{" "}
-											<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code>{" "}
-											on a connected agent.
-										</>
-									}
-								/>
-							)}
-						</CardContent>
-					</Card>
+					<section className="space-y-2">
+						<div className="flex items-end justify-between">
+							<div>
+								<h2 className="text-base font-semibold">Recent sessions</h2>
+								<p className="text-sm text-muted-foreground">Latest syncs from your agents.</p>
+							</div>
+							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
+								<Link href="/sessions">
+									View all
+									<ArrowRight />
+								</Link>
+							</Button>
+						</div>
+						<DataTable
+							columns={sessionColumns}
+							data={sessions ?? []}
+							isLoading={sessionsLoading}
+							onRowClick={(s) => router.push(`/sessions/${s.id}`)}
+							emptyMessage={
+								<>
+									No sessions yet. Run{" "}
+									<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> on
+									a connected agent.
+								</>
+							}
+						/>
+					</section>
 				</div>
 
 				{/* Right column — once agents exist, "Connect another" lives here

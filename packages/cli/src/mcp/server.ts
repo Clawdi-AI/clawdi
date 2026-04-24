@@ -137,8 +137,8 @@ export async function startMcpServer() {
 		},
 		async ({ query, limit }) => {
 			try {
-				const results = await api.get<MemoryRecord[]>(
-					`/api/memories?q=${encodeURIComponent(query)}&limit=${limit ?? 10}`,
+				const { items: results } = await api.get<{ items: MemoryRecord[] }>(
+					`/api/memories?q=${encodeURIComponent(query)}&page_size=${limit ?? 10}`,
 				);
 				return {
 					content: [

@@ -14,6 +14,8 @@ import {
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DetailHeader } from "@/components/detail-header";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
@@ -99,6 +101,8 @@ export default function SessionDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
+			<DetailHeader backHref="/sessions" backLabel="Back to sessions" />
+
 			{/* Header */}
 			<div>
 				<h1 className="text-lg font-semibold tracking-tight">
@@ -109,17 +113,13 @@ export default function SessionDetailPage() {
 				</p>
 			</div>
 
-			{/* Stats bar */}
-			<div className="flex flex-wrap items-center gap-3">
-				{session.agent_type && (
-					<Badge variant="secondary">
-						{session.agent_type === "claude_code"
-							? "Claude Code"
-							: session.agent_type === "hermes"
-								? "Hermes"
-								: session.agent_type}
-					</Badge>
-				)}
+			{/* Stats bar — agent label (2-line) has more height than the inline
+			    badges/stats, so align to start and let the badges sit along the
+			    baseline of the first line. */}
+			<div className="flex flex-wrap items-start gap-4">
+				{session.agent_type || session.machine_name ? (
+					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
+				) : null}
 				{session.model && (
 					<Badge variant="outline" className="border-primary/30 text-primary">
 						{session.model.replace("claude-", "")}

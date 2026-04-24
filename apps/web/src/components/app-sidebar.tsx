@@ -12,6 +12,7 @@ import {
 	Monitor,
 	Moon,
 	Plug,
+	Search,
 	Settings,
 	Sparkles,
 	Sun,
@@ -21,6 +22,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useState } from "react";
+import { useCommandPalette } from "@/components/command-palette";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -47,7 +49,6 @@ import {
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
-	SidebarRail,
 	useSidebar,
 } from "@/components/ui/sidebar";
 
@@ -66,6 +67,7 @@ export function AppSidebar() {
 	const { user } = useUser();
 	const { isMobile } = useSidebar();
 	const { theme, setTheme } = useTheme();
+	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [addAgentOpen, setAddAgentOpen] = useState(false);
 
@@ -132,6 +134,15 @@ export function AppSidebar() {
 					<SidebarGroup className="mt-auto">
 						<SidebarGroupContent>
 							<SidebarMenu>
+								<SidebarMenuItem>
+									<SidebarMenuButton tooltip="Search (⌘K)" onClick={() => setPaletteOpen(true)}>
+										<Search />
+										<span>Search</span>
+										<kbd className="pointer-events-none ml-auto hidden select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+											⌘K
+										</kbd>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
 								<SidebarMenuItem>
 									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
 										<Settings />
@@ -226,8 +237,6 @@ export function AppSidebar() {
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarFooter>
-
-				<SidebarRail />
 			</Sidebar>
 
 			<SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />

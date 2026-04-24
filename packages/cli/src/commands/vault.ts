@@ -42,7 +42,9 @@ export async function vaultSet(key: string) {
 export async function vaultList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const vaults = await api.get<Array<{ slug: string; name: string }>>("/api/vault");
+	const { items: vaults } = await api.get<{
+		items: Array<{ slug: string; name: string }>;
+	}>("/api/vault?page_size=100");
 
 	if (opts.json || !process.stdout.isTTY) {
 		const out: Record<string, Record<string, string[]>> = {};

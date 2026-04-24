@@ -17,7 +17,7 @@ import {
 export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-			<DialogContent className="max-w-2xl">
+			<DialogContent className="max-w-2xl sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>Add an agent</DialogTitle>
 					<DialogDescription>

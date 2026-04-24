@@ -2,15 +2,19 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, Database, Key, Loader2, Plus, Search, Trash2, X } from "lucide-react";
-import { useDeferredValue, useState } from "react";
+import { AlertCircle, Brain, Database, Key, Loader2, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { EmptyState } from "@/components/empty-state";
+import { makeMemoryColumns } from "@/components/memories/memory-columns";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,12 +24,12 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { apiFetch } from "@/lib/api";
-import type { Memory, UserSettings } from "@/lib/api-schemas";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import type { PaginatedMemories, UserSettings } from "@/lib/api-schemas";
+import { useDebouncedValue } from "@/lib/use-debounced";
+import { errorMessage } from "@/lib/utils";
 
 const CATEGORIES = [
 	{ value: "all", label: "All" },
@@ -41,23 +45,14 @@ const CATEGORIES = [
 // for the All chip (Radix does not treat "" as a selected value).
 const ALL = "all";
 
-// Semantic color overlay. Applied via cn() to the shadcn Badge — we don't
-// modify the Badge primitive itself, just extend its classes for the data-viz
-// category distinction (fact/preference/pattern/decision/context).
-const CATEGORY_COLORS: Record<string, string> = {
-	fact: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-transparent",
-	preference: "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-transparent",
-	pattern: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-transparent",
-	decision: "bg-green-500/10 text-green-700 dark:text-green-400 border-transparent",
-	context: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-transparent",
-};
-
 export default function MemoriesPage() {
 	const { getToken } = useAuth();
 	const queryClient = useQueryClient();
-	const [searchQuery, setSearchQuery] = useState("");
+	const router = useRouter();
+	const [search, setSearch] = useState("");
 	const [category, setCategory] = useState<string>(ALL);
-	const deferredQuery = useDeferredValue(searchQuery);
+	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+	const debouncedSearch = useDebouncedValue(search, 250);
 	const apiCategory = category === ALL ? "" : category;
 
 	const { data: settings } = useQuery({
@@ -90,22 +85,23 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Failed to update settings", { description: errorMessage(e) }),
 	});
 
-	const {
-		data: memories,
-		isLoading,
-		error,
-	} = useQuery({
-		queryKey: ["memories", deferredQuery, apiCategory],
+	const { data, isLoading, error } = useQuery({
+		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			const params = new URLSearchParams();
-			if (deferredQuery) params.set("q", deferredQuery);
+			const params = new URLSearchParams({
+				page: String(pagination.pageIndex + 1),
+				page_size: String(pagination.pageSize),
+			});
+			if (debouncedSearch) params.set("q", debouncedSearch);
 			if (apiCategory) params.set("category", apiCategory);
-			const qs = params.toString();
-			return apiFetch<Memory[]>(`/api/memories${qs ? `?${qs}` : ""}`, token);
+			return apiFetch<PaginatedMemories>(`/api/memories?${params}`, token);
 		},
 	});
+
+	const memories = data?.items;
+	const total = data?.total ?? 0;
 
 	const deleteMemory = useMutation({
 		mutationFn: async (id: string) => {
@@ -117,6 +113,8 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
 	});
 
+	const columns = useMemo(() => makeMemoryColumns((id) => deleteMemory.mutate(id)), [deleteMemory]);
+
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
@@ -124,9 +122,9 @@ export default function MemoriesPage() {
 				description="Searchable knowledge available to every connected agent via MCP."
 				actions={
 					<>
-						{memories ? (
+						{data ? (
 							<Badge variant="secondary">
-								{memories.length} memor{memories.length === 1 ? "y" : "ies"}
+								{total} memor{total === 1 ? "y" : "ies"}
 							</Badge>
 						) : null}
 						<ToggleGroup
@@ -159,114 +157,62 @@ export default function MemoriesPage() {
 
 			<AddMemoryForm />
 
-			<div className="flex flex-col gap-3">
-				<div className="relative">
-					<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={searchQuery}
-						onChange={(e) => setSearchQuery(e.target.value)}
-						placeholder="Search memories..."
-						className="pl-9 pr-9"
-					/>
-					{searchQuery ? (
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							onClick={() => setSearchQuery("")}
-							className="absolute right-1 top-1/2 -translate-y-1/2"
-							aria-label="Clear search"
-						>
-							<X className="size-4" />
-						</Button>
-					) : null}
-				</div>
-				<ToggleGroup
-					type="single"
-					value={category}
-					onValueChange={(v) => v && setCategory(v)}
-					variant="outline"
-					size="sm"
-				>
-					{CATEGORIES.map((c) => (
-						<ToggleGroupItem key={c.value} value={c.value}>
-							{c.label}
-						</ToggleGroupItem>
-					))}
-				</ToggleGroup>
-			</div>
-
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Failed to load memories</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
-			) : isLoading ? (
-				<div className="space-y-2">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<div key={i} className="rounded-lg border bg-card px-4 py-3 space-y-2">
-							<Skeleton className="h-4 w-3/4" />
-							<div className="flex gap-2">
-								<Skeleton className="h-4 w-14" />
-								<Skeleton className="h-4 w-20" />
-							</div>
-						</div>
-					))}
-				</div>
-			) : memories?.length ? (
-				<div className="space-y-2">
-					{memories.map((m) => (
-						<div
-							key={m.id}
-							className="group flex items-start justify-between gap-3 rounded-lg border bg-card px-4 py-3"
-						>
-							<div className="min-w-0 flex-1">
-								<p className="text-sm">{m.content}</p>
-								<div className="mt-1.5 flex flex-wrap items-center gap-2">
-									<Badge variant="secondary" className={cn(CATEGORY_COLORS[m.category])}>
-										{m.category}
-									</Badge>
-									<span className="text-xs text-muted-foreground">{m.source}</span>
-									{m.tags?.map((t) => (
-										<span key={t} className="text-xs text-muted-foreground">
-											#{t}
-										</span>
-									))}
-									{m.created_at ? (
-										<span className="text-xs text-muted-foreground">
-											{relativeTime(m.created_at)}
-										</span>
-									) : null}
-								</div>
-							</div>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								onClick={() => deleteMemory.mutate(m.id)}
-								disabled={deleteMemory.isPending}
-								className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-								aria-label="Delete memory"
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</div>
-					))}
-				</div>
 			) : (
-				<EmptyState
-					icon={Brain}
-					title={searchQuery || apiCategory ? "No matches" : "No memories yet"}
-					description={
-						searchQuery || apiCategory ? (
-							"Try a different search or category."
-						) : (
-							<>
-								Add one above, or run{" "}
-								<code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-									clawdi memory add "..."
-								</code>
-							</>
-						)
+				<DataTable
+					columns={columns}
+					data={memories ?? []}
+					isLoading={isLoading}
+					onRowClick={(m) => router.push(`/memories/${m.id}`)}
+					emptyMessage={
+						debouncedSearch || apiCategory
+							? "No matches — try a different search or category."
+							: 'No memories yet. Add one above or run clawdi memory add "..."'
+					}
+					pagination={pagination}
+					onPaginationChange={setPagination}
+					pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
+					toolbar={
+						<DataTableToolbar
+							value={search}
+							onChange={(v) => {
+								setSearch(v);
+								setPagination((p) => ({ ...p, pageIndex: 0 }));
+							}}
+							placeholder="Search memories…"
+						>
+							<ToggleGroup
+								type="single"
+								value={category}
+								onValueChange={(v) => {
+									if (!v) return;
+									setCategory(v);
+									setPagination((p) => ({ ...p, pageIndex: 0 }));
+								}}
+								variant="outline"
+								size="sm"
+							>
+								{CATEGORIES.map((c) => (
+									<ToggleGroupItem key={c.value} value={c.value}>
+										{c.label}
+									</ToggleGroupItem>
+								))}
+							</ToggleGroup>
+						</DataTableToolbar>
+					}
+					footer={
+						<DataTablePagination
+							page={pagination.pageIndex + 1}
+							pageSize={pagination.pageSize}
+							total={total}
+							onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
+							onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+						/>
 					}
 				/>
 			)}

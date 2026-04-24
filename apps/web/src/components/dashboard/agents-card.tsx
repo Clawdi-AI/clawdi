@@ -1,8 +1,8 @@
 "use client";
 
-import { AgentIcon } from "@/components/dashboard/agent-icon";
+import Link from "next/link";
+import { AgentLabel } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Environment } from "@/lib/api-schemas";
@@ -10,14 +10,6 @@ import { relativeTime } from "@/lib/utils";
 
 // Freshness threshold — "active" means the agent pinged us in the last 5 minutes.
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
-
-function agentLabel(agent: string | null | undefined): string {
-	if (agent === "claude_code") return "Claude Code";
-	if (agent === "codex") return "Codex";
-	if (agent === "hermes") return "Hermes";
-	if (agent === "openclaw") return "OpenClaw";
-	return agent ?? "Agent";
-}
 
 function isActive(lastSeenAt: string | null | undefined): boolean {
 	if (!lastSeenAt) return false;
@@ -88,25 +80,21 @@ export function AgentsCard({
 function AgentTile({ env }: { env: Environment }) {
 	const active = isActive(env.last_seen_at);
 	return (
-		<div className="flex items-center gap-3 rounded-md border p-3">
-			<div className="relative">
-				<AgentIcon agent={env.agent_type} />
-				{active ? (
-					<span
-						className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-card"
-						aria-hidden
-					/>
-				) : null}
-			</div>
-			<div className="min-w-0 flex-1">
-				<div className="truncate text-sm font-medium">{env.machine_name}</div>
-				<div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-					<Badge variant="outline">{agentLabel(env.agent_type)}</Badge>
-					<span className="truncate">
-						{env.last_seen_at ? relativeTime(env.last_seen_at) : "never seen"}
-					</span>
-				</div>
-			</div>
-		</div>
+		<Link
+			href={`/agents/${env.id}`}
+			className="relative flex items-center gap-3 rounded-md border p-3 transition-colors hover:bg-accent/40"
+		>
+			<AgentLabel machineName={env.machine_name} type={env.agent_type} size="md" />
+			<span className="ml-auto shrink-0 text-xs text-muted-foreground">
+				{env.last_seen_at ? relativeTime(env.last_seen_at) : "never seen"}
+			</span>
+			{active ? (
+				<span
+					className="absolute top-2 right-2 size-2 rounded-full bg-primary"
+					title="Active"
+					aria-hidden
+				/>
+			) : null}
+		</Link>
 	);
 }

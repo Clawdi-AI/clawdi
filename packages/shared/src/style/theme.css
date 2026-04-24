@@ -1,27 +1,16 @@
-/* clawdi-cloud design tokens — tweakcn "Claude Bazaar" community preset.
+/* clawdi-cloud design tokens — pasted verbatim from the tweakcn export.
  *
- * Pasted verbatim from the tweakcn export (community theme, warm cream
- * background + orange primary + 16px radius + Outfit sans). Local adaptations:
- *   - `@import "tailwindcss"` is declared once in apps/web/src/app/globals.css,
- *     not here.
- *   - `color-scheme` is declared on :root / .dark so native form controls,
- *     scrollbars, and the browser UA sheet follow the theme.
+ * Only adaptation: font-sans keeps Geist (team preference); the preset ships
+ * Outfit. Everything else — colors, radius, shadows — is the upstream preset.
  *
- * The preset uses canonical `--font-sans` / `--font-mono` variable names;
- * `next/font/google` is wired with the same names in apps/web/src/app/layout.tsx
- * and applied on <body> so Next's self-hosted face wins via scope inheritance,
- * while the bare "Geist" / "Geist Mono" names below act as fallback.
- * Note: we keep Geist Sans (not the preset's Outfit) per team preference.
- *
- * Imported once via apps/web/src/app/globals.css with
+ * `@import "tailwindcss"` is declared in apps/web/src/app/globals.css, so it
+ * is omitted here to avoid duplicate registration. This file is consumed via
  *   @import "@clawdi-cloud/shared/style/theme.css";
  */
 
-@custom-variant dark (&:is(.dark, .dark *));
+@custom-variant dark (&:is(.dark *));
 
 :root {
-	color-scheme: light;
-
 	--background: oklch(0.9818 0.0054 95.0986);
 	--foreground: oklch(0.3438 0.0269 95.7226);
 	--card: oklch(0.9665 0.0067 97.3521);
@@ -29,20 +18,15 @@
 	--popover: oklch(1 0 0);
 	--popover-foreground: oklch(0.2671 0.0196 98.939);
 	--primary: oklch(0.6171 0.1375 39.0427);
-	/* Near-black on the mid-lightness orange primary hits ~7.3:1 contrast,
-	   matches dark-mode treatment, and passes WCAG AA (pure white fails). */
-	--primary-foreground: oklch(0.1908 0.002 106.5859);
+	--primary-foreground: oklch(1 0 0);
 	--secondary: oklch(0.9245 0.0138 92.9892);
 	--secondary-foreground: oklch(0.4334 0.0177 98.6048);
 	--muted: oklch(0.9341 0.0153 90.239);
-	/* Darkened from 0.534 to 0.45 for ~4.7:1 on --background (WCAG AA body text). */
-	--muted-foreground: oklch(0.45 0.008 97.45);
+	--muted-foreground: oklch(0.5341 0.0078 97.4503);
 	--accent: oklch(0.9245 0.0138 92.9892);
 	--accent-foreground: oklch(0.2671 0.0196 98.939);
 	--destructive: oklch(0.1908 0.002 106.5859);
 	--destructive-foreground: oklch(1 0 0);
-	--warning: oklch(0.795 0.184 86);
-	--warning-foreground: oklch(0.42 0.095 58);
 	--border: oklch(0.8847 0.0069 97.3627);
 	--input: oklch(0.7621 0.0156 98.3528);
 	--ring: oklch(0.6171 0.1375 39.0427);
@@ -61,7 +45,7 @@
 	--sidebar-ring: oklch(0.7731 0 0);
 	--font-sans: Geist, sans-serif;
 	--font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-	--font-mono: "Geist Mono", ui-monospace, monospace;
+	--font-mono: Geist Mono, ui-monospace, monospace;
 	--radius: 1rem;
 	--shadow-x: 0;
 	--shadow-y: 1px;
@@ -82,8 +66,6 @@
 }
 
 .dark {
-	color-scheme: dark;
-
 	--background: oklch(0.2679 0.0036 106.6427);
 	--foreground: oklch(0.9576 0.0027 106.4494);
 	--card: oklch(0.2928 0.0018 106.5092);
@@ -100,8 +82,6 @@
 	--accent-foreground: oklch(0.9663 0.008 98.8792);
 	--destructive: oklch(0.6368 0.2078 25.3313);
 	--destructive-foreground: oklch(1 0 0);
-	--warning: oklch(0.795 0.184 86);
-	--warning-foreground: oklch(0.856 0.13 84);
 	--border: oklch(0.3618 0.0101 106.8928);
 	--input: oklch(0.4336 0.0113 100.2195);
 	--ring: oklch(0.6724 0.1308 38.7559);
@@ -120,7 +100,7 @@
 	--sidebar-ring: oklch(0.7731 0 0);
 	--font-sans: Geist, sans-serif;
 	--font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-	--font-mono: "Geist Mono", ui-monospace, monospace;
+	--font-mono: Geist Mono, ui-monospace, monospace;
 	--radius: 1rem;
 	--shadow-x: 0;
 	--shadow-y: 1px;
@@ -155,8 +135,6 @@
 	--color-accent-foreground: var(--accent-foreground);
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
-	--color-warning: var(--warning);
-	--color-warning-foreground: var(--warning-foreground);
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
@@ -198,6 +176,6 @@
 		@apply border-border outline-ring/50;
 	}
 	body {
-		@apply bg-background text-foreground font-sans;
+		@apply bg-background text-foreground;
 	}
 }

@@ -14,6 +14,7 @@ import {
 	Sparkles,
 	Trash2,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -25,7 +26,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import type { SkillSummary } from "@/lib/api-schemas";
+import type { PaginatedSkills } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
 
 export default function SkillsPage() {
@@ -35,18 +36,15 @@ export default function SkillsPage() {
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 
-	const {
-		data: skills,
-		isLoading,
-		error,
-	} = useQuery({
+	const { data, isLoading, error } = useQuery({
 		queryKey: ["skills"],
 		queryFn: async () => {
 			const token = await getToken();
 			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SkillSummary[]>("/api/skills", token);
+			return apiFetch<PaginatedSkills>("/api/skills?page_size=200", token);
 		},
 	});
+	const skills = data?.items;
 
 	const deleteSkill = useMutation({
 		mutationFn: async (key: string) => {
@@ -97,7 +95,7 @@ export default function SkillsPage() {
 	const installedKeys = new Set(skills?.map((s) => s.skill_key) ?? []);
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
 				description="Agent instructions synced across your machines."
@@ -111,7 +109,7 @@ export default function SkillsPage() {
 			/>
 
 			<section className="space-y-3">
-				<h2 className="text-sm font-semibold text-muted-foreground">Installed</h2>
+				<h2 className="text-base font-semibold">Installed</h2>
 				{error ? (
 					<Alert variant="destructive">
 						<AlertCircle />
@@ -133,9 +131,15 @@ export default function SkillsPage() {
 				) : skills?.length ? (
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{skills.map((s) => (
-							<Card key={s.id} className="group">
+							<Card
+								key={s.id}
+								className="group cursor-pointer transition-colors hover:bg-accent/20"
+							>
 								<CardContent className="flex items-start justify-between gap-3">
-									<div className="min-w-0 flex-1">
+									<Link
+										href={`/skills/${encodeURIComponent(s.skill_key)}`}
+										className="min-w-0 flex-1"
+									>
 										<div className="flex items-center gap-2">
 											<Sparkles className="size-4 shrink-0 text-primary" />
 											<span className="truncate text-sm font-medium">{s.skill_key}</span>
@@ -155,16 +159,19 @@ export default function SkillsPage() {
 											{s.source}
 											{s.source_repo ? ` · ${s.source_repo}` : ""}
 										</p>
-									</div>
+									</Link>
 									<Button
 										variant="ghost"
 										size="icon-sm"
-										onClick={() => deleteSkill.mutate(s.skill_key)}
+										onClick={(e) => {
+											e.stopPropagation();
+											deleteSkill.mutate(s.skill_key);
+										}}
 										disabled={deleteSkill.isPending}
 										className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
 										aria-label="Uninstall skill"
 									>
-										<Trash2 className="size-4" />
+										<Trash2 className="size-3.5" />
 									</Button>
 								</CardContent>
 							</Card>
@@ -187,7 +194,7 @@ export default function SkillsPage() {
 
 			<section className="space-y-3">
 				<div className="flex items-center justify-between">
-					<h2 className="text-sm font-semibold text-muted-foreground">Marketplace</h2>
+					<h2 className="text-base font-semibold">Marketplace</h2>
 					<a
 						href="https://skills.sh"
 						target="_blank"

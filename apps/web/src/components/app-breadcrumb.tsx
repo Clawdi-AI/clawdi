@@ -11,9 +11,9 @@ import {
 } from "@/components/ui/breadcrumb";
 
 /**
- * Derive breadcrumb from the current route. Keeps the header signal automatic —
- * pages never have to remember to set it. For a route `/connectors/github`
- * this renders: `Dashboard › Connectors › github`.
+ * Route-derived header label. Mirrors shadcn dashboard-01's single `<h1>` —
+ * top-level pages show just the page name, detail pages (e.g. `/sessions/<id>`)
+ * add the parent section as a breadcrumb link so users can get back.
  */
 const SEGMENT_LABELS: Record<string, string> = {
 	sessions: "Sessions",
@@ -42,10 +42,6 @@ export function AppBreadcrumb() {
 	return (
 		<Breadcrumb>
 			<BreadcrumbList>
-				<BreadcrumbItem className="hidden md:block">
-					<BreadcrumbLink href="/">Dashboard</BreadcrumbLink>
-				</BreadcrumbItem>
-				<BreadcrumbSeparator className="hidden md:block" />
 				{segments.map((seg, i) => {
 					const href = `/${segments.slice(0, i + 1).join("/")}`;
 					const label = SEGMENT_LABELS[seg] ?? decodeURIComponent(seg);
