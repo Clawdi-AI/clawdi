@@ -41,16 +41,22 @@ describe("ApiClient construction", () => {
 });
 
 describe("ApiClient error classification", () => {
+	// These tests exercise retry/timeout/error wiring with paths that don't
+	// exist in the OpenAPI `paths` map — openapi-fetch still issues the
+	// request, we just cast to sidestep the literal-path check.
+	// biome-ignore lint/suspicious/noExplicitAny: test-only escape from path-literal inference.
+	const anyPath = (p: string) => p as any;
+
 	it("throws ApiError with status + hint on 401", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;
 		globalThis.fetch = async () => new Response("unauthorized", { status: 401 });
 		try {
-			const { ApiClient } = await import("../src/lib/api-client");
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				await api.get("/anything");
+				unwrap(await api.GET(anyPath("/anything")));
 			} catch (e) {
 				caught = e;
 			}
@@ -75,9 +81,9 @@ describe("ApiClient error classification", () => {
 			});
 		};
 		try {
-			const { ApiClient } = await import("../src/lib/api-client");
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
-			const result = await api.get<{ ok: boolean }>("/retry-test");
+			const result = unwrap(await api.GET(anyPath("/retry-test")));
 			expect(result).toEqual({ ok: true });
 			expect(calls).toBe(3);
 		} finally {
@@ -94,11 +100,11 @@ describe("ApiClient error classification", () => {
 			return new Response("server error", { status: 500 });
 		};
 		try {
-			const { ApiClient } = await import("../src/lib/api-client");
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				await api.post("/upload", { hello: "world" });
+				unwrap(await api.POST(anyPath("/upload"), { body: { hello: "world" } }));
 			} catch (e) {
 				caught = e;
 			}
@@ -117,11 +123,11 @@ describe("ApiClient error classification", () => {
 			throw new TypeError("fetch failed");
 		};
 		try {
-			const { ApiClient } = await import("../src/lib/api-client");
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				await api.delete("/thing");
+				unwrap(await api.DELETE(anyPath("/thing")));
 			} catch (e) {
 				caught = e;
 			}

@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -12,13 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
-import { apiFetch } from "@/lib/api";
-import type { PaginatedSessions } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { errorMessage } from "@/lib/utils";
 
 export default function SessionsPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const router = useRouter();
 	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 	const [search, setSearch] = useState("");
@@ -26,16 +24,18 @@ export default function SessionsPage() {
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["sessions", pagination.pageIndex, pagination.pageSize, debouncedSearch],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			const params = new URLSearchParams({
-				page: String(pagination.pageIndex + 1),
-				page_size: String(pagination.pageSize),
-			});
-			if (debouncedSearch) params.set("q", debouncedSearch);
-			return apiFetch<PaginatedSessions>(`/api/sessions?${params}`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions", {
+					params: {
+						query: {
+							page: pagination.pageIndex + 1,
+							page_size: pagination.pageSize,
+							q: debouncedSearch || undefined,
+						},
+					},
+				}),
+			),
 	});
 
 	const total = data?.total ?? 0;

@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug, Search, X } from "lucide-react";
 import Link from "next/link";
@@ -14,8 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { ConnectorApp, ConnectorConnection } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
 const PAGE_SIZE = 30;
@@ -39,18 +37,14 @@ function ConnectorCardSkeleton() {
 }
 
 export default function ConnectorsPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const [query, setQuery] = useState("");
 	const [page, setPage] = useState(0);
 	const deferredQuery = useDeferredValue(query);
 
 	const { data: connections } = useQuery({
 		queryKey: ["connections"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectorConnection[]>("/api/connectors", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/connectors")),
 	});
 
 	const {
@@ -59,11 +53,7 @@ export default function ConnectorsPage() {
 		error,
 	} = useQuery({
 		queryKey: ["available-apps"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectorApp[]>("/api/connectors/available", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/connectors/available")),
 	});
 
 	const connectedNames = useMemo(

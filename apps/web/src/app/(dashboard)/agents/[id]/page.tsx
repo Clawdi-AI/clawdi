@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -11,14 +10,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { Environment, PaginatedSessions } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 export default function AgentDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const router = useRouter();
-	const { getToken } = useAuth();
+	const api = useApi();
 
 	const {
 		data: agent,
@@ -26,20 +24,22 @@ export default function AgentDetailPage() {
 		error,
 	} = useQuery({
 		queryKey: ["agent", id],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<Environment>(`/api/environments/${id}`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/environments/{environment_id}", {
+					params: { path: { environment_id: id } },
+				}),
+			),
 	});
 
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
 		queryKey: ["agent-sessions", id],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<PaginatedSessions>(`/api/sessions?environment_id=${id}&page_size=50`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions", {
+					params: { query: { environment_id: id, page_size: 50 } },
+				}),
+			),
 		enabled: !!agent,
 	});
 

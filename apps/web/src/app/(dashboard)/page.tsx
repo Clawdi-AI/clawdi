@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
@@ -16,54 +15,37 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type {
-	ContributionDay,
-	DashboardStats,
-	Environment,
-	PaginatedSessions,
-} from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 
 const RECENT_SESSIONS_LIMIT = 15;
 
 export default function DashboardPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const router = useRouter();
 
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<DashboardStats>("/api/dashboard/stats", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/dashboard/stats")),
 	});
 
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<Environment[]>("/api/environments", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/environments")),
 	});
 
 	const { data: contribution, isLoading: contribLoading } = useQuery({
 		queryKey: ["dashboard-contribution"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ContributionDay[]>("/api/dashboard/contribution", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/dashboard/contribution")),
 	});
 
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
 		queryKey: ["recent-sessions"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<PaginatedSessions>(`/api/sessions?page_size=${RECENT_SESSIONS_LIMIT}`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions", {
+					params: { query: { page_size: RECENT_SESSIONS_LIMIT } },
+				}),
+			),
 	});
 	const sessions = sessionsPage?.items;
 

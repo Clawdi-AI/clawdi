@@ -3,7 +3,8 @@ import { dirname } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
+import type { SkillSummary } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -54,14 +55,12 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 
 	const api = new ApiClient();
 
-	let cloudSkills: Array<{ skill_key: string; name: string }> = [];
+	let cloudSkills: SkillSummary[] = [];
 
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching from cloud...");
 	if (modules.includes("skills")) {
-		const page = await api.get<{ items: Array<{ skill_key: string; name: string }> }>(
-			"/api/skills?page_size=200",
-		);
+		const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
 		cloudSkills = page.items;
 	}
 	fetchSpinner.stop(

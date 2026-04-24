@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Brain, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -11,15 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { Memory } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const router = useRouter();
-	const { getToken } = useAuth();
+	const api = useApi();
 
 	const {
 		data: memory,
@@ -27,19 +25,17 @@ export default function MemoryDetailPage() {
 		error,
 	} = useQuery({
 		queryKey: ["memory", id],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<Memory>(`/api/memories/${id}`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/memories/{memory_id}", { params: { path: { memory_id: id } } })),
 	});
 
 	const deleteMemory = useMutation({
-		mutationFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/memories/${id}`, token, { method: "DELETE" });
-		},
+		mutationFn: async () =>
+			unwrap(
+				await api.DELETE("/api/memories/{memory_id}", {
+					params: { path: { memory_id: id } },
+				}),
+			),
 		onSuccess: () => {
 			toast.success("Memory deleted");
 			router.push("/memories");

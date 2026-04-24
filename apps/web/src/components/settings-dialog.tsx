@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Key, Plus, Settings, Trash2, User } from "lucide-react";
@@ -27,8 +27,8 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { type ApiError, apiFetch } from "@/lib/api";
-import type { ApiKey, ApiKeyCreated } from "@/lib/api-schemas";
+import { type ApiError, unwrap, useApi } from "@/lib/api";
+import type { ApiKey } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
 
 type Section = "general" | "profile" | "api-keys";
@@ -180,29 +180,19 @@ function ProfilePanel() {
 // ---------------------------------------------------------------------------
 
 function ApiKeysPanel() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
 
 	const { data: keys, isLoading } = useQuery({
 		queryKey: ["api-keys"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ApiKey[]>("/api/auth/keys", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/auth/keys")),
 	});
 
 	const createKey = useMutation({
-		mutationFn: async (label: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ApiKeyCreated>("/api/auth/keys", token, {
-				method: "POST",
-				body: JSON.stringify({ label }),
-			});
-		},
+		mutationFn: async (label: string) =>
+			unwrap(await api.POST("/api/auth/keys", { body: { label } })),
 		onSuccess: (data) => {
 			setCreatedKey(data.raw_key);
 			setNewLabel("");
@@ -212,11 +202,12 @@ function ApiKeysPanel() {
 	});
 
 	const revokeKey = useMutation({
-		mutationFn: async (keyId: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/auth/keys/${keyId}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (keyId: string) =>
+			unwrap(
+				await api.DELETE("/api/auth/keys/{key_id}", {
+					params: { path: { key_id: keyId } },
+				}),
+			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 			toast.success("Key revoked");

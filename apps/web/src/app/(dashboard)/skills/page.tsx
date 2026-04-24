@@ -1,7 +1,6 @@
 "use client";
 
 import { FEATURED_SKILLS } from "@clawdi-cloud/shared/consts";
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
@@ -25,12 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { PaginatedSkills } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
 export default function SkillsPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [customRepo, setCustomRepo] = useState("");
 	const [installing, setInstalling] = useState<string | null>(null);
@@ -38,20 +36,14 @@ export default function SkillsPage() {
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["skills"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<PaginatedSkills>("/api/skills?page_size=200", token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } })),
 	});
 	const skills = data?.items;
 
 	const deleteSkill = useMutation({
-		mutationFn: async (key: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/skills/${key}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (key: string) =>
+			unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills"] }),
 		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
 	});
@@ -61,12 +53,7 @@ export default function SkillsPage() {
 		setInstalling(key);
 		setInstallError(null);
 		try {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			await apiFetch("/api/skills/install", token, {
-				method: "POST",
-				body: JSON.stringify({ repo, path }),
-			});
+			unwrap(await api.POST("/api/skills/install", { body: { repo, path } }));
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			return true;
 		} catch (e: unknown) {

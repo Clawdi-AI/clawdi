@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata } from "../lib/sanitize";
 
@@ -25,16 +25,19 @@ export async function vaultSet(key: string) {
 
 	const api = new ApiClient();
 
-	try {
-		await api.post("/api/vault", { slug: vaultSlug, name: vaultSlug });
-	} catch {
-		// Already exists — fine
+	// 409 means the vault already exists — that's the common case when setting
+	// keys on an existing vault. Anything else bubbles up.
+	const created = await api.POST("/api/vault", { body: { slug: vaultSlug, name: vaultSlug } });
+	if (created.error !== undefined && created.response.status !== 409) {
+		unwrap(created);
 	}
 
-	await api.request(`/api/vault/${vaultSlug}/items`, {
-		method: "PUT",
-		body: JSON.stringify({ section, fields: { [field]: value } }),
-	});
+	unwrap(
+		await api.PUT("/api/vault/{slug}/items", {
+			params: { path: { slug: vaultSlug } },
+			body: { section, fields: { [field]: value } },
+		}),
+	);
 
 	console.log(chalk.green(`✓ Stored ${key}`));
 }
@@ -42,15 +45,16 @@ export async function vaultSet(key: string) {
 export async function vaultList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const { items: vaults } = await api.get<{
-		items: Array<{ slug: string; name: string }>;
-	}>("/api/vault?page_size=100");
+	const { items: vaults } = unwrap(
+		await api.GET("/api/vault", { params: { query: { page_size: 100 } } }),
+	);
+
+	const fetchItems = (slug: string) =>
+		api.GET("/api/vault/{slug}/items", { params: { path: { slug } } }).then(unwrap);
 
 	if (opts.json || !process.stdout.isTTY) {
-		const out: Record<string, Record<string, string[]>> = {};
-		for (const v of vaults) {
-			out[v.slug] = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
-		}
+		const out: Record<string, Awaited<ReturnType<typeof fetchItems>>> = {};
+		for (const v of vaults) out[v.slug] = await fetchItems(v.slug);
 		console.log(JSON.stringify(out, null, 2));
 		return;
 	}
@@ -61,7 +65,7 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 
 	for (const v of vaults) {
-		const items = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
+		const items = await fetchItems(v.slug);
 		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
 		for (const [section, fields] of Object.entries(items)) {
 			for (const field of fields) {
@@ -82,10 +86,9 @@ export async function vaultImport(file: string) {
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	try {
-		await api.post("/api/vault", { slug: "default", name: "Default" });
-	} catch {
-		// Already exists
+	const created = await api.POST("/api/vault", { body: { slug: "default", name: "Default" } });
+	if (created.error !== undefined && created.response.status !== 409) {
+		unwrap(created);
 	}
 
 	const fields: Record<string, string> = {};
@@ -116,10 +119,12 @@ export async function vaultImport(file: string) {
 		return;
 	}
 
-	await api.request("/api/vault/default/items", {
-		method: "PUT",
-		body: JSON.stringify({ section: "", fields }),
-	});
+	unwrap(
+		await api.PUT("/api/vault/{slug}/items", {
+			params: { path: { slug: "default" } },
+			body: { section: "", fields },
+		}),
+	);
 
 	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to vault "default"`));
 }

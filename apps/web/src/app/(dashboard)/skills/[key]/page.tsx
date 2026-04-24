@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ExternalLink, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -12,14 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { SkillDetail } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 export default function SkillDetailPage() {
 	const { key } = useParams<{ key: string }>();
 	const router = useRouter();
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 
 	const {
@@ -28,19 +26,13 @@ export default function SkillDetailPage() {
 		error,
 	} = useQuery({
 		queryKey: ["skill", key],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SkillDetail>(`/api/skills/${key}`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
 	});
 
 	const uninstall = useMutation({
-		mutationFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/skills/${key}`, token, { method: "DELETE" });
-		},
+		mutationFn: async () =>
+			unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
 		onSuccess: () => {
 			toast.success("Skill uninstalled");
 			queryClient.invalidateQueries({ queryKey: ["skills"] });

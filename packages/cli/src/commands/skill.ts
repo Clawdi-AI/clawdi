@@ -4,23 +4,13 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, ApiError } from "../lib/api-client";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { tarSingleFile, tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
-
-interface SkillRow {
-	skill_key: string;
-	version?: number;
-	source?: string;
-	source_repo?: string;
-	file_count?: number;
-	name?: string;
-	description?: string;
-}
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -54,7 +44,9 @@ function countFiles(dir: string): number {
 export async function skillList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const { items: skills } = await api.get<{ items: SkillRow[] }>("/api/skills?page_size=200");
+	const { items: skills } = unwrap(
+		await api.GET("/api/skills", { params: { query: { page_size: 200 } } }),
+	);
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(skills, null, 2));
@@ -189,12 +181,7 @@ export async function skillInstall(
 
 	const api = new ApiClient();
 
-	const installResult = await api.post<{
-		skill_key: string;
-		name: string;
-		version: number;
-		file_count: number;
-	}>("/api/skills/install", { repo, path });
+	const installResult = unwrap(await api.POST("/api/skills/install", { body: { repo, path } }));
 
 	// Select adapters to install to.
 	let adapters = getRegisteredAdapters();
@@ -285,7 +272,7 @@ export async function skillInstall(
 export async function skillRm(key: string) {
 	requireAuth();
 	const api = new ApiClient();
-	await api.delete(`/api/skills/${encodeURIComponent(key)}`);
+	unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } }));
 	console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
 }
 

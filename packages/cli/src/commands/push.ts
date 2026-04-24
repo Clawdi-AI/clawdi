@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { RawSession, RawSkill } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { getEnvIdByAgent, selectAdapter } from "../lib/select-adapter";
@@ -145,7 +145,12 @@ export async function push(opts: {
 		return;
 	}
 
-	// 5. Execute
+	// 5. Execute — `envId` was guarded against null up-front, but the narrowing
+	// is gone by now. Re-check so TS can forward it into the batch body.
+	if (!envId) {
+		p.log.error("Environment id missing — rerun `clawdi setup`.");
+		return;
+	}
 	const api = new ApiClient();
 
 	if (sessions.length > 0) {
@@ -154,24 +159,28 @@ export async function push(opts: {
 			`Uploading ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
 		try {
-			const result = await api.post<{ synced: number }>("/api/sessions/batch", {
-				sessions: sessions.map((s) => ({
-					environment_id: envId,
-					local_session_id: s.localSessionId,
-					project_path: s.projectPath,
-					started_at: s.startedAt.toISOString(),
-					ended_at: s.endedAt?.toISOString() ?? null,
-					duration_seconds: s.durationSeconds,
-					message_count: s.messageCount,
-					input_tokens: s.inputTokens,
-					output_tokens: s.outputTokens,
-					cache_read_tokens: s.cacheReadTokens,
-					model: s.model,
-					models_used: s.modelsUsed,
-					summary: s.summary,
-					status: "completed",
-				})),
-			});
+			const result = unwrap(
+				await api.POST("/api/sessions/batch", {
+					body: {
+						sessions: sessions.map((s) => ({
+							environment_id: envId,
+							local_session_id: s.localSessionId,
+							project_path: s.projectPath,
+							started_at: s.startedAt.toISOString(),
+							ended_at: s.endedAt?.toISOString() ?? null,
+							duration_seconds: s.durationSeconds,
+							message_count: s.messageCount,
+							input_tokens: s.inputTokens,
+							output_tokens: s.outputTokens,
+							cache_read_tokens: s.cacheReadTokens,
+							model: s.model,
+							models_used: s.modelsUsed,
+							summary: s.summary,
+							status: "completed",
+						})),
+					},
+				}),
+			);
 			sessionSpinner.stop(`Pushed ${result.synced} session${result.synced === 1 ? "" : "s"}`);
 
 			if (result.synced > 0) {

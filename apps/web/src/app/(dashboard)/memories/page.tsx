@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Loader2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -26,8 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { apiFetch } from "@/lib/api";
-import type { PaginatedMemories, UserSettings } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { errorMessage } from "@/lib/utils";
 
@@ -46,7 +44,7 @@ const CATEGORIES = [
 const ALL = "all";
 
 export default function MemoriesPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const router = useRouter();
 	const [search, setSearch] = useState("");
@@ -57,11 +55,7 @@ export default function MemoriesPage() {
 
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<UserSettings>("/api/settings", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/settings")),
 	});
 
 	const provider =
@@ -70,14 +64,8 @@ export default function MemoriesPage() {
 	const hasMem0Key = mem0Key !== "";
 
 	const updateSettings = useMutation({
-		mutationFn: async (patch: Record<string, string>) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>("/api/settings", token, {
-				method: "PATCH",
-				body: JSON.stringify({ settings: patch }),
-			});
-		},
+		mutationFn: async (patch: Record<string, string>) =>
+			unwrap(await api.PATCH("/api/settings", { body: { settings: patch } })),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
@@ -87,28 +75,31 @@ export default function MemoriesPage() {
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			const params = new URLSearchParams({
-				page: String(pagination.pageIndex + 1),
-				page_size: String(pagination.pageSize),
-			});
-			if (debouncedSearch) params.set("q", debouncedSearch);
-			if (apiCategory) params.set("category", apiCategory);
-			return apiFetch<PaginatedMemories>(`/api/memories?${params}`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/memories", {
+					params: {
+						query: {
+							page: pagination.pageIndex + 1,
+							page_size: pagination.pageSize,
+							q: debouncedSearch || undefined,
+							category: apiCategory || undefined,
+						},
+					},
+				}),
+			),
 	});
 
 	const memories = data?.items;
 	const total = data?.total ?? 0;
 
 	const deleteMemory = useMutation({
-		mutationFn: async (id: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/memories/${id}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (id: string) =>
+			unwrap(
+				await api.DELETE("/api/memories/{memory_id}", {
+					params: { path: { memory_id: id } },
+				}),
+			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
 		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
 	});
@@ -256,21 +247,19 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 }
 
 function AddMemoryForm() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [content, setContent] = useState("");
 	const [addCategory, setAddCategory] = useState("fact");
 
 	const createMemory = useMutation({
-		mutationFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>("/api/memories", token, {
-				method: "POST",
-				body: JSON.stringify({ content, category: addCategory, source: "web" }),
-			});
-		},
+		mutationFn: async () =>
+			unwrap(
+				await api.POST("/api/memories", {
+					body: { content, category: addCategory, source: "web" },
+				}),
+			),
 		onSuccess: () => {
 			setContent("");
 			setOpen(false);

@@ -1,8 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { ApiClient } from "../lib/api-client";
-import type { MemoryRecord } from "../lib/api-types";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
 // Minimal shape of a JSON Schema property we care about when mapping
@@ -81,7 +80,7 @@ export async function startMcpServer() {
 	const cliConfig = getConfig();
 	let mcpConfig: { mcp_url: string; mcp_token: string } | null = null;
 	try {
-		const raw = await api.get<{ mcp_url: string; mcp_token: string }>("/api/connectors/mcp-config");
+		const raw = unwrap(await api.GET("/api/connectors/mcp-config"));
 		// Backend returns localhost URL which may not work in containers;
 		// use the CLI's configured apiUrl instead
 		raw.mcp_url = `${cliConfig.apiUrl}/api/mcp/proxy`;
@@ -137,8 +136,10 @@ export async function startMcpServer() {
 		},
 		async ({ query, limit }) => {
 			try {
-				const { items: results } = await api.get<{ items: MemoryRecord[] }>(
-					`/api/memories?q=${encodeURIComponent(query)}&page_size=${limit ?? 10}`,
+				const { items: results } = unwrap(
+					await api.GET("/api/memories", {
+						params: { query: { q: query, page_size: limit ?? 10 } },
+					}),
 				);
 				return {
 					content: [
@@ -177,10 +178,11 @@ export async function startMcpServer() {
 		},
 		async ({ content, category }) => {
 			try {
-				const result = await api.post<{ id: string }>("/api/memories", {
-					content,
-					category: category ?? "fact",
-				});
+				const result = unwrap(
+					await api.POST("/api/memories", {
+						body: { content, category: category ?? "fact", source: "mcp" },
+					}),
+				);
 				return {
 					content: [
 						{

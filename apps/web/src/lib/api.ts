@@ -1,6 +1,13 @@
+"use client";
+
+import type { paths } from "@clawdi-cloud/shared/api";
+import { useAuth } from "@clerk/nextjs";
+import createClient from "openapi-fetch";
+import { useMemo } from "react";
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-/** Build a full backend URL — use when you need raw `fetch` (e.g. streaming, non-JSON bodies). */
+/** Build a full backend URL — for raw fetch (streaming, non-JSON bodies). */
 export const apiUrl = (path: string): string => `${API_URL}${path}`;
 
 export class ApiError extends Error {
@@ -13,39 +20,58 @@ export class ApiError extends Error {
 	}
 }
 
-export async function apiFetch<T>(path: string, token: string, options?: RequestInit): Promise<T> {
-	const res = await fetch(apiUrl(path), {
-		...options,
-		headers: {
-			Authorization: `Bearer ${token}`,
-			"Content-Type": "application/json",
-			...options?.headers,
-		},
-	});
-
-	if (!res.ok) {
-		const body = await res.text();
-		let detail = body;
-		try {
-			// FastAPI puts the human message in `detail`. 4xx from pydantic validation
-			// returns it as an array of {loc, msg, type} objects — join into a readable line.
-			const parsed = JSON.parse(body);
-			if (parsed && typeof parsed.detail === "string") {
-				detail = parsed.detail;
-			} else if (parsed && Array.isArray(parsed.detail)) {
-				detail = parsed.detail
-					.map((e: { loc?: unknown[]; msg?: string }) => {
-						const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
-						return loc ? `${loc}: ${e.msg ?? ""}` : (e.msg ?? "");
-					})
-					.filter(Boolean)
-					.join("; ");
-			}
-		} catch {
-			// body wasn't JSON — fall back to the raw text
+// FastAPI packs the human message in `detail`; validation errors come back
+// as an array of {loc, msg, type}. Flatten into one readable line.
+function errorDetail(err: unknown): string {
+	if (typeof err === "object" && err !== null && "detail" in err) {
+		const d = (err as { detail: unknown }).detail;
+		if (typeof d === "string") return d;
+		if (Array.isArray(d)) {
+			return d
+				.map((e) => {
+					const loc = Array.isArray((e as { loc?: unknown[] })?.loc)
+						? ((e as { loc: unknown[] }).loc as unknown[]).join(".")
+						: "";
+					const msg = (e as { msg?: string })?.msg ?? "";
+					return loc ? `${loc}: ${msg}` : msg;
+				})
+				.filter(Boolean)
+				.join("; ");
 		}
-		throw new ApiError(res.status, detail);
 	}
+	return typeof err === "string" ? err : JSON.stringify(err);
+}
 
-	return res.json() as Promise<T>;
+/**
+ * openapi-fetch client authenticated via Clerk. Response types are inferred
+ * from the OpenAPI path + method, so call sites never pass a manual generic.
+ *
+ * Use inside a React component/hook — Clerk's `getToken` is only available
+ * in the browser tree.
+ */
+export function useApi() {
+	const { getToken } = useAuth();
+	return useMemo(() => {
+		const client = createClient<paths>({ baseUrl: API_URL });
+		client.use({
+			async onRequest({ request }) {
+				const token = await getToken();
+				if (token) request.headers.set("Authorization", `Bearer ${token}`);
+				return request;
+			},
+		});
+		return client;
+	}, [getToken]);
+}
+
+/**
+ * Unwrap an openapi-fetch result. Throws ApiError on non-2xx so TanStack
+ * Query routes it through its usual error path; returns `data` otherwise.
+ */
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
+	if (result.error !== undefined) {
+		throw new ApiError(result.response.status, errorDetail(result.error));
+	}
+	// 204 No Content etc. — hand back undefined as T for callers that opt in.
+	return (result.data as T) ?? (undefined as T);
 }

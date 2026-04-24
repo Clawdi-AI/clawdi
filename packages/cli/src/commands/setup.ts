@@ -14,7 +14,7 @@ import {
 	allAdapterEntries,
 	builtinSkillTargetDir,
 } from "../adapters/registry";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { isInteractive } from "../lib/tty";
 
@@ -109,13 +109,17 @@ async function registerEnv(
 	machineName: string,
 ) {
 	try {
-		const env = await api.post<{ id: string }>("/api/environments", {
-			machine_id: machineId,
-			machine_name: machineName,
-			agent_type: agentType,
-			agent_version: agentVersion,
-			os: process.platform,
-		});
+		const env = unwrap(
+			await api.POST("/api/environments", {
+				body: {
+					machine_id: machineId,
+					machine_name: machineName,
+					agent_type: agentType,
+					agent_version: agentVersion,
+					os: process.platform,
+				},
+			}),
+		);
 
 		const envDir = join(getClawdiDir(), "environments");
 		mkdirSync(envDir, { recursive: true });

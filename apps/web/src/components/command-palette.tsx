@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	BarChart3,
@@ -23,8 +22,8 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@/components/ui/command";
-import { apiFetch } from "@/lib/api";
-import type { SearchHit, SearchResponse } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
+import type { SearchHit } from "@/lib/api-schemas";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
 const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
@@ -101,7 +100,7 @@ function CommandPalette({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const router = useRouter();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
@@ -115,11 +114,8 @@ function CommandPalette({
 
 	const { data, isFetching } = useQuery({
 		queryKey: ["command-search", debounced],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SearchResponse>(`/api/search?q=${encodeURIComponent(debounced)}`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/search", { params: { query: { q: debounced } } })),
 		enabled: open && debounced.trim().length > 0,
 		staleTime: 30_000,
 		// Keep the last page of results visible while a new debounced query

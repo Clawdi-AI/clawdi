@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, Key, Loader2, Plus, Trash2, X } from "lucide-react";
@@ -15,8 +14,8 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { PaginatedVaults, Vault, VaultItems } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
+import type { Vault } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
 
 interface VaultField {
@@ -26,31 +25,22 @@ interface VaultField {
 }
 
 export default function VaultPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [newVaultSlug, setNewVaultSlug] = useState("");
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["vaults"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			// Vaults list is small; fetch one large page so the UI doesn't need
-			// its own paginator here.
-			return apiFetch<PaginatedVaults>("/api/vault?page_size=100", token);
-		},
+		// Vaults list is small; fetch one large page so the UI doesn't need
+		// its own paginator here.
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } })),
 	});
 	const vaults = data?.items;
 
 	const createVault = useMutation({
-		mutationFn: async (slug: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>("/api/vault", token, {
-				method: "POST",
-				body: JSON.stringify({ slug, name: slug }),
-			});
-		},
+		mutationFn: async (slug: string) =>
+			unwrap(await api.POST("/api/vault", { body: { slug, name: slug } })),
 		onSuccess: () => {
 			setNewVaultSlug("");
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
@@ -59,11 +49,8 @@ export default function VaultPage() {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async (slug: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${slug}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (slug: string) =>
+			unwrap(await api.DELETE("/api/vault/{slug}", { params: { path: { slug } } })),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
 		onError: (e) => toast.error("Failed to delete vault", { description: errorMessage(e) }),
 	});
@@ -157,7 +144,7 @@ function VaultCard({
 	onDelete: () => void;
 	isDeleting: boolean;
 }) {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [adding, setAdding] = useState(false);
 	const [newKey, setNewKey] = useState("");
@@ -165,30 +152,18 @@ function VaultCard({
 
 	const { data: items } = useQuery({
 		queryKey: ["vault-items", vault.slug],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<VaultItems>(`/api/vault/${vault.slug}/items`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault/{slug}/items", { params: { path: { slug: vault.slug } } })),
 	});
 
 	const upsertItem = useMutation({
-		mutationFn: async ({
-			section,
-			key,
-			value,
-		}: {
-			section: string;
-			key: string;
-			value: string;
-		}) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
-				method: "PUT",
-				body: JSON.stringify({ section, fields: { [key]: value } }),
-			});
-		},
+		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
+			unwrap(
+				await api.PUT("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug } },
+					body: { section, fields: { [key]: value } },
+				}),
+			),
 		onSuccess: () => {
 			setNewKey("");
 			setNewValue("");
@@ -201,14 +176,13 @@ function VaultCard({
 	});
 
 	const deleteItem = useMutation({
-		mutationFn: async ({ section, name }: { section: string; name: string }) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
-				method: "DELETE",
-				body: JSON.stringify({ section, fields: [name] }),
-			});
-		},
+		mutationFn: async ({ section, name }: { section: string; name: string }) =>
+			unwrap(
+				await api.DELETE("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug } },
+					body: { section, fields: [name] },
+				}),
+			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
 				queryKey: ["vault-items", vault.slug],
