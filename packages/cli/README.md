@@ -86,12 +86,169 @@ It verifies auth, API reachability, each known agent's install path, vault resol
 
 ## Development
 
+### Running the CLI locally
+
+Four ways to exercise the CLI, ordered from fastest inner loop to
+closest-to-end-user:
+
+| When you want to… | Use |
+| --- | --- |
+| Iterate on a command with instant reload | `bun run packages/cli/src/index.ts <args>` |
+| Verify the bundled output + bin wrapper | `bun --cwd packages/cli run build` then `bun packages/cli/bin/clawdi.mjs <args>` |
+| Exercise a globally-installed CLI from source | `bun link` (see below) |
+| Simulate an `npm publish` | `bun pm pack` (see below) |
+
+Read-only local commands (`skill init`, `config *`, `status --json` while
+unauthenticated) work without a backend. Anything that hits the API
+(`auth login`, `setup`, `push`, `pull`, `doctor`, `skill install/list/rm`,
+`memory *`, `vault *`, `run`) targets `$CLAWDI_API_URL`, which defaults to
+`http://localhost:8000`.
+
+### Link (`bun link`) — simulated global install
+
+```bash
+cd packages/cli
+bun run build          # bin/clawdi.mjs imports ../dist/index.js
+bun link               # register @clawdi-cloud/cli for linking
+
+# In any other directory
+bun link @clawdi-cloud/cli
+which clawdi           # ~/.bun/install/global/.../clawdi
+clawdi --version
+```
+
+Re-run `bun run build` after every source change — the bin wrapper always
+executes the compiled bundle.
+
+Clean up:
+
+```bash
+bun unlink @clawdi-cloud/cli    # in the other directory
+cd packages/cli && bun unlink   # in the package
+```
+
+### Pack (`bun pm pack`) — simulated publish
+
+Catches bugs that only show up in the tarball an npm user actually
+installs (missing `files` entries, absent `LICENSE`, stale `dist/`,
+workspace deps leaking into `dependencies`, …):
+
+```bash
+cd packages/cli
+bun run build
+bun pm pack                                  # → clawdi-cloud-cli-0.0.1.tgz
+tar -tzf clawdi-cloud-cli-0.0.1.tgz | head   # inspect contents
+bun install -g ./clawdi-cloud-cli-0.0.1.tgz
+clawdi --version
+bun uninstall -g @clawdi-cloud/cli
+rm clawdi-cloud-cli-*.tgz
+```
+
+### Install into a dockerized agent
+
+End-to-end smoke: install the packed CLI *inside* a real agent image,
+chat with the agent so it produces real session data, then have clawdi
+read it back. Catches install-time issues (missing runtime deps, Bun /
+libc compatibility, workspace deps leaking into `dependencies`) and
+adapter-versus-real-data drift that the fixture tests can't.
+
+Example with Hermes (`nousresearch/hermes-agent`). Prerequisite:
+`OPENROUTER_API_KEY` in your shell — Hermes's default provider.
+
+```bash
+# 0. Pack the CLI on the host.
+cd packages/cli
+bun run build
+bun pm pack                # → clawdi-cloud-cli-0.0.1.tgz
+
+# 1. Start the container. The upstream ENTRYPOINT bootstraps
+#    $HERMES_HOME and launches the Hermes TUI as PID 1 — we leave it
+#    idle (never `docker attach`) and chat via fresh `docker exec`
+#    sessions instead, so Ctrl-C can never kill the container.
+#    Two -e flags below are upstream workarounds, not clawdi config:
+#      OPENROUTER_API_KEY — Hermes's default LLM provider
+#      PATH               — upstream ships the `hermes` shim in
+#                           /opt/hermes/.venv/bin, which isn't on the
+#                           default PATH; without this, entrypoint.sh's
+#                           `exec hermes` fails and the container dies
+#    Linux only: add --add-host=host.docker.internal:host-gateway
+docker run -dit --name hermes \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -e PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  nousresearch/hermes-agent
+
+# 2. Chat with Hermes so state.db accumulates real sessions. Each
+#    exec opens a fresh hermes instance sharing /opt/data/state.db;
+#    Ctrl-C / quit exits only this session, PID 1 keeps the container
+#    alive so state persists.
+docker exec -it hermes hermes
+
+# 3. Copy tarball in, install Bun + CLI.
+docker cp clawdi-cloud-cli-*.tgz hermes:/tmp/
+docker exec hermes bash -lc '
+  apt-get update -qq && apt-get install -y -qq curl unzip
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+  echo "export PATH=\$HOME/.bun/bin:\$PATH" >> ~/.bashrc
+  bun install -g /tmp/clawdi-cloud-cli-*.tgz
+'
+
+# 4. Verify. `host.docker.internal` resolves to your host (auto on
+#    Docker Desktop). `HERMES_HOME=/opt/data` is baked into the image
+#    as an ENV, so the adapter finds the SQLite automatically.
+docker exec hermes bash -lc '
+  clawdi config set apiUrl http://host.docker.internal:8000
+  clawdi doctor                                 # Agent: Hermes should be ✓
+  clawdi push --agent hermes --all --dry-run    # expect the session count you just chatted
+'
+
+# 5. Cleanup.
+docker rm -f hermes
+rm clawdi-cloud-cli-*.tgz
+```
+
+Two image-specific wrinkles worth knowing:
+
+- **`HERMES_HOME=/opt/data`** is baked into the image (not `~/.hermes`).
+  clawdi's `getHermesHome()` reads `$HERMES_HOME` first, so the adapter
+  picks up the right path without extra config.
+- **The `hermes` shim lives in `/opt/hermes/.venv/bin/`**, not
+  `/usr/local/bin/`. That's an upstream Dockerfile oversight — the
+  `-e PATH=...` above is a workaround; a proper fix would be an
+  `ENV PATH=/opt/hermes/.venv/bin:$PATH` in the upstream Dockerfile.
+
+Without an API key, `hermes` still launches but can't respond; you'd
+validate installation and adapter `detect()` but not session parsing.
+
+### Running the backend
+
+Full-pipe commands need the Clawdi Cloud backend on `:8000`. PostgreSQL
+(with `pgvector` + `pg_trgm`) must be running first — see the root
+README for setup details.
+
+```bash
+cd backend
+uv sync       # install Python deps
+pdm migrate   # alembic upgrade head
+pdm dev       # uvicorn app.main:app --reload on :8000
+```
+
+Once it's up, a canonical smoke loop:
+
+```bash
+clawdi auth login     # paste an API key from the web dashboard
+clawdi setup          # register this machine + install the built-in skill
+clawdi doctor         # all ✓ means the full pipe is wired up
+clawdi push --dry-run # preview what push would upload
+```
+
+### Typecheck / test / build
+
 ```bash
 bun install
-bun run packages/cli/src/index.ts --help    # run from source
-bun run --cwd packages/cli typecheck         # tsc
-bun run --cwd packages/cli test              # bun test
-bun run --cwd packages/cli build             # produce dist/
+bun run --cwd packages/cli typecheck   # tsc --noEmit
+bun run --cwd packages/cli test        # ~145 tests, < 3s
+bun run --cwd packages/cli build       # produces dist/
 ```
 
 ## Testing
