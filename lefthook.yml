@@ -1,0 +1,12 @@
+# Lefthook — git hook manager
+# Runs biome check (fix + format) on staged JS/TS/JSON/CSS files before every commit.
+# Python side is handled by `ruff` in CI; we keep the pre-commit scope narrow to avoid
+# slowing commits in the backend subtree.
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{js,jsx,ts,tsx,json,jsonc,css}"
+      run: bunx biome check --no-errors-on-unmatched --files-ignore-unknown=true --write {staged_files}
+      stage_fixed: true

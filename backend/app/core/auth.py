@@ -1,9 +1,9 @@
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX = "clawdi_"
 
+# Only touch api_key.last_used_at if the previous update was at least this
+# long ago. Every authenticated CLI request used to write+commit the row,
+# which becomes write-lock contention on a hot key at scale.
+LAST_USED_THROTTLE = timedelta(minutes=1)
+
 
 class AuthContext:
     def __init__(self, user: User, api_key: ApiKey | None = None):
@@ -30,9 +35,7 @@ class AuthContext:
         return self.user.id
 
 
-async def _auth_via_api_key(
-    token: str, db: AsyncSession
-) -> AuthContext | None:
+async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if not token.startswith(API_KEY_PREFIX):
         return None
 
@@ -44,12 +47,15 @@ async def _auth_via_api_key(
         return None
     if api_key.revoked_at:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
-    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
 
-    # Update last_used_at
-    api_key.last_used_at = datetime.now(timezone.utc)
-    await db.commit()
+    # Throttle last_used_at writes: once per LAST_USED_THROTTLE per key.
+    now = datetime.now(UTC)
+    last = api_key.last_used_at
+    if last is None or (now - last) > LAST_USED_THROTTLE:
+        api_key.last_used_at = now
+        await db.commit()
 
     result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
@@ -59,11 +65,11 @@ async def _auth_via_api_key(
     return AuthContext(user=user, api_key=api_key)
 
 
-async def _auth_via_clerk_jwt(
-    token: str, db: AsyncSession
-) -> AuthContext | None:
+async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
     if not settings.clerk_pem_public_key:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured"
+        )
 
     try:
         payload = jwt.decode(

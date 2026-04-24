@@ -8,20 +8,26 @@ This README covers how to run the project locally, install the `clawdi` CLI on y
 
 ## Prerequisites
 
-- **Node.js 20+** and **[Bun](https://bun.sh) 1.1+** — web app, CLI, monorepo tooling
-- **Python 3.12** and **[PDM](https://pdm-project.org)** (or `uv`) — backend
-- **PostgreSQL 14+** running locally, with the `pg_trgm` and `pgvector` extensions available
-- **Redis** running on localhost:6379 (used for cache / rate limits)
+- **Node.js 22+** and **[Bun](https://bun.sh) 1.3+** — web app, CLI, monorepo tooling (pinned in `package.json → engines`)
+- **Python 3.12** and **[uv](https://docs.astral.sh/uv/)** (or `pdm`) — backend
+- **PostgreSQL 16** with the `pg_trgm` and `pgvector` extensions (a `docker-compose.yml` is provided so you don't have to install locally)
 - A **[Clerk](https://clerk.com)** account for auth (dev instance is fine)
 
-### PostgreSQL (macOS example)
+No Redis, no Celery — background work has been removed from this codebase; the backend is a single FastAPI process.
+
+### PostgreSQL via Docker (recommended)
 
 ```bash
-# PG itself (if not already installed)
-brew install postgresql@14 pgvector
-brew services start postgresql@14
+docker compose up -d postgres
+# Listens on localhost:5433 with database clawdi_cloud, user/pass clawdi/clawdi_dev.
+```
 
-# Create the dev database + user matching backend/.env.example defaults
+### PostgreSQL native (macOS example)
+
+```bash
+brew install postgresql@16 pgvector
+brew services start postgresql@16
+
 createuser -s clawdi
 psql postgres -c "ALTER USER clawdi WITH PASSWORD 'clawdi_dev';"
 createdb -O clawdi clawdi_cloud
@@ -36,7 +42,7 @@ If you already have Postgres running under a different user / port, skip the rol
 ## Repository layout
 
 ```
-apps/web/          Next.js 15 dashboard (Clerk auth, shadcn/ui, Tailwind v4)
+apps/web/          Next.js 16 dashboard (Clerk auth, shadcn/ui, Tailwind v4)
 packages/cli/      `clawdi` CLI (TypeScript, Bun, Commander)
 packages/shared/   Shared types / constants between web and CLI
 backend/           Python FastAPI backend (async SQLAlchemy, asyncpg, Alembic)
@@ -310,4 +316,5 @@ You may need to `clawdi setup --agent claude_code` again — it'll now overwrite
 - Code comments in English
 - Biome for JS/TS (`bun run check`), Ruff for Python (`pdm lint`)
 - Backend type hints and async/await, no sync DB calls in request handlers
-- Web app follows the Next.js 15 conventions already in the repo — check `CLAUDE.md` and existing files before introducing new patterns
+- Web app follows the Next.js 16 conventions already in the repo — check `CLAUDE.md` and existing files before introducing new patterns
+- `bun run check` and `bun run typecheck` must stay green before you push; a `lefthook` pre-commit hook auto-runs `biome check --write` on staged files

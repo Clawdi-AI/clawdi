@@ -43,7 +43,7 @@ class LocalEmbedder:
     calls load from disk. Runs on CPU via onnxruntime.
     """
 
-    _instance: "LocalEmbedder | None" = None
+    _instance: LocalEmbedder | None = None
 
     def __init__(self) -> None:
         from fastembed import TextEmbedding
@@ -52,7 +52,7 @@ class LocalEmbedder:
         self.model = TextEmbedding(LOCAL_MODEL_NAME)
 
     @classmethod
-    def get(cls) -> "LocalEmbedder":
+    def get(cls) -> LocalEmbedder:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -83,7 +83,9 @@ class ApiEmbedder:
         # text-embedding-3-*). Providers that don't support it will
         # surface an explicit error rather than silently mismatch dims.
         resp = await self.client.embeddings.create(
-            input=text, model=self.model, dimensions=EMBEDDING_DIM,
+            input=text,
+            model=self.model,
+            dimensions=EMBEDDING_DIM,
         )
         return list(resp.data[0].embedding)
 

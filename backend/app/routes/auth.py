@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from datetime import UTC
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -8,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyResponse
+from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyResponse, ApiKeyRevokeResponse
+from app.schemas.user import CurrentUserResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -57,9 +59,7 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(
-        select(ApiKey)
-        .where(ApiKey.user_id == auth.user_id)
-        .order_by(ApiKey.created_at.desc())
+        select(ApiKey).where(ApiKey.user_id == auth.user_id).order_by(ApiKey.created_at.desc())
     )
     keys = result.scalars().all()
     return [
@@ -81,8 +81,8 @@ async def revoke_api_key(
     key_id: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
-    from datetime import datetime, timezone
+) -> ApiKeyRevokeResponse:
+    from datetime import datetime
 
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == auth.user_id)
@@ -91,16 +91,16 @@ async def revoke_api_key(
     if not api_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
 
-    api_key.revoked_at = datetime.now(timezone.utc)
+    api_key.revoked_at = datetime.now(UTC)
     await db.commit()
-    return {"status": "revoked"}
+    return ApiKeyRevokeResponse(status="revoked")
 
 
 @router.get("/me")
-async def get_me(auth: AuthContext = Depends(get_auth)):
-    return {
-        "id": str(auth.user.id),
-        "email": auth.user.email,
-        "name": auth.user.name,
-        "auth_type": "api_key" if auth.is_cli else "clerk",
-    }
+async def get_me(auth: AuthContext = Depends(get_auth)) -> CurrentUserResponse:
+    return CurrentUserResponse(
+        id=str(auth.user.id),
+        email=auth.user.email,
+        name=auth.user.name,
+        auth_type="api_key" if auth.is_cli else "clerk",
+    )

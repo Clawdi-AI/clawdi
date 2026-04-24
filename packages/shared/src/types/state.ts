@@ -1,5 +1,3 @@
-import type { DataModule } from "../consts/modules";
-
 /**
  * Per-module activity timestamps tracked in `~/.clawdi/state.json`.
  * Both `push` and `pull` update the relevant module's `lastActivityAt`.
@@ -10,11 +8,4 @@ export interface ModuleState {
 	[module: string]: {
 		lastActivityAt: string;
 	};
-}
-
-export interface TransferResult {
-	module: DataModule;
-	uploaded: number;
-	skipped: number;
-	errors: number;
 }

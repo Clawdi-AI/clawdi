@@ -1,0 +1,40 @@
+name: clawdi-cloud-dev
+
+# Dev-only infrastructure. Brings up a Postgres 16 image with pgvector +
+# pg_trgm so local dev doesn't have to install those extensions by hand.
+#
+# Usage:
+#   docker compose up -d            # start postgres in the background
+#   docker compose down             # stop (keeps data volume)
+#   docker compose down -v          # stop AND wipe the data volume
+#
+# The backend itself runs locally via `pdm dev` — this file intentionally
+# does NOT bake a backend container for dev, because you want hot reload
+# and fast iteration on the host. See backend/Dockerfile for the prod image
+# and (eventually) docker-compose.prod.yml for a full-stack deploy target.
+
+services:
+  postgres:
+    # pgvector/pgvector image ships pgvector pre-installed and is based on
+    # the upstream postgres image, so pg_trgm is still available via the
+    # standard `CREATE EXTENSION` call wired in app/core/database.py.
+    image: pgvector/pgvector:pg16
+    container_name: clawdi-cloud-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: clawdi_cloud
+      POSTGRES_USER: clawdi
+      POSTGRES_PASSWORD: clawdi_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi_cloud"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pg_data:

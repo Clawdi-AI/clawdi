@@ -6,11 +6,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.config import settings
 from app.core.database import get_session
 from app.models.skill import Skill
-from app.schemas.skill import SkillInstallRequest
-from app.services.file_store import LocalFileStore
+from app.schemas.skill import (
+    SkillDeleteResponse,
+    SkillDetailResponse,
+    SkillInstallRequest,
+    SkillInstallResponse,
+    SkillSummaryResponse,
+    SkillUploadResponse,
+)
+from app.services.file_store import get_file_store
 from app.services.tar_utils import (
     TarValidationError,
     extract_skill_md,
@@ -21,7 +27,7 @@ from app.services.tar_utils import (
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-file_store = LocalFileStore(settings.file_store_local_path)
+file_store = get_file_store()
 
 
 def _content_hash(data: bytes) -> str:
@@ -42,38 +48,41 @@ async def list_skills(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
     include_content: bool = Query(default=False),
-):
+) -> list[SkillSummaryResponse]:
     result = await db.execute(
         select(Skill)
-        .where(Skill.user_id == auth.user_id, Skill.is_active == True)
+        .where(Skill.user_id == auth.user_id, Skill.is_active)
         .order_by(Skill.skill_key)
     )
     skills = result.scalars().all()
 
-    items = []
+    items: list[SkillSummaryResponse] = []
     for s in skills:
-        item = {
-            "id": str(s.id),
-            "skill_key": s.skill_key,
-            "name": s.name,
-            "description": s.description,
-            "version": s.version,
-            "source": s.source,
-            "source_repo": s.source_repo,
-            "agent_types": s.agent_types,
-            "file_count": s.file_count,
-            "content_hash": s.content_hash,
-            "is_active": s.is_active,
-            "created_at": s.created_at.isoformat(),
-            "updated_at": s.updated_at.isoformat(),
-        }
+        content = None
         if include_content and s.file_key:
             try:
                 tar_bytes = await file_store.get(s.file_key)
-                item["content"] = extract_skill_md(tar_bytes)
+                content = extract_skill_md(tar_bytes)
             except Exception:
-                item["content"] = None
-        items.append(item)
+                content = None
+        items.append(
+            SkillSummaryResponse(
+                id=str(s.id),
+                skill_key=s.skill_key,
+                name=s.name,
+                description=s.description,
+                version=s.version,
+                source=s.source,
+                source_repo=s.source_repo,
+                agent_types=s.agent_types,
+                file_count=s.file_count,
+                content_hash=s.content_hash,
+                is_active=s.is_active,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
+                content=content,
+            )
+        )
 
     return items
 
@@ -83,12 +92,12 @@ async def get_skill(
     skill_key: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SkillDetailResponse:
     result = await db.execute(
         select(Skill).where(
             Skill.user_id == auth.user_id,
             Skill.skill_key == skill_key,
-            Skill.is_active == True,
+            Skill.is_active,
         )
     )
     skill = result.scalar_one_or_none()
@@ -103,19 +112,19 @@ async def get_skill(
         except Exception:
             pass
 
-    return {
-        "id": str(skill.id),
-        "skill_key": skill.skill_key,
-        "name": skill.name,
-        "description": skill.description,
-        "version": skill.version,
-        "source": skill.source,
-        "source_repo": skill.source_repo,
-        "file_count": skill.file_count,
-        "content": content,
-        "agent_types": skill.agent_types,
-        "created_at": skill.created_at.isoformat(),
-    }
+    return SkillDetailResponse(
+        id=str(skill.id),
+        skill_key=skill.skill_key,
+        name=skill.name,
+        description=skill.description,
+        version=skill.version,
+        source=skill.source,
+        source_repo=skill.source_repo,
+        file_count=skill.file_count,
+        content=content,
+        agent_types=skill.agent_types,
+        created_at=skill.created_at,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +138,7 @@ async def upload_skill(
     file: UploadFile = File(...),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SkillUploadResponse:
     """Upload a skill as a tar.gz archive."""
     data = await file.read()
 
@@ -163,12 +172,12 @@ async def upload_skill(
         source_repo=None,
     )
 
-    return {
-        "skill_key": skill.skill_key,
-        "name": skill.name,
-        "version": skill.version,
-        "file_count": file_count,
-    }
+    return SkillUploadResponse(
+        skill_key=skill.skill_key,
+        name=skill.name,
+        version=skill.version,
+        file_count=file_count,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +196,7 @@ async def download_skill(
         select(Skill).where(
             Skill.user_id == auth.user_id,
             Skill.skill_key == skill_key,
-            Skill.is_active == True,
+            Skill.is_active,
         )
     )
     skill = result.scalar_one_or_none()
@@ -221,11 +230,9 @@ async def delete_skill(
     skill_key: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SkillDeleteResponse:
     result = await db.execute(
-        select(Skill).where(
-            Skill.user_id == auth.user_id, Skill.skill_key == skill_key
-        )
+        select(Skill).where(Skill.user_id == auth.user_id, Skill.skill_key == skill_key)
     )
     skill = result.scalar_one_or_none()
     if not skill:
@@ -233,7 +240,7 @@ async def delete_skill(
 
     skill.is_active = False
     await db.commit()
-    return {"status": "deleted"}
+    return SkillDeleteResponse(status="deleted")
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +253,7 @@ async def install_skill(
     body: SkillInstallRequest,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SkillInstallResponse:
     from app.services.skill_installer import fetch_skill_from_github
 
     try:
@@ -272,14 +279,14 @@ async def install_skill(
         source_repo=body.repo,
     )
 
-    return {
-        "skill_key": skill_key,
-        "name": fetched.name,
-        "description": fetched.description,
-        "version": skill.version,
-        "file_count": fetched.file_count,
-        "repo": body.repo,
-    }
+    return SkillInstallResponse(
+        skill_key=skill_key,
+        name=fetched.name,
+        description=fetched.description,
+        version=skill.version,
+        file_count=fetched.file_count,
+        repo=body.repo,
+    )
 
 
 # ---------------------------------------------------------------------------

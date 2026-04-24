@@ -1,20 +1,29 @@
-"""Composio integration service for connector management and MCP proxy."""
+"""Composio integration service for connector management and MCP proxy.
+
+The composio package initializes a filesystem cache directory at import time,
+which breaks cold starts in read-only / sandboxed environments. We defer the
+import until the first actual call site so tests and health checks can run
+without a writable home dir.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import jwt
-from composio import Composio
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 
+if TYPE_CHECKING:
+    from composio import Composio
+
 logger = logging.getLogger(__name__)
 
-_client: Composio | None = None
+_client: Any = None
 
 
 def get_composio_client() -> Composio:
@@ -22,29 +31,43 @@ def get_composio_client() -> Composio:
     if _client is None:
         if not settings.composio_api_key:
             raise RuntimeError("COMPOSIO_API_KEY not configured")
+        # Import lazily: see module docstring.
+        from composio import Composio
+
         _client = Composio(api_key=settings.composio_api_key)
     return _client
 
 
+def _jwt_signing_key() -> str:
+    """Return the MCP proxy JWT signing key.
+
+    We deliberately do NOT fall back to `vault_encryption_key` — that would
+    merge two key purposes (data-at-rest AES-GCM + proxy token HS256) into a
+    single secret. A compromise of the fallback leaks both the vault
+    contents AND the ability to mint MCP proxy tokens. Keep them separate.
+    """
+    key = settings.encryption_key
+    if not key:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not configured. Generate a 32-byte hex value and "
+            "set it in backend/.env — it must be distinct from VAULT_ENCRYPTION_KEY."
+        )
+    return key
+
+
 def create_proxy_token(user_id: str) -> str:
     """Create a JWT for MCP proxy authentication."""
-    key = settings.encryption_key or settings.vault_encryption_key
-    if not key:
-        raise RuntimeError("No encryption key configured for JWT signing")
     payload = {
         "sub": "mcp",
         "user_id": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "exp": datetime.now(UTC) + timedelta(days=30),
     }
-    return jwt.encode(payload, key, algorithm="HS256")
+    return jwt.encode(payload, _jwt_signing_key(), algorithm="HS256")
 
 
 def verify_proxy_token(token: str) -> str:
     """Verify MCP proxy JWT, return user_id."""
-    key = settings.encryption_key or settings.vault_encryption_key
-    if not key:
-        raise RuntimeError("No encryption key configured")
-    payload = jwt.decode(token, key, algorithms=["HS256"])
+    payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
     return payload["user_id"]
 
 
@@ -221,14 +244,20 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
             display = _extract_display_name(key, app.description or "")
             logo = app.logo or ""
             desc = app.description or ""
-            if search and search.lower() not in key.lower() and search.lower() not in display.lower():
+            if (
+                search
+                and search.lower() not in key.lower()
+                and search.lower() not in display.lower()
+            ):
                 continue
-            result.append({
-                "name": key,
-                "display_name": display,
-                "logo": logo,
-                "description": desc[:200] if desc else "",
-            })
+            result.append(
+                {
+                    "name": key,
+                    "display_name": display,
+                    "logo": logo,
+                    "description": desc[:200] if desc else "",
+                }
+            )
         return sorted(result, key=lambda x: x["display_name"].lower())
 
     return await run_in_threadpool(_list)

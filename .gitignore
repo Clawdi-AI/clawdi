@@ -21,6 +21,7 @@ data/
 # OS
 .DS_Store
 .claude/settings.local.json
+.gstack/
 
 # Test fixtures deliberately use these names as SKIP_DIRS sentinels — the
 # adapter tests assert they are dropped, so they must be committed.

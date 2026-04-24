@@ -1,21 +1,33 @@
+import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
-from app.schemas.session import EnvironmentCreate, SessionBatchRequest
-from app.services.file_store import LocalFileStore
+from app.schemas.session import (
+    EnvironmentCreate,
+    EnvironmentCreatedResponse,
+    EnvironmentResponse,
+    SessionBatchRequest,
+    SessionBatchResponse,
+    SessionDetailResponse,
+    SessionListItemResponse,
+    SessionMessageResponse,
+    SessionUploadResponse,
+)
+from app.services.file_store import get_file_store
 
 router = APIRouter(tags=["sessions"])
+log = logging.getLogger(__name__)
 
-file_store = LocalFileStore(settings.file_store_local_path)
+file_store = get_file_store()
 
 
 @router.post("/api/environments")
@@ -23,7 +35,7 @@ async def register_environment(
     body: EnvironmentCreate,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> EnvironmentCreatedResponse:
     # Check if environment already exists for this user + machine
     result = await db.execute(
         select(AgentEnvironment).where(
@@ -37,9 +49,9 @@ async def register_environment(
     if env:
         env.machine_name = body.machine_name
         env.agent_version = body.agent_version
-        env.last_seen_at = datetime.now(timezone.utc)
+        env.last_seen_at = datetime.now(UTC)
         await db.commit()
-        return {"id": str(env.id)}
+        return EnvironmentCreatedResponse(id=str(env.id))
 
     env = AgentEnvironment(
         user_id=auth.user_id,
@@ -48,19 +60,19 @@ async def register_environment(
         agent_type=body.agent_type,
         agent_version=body.agent_version,
         os=body.os,
-        last_seen_at=datetime.now(timezone.utc),
+        last_seen_at=datetime.now(UTC),
     )
     db.add(env)
     await db.commit()
     await db.refresh(env)
-    return {"id": str(env.id)}
+    return EnvironmentCreatedResponse(id=str(env.id))
 
 
 @router.get("/api/environments")
 async def list_environments(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> list[EnvironmentResponse]:
     result = await db.execute(
         select(AgentEnvironment)
         .where(AgentEnvironment.user_id == auth.user_id)
@@ -68,14 +80,14 @@ async def list_environments(
     )
     envs = result.scalars().all()
     return [
-        {
-            "id": str(e.id),
-            "machine_name": e.machine_name,
-            "agent_type": e.agent_type,
-            "agent_version": e.agent_version,
-            "os": e.os,
-            "last_seen_at": e.last_seen_at.isoformat() if e.last_seen_at else None,
-        }
+        EnvironmentResponse(
+            id=str(e.id),
+            machine_name=e.machine_name,
+            agent_type=e.agent_type,
+            agent_version=e.agent_version,
+            os=e.os,
+            last_seen_at=e.last_seen_at,
+        )
         for e in envs
     ]
 
@@ -85,42 +97,48 @@ async def batch_create_sessions(
     body: SessionBatchRequest,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
-    synced = 0
-    for s in body.sessions:
-        # Skip duplicates by local_session_id
-        result = await db.execute(
-            select(Session).where(
-                Session.user_id == auth.user_id,
-                Session.local_session_id == s.local_session_id,
-            )
-        )
-        if result.scalar_one_or_none():
-            continue
+) -> SessionBatchResponse:
+    """Ingest a batch of sessions from a CLI sync.
 
-        session = Session(
-            user_id=auth.user_id,
-            environment_id=uuid.UUID(s.environment_id),
-            local_session_id=s.local_session_id,
-            project_path=s.project_path,
-            started_at=s.started_at,
-            ended_at=s.ended_at,
-            duration_seconds=s.duration_seconds,
-            message_count=s.message_count,
-            input_tokens=s.input_tokens,
-            output_tokens=s.output_tokens,
-            cache_read_tokens=s.cache_read_tokens,
-            model=s.model,
-            models_used=s.models_used,
-            summary=s.summary,
-            tags=s.tags,
-            status=s.status,
-        )
-        db.add(session)
-        synced += 1
+    Relies on the `uq_sessions_user_local` unique constraint plus Postgres
+    `ON CONFLICT DO NOTHING` for idempotency — safe under concurrent
+    invocations and a single round-trip to the DB regardless of batch size.
+    """
+    if not body.sessions:
+        return SessionBatchResponse(synced=0)
 
+    rows = [
+        {
+            "user_id": auth.user_id,
+            "environment_id": uuid.UUID(s.environment_id),
+            "local_session_id": s.local_session_id,
+            "project_path": s.project_path,
+            "started_at": s.started_at,
+            "ended_at": s.ended_at,
+            "duration_seconds": s.duration_seconds,
+            "message_count": s.message_count,
+            "input_tokens": s.input_tokens,
+            "output_tokens": s.output_tokens,
+            "cache_read_tokens": s.cache_read_tokens,
+            "model": s.model,
+            "models_used": s.models_used,
+            "summary": s.summary,
+            "tags": s.tags,
+            "status": s.status,
+        }
+        for s in body.sessions
+    ]
+
+    stmt = (
+        pg_insert(Session)
+        .values(rows)
+        .on_conflict_do_nothing(constraint="uq_sessions_user_local")
+        .returning(Session.id)
+    )
+    result = await db.execute(stmt)
+    inserted = result.scalars().all()
     await db.commit()
-    return {"synced": synced}
+    return SessionBatchResponse(synced=len(inserted))
 
 
 @router.get("/api/sessions")
@@ -130,7 +148,7 @@ async def list_sessions(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
     since: datetime | None = Query(default=None),
-):
+) -> list[SessionListItemResponse]:
     q = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -141,21 +159,21 @@ async def list_sessions(
     q = q.order_by(Session.started_at.desc()).limit(limit).offset(offset)
 
     result = await db.execute(q)
-    return [_session_to_dict(s, agent_type) for s, agent_type in result.all()]
+    return [_session_to_response(s, agent_type) for s, agent_type in result.all()]
 
 
 @router.get("/api/sessions/{session_id}")
 async def get_session_detail(
-    session_id: str,
+    session_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SessionDetailResponse:
     result = await db.execute(
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(
             Session.user_id == auth.user_id,
-            Session.id == uuid.UUID(session_id),
+            Session.id == session_id,
         )
     )
     row = result.first()
@@ -163,18 +181,21 @@ async def get_session_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
     session, agent_type = row
-    data = _session_to_dict(session, agent_type)
-    data["has_content"] = bool(session.file_key)
-    return data
+    return SessionDetailResponse(
+        **_session_to_response(session, agent_type).model_dump(),
+        has_content=bool(session.file_key),
+    )
 
 
 @router.post("/api/sessions/{local_session_id}/upload")
 async def upload_session_content(
-    local_session_id: str,
+    # Constrained to safe filename chars so it cannot escape the
+    # `sessions/{user_id}/` prefix in the file-store key below.
+    local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
     result = await db.execute(
         select(Session).where(
@@ -193,20 +214,22 @@ async def upload_session_content(
     session.file_key = fk
     await db.commit()
 
-    return {"status": "uploaded", "file_key": fk}
+    return SessionUploadResponse(status="uploaded", file_key=fk)
 
 
 @router.get("/api/sessions/{session_id}/content")
 async def get_session_content(
-    session_id: str,
+    session_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
-    """Read session messages from FileStore."""
+) -> list[SessionMessageResponse]:
+    """Read session messages from FileStore, typed as SessionMessageResponse[]."""
+    import json
+
     result = await db.execute(
         select(Session).where(
             Session.user_id == auth.user_id,
-            Session.id == uuid.UUID(session_id),
+            Session.id == session_id,
         )
     )
     session = result.scalar_one_or_none()
@@ -221,25 +244,39 @@ async def get_session_content(
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found")
 
-    return Response(content=data, media_type="application/json")
+    # Session content was written by the CLI; if it's not valid JSON or not
+    # the expected shape, something went wrong on upload — surface a generic
+    # server error to the client and log the detail server-side so we don't
+    # leak stored-data shape assumptions.
+    try:
+        raw = json.loads(data)
+    except json.JSONDecodeError:
+        log.exception("session %s content is not valid JSON", session_id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+
+    if not isinstance(raw, list):
+        log.error("session %s content is not a JSON array (got %s)", session_id, type(raw).__name__)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+
+    return [SessionMessageResponse.model_validate(m) for m in raw]
 
 
-def _session_to_dict(s: Session, agent_type: str | None = None) -> dict:
-    return {
-        "id": str(s.id),
-        "local_session_id": s.local_session_id,
-        "project_path": s.project_path,
-        "agent_type": agent_type,
-        "started_at": s.started_at.isoformat(),
-        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-        "duration_seconds": s.duration_seconds,
-        "message_count": s.message_count,
-        "input_tokens": s.input_tokens,
-        "output_tokens": s.output_tokens,
-        "cache_read_tokens": s.cache_read_tokens,
-        "model": s.model,
-        "models_used": s.models_used,
-        "summary": s.summary,
-        "tags": s.tags,
-        "status": s.status,
-    }
+def _session_to_response(s: Session, agent_type: str | None = None) -> SessionListItemResponse:
+    return SessionListItemResponse(
+        id=str(s.id),
+        local_session_id=s.local_session_id,
+        project_path=s.project_path,
+        agent_type=agent_type,
+        started_at=s.started_at,
+        ended_at=s.ended_at,
+        duration_seconds=s.duration_seconds,
+        message_count=s.message_count,
+        input_tokens=s.input_tokens,
+        output_tokens=s.output_tokens,
+        cache_read_tokens=s.cache_read_tokens,
+        model=s.model,
+        models_used=s.models_used,
+        summary=s.summary,
+        tags=s.tags,
+        status=s.status,
+    )
