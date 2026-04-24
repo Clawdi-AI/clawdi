@@ -48,9 +48,9 @@ jobs:
       shared: ${{ steps.filter.outputs.shared }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             web:
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -118,7 +118,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.guard.outputs.run == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - if: steps.guard.outputs.run == 'true'
         uses: ./.github/actions/setup-bun-ci
         with:
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
