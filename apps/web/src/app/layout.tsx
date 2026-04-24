@@ -16,9 +16,64 @@ const fontMono = Geist_Mono({
 	subsets: ["latin"],
 });
 
+// Resolve the canonical site URL per deployment env so OG/canonical tags
+// point at the actual host serving the page:
+//   - production on Vercel with a custom domain set → cloud.clawdi.ai
+//   - preview on Vercel                             → <branch>.vercel.app
+//   - anywhere else (local dev, CI)                 → localhost:3000
+// The `cloud.clawdi.ai` literal stays only as a hard fallback for
+// non-Vercel builds that still want reasonable absolute URLs.
+function resolveSiteUrl(): string {
+	if (process.env.VERCEL_ENV === "production" && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+		return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+	}
+	if (process.env.VERCEL_URL) {
+		return `https://${process.env.VERCEL_URL}`;
+	}
+	return "https://cloud.clawdi.ai";
+}
+
+const SITE_URL = resolveSiteUrl();
+const DESCRIPTION =
+	"iCloud for AI agents — sync sessions, skills, memories, and secrets across every connected machine.";
+
 export const metadata: Metadata = {
-	title: "Clawdi Cloud",
-	description: "iCloud for AI Agents",
+	metadataBase: new URL(SITE_URL),
+	// Per-page layouts/pages can override `title` with a plain string and
+	// this template will suffix " · Clawdi Cloud" automatically.
+	title: {
+		default: "Clawdi Cloud",
+		template: "%s · Clawdi Cloud",
+	},
+	description: DESCRIPTION,
+	applicationName: "Clawdi Cloud",
+	manifest: "/site.webmanifest",
+	icons: {
+		icon: [
+			{ url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+			{ url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+		],
+		shortcut: "/favicon.ico",
+		apple: "/apple-touch-icon.png",
+	},
+	openGraph: {
+		type: "website",
+		siteName: "Clawdi Cloud",
+		title: "Clawdi Cloud",
+		description: DESCRIPTION,
+		url: SITE_URL,
+	},
+	twitter: {
+		card: "summary",
+		title: "Clawdi Cloud",
+		description: DESCRIPTION,
+	},
+	// Private beta: keep the dashboard out of search indexes until launch.
+	// Remove this block (or flip values) when going public.
+	robots: {
+		index: false,
+		follow: false,
+	},
 };
 
 export default function RootLayout({
