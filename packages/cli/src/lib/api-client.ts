@@ -226,7 +226,7 @@ export class ApiClient {
 	): Promise<T> {
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
-		formData.append("file", new Blob([new Uint8Array(file)]), filename);
+		formData.append("file", new Blob([file]), filename);
 
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -264,11 +264,12 @@ export class ApiClient {
  * Unwrap an openapi-fetch result: throw `ApiError` on non-2xx, return
  * `data` otherwise. Mirrors the web helper so call sites look identical.
  *
- * The overload set lets 2xx-with-no-body responses (204, void return)
- * compile cleanly without forcing the caller to cast.
+ * On 2xx-with-no-body the return is `undefined as T`. The backend always
+ * returns a typed response envelope, so this is a belt-and-braces fallback
+ * rather than a routine case — a caller that dereferences `.foo` on a
+ * true 204 will runtime-crash, which is the right failure mode for a
+ * contract violation.
  */
-export function unwrap<T>(result: { data: T; error?: undefined; response: Response }): T;
-export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T;
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
 	if (result.error !== undefined) {
 		throw new ApiError({

@@ -46,12 +46,12 @@ export function useApi() {
  * Unwrap an openapi-fetch result. Throws ApiError on non-2xx so TanStack
  * Query routes it through its usual error path; returns `data` otherwise.
  *
- * 2xx with no body (204 / delete-style responses) surface as `undefined` —
- * call sites that destructure the result already guard with `.items?.` etc.,
- * and the overload set lets `void` responses compile without forcing a cast.
+ * On 2xx-with-no-body (rare: the backend always returns a typed response
+ * envelope — even DELETEs return e.g. `{status: "deleted"}`) this returns
+ * `undefined` cast to T. Callers that dereference `.foo` on a true 204
+ * will runtime-crash, which is fine: that's a contract violation, not a
+ * silently-wrong value.
  */
-export function unwrap<T>(result: { data: T; error?: undefined; response: Response }): T;
-export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T;
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
 	if (result.error !== undefined) {
 		throw new ApiError(result.response.status, extractApiDetail(result.error));

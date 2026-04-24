@@ -170,6 +170,7 @@ async def global_search(
     palette UX beats strict all-or-nothing consistency here.
     """
     user_id = auth.user_id
+    labels = ("sessions", "memories", "skills", "vaults")
     results = await asyncio.gather(
         _search_sessions(db, user_id, q),
         _search_memories(db, user_id, q),
@@ -178,11 +179,15 @@ async def global_search(
         return_exceptions=True,
     )
     hits: list[SearchHit] = []
-    for source, r in zip(
-        ("sessions", "memories", "skills", "vaults"), results, strict=True
-    ):
+    for source, r in zip(labels, results):
         if isinstance(r, BaseException):
-            log.warning("search source %s failed: %s", source, r)
+            log.warning(
+                "search source %s failed for user %s: %s",
+                source,
+                user_id,
+                r,
+                exc_info=r,
+            )
             continue
         hits.extend(r)
     return SearchResponse(query=q, results=hits)
