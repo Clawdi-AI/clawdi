@@ -1,0 +1,149 @@
+name: Client CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - "packages/cli/**"
+      - "package.json"
+      - "bun.lock"
+      - "turbo.json"
+      - "tsconfig.base.json"
+      - "biome.json"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/client-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - "packages/cli/**"
+      - "package.json"
+      - "bun.lock"
+      - "turbo.json"
+      - "tsconfig.base.json"
+      - "biome.json"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/client-ci.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: client-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.3.13"
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      cli: ${{ steps.filter.outputs.cli }}
+      shared: ${{ steps.filter.outputs.shared }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            web:
+              - "apps/web/**"
+            cli:
+              - "packages/cli/**"
+            shared:
+              - "packages/shared/**"
+            infra:
+              - "package.json"
+              - "bun.lock"
+              - "turbo.json"
+              - "tsconfig.base.json"
+              - "biome.json"
+              - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/client-ci.yml"
+
+  # Lint + format check across the whole JS/TS tree in one fast job.
+  lint:
+    needs: changes
+    if: >-
+      needs.changes.outputs.web == 'true' ||
+      needs.changes.outputs.cli == 'true' ||
+      needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Biome check
+        run: bun run check
+
+  typecheck:
+    needs: changes
+    if: >-
+      needs.changes.outputs.web == 'true' ||
+      needs.changes.outputs.cli == 'true' ||
+      needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: web
+            filter: "web"
+          - target: cli
+            filter: "@clawdi-cloud/cli"
+          - target: shared
+            filter: "@clawdi-cloud/shared"
+    steps:
+      - name: Guard — run only if this target changed
+        id: guard
+        env:
+          CHANGED: ${{ matrix.target == 'web' && needs.changes.outputs.web || matrix.target == 'cli' && needs.changes.outputs.cli || matrix.target == 'shared' && needs.changes.outputs.shared }}
+          INFRA: ${{ needs.changes.outputs.infra }}
+        run: |
+          if [ "$CHANGED" = "true" ] || [ "$INFRA" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.guard.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.guard.outputs.run == 'true'
+        uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - if: steps.guard.outputs.run == 'true'
+        name: Typecheck
+        env:
+          # Required for `next typegen` — CI doesn't need real values
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: bunx turbo typecheck --filter=${{ matrix.filter }}
+
+  build:
+    needs: [changes, typecheck]
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Build web
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          CLERK_SECRET_KEY: sk_test_dummy
+        run: bunx turbo build --filter=web

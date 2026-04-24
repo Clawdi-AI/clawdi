@@ -1,4 +1,12 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, statSync, type Dirent } from "node:fs";
+import {
+	type Dirent,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
@@ -34,11 +42,11 @@ function extractMessageText(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.filter(
-			(b): b is { type: string; text?: string } =>
+			(b): b is { type: string; text: string } =>
 				typeof b === "object" && b !== null && "type" in b && typeof b.text === "string",
 		)
 		.filter((b) => b.type === "input_text" || b.type === "output_text" || b.type === "text")
-		.map((b) => b.text!)
+		.map((b) => b.text)
 		.join("\n");
 }
 
@@ -182,7 +190,7 @@ export class CodexAdapter implements AgentAdapter {
 					messages.push({
 						role,
 						content: text,
-						model: role === "assistant" ? lastModel ?? undefined : undefined,
+						model: role === "assistant" ? (lastModel ?? undefined) : undefined,
 						timestamp: ts?.toISOString(),
 					});
 				}
@@ -198,9 +206,7 @@ export class CodexAdapter implements AgentAdapter {
 			}
 
 			if (!endedAt) endedAt = startedAt;
-			const durationSeconds = Math.floor(
-				(endedAt.getTime() - startedAt.getTime()) / 1000,
-			);
+			const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
 
 			const firstRealUser = messages.find(
 				(m) => m.role === "user" && !m.content.startsWith("<environment_context>"),

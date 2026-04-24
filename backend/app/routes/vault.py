@@ -1,29 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_cli_auth
 from app.core.database import get_session
 from app.models.vault import Vault, VaultItem
+from app.schemas.vault import (
+    VaultCreate,
+    VaultCreatedResponse,
+    VaultDeleteResponse,
+    VaultItemDelete,
+    VaultItemsDeleteResponse,
+    VaultItemsUpsertResponse,
+    VaultItemUpsert,
+    VaultResolveResponse,
+    VaultResponse,
+    VaultSectionsResponse,
+)
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
-
-
-class VaultCreate(BaseModel):
-    slug: str
-    name: str
-
-
-class VaultItemUpsert(BaseModel):
-    section: str = ""
-    fields: dict[str, str]  # field_name → plaintext value
-
-
-class VaultItemDelete(BaseModel):
-    section: str = ""
-    fields: list[str]
 
 
 # --- Vault CRUD ---
@@ -33,12 +29,17 @@ class VaultItemDelete(BaseModel):
 async def list_vaults(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> list[VaultResponse]:
     result = await db.execute(
         select(Vault).where(Vault.user_id == auth.user_id).order_by(Vault.slug)
     )
     return [
-        {"id": str(v.id), "slug": v.slug, "name": v.name, "created_at": v.created_at.isoformat()}
+        VaultResponse(
+            id=str(v.id),
+            slug=v.slug,
+            name=v.name,
+            created_at=v.created_at,
+        )
         for v in result.scalars().all()
     ]
 
@@ -48,7 +49,7 @@ async def create_vault(
     body: VaultCreate,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultCreatedResponse:
     existing = await db.execute(
         select(Vault).where(Vault.user_id == auth.user_id, Vault.slug == body.slug)
     )
@@ -59,7 +60,7 @@ async def create_vault(
     db.add(vault)
     await db.commit()
     await db.refresh(vault)
-    return {"id": str(vault.id), "slug": vault.slug}
+    return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)
 
 
 @router.delete("/{slug}")
@@ -67,7 +68,7 @@ async def delete_vault(
     slug: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultDeleteResponse:
     result = await db.execute(
         select(Vault).where(Vault.user_id == auth.user_id, Vault.slug == slug)
     )
@@ -77,7 +78,7 @@ async def delete_vault(
 
     await db.delete(vault)
     await db.commit()
-    return {"status": "deleted"}
+    return VaultDeleteResponse(status="deleted")
 
 
 # --- Vault Items ---
@@ -88,7 +89,7 @@ async def list_vault_sections(
     slug: str,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultSectionsResponse:
     vault = await _get_vault(auth.user_id, slug, db)
     result = await db.execute(
         select(VaultItem.section, VaultItem.item_name)
@@ -98,7 +99,18 @@ async def list_vault_sections(
     items = {}
     for section, item_name in result.all():
         items.setdefault(section or "(default)", []).append(item_name)
-    return items
+    return VaultSectionsResponse(items)
+
+
+async def _load_items_by_name(db: AsyncSession, vault_id, section: str) -> dict[str, VaultItem]:
+    """Batch-prefetch all vault items for a vault+section keyed by item_name."""
+    result = await db.execute(
+        select(VaultItem).where(
+            VaultItem.vault_id == vault_id,
+            VaultItem.section == section,
+        )
+    )
+    return {item.item_name: item for item in result.scalars().all()}
 
 
 @router.put("/{slug}/items")
@@ -107,32 +119,29 @@ async def upsert_vault_items(
     body: VaultItemUpsert,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultItemsUpsertResponse:
     vault = await _get_vault(auth.user_id, slug, db)
+    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
+
     for field_name, plaintext in body.fields.items():
         ciphertext, nonce = encrypt(plaintext)
-        existing = await db.execute(
-            select(VaultItem).where(
-                VaultItem.vault_id == vault.id,
-                VaultItem.section == body.section,
-                VaultItem.item_name == field_name,
-            )
-        )
-        item = existing.scalar_one_or_none()
+        item = existing_by_name.get(field_name)
         if item:
             item.encrypted_value = ciphertext
             item.nonce = nonce
         else:
-            db.add(VaultItem(
-                vault_id=vault.id,
-                section=body.section,
-                item_name=field_name,
-                encrypted_value=ciphertext,
-                nonce=nonce,
-            ))
+            db.add(
+                VaultItem(
+                    vault_id=vault.id,
+                    section=body.section,
+                    item_name=field_name,
+                    encrypted_value=ciphertext,
+                    nonce=nonce,
+                )
+            )
 
     await db.commit()
-    return {"status": "ok", "fields": len(body.fields)}
+    return VaultItemsUpsertResponse(status="ok", fields=len(body.fields))
 
 
 @router.delete("/{slug}/items")
@@ -141,22 +150,17 @@ async def delete_vault_items(
     body: VaultItemDelete,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultItemsDeleteResponse:
     vault = await _get_vault(auth.user_id, slug, db)
+    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
+
     for field_name in body.fields:
-        result = await db.execute(
-            select(VaultItem).where(
-                VaultItem.vault_id == vault.id,
-                VaultItem.section == body.section,
-                VaultItem.item_name == field_name,
-            )
-        )
-        item = result.scalar_one_or_none()
+        item = existing_by_name.get(field_name)
         if item:
             await db.delete(item)
 
     await db.commit()
-    return {"status": "deleted"}
+    return VaultItemsDeleteResponse(status="deleted")
 
 
 # --- Resolve (CLI only — returns plaintext values) ---
@@ -166,18 +170,14 @@ async def delete_vault_items(
 async def resolve_vault(
     auth: AuthContext = Depends(require_cli_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> VaultResolveResponse:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth)."""
-    result = await db.execute(
-        select(Vault).where(Vault.user_id == auth.user_id)
-    )
+    result = await db.execute(select(Vault).where(Vault.user_id == auth.user_id))
     vaults = result.scalars().all()
 
     env: dict[str, str] = {}
     for vault in vaults:
-        items_result = await db.execute(
-            select(VaultItem).where(VaultItem.vault_id == vault.id)
-        )
+        items_result = await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id))
         for item in items_result.scalars().all():
             plaintext = decrypt(item.encrypted_value, item.nonce)
             # Build env var name: SECTION_FIELDNAME (uppercase)
@@ -187,13 +187,11 @@ async def resolve_vault(
                 key = item.item_name.upper()
             env[key] = plaintext
 
-    return env
+    return VaultResolveResponse(env)
 
 
 async def _get_vault(user_id, slug: str, db: AsyncSession) -> Vault:
-    result = await db.execute(
-        select(Vault).where(Vault.user_id == user_id, Vault.slug == slug)
-    )
+    result = await db.execute(select(Vault).where(Vault.user_id == user_id, Vault.slug == slug))
     vault = result.scalar_one_or_none()
     if not vault:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")

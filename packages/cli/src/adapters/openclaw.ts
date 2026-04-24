@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
@@ -43,11 +43,15 @@ function extractText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (Array.isArray(content)) {
 		return content
-			.filter((b): b is { type: string; text?: string } =>
-				typeof b === "object" && b !== null && "type" in b,
+			.filter(
+				(b): b is { type: string; text: string } =>
+					typeof b === "object" &&
+					b !== null &&
+					"type" in b &&
+					b.type === "text" &&
+					typeof b.text === "string",
 			)
-			.filter((b) => b.type === "text" && typeof b.text === "string")
-			.map((b) => b.text!)
+			.map((b) => b.text)
 			.join("\n");
 	}
 	return "";
@@ -63,14 +67,17 @@ export class OpenClawAdapter implements AgentAdapter {
 	async getVersion(): Promise<string | null> {
 		const { execSync } = await import("node:child_process");
 		try {
-			return execSync("openclaw --version", { encoding: "utf-8", stdio: "pipe" })
-				.trim()
-				.split("\n")[0] || null;
+			return (
+				execSync("openclaw --version", { encoding: "utf-8", stdio: "pipe" })
+					.trim()
+					.split("\n")[0] || null
+			);
 		} catch {
 			try {
-				return execSync("openclaw --help", { encoding: "utf-8", stdio: "pipe" })
-					.trim()
-					.split("\n")[0] || null;
+				return (
+					execSync("openclaw --help", { encoding: "utf-8", stdio: "pipe" }).trim().split("\n")[0] ||
+					null
+				);
 			} catch {
 				return null;
 			}
@@ -129,11 +136,7 @@ export class OpenClawAdapter implements AgentAdapter {
 						}
 
 						const ts = parsed.timestamp
-							? new Date(
-									typeof parsed.timestamp === "number"
-										? parsed.timestamp
-										: parsed.timestamp,
-								)
+							? new Date(typeof parsed.timestamp === "number" ? parsed.timestamp : parsed.timestamp)
 							: null;
 						if (ts && !Number.isNaN(ts.getTime())) {
 							if (!startedAt) startedAt = ts;
@@ -156,7 +159,7 @@ export class OpenClawAdapter implements AgentAdapter {
 						messages.push({
 							role,
 							content: text,
-							model: role === "assistant" ? currentModel ?? undefined : undefined,
+							model: role === "assistant" ? (currentModel ?? undefined) : undefined,
 							timestamp: ts?.toISOString(),
 						});
 					}
@@ -173,9 +176,7 @@ export class OpenClawAdapter implements AgentAdapter {
 			startedAt ??= new Date(updatedAt);
 			endedAt ??= new Date(updatedAt);
 
-			const durationSeconds = Math.floor(
-				(endedAt.getTime() - startedAt.getTime()) / 1000,
-			);
+			const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
 
 			const summary =
 				entry.displayName ??

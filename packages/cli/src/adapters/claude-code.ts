@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
+import { basename, join } from "node:path";
 import * as tar from "tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 
@@ -73,7 +73,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				const sessionId = basename(file, ".jsonl");
 
 				try {
-					const parsed = this.parseSessionJsonl(filePath, projectDir.name);
+					const parsed = this.parseSessionJsonl(filePath);
 					if (!parsed) continue;
 
 					if (since && parsed.startedAt < since) continue;
@@ -90,7 +90,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	private parseSessionJsonl(
 		filePath: string,
-		projectDirName: string,
 	): Omit<RawSession, "localSessionId" | "rawFilePath"> | null {
 		const content = readFileSync(filePath, "utf-8");
 		const lines = content.split("\n").filter(Boolean);
@@ -131,8 +130,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 						text = c;
 					} else if (Array.isArray(c)) {
 						text = c
-							.filter((b) => b.type === "text" && b.text)
-							.map((b) => b.text!)
+							.filter(
+								(b): b is { type: string; text: string } =>
+									b.type === "text" && typeof b.text === "string" && b.text.length > 0,
+							)
+							.map((b) => b.text)
 							.join("\n");
 					}
 					if (text) {
@@ -236,14 +238,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		}
 		mkdirSync(targetDir, { recursive: true });
 
-		await tar.extract({
-			cwd: skillsDir,
-			gzip: true,
-			filter: (path) => {
-				// Reject path traversal
-				return !path.includes("..") && !path.startsWith("/");
-			},
-		}).end(tarGzBytes);
+		await tar
+			.extract({
+				cwd: skillsDir,
+				gzip: true,
+				filter: (path) => {
+					// Reject path traversal
+					return !path.includes("..") && !path.startsWith("/");
+				},
+			})
+			.end(tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

@@ -1,14 +1,16 @@
 {
-  "name": "@clawdi-cloud/shared",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./types": "./src/types/index.ts",
-    "./consts": "./src/consts/index.ts"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.0"
-  }
+	"name": "@clawdi-cloud/shared",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./types": "./src/types/index.ts",
+		"./consts": "./src/consts/index.ts",
+		"./api": "./src/api/index.ts",
+		"./style/theme.css": "./src/style/theme.css"
+	},
+	"devDependencies": {
+		"typescript": "catalog:"
+	}
 }

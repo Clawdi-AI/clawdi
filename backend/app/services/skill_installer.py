@@ -9,7 +9,14 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.services.tar_utils import parse_frontmatter, tar_from_content
+from app.services.tar_utils import (
+    MAX_DECOMPRESSED_BYTES,
+    MAX_FILES,
+    TarValidationError,
+    parse_frontmatter,
+    tar_from_content,
+    validate_tar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +57,17 @@ async def fetch_skill_from_github(repo: str, path: str | None = None) -> SkillPa
             # Fallback: just the SKILL.md as a single-file archive
             skill_md_content = await _fetch_single_skill_md(client, repo, branch, skill_dir)
             if not skill_md_content:
-                raise ValueError(
-                    f"No SKILL.md found in {repo}" + (f"/{path}" if path else "")
-                )
+                raise ValueError(f"No SKILL.md found in {repo}" + (f"/{path}" if path else ""))
             skill_key = path or repo.split("/")[-1]
             tar_bytes, file_count = tar_from_content(skill_key, skill_md_content)
+
+    # Apply the same sanity checks we enforce on direct tar uploads. Keeps
+    # the marketplace install path from producing bigger / more numerous /
+    # traversal-carrying archives than we'd accept from a client.
+    try:
+        validate_tar(tar_bytes)
+    except TarValidationError as e:
+        raise ValueError(f"Built archive failed validation: {e}") from e
 
     fm = parse_frontmatter(skill_md_content or "")
     name = fm.get("name", path or repo.split("/")[-1])
@@ -73,11 +86,13 @@ async def _resolve_skill_path(repo: str, path: str | None) -> tuple[str, str]:
     """Resolve the skill directory path and branch."""
     search_paths: list[str] = []
     if path:
-        search_paths.extend([
-            f"skills/{path}",
-            path,
-            f".claude/skills/{path}",
-        ])
+        search_paths.extend(
+            [
+                f"skills/{path}",
+                path,
+                f".claude/skills/{path}",
+            ]
+        )
     else:
         search_paths.append("")
 
@@ -117,11 +132,13 @@ async def _list_github_dir(
     files: list[dict] = []
     for item in data:
         if item["type"] == "file":
-            files.append({
-                "path": item["path"],
-                "download_url": item["download_url"],
-                "size": item.get("size", 0),
-            })
+            files.append(
+                {
+                    "path": item["path"],
+                    "download_url": item["download_url"],
+                    "size": item.get("size", 0),
+                }
+            )
         elif item["type"] == "dir":
             sub_files = await _list_github_dir(client, repo, item["path"], branch)
             files.extend(sub_files)
@@ -142,16 +159,45 @@ async def _download_and_tar(
     skill_md_content: str | None = None
     prefix_len = len(skill_dir) + 1 if skill_dir else 0  # strip leading dir from GitHub paths
 
+    total_size = 0
+
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for f in files:
-            resp = await client.get(f["download_url"])
-            if resp.status_code != 200:
-                logger.warning(f"Failed to download {f['path']}: {resp.status_code}")
-                continue
+            if file_count >= MAX_FILES:
+                raise ValueError(f"Skill repo has too many files (>{MAX_FILES})")
 
-            content = resp.content
+            # Stream the download so a malicious repo serving a multi-GB blob
+            # can't buffer it into memory before we reject it. We stop reading
+            # the moment cumulative size would exceed the cap.
+            chunks: list[bytes] = []
+            file_size = 0
+            try:
+                async with client.stream("GET", f["download_url"]) as resp:
+                    if resp.status_code != 200:
+                        logger.warning(f"Failed to download {f['path']}: {resp.status_code}")
+                        continue
+                    async for chunk in resp.aiter_bytes():
+                        file_size += len(chunk)
+                        if total_size + file_size > MAX_DECOMPRESSED_BYTES:
+                            raise ValueError(
+                                f"Skill repo exceeds {MAX_DECOMPRESSED_BYTES // (1024 * 1024)}MB"
+                            )
+                        chunks.append(chunk)
+            except ValueError:
+                raise
+
+            content = b"".join(chunks)
+            total_size += file_size
+
             # Relative path within the skill directory
             rel_path = f["path"][prefix_len:] if prefix_len else f["path"]
+            # Guard against traversal coming back from the GitHub Contents API —
+            # we control the input, but validate anyway so the invariant lives
+            # at the boundary where the untrusted bytes arrive, not just in
+            # validate_tar() after the fact.
+            if rel_path.startswith("/") or ".." in rel_path.split("/"):
+                raise ValueError(f"Unsafe path in repo: {rel_path}")
+
             # Archive path: skill_key/relative_path
             skill_key = skill_dir.split("/")[-1] if "/" in skill_dir else skill_dir
             arc_name = f"{skill_key}/{rel_path}"
@@ -180,5 +226,3 @@ async def _fetch_single_skill_md(
     if resp.status_code == 200:
         return resp.text
     return None
-
-

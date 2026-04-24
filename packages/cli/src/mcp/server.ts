@@ -2,15 +2,32 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ApiClient } from "../lib/api-client";
+import type { MemoryRecord } from "../lib/api-types";
 import { isLoggedIn } from "../lib/config";
+
+// Minimal shape of a JSON Schema property we care about when mapping
+// Composio tool definitions to Zod. Unknown fields are ignored.
+interface JsonSchemaProperty {
+	type?: string;
+	description?: string;
+}
 
 interface McpTool {
 	name: string;
 	description: string;
 	parameters?: {
-		properties: Record<string, any>;
-		required: string[];
+		properties: Record<string, JsonSchemaProperty>;
+		required?: string[];
 	};
+}
+
+interface JsonRpcResponse {
+	result?: unknown;
+	error?: unknown;
+}
+
+interface ToolsListResult {
+	tools?: McpTool[];
 }
 
 const MEMORY_EXTRACT_INSTRUCTIONS = `Review the CURRENT conversation silently and propose up to 5 durable memories worth saving for future sessions. Pick the highest-signal. Fewer is better — a confident 1-2 beats 5 mediocre. Do not fabricate candidates to fill the list.
@@ -70,9 +87,7 @@ export async function startMcpServer() {
 		raw.mcp_url = `${cliConfig.apiUrl}/api/mcp/proxy`;
 		mcpConfig = raw;
 	} catch {
-		process.stderr.write(
-			"Warning: Could not get MCP proxy config. Connector tools unavailable.\n",
-		);
+		process.stderr.write("Warning: Could not get MCP proxy config. Connector tools unavailable.\n");
 	}
 
 	// Fetch available tools from backend (user's connected apps)
@@ -92,15 +107,13 @@ export async function startMcpServer() {
 					params: {},
 				}),
 			});
-			const result = await resp.json();
-			remoteTools = result.result?.tools ?? [];
-			process.stderr.write(
-				`Loaded ${remoteTools.length} connector tools.\n`,
-			);
-		} catch (e: any) {
-			process.stderr.write(
-				`Warning: Could not fetch connector tools: ${e.message}\n`,
-			);
+			const result = (await resp.json()) as JsonRpcResponse;
+			const toolsResult = (result.result ?? {}) as ToolsListResult;
+			remoteTools = toolsResult.tools ?? [];
+			process.stderr.write(`Loaded ${remoteTools.length} connector tools.\n`);
+		} catch (e: unknown) {
+			const message = e instanceof Error ? e.message : String(e);
+			process.stderr.write(`Warning: Could not fetch connector tools: ${message}\n`);
 		}
 	}
 
@@ -113,21 +126,18 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_search",
-		"ALWAYS call this BEFORE answering any question that references the user's own context — their preferences, projects, past decisions, named entities, or work history. A missed hit costs the user's trust every subsequent turn; a call that returns empty costs ~100ms. Bias toward calling. Works in any language — pass the user's query through as-is.\n\nMUST call when the user's message contains ANY of these signals (in English, Chinese, or any other language):\n- First-person self-reference in a question about themselves: possessives like \"my\", verbs of habit like \"I usually\", \"I prefer\", \"I always\"\n- Preference / habit questions, even phrased abstractly: \"what do I usually use for X\", \"how do I normally do Y\", \"what's my preferred tool for Z\" — these MUST trigger even when no specific entity is named\n- Callbacks to past context: \"like last time\", \"as I mentioned\", \"you know the one\", \"we discussed before\", \"what was that X\"\n- Named entities specific to this user: their project / repo / service / team / tool name, or a person by name\n- Any reference to a past bug, decision, investigation, meeting, or design choice\n\nExample queries to pass (choose whichever phrasing fits; language does not matter): \"user's name\", \"coding style preference\", \"command-line tools the user uses\", \"how we fixed the login bug\", \"Clerk auth decision reasoning\", \"project architecture\".\n\nDo NOT call for pure textbook / generic programming questions with zero user-specific signal (e.g. \"how does async/await work\", \"what is the time complexity of quicksort\").\n\nWhen in doubt, CALL IT. Zero results is cheap; a missed memory makes you look amnesic.",
+		'ALWAYS call this BEFORE answering any question that references the user\'s own context — their preferences, projects, past decisions, named entities, or work history. A missed hit costs the user\'s trust every subsequent turn; a call that returns empty costs ~100ms. Bias toward calling. Works in any language — pass the user\'s query through as-is.\n\nMUST call when the user\'s message contains ANY of these signals (in English, Chinese, or any other language):\n- First-person self-reference in a question about themselves: possessives like "my", verbs of habit like "I usually", "I prefer", "I always"\n- Preference / habit questions, even phrased abstractly: "what do I usually use for X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger even when no specific entity is named\n- Callbacks to past context: "like last time", "as I mentioned", "you know the one", "we discussed before", "what was that X"\n- Named entities specific to this user: their project / repo / service / team / tool name, or a person by name\n- Any reference to a past bug, decision, investigation, meeting, or design choice\n\nExample queries to pass (choose whichever phrasing fits; language does not matter): "user\'s name", "coding style preference", "command-line tools the user uses", "how we fixed the login bug", "Clerk auth decision reasoning", "project architecture".\n\nDo NOT call for pure textbook / generic programming questions with zero user-specific signal (e.g. "how does async/await work", "what is the time complexity of quicksort").\n\nWhen in doubt, CALL IT. Zero results is cheap; a missed memory makes you look amnesic.',
 		{
 			query: z
 				.string()
 				.describe(
-					"Natural-language query in any language — the search does semantic matching, no keyword optimization needed. Pass the user's own phrasing (translation not required) or a short rewrite that captures intent. Examples: \"user's name\", \"coding style preference\", \"command-line tools the user prefers\", \"how we fixed the login bug\", \"Clerk auth reasoning\", \"project architecture\".",
+					'Natural-language query in any language — the search does semantic matching, no keyword optimization needed. Pass the user\'s own phrasing (translation not required) or a short rewrite that captures intent. Examples: "user\'s name", "coding style preference", "command-line tools the user prefers", "how we fixed the login bug", "Clerk auth reasoning", "project architecture".',
 				),
-			limit: z
-				.number()
-				.optional()
-				.describe("Max results (default 10)."),
+			limit: z.number().optional().describe("Max results (default 10)."),
 		},
 		async ({ query, limit }) => {
 			try {
-				const results = await api.get<any[]>(
+				const results = await api.get<MemoryRecord[]>(
 					`/api/memories?q=${encodeURIComponent(query)}&limit=${limit ?? 10}`,
 				);
 				return {
@@ -135,21 +145,15 @@ export async function startMcpServer() {
 						{
 							type: "text" as const,
 							text: results.length
-								? results
-										.map(
-											(m: any) =>
-												`[${m.category}] ${m.content}`,
-										)
-										.join("\n\n")
+								? results.map((m) => `[${m.category}] ${m.content}`).join("\n\n")
 								: "No memories found.",
 						},
 					],
 				};
-			} catch (e: any) {
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
 				return {
-					content: [
-						{ type: "text" as const, text: `Error: ${e.message}` },
-					],
+					content: [{ type: "text" as const, text: `Error: ${message}` }],
 				};
 			}
 		},
@@ -157,21 +161,15 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_add",
-		"Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something (\"remember this\", \"save this\", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just \"bug fixed\"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. \"user prefers pnpm over npm\")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details (\"the user asked about X today\")\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today's conversation. Content language should match the user's primary language for that context.",
+		'Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something ("remember this", "save this", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details ("the user asked about X today")\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today\'s conversation. Content language should match the user\'s primary language for that context.',
 		{
 			content: z
 				.string()
 				.describe(
-					"The memory content. Standalone sentence that makes sense in isolation. Examples: \"The user prefers rg over grep and fd over find.\", \"We chose Clerk over Auth0 because the team already had a Clerk account.\", \"The login bug on 2026-04-15 was caused by a stale JWT cache in the authentication middleware.\"",
+					'The memory content. Standalone sentence that makes sense in isolation. Examples: "The user prefers rg over grep and fd over find.", "We chose Clerk over Auth0 because the team already had a Clerk account.", "The login bug on 2026-04-15 was caused by a stale JWT cache in the authentication middleware."',
 				),
 			category: z
-				.enum([
-					"fact",
-					"preference",
-					"pattern",
-					"decision",
-					"context",
-				])
+				.enum(["fact", "preference", "pattern", "decision", "context"])
 				.optional()
 				.describe(
 					"fact — technical facts, API details, config values. preference — user preferences, coding style, workflow choices. pattern — recurring patterns, pitfalls, team conventions. decision — architecture decisions and their reasoning. context — project context, deadlines, ongoing work. Default: fact.",
@@ -179,13 +177,10 @@ export async function startMcpServer() {
 		},
 		async ({ content, category }) => {
 			try {
-				const result = await api.post<{ id: string }>(
-					"/api/memories",
-					{
-						content,
-						category: category ?? "fact",
-					},
-				);
+				const result = await api.post<{ id: string }>("/api/memories", {
+					content,
+					category: category ?? "fact",
+				});
 				return {
 					content: [
 						{
@@ -194,11 +189,10 @@ export async function startMcpServer() {
 						},
 					],
 				};
-			} catch (e: any) {
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
 				return {
-					content: [
-						{ type: "text" as const, text: `Error: ${e.message}` },
-					],
+					content: [{ type: "text" as const, text: `Error: ${message}` }],
 				};
 			}
 		},
@@ -216,14 +210,12 @@ export async function startMcpServer() {
 	// --- Dynamically registered connector tools (from Composio via backend) ---
 
 	if (mcpConfig && remoteTools.length > 0) {
-		const callTool = async (
-			toolName: string,
-			args: Record<string, unknown>,
-		) => {
-			const resp = await fetch(mcpConfig!.mcp_url, {
+		const { mcp_url: proxyUrl, mcp_token: proxyToken } = mcpConfig;
+		const callTool = async (toolName: string, args: Record<string, unknown>) => {
+			const resp = await fetch(proxyUrl, {
 				method: "POST",
 				headers: {
-					Authorization: `Bearer ${mcpConfig!.mcp_token}`,
+					Authorization: `Bearer ${proxyToken}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
@@ -233,7 +225,7 @@ export async function startMcpServer() {
 					params: { name: toolName, arguments: args },
 				}),
 			});
-			const result = await resp.json();
+			const result = (await resp.json()) as JsonRpcResponse;
 			if (result.error) {
 				throw new Error(JSON.stringify(result.error));
 			}
@@ -245,10 +237,10 @@ export async function startMcpServer() {
 			const schema: Record<string, z.ZodTypeAny> = {};
 			if (tool.parameters?.properties) {
 				for (const [key, prop] of Object.entries(tool.parameters.properties)) {
-					const desc = (prop as any).description || key;
-					const isRequired = tool.parameters.required?.includes(key);
+					const desc = prop.description || key;
+					const isRequired = tool.parameters.required?.includes(key) ?? false;
 					let field: z.ZodTypeAny;
-					switch ((prop as any).type) {
+					switch (prop.type) {
 						case "integer":
 						case "number":
 							field = z.number().describe(desc);
@@ -274,41 +266,41 @@ export async function startMcpServer() {
 			const toolSchema = hasSchema
 				? schema
 				: {
-						arguments: z
-							.string()
-							.optional()
-							.describe("JSON string of tool arguments"),
+						arguments: z.string().optional().describe("JSON string of tool arguments"),
 					};
 
 			server.tool(
 				tool.name.toLowerCase(),
 				tool.description || tool.name,
 				toolSchema,
-				async (params) => {
+				async (params: Record<string, unknown>) => {
 					try {
-						const args = hasSchema
-							? params
-							: (params as any).arguments
-								? JSON.parse((params as any).arguments)
-								: {};
-						const result = await callTool(tool.name, args as Record<string, unknown>);
+						let args: Record<string, unknown>;
+						if (hasSchema) {
+							args = params;
+						} else {
+							const argsField = params.arguments;
+							args =
+								typeof argsField === "string" && argsField.length > 0
+									? (JSON.parse(argsField) as Record<string, unknown>)
+									: {};
+						}
+						const result = await callTool(tool.name, args);
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text:
-										typeof result === "string"
-											? result
-											: JSON.stringify(result, null, 2),
+									text: typeof result === "string" ? result : JSON.stringify(result, null, 2),
 								},
 							],
 						};
-					} catch (e: any) {
+					} catch (e: unknown) {
+						const message = e instanceof Error ? e.message : String(e);
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text: `Error: ${e.message}`,
+									text: `Error: ${message}`,
 								},
 							],
 						};

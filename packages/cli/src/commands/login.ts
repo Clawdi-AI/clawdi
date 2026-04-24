@@ -1,11 +1,15 @@
-import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
+import chalk from "chalk";
 import { clearAuth, getAuth, getConfig, isLoggedIn, setAuth } from "../lib/config";
 
 export async function login() {
-	if (isLoggedIn()) {
-		const auth = getAuth()!;
-		console.log(chalk.yellow(`Already logged in as ${auth.email || auth.userId || "unknown"}`));
+	const existingAuth = getAuth();
+	if (existingAuth) {
+		console.log(
+			chalk.yellow(
+				`Already logged in as ${existingAuth.email || existingAuth.userId || "unknown"}`,
+			),
+		);
 		console.log(chalk.gray("Run `clawdi logout` first to switch accounts."));
 		return;
 	}

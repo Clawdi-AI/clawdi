@@ -1,0 +1,113 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      any: ${{ steps.filter.outputs.any }}
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            any:
+              - "backend/**/*.py"
+              - "backend/pyproject.toml"
+              - "backend/uv.lock"
+              - "backend/alembic.ini"
+            test:
+              - "backend/app/**"
+              - "backend/tests/**"
+              - "backend/alembic/**"
+              - "backend/pyproject.toml"
+              - "backend/uv.lock"
+
+  lint-and-typecheck:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --frozen --no-install-project
+      - name: Ruff lint
+        run: uv run ruff check app
+      - name: Ruff format (check-only)
+        run: uv run ruff format --check app
+      - name: Byte-compile sanity check
+        run: uv run python -m compileall -q app
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        # pgvector image ships PG 16 + pgvector + pg_trgm preinstalled as extensions.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: clawdi_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/clawdi_test
+      ENCRYPTION_KEY: test-encryption-key-32-chars-xxxx
+      VAULT_ENCRYPTION_KEY: test-vault-key-32-chars-xxxxxxxx
+      CLERK_PEM_PUBLIC_KEY: ""
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --frozen --no-install-project
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -U test -d clawdi_test \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector;' \
+            -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+      - name: Run migrations
+        run: uv run alembic upgrade head
+      - name: Pytest
+        run: uv run pytest -q

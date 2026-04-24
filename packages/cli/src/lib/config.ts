@@ -1,11 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CLAWDI_DIR = join(homedir(), ".clawdi");
 const CONFIG_FILE = join(CLAWDI_DIR, "config.json");
 const AUTH_FILE = join(CLAWDI_DIR, "auth.json");
-const SYNC_FILE = join(CLAWDI_DIR, "sync.json");
 
 export interface ClawdiConfig {
 	apiUrl: string;
@@ -35,7 +34,7 @@ function readJson<T>(path: string): T | null {
 
 function writeJson(path: string, data: unknown) {
 	ensureDir();
-	writeFileSync(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
 }
 
 const DEFAULT_API_URL = "http://localhost:8000";
@@ -78,7 +77,6 @@ export function setAuth(auth: ClawdiAuth) {
 }
 
 export function clearAuth() {
-	const { unlinkSync } = require("node:fs");
 	if (existsSync(AUTH_FILE)) {
 		unlinkSync(AUTH_FILE);
 	}

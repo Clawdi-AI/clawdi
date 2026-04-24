@@ -1,30 +1,26 @@
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.memory import Memory
+from app.schemas.memory import (
+    EmbedBackfillResponse,
+    MemoryCreate,
+    MemoryCreatedResponse,
+    MemoryDeleteResponse,
+    MemoryResponse,
+)
 from app.services.embedding import resolve_embedder
 from app.services.memory_provider import get_memory_provider
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
-
-
-class MemoryCreate(BaseModel):
-    content: str
-    category: str = "fact"
-    source: str = "manual"
-    tags: list[str] | None = None
-
-
-class MemoryBatchRequest(BaseModel):
-    memories: list[MemoryCreate]
 
 
 @router.get("")
@@ -35,13 +31,26 @@ async def list_memories(
     offset: int = Query(default=0),
     category: str | None = Query(default=None),
     q: str | None = Query(default=None),
-):
+) -> list[MemoryResponse]:
     provider = await get_memory_provider(str(auth.user_id), db)
 
     if q:
-        return await provider.search(str(auth.user_id), q, limit=limit, category=category)
+        return [
+            MemoryResponse.model_validate(memory)
+            for memory in await provider.search(
+                str(auth.user_id),
+                q,
+                limit=limit,
+                category=category,
+            )
+        ]
 
-    return await provider.list_all(str(auth.user_id), limit=limit, offset=offset, category=category)
+    return [
+        MemoryResponse.model_validate(memory)
+        for memory in await provider.list_all(
+            str(auth.user_id), limit=limit, offset=offset, category=category
+        )
+    ]
 
 
 @router.post("")
@@ -49,40 +58,28 @@ async def create_memory(
     body: MemoryCreate,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> MemoryCreatedResponse:
     provider = await get_memory_provider(str(auth.user_id), db)
-    return await provider.add(
-        str(auth.user_id), body.content,
-        category=body.category, source=body.source, tags=body.tags,
-    )
-
-
-@router.post("/batch")
-async def batch_create_memories(
-    body: MemoryBatchRequest,
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-):
-    provider = await get_memory_provider(str(auth.user_id), db)
-    synced = 0
-    for m in body.memories:
+    return MemoryCreatedResponse.model_validate(
         await provider.add(
-            str(auth.user_id), m.content,
-            category=m.category, source=m.source, tags=m.tags,
+            str(auth.user_id),
+            body.content,
+            category=body.category,
+            source=body.source,
+            tags=body.tags,
         )
-        synced += 1
-    return {"synced": synced}
+    )
 
 
 @router.delete("/{memory_id}")
 async def delete_memory(
-    memory_id: str,
+    memory_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> MemoryDeleteResponse:
     provider = await get_memory_provider(str(auth.user_id), db)
-    await provider.delete(str(auth.user_id), memory_id)
-    return {"status": "deleted"}
+    await provider.delete(str(auth.user_id), str(memory_id))
+    return MemoryDeleteResponse(status="deleted")
 
 
 @router.post("/embed-backfill")
@@ -91,7 +88,7 @@ async def embed_backfill(
     batch_size: int = Query(default=32, ge=1, le=200),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> EmbedBackfillResponse:
     """Compute embeddings for the caller's memories that lack one.
 
     Used after the deployment's embedder becomes available (first-time
@@ -105,7 +102,10 @@ async def embed_backfill(
     if embedder is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No embedding provider available. Check MEMORY_EMBEDDING_MODE and related env vars on the backend.",
+            detail=(
+                "No embedding provider available. "
+                "Check MEMORY_EMBEDDING_MODE and related env vars on the backend."
+            ),
         )
 
     # Snapshot the IDs of rows we intend to process. Iterating via offset
@@ -124,10 +124,8 @@ async def embed_backfill(
     processed = 0
     failed = 0
     for i in range(0, len(target_ids), batch_size):
-        chunk_ids = target_ids[i:i + batch_size]
-        chunk = (
-            await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))
-        ).scalars().all()
+        chunk_ids = target_ids[i : i + batch_size]
+        chunk = (await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))).scalars().all()
         for mem in chunk:
             try:
                 vec = await embedder.embed(mem.content)
@@ -137,4 +135,4 @@ async def embed_backfill(
                 log.warning("backfill embed failed for %s: %s", mem.id, e)
                 failed += 1
         await db.commit()
-    return {"processed": processed, "failed": failed}
+    return EmbedBackfillResponse(processed=processed, failed=failed)

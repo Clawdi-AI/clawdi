@@ -1,0 +1,32 @@
+# Reusable composite action: set up Bun + install workspace dependencies
+# with a shared cache. Used by every client-ci job so caching is consistent.
+name: Setup Bun CI
+description: Install Bun and run `bun install --frozen-lockfile` with lockfile-scoped cache
+
+inputs:
+  bun-version:
+    description: Bun version to install (defaults to package.json engines or repo BUN_VERSION env)
+    required: false
+    default: "1.3.13"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Cache bun install
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.bun/install/cache
+          node_modules
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          bun-${{ runner.os }}-
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
