@@ -1,6 +1,6 @@
 "use client";
 
-import type { paths } from "@clawdi-cloud/shared/api";
+import { extractApiDetail, type paths } from "@clawdi-cloud/shared/api";
 import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
@@ -18,28 +18,6 @@ export class ApiError extends Error {
 		super(`API ${status}: ${detail}`);
 		this.name = "ApiError";
 	}
-}
-
-// FastAPI packs the human message in `detail`; validation errors come back
-// as an array of {loc, msg, type}. Flatten into one readable line.
-function errorDetail(err: unknown): string {
-	if (typeof err === "object" && err !== null && "detail" in err) {
-		const d = (err as { detail: unknown }).detail;
-		if (typeof d === "string") return d;
-		if (Array.isArray(d)) {
-			return d
-				.map((e) => {
-					const loc = Array.isArray((e as { loc?: unknown[] })?.loc)
-						? ((e as { loc: unknown[] }).loc as unknown[]).join(".")
-						: "";
-					const msg = (e as { msg?: string })?.msg ?? "";
-					return loc ? `${loc}: ${msg}` : msg;
-				})
-				.filter(Boolean)
-				.join("; ");
-		}
-	}
-	return typeof err === "string" ? err : JSON.stringify(err);
 }
 
 /**
@@ -67,11 +45,16 @@ export function useApi() {
 /**
  * Unwrap an openapi-fetch result. Throws ApiError on non-2xx so TanStack
  * Query routes it through its usual error path; returns `data` otherwise.
+ *
+ * 2xx with no body (204 / delete-style responses) surface as `undefined` —
+ * call sites that destructure the result already guard with `.items?.` etc.,
+ * and the overload set lets `void` responses compile without forcing a cast.
  */
+export function unwrap<T>(result: { data: T; error?: undefined; response: Response }): T;
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T;
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
 	if (result.error !== undefined) {
-		throw new ApiError(result.response.status, errorDetail(result.error));
+		throw new ApiError(result.response.status, extractApiDetail(result.error));
 	}
-	// 204 No Content etc. — hand back undefined as T for callers that opt in.
-	return (result.data as T) ?? (undefined as T);
+	return result.data as T;
 }

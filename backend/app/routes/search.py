@@ -8,7 +8,9 @@ iterates groups and renders icons per type.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -17,10 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
+from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault
 from app.services.memory_provider import get_memory_provider
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -43,19 +48,17 @@ class SearchResponse(BaseModel):
 TYPE_LIMIT = 5
 
 
-async def _search_sessions(
-    db: AsyncSession, user_id, query: str
-) -> list[SearchHit]:
-    needle = f"%{query}%"
+async def _search_sessions(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
+    needle = like_needle(query)
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(Session.user_id == user_id)
         .where(
             or_(
-                Session.summary.ilike(needle),
-                Session.project_path.ilike(needle),
-                Session.local_session_id.ilike(needle),
+                Session.summary.ilike(needle, escape="\\"),
+                Session.project_path.ilike(needle, escape="\\"),
+                Session.local_session_id.ilike(needle, escape="\\"),
             )
         )
         .order_by(Session.started_at.desc())
@@ -78,7 +81,7 @@ async def _search_sessions(
     return hits
 
 
-async def _search_memories(db: AsyncSession, user_id, query: str) -> list[SearchHit]:
+async def _search_memories(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
     provider = await get_memory_provider(str(user_id), db)
     rows = await provider.search(str(user_id), query, limit=TYPE_LIMIT)
     return [
@@ -93,16 +96,16 @@ async def _search_memories(db: AsyncSession, user_id, query: str) -> list[Search
     ]
 
 
-async def _search_skills(db: AsyncSession, user_id, query: str) -> list[SearchHit]:
-    needle = f"%{query}%"
+async def _search_skills(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
+    needle = like_needle(query)
     stmt = (
         select(Skill)
         .where(Skill.user_id == user_id, Skill.is_active)
         .where(
             or_(
-                Skill.skill_key.ilike(needle),
-                Skill.name.ilike(needle),
-                Skill.description.ilike(needle),
+                Skill.skill_key.ilike(needle, escape="\\"),
+                Skill.name.ilike(needle, escape="\\"),
+                Skill.description.ilike(needle, escape="\\"),
             )
         )
         .order_by(Skill.skill_key)
@@ -121,12 +124,17 @@ async def _search_skills(db: AsyncSession, user_id, query: str) -> list[SearchHi
     ]
 
 
-async def _search_vaults(db: AsyncSession, user_id, query: str) -> list[SearchHit]:
-    needle = f"%{query}%"
+async def _search_vaults(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
+    needle = like_needle(query)
     stmt = (
         select(Vault)
         .where(Vault.user_id == user_id)
-        .where(or_(Vault.slug.ilike(needle), Vault.name.ilike(needle)))
+        .where(
+            or_(
+                Vault.slug.ilike(needle, escape="\\"),
+                Vault.name.ilike(needle, escape="\\"),
+            )
+        )
         .order_by(Vault.slug)
         .limit(TYPE_LIMIT)
     )
@@ -156,15 +164,25 @@ async def global_search(
 
     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
     the hybrid provider (FTS + trgm + optional pgvector) for quality.
+
+    A single failing source (e.g. the memory provider briefly unavailable)
+    degrades to partial results rather than failing the whole request —
+    palette UX beats strict all-or-nothing consistency here.
     """
     user_id = auth.user_id
-    # gather() runs all four searches concurrently on the same AsyncSession
-    # — safe because no writes happen and SQLAlchemy serialises statements
-    # through the session's underlying connection.
-    sessions, memories, skills, vaults = await asyncio.gather(
+    results = await asyncio.gather(
         _search_sessions(db, user_id, q),
         _search_memories(db, user_id, q),
         _search_skills(db, user_id, q),
         _search_vaults(db, user_id, q),
+        return_exceptions=True,
     )
-    return SearchResponse(query=q, results=[*sessions, *memories, *skills, *vaults])
+    hits: list[SearchHit] = []
+    for source, r in zip(
+        ("sessions", "memories", "skills", "vaults"), results, strict=True
+    ):
+        if isinstance(r, BaseException):
+            log.warning("search source %s failed: %s", source, r)
+            continue
+        hits.extend(r)
+    return SearchResponse(query=q, results=hits)

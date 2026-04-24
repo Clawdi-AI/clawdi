@@ -49,10 +49,17 @@ export default function ConnectorDetailPage() {
 			),
 	});
 
-	// Track OAuth polling timers so we can clean up on unmount.
+	// Track OAuth polling timers + a cancelled flag. The flag covers a race
+	// where the mutation's `onSuccess` fires after this page has already
+	// unmounted — without it, the first `setTimeout` would register *after*
+	// the cleanup ran and the poll chain would escape, continuing to
+	// invalidate queries for a component no one is watching.
 	const pollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+	const pollCancelled = useRef(false);
 	useEffect(() => {
+		pollCancelled.current = false;
 		return () => {
+			pollCancelled.current = true;
 			for (const t of pollTimers.current) clearTimeout(t);
 			pollTimers.current = [];
 		};
@@ -69,11 +76,13 @@ export default function ConnectorDetailPage() {
 			window.open(result.connect_url, "_blank", "noopener,noreferrer");
 		},
 		onSuccess: () => {
-			// Poll for connection status — user may take time to complete OAuth
+			// Poll for connection status — user may take time to complete OAuth.
+			if (pollCancelled.current) return;
 			let attempts = 0;
 			const poll = () => {
-				if (attempts++ >= 12) return;
+				if (pollCancelled.current || attempts++ >= 12) return;
 				const id = setTimeout(() => {
+					if (pollCancelled.current) return;
 					queryClient.invalidateQueries({ queryKey: ["connections"] });
 					poll();
 				}, 5000);

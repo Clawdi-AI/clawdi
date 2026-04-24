@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_cli_auth
 from app.core.database import get_session
+from app.core.query_utils import like_needle
 from app.models.vault import Vault, VaultItem
 from app.schemas.common import Paginated
 from app.schemas.vault import (
@@ -36,8 +37,13 @@ async def list_vaults(
 ) -> Paginated[VaultResponse]:
     base = select(Vault).where(Vault.user_id == auth.user_id).order_by(Vault.slug)
     if q:
-        needle = f"%{q}%"
-        base = base.where(or_(Vault.slug.ilike(needle), Vault.name.ilike(needle)))
+        needle = like_needle(q)
+        base = base.where(
+            or_(
+                Vault.slug.ilike(needle, escape="\\"),
+                Vault.name.ilike(needle, escape="\\"),
+            )
+        )
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     rows = (

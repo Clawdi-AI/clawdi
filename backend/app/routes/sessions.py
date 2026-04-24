@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
+from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.schemas.common import Paginated
 from app.schemas.session import (
@@ -205,12 +207,12 @@ async def list_sessions(
     if q:
         # ILIKE on three columns — kept simple; pg_trgm GIN index on these
         # columns is on the to-do list for when session volume grows.
-        needle = f"%{q}%"
+        needle = like_needle(q)
         base = base.where(
             or_(
-                Session.summary.ilike(needle),
-                Session.project_path.ilike(needle),
-                Session.local_session_id.ilike(needle),
+                Session.summary.ilike(needle, escape="\\"),
+                Session.project_path.ilike(needle, escape="\\"),
+                Session.local_session_id.ilike(needle, escape="\\"),
             )
         )
 
@@ -293,8 +295,6 @@ async def get_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> list[SessionMessageResponse]:
     """Read session messages from FileStore, typed as SessionMessageResponse[]."""
-    import json
-
     result = await db.execute(
         select(Session).where(
             Session.user_id == auth.user_id,

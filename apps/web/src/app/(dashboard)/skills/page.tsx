@@ -34,12 +34,17 @@ export default function SkillsPage() {
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 
+	// Backend caps `page_size` at 200. For the 99% who are under that this is
+	// one page. If a user ever crosses 200 skills we surface a warning below
+	// rather than silently hiding the overflow.
+	const SKILLS_PAGE_SIZE = 200;
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["skills"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/api/skills", { params: { query: { page_size: SKILLS_PAGE_SIZE } } })),
 	});
 	const skills = data?.items;
+	const hasTruncatedList = (data?.total ?? 0) > (skills?.length ?? 0);
 
 	const deleteSkill = useMutation({
 		mutationFn: async (key: string) =>
@@ -97,6 +102,18 @@ export default function SkillsPage() {
 
 			<section className="space-y-3">
 				<h2 className="text-base font-semibold">Installed</h2>
+				{hasTruncatedList ? (
+					<Alert>
+						<AlertCircle />
+						<AlertTitle>
+							Showing {skills?.length ?? 0} of {data?.total ?? 0} skills
+						</AlertTitle>
+						<AlertDescription>
+							Use <code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi skill list</code>{" "}
+							to see everything, or uninstall what you don't need.
+						</AlertDescription>
+					</Alert>
+				) : null}
 				{error ? (
 					<Alert variant="destructive">
 						<AlertCircle />

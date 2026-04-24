@@ -191,16 +191,15 @@ export async function push(opts: {
 					if (s.messages.length === 0) continue;
 					try {
 						const content = Buffer.from(JSON.stringify(s.messages), "utf-8");
-						await api.uploadFile(
-							`/api/sessions/${s.localSessionId}/upload`,
-							{},
-							content,
-							`${s.localSessionId}.json`,
-						);
+						await api.uploadSessionContent(s.localSessionId, content, `${s.localSessionId}.json`);
 						uploaded++;
 						contentSpinner.message(`Uploading session content (${uploaded}/${result.synced})...`);
-					} catch {
-						// Session might already exist, skip
+					} catch (e) {
+						// Content upload is best-effort — the session header was
+						// already committed in the batch POST above. Surface the
+						// reason so misconfigured file stores don't appear to
+						// succeed silently.
+						p.log.warn(`Content upload skipped for ${s.localSessionId}: ${(e as Error).message}`);
 					}
 				}
 				contentSpinner.stop(`Uploaded ${uploaded} session content${uploaded === 1 ? "" : "s"}`);
@@ -221,12 +220,7 @@ export async function push(opts: {
 		try {
 			for (const skill of skills) {
 				const tarBytes = await tarSkillDir(skill.directoryPath);
-				await api.uploadFile(
-					"/api/skills/upload",
-					{ skill_key: skill.skillKey },
-					tarBytes,
-					`${skill.skillKey}.tar.gz`,
-				);
+				await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`);
 				pushed++;
 				skillSpinner.message(`Uploading skills (${pushed}/${skills.length})...`);
 			}

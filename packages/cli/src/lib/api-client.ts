@@ -1,6 +1,9 @@
 import createClient, { type Client } from "openapi-fetch";
-import type { paths } from "./api-types.generated";
+import type { components, paths } from "./api-types.generated";
 import { getAuth, getConfig } from "./config";
+
+type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
+type SessionUploadResponse = components["schemas"]["SessionUploadResponse"];
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
@@ -52,6 +55,12 @@ const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 async function retryingFetch(req: Request, timeoutMs: number): Promise<Response> {
 	const retry = IDEMPOTENT_METHODS.has(req.method);
 	const maxAttempts = retry ? MAX_RETRIES : 1;
+	// Snapshot the request once so the body stream survives retries — the
+	// very first `fetch` drains `req.body`, after which `req.clone()` would
+	// throw `TypeError: cannot clone a disturbed body`. Keeping the base
+	// pristine lets us hand a fresh clone to every attempt including the
+	// first, even for PUT/PATCH with JSON bodies.
+	const base = req.clone();
 	let lastErr: ApiError | undefined;
 
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -64,7 +73,7 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 
 		let res: Response;
 		try {
-			res = await fetch(attempt === 0 ? req : req.clone(), { signal: controller.signal });
+			res = await fetch(base.clone(), { signal: controller.signal });
 		} catch (e: unknown) {
 			clearTimeout(timer);
 			const err = e as { name?: string; message?: string };
@@ -99,7 +108,11 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 	);
 }
 
-function extractDetail(err: unknown): string {
+// Duplicated verbatim from `@clawdi-cloud/shared/api/error-detail`. The CLI
+// publishes to npm as a standalone `@clawdi/cli` and deliberately doesn't
+// depend on the shared workspace package. If this diverges from the shared
+// copy, update both.
+function extractApiDetail(err: unknown): string {
 	if (typeof err === "object" && err !== null && "detail" in err) {
 		const d = (err as { detail: unknown }).detail;
 		if (typeof d === "string") return d;
@@ -172,8 +185,40 @@ export class ApiClient {
 		return this.client.PATCH.bind(this.client);
 	}
 
-	/** Multipart upload; never retried (non-idempotent). */
-	async uploadFile<T>(
+	/**
+	 * Upload a skill archive (`.tar.gz`) to `/api/skills/upload`. openapi-fetch
+	 * can't model multipart today, so this stays hand-rolled — but the
+	 * response shape is still typed from the generated schema.
+	 */
+	async uploadSkill(
+		skillKey: string,
+		file: Buffer,
+		filename: string,
+	): Promise<SkillUploadResponse> {
+		return this.multipartPost<SkillUploadResponse>(
+			"/api/skills/upload",
+			{ skill_key: skillKey },
+			file,
+			filename,
+		);
+	}
+
+	/** Upload per-session content JSON to `/api/sessions/{id}/upload`. */
+	async uploadSessionContent(
+		localSessionId: string,
+		file: Buffer,
+		filename: string,
+	): Promise<SessionUploadResponse> {
+		return this.multipartPost<SessionUploadResponse>(
+			`/api/sessions/${encodeURIComponent(localSessionId)}/upload`,
+			{},
+			file,
+			filename,
+		);
+	}
+
+	/** Shared multipart POST; never retried (non-idempotent). */
+	private async multipartPost<T>(
 		path: string,
 		fields: Record<string, string>,
 		file: Buffer,
@@ -218,14 +263,19 @@ export class ApiClient {
 /**
  * Unwrap an openapi-fetch result: throw `ApiError` on non-2xx, return
  * `data` otherwise. Mirrors the web helper so call sites look identical.
+ *
+ * The overload set lets 2xx-with-no-body responses (204, void return)
+ * compile cleanly without forcing the caller to cast.
  */
+export function unwrap<T>(result: { data: T; error?: undefined; response: Response }): T;
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T;
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
 	if (result.error !== undefined) {
 		throw new ApiError({
 			status: result.response.status,
-			body: extractDetail(result.error),
+			body: extractApiDetail(result.error),
 			hint: hintFor(result.response.status),
 		});
 	}
-	return (result.data as T) ?? (undefined as T);
+	return result.data as T;
 }

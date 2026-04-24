@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
+from app.core.query_utils import like_needle
 from app.models.skill import Skill
 from app.schemas.common import Paginated
 from app.schemas.skill import (
@@ -59,12 +60,12 @@ async def list_skills(
         .order_by(Skill.skill_key)
     )
     if q:
-        needle = f"%{q}%"
+        needle = like_needle(q)
         base = base.where(
             or_(
-                Skill.skill_key.ilike(needle),
-                Skill.name.ilike(needle),
-                Skill.description.ilike(needle),
+                Skill.skill_key.ilike(needle, escape="\\"),
+                Skill.name.ilike(needle, escape="\\"),
+                Skill.description.ilike(needle, escape="\\"),
             )
         )
 

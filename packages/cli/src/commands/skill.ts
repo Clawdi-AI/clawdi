@@ -127,12 +127,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
 		}
 	}
 
-	const result = await api.uploadFile<{ skill_key: string; version: number; file_count: number }>(
-		"/api/skills/upload",
-		{ skill_key: skillKey },
-		tarBytes,
-		`${skillKey}.tar.gz`,
-	);
+	const result = await api.uploadSkill(skillKey, tarBytes, `${skillKey}.tar.gz`);
 
 	console.log(
 		chalk.green(

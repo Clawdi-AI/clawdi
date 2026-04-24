@@ -3,7 +3,20 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+import { type CapturedRequest, jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+
+/** Narrow the JSON-parsed request body of `/api/sessions/batch`. */
+interface BatchSession {
+	environment_id: string;
+	local_session_id: string;
+	input_tokens?: number;
+	cache_read_tokens?: number;
+	project_path?: string | null;
+}
+function batchSessions(c: CapturedRequest | undefined): BatchSession[] {
+	const body = c?.body as { sessions?: BatchSession[] } | undefined;
+	return body?.sessions ?? [];
+}
 
 type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
 
@@ -57,8 +70,7 @@ describe("push — Hermes fixture", () => {
 		expect(batchCall).toBeDefined();
 		expect(batchCall?.method).toBe("POST");
 		// Adapter filters out s-empty; s-json comes first by started_at DESC.
-		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batchCall?.body as any).sessions as Array<any>;
+		const sessions = batchSessions(batchCall);
 		expect(sessions).toHaveLength(2);
 		expect(sessions.map((s) => s.local_session_id).sort()).toEqual(["s-json", "s-plain"]);
 		// environment_id was seeded via seedAuthAndEnv
@@ -136,8 +148,7 @@ describe("push — Claude Code fixture", () => {
 
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
 		expect(batch).toBeDefined();
-		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch?.body as any).sessions as Array<any>;
+		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.local_session_id).toBe("11111111-2222-3333-4444-555555555555");
 		expect(sessions[0]?.input_tokens).toBe(30);
@@ -160,8 +171,7 @@ describe("push — Codex fixture", () => {
 		}
 
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
-		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch?.body as any).sessions as Array<any>;
+		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.input_tokens).toBe(15);
 		expect(sessions[0]?.output_tokens).toBe(7);
@@ -184,8 +194,7 @@ describe("push — OpenClaw fixture", () => {
 		}
 
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
-		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch?.body as any).sessions as Array<any>;
+		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.local_session_id).toBe("oc-session-001");
 		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");

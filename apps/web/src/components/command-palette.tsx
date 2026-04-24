@@ -83,7 +83,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 		return () => window.removeEventListener("keydown", handler);
 	}, []);
 
-	const value = useMemo(() => ({ open, setOpen }), [open]);
+	const value = useMemo(() => ({ open, setOpen }), [open, setOpen]);
 
 	return (
 		<PaletteContext.Provider value={value}>
