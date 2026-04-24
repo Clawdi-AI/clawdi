@@ -102,7 +102,7 @@ jobs:
           - target: web
             filter: "web"
           - target: cli
-            filter: "@clawdi-cloud/cli"
+            filter: "@clawdi/cli"
           - target: shared
             filter: "@clawdi-cloud/shared"
     steps:
