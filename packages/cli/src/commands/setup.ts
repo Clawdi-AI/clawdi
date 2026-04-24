@@ -187,11 +187,10 @@ async function registerMcpServer(agentType: AgentType) {
 		// claude command not found or failed, try registering anyway
 	}
 
-	const cliPath = resolve(import.meta.dirname, "../../src/index.ts");
 	const mcpConfig = JSON.stringify({
 		type: "stdio",
-		command: "bun",
-		args: ["run", cliPath, "mcp"],
+		command: "clawdi",
+		args: ["mcp"],
 	});
 
 	try {
@@ -261,8 +260,6 @@ async function registerHermesMcp() {
 }
 
 function registerCodexMcp() {
-	const cliPath = resolve(import.meta.dirname, "../../src/index.ts");
-
 	try {
 		const list = execSync("codex mcp list", { encoding: "utf-8", stdio: "pipe" });
 		if (/^\s*clawdi\b/m.test(list)) {
@@ -274,11 +271,11 @@ function registerCodexMcp() {
 	}
 
 	try {
-		execSync(`codex mcp add clawdi -- bun run ${cliPath} mcp`, { stdio: "pipe" });
+		execSync("codex mcp add clawdi -- clawdi mcp", { stdio: "pipe" });
 		console.log(chalk.green("✓ MCP server registered in Codex"));
 	} catch {
 		console.log(chalk.yellow("⚠ Could not auto-register MCP server in Codex."));
-		console.log(chalk.gray(`  Run manually: codex mcp add clawdi -- bun run ${cliPath} mcp`));
+		console.log(chalk.gray("  Run manually: codex mcp add clawdi -- clawdi mcp"));
 	}
 }
 

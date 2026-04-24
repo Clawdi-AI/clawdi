@@ -78,7 +78,3 @@ clawdi doctor         # a single-shot diagnostic
 ```
 
 It verifies auth, API reachability, each known agent's install path, vault resolution, and MCP connector config — with actionable hints on every failing check.
-
-## Development
-
-Contributing? See [docs/cli-development.md](https://github.com/Clawdi-AI/clawdi-cloud/blob/main/docs/cli-development.md) in the repo.

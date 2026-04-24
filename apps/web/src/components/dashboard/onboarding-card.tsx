@@ -24,12 +24,12 @@ function useAgentPrompt() {
 const CLI_STEPS = [
 	{
 		title: "Install CLI",
-		code: "bun add -g @clawdi-cloud/cli",
-		description: "Or use npm: npm install -g @clawdi-cloud/cli",
+		code: "bun add -g @clawdi/cli",
+		description: "Or use npm: npm install -g @clawdi/cli",
 	},
 	{
 		title: "Log in",
-		code: "clawdi login",
+		code: "clawdi auth login",
 		description: "Enter your API key from Settings → API Keys",
 	},
 	{
@@ -39,7 +39,7 @@ const CLI_STEPS = [
 	},
 	{
 		title: "Sync sessions",
-		code: "clawdi sync up",
+		code: "clawdi push --modules sessions",
 		description: "Upload your conversation history to the cloud",
 	},
 ];
