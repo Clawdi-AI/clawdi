@@ -1,11 +1,18 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { AppSidebar } from "@/components/app-sidebar";
-import { Separator } from "@/components/ui/separator";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SiteHeader } from "@/components/site-header";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { isEmailAllowed } from "@/lib/email-allowlist";
+
+// Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
+// SidebarInset. Below that width the constraint is inert; above it (27"/4K
+// external monitors) the main pane stops stretching into unreadable row
+// widths and overly-thin grids. shadcn's dashboard-01 reference omits this
+// cap because its demo environment is a standard viewport — productionising
+// it means adding one.
+const CONTENT_MAX_WIDTH = "max-w-[96rem]";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
 	// Private-beta gate. Only runs when ALLOWED_EMAIL_DOMAINS is set; otherwise
@@ -28,18 +35,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
 			}
 		>
 			<AppSidebar />
-			{/* 1rem = SidebarInset's md:m-2 top+bottom. */}
+			{/* 1rem = SidebarInset's md:m-2 top+bottom. Without this cap the inset
+			    scrolls the whole page and the sticky SiteHeader has nothing to
+			    pin against. */}
 			<SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-y-auto">
-				<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
-					<div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-						<SidebarTrigger className="-ml-1" />
-						<Separator orientation="vertical" className="mx-2 data-[orientation=vertical]:h-4" />
-						<AppBreadcrumb />
-					</div>
-				</header>
+				<SiteHeader />
 				<div className="flex flex-1 flex-col">
 					<div className="@container/main flex flex-1 flex-col gap-2">
-						<div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">{children}</div>
+						<div
+							className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-6 md:py-6`}
+						>
+							{children}
+						</div>
 					</div>
 				</div>
 			</SidebarInset>
