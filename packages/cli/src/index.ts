@@ -301,7 +301,6 @@ memoryCmd
 	.option("--json", "Output as JSON")
 	.option("--limit <n>", "Max number of memories")
 	.option("--category <cat>", "Filter by category (fact/preference/pattern/decision/context)")
-	.option("--since <date>", "Only memories after this date")
 	.action(async (opts) => {
 		const { memoryList } = await import("./commands/memory.js");
 		await memoryList(opts);
@@ -313,7 +312,6 @@ memoryCmd
 	.option("--json", "Output as JSON")
 	.option("--limit <n>", "Max number of memories")
 	.option("--category <cat>", "Filter by category")
-	.option("--since <date>", "Only memories after this date")
 	.addHelpText(
 		"after",
 		'\nExamples:\n  $ clawdi memory search redis\n  $ clawdi memory search "typing styles" --limit 5',

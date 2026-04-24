@@ -226,7 +226,10 @@ export class ApiClient {
 	): Promise<T> {
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
-		formData.append("file", new Blob([file]), filename);
+		// Buffer → Uint8Array: Buffer's `ArrayBufferLike` doesn't satisfy
+		// `BlobPart` under strict TS (`SharedArrayBuffer` vs `ArrayBuffer`).
+		// Wrapping narrows it without a cast.
+		formData.append("file", new Blob([new Uint8Array(file)]), filename);
 
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);

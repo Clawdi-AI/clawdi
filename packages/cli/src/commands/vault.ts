@@ -12,6 +12,19 @@ function requireAuth() {
 	}
 }
 
+/**
+ * Create a vault if it doesn't exist. 409 is the common "already exists"
+ * response and is expected when the caller is about to PUT items into a
+ * pre-existing vault; everything else propagates as a normal ApiError so
+ * users see auth/network failures instead of a silent skip.
+ */
+async function ensureVault(api: ApiClient, slug: string, name = slug) {
+	const created = await api.POST("/api/vault", { body: { slug, name } });
+	if (created.error !== undefined && created.response.status !== 409) {
+		unwrap(created);
+	}
+}
+
 export async function vaultSet(key: string) {
 	requireAuth();
 
@@ -24,13 +37,7 @@ export async function vaultSet(key: string) {
 	}
 
 	const api = new ApiClient();
-
-	// 409 means the vault already exists — that's the common case when setting
-	// keys on an existing vault. Anything else bubbles up.
-	const created = await api.POST("/api/vault", { body: { slug: vaultSlug, name: vaultSlug } });
-	if (created.error !== undefined && created.response.status !== 409) {
-		unwrap(created);
-	}
+	await ensureVault(api, vaultSlug);
 
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
@@ -45,9 +52,13 @@ export async function vaultSet(key: string) {
 export async function vaultList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const { items: vaults } = unwrap(
-		await api.GET("/api/vault", { params: { query: { page_size: 100 } } }),
+	// `page_size=100` covers ~all realistic tenants; if someone crosses it we
+	// surface the overflow below rather than silently dropping vaults.
+	const VAULT_PAGE_SIZE = 100;
+	const page = unwrap(
+		await api.GET("/api/vault", { params: { query: { page_size: VAULT_PAGE_SIZE } } }),
 	);
+	const vaults = page.items;
 
 	const fetchItems = (slug: string) =>
 		api.GET("/api/vault/{slug}/items", { params: { path: { slug } } }).then(unwrap);
@@ -62,6 +73,12 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	if (vaults.length === 0) {
 		console.log(chalk.gray("No vaults."));
 		return;
+	}
+
+	if (page.total > vaults.length) {
+		console.log(
+			chalk.yellow(`  Showing ${vaults.length} of ${page.total} vaults (first page only).`),
+		);
 	}
 
 	for (const v of vaults) {
@@ -86,10 +103,7 @@ export async function vaultImport(file: string) {
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	const created = await api.POST("/api/vault", { body: { slug: "default", name: "Default" } });
-	if (created.error !== undefined && created.response.status !== 409) {
-		unwrap(created);
-	}
+	await ensureVault(api, "default", "Default");
 
 	const fields: Record<string, string> = {};
 	for (const line of lines) {

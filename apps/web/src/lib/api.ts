@@ -7,9 +7,6 @@ import { useMemo } from "react";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-/** Build a full backend URL — for raw fetch (streaming, non-JSON bodies). */
-export const apiUrl = (path: string): string => `${API_URL}${path}`;
-
 export class ApiError extends Error {
 	constructor(
 		public status: number,
