@@ -76,6 +76,12 @@ export default function DashboardPage() {
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
+	// Zero-state promotion: when the user has no agents yet, the primary CTA
+	// (connect one) belongs in the hero slot — not tucked into the sidebar
+	// behind an empty "Agents" card that tells them to "use the panel below".
+	const hasAgents = !envsLoading && (environments?.length ?? 0) > 0;
+	const isEmptyState = !envsLoading && (environments?.length ?? 0) === 0;
+
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader title="Overview" description="Your agent cloud at a glance." />
@@ -83,7 +89,11 @@ export default function DashboardPage() {
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity */}
 				<div className="space-y-4 lg:col-span-2">
-					<AgentsCard environments={environments} isLoading={envsLoading} />
+					{isEmptyState ? (
+						<OnboardingCard />
+					) : (
+						<AgentsCard environments={environments} isLoading={envsLoading} />
+					)}
 
 					<Card>
 						<CardHeader>
@@ -144,10 +154,11 @@ export default function DashboardPage() {
 					</Card>
 				</div>
 
-				{/* Right column — primary action (Add an agent) on top, then
-				    inventory + weekly KPIs below. */}
+				{/* Right column — once agents exist, "Connect another" lives here
+				    as a secondary action. Empty state hides it entirely because
+				    the hero card above is already the onboarding. */}
 				<div className="space-y-4">
-					<OnboardingCard />
+					{hasAgents ? <OnboardingCard /> : null}
 					<ResourcesCard stats={stats} />
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>

@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import type { SessionDetail, SessionMessage } from "@/lib/api-schemas";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
@@ -50,6 +50,14 @@ export default function SessionDetailPage() {
 			if (!token) throw new Error("Not authenticated");
 			return apiFetch<SessionDetail>(`/api/sessions/${id}`, token);
 		},
+		// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
+		// recover on retry and the default 3× retry makes the page hang in
+		// "Loading..." for seconds before the user learns the URL is bogus.
+		retry: (failureCount, err) => {
+			const status = err instanceof ApiError ? err.status : 0;
+			if (status >= 400 && status < 500) return false;
+			return failureCount < 2;
+		},
 	});
 
 	const {
@@ -64,6 +72,11 @@ export default function SessionDetailPage() {
 			return apiFetch<SessionMessage[]>(`/api/sessions/${id}/content`, token);
 		},
 		enabled: !!session?.has_content,
+		retry: (failureCount, err) => {
+			const status = err instanceof ApiError ? err.status : 0;
+			if (status >= 400 && status < 500) return false;
+			return failureCount < 2;
+		},
 	});
 
 	if (isSessionLoading) {
