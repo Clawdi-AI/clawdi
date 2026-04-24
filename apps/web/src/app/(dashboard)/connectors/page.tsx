@@ -16,18 +16,22 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { ConnectorApp, ConnectorConnection } from "@/lib/api-schemas";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 const PAGE_SIZE = 30;
 
+const CONNECTOR_CARD_CLASS = "gap-0 rounded-lg border-border/60 py-0 shadow-none";
+const CONNECTOR_CARD_CONTENT_CLASS = "flex items-start gap-3 p-3";
+
 function ConnectorCardSkeleton() {
 	return (
-		<Card>
-			<CardContent className="flex items-center gap-3 py-3">
-				<Skeleton className="size-10 rounded-lg" />
+		<Card className={CONNECTOR_CARD_CLASS}>
+			<CardContent className={CONNECTOR_CARD_CONTENT_CLASS}>
+				<Skeleton className="size-10 shrink-0 rounded-lg" />
 				<div className="min-w-0 flex-1 space-y-1.5">
 					<Skeleton className="h-3.5 w-28" />
-					<Skeleton className="h-3 w-44" />
+					<Skeleton className="h-3 w-full" />
+					<Skeleton className="h-3 w-3/4" />
 				</div>
 			</CardContent>
 		</Card>
@@ -163,12 +167,19 @@ export default function ConnectorsPage() {
 							const isConnected = connectedNames.has(app.name);
 							return (
 								<Link key={app.name} href={`/connectors/${app.name}`} className="group">
-									<Card className="h-full transition-all hover:border-ring/50 hover:bg-accent/30">
-										<CardContent className="flex h-full items-center gap-3 py-3">
+									<Card
+										className={cn(
+											CONNECTOR_CARD_CLASS,
+											"h-full transition-colors hover:border-ring/50 hover:bg-accent/40",
+										)}
+									>
+										<CardContent className={cn(CONNECTOR_CARD_CONTENT_CLASS, "h-full")}>
 											<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />
 											<div className="min-w-0 flex-1">
 												<div className="flex items-center gap-1.5">
-													<span className="truncate text-sm font-medium">{app.display_name}</span>
+													<span className="truncate text-sm font-medium leading-5">
+														{app.display_name}
+													</span>
 													{isConnected ? (
 														<Check
 															className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500"
@@ -176,7 +187,7 @@ export default function ConnectorsPage() {
 														/>
 													) : null}
 												</div>
-												<p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+												<p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
 													{app.description}
 												</p>
 											</div>
