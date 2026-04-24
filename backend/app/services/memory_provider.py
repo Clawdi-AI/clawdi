@@ -475,10 +475,12 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
             return BuiltinProvider(db, embedder=resolve_embedder())
         # Decrypt if stored with enc: prefix; legacy plaintext passes through.
         # Fall back to builtin on any decrypt failure so a single corrupt row
-        # doesn't 500 every memory request for that user.
+        # (or a misconfigured VAULT_ENCRYPTION_KEY at the process level) doesn't
+        # 500 every memory request. decrypt_field raises ValueError on malformed
+        # ciphertext and RuntimeError when the key itself is missing/invalid.
         try:
             api_key = decrypt_field(raw_key)
-        except ValueError as e:
+        except (ValueError, RuntimeError, TypeError) as e:
             log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
             return BuiltinProvider(db, embedder=resolve_embedder())
         return Mem0Provider(api_key=api_key)

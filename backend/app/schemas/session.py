@@ -1,12 +1,29 @@
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
+
+# local_session_id flows straight into a file-store key
+# (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
+# so a malicious client can't smuggle `/` or `..` and escape their own tenant
+# prefix. Claude Code / Codex session IDs are UUIDs or short slugs in practice;
+# we accept dashes, underscores, dots, and alphanumerics up to 200 chars.
+_LOCAL_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$")
+SafeLocalSessionId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=200,
+        pattern=_LOCAL_SESSION_ID_RE.pattern,
+    ),
+]
 
 
 class SessionCreate(BaseModel):
     environment_id: str
-    local_session_id: str
+    local_session_id: SafeLocalSessionId
     project_path: str | None = None
     started_at: datetime
     ended_at: datetime | None = None

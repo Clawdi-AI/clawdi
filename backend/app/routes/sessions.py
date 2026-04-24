@@ -1,8 +1,9 @@
+import logging
 import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from app.schemas.session import (
 from app.services.file_store import get_file_store
 
 router = APIRouter(tags=["sessions"])
+log = logging.getLogger(__name__)
 
 file_store = get_file_store()
 
@@ -187,7 +189,9 @@ async def get_session_detail(
 
 @router.post("/api/sessions/{local_session_id}/upload")
 async def upload_session_content(
-    local_session_id: str,
+    # Constrained to safe filename chars so it cannot escape the
+    # `sessions/{user_id}/` prefix in the file-store key below.
+    local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
@@ -240,13 +244,19 @@ async def get_session_content(
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found")
 
+    # Session content was written by the CLI; if it's not valid JSON or not
+    # the expected shape, something went wrong on upload — surface a generic
+    # server error to the client and log the detail server-side so we don't
+    # leak stored-data shape assumptions.
     try:
         raw = json.loads(data)
     except json.JSONDecodeError:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Malformed session content")
+        log.exception("session %s content is not valid JSON", session_id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
     if not isinstance(raw, list):
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Session content must be a list")
+        log.error("session %s content is not a JSON array (got %s)", session_id, type(raw).__name__)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
     return [SessionMessageResponse.model_validate(m) for m in raw]
 
