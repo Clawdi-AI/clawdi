@@ -58,5 +58,5 @@ for worker in 70 71; do
 done
 
 # ---------------------------------------------------------------------------
-green "Deploy $AFTER_SHA complete. Verify: curl https://api.cloud.clawdi.ai/health"
+green "Deploy $AFTER_SHA complete. Verify: curl https://cloud-api.clawdi.ai/health"
 # ---------------------------------------------------------------------------

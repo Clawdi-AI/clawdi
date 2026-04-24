@@ -5,7 +5,7 @@ Clawdi Cloud deploys in two halves that talk over HTTPS:
 | Piece | Where | How |
 |---|---|---|
 | **Next.js dashboard** | Vercel, `cloud.clawdi.ai` | `vercel deploy` from `apps/web/` (or GitHub integration) |
-| **FastAPI backend** | `redpill` (ssh `clawdi`), `api.cloud.clawdi.ai` | supervisor + uv + nginx + certbot (mirrors the `clawdi` deploy pattern on the same box) |
+| **FastAPI backend** | `redpill` (ssh `clawdi`), `cloud-api.clawdi.ai` | supervisor + uv + nginx + certbot (mirrors the `clawdi` deploy pattern on the same box) |
 | **Postgres** | Same redpill box, system `postgresql@16-main` service | Reuses the already-running pg16; dedicated `clawdi_cloud_prod` DB + role |
 
 No Docker, no k8s. Backend runs directly on the host under the `phala` user, managed by the existing supervisord.
@@ -14,14 +14,66 @@ No Docker, no k8s. Backend runs directly on the host under the `phala` user, man
 
 ## First-time setup (backend)
 
-Done **once**, after DNS for `api.cloud.clawdi.ai` points at the redpill box.
+Done **once**, after DNS for the API domain points at the redpill box. There's no committed setup script — the steps are deliberately manual so you can stop and inspect between them.
 
 ```bash
-# From a local clone of the repo.
-ssh clawdi 'bash -s' < deploy/setup.sh
-```
+ssh clawdi
+sudo mkdir -p /opt/clawdi-cloud && sudo chown phala:phala /opt/clawdi-cloud
 
-The script stops and tells you to edit `.env` the first time — fill in the secrets (see below), then rerun. Idempotent, so it picks up where it stopped.
+# 1. Install pgvector on the shared pg16 cluster (pg_trgm is already there):
+sudo apt-get update && sudo apt-get install -y postgresql-16-pgvector
+
+# 2. Provision the DB and role:
+sudo -u postgres createuser --pwprompt clawdi_cloud_prod
+sudo -u postgres createdb -O clawdi_cloud_prod clawdi_cloud_prod
+sudo -u postgres psql -d clawdi_cloud_prod \
+    -c "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;"
+
+# 3. Generate a deploy key so redpill can pull from the INTERNAL repo:
+ssh-keygen -t ed25519 -f ~/.ssh/clawdi_cloud_deploy -N ""
+cat >> ~/.ssh/config <<'CFG'
+
+Host github-clawdi-cloud
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/clawdi_cloud_deploy
+    IdentitiesOnly yes
+CFG
+cat ~/.ssh/clawdi_cloud_deploy.pub  # paste at
+# https://github.com/Clawdi-AI/clawdi-cloud/settings/keys/new (read-only)
+
+# 4. Clone:
+git clone --branch main \
+    git@github-clawdi-cloud:Clawdi-AI/clawdi-cloud.git /opt/clawdi-cloud
+
+# 5. Install Python deps + seed data dirs:
+cd /opt/clawdi-cloud/backend
+~/.local/bin/uv sync --frozen --no-dev
+mkdir -p data/files data/fastembed-cache
+
+# 6. Create .env with the secrets listed below (chmod 600), then run
+#    migrations:
+sudoedit /opt/clawdi-cloud/backend/.env
+chmod 600 /opt/clawdi-cloud/backend/.env
+~/.local/bin/uv run alembic upgrade head
+
+# 7. Install supervisor unit + nginx vhost:
+sudo cp /opt/clawdi-cloud/deploy/supervisor/clawdi-cloud.conf /etc/supervisor/conf.d/
+sudo supervisorctl reread && sudo supervisorctl update
+sudo supervisorctl start clawdi-cloud-backend:
+
+sudo cp /opt/clawdi-cloud/deploy/nginx/cloud-api.clawdi.ai.conf /etc/nginx/sites-available/
+sudo ln -sfn /etc/nginx/sites-available/cloud-api.clawdi.ai.conf \
+             /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 8. Issue TLS (DNS for the API domain must already resolve here):
+sudo certbot --nginx -d cloud-api.clawdi.ai \
+    --non-interactive --agree-tos --email ops@clawdi.ai
+
+# 9. Verify:
+curl -fsS https://cloud-api.clawdi.ai/health
+```
 
 ### Secrets to put in `/opt/clawdi-cloud/backend/.env`
 
@@ -92,14 +144,14 @@ Dashboard ships to Vercel from `apps/web/`. Once:
     CLERK_SECRET_KEY=sk_live_...
     NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
     NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
-    NEXT_PUBLIC_API_URL=https://api.cloud.clawdi.ai
+    NEXT_PUBLIC_API_URL=https://cloud-api.clawdi.ai
     ```
 
 4. Add `cloud.clawdi.ai` as a custom domain; Vercel handles TLS.
 5. Every push to `main` auto-deploys preview; promote to prod from the PR.
 
 Don't put any server-side secrets here. The Vercel deployment is a thin
-Next.js client — all privileged work happens on `api.cloud.clawdi.ai`.
+Next.js client — all privileged work happens on `cloud-api.clawdi.ai`.
 
 ---
 
