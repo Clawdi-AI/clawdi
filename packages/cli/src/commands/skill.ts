@@ -54,7 +54,7 @@ function countFiles(dir: string): number {
 export async function skillList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const skills = await api.get<SkillRow[]>("/api/skills");
+	const { items: skills } = await api.get<{ items: SkillRow[] }>("/api/skills?page_size=200");
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(skills, null, 2));

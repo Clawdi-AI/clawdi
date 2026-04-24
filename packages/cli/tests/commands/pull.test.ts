@@ -68,7 +68,7 @@ content
 			{
 				method: "GET",
 				path: "/api/skills",
-				response: () => jsonResponse([{ skill_key: "demo", name: "demo" }]),
+				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
 			},
 		]);
 
@@ -83,7 +83,7 @@ content
 		expect(readFileSync(skillMd, "utf-8")).toContain("description: pulled from cloud");
 
 		// Both list + download should have been called
-		expect(captured.some((c) => c.path === "/api/skills" && c.method === "GET")).toBe(true);
+		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
 		expect(captured.some((c) => c.path === "/api/skills/demo/download")).toBe(true);
 	});
 
@@ -94,7 +94,7 @@ content
 			{
 				method: "GET",
 				path: "/api/skills",
-				response: () => jsonResponse([{ skill_key: "demo", name: "demo" }]),
+				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
 			},
 		]);
 		try {
@@ -104,7 +104,7 @@ content
 		}
 
 		// The list is needed to show the summary; the download must not fire.
-		expect(captured.some((c) => c.path === "/api/skills" && c.method === "GET")).toBe(true);
+		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
 		expect(captured.some((c) => c.path.endsWith("/download"))).toBe(false);
 		// Nothing written locally
 		expect(existsSync(join(tmpHome, ".hermes", "skills", "demo", "SKILL.md"))).toBe(
@@ -116,7 +116,7 @@ content
 	it("cloud returns empty list → short-circuit", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: "/api/skills", response: () => jsonResponse([]) },
+			{ method: "GET", path: "/api/skills", response: () => jsonResponse({ items: [] }) },
 		]);
 		try {
 			await pull({ agent: "hermes" });
@@ -160,7 +160,7 @@ description: new
 			{
 				method: "GET",
 				path: "/api/skills",
-				response: () => jsonResponse([{ skill_key: "fresh", name: "fresh" }]),
+				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);
 		try {
@@ -192,7 +192,7 @@ description: new
 			{
 				method: "GET",
 				path: "/api/skills",
-				response: () => jsonResponse([{ skill_key: "fresh", name: "fresh" }]),
+				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);
 		try {
@@ -224,7 +224,7 @@ description: new
 			{
 				method: "GET",
 				path: "/api/skills",
-				response: () => jsonResponse([{ skill_key: "fresh", name: "fresh" }]),
+				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);
 		try {

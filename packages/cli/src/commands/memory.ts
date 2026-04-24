@@ -10,6 +10,13 @@ interface MemoryRow {
 	created_at: string;
 }
 
+interface Paginated<T> {
+	items: T[];
+	total: number;
+	page: number;
+	page_size: number;
+}
+
 function requireAuth() {
 	if (!isLoggedIn()) {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
@@ -17,6 +24,8 @@ function requireAuth() {
 	}
 }
 
+// Backend expects `page_size` + `page`. Accept the old `limit` flag for
+// backward compatibility with existing CLI invocations but map it through.
 function buildQuery(opts: {
 	limit?: string;
 	category?: string;
@@ -25,7 +34,7 @@ function buildQuery(opts: {
 }): string {
 	const params = new URLSearchParams();
 	if (opts.q) params.set("q", opts.q);
-	if (opts.limit) params.set("limit", opts.limit);
+	if (opts.limit) params.set("page_size", opts.limit);
 	if (opts.category) params.set("category", opts.category);
 	if (opts.since) params.set("since", opts.since);
 	const qs = params.toString();
@@ -53,7 +62,8 @@ export async function memoryList(
 ) {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<MemoryRow[]>(`/api/memories${buildQuery(opts)}`);
+	const page = await api.get<Paginated<MemoryRow>>(`/api/memories${buildQuery(opts)}`);
+	const memories = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));
@@ -66,9 +76,7 @@ export async function memoryList(
 	}
 
 	printRows(memories, false);
-	console.log(
-		chalk.gray(`\n  ${memories.length} memor${memories.length === 1 ? "y" : "ies"} total`),
-	);
+	console.log(chalk.gray(`\n  ${memories.length} of ${page.total} memories`));
 }
 
 export async function memorySearch(
@@ -77,7 +85,10 @@ export async function memorySearch(
 ) {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<MemoryRow[]>(`/api/memories${buildQuery({ ...opts, q: query })}`);
+	const page = await api.get<Paginated<MemoryRow>>(
+		`/api/memories${buildQuery({ ...opts, q: query })}`,
+	);
+	const memories = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));

@@ -59,7 +59,10 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching from cloud...");
 	if (modules.includes("skills")) {
-		cloudSkills = await api.get("/api/skills");
+		const page = await api.get<{ items: Array<{ skill_key: string; name: string }> }>(
+			"/api/skills?page_size=200",
+		);
+		cloudSkills = page.items;
 	}
 	fetchSpinner.stop(
 		`Found ${cloudSkills.length} skill${cloudSkills.length === 1 ? "" : "s"} in cloud`,

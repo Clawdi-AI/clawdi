@@ -53,7 +53,7 @@
       "name": "@clawdi/cli",
       "version": "0.1.0",
       "bin": {
-        "clawdi": "./bin/clawdi.mjs",
+        "clawdi": "bin/clawdi.mjs",
       },
       "dependencies": {
         "@clack/prompts": "^1.2.0",
