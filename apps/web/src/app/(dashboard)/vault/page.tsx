@@ -127,10 +127,12 @@ export default function VaultPage() {
 				</div>
 			) : (
 				<EmptyState
+					icon={Key}
+					title="No vaults yet"
 					description={
 						<>
-							No vaults yet. Create one above or run{" "}
-							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">clawdi vault set KEY</code>
+							Create one above, or run{" "}
+							<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi vault set KEY</code>
 						</>
 					}
 				/>

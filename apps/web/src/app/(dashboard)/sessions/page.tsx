@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, MessageSquare } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
@@ -62,11 +62,12 @@ export default function SessionsPage() {
 				</div>
 			) : (
 				<EmptyState
+					icon={MessageSquare}
+					title="No sessions yet"
 					description={
 						<>
-							No sessions yet. Run{" "}
-							<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> to
-							sync.
+							Run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> on
+							a connected agent to start syncing.
 						</>
 					}
 				/>

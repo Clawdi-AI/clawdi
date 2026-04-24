@@ -4,9 +4,9 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
-	sm: { box: "size-9", img: "size-5", text: "text-sm", radius: "rounded-lg" },
-	md: { box: "size-11", img: "size-6", text: "text-xl", radius: "rounded-xl" },
-	lg: { box: "size-14", img: "size-8", text: "text-3xl", radius: "rounded-2xl" },
+	sm: { box: "size-9", pad: "p-1", text: "text-sm", radius: "rounded-lg" },
+	md: { box: "size-10", pad: "p-1.5", text: "text-base", radius: "rounded-lg" },
+	lg: { box: "size-14", pad: "p-2", text: "text-2xl", radius: "rounded-xl" },
 } as const;
 
 export function ConnectorIcon({
@@ -26,13 +26,34 @@ export function ConnectorIcon({
 			.charAt(0)
 			.toUpperCase() || "?";
 
+	// Logo: bordered white tile with logo filling via object-contain + small
+	// breathing padding. Lets brand colors stay themselves instead of fighting
+	// a gray muted backdrop.
+	if (logo && !imgError) {
+		return (
+			<div
+				className={cn(
+					"flex shrink-0 items-center justify-center overflow-hidden border bg-background",
+					s.box,
+					s.radius,
+				)}
+			>
+				<img
+					src={logo}
+					alt=""
+					className={cn("h-full w-full object-contain", s.pad)}
+					onError={() => setImgError(true)}
+				/>
+			</div>
+		);
+	}
+
+	// Fallback: muted initial tile.
 	return (
-		<div className={cn("flex shrink-0 items-center justify-center bg-muted", s.box, s.radius)}>
-			{logo && !imgError ? (
-				<img src={logo} alt="" className={cn(s.img, "rounded")} onError={() => setImgError(true)} />
-			) : (
-				<span className={cn("font-semibold text-muted-foreground", s.text)}>{letter}</span>
-			)}
+		<div
+			className={cn("flex shrink-0 items-center justify-center border bg-muted", s.box, s.radius)}
+		>
+			<span className={cn("font-semibold text-muted-foreground", s.text)}>{letter}</span>
 		</div>
 	);
 }

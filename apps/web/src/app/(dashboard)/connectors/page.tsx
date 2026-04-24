@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -23,11 +23,11 @@ const PAGE_SIZE = 30;
 function ConnectorCardSkeleton() {
 	return (
 		<Card>
-			<CardContent className="flex items-center gap-4 py-4">
-				<Skeleton className="size-11 rounded-xl" />
-				<div className="min-w-0 flex-1 space-y-2">
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="h-4 w-44" />
+			<CardContent className="flex items-center gap-3 py-3">
+				<Skeleton className="size-10 rounded-lg" />
+				<div className="min-w-0 flex-1 space-y-1.5">
+					<Skeleton className="h-3.5 w-28" />
+					<Skeleton className="h-3 w-44" />
 				</div>
 			</CardContent>
 		</Card>
@@ -141,40 +141,42 @@ export default function ConnectorsPage() {
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading ? (
-				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					{Array.from({ length: 12 }).map((_, i) => (
+				<div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+					{Array.from({ length: 16 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
 					))}
 				</div>
 			) : filtered.length === 0 ? (
 				<EmptyState
+					icon={Plug}
+					title={query ? "No matches" : "No connectors available"}
 					description={
 						query
-							? `No connectors matching "${query}"`
-							: "No connectors available. Configure COMPOSIO_API_KEY."
+							? `Nothing matches "${query}".`
+							: "Configure COMPOSIO_API_KEY on the backend to enable connectors."
 					}
 				/>
 			) : (
 				<>
-					<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					<div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 						{paged.map((app) => {
 							const isConnected = connectedNames.has(app.name);
 							return (
 								<Link key={app.name} href={`/connectors/${app.name}`} className="group">
-									<Card className="transition-colors hover:bg-accent/40">
-										<CardContent className="flex items-center gap-4 py-4">
+									<Card className="h-full transition-all hover:border-ring/50 hover:bg-accent/30">
+										<CardContent className="flex h-full items-center gap-3 py-3">
 											<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />
 											<div className="min-w-0 flex-1">
-												<div className="flex items-center gap-2">
-													<span className="truncate text-sm font-semibold">{app.display_name}</span>
+												<div className="flex items-center gap-1.5">
+													<span className="truncate text-sm font-medium">{app.display_name}</span>
 													{isConnected ? (
-														<Badge variant="secondary">
-															<Check />
-															Connected
-														</Badge>
+														<Check
+															className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500"
+															aria-label="Connected"
+														/>
 													) : null}
 												</div>
-												<p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+												<p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
 													{app.description}
 												</p>
 											</div>
@@ -186,34 +188,29 @@ export default function ConnectorsPage() {
 					</div>
 
 					{totalPages > 1 ? (
-						<div className="flex items-center justify-between">
-							<span className="text-xs text-muted-foreground">
+						<div className="flex items-center justify-center gap-2 pt-1">
+							<Button
+								variant="outline"
+								size="icon-sm"
+								onClick={() => setPage((p) => Math.max(0, p - 1))}
+								disabled={page === 0}
+								aria-label="Previous page"
+							>
+								<ChevronLeft className="size-4" />
+							</Button>
+							<span className="px-3 text-xs tabular-nums text-muted-foreground">
 								{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of{" "}
-								{filtered.length}
+								{filtered.length.toLocaleString()}
 							</span>
-							<div className="flex items-center gap-1">
-								<Button
-									variant="outline"
-									size="icon-sm"
-									onClick={() => setPage((p) => Math.max(0, p - 1))}
-									disabled={page === 0}
-									aria-label="Previous page"
-								>
-									<ChevronLeft className="size-4" />
-								</Button>
-								<span className="px-3 text-xs text-muted-foreground">
-									{page + 1} / {totalPages}
-								</span>
-								<Button
-									variant="outline"
-									size="icon-sm"
-									onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-									disabled={page >= totalPages - 1}
-									aria-label="Next page"
-								>
-									<ChevronRight className="size-4" />
-								</Button>
-							</div>
+							<Button
+								variant="outline"
+								size="icon-sm"
+								onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+								disabled={page >= totalPages - 1}
+								aria-label="Next page"
+							>
+								<ChevronRight className="size-4" />
+							</Button>
 						</div>
 					) : null}
 				</>

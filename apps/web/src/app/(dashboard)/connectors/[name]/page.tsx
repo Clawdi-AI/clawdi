@@ -171,6 +171,8 @@ export default function ConnectorDetailPage() {
 
 				{activeConnections.length === 0 ? (
 					<EmptyState
+						fillHeight={false}
+						bordered
 						description="No connected accounts yet."
 						action={
 							<Button onClick={() => connectApp.mutate()} disabled={connectApp.isPending}>

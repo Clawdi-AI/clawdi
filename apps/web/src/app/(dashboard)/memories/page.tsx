@@ -254,10 +254,19 @@ export default function MemoriesPage() {
 				</div>
 			) : (
 				<EmptyState
+					icon={Brain}
+					title={searchQuery || apiCategory ? "No matches" : "No memories yet"}
 					description={
-						searchQuery || apiCategory
-							? "No memories match your search."
-							: 'No memories yet. Add one above or use `clawdi memory add "..."`'
+						searchQuery || apiCategory ? (
+							"Try a different search or category."
+						) : (
+							<>
+								Add one above, or run{" "}
+								<code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+									clawdi memory add "..."
+								</code>
+							</>
+						)
 					}
 				/>
 			)}

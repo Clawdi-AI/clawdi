@@ -369,11 +369,14 @@ function MessagesSkeleton() {
 }
 
 function EmptyContent() {
-	return <EmptyState description="No messages in this session." />;
+	return <EmptyState fillHeight={false} description="No messages in this session." />;
 }
 
 function ContentFetchError() {
 	return (
-		<EmptyState description="Failed to load session content. Check your connection and try refreshing." />
+		<EmptyState
+			fillHeight={false}
+			description="Failed to load session content. Check your connection and try refreshing."
+		/>
 	);
 }

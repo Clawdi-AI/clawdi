@@ -140,6 +140,7 @@ export default function DashboardPage() {
 								</div>
 							) : (
 								<EmptyState
+									fillHeight={false}
 									className="py-6"
 									description={
 										<>

@@ -75,7 +75,10 @@ export function AgentsCard({
 						))}
 					</div>
 				) : (
-					<EmptyState description="No agents registered yet. Use the Add an agent panel below to connect your first machine." />
+					<EmptyState
+						fillHeight={false}
+						description="No agents registered yet. Use the Add an agent panel below to connect your first machine."
+					/>
 				)}
 			</CardContent>
 		</Card>

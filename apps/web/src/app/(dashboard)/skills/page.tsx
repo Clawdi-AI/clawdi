@@ -172,6 +172,7 @@ export default function SkillsPage() {
 					</div>
 				) : (
 					<EmptyState
+						fillHeight={false}
 						description={
 							<>
 								No skills installed yet. Install from below or run{" "}
