@@ -29,6 +29,7 @@ without Bun on `$PATH` — the shipped `bin/clawdi.mjs` uses a
 | `clawdi status [--json]` | Show auth + per-module activity |
 | `clawdi config list/get/set/unset` | Manage `~/.clawdi/config.json` |
 | `clawdi setup [--agent <type>] [-y]` | Detect installed agents, register this machine, install built-in skill, wire up MCP |
+| `clawdi teardown [--agent <type> --all --keep-skill --keep-mcp -y]` | Reverse setup: remove env file, bundled skill, and MCP entry |
 | `clawdi push [--modules --since --project --all --agent --dry-run]` | Upload sessions / skills to the cloud |
 | `clawdi pull [--modules --agent --dry-run]` | Download cloud skills to registered agents |
 | `clawdi skill list [--json]` | List uploaded skills |
@@ -297,7 +298,7 @@ when an upstream agent's on-disk format changes and a test breaks.
 ### Running tests
 
 ```bash
-bun test                              # everything (~145 tests, < 3s)
+bun test                              # everything (~155 tests, < 3s)
 bun test tests/adapters/              # adapter layer only
 bun test tests/commands/push.test.ts  # just push regression
 bun run test:watch                    # watch mode
@@ -316,4 +317,5 @@ Before publishing `@clawdi-cloud/cli`:
    - `clawdi push --agent codex --dry-run`
    - `clawdi push --agent hermes --dry-run` (will warn about no project filter)
    - `clawdi push --agent openclaw --dry-run`
-4. `clawdi mcp` launched from a real Claude Code `.mcp.json`; call `memory_search` and see a response
+4. `clawdi teardown --agent claude_code --yes` then re-run `clawdi setup --agent claude_code --yes` — verifies the inverse cleanly removes env file + bundled skill + MCP entry, and re-setup restores everything
+5. `clawdi mcp` launched from a real Claude Code `.mcp.json`; call `memory_search` and see a response
