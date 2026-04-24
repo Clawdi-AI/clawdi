@@ -2,12 +2,13 @@ import hashlib
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.skill import Skill
+from app.schemas.common import Paginated
 from app.schemas.skill import (
     SkillDeleteResponse,
     SkillDetailResponse,
@@ -47,14 +48,31 @@ def _file_key(user_id, skill_key: str) -> str:
 async def list_skills(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
+    q: str | None = Query(default=None, description="Search name / description / skill_key"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200),
     include_content: bool = Query(default=False),
-) -> list[SkillSummaryResponse]:
-    result = await db.execute(
+) -> Paginated[SkillSummaryResponse]:
+    base = (
         select(Skill)
         .where(Skill.user_id == auth.user_id, Skill.is_active)
         .order_by(Skill.skill_key)
     )
-    skills = result.scalars().all()
+    if q:
+        needle = f"%{q}%"
+        base = base.where(
+            or_(
+                Skill.skill_key.ilike(needle),
+                Skill.name.ilike(needle),
+                Skill.description.ilike(needle),
+            )
+        )
+
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    skills = (
+        (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
+    )
 
     items: list[SkillSummaryResponse] = []
     for s in skills:
@@ -84,7 +102,9 @@ async def list_skills(
             )
         )
 
-    return items
+    return Paginated[SkillSummaryResponse](
+        items=items, total=total, page=page, page_size=page_size
+    )
 
 
 @router.get("/{skill_key}")

@@ -4,13 +4,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
+from app.schemas.common import Paginated
 from app.schemas.session import (
     EnvironmentCreate,
     EnvironmentCreatedResponse,
@@ -92,6 +93,31 @@ async def list_environments(
     ]
 
 
+@router.get("/api/environments/{environment_id}")
+async def get_environment(
+    environment_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    result = await db.execute(
+        select(AgentEnvironment).where(
+            AgentEnvironment.id == environment_id,
+            AgentEnvironment.user_id == auth.user_id,
+        )
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    return EnvironmentResponse(
+        id=str(env.id),
+        machine_name=env.machine_name,
+        agent_type=env.agent_type,
+        agent_version=env.agent_version,
+        os=env.os,
+        last_seen_at=env.last_seen_at,
+    )
+
+
 @router.post("/api/sessions/batch")
 async def batch_create_sessions(
     body: SessionBatchRequest,
@@ -141,25 +167,68 @@ async def batch_create_sessions(
     return SessionBatchResponse(synced=len(inserted))
 
 
+# Allow-list of columns the client can sort by. Hard-coded to avoid SQL
+# injection and so we can promise a stable order for pagination.
+# Note: `tokens` is a synthetic key — the UI shows total tokens (in + out) so
+# sort by the sum expression, not just one column.
+_SESSION_SORT_COLUMNS = {
+    "started_at": Session.started_at,
+    "message_count": Session.message_count,
+    "tokens": Session.input_tokens + Session.output_tokens,
+}
+
+
 @router.get("/api/sessions")
 async def list_sessions(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-    limit: int = Query(default=50, le=200),
-    offset: int = Query(default=0),
+    q: str | None = Query(default=None, description="Fuzzy search on summary/project/id"),
+    agent: str | None = Query(default=None, description="Filter by agent_type"),
+    environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
+    sort: str = Query(default="started_at", pattern=r"^(started_at|message_count|tokens)$"),
+    order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200),
     since: datetime | None = Query(default=None),
-) -> list[SessionListItemResponse]:
-    q = (
-        select(Session, AgentEnvironment.agent_type)
+) -> Paginated[SessionListItemResponse]:
+    base = (
+        select(Session, AgentEnvironment.agent_type, AgentEnvironment.machine_name)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(Session.user_id == auth.user_id)
     )
     if since:
-        q = q.where(Session.started_at >= since)
-    q = q.order_by(Session.started_at.desc()).limit(limit).offset(offset)
+        base = base.where(Session.started_at >= since)
+    if agent:
+        base = base.where(AgentEnvironment.agent_type == agent)
+    if environment_id:
+        base = base.where(Session.environment_id == environment_id)
+    if q:
+        # ILIKE on three columns — kept simple; pg_trgm GIN index on these
+        # columns is on the to-do list for when session volume grows.
+        needle = f"%{q}%"
+        base = base.where(
+            or_(
+                Session.summary.ilike(needle),
+                Session.project_path.ilike(needle),
+                Session.local_session_id.ilike(needle),
+            )
+        )
 
-    result = await db.execute(q)
-    return [_session_to_response(s, agent_type) for s, agent_type in result.all()]
+    sort_col = _SESSION_SORT_COLUMNS[sort]
+    base = base.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    rows = (
+        await db.execute(base.limit(page_size).offset((page - 1) * page_size))
+    ).all()
+
+    return Paginated[SessionListItemResponse](
+        items=[_session_to_response(s, at, mn) for s, at, mn in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/api/sessions/{session_id}")
@@ -169,7 +238,7 @@ async def get_session_detail(
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
     result = await db.execute(
-        select(Session, AgentEnvironment.agent_type)
+        select(Session, AgentEnvironment.agent_type, AgentEnvironment.machine_name)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(
             Session.user_id == auth.user_id,
@@ -180,9 +249,9 @@ async def get_session_detail(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    session, agent_type = row
+    session, agent_type, machine_name = row
     return SessionDetailResponse(
-        **_session_to_response(session, agent_type).model_dump(),
+        **_session_to_response(session, agent_type, machine_name).model_dump(),
         has_content=bool(session.file_key),
     )
 
@@ -261,12 +330,17 @@ async def get_session_content(
     return [SessionMessageResponse.model_validate(m) for m in raw]
 
 
-def _session_to_response(s: Session, agent_type: str | None = None) -> SessionListItemResponse:
+def _session_to_response(
+    s: Session,
+    agent_type: str | None = None,
+    machine_name: str | None = None,
+) -> SessionListItemResponse:
     return SessionListItemResponse(
         id=str(s.id),
         local_session_id=s.local_session_id,
         project_path=s.project_path,
         agent_type=agent_type,
+        machine_name=machine_name,
         started_at=s.started_at,
         ended_at=s.ended_at,
         duration_seconds=s.duration_seconds,

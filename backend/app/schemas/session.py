@@ -73,6 +73,7 @@ class SessionListItemResponse(BaseModel):
     local_session_id: str
     project_path: str | None
     agent_type: str | None
+    machine_name: str | None = None
     started_at: datetime
     ended_at: datetime | None
     duration_seconds: int | None

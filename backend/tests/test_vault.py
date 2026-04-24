@@ -24,7 +24,7 @@ async def test_vault_create_list_and_slug_conflict(client: httpx.AsyncClient):
     assert r2.status_code == 409, r2.text
 
     listing = (await client.get("/api/vault")).json()
-    assert any(v["slug"] == "prod" for v in listing)
+    assert any(v["slug"] == "prod" for v in listing["items"])
 
 
 @pytest.mark.asyncio

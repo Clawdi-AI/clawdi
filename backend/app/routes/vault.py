@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_cli_auth
 from app.core.database import get_session
 from app.models.vault import Vault, VaultItem
+from app.schemas.common import Paginated
 from app.schemas.vault import (
     VaultCreate,
     VaultCreatedResponse,
@@ -29,19 +30,28 @@ router = APIRouter(prefix="/api/vault", tags=["vault"])
 async def list_vaults(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> list[VaultResponse]:
-    result = await db.execute(
-        select(Vault).where(Vault.user_id == auth.user_id).order_by(Vault.slug)
+    q: str | None = Query(default=None, description="Filter by slug / name"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200),
+) -> Paginated[VaultResponse]:
+    base = select(Vault).where(Vault.user_id == auth.user_id).order_by(Vault.slug)
+    if q:
+        needle = f"%{q}%"
+        base = base.where(or_(Vault.slug.ilike(needle), Vault.name.ilike(needle)))
+
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    rows = (
+        (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
     )
-    return [
-        VaultResponse(
-            id=str(v.id),
-            slug=v.slug,
-            name=v.name,
-            created_at=v.created_at,
-        )
-        for v in result.scalars().all()
-    ]
+    return Paginated[VaultResponse](
+        items=[
+            VaultResponse(id=str(v.id), slug=v.slug, name=v.name, created_at=v.created_at)
+            for v in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("")

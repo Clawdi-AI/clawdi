@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.memory import Memory
+from app.schemas.common import Paginated
 from app.schemas.memory import (
     EmbedBackfillResponse,
     MemoryCreate,
@@ -27,30 +28,64 @@ router = APIRouter(prefix="/api/memories", tags=["memories"])
 async def list_memories(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-    limit: int = Query(default=50, le=200),
-    offset: int = Query(default=0),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200),
     category: str | None = Query(default=None),
     q: str | None = Query(default=None),
-) -> list[MemoryResponse]:
+    order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
+) -> Paginated[MemoryResponse]:
     provider = await get_memory_provider(str(auth.user_id), db)
 
     if q:
-        return [
-            MemoryResponse.model_validate(memory)
-            for memory in await provider.search(
-                str(auth.user_id),
-                q,
-                limit=limit,
-                category=category,
-            )
-        ]
-
-    return [
-        MemoryResponse.model_validate(memory)
-        for memory in await provider.list_all(
-            str(auth.user_id), limit=limit, offset=offset, category=category
+        # Search is top-N ranked (FTS + trgm + vector hybrid). Paging through
+        # relevance-ordered results doesn't map cleanly to offset — mirror
+        # Linear/Notion and return one page worth with total = len(hits).
+        hits = await provider.search(
+            str(auth.user_id),
+            q,
+            limit=page_size,
+            category=category,
         )
-    ]
+        items = [MemoryResponse.model_validate(m) for m in hits]
+        return Paginated[MemoryResponse](
+            items=items,
+            total=len(items),
+            page=1,
+            page_size=page_size,
+        )
+
+    total = await provider.count(str(auth.user_id), category=category)
+    rows = await provider.list_all(
+        str(auth.user_id),
+        limit=page_size,
+        offset=(page - 1) * page_size,
+        category=category,
+        order=order,
+    )
+    return Paginated[MemoryResponse](
+        items=[MemoryResponse.model_validate(m) for m in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{memory_id}")
+async def get_memory(
+    memory_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> MemoryResponse:
+    result = await db.execute(
+        select(Memory).where(
+            Memory.id == memory_id,
+            Memory.user_id == auth.user_id,
+        )
+    )
+    memory = result.scalar_one_or_none()
+    if not memory:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    return MemoryResponse.model_validate(memory)
 
 
 @router.post("")

@@ -51,3 +51,11 @@ export type ConnectorMcpConfig = Schemas["ConnectorMcpConfigResponse"];
 
 // ── Settings ─────────────────────────────────────────────────────────────
 export type UserSettings = Schemas["SettingsResponse"];
+
+// ── Pagination + global search ───────────────────────────────────────────
+export type PaginatedSessions = Schemas["Paginated_SessionListItemResponse_"];
+export type PaginatedMemories = Schemas["Paginated_MemoryResponse_"];
+export type PaginatedSkills = Schemas["Paginated_SkillSummaryResponse_"];
+export type PaginatedVaults = Schemas["Paginated_VaultResponse_"];
+export type SearchResponse = Schemas["SearchResponse"];
+export type SearchHit = Schemas["SearchHit"];
