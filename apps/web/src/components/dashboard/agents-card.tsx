@@ -1,6 +1,6 @@
 "use client";
 
-import { Laptop } from "lucide-react";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -89,8 +89,8 @@ function AgentTile({ env }: { env: Environment }) {
 	const active = isActive(env.last_seen_at);
 	return (
 		<div className="flex items-center gap-3 rounded-md border p-3">
-			<div className="relative flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
-				<Laptop className="size-4 text-muted-foreground" />
+			<div className="relative">
+				<AgentIcon agent={env.agent_type} />
 				{active ? (
 					<span
 						className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-card"
