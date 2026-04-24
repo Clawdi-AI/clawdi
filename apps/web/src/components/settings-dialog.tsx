@@ -40,7 +40,7 @@ export function SettingsDialog({ open, onClose, initialSection = "general" }: Se
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent
-				className="h-[min(680px,85vh)] max-w-3xl gap-0 overflow-hidden p-0 sm:max-w-3xl"
+				className="flex h-[min(680px,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
 				showCloseButton
 			>
 				<DialogHeader className="border-b px-5 py-3">
