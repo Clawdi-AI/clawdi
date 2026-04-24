@@ -1,9 +1,10 @@
 {
-	"name": "@clawdi-cloud/cli",
-	"version": "0.0.1",
+	"name": "@clawdi/cli",
+	"version": "0.1.0",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "SEE LICENSE IN LICENSE",
 	"type": "module",
+	"sideEffects": false,
 	"bin": {
 		"clawdi": "./bin/clawdi.mjs"
 	},
@@ -14,14 +15,19 @@
 		"README.md"
 	],
 	"engines": {
-		"bun": ">=1.1"
+		"node": ">=18"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "bun build src/index.ts --outdir dist --target bun && cp -r skills dist/skills",
+		"build": "bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' && cp -r skills dist/skills",
+		"build:dev": "bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"test:watch": "bun test --watch",
+		"generate-api": "bun x openapi-typescript http://localhost:8000/openapi.json -o src/lib/api-types.generated.ts",
 		"prepublishOnly": "bun run build"
 	},
 	"repository": {
@@ -54,7 +60,6 @@
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
-		"@clawdi-cloud/shared": "workspace:*",
 		"@types/bun": "^1.3.12",
 		"@types/node": "^22.0.0",
 		"typescript": "^5.9.0"

@@ -201,7 +201,7 @@ export async function skillInstall(
 	if (opts.agent) {
 		adapters = adapters.filter((a) => a.agentType === opts.agent);
 		if (adapters.length === 0) {
-			const entry = Object.values(adapterRegistry).find((e) => e.agentType === opts.agent);
+			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
 			if (!entry) {
 				console.log(
 					chalk.red(

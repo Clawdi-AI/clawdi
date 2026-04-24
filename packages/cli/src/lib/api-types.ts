@@ -4,11 +4,7 @@
  * hand-maintained shadow interfaces.
  */
 
-import type {
-	Memory,
-	SkillSummary as SharedSkillSummary,
-	SkillDetail,
-} from "@clawdi-cloud/shared/api";
+import type { Memory, SkillSummary as SharedSkillSummary, SkillDetail } from "./api-schemas";
 
 export type MemoryRecord = Memory;
 export type SkillRecord = SkillDetail;

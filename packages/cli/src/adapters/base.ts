@@ -1,4 +1,4 @@
-import type { AgentType } from "@clawdi-cloud/shared/consts";
+import type { AgentType } from "./registry";
 
 export interface SessionMessage {
 	role: "user" | "assistant";

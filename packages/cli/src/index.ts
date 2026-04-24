@@ -28,7 +28,7 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
-  HERMES_HOME              Custom Hermes home (else ~/.hermes)
+  HERMES_HOME              Custom Hermes home (else ~/.hermes; push requires Bun)
   OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI

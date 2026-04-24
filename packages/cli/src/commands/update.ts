@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { getClawdiDir } from "../lib/config";
 import { getCliVersion } from "../lib/version";
 
-const REGISTRY_URL = "https://registry.npmjs.org/@clawdi-cloud/cli";
+const REGISTRY_URL = "https://registry.npmjs.org/@clawdi/cli";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
 
 interface UpdateCache {
@@ -97,7 +97,7 @@ export async function update(opts: { json?: boolean } = {}) {
 		console.log(
 			chalk.cyan(`A newer version is available. Install with:`) +
 				"\n  " +
-				chalk.white("npm i -g @clawdi-cloud/cli"),
+				chalk.white("npm i -g @clawdi/cli"),
 		);
 	} else {
 		console.log(chalk.green("\n✓ You're up to date."));
@@ -121,7 +121,7 @@ export async function maybeNotifyOutdated(): Promise<void> {
 			console.log();
 			console.log(
 				chalk.gray(
-					`  (v${cached.latest} available — run \`clawdi update\` or \`npm i -g @clawdi-cloud/cli\`)`,
+					`  (v${cached.latest} available — run \`clawdi update\` or \`npm i -g @clawdi/cli\`)`,
 				),
 			);
 		}

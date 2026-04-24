@@ -2,10 +2,14 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
-import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
 import { getHermesHome } from "../adapters/paths";
-import { builtinSkillTargetDir } from "../adapters/registry";
+import {
+	AGENT_TYPES,
+	type AgentType,
+	adapterRegistry,
+	builtinSkillTargetDir,
+} from "../adapters/registry";
 import { getClawdiDir } from "../lib/config";
 import { askMulti, askYesNo } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
@@ -32,7 +36,7 @@ export async function teardown(opts: {
 	}
 
 	if (!opts.yes) {
-		const labels = targets.map((t) => AGENT_LABELS[t]).join(", ");
+		const labels = targets.map((t) => adapterRegistry[t].displayName).join(", ");
 		p.log.info(`Will tear down: ${labels}`);
 		const ok = await askYesNo("Proceed?");
 		if (!ok) {
@@ -76,7 +80,7 @@ async function resolveTargets(opts: {
 		const type = opts.agent as AgentType;
 		if (!registered.includes(type)) {
 			p.log.error(
-				`${AGENT_LABELS[type]} is not registered (no ~/.clawdi/environments/${type}.json).`,
+				`${adapterRegistry[type].displayName} is not registered (no ~/.clawdi/environments/${type}.json).`,
 			);
 			process.exitCode = 1;
 			return null;
@@ -99,7 +103,7 @@ async function resolveTargets(opts: {
 	}
 	const picked = await askMulti<AgentType>(
 		"Tear down which agents?",
-		registered.map((t) => ({ value: t, label: AGENT_LABELS[t] })),
+		registered.map((t) => ({ value: t, label: adapterRegistry[t].displayName })),
 		[],
 	);
 	if (!picked) return null;
@@ -107,7 +111,7 @@ async function resolveTargets(opts: {
 }
 
 async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; keepMcp: boolean }) {
-	const label = AGENT_LABELS[agentType];
+	const label = adapterRegistry[agentType].displayName;
 
 	// 1. Local env file
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);

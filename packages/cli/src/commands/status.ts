@@ -1,7 +1,6 @@
-import type { ModuleState } from "@clawdi-cloud/shared/types";
 import chalk from "chalk";
 import { getAuth, getConfig, isLoggedIn } from "../lib/config";
-import { readModuleState } from "../lib/state";
+import { type ModuleState, readModuleState } from "../lib/state";
 
 interface StatusJson {
 	loggedIn: boolean;

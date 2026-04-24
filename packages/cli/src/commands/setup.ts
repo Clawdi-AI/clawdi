@@ -4,11 +4,16 @@ import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { getHermesHome } from "../adapters/paths";
-import { allAdapterEntries, builtinSkillTargetDir } from "../adapters/registry";
+import {
+	AGENT_TYPES,
+	type AgentType,
+	adapterRegistry,
+	allAdapterEntries,
+	builtinSkillTargetDir,
+} from "../adapters/registry";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { isInteractive } from "../lib/tty";
@@ -70,7 +75,7 @@ export async function setup(opts: { agent?: string; yes?: boolean }) {
 			message: "Register which agents?",
 			options: detected.map((d) => ({
 				value: d.adapter.agentType as string,
-				label: `${AGENT_LABELS[d.adapter.agentType]}${d.version ? ` (${d.version})` : ""}`,
+				label: `${adapterRegistry[d.adapter.agentType].displayName}${d.version ? ` (${d.version})` : ""}`,
 			})),
 			initialValues: detected.map((d) => d.adapter.agentType),
 			required: false,
@@ -120,10 +125,12 @@ async function registerEnv(
 			{ mode: 0o600 },
 		);
 
-		console.log(chalk.green(`✓ ${AGENT_LABELS[agentType]} registered`));
+		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
 	} catch (e) {
 		console.log(
-			chalk.red(`  Failed to register ${AGENT_LABELS[agentType]}: ${(e as Error).message}`),
+			chalk.red(
+				`  Failed to register ${adapterRegistry[agentType].displayName}: ${(e as Error).message}`,
+			),
 		);
 	}
 }
@@ -131,7 +138,7 @@ async function registerEnv(
 async function installBuiltinSkill(agentType: AgentType) {
 	const targetDir = builtinSkillTargetDir(agentType);
 	if (!targetDir) return;
-	const label = AGENT_LABELS[agentType];
+	const label = adapterRegistry[agentType].displayName;
 
 	// Support both dev (src/commands/) and build (dist/) paths
 	let sourceDir = resolve(import.meta.dirname, "../../skills/clawdi");

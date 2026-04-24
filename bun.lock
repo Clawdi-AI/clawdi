@@ -48,8 +48,8 @@
       },
     },
     "packages/cli": {
-      "name": "@clawdi-cloud/cli",
-      "version": "0.0.1",
+      "name": "@clawdi/cli",
+      "version": "0.1.0",
       "bin": {
         "clawdi": "./bin/clawdi.mjs",
       },
@@ -62,7 +62,6 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
-        "@clawdi-cloud/shared": "workspace:*",
         "@types/bun": "^1.3.12",
         "@types/node": "^22.0.0",
         "typescript": "^5.9.0",
@@ -124,9 +123,9 @@
 
     "@clack/prompts": ["@clack/prompts@1.2.0", "", { "dependencies": { "@clack/core": "1.2.0", "fast-string-width": "^1.1.0", "fast-wrap-ansi": "^0.1.3", "sisteransi": "^1.0.5" } }, "sha512-4jmztR9fMqPMjz6H/UZXj0zEmE43ha1euENwkckKKel4XpSfokExPo5AiVStdHSAlHekz4d0CA/r45Ok1E4D3w=="],
 
-    "@clawdi-cloud/cli": ["@clawdi-cloud/cli@workspace:packages/cli"],
-
     "@clawdi-cloud/shared": ["@clawdi-cloud/shared@workspace:packages/shared"],
+
+    "@clawdi/cli": ["@clawdi/cli@workspace:packages/cli"],
 
     "@clerk/backend": ["@clerk/backend@3.2.11", "", { "dependencies": { "@clerk/shared": "^4.8.1", "standardwebhooks": "^1.0.0", "tslib": "2.8.1" } }, "sha512-EPgFP3c4TpsZGMILW0pD0qkM4mCF0eSFMAVB3c6YyM4bCoEg/pTTgBCkNJtt7T/fo0hlMq6qfOoZA8adWTUaaA=="],
 

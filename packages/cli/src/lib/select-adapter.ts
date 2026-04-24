@@ -1,9 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
-import { adapterRegistry, allAdapterEntries, getAdapterEntry } from "../adapters/registry";
+import {
+	AGENT_TYPES,
+	type AgentType,
+	adapterRegistry,
+	allAdapterEntries,
+	getAdapterEntry,
+} from "../adapters/registry";
 import { getClawdiDir } from "./config";
 import { askOne } from "./prompts";
 

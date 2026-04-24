@@ -1,7 +1,6 @@
-#!/usr/bin/env bun
-// Thin wrapper that forwards to the bundled CLI. The clawdi CLI requires
-// Bun to run (Hermes adapter uses bun:sqlite). On Node 22+ enable the
-// compile cache for faster startup; on older Node / Bun this is a no-op.
+#!/usr/bin/env node
+// Thin wrapper that forwards to the bundled CLI. On Node 22+ enable the
+// compile cache for faster startup; elsewhere this is a no-op.
 import module from "node:module";
 
 if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {

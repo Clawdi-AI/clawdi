@@ -48,7 +48,9 @@ function writeJson(path: string, data: unknown) {
 	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
 }
 
-const DEFAULT_API_URL = "http://localhost:8000";
+// Replaced by `bun build --define 'process.env.CLAWDI_DEFAULT_API_URL=...'`
+// at release build; dev runs fall through to localhost.
+const DEFAULT_API_URL = process.env.CLAWDI_DEFAULT_API_URL || "http://localhost:8000";
 
 export function getConfig(): ClawdiConfig {
 	// Precedence: CLAWDI_API_URL env var > ~/.clawdi/config.json > default.

@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { AGENT_LABELS, type AgentType } from "@clawdi-cloud/shared/consts";
 import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
@@ -11,8 +10,14 @@ import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./p
 // Defined in paths.ts to avoid a circular import (registry imports adapters).
 export { SKIP_DIRS } from "./paths";
 
+// Agent identity is declared as a literal tuple so `AgentType` doesn't depend
+// on the registry object — avoids a type-level cycle when `AdapterRegistryEntry`
+// references `AgentAdapter` (which references `AgentType`).
+// Adding an agent: append here AND add the matching entry to `adapterRegistry`.
+export const AGENT_TYPES = ["claude_code", "codex", "openclaw", "hermes"] as const;
+export type AgentType = (typeof AGENT_TYPES)[number];
+
 export interface AdapterRegistryEntry {
-	agentType: AgentType;
 	displayName: string;
 	/** File name stored under `~/.clawdi/environments/` when the agent is registered. */
 	envFileName: string;
@@ -22,39 +27,45 @@ export interface AdapterRegistryEntry {
 	create: () => AgentAdapter;
 }
 
+// Registry: every `AgentType` must have exactly one entry — `Record<AgentType, …>`
+// enforces exhaustiveness at compile time.
 export const adapterRegistry: Record<AgentType, AdapterRegistryEntry> = {
 	claude_code: {
-		agentType: "claude_code",
-		displayName: AGENT_LABELS.claude_code,
+		displayName: "Claude Code",
 		envFileName: "claude_code.json",
 		home: getClaudeHome,
 		create: () => new ClaudeCodeAdapter(),
 	},
 	codex: {
-		agentType: "codex",
-		displayName: AGENT_LABELS.codex,
+		displayName: "Codex",
 		envFileName: "codex.json",
 		home: getCodexHome,
 		create: () => new CodexAdapter(),
 	},
-	hermes: {
-		agentType: "hermes",
-		displayName: AGENT_LABELS.hermes,
-		envFileName: "hermes.json",
-		home: getHermesHome,
-		create: () => new HermesAdapter(),
-	},
 	openclaw: {
-		agentType: "openclaw",
-		displayName: AGENT_LABELS.openclaw,
+		displayName: "OpenClaw",
 		envFileName: "openclaw.json",
 		home: getOpenClawHome,
 		create: () => new OpenClawAdapter(),
 	},
+	hermes: {
+		displayName: "Hermes",
+		envFileName: "hermes.json",
+		home: getHermesHome,
+		create: () => new HermesAdapter(),
+	},
 };
 
-export function allAdapterEntries(): AdapterRegistryEntry[] {
-	return Object.values(adapterRegistry);
+/** Registry entry annotated with its agent type — convenience for iteration. */
+export interface AnnotatedAdapterEntry extends AdapterRegistryEntry {
+	agentType: AgentType;
+}
+
+export function allAdapterEntries(): AnnotatedAdapterEntry[] {
+	return (Object.keys(adapterRegistry) as AgentType[]).map((agentType) => ({
+		agentType,
+		...adapterRegistry[agentType],
+	}));
 }
 
 export function getAdapterEntry(type: AgentType): AdapterRegistryEntry | null {

@@ -1,8 +1,19 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ModuleState } from "@clawdi-cloud/shared/types";
 import chalk from "chalk";
 import { getClawdiDir } from "./config";
+
+/**
+ * Per-module activity timestamps tracked in `~/.clawdi/state.json`.
+ * Both `push` and `pull` update the relevant module's `lastActivityAt`.
+ * `push --since` uses it as an incremental cursor when no explicit
+ * `--since` is supplied.
+ */
+export interface ModuleState {
+	[module: string]: {
+		lastActivityAt: string;
+	};
+}
 
 const STATE_FILE = "state.json";
 

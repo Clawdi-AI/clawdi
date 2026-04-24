@@ -37,7 +37,7 @@ describe("update --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/@clawdi-cloud/cli",
+				path: "/@clawdi/cli",
 				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
 			},
 		]);
@@ -72,7 +72,7 @@ describe("update --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/@clawdi-cloud/cli",
+				path: "/@clawdi/cli",
 				response: () => jsonResponse({ "dist-tags": { latest: current } }),
 			},
 		]);

@@ -1,9 +1,22 @@
-import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { extractTarGz } from "../lib/tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
+
+// Hermes state is stored in a SQLite db opened via `bun:sqlite`. That module
+// only exists under Bun, so we defer the import until actually reading the db
+// — other Hermes operations (detect, skills) work on plain Node.
+async function loadBunSqlite(): Promise<typeof import("bun:sqlite")> {
+	if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
+		throw new Error(
+			"Hermes session ingestion requires the Bun runtime (uses bun:sqlite). " +
+				"Install Bun from https://bun.sh and re-run, or push other agents with " +
+				"`clawdi push --agent claude_code,codex,openclaw`.",
+		);
+	}
+	return await import("bun:sqlite");
+}
 
 function hermesDir() {
 	return getHermesHome();
@@ -54,6 +67,7 @@ export class HermesAdapter implements AgentAdapter {
 	async collectSessions(since?: Date, _projectFilter?: string): Promise<RawSession[]> {
 		if (!existsSync(stateDbPath())) return [];
 
+		const { Database } = await loadBunSqlite();
 		const db = new Database(stateDbPath(), { readonly: true });
 		try {
 			const sinceEpoch = since ? since.getTime() / 1000 : 0;

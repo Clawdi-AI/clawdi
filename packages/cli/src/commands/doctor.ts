@@ -1,12 +1,12 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_LABELS } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
 import { HermesAdapter } from "../adapters/hermes";
 import { OpenClawAdapter } from "../adapters/openclaw";
+import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError } from "../lib/api-client";
 import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 
@@ -64,7 +64,7 @@ async function checkAgents(): Promise<Check[]> {
 	];
 	const results: Check[] = [];
 	for (const a of adapters) {
-		const label = AGENT_LABELS[a.agentType];
+		const label = adapterRegistry[a.agentType].displayName;
 		const detected = await a.detect();
 		if (!detected) {
 			results.push({ name: `Agent: ${label}`, ok: false, detail: "not installed" });

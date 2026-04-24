@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import * as p from "@clack/prompts";
-import { AGENT_LABELS } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
+import { adapterRegistry } from "../adapters/registry";
 import { ApiClient } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
@@ -49,7 +49,7 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 		return;
 	}
 
-	p.log.info(`Agent:   ${AGENT_LABELS[adapter.agentType]}`);
+	p.log.info(`Agent:   ${adapterRegistry[adapter.agentType].displayName}`);
 	p.log.info(`Modules: ${modules.join(", ")}`);
 
 	const api = new ApiClient();
