@@ -122,7 +122,7 @@ export class OpenClawAdapter implements AgentAdapter {
 			const projectPath = entry.acp?.cwd ?? null;
 			if (absFilter) {
 				if (!projectPath) continue;
-				if (projectPath !== absFilter) continue;
+				if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) continue;
 			}
 
 			const transcriptPath = entry.sessionFile

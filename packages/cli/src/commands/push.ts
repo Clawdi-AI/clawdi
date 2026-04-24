@@ -70,12 +70,25 @@ export async function push(opts: {
 
 	// 2. Scan data
 	const moduleState = readModuleState();
+	const sinceSource: "flag" | "state" | "none" = opts.since
+		? "flag"
+		: moduleState.sessions?.lastActivityAt
+			? "state"
+			: "none";
 	const since = opts.since
 		? new Date(opts.since)
 		: moduleState.sessions?.lastActivityAt
 			? new Date(moduleState.sessions.lastActivityAt)
 			: undefined;
 	const projectFilter = opts.all ? undefined : (opts.project ?? process.cwd());
+
+	if (modules.includes("sessions")) {
+		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
+		const sinceLabel = since
+			? `since ${since.toISOString()}${sinceSource === "state" ? " (from last push)" : ""}`
+			: "no since cutoff";
+		p.log.info(chalk.gray(`Scanning ${scope}, ${sinceLabel}`));
+	}
 
 	if (
 		adapter.agentType === "hermes" &&
@@ -104,6 +117,13 @@ export async function push(opts: {
 	// 3. Summary
 	if (modules.includes("sessions")) {
 		p.log.message(chalk.gray(`Sessions: ${sessions.length} to upload`));
+		if (sessions.length === 0 && projectFilter) {
+			p.log.info(
+				chalk.gray(
+					"No sessions matched. Try --all to scan every project, or --since <date> to override the last-push cutoff.",
+				),
+			);
+		}
 	}
 	if (modules.includes("skills")) {
 		p.log.message(chalk.gray(`Skills:   ${skills.length} to upload`));

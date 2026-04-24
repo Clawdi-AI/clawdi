@@ -208,7 +208,7 @@ export class CodexAdapter implements AgentAdapter {
 
 			if (absFilter) {
 				if (!projectPath) continue;
-				if (projectPath !== absFilter) continue;
+				if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) continue;
 			}
 
 			if (!endedAt) endedAt = startedAt;

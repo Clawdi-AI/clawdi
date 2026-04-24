@@ -64,11 +64,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			d.isDirectory(),
 		);
 
+		let absFilter: string | null = null;
 		if (projectFilter) {
 			const { resolve } = await import("node:path");
-			const absPath = resolve(projectFilter);
-			const targetDir = this.pathToProjectDir(absPath);
-			projectDirs = projectDirs.filter((d) => d.name === targetDir);
+			absFilter = resolve(projectFilter);
+			const targetDir = this.pathToProjectDir(absFilter);
+			// Coarse pre-filter on the encoded dir name: keep the target and any
+			// dir whose name starts with "target-". Because "/" and in-segment "-"
+			// both encode as "-", this superset may include sibling repos like
+			// "clawdi-cloud" when the target is "clawdi" — those false positives
+			// are dropped below using each session's real cwd.
+			projectDirs = projectDirs.filter(
+				(d) => d.name === targetDir || d.name.startsWith(`${targetDir}-`),
+			);
 		}
 
 		for (const projectDir of projectDirs) {
@@ -84,6 +92,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 					if (!parsed) continue;
 
 					if (since && parsed.startedAt < since) continue;
+
+					if (absFilter) {
+						const cwd = parsed.projectPath;
+						if (!cwd) continue;
+						if (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)) continue;
+					}
 
 					sessions.push({ ...parsed, localSessionId: sessionId, rawFilePath: filePath });
 				} catch {
