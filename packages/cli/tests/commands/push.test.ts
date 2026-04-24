@@ -1,0 +1,226 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { push } from "../../src/commands/push";
+import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
+import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+
+type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
+
+const AGENT_TYPE: Record<AgentKey, string> = {
+	"claude-code": "claude_code",
+	codex: "codex",
+	hermes: "hermes",
+	openclaw: "openclaw",
+};
+
+let tmpHome: string;
+let origHome: string | undefined;
+let origExitCode: number | string | undefined;
+
+function setup(agent: AgentKey): {
+	sent: ReturnType<typeof mockFetch>["captured"];
+	restore: () => void;
+} {
+	origHome = process.env.HOME;
+	origExitCode = process.exitCode;
+	tmpHome = copyFixtureToTmp(agent);
+	process.env.HOME = tmpHome;
+	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
+	return { sent: [], restore: () => {} };
+}
+
+afterEach(() => {
+	if (origHome) process.env.HOME = origHome;
+	else delete process.env.HOME;
+	// push/pull now set process.exitCode=1 on abort paths — reset so a later
+	// test file's `bun test` result isn't polluted.
+	process.exitCode = origExitCode;
+	if (tmpHome) cleanupTmp(tmpHome);
+});
+
+describe("push — Hermes fixture", () => {
+	it("uploads the 2 non-empty sessions plus per-session content", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([
+			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 2 }) },
+			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+		]);
+
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+
+		const batchCall = captured.find((c) => c.path === "/api/sessions/batch");
+		expect(batchCall).toBeDefined();
+		expect(batchCall?.method).toBe("POST");
+		// Adapter filters out s-empty; s-json comes first by started_at DESC.
+		// biome-ignore lint/suspicious/noExplicitAny: test payload
+		const sessions = (batchCall?.body as any).sessions as Array<any>;
+		expect(sessions).toHaveLength(2);
+		expect(sessions.map((s) => s.local_session_id).sort()).toEqual(["s-json", "s-plain"]);
+		// environment_id was seeded via seedAuthAndEnv
+		expect(sessions[0]?.environment_id).toBe("env-test");
+
+		// After batch, each session gets a content upload (multipart).
+		const uploads = captured.filter((c) => c.path.match(/^\/api\/sessions\/[^/]+\/upload$/));
+		expect(uploads).toHaveLength(2);
+		for (const u of uploads) expect(u.isMultipart).toBe(true);
+
+		// state.json updated
+		const state = JSON.parse(readFileSync(join(tmpHome, ".clawdi", "state.json"), "utf-8"));
+		expect(state.sessions.lastActivityAt).toBeDefined();
+	});
+
+	it("--dry-run makes zero fetch calls", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true, dryRun: true });
+		} finally {
+			restore();
+		}
+		expect(captured).toHaveLength(0);
+	});
+
+	it("skills module uploads multipart per skill", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/skills/upload",
+				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
+			},
+		]);
+		try {
+			await push({ agent: "hermes", modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+		const uploads = captured.filter((c) => c.path === "/api/skills/upload");
+		expect(uploads).toHaveLength(1);
+		expect(uploads[0]?.isMultipart).toBe(true);
+	});
+
+	it("corrupt state.json is tolerated (warning, not crash)", async () => {
+		setup("hermes");
+		writeFileSync(join(tmpHome, ".clawdi", "state.json"), "{ not valid json");
+		const { restore } = mockFetch([
+			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 2 }) },
+			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+		]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+		// Got here without throwing.
+		expect(existsSync(join(tmpHome, ".clawdi", "state.json"))).toBe(true);
+	});
+});
+
+describe("push — Claude Code fixture", () => {
+	it("uploads the single fixture session", async () => {
+		setup("claude-code");
+		const { captured, restore } = mockFetch([
+			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
+			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+		]);
+		try {
+			await push({ agent: "claude_code", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+
+		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		expect(batch).toBeDefined();
+		// biome-ignore lint/suspicious/noExplicitAny: test payload
+		const sessions = (batch?.body as any).sessions as Array<any>;
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.local_session_id).toBe("11111111-2222-3333-4444-555555555555");
+		expect(sessions[0]?.input_tokens).toBe(30);
+		expect(sessions[0]?.output_tokens).toBe(8);
+		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
+	});
+});
+
+describe("push — Codex fixture", () => {
+	it("uploads the single fixture session with Codex token counters", async () => {
+		setup("codex");
+		const { captured, restore } = mockFetch([
+			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
+			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+		]);
+		try {
+			await push({ agent: "codex", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+
+		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		// biome-ignore lint/suspicious/noExplicitAny: test payload
+		const sessions = (batch?.body as any).sessions as Array<any>;
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.input_tokens).toBe(15);
+		expect(sessions[0]?.output_tokens).toBe(7);
+		expect(sessions[0]?.cache_read_tokens).toBe(3);
+		expect(sessions[0]?.model).toBe("gpt-5.3-codex");
+	});
+});
+
+describe("push — OpenClaw fixture", () => {
+	it("uploads the single fixture session with OpenClaw tokens + cwd", async () => {
+		setup("openclaw");
+		const { captured, restore } = mockFetch([
+			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
+			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+		]);
+		try {
+			await push({ agent: "openclaw", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+
+		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		// biome-ignore lint/suspicious/noExplicitAny: test payload
+		const sessions = (batch?.body as any).sessions as Array<any>;
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.local_session_id).toBe("oc-session-001");
+		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
+		expect(sessions[0]?.input_tokens).toBe(12);
+	});
+});
+
+describe("push — preflight checks", () => {
+	it("aborts with exitCode=1 when not logged in (no fetch)", async () => {
+		setup("hermes");
+		const { rmSync } = await import("node:fs");
+		rmSync(join(tmpHome, ".clawdi", "auth.json"));
+
+		const { captured, restore } = mockFetch([]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+		expect(captured).toHaveLength(0);
+		expect(process.exitCode).toBe(1);
+	});
+
+	it("aborts with exitCode=1 when no environment registered (no fetch)", async () => {
+		setup("hermes");
+		const { rmSync } = await import("node:fs");
+		rmSync(join(tmpHome, ".clawdi", "environments", "hermes.json"));
+
+		const { captured, restore } = mockFetch([]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+		expect(captured).toHaveLength(0);
+		expect(process.exitCode).toBe(1);
+	});
+});

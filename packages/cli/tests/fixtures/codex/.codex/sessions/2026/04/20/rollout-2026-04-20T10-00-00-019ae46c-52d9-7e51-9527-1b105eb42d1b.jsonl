@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-20T10:00:00.000Z","type":"session_meta","payload":{"id":"019ae46c-52d9-7e51-9527-1b105eb42d1b","timestamp":"2026-04-20T10:00:00.000Z","cwd":"/Users/fixture/project","originator":"codex_cli_rs","cli_version":"0.63.0","instructions":"# Agents\n\nFixture instructions (placeholder)."}}
+{"timestamp":"2026-04-20T10:00:01.000Z","type":"turn_context","payload":{"model":"gpt-5.3-codex"}}
+{"timestamp":"2026-04-20T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}
+{"timestamp":"2026-04-20T10:00:03.500Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}}
+{"timestamp":"2026-04-20T10:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15,"output_tokens":7,"cached_input_tokens":3}}}}

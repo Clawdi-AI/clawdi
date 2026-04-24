@@ -1,0 +1,3 @@
+{"type":"message","timestamp":"2026-04-20T10:00:00.000Z","message":{"role":"user","content":"hello"}}
+{"type":"model_change","timestamp":"2026-04-20T10:00:01.000Z","modelId":"claude-opus-4-7"}
+{"type":"message","timestamp":"2026-04-20T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"world"}]}}

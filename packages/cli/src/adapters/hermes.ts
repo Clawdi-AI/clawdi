@@ -1,31 +1,18 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import * as tar from "tar";
+import { extractTarGz } from "../lib/tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import { getHermesHome, SKIP_DIRS } from "./paths";
 
-const HERMES_DIR = process.env.HERMES_HOME || join(homedir(), ".hermes");
-const STATE_DB = join(HERMES_DIR, "state.db");
-const SKILLS_DIR = join(HERMES_DIR, "skills");
-
-interface HermesSessionRow {
-	id: string;
-	source: string | null;
-	model: string | null;
-	title: string | null;
-	started_at: number;
-	ended_at: number | null;
-	message_count: number | null;
-	input_tokens: number | null;
-	output_tokens: number | null;
-	cache_read_tokens: number | null;
+function hermesDir() {
+	return getHermesHome();
 }
-
-interface HermesMessageRow {
-	role: string;
-	content: string;
-	timestamp: number;
+function stateDbPath() {
+	return join(hermesDir(), "state.db");
+}
+function skillsDir() {
+	return join(hermesDir(), "skills");
 }
 
 /**
@@ -37,7 +24,7 @@ function parseModelField(raw: string | null): string | null {
 	if (!raw) return null;
 	if (raw.startsWith("{")) {
 		try {
-			const obj = JSON.parse(raw) as { default?: string; model?: string };
+			const obj = JSON.parse(raw);
 			return obj.default || obj.model || null;
 		} catch {
 			return raw;
@@ -50,7 +37,7 @@ export class HermesAdapter implements AgentAdapter {
 	readonly agentType = "hermes" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(HERMES_DIR);
+		return existsSync(hermesDir());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -65,11 +52,29 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(since?: Date, _projectFilter?: string): Promise<RawSession[]> {
-		if (!existsSync(STATE_DB)) return [];
+		if (!existsSync(stateDbPath())) return [];
 
-		const db = new Database(STATE_DB, { readonly: true });
+		const db = new Database(stateDbPath(), { readonly: true });
 		try {
 			const sinceEpoch = since ? since.getTime() / 1000 : 0;
+
+			interface SessionRow {
+				id: string;
+				source: string | null;
+				model: string | null;
+				title: string | null;
+				started_at: number;
+				ended_at: number | null;
+				message_count: number | null;
+				input_tokens: number | null;
+				output_tokens: number | null;
+				cache_read_tokens: number | null;
+			}
+			interface MessageRow {
+				role: string;
+				content: string;
+				timestamp: number;
+			}
 
 			const rows = db
 				.query(`
@@ -79,7 +84,7 @@ export class HermesAdapter implements AgentAdapter {
 					WHERE started_at >= ?
 					ORDER BY started_at DESC
 				`)
-				.all(sinceEpoch) as HermesSessionRow[];
+				.all(sinceEpoch) as SessionRow[];
 
 			const msgStmt = db.query(`
 				SELECT role, content, timestamp
@@ -98,7 +103,7 @@ export class HermesAdapter implements AgentAdapter {
 					? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
 					: null;
 
-				const msgRows = msgStmt.all(row.id) as HermesMessageRow[];
+				const msgRows = msgStmt.all(row.id) as MessageRow[];
 				const messages: SessionMessage[] = msgRows.map((m) => ({
 					role: m.role as "user" | "assistant",
 					content: m.content,
@@ -134,7 +139,7 @@ export class HermesAdapter implements AgentAdapter {
 					messages,
 					// The DB is shared across sessions — anchor to the row id so the pointer
 					// identifies the specific session rather than the whole store.
-					rawFilePath: `${STATE_DB}#${row.id}`,
+					rawFilePath: `${stateDbPath()}#${row.id}`,
 				});
 			}
 
@@ -145,10 +150,10 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
-		if (!existsSync(SKILLS_DIR)) return [];
+		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
-		this._scanSkillsDir(SKILLS_DIR, skills);
+		this._scanSkillsDir(skillsDir(), skills);
 		return skills;
 	}
 
@@ -159,12 +164,13 @@ export class HermesAdapter implements AgentAdapter {
 	private _scanSkillsDir(dir: string, results: RawSkill[]): void {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
 
 			if (existsSync(skillMd)) {
 				const content = readFileSync(skillMd, "utf-8");
-				const skillKey = relative(SKILLS_DIR, fullPath);
+				const skillKey = relative(skillsDir(), fullPath);
 				const fileCount = readdirSync(fullPath, { recursive: true }).length;
 
 				results.push({
@@ -183,24 +189,18 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	getSkillPath(key: string): string {
-		return join(SKILLS_DIR, key, "SKILL.md");
+		return join(skillsDir(), key, "SKILL.md");
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const targetDir = join(SKILLS_DIR, key);
+		const targetDir = join(skillsDir(), key);
 
 		if (existsSync(targetDir)) {
 			rmSync(targetDir, { recursive: true, force: true });
 		}
 		mkdirSync(targetDir, { recursive: true });
 
-		await tar
-			.extract({
-				cwd: SKILLS_DIR,
-				gzip: true,
-				filter: (path) => !path.includes("..") && !path.startsWith("/"),
-			})
-			.end(tarGzBytes);
+		await extractTarGz(skillsDir(), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

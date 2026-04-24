@@ -3,10 +3,11 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
+import { sanitizeMetadata } from "../lib/sanitize";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi login` first."));
+		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 }
@@ -14,7 +15,6 @@ function requireAuth() {
 export async function vaultSet(key: string) {
 	requireAuth();
 
-	// Parse key: can be "VAULT/SECTION/FIELD" or just "FIELD" (default vault)
 	const { vaultSlug, section, field } = parseVaultKey(key);
 
 	const value = await p.password({ message: `Value for ${key}:` });
@@ -25,7 +25,6 @@ export async function vaultSet(key: string) {
 
 	const api = new ApiClient();
 
-	// Ensure vault exists
 	try {
 		await api.post("/api/vault", { slug: vaultSlug, name: vaultSlug });
 	} catch {
@@ -40,10 +39,19 @@ export async function vaultSet(key: string) {
 	console.log(chalk.green(`✓ Stored ${key}`));
 }
 
-export async function vaultList() {
+export async function vaultList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
 	const vaults = await api.get<Array<{ slug: string; name: string }>>("/api/vault");
+
+	if (opts.json || !process.stdout.isTTY) {
+		const out: Record<string, Record<string, string[]>> = {};
+		for (const v of vaults) {
+			out[v.slug] = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
+		}
+		console.log(JSON.stringify(out, null, 2));
+		return;
+	}
 
 	if (vaults.length === 0) {
 		console.log(chalk.gray("No vaults."));
@@ -52,10 +60,13 @@ export async function vaultList() {
 
 	for (const v of vaults) {
 		const items = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
-		console.log(chalk.white(`  ${v.slug}`));
+		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
 		for (const [section, fields] of Object.entries(items)) {
 			for (const field of fields) {
-				const display = section === "(default)" ? field : `${section}/${field}`;
+				const display =
+					section === "(default)"
+						? sanitizeMetadata(field)
+						: `${sanitizeMetadata(section)}/${sanitizeMetadata(field)}`;
 				console.log(chalk.gray(`    ${display}`));
 			}
 		}
@@ -69,7 +80,6 @@ export async function vaultImport(file: string) {
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	// Create default vault
 	try {
 		await api.post("/api/vault", { slug: "default", name: "Default" });
 	} catch {
@@ -82,7 +92,6 @@ export async function vaultImport(file: string) {
 		if (eqIdx === -1) continue;
 		const key = line.slice(0, eqIdx).trim();
 		let value = line.slice(eqIdx + 1).trim();
-		// Remove surrounding quotes
 		if (
 			(value.startsWith('"') && value.endsWith('"')) ||
 			(value.startsWith("'") && value.endsWith("'"))
@@ -114,14 +123,9 @@ export async function vaultImport(file: string) {
 }
 
 function parseVaultKey(key: string): { vaultSlug: string; section: string; field: string } {
-	// clawdi://vault/section/field or VAULT/SECTION/FIELD or just FIELD
 	const cleaned = key.replace(/^clawdi:\/\//, "");
-	const parts = cleaned.split("/");
-	if (parts.length === 3) {
-		return { vaultSlug: parts[0], section: parts[1], field: parts[2] };
-	}
-	if (parts.length === 2) {
-		return { vaultSlug: parts[0], section: "", field: parts[1] };
-	}
-	return { vaultSlug: "default", section: "", field: parts[0] };
+	const [a = "", b = "", c = ""] = cleaned.split("/");
+	if (c) return { vaultSlug: a, section: b, field: c };
+	if (b) return { vaultSlug: a, section: "", field: b };
+	return { vaultSlug: "default", section: "", field: a };
 }

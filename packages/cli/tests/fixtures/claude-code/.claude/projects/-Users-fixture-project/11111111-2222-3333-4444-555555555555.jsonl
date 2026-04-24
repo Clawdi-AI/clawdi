@@ -1,0 +1,5 @@
+{"type":"session-start","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/fixture/project","timestamp":"2026-04-20T10:00:00.000Z","version":"1.0.0"}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/fixture/project","timestamp":"2026-04-20T10:00:01.000Z","message":{"role":"user","content":"hello"}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-04-20T10:00:02.500Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"world"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":2}}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-04-20T10:00:03.000Z","message":{"role":"user","content":"one more"}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-04-20T10:00:05.000Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":20,"output_tokens":3,"cache_read_input_tokens":5}}}

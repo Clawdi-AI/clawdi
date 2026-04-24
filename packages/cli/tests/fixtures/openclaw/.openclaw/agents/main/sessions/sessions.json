@@ -1,0 +1,21 @@
+{
+	"oc-session-001": {
+		"sessionId": "oc-session-001",
+		"updatedAt": 1776247205000,
+		"sessionFile": "oc-session-001.jsonl",
+		"model": "claude-opus-4-7",
+		"modelProvider": "anthropic",
+		"inputTokens": 12,
+		"outputTokens": 6,
+		"totalTokens": 18,
+		"cacheRead": 2,
+		"cacheWrite": 0,
+		"displayName": "Fixture session",
+		"subject": null,
+		"label": null,
+		"acp": {
+			"cwd": "/Users/fixture/project",
+			"lastActivityAt": 1776247205000
+		}
+	}
+}

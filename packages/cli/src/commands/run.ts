@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, ApiError } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
-export async function run(args: string[], opts: { allowMissingVault?: boolean } = {}) {
+export async function run(args: string[]) {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi login` first."));
+		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 
@@ -20,20 +20,13 @@ export async function run(args: string[], opts: { allowMissingVault?: boolean } 
 
 	try {
 		vaultEnv = await api.post<Record<string, string>>("/api/vault/resolve");
-	} catch (e: unknown) {
-		const message = e instanceof Error ? e.message : String(e);
-		if (message.includes("403")) {
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 403) {
 			console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
 			process.exit(1);
 		}
-		if (opts.allowMissingVault) {
-			console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${message}`));
-			console.log(chalk.gray("  Running without vault injection (--allow-missing-vault)."));
-		} else {
-			console.log(chalk.red(`✗ Could not fetch vault secrets: ${message}`));
-			console.log(chalk.gray("  Use --allow-missing-vault to run without secrets."));
-			process.exit(1);
-		}
+		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${(e as Error).message}`));
+		console.log(chalk.gray("  Running without vault injection."));
 	}
 
 	const injectedCount = Object.keys(vaultEnv).length;

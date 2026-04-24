@@ -2,6 +2,28 @@ import { basename, resolve } from "node:path";
 import * as tar from "tar";
 
 /**
+ * Extract a gzipped tar archive into `cwd`.
+ *
+ * Use this instead of `tar.extract({...}).end(bytes)` — `.end()` returns the
+ * stream (not a promise), so `await tar.extract(...).end(bytes)` resolves
+ * before extraction actually completes, leaving callers in a race with the
+ * filesystem. This helper listens for `finish` so the promise resolves only
+ * after every entry has been written to disk.
+ */
+export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
+	return new Promise((resolvePromise, reject) => {
+		const stream = tar.extract({
+			cwd,
+			gzip: true,
+			filter: (path) => !path.includes("..") && !path.startsWith("/"),
+		});
+		stream.on("finish", () => resolvePromise());
+		stream.on("error", reject);
+		stream.end(bytes);
+	});
+}
+
+/**
  * Create a tar.gz buffer from a skill directory.
  */
 export async function tarSkillDir(dirPath: string): Promise<Buffer> {

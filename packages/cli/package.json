@@ -1,29 +1,62 @@
 {
 	"name": "@clawdi-cloud/cli",
-	"version": "0.1.0",
+	"version": "0.0.1",
+	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
+	"license": "SEE LICENSE IN LICENSE",
 	"type": "module",
 	"bin": {
-		"clawdi": "./dist/index.js"
+		"clawdi": "./bin/clawdi.mjs"
+	},
+	"files": [
+		"bin",
+		"dist",
+		"LICENSE",
+		"README.md"
+	],
+	"engines": {
+		"bun": ">=1.1"
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "bun build src/index.ts --outdir dist --target bun && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/index.js && cp -r skills dist/skills",
-		"typecheck": "tsc --noEmit"
+		"build": "bun build src/index.ts --outdir dist --target bun && cp -r skills dist/skills",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"test:watch": "bun test --watch",
+		"prepublishOnly": "bun run build"
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Clawdi-AI/clawdi-cloud.git",
+		"directory": "packages/cli"
+	},
+	"bugs": {
+		"url": "https://github.com/Clawdi-AI/clawdi-cloud/issues"
+	},
+	"homepage": "https://github.com/Clawdi-AI/clawdi-cloud#readme",
+	"keywords": [
+		"cli",
+		"claude-code",
+		"codex",
+		"openclaw",
+		"hermes",
+		"ai-agents",
+		"skills",
+		"memory",
+		"vault",
+		"mcp"
+	],
 	"dependencies": {
 		"@clack/prompts": "^1.2.0",
-		"@clawdi-cloud/shared": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-
 		"chalk": "^5.4.0",
 		"commander": "^13.0.0",
-		"ora": "^8.2.0",
 		"tar": "^7.5.13",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
-		"@types/bun": "^1.3.13",
+		"@clawdi-cloud/shared": "workspace:*",
+		"@types/bun": "^1.3.12",
 		"@types/node": "^22.0.0",
-		"typescript": "catalog:"
+		"typescript": "^5.9.0"
 	}
 }

@@ -1,10 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CLAWDI_DIR = join(homedir(), ".clawdi");
-const CONFIG_FILE = join(CLAWDI_DIR, "config.json");
-const AUTH_FILE = join(CLAWDI_DIR, "auth.json");
+// NOTE: these paths are computed lazily so tests can override HOME per-run
+// and module caching doesn't freeze the path at first import.
+// We honor $HOME directly because os.homedir() is cached by the runtime
+// and doesn't update when $HOME is reassigned mid-process.
+function clawdiDir() {
+	return join(process.env.HOME || homedir(), ".clawdi");
+}
+function configFile() {
+	return join(clawdiDir(), "config.json");
+}
+function authFile() {
+	return join(clawdiDir(), "auth.json");
+}
 
 export interface ClawdiConfig {
 	apiUrl: string;
@@ -22,8 +32,9 @@ export interface ClawdiAuth {
 }
 
 function ensureDir() {
-	if (!existsSync(CLAWDI_DIR)) {
-		mkdirSync(CLAWDI_DIR, { recursive: true });
+	const dir = clawdiDir();
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
 	}
 }
 
@@ -42,7 +53,7 @@ const DEFAULT_API_URL = "http://localhost:8000";
 export function getConfig(): ClawdiConfig {
 	// Precedence: CLAWDI_API_URL env var > ~/.clawdi/config.json > default.
 	// Env var wins so CI / scripted runs can override without writing to disk.
-	const stored = readJson<Partial<ClawdiConfig>>(CONFIG_FILE) ?? {};
+	const stored = readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
 	return {
 		apiUrl: process.env.CLAWDI_API_URL || stored.apiUrl || DEFAULT_API_URL,
 	};
@@ -50,35 +61,37 @@ export function getConfig(): ClawdiConfig {
 
 /** Raw config on disk, without env overrides. Used by `config list / get`. */
 export function getStoredConfig(): Partial<ClawdiConfig> {
-	return readJson<Partial<ClawdiConfig>>(CONFIG_FILE) ?? {};
+	return readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
 }
 
 export function setConfig(config: ClawdiConfig) {
-	writeJson(CONFIG_FILE, config);
+	writeJson(configFile(), config);
 }
 
 export function setConfigKey(key: ConfigKey, value: string) {
 	const current = getStoredConfig();
-	writeJson(CONFIG_FILE, { ...current, [key]: value });
+	writeJson(configFile(), { ...current, [key]: value });
 }
 
 export function unsetConfigKey(key: ConfigKey) {
 	const current = getStoredConfig();
 	delete current[key];
-	writeJson(CONFIG_FILE, current);
+	writeJson(configFile(), current);
 }
 
 export function getAuth(): ClawdiAuth | null {
-	return readJson<ClawdiAuth>(AUTH_FILE);
+	return readJson<ClawdiAuth>(authFile());
 }
 
 export function setAuth(auth: ClawdiAuth) {
-	writeJson(AUTH_FILE, auth);
+	writeJson(authFile(), auth);
 }
 
 export function clearAuth() {
-	if (existsSync(AUTH_FILE)) {
-		unlinkSync(AUTH_FILE);
+	const { unlinkSync } = require("node:fs");
+	const p = authFile();
+	if (existsSync(p)) {
+		unlinkSync(p);
 	}
 }
 
@@ -87,5 +100,5 @@ export function isLoggedIn(): boolean {
 }
 
 export function getClawdiDir(): string {
-	return CLAWDI_DIR;
+	return clawdiDir();
 }

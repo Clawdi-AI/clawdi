@@ -1,38 +1,69 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { ModuleState } from "@clawdi-cloud/shared/types";
 import chalk from "chalk";
-import { getAuth, getClawdiDir, getConfig } from "../lib/config";
+import { getAuth, getConfig, isLoggedIn } from "../lib/config";
+import { readModuleState } from "../lib/state";
 
-export async function status() {
+interface StatusJson {
+	loggedIn: boolean;
+	user?: { email?: string; id?: string };
+	apiUrl: string;
+	activity: Record<string, { lastActivityAt: string }>;
+}
+
+function buildStatus(): StatusJson {
 	const config = getConfig();
+	const auth = getAuth();
+	const state = (readModuleState() ?? {}) as ModuleState;
+	const entries: Record<string, { lastActivityAt: string }> = {};
+	for (const [k, v] of Object.entries(state)) {
+		if (
+			v &&
+			typeof v === "object" &&
+			"lastActivityAt" in v &&
+			typeof v.lastActivityAt === "string"
+		) {
+			entries[k] = { lastActivityAt: v.lastActivityAt };
+		}
+	}
+	return {
+		loggedIn: isLoggedIn(),
+		user: auth ? { email: auth.email, id: auth.userId } : undefined,
+		apiUrl: config.apiUrl,
+		activity: entries,
+	};
+}
+
+export async function status(opts: { json?: boolean } = {}) {
+	const s = buildStatus();
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(s, null, 2));
+		return;
+	}
 
 	console.log(chalk.bold("Clawdi Cloud Status"));
 	console.log();
 
-	// Auth
-	const auth = getAuth();
-	if (auth) {
-		console.log(chalk.green("  Auth:    ✓ logged in"));
-		console.log(chalk.gray(`  User:    ${auth.email || auth.userId || "unknown"}`));
-		console.log(chalk.gray(`  API:     ${config.apiUrl}`));
+	if (s.loggedIn) {
+		console.log(chalk.green("  Auth:     ✓ logged in"));
+		console.log(chalk.gray(`  User:     ${s.user?.email || s.user?.id || "unknown"}`));
+		console.log(chalk.gray(`  API:      ${s.apiUrl}`));
 	} else {
-		console.log(chalk.red("  Auth:    ✗ not logged in"));
-		console.log(chalk.gray("  Run `clawdi login` to authenticate."));
+		console.log(chalk.red("  Auth:     ✗ not logged in"));
+		console.log(chalk.gray("  Run `clawdi auth login` to authenticate."));
 	}
 
 	console.log();
 
-	// Sync state
-	const syncPath = join(getClawdiDir(), "sync.json");
-	if (existsSync(syncPath)) {
-		const sync = JSON.parse(readFileSync(syncPath, "utf-8"));
-		console.log(chalk.bold("  Sync:"));
-		for (const [module, state] of Object.entries(sync) as [string, { lastSyncedAt: string }][]) {
-			const ago = timeSince(new Date(state.lastSyncedAt));
-			console.log(chalk.gray(`    ${module}: last synced ${ago}`));
+	const activityEntries = Object.entries(s.activity);
+	if (activityEntries.length > 0) {
+		console.log(chalk.bold("  Activity:"));
+		for (const [module, state] of activityEntries) {
+			const ago = timeSince(new Date(state.lastActivityAt));
+			console.log(chalk.gray(`    ${module}: last activity ${ago}`));
 		}
 	} else {
-		console.log(chalk.gray("  Sync:    no sync history"));
+		console.log(chalk.gray("  Activity: no activity yet"));
 	}
 }
 
