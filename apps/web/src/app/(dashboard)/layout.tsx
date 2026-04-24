@@ -1,10 +1,23 @@
+import { currentUser } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
+import { isEmailAllowed } from "@/lib/email-allowlist";
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+	// Private-beta gate. Only runs when ALLOWED_EMAIL_DOMAINS is set; otherwise
+	// isEmailAllowed returns true for everyone. See lib/email-allowlist.ts.
+	const user = await currentUser();
+	const primaryEmail = user?.emailAddresses.find(
+		(e) => e.id === user.primaryEmailAddressId,
+	)?.emailAddress;
+	if (!isEmailAllowed(primaryEmail)) {
+		redirect("/access-denied");
+	}
+
 	return (
 		<SidebarProvider
 			style={

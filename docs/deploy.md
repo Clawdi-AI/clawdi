@@ -137,15 +137,19 @@ Dashboard ships to Vercel from `apps/web/`. Once:
 
 1. In the Vercel dashboard, import the repo.
 2. **Root Directory** = `apps/web`. Framework preset = Next.js.
-3. Environment variables (Production scope):
+3. Environment variables (Production scope; see `apps/web/.env.example` for the canonical list):
 
     ```
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...   # shared Clerk instance
     CLERK_SECRET_KEY=sk_live_...
-    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
     NEXT_PUBLIC_API_URL=https://cloud-api.clawdi.ai
+
+    # Optional — restrict dashboard access to listed email domains
+    # (comma-separated). Unset or blank = any signed-in user allowed.
+    ALLOWED_EMAIL_DOMAINS=
     ```
+
+    Clerk's `/sign-in` + `/sign-up` paths are wired via `ClerkProvider` props in `apps/web/src/app/layout.tsx` — no env vars needed.
 
 4. Add `cloud.clawdi.ai` as a custom domain; Vercel handles TLS.
 5. Every push to `main` auto-deploys preview; promote to prod from the PR.
