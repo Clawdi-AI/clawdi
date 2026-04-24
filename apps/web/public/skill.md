@@ -22,7 +22,7 @@ npm install -g @clawdi/cli
 ## Step 2: Log in
 
 ```bash
-clawdi login
+clawdi auth login
 ```
 
 This will prompt for an API key. Tell the user to get it from the Clawdi Cloud dashboard:
@@ -35,14 +35,14 @@ clawdi setup
 ```
 
 This will:
-- Detect Claude Code (or other supported agents)
+- Detect installed agents (Claude Code, Codex, Hermes, OpenClaw)
 - Register the MCP server (gives you `memory_search`, `memory_add`, and connector tools)
 - Install the Clawdi skill
 
 ## Step 4: Sync sessions (optional)
 
 ```bash
-clawdi sync up --modules sessions
+clawdi push --modules sessions
 ```
 
 This uploads your conversation history to the Clawdi Cloud dashboard.
