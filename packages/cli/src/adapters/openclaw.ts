@@ -56,11 +56,14 @@ function extractText(content: unknown): string {
 	if (Array.isArray(content)) {
 		return content
 			.filter(
-				(b): b is { type: string; text?: string } =>
-					typeof b === "object" && b !== null && "type" in b,
+				(b): b is { type: string; text: string } =>
+					typeof b === "object" &&
+					b !== null &&
+					"type" in b &&
+					b.type === "text" &&
+					typeof (b as { text?: unknown }).text === "string",
 			)
-			.filter((b) => b.type === "text" && typeof b.text === "string")
-			.map((b) => b.text!)
+			.map((b) => b.text)
 			.join("\n");
 	}
 	return "";

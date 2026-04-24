@@ -47,7 +47,7 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 
 	// 2. Prefer registered environments.
 	const registered = listRegisteredAgentTypes();
-	if (registered.length === 1) return adapterForType(registered[0]!);
+	if (registered.length === 1 && registered[0]) return adapterForType(registered[0]);
 	if (registered.length > 1) {
 		const picked = await askOne<AgentType>(
 			"Multiple agents registered. Select one:",
@@ -62,7 +62,7 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 		await Promise.all(allAdapters.map(async (a) => ((await a.detect()) ? a : null)))
 	).filter((a): a is AgentAdapter => a !== null);
 	if (detected.length === 0) return null;
-	if (detected.length === 1) return detected[0]!;
+	if (detected.length === 1 && detected[0]) return detected[0];
 	const picked = await askOne<AgentType>(
 		"Multiple agents detected. Select one:",
 		detected.map((a) => ({

@@ -18,7 +18,8 @@ interface Check {
 }
 
 async function checkAuth(): Promise<Check> {
-	if (!isLoggedIn()) {
+	const auth = getAuth();
+	if (!auth) {
 		return {
 			name: "Auth",
 			ok: false,
@@ -26,7 +27,6 @@ async function checkAuth(): Promise<Check> {
 			hint: "Run `clawdi auth login`",
 		};
 	}
-	const auth = getAuth()!;
 	return {
 		name: "Auth",
 		ok: true,

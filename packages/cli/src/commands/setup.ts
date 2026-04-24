@@ -68,11 +68,10 @@ export async function setup(opts: { agent?: string; yes?: boolean }) {
 		console.log();
 		const result = await p.multiselect<string>({
 			message: "Register which agents?",
-			// biome-ignore lint/suspicious/noExplicitAny: @clack/prompts Option<T> generics
 			options: detected.map((d) => ({
-				value: d.adapter.agentType,
+				value: d.adapter.agentType as string,
 				label: `${AGENT_LABELS[d.adapter.agentType]}${d.version ? ` (${d.version})` : ""}`,
-			})) as any,
+			})),
 			initialValues: detected.map((d) => d.adapter.agentType),
 			required: false,
 		});
@@ -117,7 +116,7 @@ async function registerEnv(
 		mkdirSync(envDir, { recursive: true });
 		writeFileSync(
 			join(envDir, `${agentType}.json`),
-			JSON.stringify({ id: env.id, agentType, machineId, machineName }, null, 2) + "\n",
+			`${JSON.stringify({ id: env.id, agentType, machineId, machineName }, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
 

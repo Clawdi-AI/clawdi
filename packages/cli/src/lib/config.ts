@@ -45,7 +45,7 @@ function readJson<T>(path: string): T | null {
 
 function writeJson(path: string, data: unknown) {
 	ensureDir();
-	writeFileSync(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
 }
 
 const DEFAULT_API_URL = "http://localhost:8000";

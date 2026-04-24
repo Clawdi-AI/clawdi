@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { rmSync } from "node:fs";
-import { join } from "node:path";
 import { doctor } from "../../src/commands/doctor";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
@@ -42,12 +40,12 @@ describe("doctor --json", () => {
 
 		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; hint?: string }>;
 		const auth = checks.find((c) => c.name === "Auth");
-		expect(auth!.ok).toBe(false);
-		expect(auth!.hint).toContain("clawdi auth login");
+		expect(auth?.ok).toBe(false);
+		expect(auth?.hint).toContain("clawdi auth login");
 
 		// API reachability is skipped when not logged in
 		const api = checks.find((c) => c.name === "API reachability");
-		expect(api!.ok).toBe(false);
+		expect(api?.ok).toBe(false);
 
 		// No network calls should have happened (all checks are skipped when unauthenticated)
 		expect(fetchCalls).toHaveLength(0);
@@ -90,16 +88,16 @@ describe("doctor --json", () => {
 		}
 
 		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; detail?: string }>;
-		expect(checks.find((c) => c.name === "Auth")!.ok).toBe(true);
-		expect(checks.find((c) => c.name === "API reachability")!.ok).toBe(true);
-		expect(checks.find((c) => c.name === "Environments")!.ok).toBe(true);
-		expect(checks.find((c) => c.name === "Environments")!.detail).toContain("hermes");
-		expect(checks.find((c) => c.name === "Vault resolve")!.ok).toBe(true);
-		expect(checks.find((c) => c.name === "MCP connectors")!.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Auth")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "API reachability")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Environments")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Environments")?.detail).toContain("hermes");
+		expect(checks.find((c) => c.name === "Vault resolve")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "MCP connectors")?.ok).toBe(true);
 
 		// Hermes fixture present → that agent shows ✓, others show ✗ (not installed)
 		const hermesCheck = checks.find((c) => c.name === "Agent: Hermes");
-		expect(hermesCheck!.ok).toBe(true);
+		expect(hermesCheck?.ok).toBe(true);
 	});
 
 	it("reports API unreachable when /api/auth/me fails", async () => {
@@ -137,7 +135,7 @@ describe("doctor --json", () => {
 
 		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; hint?: string }>;
 		const api = checks.find((c) => c.name === "API reachability");
-		expect(api!.ok).toBe(false);
-		expect(api!.hint).toContain("retry");
+		expect(api?.ok).toBe(false);
+		expect(api?.hint).toContain("retry");
 	});
 });

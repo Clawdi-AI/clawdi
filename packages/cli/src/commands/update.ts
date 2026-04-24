@@ -30,7 +30,7 @@ function writeCache(latest: string): void {
 	try {
 		writeFileSync(
 			cachePath(),
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2) + "\n",
+			`${JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
 	} catch {
@@ -116,7 +116,7 @@ export async function maybeNotifyOutdated(): Promise<void> {
 	const cached = readCache();
 	const now = Date.now();
 
-	if (cached && cached.latest && now - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) {
+	if (cached?.latest && now - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) {
 		if (isNewer(cached.latest, current)) {
 			console.log();
 			console.log(

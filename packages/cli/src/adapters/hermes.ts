@@ -58,6 +58,24 @@ export class HermesAdapter implements AgentAdapter {
 		try {
 			const sinceEpoch = since ? since.getTime() / 1000 : 0;
 
+			interface SessionRow {
+				id: string;
+				source: string | null;
+				model: string | null;
+				title: string | null;
+				started_at: number;
+				ended_at: number | null;
+				message_count: number | null;
+				input_tokens: number | null;
+				output_tokens: number | null;
+				cache_read_tokens: number | null;
+			}
+			interface MessageRow {
+				role: string;
+				content: string;
+				timestamp: number;
+			}
+
 			const rows = db
 				.query(`
 					SELECT id, source, model, title, started_at, ended_at,
@@ -66,7 +84,7 @@ export class HermesAdapter implements AgentAdapter {
 					WHERE started_at >= ?
 					ORDER BY started_at DESC
 				`)
-				.all(sinceEpoch) as any[];
+				.all(sinceEpoch) as SessionRow[];
 
 			const msgStmt = db.query(`
 				SELECT role, content, timestamp
@@ -85,7 +103,7 @@ export class HermesAdapter implements AgentAdapter {
 					? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
 					: null;
 
-				const msgRows = msgStmt.all(row.id) as any[];
+				const msgRows = msgStmt.all(row.id) as MessageRow[];
 				const messages: SessionMessage[] = msgRows.map((m) => ({
 					role: m.role as "user" | "assistant",
 					content: m.content,

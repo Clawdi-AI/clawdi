@@ -51,7 +51,8 @@ export function parseSource(input: string): ParsedSource {
 				.replace(/^\//, "")
 				.replace(/\.git$/, "")
 				.split("/");
-			if (parts.length >= 2) {
+			const [owner, repo] = parts;
+			if (owner && repo) {
 				// Handle GitHub's /tree/<ref>/subpath convention.
 				let ref: string | undefined;
 				let path: string | undefined;
@@ -63,10 +64,10 @@ export function parseSource(input: string): ParsedSource {
 					path = parts.slice(2).join("/");
 				}
 				if (host === "github.com") {
-					return { type: "github", owner: parts[0]!, repo: parts[1]!, path, ref };
+					return { type: "github", owner, repo, path, ref };
 				}
 				if (host === "gitlab.com") {
-					return { type: "gitlab", owner: parts[0]!, repo: parts[1]!, path, ref };
+					return { type: "gitlab", owner, repo, path, ref };
 				}
 			}
 			return { type: "https", url: trimmed };
@@ -77,12 +78,13 @@ export function parseSource(input: string): ParsedSource {
 
 	// owner/repo[/subpath][#ref] shorthand
 	const [ownerRepoPath, ref] = trimmed.split("#");
-	const segments = ownerRepoPath!.split("/").filter(Boolean);
-	if (segments.length >= 2) {
+	const segments = ownerRepoPath?.split("/").filter(Boolean) ?? [];
+	const [owner, repo] = segments;
+	if (owner && repo) {
 		return {
 			type: "github",
-			owner: segments[0]!,
-			repo: segments[1]!,
+			owner,
+			repo,
 			path: segments.length > 2 ? segments.slice(2).join("/") : undefined,
 			ref,
 		};

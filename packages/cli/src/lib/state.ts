@@ -24,5 +24,5 @@ export function readModuleState(): ModuleState {
 
 export function writeModuleState(state: ModuleState) {
 	const path = join(getClawdiDir(), STATE_FILE);
-	writeFileSync(path, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+	writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
 }

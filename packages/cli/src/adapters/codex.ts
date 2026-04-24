@@ -48,11 +48,11 @@ function extractMessageText(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.filter(
-			(b): b is { type: string; text?: string } =>
+			(b): b is { type: string; text: string } =>
 				typeof b === "object" && b !== null && "type" in b && typeof b.text === "string",
 		)
 		.filter((b) => b.type === "input_text" || b.type === "output_text" || b.type === "text")
-		.map((b) => b.text!)
+		.map((b) => b.text)
 		.join("\n");
 }
 

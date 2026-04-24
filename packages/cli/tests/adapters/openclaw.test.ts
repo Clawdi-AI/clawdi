@@ -33,7 +33,7 @@ describe("OpenClawAdapter.detect", () => {
 
 	it("detects alternative home names (.clawdbot / .moltbot) via getOpenClawHome", async () => {
 		// Point HOME to a dir that has .clawdbot but not .openclaw
-		const alt = tmpHome + "-alt";
+		const alt = `${tmpHome}-alt`;
 		mkdirSync(join(alt, ".clawdbot"), { recursive: true });
 		process.env.HOME = alt;
 		const a = new OpenClawAdapter();
@@ -44,7 +44,7 @@ describe("OpenClawAdapter.detect", () => {
 	});
 
 	it("honors $OPENCLAW_STATE_DIR override", async () => {
-		process.env.HOME = "/tmp/clawdi-nowhere-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		process.env.OPENCLAW_STATE_DIR = join(tmpHome, ".openclaw");
 		const a = new OpenClawAdapter();
 		expect(await a.detect()).toBe(true);

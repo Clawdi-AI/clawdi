@@ -32,13 +32,13 @@ describe("ClaudeCodeAdapter.detect", () => {
 	});
 
 	it("returns false when $HOME/.claude is absent", async () => {
-		process.env.HOME = "/tmp/clawdi-nowhere-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		const a = new ClaudeCodeAdapter();
 		expect(await a.detect()).toBe(false);
 	});
 
 	it("honors $CLAUDE_CONFIG_DIR override", async () => {
-		process.env.HOME = "/tmp/clawdi-nowhere-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		process.env.CLAUDE_CONFIG_DIR = join(tmpHome, ".claude");
 		const a = new ClaudeCodeAdapter();
 		expect(await a.detect()).toBe(true);
@@ -69,7 +69,7 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 	it("extracts text from array content blocks (type:text)", async () => {
 		const a = new ClaudeCodeAdapter();
 		const sessions = await a.collectSessions();
-		const texts = sessions[0]!.messages.map((m) => m.content);
+		const texts = sessions[0]?.messages.map((m) => m.content);
 		expect(texts).toEqual(["hello", "world", "one more", "done"]);
 	});
 
@@ -90,7 +90,7 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 
 	it("skips sessions with fewer than 3 JSONL lines", async () => {
 		const shortPath = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "short.jsonl");
-		writeFileSync(shortPath, JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" }) + "\n");
+		writeFileSync(shortPath, `${JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" })}\n`);
 		const a = new ClaudeCodeAdapter();
 		const sessions = await a.collectSessions();
 		// original long session still counts, short file is skipped

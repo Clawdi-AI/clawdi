@@ -5,7 +5,7 @@ import * as p from "@clack/prompts";
 import { AGENT_LABELS, AGENT_TYPES, type AgentType } from "@clawdi-cloud/shared/consts";
 import chalk from "chalk";
 import { getHermesHome } from "../adapters/paths";
-import { adapterRegistry, builtinSkillTargetDir } from "../adapters/registry";
+import { builtinSkillTargetDir } from "../adapters/registry";
 import { getClawdiDir } from "../lib/config";
 import { askMulti, askYesNo } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";

@@ -27,7 +27,7 @@ describe("HermesAdapter.detect", () => {
 	});
 
 	it("returns false when $HOME/.hermes is absent", async () => {
-		process.env.HOME = "/tmp/clawdi-nowhere-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		const a = new HermesAdapter();
 		expect(await a.detect()).toBe(false);
 	});
@@ -48,11 +48,11 @@ describe("HermesAdapter.collectSessions", () => {
 			outputTokens: 5,
 			cacheReadTokens: 2,
 		});
-		expect(plain!.messages).toHaveLength(2);
-		expect(plain!.messages[0]!.role).toBe("user");
-		expect(plain!.messages[0]!.content).toBe("hello");
-		expect(plain!.messages[1]!.role).toBe("assistant");
-		expect(plain!.messages[1]!.model).toBe("claude-opus-4-7");
+		expect(plain?.messages).toHaveLength(2);
+		expect(plain?.messages[0]?.role).toBe("user");
+		expect(plain?.messages[0]?.content).toBe("hello");
+		expect(plain?.messages[1]?.role).toBe("assistant");
+		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
 	});
 
 	it("parses a JSON-blob model field via parseModelField", async () => {
@@ -60,8 +60,8 @@ describe("HermesAdapter.collectSessions", () => {
 		const sessions = await a.collectSessions();
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json).toBeDefined();
-		expect(json!.model).toBe("gpt-5.3-codex");
-		expect(json!.modelsUsed).toEqual(["gpt-5.3-codex"]);
+		expect(json?.model).toBe("gpt-5.3-codex");
+		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
 	});
 
 	it("skips sessions with no extractable messages", async () => {
@@ -94,7 +94,7 @@ describe("HermesAdapter.collectSessions", () => {
 	it("rawFilePath includes the session id anchor", async () => {
 		const a = new HermesAdapter();
 		const sessions = await a.collectSessions();
-		expect(sessions[0]!.rawFilePath).toContain("state.db#");
+		expect(sessions[0]?.rawFilePath).toContain("state.db#");
 	});
 });
 
@@ -110,12 +110,12 @@ describe("HermesAdapter.collectSkills", () => {
 			skillKey: "core/demo",
 			name: "demo",
 		});
-		expect(skills[0]!.content).toContain("description: A nested demo skill");
+		expect(skills[0]?.content).toContain("description: A nested demo skill");
 	});
 
 	it("returns empty when skills dir is missing", async () => {
 		// Point HOME at a fresh tmpdir with no .hermes/
-		process.env.HOME = "/tmp/clawdi-empty-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-empty-${Date.now()}`;
 		const a = new HermesAdapter();
 		expect(await a.collectSkills()).toEqual([]);
 	});

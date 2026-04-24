@@ -10,7 +10,7 @@ function claudeDir() {
 function projectsDir() {
 	return join(claudeDir(), "projects");
 }
-function skillsDirFor() {
+function _skillsDirFor() {
 	return join(claudeDir(), "skills");
 }
 
@@ -97,7 +97,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	private parseSessionJsonl(
 		filePath: string,
-		projectDirName: string,
+		_projectDirName: string,
 	): Omit<RawSession, "localSessionId" | "rawFilePath"> | null {
 		const content = readFileSync(filePath, "utf-8");
 		const lines = content.split("\n").filter(Boolean);
@@ -138,8 +138,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 						text = c;
 					} else if (Array.isArray(c)) {
 						text = c
-							.filter((b) => b.type === "text" && b.text)
-							.map((b) => b.text!)
+							.filter((b): b is { type: "text"; text: string } => b.type === "text" && !!b.text)
+							.map((b) => b.text)
 							.join("\n");
 					}
 					if (text) {

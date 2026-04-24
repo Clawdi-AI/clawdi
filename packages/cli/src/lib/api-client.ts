@@ -2,7 +2,7 @@ import { getAuth, getConfig } from "./config";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
-const RETRY_DELAYS_MS = [100, 400, 1600];
+const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 
 /** Error thrown by ApiClient. Carries HTTP status and a human-facing hint. */
 export class ApiError extends Error {
@@ -108,7 +108,7 @@ export class ApiClient {
 
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
 			if (attempt > 0) {
-				const delay = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]!;
+				const delay = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
 				await sleep(delay);
 			}
 

@@ -32,7 +32,7 @@ describe("CodexAdapter.detect", () => {
 	});
 
 	it("honors $CODEX_HOME override", async () => {
-		process.env.HOME = "/tmp/clawdi-nowhere-" + Date.now();
+		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		process.env.CODEX_HOME = join(tmpHome, ".codex");
 		const a = new CodexAdapter();
 		expect(await a.detect()).toBe(true);

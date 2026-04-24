@@ -124,12 +124,8 @@ export async function vaultImport(file: string) {
 
 function parseVaultKey(key: string): { vaultSlug: string; section: string; field: string } {
 	const cleaned = key.replace(/^clawdi:\/\//, "");
-	const parts = cleaned.split("/");
-	if (parts.length === 3) {
-		return { vaultSlug: parts[0]!, section: parts[1]!, field: parts[2]! };
-	}
-	if (parts.length === 2) {
-		return { vaultSlug: parts[0]!, section: "", field: parts[1]! };
-	}
-	return { vaultSlug: "default", section: "", field: parts[0]! };
+	const [a = "", b = "", c = ""] = cleaned.split("/");
+	if (c) return { vaultSlug: a, section: b, field: c };
+	if (b) return { vaultSlug: a, section: "", field: b };
+	return { vaultSlug: "default", section: "", field: a };
 }

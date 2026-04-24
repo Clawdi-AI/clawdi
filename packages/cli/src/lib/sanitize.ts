@@ -24,7 +24,6 @@ const OSC_RE = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
 const DCS_PM_APC_RE = /\x1b[P^_][\s\S]*?(?:\x1b\\)/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
 const SIMPLE_ESC_RE = /\x1b[\x20-\x7e]/g;
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
 const C1_RE = /[\x80-\x9f]/g;
 // Strips all C0 control chars except \t (0x09) and \n (0x0a). Matches Vercel skills/src/sanitize.ts.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars

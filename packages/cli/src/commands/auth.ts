@@ -3,9 +3,9 @@ import chalk from "chalk";
 import { clearAuth, getAuth, getConfig, isLoggedIn, setAuth } from "../lib/config";
 
 export async function authLogin() {
-	if (isLoggedIn()) {
-		const auth = getAuth()!;
-		p.log.warn(`Already logged in as ${auth.email || auth.userId || "unknown"}`);
+	const existing = getAuth();
+	if (existing) {
+		p.log.warn(`Already logged in as ${existing.email || existing.userId || "unknown"}`);
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
 		return;
 	}
@@ -22,7 +22,7 @@ export async function authLogin() {
 
 	const apiKey = await p.password({
 		message: "Paste your API key",
-		validate: (v) => (v && v.trim() ? undefined : "API key cannot be empty"),
+		validate: (v) => (v?.trim() ? undefined : "API key cannot be empty"),
 	});
 	if (p.isCancel(apiKey)) {
 		p.cancel("Cancelled.");

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
@@ -55,14 +55,14 @@ describe("push — Hermes fixture", () => {
 
 		const batchCall = captured.find((c) => c.path === "/api/sessions/batch");
 		expect(batchCall).toBeDefined();
-		expect(batchCall!.method).toBe("POST");
+		expect(batchCall?.method).toBe("POST");
 		// Adapter filters out s-empty; s-json comes first by started_at DESC.
 		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batchCall!.body as any).sessions as Array<any>;
+		const sessions = (batchCall?.body as any).sessions as Array<any>;
 		expect(sessions).toHaveLength(2);
 		expect(sessions.map((s) => s.local_session_id).sort()).toEqual(["s-json", "s-plain"]);
 		// environment_id was seeded via seedAuthAndEnv
-		expect(sessions[0]!.environment_id).toBe("env-test");
+		expect(sessions[0]?.environment_id).toBe("env-test");
 
 		// After batch, each session gets a content upload (multipart).
 		const uploads = captured.filter((c) => c.path.match(/^\/api\/sessions\/[^/]+\/upload$/));
@@ -101,7 +101,7 @@ describe("push — Hermes fixture", () => {
 		}
 		const uploads = captured.filter((c) => c.path === "/api/skills/upload");
 		expect(uploads).toHaveLength(1);
-		expect(uploads[0]!.isMultipart).toBe(true);
+		expect(uploads[0]?.isMultipart).toBe(true);
 	});
 
 	it("corrupt state.json is tolerated (warning, not crash)", async () => {
@@ -137,12 +137,12 @@ describe("push — Claude Code fixture", () => {
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
 		expect(batch).toBeDefined();
 		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch!.body as any).sessions as Array<any>;
+		const sessions = (batch?.body as any).sessions as Array<any>;
 		expect(sessions).toHaveLength(1);
-		expect(sessions[0]!.local_session_id).toBe("11111111-2222-3333-4444-555555555555");
-		expect(sessions[0]!.input_tokens).toBe(30);
-		expect(sessions[0]!.output_tokens).toBe(8);
-		expect(sessions[0]!.project_path).toBe("/Users/fixture/project");
+		expect(sessions[0]?.local_session_id).toBe("11111111-2222-3333-4444-555555555555");
+		expect(sessions[0]?.input_tokens).toBe(30);
+		expect(sessions[0]?.output_tokens).toBe(8);
+		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
 	});
 });
 
@@ -161,12 +161,12 @@ describe("push — Codex fixture", () => {
 
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
 		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch!.body as any).sessions as Array<any>;
+		const sessions = (batch?.body as any).sessions as Array<any>;
 		expect(sessions).toHaveLength(1);
-		expect(sessions[0]!.input_tokens).toBe(15);
-		expect(sessions[0]!.output_tokens).toBe(7);
-		expect(sessions[0]!.cache_read_tokens).toBe(3);
-		expect(sessions[0]!.model).toBe("gpt-5.3-codex");
+		expect(sessions[0]?.input_tokens).toBe(15);
+		expect(sessions[0]?.output_tokens).toBe(7);
+		expect(sessions[0]?.cache_read_tokens).toBe(3);
+		expect(sessions[0]?.model).toBe("gpt-5.3-codex");
 	});
 });
 
@@ -185,11 +185,11 @@ describe("push — OpenClaw fixture", () => {
 
 		const batch = captured.find((c) => c.path === "/api/sessions/batch");
 		// biome-ignore lint/suspicious/noExplicitAny: test payload
-		const sessions = (batch!.body as any).sessions as Array<any>;
+		const sessions = (batch?.body as any).sessions as Array<any>;
 		expect(sessions).toHaveLength(1);
-		expect(sessions[0]!.local_session_id).toBe("oc-session-001");
-		expect(sessions[0]!.project_path).toBe("/Users/fixture/project");
-		expect(sessions[0]!.input_tokens).toBe(12);
+		expect(sessions[0]?.local_session_id).toBe("oc-session-001");
+		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
+		expect(sessions[0]?.input_tokens).toBe(12);
 	});
 });
 

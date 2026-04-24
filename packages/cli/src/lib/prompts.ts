@@ -1,19 +1,16 @@
+import type { Option } from "@clack/prompts";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { isInteractive } from "./tty";
 
 export type SelectOption<T extends string> = { value: T; label: string; hint?: string };
 
-function toClackOptions<T extends string>(
-	options: SelectOption<T>[],
-): Array<{ value: T; label: string; hint?: string }> {
+function toClackOptions<T extends string>(options: SelectOption<T>[]): Option<T>[] {
+	// `Option<T>` is a conditional that doesn't reduce when T is a generic
+	// constrained to `string`, so the literal needs an explicit cast.
 	return options.map((o) => {
-		const base: { value: T; label: string; hint?: string } = {
-			value: o.value,
-			label: o.label,
-		};
-		if (o.hint) base.hint = o.hint;
-		return base;
+		const base = { value: o.value, label: o.label, ...(o.hint ? { hint: o.hint } : {}) };
+		return base as Option<T>;
 	});
 }
 
@@ -36,15 +33,14 @@ export async function askMulti<T extends string>(
 		return defaultSelected ?? options.map((o) => o.value);
 	}
 	const initial = defaultSelected ?? options.map((o) => o.value);
-	// biome-ignore lint/suspicious/noExplicitAny: @clack/prompts Option<T> uses conditional types that don't flow through generics
-	const result = await p.multiselect({
+	const result = await p.multiselect<T>({
 		message,
-		options: toClackOptions(options) as any,
+		options: toClackOptions(options),
 		initialValues: initial,
 		required: false,
 	});
 	if (p.isCancel(result)) return null;
-	return result as T[];
+	return result;
 }
 
 export async function askOne<T extends string>(
@@ -52,13 +48,12 @@ export async function askOne<T extends string>(
 	options: SelectOption<T>[],
 ): Promise<T | null> {
 	if (!isInteractive()) return null;
-	// biome-ignore lint/suspicious/noExplicitAny: @clack/prompts Option<T> uses conditional types that don't flow through generics
-	const result = await p.select({
+	const result = await p.select<T>({
 		message,
-		options: toClackOptions(options) as any,
+		options: toClackOptions(options),
 	});
 	if (p.isCancel(result)) return null;
-	return result as T;
+	return result;
 }
 
 export function parseModules(
