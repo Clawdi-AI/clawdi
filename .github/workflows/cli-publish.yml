@@ -88,6 +88,11 @@ jobs:
       # `prepublishOnly` would re-run the build. We pass `--ignore-scripts`
       # because the step above already built everything; rerunning wastes
       # ~10s of CI time and risks a silent re-bundle with stale env.
-      - name: Publish to npm with provenance
+      #
+      # `--provenance` is intentionally omitted: npm requires the source
+      # repository to be public to verify provenance attestations, and
+      # `Clawdi-AI/clawdi` is internal. If the repo ever goes public, add
+      # `--provenance` back and the OIDC + sigstore flow takes over.
+      - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
-        run: npm publish --access public --provenance --ignore-scripts
+        run: npm publish --access public --ignore-scripts
