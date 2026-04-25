@@ -241,6 +241,23 @@ export async function authLogin(opts: { manual?: boolean } = {}) {
 		return;
 	}
 
+	// Both paths below need a TTY: device flow opens a browser and shows a
+	// code, manual flow uses an interactive password prompt. Bail out early
+	// in CI/SSH-without-pty/piped-stdout — the alternative is a 10-minute
+	// silent poll-timeout (device) or a hung password prompt (manual).
+	// Headless installs should pre-populate `~/.clawdi/auth.json` directly.
+	if (!process.stdout.isTTY || !process.stdin.isTTY) {
+		p.log.error("`clawdi auth login` needs an interactive terminal.");
+		p.log.message(
+			chalk.gray(
+				"Headless setup: write your API key directly to `~/.clawdi/auth.json`:\n" +
+					'  { "apiKey": "clawdi_…" }',
+			),
+		);
+		process.exitCode = 1;
+		return;
+	}
+
 	const config = getConfig();
 
 	p.intro(chalk.bold("clawdi auth login"));

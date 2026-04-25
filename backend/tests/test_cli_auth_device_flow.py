@@ -114,3 +114,50 @@ async def test_lookup_returns_status_and_label(client: httpx.AsyncClient):
     assert body["user_code"] == started["user_code"]
     assert body["client_label"] == "Claude Code · ci-runner"
     assert body["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_device_start_prunes_expired_rows(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    """Each /device call should garbage-collect rows past their TTL.
+    Bounds the unauthenticated table from inflating indefinitely under spam.
+
+    The test DB is shared across the suite and not rolled back per-test, so
+    use a unique tag prefix to identify our planted rows and assert about
+    only those.
+    """
+    import uuid as uuid_mod
+
+    tag = uuid_mod.uuid4().hex[:8]
+    for i in range(3):
+        db_session.add(
+            DeviceAuthorization(
+                device_code=f"prune-{tag}-{i}",
+                user_code=f"X{tag.upper()}{i}",  # 8 chars, alphabet-safe
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+    await db_session.commit()
+
+    before = (
+        await db_session.execute(
+            select(DeviceAuthorization).where(
+                DeviceAuthorization.device_code.like(f"prune-{tag}-%")
+            )
+        )
+    ).all()
+    assert len(before) == 3
+
+    # /device sweep should clear all rows whose expires_at has passed —
+    # including ours, regardless of any concurrent test data.
+    await _start(client)
+
+    after = (
+        await db_session.execute(
+            select(DeviceAuthorization).where(
+                DeviceAuthorization.device_code.like(f"prune-{tag}-%")
+            )
+        )
+    ).all()
+    assert len(after) == 0

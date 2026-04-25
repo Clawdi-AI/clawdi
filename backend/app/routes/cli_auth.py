@@ -23,7 +23,8 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_web_auth
@@ -52,6 +53,15 @@ _USER_CODE_LEN = 8
 _DEVICE_TTL = timedelta(minutes=10)
 _POLL_INTERVAL_SEC = 2
 
+# Hard cap on rows in `device_authorizations` at any moment. The endpoint is
+# unauthenticated by design (CLI has no key yet), so without a ceiling a bot
+# loop can inflate the table indefinitely. 10 000 covers ~1 666 concurrent
+# users mid-flow given the 10-min TTL — orders of magnitude above plausible
+# real load. Above the cap we 429 instead of inserting; legitimate users
+# retry in ≤ 10 min once expired rows clear. Proper per-IP rate limiting
+# (slowapi) is a follow-up; this is the floor.
+_MAX_ACTIVE_DEVICES = 10_000
+
 
 def _generate_user_code() -> str:
     return "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(_USER_CODE_LEN))
@@ -76,9 +86,27 @@ async def start_device_flow(
     body: DeviceStartRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    # Bound the (unauthenticated) write surface: prune anything past TTL and
+    # refuse new inserts above a hard ceiling. Cheap — both queries hit the
+    # same indexed column. Worst-case growth between calls is bounded by
+    # `_MAX_ACTIVE_DEVICES`, ensuring a spam loop can't fill the table or
+    # exhaust the user_code namespace.
+    await db.execute(
+        delete(DeviceAuthorization).where(DeviceAuthorization.expires_at < datetime.now(UTC))
+    )
+    active = (await db.execute(select(func.count()).select_from(DeviceAuthorization))).scalar_one()
+    if active >= _MAX_ACTIVE_DEVICES:
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many active authorizations — try again in a few minutes.",
+        )
+
     # Retry on the rare user_code collision — 8 chars from a 32-char alphabet
     # makes ~1 in a trillion at typical concurrency, but the unique-index will
     # raise IntegrityError anyway and we'd rather handle it cleanly here.
+    # Catch only the integrity error so a real DB failure (connection, schema
+    # drift) surfaces as a 500 instead of being masked as "user_code collision".
     for _ in range(5):
         device_code = _generate_device_code()
         user_code = _generate_user_code()
@@ -92,7 +120,7 @@ async def start_device_flow(
         try:
             await db.commit()
             break
-        except Exception:
+        except IntegrityError:
             await db.rollback()
     else:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not allocate user_code")

@@ -1,13 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
@@ -276,36 +268,17 @@ export async function maybeAutoUpdate(): Promise<void> {
 	const installer = detectInstaller();
 	if (!installer) return;
 
-	// Single-flight: a `mkdir` is atomic on every POSIX fs and on Windows,
-	// so if two clawdi processes race here only one creates the lock dir
-	// and only one spawns the install. The other returns silently.
+	// No single-flight lock. Two concurrent CLIs both spawning `npm i -g
+	// clawdi@latest` would serialize on npm's own per-package install lock —
+	// at worst one waits, both end up at the same target version. The
+	// previous mkdir-based lock added stale-recovery complexity for a
+	// non-correctness gain (saving one redundant spawn + a duplicate
+	// "Updating…" line); not worth it.
 	//
-	// Self-heal: detached children can outlive their parent, so the parent's
-	// `exit` listener may never run to clean up the lock. Treat any lock
-	// older than 5 min as stale and clear it on entry — that's much longer
-	// than `npm i -g` on the slowest connection but short enough that a
-	// future broken install doesn't permanently disable auto-update.
-	const lockDir = join(getClawdiDir(), ".auto-update.lock");
-	const STALE_LOCK_MS = 5 * 60 * 1000;
-	try {
-		const age = Date.now() - statSync(lockDir).mtimeMs;
-		if (age > STALE_LOCK_MS) {
-			rmSync(lockDir, { recursive: true, force: true });
-		}
-	} catch {
-		// no existing lock — fall through to mkdir
-	}
-	try {
-		mkdirSync(lockDir);
-	} catch {
-		return;
-	}
-
-	// Use `clawdi@latest` (not the pinned version we read from cache). If a
-	// newer patch landed between cache write and now, the install picks it
-	// up; combined with the `last-version` check next run, that keeps the
-	// system idempotent — no infinite re-install loop when the registry
-	// races ahead of our cache.
+	// `clawdi@latest` (not the pinned cache version) keeps installs
+	// idempotent — a newer patch landing between cache write and now is
+	// picked up automatically, and `last-version` on next invocation
+	// detects the change.
 	const args = installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
 
 	// Redirect installer output to a logfile so silent failures (network
@@ -330,10 +303,8 @@ export async function maybeAutoUpdate(): Promise<void> {
 		env: process.env,
 	});
 	child.on("error", () => {
-		rmSync(lockDir, { recursive: true, force: true });
-	});
-	child.on("exit", () => {
-		rmSync(lockDir, { recursive: true, force: true });
+		// Installer missing / crashed — silent skip; the user still sees
+		// `auto-update.log` if they care, and the next invocation retries.
 	});
 	child.unref();
 }

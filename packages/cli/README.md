@@ -10,10 +10,12 @@ npx clawdi --help
 
 # Or install globally
 npm i -g clawdi          # or: bun add -g clawdi
-clawdi auth login        # paste an API key from https://cloud.clawdi.ai
+clawdi auth login        # opens the dashboard in your browser to authorize
 clawdi setup             # detect agents, register MCP, install skill
 clawdi doctor            # verify everything's wired up
 ```
+
+> Headless? `clawdi auth login --manual` skips the browser and prompts for an API key from **Settings → API Keys**.
 
 ## Requirements
 
@@ -55,6 +57,7 @@ Run any command with `--help` to see its flags and real examples.
 | `CLAWDI_API_URL` | Override the backend endpoint (production builds default to `https://cloud-api.clawdi.ai`; from-source dev defaults to `http://localhost:8000`) |
 | `CLAWDI_DEBUG` | Print stack traces on errors |
 | `CLAWDI_NO_UPDATE_CHECK` | Suppress the non-blocking update check |
+| `CLAWDI_NO_AUTO_UPDATE` | Skip the default-on background auto-updater. Persistent equivalent: `clawdi config set autoUpdate false` |
 | `CLAUDE_CONFIG_DIR` | Custom home for the Claude Code adapter (instead of `~/.claude`) |
 | `CODEX_HOME` | Custom home for the Codex adapter (instead of `~/.codex`) |
 | `HERMES_HOME` | Custom home for the Hermes adapter (instead of `~/.hermes`) |
