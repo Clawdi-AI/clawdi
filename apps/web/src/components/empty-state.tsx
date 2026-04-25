@@ -1,5 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+	Empty,
+	EmptyContent,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 
 interface EmptyStateProps {
@@ -19,9 +27,13 @@ interface EmptyStateProps {
 }
 
 /**
- * Centered empty-state message. Flat by default — a minimal hint, not a
- * heavy dashed box. Opt-in `bordered` switches it to a subtle bordered tile
- * for cases where the surrounding layout needs visible structure.
+ * Centered empty-state message. Thin wrapper around shadcn's `<Empty>`
+ * primitives so call sites get a single prop-driven API while everything
+ * styling / aria comes from upstream.
+ *
+ * If a page needs unusual composition (multiple actions, custom media,
+ * nested sections), import the `<Empty>` parts from `@/components/ui/empty`
+ * directly instead of expanding this component's props.
  */
 export function EmptyState({
 	icon: Icon,
@@ -33,18 +45,26 @@ export function EmptyState({
 	className,
 }: EmptyStateProps) {
 	return (
-		<div
+		<Empty
 			className={cn(
-				"mx-auto flex w-full max-w-md flex-col items-center justify-center gap-2 text-center",
-				fillHeight ? "min-h-[320px] py-10" : "py-8",
-				bordered && "rounded-lg border border-dashed bg-muted/20",
+				// shadcn's default already includes `rounded-lg border-dashed p-6
+				// md:p-12`. The flat variant (default) strips the border + padding
+				// because most of our usages live inside existing card chrome.
+				bordered ? "border bg-muted/20" : "border-none p-0 md:p-0",
+				fillHeight ? "min-h-[320px]" : "py-8 md:py-8",
 				className,
 			)}
 		>
-			{Icon ? <Icon className="size-8 text-muted-foreground/60" aria-hidden /> : null}
-			{title ? <p className="text-sm font-medium">{title}</p> : null}
-			{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
-			{action ? <div className="mt-2">{action}</div> : null}
-		</div>
+			<EmptyHeader>
+				{Icon ? (
+					<EmptyMedia>
+						<Icon className="size-8 text-muted-foreground/60" aria-hidden />
+					</EmptyMedia>
+				) : null}
+				{title ? <EmptyTitle className="text-sm">{title}</EmptyTitle> : null}
+				{description ? <EmptyDescription>{description}</EmptyDescription> : null}
+			</EmptyHeader>
+			{action ? <EmptyContent>{action}</EmptyContent> : null}
+		</Empty>
 	);
 }

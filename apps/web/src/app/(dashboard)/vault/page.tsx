@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, Key, Loader2, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -14,6 +14,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
@@ -311,7 +312,7 @@ function VaultCard({
 						disabled={!newKey || !newValue || upsertItem.isPending}
 						size="sm"
 					>
-						{upsertItem.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+						{upsertItem.isPending ? <Spinner /> : <Plus />}
 						Save
 					</Button>
 					<Button

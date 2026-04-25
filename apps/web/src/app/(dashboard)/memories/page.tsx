@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, Database, Key, Loader2, Plus } from "lucide-react";
+import { AlertCircle, Brain, Database, Key, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
@@ -237,7 +238,7 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 						}}
 					/>
 					<Button onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
-						{isPending ? <Loader2 className="animate-spin" /> : <Key />}
+						{isPending ? <Spinner /> : <Key />}
 						Save
 					</Button>
 				</div>
@@ -330,7 +331,7 @@ function AddMemoryForm() {
 							onClick={() => content.trim() && createMemory.mutate()}
 							disabled={!content.trim() || createMemory.isPending}
 						>
-							{createMemory.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+							{createMemory.isPending ? <Spinner /> : <Plus />}
 							Add
 						</Button>
 					</div>

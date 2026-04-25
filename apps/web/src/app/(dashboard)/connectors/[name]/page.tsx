@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Link2Off, Loader2, Lock, Plug, PlugZap, Search, Shield } from "lucide-react";
+import { Check, Link2Off, Lock, Plug, PlugZap, Search, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import { cn, errorMessage } from "@/lib/utils";
@@ -159,7 +160,7 @@ export default function ConnectorDetailPage() {
 							disabled={connectApp.isPending}
 						>
 							{connectApp.isPending ? (
-								<Loader2 className="size-3.5 animate-spin" />
+								<Spinner className="size-3.5" />
 							) : (
 								<Plug className="size-3.5" />
 							)}
@@ -176,7 +177,7 @@ export default function ConnectorDetailPage() {
 						action={
 							<Button onClick={() => connectApp.mutate()} disabled={connectApp.isPending}>
 								{connectApp.isPending ? (
-									<Loader2 className="size-3.5 animate-spin" />
+									<Spinner className="size-3.5" />
 								) : (
 									<Plug className="size-3.5" />
 								)}
@@ -205,7 +206,7 @@ export default function ConnectorDetailPage() {
 									className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 								>
 									{disconnectApp.isPending ? (
-										<Loader2 className="size-3.5 animate-spin" />
+										<Spinner className="size-3.5" />
 									) : (
 										<Link2Off className="size-3.5" />
 									)}
@@ -341,7 +342,7 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 					Available Tools
 				</h2>
 				<div className="flex items-center justify-center py-6">
-					<Loader2 className="size-5 animate-spin text-muted-foreground" />
+					<Spinner className="size-5 text-muted-foreground" />
 				</div>
 			</section>
 		);
