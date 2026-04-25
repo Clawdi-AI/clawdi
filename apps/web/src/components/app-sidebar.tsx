@@ -115,23 +115,6 @@ export function AppSidebar() {
 										<span>Add an agent</span>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
-								<SidebarMenuItem>
-									{/* Sibling action to "Add an agent": adding connects an
-									    existing local agent, deploying spawns a brand-new
-									    one in clawdi.ai's SaaS. External link → opens in a
-									    new tab so the user doesn't lose dashboard state. */}
-									<SidebarMenuButton asChild tooltip="Deploy a new agent">
-										<a
-											href="https://www.clawdi.ai/dashboard"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<Rocket />
-											<span>Deploy a new agent</span>
-											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-										</a>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
 							</SidebarMenu>
 							<SidebarMenu>
 								{navItems.map((item) => {
@@ -165,6 +148,23 @@ export function AppSidebar() {
 											<Kbd>⌘</Kbd>
 											<Kbd>K</Kbd>
 										</KbdGroup>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+								<SidebarMenuItem>
+									{/* Cross-product link: this app manages already-deployed
+									    agents; clawdi.ai's dashboard is where users spin up
+									    a brand-new one. External link, new tab, with the
+									    arrow icon so the destination isn't a surprise. */}
+									<SidebarMenuButton asChild tooltip="Deploy a new agent">
+										<a
+											href="https://www.clawdi.ai/dashboard"
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<Rocket />
+											<span>Deploy a new agent</span>
+											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+										</a>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
 								<SidebarMenuItem>
