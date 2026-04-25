@@ -1,5 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
@@ -270,10 +278,23 @@ export async function maybeAutoUpdate(): Promise<void> {
 
 	// Single-flight: a `mkdir` is atomic on every POSIX fs and on Windows,
 	// so if two clawdi processes race here only one creates the lock dir
-	// and only one spawns the install. The other returns silently. Stale
-	// locks are cleared on `clawdi update --apply`-style manual runs;
-	// they're harmless at worst (one extra invocation skips the spawn).
+	// and only one spawns the install. The other returns silently.
+	//
+	// Self-heal: detached children can outlive their parent, so the parent's
+	// `exit` listener may never run to clean up the lock. Treat any lock
+	// older than 5 min as stale and clear it on entry — that's much longer
+	// than `npm i -g` on the slowest connection but short enough that a
+	// future broken install doesn't permanently disable auto-update.
 	const lockDir = join(getClawdiDir(), ".auto-update.lock");
+	const STALE_LOCK_MS = 5 * 60 * 1000;
+	try {
+		const age = Date.now() - statSync(lockDir).mtimeMs;
+		if (age > STALE_LOCK_MS) {
+			rmSync(lockDir, { recursive: true, force: true });
+		}
+	} catch {
+		// no existing lock — fall through to mkdir
+	}
 	try {
 		mkdirSync(lockDir);
 	} catch {

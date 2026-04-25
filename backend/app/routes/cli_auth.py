@@ -164,9 +164,7 @@ async def _load_device_or_404(
     deny). The lookup endpoint stays lockless because it's a pure read and
     locking would hold the row across the round-trip to the React UI.
     """
-    stmt = select(DeviceAuthorization).where(
-        DeviceAuthorization.user_code == user_code.upper()
-    )
+    stmt = select(DeviceAuthorization).where(DeviceAuthorization.user_code == user_code.upper())
     if lock:
         stmt = stmt.with_for_update()
     da = (await db.execute(stmt)).scalar_one_or_none()
