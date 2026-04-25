@@ -221,9 +221,7 @@ async def list_sessions(
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
-    rows = (
-        await db.execute(base.limit(page_size).offset((page - 1) * page_size))
-    ).all()
+    rows = (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).all()
 
     return Paginated[SessionListItemResponse](
         items=[_session_to_response(s, at, mn) for s, at, mn in rows],

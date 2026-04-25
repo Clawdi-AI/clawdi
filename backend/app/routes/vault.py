@@ -46,9 +46,7 @@ async def list_vaults(
         )
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
-    rows = (
-        (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
-    )
+    rows = (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
     return Paginated[VaultResponse](
         items=[
             VaultResponse(id=str(v.id), slug=v.slug, name=v.name, created_at=v.created_at)

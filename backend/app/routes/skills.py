@@ -103,9 +103,7 @@ async def list_skills(
             )
         )
 
-    return Paginated[SkillSummaryResponse](
-        items=items, total=total, page=page, page_size=page_size
-    )
+    return Paginated[SkillSummaryResponse](items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/{skill_key}")
