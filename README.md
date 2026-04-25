@@ -1,11 +1,11 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="Clawdi" width="180">
+</p>
+
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
   <strong>The best home for all your AI agents — environments, sessions, memory, skills, cron jobs, and app connections.</strong>
-</p>
-
-<p align="center">
-  <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="800">
 </p>
 
 <p align="center">
@@ -23,6 +23,10 @@
   <a href="#quickstart">Quickstart</a> ·
   <a href="#cli-reference">CLI Reference</a> ·
   <a href="#troubleshooting">Troubleshooting</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
 </p>
 
 > Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.

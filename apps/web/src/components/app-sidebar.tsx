@@ -86,7 +86,7 @@ export function AppSidebar() {
 							<SidebarMenuButton size="lg" asChild>
 								<Link href="/">
 									<Image
-										src="/clawdi.svg"
+										src="/clawdi-logo-transparent.png"
 										alt=""
 										width={32}
 										height={32}
