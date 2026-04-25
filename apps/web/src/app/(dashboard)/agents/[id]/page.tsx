@@ -1,15 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AgentLabel } from "@/components/dashboard/agent-label";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { DetailActions, DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { sessionColumns } from "@/components/sessions/session-columns";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
@@ -47,6 +47,12 @@ export default function AgentDetailPage() {
 	});
 
 	const sessionTotal = sessionsPage?.total ?? 0;
+
+	// Wait until `agent` is loaded — otherwise `agentTypeLabel(undefined)`
+	// returns the literal "Unknown", which would briefly flash in the
+	// breadcrumb during the initial query.
+	useSetBreadcrumbTitle(agent ? agent.machine_name || agentTypeLabel(agent.agent_type) : null);
+
 	const remove = useMutation({
 		mutationFn: async () =>
 			unwrap(
@@ -91,64 +97,65 @@ export default function AgentDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/"
-				backLabel="Back to Overview"
-				actions={
-					agent && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={onRemove}
-							disabled={remove.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Remove agent
-						</Button>
-					) : null
-				}
-			/>
+			<DetailActions>
+				{agent && !isLoading ? (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={onRemove}
+						disabled={remove.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Remove agent
+					</Button>
+				) : null}
+			</DetailActions>
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Agent not found</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<Card>
-					<CardContent className="space-y-3 py-6">
-						<Skeleton className="h-10 w-48" />
-						<Skeleton className="h-4 w-64" />
-					</CardContent>
-				</Card>
+				<div className="space-y-3 py-2">
+					<Skeleton className="h-6 w-48" />
+					<Skeleton className="h-4 w-64" />
+				</div>
 			) : agent ? (
 				<>
-					<Card>
-						<CardContent className="space-y-4 py-4">
-							<AgentLabel machineName={agent.machine_name} type={agent.agent_type} size="lg" />
-							<dl className="grid gap-3 border-t pt-4 text-sm sm:grid-cols-3">
-								<div>
-									<dt className="text-xs text-muted-foreground">Version</dt>
-									<dd>{agent.agent_version ? `v${agent.agent_version}` : "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">OS</dt>
-									<dd>{agent.os ?? "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">Last seen</dt>
-									<dd>{agent.last_seen_at ? relativeTime(agent.last_seen_at) : "—"}</dd>
-								</div>
-							</dl>
-						</CardContent>
-					</Card>
+					{/* Same flat header as sessions/skills/memories. The big
+					    AgentLabel + bordered dl was visually heavy for a
+					    page that's mostly the sessions table below it. */}
+					<div className="space-y-2">
+						<DetailTitle className="inline-flex items-center gap-2">
+							<AgentIcon agent={agent.agent_type} className="size-7 rounded" />
+							{agent.machine_name || agentTypeLabel(agent.agent_type)}
+						</DetailTitle>
+						<DetailMeta>
+							<span>{agentTypeLabel(agent.agent_type)}</span>
+							{agent.agent_version ? (
+								<>
+									<span>·</span>
+									<span>v{agent.agent_version}</span>
+								</>
+							) : null}
+							{agent.os ? (
+								<>
+									<span>·</span>
+									<span>{agent.os}</span>
+								</>
+							) : null}
+							{agent.last_seen_at ? (
+								<>
+									<span>·</span>
+									<span>last seen {relativeTime(agent.last_seen_at)}</span>
+								</>
+							) : null}
+						</DetailMeta>
+					</div>
 
 					<section className="space-y-2">
 						<div className="flex items-end justify-between">
 							<div>
-								<h2 className="text-base font-semibold">Sessions from this agent</h2>
+								<h2 className="font-semibold text-base">Sessions from this agent</h2>
 								<p className="text-sm text-muted-foreground">{sessionsPage?.total ?? 0} total</p>
 							</div>
 						</div>

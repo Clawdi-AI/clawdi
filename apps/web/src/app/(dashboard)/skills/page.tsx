@@ -7,7 +7,6 @@ import {
 	Check,
 	Download,
 	ExternalLink,
-	Loader2,
 	Plus,
 	Search,
 	Sparkles,
@@ -24,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
@@ -226,7 +226,7 @@ export default function SkillsPage() {
 						/>
 					</div>
 					<Button onClick={handleCustomInstall} disabled={!customRepo.trim() || !!installing}>
-						{installing && customRepo ? <Loader2 className="animate-spin" /> : <Plus />}
+						{installing && customRepo ? <Spinner /> : <Plus />}
 						Install
 					</Button>
 				</div>
@@ -272,7 +272,7 @@ export default function SkillsPage() {
 											disabled={isInstalling}
 											className="shrink-0"
 										>
-											{isInstalling ? <Loader2 className="animate-spin" /> : <Download />}
+											{isInstalling ? <Spinner /> : <Download />}
 											Install
 										</Button>
 									)}

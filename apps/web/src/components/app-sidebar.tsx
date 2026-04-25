@@ -5,13 +5,18 @@ import {
 	BarChart3,
 	Brain,
 	ChevronsUpDown,
+	CircleHelp,
 	CirclePlus,
+	ExternalLink,
 	Key,
 	LayoutDashboard,
 	LogOut,
+	Mail,
+	MessageCircle,
 	Monitor,
 	Moon,
 	Plug,
+	Rocket,
 	Search,
 	Settings,
 	Sparkles,
@@ -39,6 +44,7 @@ import {
 	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import {
 	Sidebar,
 	SidebarContent,
@@ -109,6 +115,23 @@ export function AppSidebar() {
 										<span>Add an agent</span>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
+								<SidebarMenuItem>
+									{/* Sibling action to "Add an agent": adding connects an
+									    existing local agent, deploying spawns a brand-new
+									    one in clawdi.ai's SaaS. External link → opens in a
+									    new tab so the user doesn't lose dashboard state. */}
+									<SidebarMenuButton asChild tooltip="Deploy a new agent">
+										<a
+											href="https://www.clawdi.ai/dashboard"
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<Rocket />
+											<span>Deploy a new agent</span>
+											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+										</a>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
 							</SidebarMenu>
 							<SidebarMenu>
 								{navItems.map((item) => {
@@ -138,9 +161,10 @@ export function AppSidebar() {
 									<SidebarMenuButton tooltip="Search (⌘K)" onClick={() => setPaletteOpen(true)}>
 										<Search />
 										<span>Search</span>
-										<kbd className="pointer-events-none ml-auto hidden select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
-											⌘K
-										</kbd>
+										<KbdGroup className="ml-auto">
+											<Kbd>⌘</Kbd>
+											<Kbd>K</Kbd>
+										</KbdGroup>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
 								<SidebarMenuItem>
@@ -148,6 +172,41 @@ export function AppSidebar() {
 										<Settings />
 										<span>Settings</span>
 									</SidebarMenuButton>
+								</SidebarMenuItem>
+								<SidebarMenuItem>
+									{/* Help → support email + Telegram. Mirrors the navbar
+									    pattern from the public clawdi repo so users hit the
+									    same channels everywhere. */}
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<SidebarMenuButton tooltip="Help">
+												<CircleHelp />
+												<span>Help</span>
+											</SidebarMenuButton>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent
+											side={isMobile ? "bottom" : "right"}
+											align="end"
+											className="min-w-56"
+										>
+											<DropdownMenuItem asChild>
+												<a href="mailto:support@clawdi.ai">
+													<Mail />
+													support@clawdi.ai
+												</a>
+											</DropdownMenuItem>
+											<DropdownMenuItem asChild>
+												<a
+													href="https://t.me/clawdiofficial"
+													target="_blank"
+													rel="noopener noreferrer"
+												>
+													<MessageCircle />
+													Telegram @clawdiofficial
+												</a>
+											</DropdownMenuItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
 								</SidebarMenuItem>
 							</SidebarMenu>
 						</SidebarGroupContent>

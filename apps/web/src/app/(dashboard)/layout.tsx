@@ -1,6 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
+import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -36,23 +37,25 @@ export default async function DashboardLayout({ children }: { children: React.Re
 			}
 		>
 			<CommandPaletteProvider>
-				<AppSidebar />
-				{/* 1rem = SidebarInset's md:m-2 top+bottom. Without this cap the
-				    inset scrolls the whole page and the sticky SiteHeader has
-				    nothing to pin against. */}
-				<SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-y-auto">
-					<SiteHeader />
-					<div className="flex flex-1 flex-col">
-						<div className="@container/main flex flex-1 flex-col gap-2">
-							<div
-								className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-6 md:py-6`}
-							>
-								{children}
+				<BreadcrumbTitleProvider>
+					<AppSidebar />
+					{/* 1rem = SidebarInset's md:m-2 top+bottom. Without this cap the
+					    inset scrolls the whole page and the sticky SiteHeader has
+					    nothing to pin against. */}
+					<SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-y-auto">
+						<SiteHeader />
+						<div className="flex flex-1 flex-col">
+							<div className="@container/main flex flex-1 flex-col gap-2">
+								<div
+									className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-6 md:py-6`}
+								>
+									{children}
+								</div>
 							</div>
 						</div>
-					</div>
-				</SidebarInset>
-				<Toaster />
+					</SidebarInset>
+					<Toaster />
+				</BreadcrumbTitleProvider>
 			</CommandPaletteProvider>
 		</SidebarProvider>
 	);

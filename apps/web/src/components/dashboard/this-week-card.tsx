@@ -3,6 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ContributionDay, DashboardStats } from "@/lib/api-schemas";
+import { formatModelLabel } from "@/lib/format";
 import { formatNumber } from "@/lib/utils";
 
 function sessionsInLastDays(contribution: ContributionDay[] | undefined, days: number): number {
@@ -20,7 +21,7 @@ export function ThisWeekCard({
 	const ready = !!stats;
 	const weekSessions = sessionsInLastDays(contribution, 7);
 	const todaySessions = sessionsInLastDays(contribution, 1);
-	const topModel = stats?.favorite_model ? stats.favorite_model.replace("claude-", "") : null;
+	const topModel = formatModelLabel(stats?.favorite_model) || null;
 
 	return (
 		<Card>

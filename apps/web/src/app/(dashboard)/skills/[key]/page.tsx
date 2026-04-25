@@ -1,15 +1,21 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Tag, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import {
+	DetailActions,
+	DetailMeta,
+	DetailNotFound,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Stat } from "@/components/meta/stat";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { errorMessage, relativeTime } from "@/lib/utils";
@@ -30,6 +36,8 @@ export default function SkillDetailPage() {
 			unwrap(await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
 	});
 
+	useSetBreadcrumbTitle(skill?.name || (skill ? key : null));
+
 	const uninstall = useMutation({
 		mutationFn: async () =>
 			unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
@@ -43,98 +51,77 @@ export default function SkillDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/skills"
-				backLabel="Back to skills"
-				actions={
-					skill && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => uninstall.mutate()}
-							disabled={uninstall.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Uninstall
-						</Button>
-					) : null
-				}
-			/>
+			<DetailActions>
+				{skill && !isLoading ? (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => uninstall.mutate()}
+						disabled={uninstall.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Uninstall
+					</Button>
+				) : null}
+			</DetailActions>
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Skill not found</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<Card>
-					<CardContent className="space-y-3 py-6">
-						<Skeleton className="h-6 w-48" />
-						<Skeleton className="h-4 w-64" />
-					</CardContent>
-				</Card>
+				<div className="space-y-3 py-2">
+					<Skeleton className="h-6 w-48" />
+					<Skeleton className="h-4 w-64" />
+				</div>
 			) : skill ? (
 				<>
-					<Card>
-						<CardHeader>
-							<CardTitle className="truncate font-semibold text-lg tracking-tight">
-								{skill.name}
-							</CardTitle>
-							<div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-								<Badge variant="secondary">v{skill.version}</Badge>
-								<span>{skill.file_count} files</span>
-								<span>·</span>
-								<span>{skill.source}</span>
-								{skill.source_repo ? (
-									<>
-										<span>·</span>
-										<a
-											href={`https://github.com/${skill.source_repo}`}
-											target="_blank"
-											rel="noreferrer"
-											className="inline-flex items-center gap-1 hover:text-foreground"
-										>
-											{skill.source_repo}
-											<ExternalLink className="size-3" />
-										</a>
-									</>
-								) : null}
-							</div>
-							{skill.description ? (
-								<p className="mt-2 text-sm text-muted-foreground">{skill.description}</p>
+					<div className="space-y-2">
+						<DetailTitle className="truncate">{skill.name}</DetailTitle>
+						<DetailMeta>
+							<span>{skill.source}</span>
+							{skill.source_repo ? (
+								<>
+									<span>·</span>
+									<a
+										href={`https://github.com/${skill.source_repo}`}
+										target="_blank"
+										rel="noreferrer"
+										className="inline-flex items-center gap-1 hover:text-foreground"
+									>
+										{skill.source_repo}
+										<ExternalLink className="size-3" />
+									</a>
+								</>
 							) : null}
-						</CardHeader>
-					</Card>
+							{skill.created_at ? (
+								<>
+									<span>·</span>
+									<span>installed {relativeTime(skill.created_at)}</span>
+								</>
+							) : null}
+						</DetailMeta>
+					</div>
 
-					{skill.content ? (
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-base">SKILL.md</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<div className="prose prose-sm max-w-none dark:prose-invert">
-									<Markdown content={skill.content} />
-								</div>
-							</CardContent>
-						</Card>
+					<DetailStats>
+						<Stat icon={Tag} label={`v${skill.version}`} />
+						<Stat
+							icon={FileText}
+							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
+						/>
+					</DetailStats>
+
+					{skill.description ? (
+						<p className="text-sm text-muted-foreground">{skill.description}</p>
 					) : null}
 
-					<Card>
-						<CardContent className="py-4">
-							<dl className="grid gap-3 text-sm sm:grid-cols-2">
-								<div>
-									<dt className="text-xs text-muted-foreground">Installed</dt>
-									<dd>{skill.created_at ? relativeTime(skill.created_at) : "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">Key</dt>
-									<dd className="font-mono text-xs">{skill.skill_key}</dd>
-								</div>
-							</dl>
-						</CardContent>
-					</Card>
+					{skill.content ? (
+						<>
+							<Separator />
+							<div className="prose prose-sm max-w-none dark:prose-invert">
+								<Markdown content={skill.content} />
+							</div>
+						</>
+					) : null}
 				</>
 			) : null}
 		</div>

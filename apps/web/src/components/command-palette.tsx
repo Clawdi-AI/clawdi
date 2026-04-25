@@ -6,7 +6,6 @@ import {
 	Brain,
 	Key,
 	LayoutDashboard,
-	Loader2,
 	type LucideIcon,
 	Plug,
 	Sparkles,
@@ -22,6 +21,7 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@/components/ui/command";
+import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { useDebouncedValue } from "@/lib/use-debounced";
@@ -172,7 +172,7 @@ function CommandPalette({
 					placeholder="Search sessions, memories, skills, vaults…"
 				/>
 				{hasQuery && isFetching ? (
-					<Loader2 className="pointer-events-none absolute top-3.5 right-4 size-4 animate-spin text-muted-foreground" />
+					<Spinner className="pointer-events-none absolute top-3.5 right-4 size-4 text-muted-foreground" />
 				) : null}
 			</div>
 			{/* Fixed min-height: stops the dialog from jumping as the user types
@@ -185,7 +185,7 @@ function CommandPalette({
 				    just an empty box while the debounce + network settles. */}
 				{hasQuery && isFetching && !hasStaleResults ? (
 					<div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-						<Loader2 className="size-4 animate-spin" />
+						<Spinner />
 						Searching…
 					</div>
 				) : null}

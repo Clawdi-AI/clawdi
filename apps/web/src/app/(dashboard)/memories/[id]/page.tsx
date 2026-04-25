@@ -1,14 +1,14 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Brain, Trash2 } from "lucide-react";
+import { Brain, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { DetailActions, DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
@@ -29,6 +29,12 @@ export default function MemoryDetailPage() {
 			unwrap(await api.GET("/api/memories/{memory_id}", { params: { path: { memory_id: id } } })),
 	});
 
+	// First sentence (or 80 chars) — keeps the breadcrumb readable.
+	const memoryTitle = memory?.content
+		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
+		: null;
+	useSetBreadcrumbTitle(memoryTitle);
+
 	const deleteMemory = useMutation({
 		mutationFn: async () =>
 			unwrap(
@@ -45,60 +51,50 @@ export default function MemoryDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/memories"
-				backLabel="Back to memories"
-				actions={
-					memory && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => deleteMemory.mutate()}
-							disabled={deleteMemory.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Delete
-						</Button>
-					) : null
-				}
-			/>
+			<DetailActions>
+				{memory && !isLoading ? (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => deleteMemory.mutate()}
+						disabled={deleteMemory.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Delete
+					</Button>
+				) : null}
+			</DetailActions>
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Memory not found</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<Card>
-					<CardContent className="space-y-4 py-6">
-						<Skeleton className="h-5 w-24" />
-						<Skeleton className="h-24 w-full" />
-						<Skeleton className="h-4 w-48" />
-					</CardContent>
-				</Card>
+				<div className="space-y-4 py-2">
+					<Skeleton className="h-5 w-24" />
+					<Skeleton className="h-24 w-full" />
+					<Skeleton className="h-4 w-48" />
+				</div>
 			) : memory ? (
 				<>
-					{/* Title treatment parallels Sessions/Skills detail: the content
-					    IS the memory, so it becomes the h1; a subtitle row below
-					    carries the meta (category / source / created). */}
 					<div className="space-y-2">
-						<h1 className="whitespace-pre-wrap font-semibold text-lg leading-snug tracking-tight">
-							{memory.content}
-						</h1>
-						<div className="flex flex-wrap items-center gap-2 text-sm">
-							<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
+						<DetailTitle className="whitespace-pre-wrap leading-snug">{memory.content}</DetailTitle>
+						<DetailMeta>
+							<Badge
+								variant="secondary"
+								className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
+							>
 								{memory.category}
 							</Badge>
-							<span className="text-muted-foreground">{memory.source}</span>
+							<span>{memory.source}</span>
 							{memory.created_at ? (
 								<>
-									<span className="text-muted-foreground">·</span>
-									<span className="text-muted-foreground">{relativeTime(memory.created_at)}</span>
+									<span>·</span>
+									<span title={new Date(memory.created_at).toLocaleString()}>
+										{relativeTime(memory.created_at)}
+									</span>
 								</>
 							) : null}
-						</div>
+						</DetailMeta>
 					</div>
 
 					{memory.tags?.length ? (
@@ -111,21 +107,6 @@ export default function MemoryDetailPage() {
 							))}
 						</div>
 					) : null}
-
-					<Card>
-						<CardContent className="py-4">
-							<dl className="grid gap-3 text-sm sm:grid-cols-2">
-								<div>
-									<dt className="text-xs text-muted-foreground">Created</dt>
-									<dd>{memory.created_at ? new Date(memory.created_at).toLocaleString() : "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">ID</dt>
-									<dd className="font-mono text-xs">{memory.id}</dd>
-								</div>
-							</dl>
-						</CardContent>
-					</Card>
 				</>
 			) : (
 				<Alert>

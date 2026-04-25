@@ -2,44 +2,25 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import {
-	ChevronRight,
-	Clock,
-	Hash,
-	type LucideIcon,
-	MessageSquare,
-	Terminal,
-	Zap,
-} from "lucide-react";
+import { ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
-import { DetailHeader } from "@/components/detail-header";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
-import { Badge } from "@/components/ui/badge";
+import { ModelBadge } from "@/components/meta/model-badge";
+import { Stat } from "@/components/meta/stat";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
-import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
-
-function formatDuration(seconds: number | null): string {
-	if (!seconds) return "-";
-	if (seconds < 60) return `${seconds}s`;
-	const mins = Math.floor(seconds / 60);
-	if (mins < 60) return `${mins}m`;
-	return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
-
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-	return String(n);
-}
+import { formatDuration } from "@/lib/format";
+import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
@@ -80,6 +61,15 @@ export default function SessionDetailPage() {
 		},
 	});
 
+	// Hooks must run on every render in the same order — this includes the
+	// breadcrumb title hook. Compute the title (nullable while loading) and
+	// register it BEFORE any early return; AppBreadcrumb's UUID fallback
+	// handles the loading state in the meantime.
+	const summaryText = session
+		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
+		: null;
+	useSetBreadcrumbTitle(summaryText);
+
 	if (isSessionLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
@@ -88,7 +78,7 @@ export default function SessionDetailPage() {
 		);
 	}
 
-	if (!session) {
+	if (!session || !summaryText) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<p className="text-muted-foreground">Session not found.</p>
@@ -100,37 +90,44 @@ export default function SessionDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader backHref="/sessions" backLabel="Back to sessions" />
-
-			{/* Header */}
-			<div>
-				<h1 className="text-lg font-semibold tracking-tight">
-					{formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)}
-				</h1>
-				<p className="text-xs text-muted-foreground mt-1">
-					{session.project_path || "No project path"} · {relativeTime(session.started_at)}
-				</p>
+			<div className="space-y-2">
+				<DetailTitle>{summaryText}</DetailTitle>
+				<DetailMeta>
+					{session.agent_type || session.machine_name ? (
+						<span className="inline-flex items-center gap-1.5">
+							<AgentIcon agent={session.agent_type} className="size-4 rounded-sm" />
+							<span className="font-medium text-foreground">
+								{session.machine_name || agentTypeLabel(session.agent_type)}
+							</span>
+							{session.machine_name && session.agent_type ? (
+								<span>· {agentTypeLabel(session.agent_type)}</span>
+							) : null}
+						</span>
+					) : null}
+					{session.project_path ? (
+						<>
+							<span>·</span>
+							<span className="truncate font-mono">{session.project_path}</span>
+						</>
+					) : null}
+					<span>·</span>
+					<span>{relativeTime(session.started_at)}</span>
+				</DetailMeta>
 			</div>
 
-			{/* Stats bar — agent label (2-line) has more height than the inline
-			    badges/stats, so align to start and let the badges sit along the
-			    baseline of the first line. */}
-			<div className="flex flex-wrap items-start gap-4">
-				{session.agent_type || session.machine_name ? (
-					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
-				) : null}
-				{session.model && (
-					<Badge variant="outline" className="border-primary/30 text-primary">
-						{session.model.replace("claude-", "")}
-					</Badge>
-				)}
+			<DetailStats>
+				<ModelBadge modelId={session.model} />
 				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
-				<Stat icon={Zap} label={`${formatTokens(totalTokens)} tokens`} />
-				{session.duration_seconds && (
+				<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
+				{session.duration_seconds ? (
 					<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
-				)}
-				<Stat icon={Hash} label={session.local_session_id.slice(0, 8)} />
-			</div>
+				) : null}
+				<Stat
+					icon={Hash}
+					label={session.local_session_id.slice(0, 8)}
+					title={session.local_session_id}
+				/>
+			</DetailStats>
 
 			{/* Divider */}
 			<Separator />
@@ -177,15 +174,6 @@ export default function SessionDetailPage() {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function Stat({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
-	return (
-		<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-			<Icon className="size-3.5" />
-			{label}
-		</span>
-	);
-}
-
 function MessageBlock({
 	message,
 	userAvatar,
@@ -221,19 +209,17 @@ function MessageBlock({
 			{/* Content */}
 			<div className="min-w-0 flex-1">
 				{/* Author line */}
-				<div className="flex items-center gap-2 mb-1">
+				<div className="mb-1 flex items-center gap-2">
 					<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
-					{!isUser && message.model && (
-						<Badge variant="secondary">{message.model.replace("claude-", "")}</Badge>
-					)}
-					{message.timestamp && (
+					{isUser ? null : <ModelBadge modelId={message.model} />}
+					{message.timestamp ? (
 						<span className="text-xs text-muted-foreground">
 							{new Date(message.timestamp).toLocaleTimeString([], {
 								hour: "2-digit",
 								minute: "2-digit",
 							})}
 						</span>
-					)}
+					) : null}
 				</div>
 
 				{/* Message body */}

@@ -77,8 +77,15 @@ export async function setup(opts: { agent?: string; yes?: boolean }) {
 			options: detected.map((d) => ({
 				value: d.adapter.agentType as string,
 				label: `${adapterRegistry[d.adapter.agentType].displayName}${d.version ? ` (${d.version})` : ""}`,
+				// Hint when an agent dir exists but the binary isn't on PATH —
+				// the user sees WHY it's unchecked instead of guessing.
+				...(d.version ? {} : { hint: "data only — binary not on PATH" }),
 			})),
-			initialValues: detected.map((d) => d.adapter.agentType),
+			// Only pre-select agents whose binary is actually reachable
+			// (`getVersion()` non-null). Stale `~/.openclaw/` etc. data dirs
+			// from old installs still show — but unchecked, so they're not
+			// registered by accident.
+			initialValues: detected.filter((d) => d.version !== null).map((d) => d.adapter.agentType),
 			required: false,
 		});
 		if (p.isCancel(result)) {
