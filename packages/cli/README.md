@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/docs/images/logo.png" alt="Clawdi" width="180">
-</p>
-
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
