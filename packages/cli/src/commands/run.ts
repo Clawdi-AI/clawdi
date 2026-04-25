@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { VaultResolved } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 
 export async function run(args: string[]) {
 	if (!isLoggedIn()) {
@@ -26,7 +27,7 @@ export async function run(args: string[]) {
 			console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
 			process.exit(1);
 		}
-		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${(e as Error).message}`));
+		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
 		console.log(chalk.gray("  Running without vault injection."));
 	}
 

@@ -4,6 +4,7 @@ import type { RawSession, RawSkill } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { getEnvIdByAgent, selectAdapter } from "../lib/select-adapter";
 import { readModuleState, writeModuleState } from "../lib/state";
@@ -199,7 +200,7 @@ export async function push(opts: {
 						// already committed in the batch POST above. Surface the
 						// reason so misconfigured file stores don't appear to
 						// succeed silently.
-						p.log.warn(`Content upload skipped for ${s.localSessionId}: ${(e as Error).message}`);
+						p.log.warn(`Content upload skipped for ${s.localSessionId}: ${errMessage(e)}`);
 					}
 				}
 				contentSpinner.stop(`Uploaded ${uploaded} session content${uploaded === 1 ? "" : "s"}`);

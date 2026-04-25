@@ -19,7 +19,7 @@ class Settings(BaseSettings):
             return ""
         return v
 
-    app_name: str = "clawdi-cloud"
+    app_name: str = "clawdi"
     environment: str = "development"  # development | staging | production
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # e.g. https://api.clawdi.example.
     public_api_url: str = "http://localhost:8000"
 
-    database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi_cloud"
+    database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi"
 
     # Observability (both optional; no-op if not set)
     sentry_dsn: str = ""

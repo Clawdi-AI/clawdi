@@ -16,6 +16,7 @@ import {
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { isInteractive } from "../lib/tty";
 
 export async function setup(opts: { agent?: string; yes?: boolean }) {
@@ -132,9 +133,7 @@ async function registerEnv(
 		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
 	} catch (e) {
 		console.log(
-			chalk.red(
-				`  Failed to register ${adapterRegistry[agentType].displayName}: ${(e as Error).message}`,
-			),
+			chalk.red(`  Failed to register ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`),
 		);
 	}
 }
@@ -255,9 +254,7 @@ async function registerHermesMcp() {
 		writeFs(configPath, updated);
 		console.log(chalk.green("✓ MCP server registered in Hermes"));
 	} catch (e) {
-		console.log(
-			chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${(e as Error).message}`),
-		);
+		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${errMessage(e)}`));
 		console.log(chalk.gray(`  Edit ${configPath} and add under mcp_servers:`));
 		console.log(chalk.gray(clawdiChild));
 	}

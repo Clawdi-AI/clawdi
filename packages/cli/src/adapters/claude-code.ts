@@ -10,9 +10,6 @@ function claudeDir() {
 function projectsDir() {
 	return join(claudeDir(), "projects");
 }
-function _skillsDirFor() {
-	return join(claudeDir(), "skills");
-}
 
 interface SessionJsonlEntry {
 	type?: string;
@@ -72,7 +69,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			// Coarse pre-filter on the encoded dir name: keep the target and any
 			// dir whose name starts with "target-". Because "/" and in-segment "-"
 			// both encode as "-", this superset may include sibling repos like
-			// "clawdi-cloud" when the target is "clawdi" — those false positives
+			// "clawdi-web" when the target is "clawdi" — those false positives
 			// are dropped below using each session's real cwd.
 			projectDirs = projectDirs.filter(
 				(d) => d.name === targetDir || d.name.startsWith(`${targetDir}-`),

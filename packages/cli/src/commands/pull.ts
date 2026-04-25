@@ -6,6 +6,7 @@ import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { selectAdapter } from "../lib/select-adapter";
@@ -109,7 +110,7 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 			pulled++;
 		} catch (e) {
-			p.log.warn(`${safeKey} failed: ${(e as Error).message}`);
+			p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
 		}
 	}
 	p.outro(chalk.green(`✓ Pulled ${pulled} skill${pulled === 1 ? "" : "s"}`));

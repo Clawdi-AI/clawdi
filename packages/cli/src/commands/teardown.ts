@@ -11,6 +11,7 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { getClawdiDir } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
@@ -121,7 +122,7 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 			p.log.success(`${label}: removed environment registration`);
 		}
 	} catch (e) {
-		p.log.warn(`${label}: could not remove env file (${(e as Error).message})`);
+		p.log.warn(`${label}: could not remove env file (${errMessage(e)})`);
 	}
 
 	// 2. Backend env row — intentionally left as dangling metadata.
@@ -137,7 +138,7 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 				rmSync(skillDir, { recursive: true, force: true });
 				p.log.success(`${label}: removed bundled skill (${skillDir})`);
 			} catch (e) {
-				p.log.warn(`${label}: could not remove skill (${(e as Error).message})`);
+				p.log.warn(`${label}: could not remove skill (${errMessage(e)})`);
 			}
 		}
 	}
@@ -198,7 +199,7 @@ function unregisterHermesMcp() {
 		writeFileSync(configPath, updated);
 		p.log.success("Hermes: removed MCP server entry from config.yaml");
 	} catch (e) {
-		p.log.warn(`Hermes: could not edit config.yaml (${(e as Error).message})`);
+		p.log.warn(`Hermes: could not edit config.yaml (${errMessage(e)})`);
 		p.log.info(`  Edit ${configPath} manually and remove the clawdi block under mcp_servers`);
 	}
 }

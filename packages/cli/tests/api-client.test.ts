@@ -41,11 +41,9 @@ describe("ApiClient construction", () => {
 });
 
 describe("ApiClient error classification", () => {
-	// These tests exercise retry/timeout/error wiring with paths that don't
-	// exist in the OpenAPI `paths` map — openapi-fetch still issues the
-	// request, we just cast to sidestep the literal-path check.
-	// biome-ignore lint/suspicious/noExplicitAny: test-only escape from path-literal inference.
-	const anyPath = (p: string) => p as any;
+	// Each test stubs `globalThis.fetch`, so the actual URL doesn't matter —
+	// but the path literal must type-check against the generated OpenAPI
+	// `paths` map. Pick any real endpoint for the method under test.
 
 	it("throws ApiError with status + hint on 401", async () => {
 		fakeLogin("http://127.0.0.1:0");
@@ -56,7 +54,7 @@ describe("ApiClient error classification", () => {
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				unwrap(await api.GET(anyPath("/anything")));
+				unwrap(await api.GET("/api/auth/me"));
 			} catch (e) {
 				caught = e;
 			}
@@ -75,7 +73,7 @@ describe("ApiClient error classification", () => {
 		globalThis.fetch = async () => {
 			calls++;
 			if (calls < 3) return new Response("oops", { status: 503 });
-			return new Response(JSON.stringify({ ok: true }), {
+			return new Response(JSON.stringify({ email: "e@x" }), {
 				status: 200,
 				headers: { "content-type": "application/json" },
 			});
@@ -83,8 +81,8 @@ describe("ApiClient error classification", () => {
 		try {
 			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
-			const result = unwrap(await api.GET(anyPath("/retry-test")));
-			expect(result).toEqual({ ok: true });
+			const result = unwrap(await api.GET("/api/auth/me"));
+			expect(result).toMatchObject({ email: "e@x" });
 			expect(calls).toBe(3);
 		} finally {
 			globalThis.fetch = origFetch;
@@ -104,7 +102,11 @@ describe("ApiClient error classification", () => {
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				unwrap(await api.POST(anyPath("/upload"), { body: { hello: "world" } }));
+				unwrap(
+					await api.POST("/api/memories", {
+						body: { content: "x", category: "fact", source: "test" },
+					}),
+				);
 			} catch (e) {
 				caught = e;
 			}
@@ -127,7 +129,11 @@ describe("ApiClient error classification", () => {
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				unwrap(await api.DELETE(anyPath("/thing")));
+				unwrap(
+					await api.DELETE("/api/memories/{memory_id}", {
+						params: { path: { memory_id: "abc" } },
+					}),
+				);
 			} catch (e) {
 				caught = e;
 			}

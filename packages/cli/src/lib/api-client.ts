@@ -109,9 +109,9 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 }
 
 // Duplicated verbatim from `@clawdi/shared/api/error-detail`. The CLI
-// publishes to npm as a standalone `@clawdi/cli` and deliberately doesn't
-// depend on the shared workspace package. If this diverges from the shared
-// copy, update both.
+// publishes to npm as a standalone `clawdi` package and deliberately
+// doesn't depend on the shared workspace package. If this diverges from
+// the shared copy, update both.
 function extractApiDetail(err: unknown): string {
 	if (typeof err === "object" && err !== null && "detail" in err) {
 		const d = (err as { detail: unknown }).detail;

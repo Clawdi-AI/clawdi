@@ -34,3 +34,7 @@ data/
 
 # PDM (local interpreter path — machine-specific)
 .pdm-python
+
+# Local dev seed scripts — they embed user-specific paths and personal
+# memory content; keep them out of the repo.
+backend/scripts/seed_demo.py

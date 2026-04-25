@@ -1,4 +1,4 @@
-# @clawdi/cli
+# clawdi
 
 iCloud for AI Agents. One CLI to share sessions, skills, memory, and vault secrets across Claude Code, Codex, OpenClaw, and Hermes — with an MCP server on the other end of the pipe.
 
@@ -11,8 +11,8 @@ iCloud for AI Agents. One CLI to share sessions, skills, memory, and vault secre
 ## Install
 
 ```bash
-npm i -g @clawdi/cli
-# or: bun add -g @clawdi/cli
+npm i -g clawdi
+# or: bun add -g clawdi
 ```
 
 ## Commands

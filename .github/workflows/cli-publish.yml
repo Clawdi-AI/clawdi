@@ -1,0 +1,80 @@
+name: Publish CLI
+
+# Auto-publishes `clawdi` to npm whenever `packages/cli/` lands on main with
+# a new version. The `skip-if-same-version` gate means a merge with no
+# version bump is a no-op, so every PR to main is safe — only deliberate
+# `"version": "..."` changes trigger a release. Mirrors the pattern used by
+# `@clawdi/openclaw-plugin` in the main clawdi repo.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - ".github/workflows/cli-publish.yml"
+
+concurrency:
+  group: cli-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # `environment: npm` gates the job behind the repo's `npm` environment
+    # secrets/rules. Combined with `id-token: write` this enables npm
+    # trusted-publisher OIDC so no NPM_TOKEN secret is needed.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: packages/cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Skip if version already published
+        id: check
+        run: |
+          LOCAL=$(node -p "require('./package.json').version")
+          REMOTE=$(npm view clawdi version 2>/dev/null || echo "0.0.0")
+          echo "local=$LOCAL remote=$REMOTE"
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install workspace deps
+        if: steps.check.outputs.skip != 'true'
+        working-directory: ${{ github.workspace }}
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        if: steps.check.outputs.skip != 'true'
+        run: bun run typecheck
+
+      - name: Test
+        if: steps.check.outputs.skip != 'true'
+        run: bun test
+
+      # `prepublishOnly` (in packages/cli/package.json) re-runs `bun run build`
+      # but we build explicitly here so a build failure is its own visible
+      # step, not buried inside the publish log.
+      - name: Build
+        if: steps.check.outputs.skip != 'true'
+        run: bun run build
+
+      - name: Publish to npm with provenance
+        if: steps.check.outputs.skip != 'true'
+        run: npm publish --access public --provenance

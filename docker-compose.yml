@@ -1,4 +1,4 @@
-name: clawdi-cloud-dev
+name: clawdi-dev
 
 # Dev-only infrastructure. Brings up a Postgres 16 image with pgvector +
 # pg_trgm so local dev doesn't have to install those extensions by hand.
@@ -19,10 +19,10 @@ services:
     # the upstream postgres image, so pg_trgm is still available via the
     # standard `CREATE EXTENSION` call wired in app/core/database.py.
     image: pgvector/pgvector:pg16
-    container_name: clawdi-cloud-pg
+    container_name: clawdi-pg
     restart: unless-stopped
     environment:
-      POSTGRES_DB: clawdi_cloud
+      POSTGRES_DB: clawdi
       POSTGRES_USER: clawdi
       POSTGRES_PASSWORD: clawdi_dev
     ports:
@@ -30,7 +30,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi_cloud"]
+      test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi"]
       interval: 10s
       timeout: 5s
       retries: 10

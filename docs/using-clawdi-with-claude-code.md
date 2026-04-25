@@ -113,17 +113,17 @@ Claude: → memory_extract()
           [empty]
 
         Found 3 candidate memories:
-        1. [preference] The user prefers pnpm over npm in the clawdi-cloud monorepo.
+        1. [preference] The user prefers pnpm over npm in the clawdi monorepo.
         2. [decision]   Clawdi chose Clerk for auth because the team already had a Clerk account.
-        3. [pattern]    All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+        3. [pattern]    All code comments in clawdi must be in English (per CLAUDE.md).
 
         Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
 
 You: save 1 and 3
 
-Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi-cloud monorepo.", category: "preference" })
+Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi monorepo.", category: "preference" })
           ✓ abc12345
-        → memory_add({ content: "All code comments in clawdi-cloud must be in English (per CLAUDE.md).", category: "pattern" })
+        → memory_add({ content: "All code comments in clawdi must be in English (per CLAUDE.md).", category: "pattern" })
           ✓ def67890
 
         Saved:

@@ -6,6 +6,7 @@ import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
@@ -146,7 +147,7 @@ export async function skillInstall(
 	try {
 		parsed = parseSource(repoInput);
 	} catch (e) {
-		console.log(chalk.red((e as Error).message));
+		console.log(chalk.red(errMessage(e)));
 		process.exit(1);
 	}
 
@@ -213,7 +214,7 @@ export async function skillInstall(
 			tarBytes = await api.getBytes(`/api/skills/${installResult.skill_key}/download`);
 		} catch (e) {
 			console.log(
-				chalk.red(`✗ Download failed: ${e instanceof ApiError ? e.message : (e as Error).message}`),
+				chalk.red(`✗ Download failed: ${e instanceof ApiError ? e.message : errMessage(e)}`),
 			);
 			console.log(
 				chalk.gray(
@@ -230,8 +231,8 @@ export async function skillInstall(
 				const skillDir = dirname(adapter.getSkillPath(installResult.skill_key));
 				console.log(chalk.green(`  ✓ ${label} → ${skillDir}/ (${installResult.file_count} files)`));
 			} catch (e) {
-				failed.push({ agent: adapter.agentType, error: (e as Error).message });
-				console.log(chalk.red(`  ✗ ${label} failed: ${(e as Error).message}`));
+				failed.push({ agent: adapter.agentType, error: errMessage(e) });
+				console.log(chalk.red(`  ✗ ${label} failed: ${errMessage(e)}`));
 			}
 		}
 	}
