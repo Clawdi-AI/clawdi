@@ -104,7 +104,7 @@ jobs:
           - target: cli
             filter: "@clawdi/cli"
           - target: shared
-            filter: "@clawdi-cloud/shared"
+            filter: "@clawdi/shared"
     steps:
       - name: Guard — run only if this target changed
         id: guard

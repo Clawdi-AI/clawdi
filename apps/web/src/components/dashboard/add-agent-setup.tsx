@@ -23,8 +23,8 @@ function useAgentPrompt() {
 const CLI_STEPS = [
 	{
 		title: "Install CLI",
-		code: "bun add -g @clawdi-cloud/cli",
-		description: "Or use npm: npm install -g @clawdi-cloud/cli",
+		code: "bun add -g @clawdi/cli",
+		description: "Or use npm: npm install -g @clawdi/cli",
 	},
 	{
 		title: "Log in",

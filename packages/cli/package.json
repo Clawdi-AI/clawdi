@@ -32,13 +32,13 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/Clawdi-AI/clawdi-cloud.git",
+		"url": "git+https://github.com/Clawdi-AI/clawdi.git",
 		"directory": "packages/cli"
 	},
 	"bugs": {
-		"url": "https://github.com/Clawdi-AI/clawdi-cloud/issues"
+		"url": "https://github.com/Clawdi-AI/clawdi/issues"
 	},
-	"homepage": "https://github.com/Clawdi-AI/clawdi-cloud#readme",
+	"homepage": "https://github.com/Clawdi-AI/clawdi#readme",
 	"keywords": [
 		"cli",
 		"claude-code",

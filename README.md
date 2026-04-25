@@ -56,8 +56,8 @@ docs/              Design docs, scenarios, plans
 ### 1. Clone and install JS/TS dependencies
 
 ```bash
-git clone <this-repo>.git clawdi-cloud
-cd clawdi-cloud
+git clone https://github.com/Clawdi-AI/clawdi.git
+cd clawdi
 bun install
 ```
 

@@ -33,7 +33,7 @@ Environment:
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI
 
-Docs: https://github.com/Clawdi-AI/clawdi-cloud`,
+Docs: https://github.com/Clawdi-AI/clawdi`,
 	);
 
 // ─────────────────────────────────────────────────────────────

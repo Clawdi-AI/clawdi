@@ -1,11 +1,11 @@
-/* clawdi-cloud design tokens — pasted verbatim from the tweakcn export.
+/* clawdi design tokens — pasted verbatim from the tweakcn export.
  *
  * Only adaptation: font-sans keeps Geist (team preference); the preset ships
  * Outfit. Everything else — colors, radius, shadows — is the upstream preset.
  *
  * `@import "tailwindcss"` is declared in apps/web/src/app/globals.css, so it
  * is omitted here to avoid duplicate registration. This file is consumed via
- *   @import "@clawdi-cloud/shared/style/theme.css";
+ *   @import "@clawdi/shared/style/theme.css";
  */
 
 @custom-variant dark (&:is(.dark *));

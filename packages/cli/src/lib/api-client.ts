@@ -108,7 +108,7 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 	);
 }
 
-// Duplicated verbatim from `@clawdi-cloud/shared/api/error-detail`. The CLI
+// Duplicated verbatim from `@clawdi/shared/api/error-detail`. The CLI
 // publishes to npm as a standalone `@clawdi/cli` and deliberately doesn't
 // depend on the shared workspace package. If this diverges from the shared
 // copy, update both.

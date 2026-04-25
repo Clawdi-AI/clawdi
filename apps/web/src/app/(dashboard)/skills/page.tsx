@@ -1,6 +1,6 @@
 "use client";
 
-import { FEATURED_SKILLS } from "@clawdi-cloud/shared/consts";
+import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,

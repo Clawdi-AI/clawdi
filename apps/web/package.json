@@ -12,7 +12,7 @@
 		"generate-api": "bun x openapi-typescript http://localhost:8000/openapi.json -o ../../packages/shared/src/api/generated.ts"
 	},
 	"dependencies": {
-		"@clawdi-cloud/shared": "workspace:*",
+		"@clawdi/shared": "workspace:*",
 		"@clerk/nextjs": "^7.2.1",
 		"@clerk/themes": "^2.4.57",
 		"@radix-ui/react-toggle": "^1.1.10",

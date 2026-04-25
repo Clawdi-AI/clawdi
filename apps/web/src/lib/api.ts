@@ -1,6 +1,6 @@
 "use client";
 
-import { extractApiDetail, type paths } from "@clawdi-cloud/shared/api";
+import { extractApiDetail, type paths } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";

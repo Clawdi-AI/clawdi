@@ -40,7 +40,7 @@ Otherwise, present the surviving candidates to the user as a numbered list. For 
   Found 3 candidate memories:
   1. [preference] The user prefers rg over grep and fd over find for searching files in their codebase.
   2. [decision] Clawdi chose Clerk for auth because the team already had a Clerk account.
-  3. [pattern] All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+  3. [pattern] All code comments in clawdi must be in English (per CLAUDE.md).
 
   Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
 
@@ -117,7 +117,7 @@ export async function startMcpServer() {
 	}
 
 	const server = new McpServer({
-		name: "clawdi-cloud",
+		name: "clawdi",
 		version: "0.0.1",
 	});
 
