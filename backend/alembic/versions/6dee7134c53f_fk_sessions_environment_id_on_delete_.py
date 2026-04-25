@@ -33,31 +33,59 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Clear orphan refs so the FK can attach without violating itself.
+    # Order matters and the obvious sequence is wrong:
+    #
+    #   ❌ UPDATE → ALTER nullable → ADD FK
+    #      The UPDATE writes NULL into a NOT NULL column → migration fails
+    #      before it even gets to the constraint.
+    #
+    #   ❌ ALTER nullable → UPDATE → ADD FK
+    #      Cleanup is correct, but between the UPDATE and the constraint
+    #      a concurrent batch insert can land another orphan and the
+    #      VALIDATE/CREATE step fails.
+    #
+    # The right pattern is `NOT VALID` first (immediately enforces against
+    # new writes without scanning the table), THEN cleanup, THEN VALIDATE
+    # (scans existing rows). This eliminates the race window and keeps the
+    # write lock window short on `sessions`.
+
+    # 1. Allow NULL so ON DELETE SET NULL has somewhere to land, and so
+    #    the cleanup UPDATE below is legal.
+    op.alter_column("sessions", "environment_id", nullable=True)
+
+    # 2. Add the FK in NOT VALID mode — guards new writes immediately.
+    op.execute(
+        """
+        ALTER TABLE sessions
+        ADD CONSTRAINT sessions_environment_id_fkey
+        FOREIGN KEY (environment_id) REFERENCES agent_environments(id)
+        ON DELETE SET NULL NOT VALID
+        """
+    )
+
+    # 3. Clean up existing orphans. NOT EXISTS instead of NOT IN avoids
+    #    the well-known NULL-in-subquery footgun (`x NOT IN (NULL, ...)`
+    #    is NULL, not TRUE, so rows would silently survive).
     op.execute(
         """
         UPDATE sessions
         SET environment_id = NULL
         WHERE environment_id IS NOT NULL
-          AND environment_id NOT IN (SELECT id FROM agent_environments)
+          AND NOT EXISTS (
+              SELECT 1 FROM agent_environments WHERE id = sessions.environment_id
+          )
         """
     )
 
-    # 2. Allow NULL — needed for ON DELETE SET NULL.
-    op.alter_column("sessions", "environment_id", nullable=True)
-
-    # 3. Attach the FK.
-    op.create_foreign_key(
-        "sessions_environment_id_fkey",
-        source_table="sessions",
-        referent_table="agent_environments",
-        local_cols=["environment_id"],
-        remote_cols=["id"],
-        ondelete="SET NULL",
-    )
+    # 4. Validate the constraint against existing data. Only takes a
+    #    SHARE UPDATE EXCLUSIVE lock — concurrent reads + writes proceed.
+    op.execute("ALTER TABLE sessions VALIDATE CONSTRAINT sessions_environment_id_fkey")
 
 
 def downgrade() -> None:
     op.drop_constraint("sessions_environment_id_fkey", "sessions", type_="foreignkey")
-    # Best-effort: if any rows are NULL we can't restore NOT NULL without
-    # data invention. Leave the column nullable on downgrade.
+    # We can't safely restore NOT NULL: rows that became orphaned (either
+    # at upgrade-time or via subsequent agent deletes) are now NULL and
+    # have no canonical env_id to backfill. Leave the column nullable on
+    # downgrade and let the operator decide. If they want a hard floor,
+    # they can run their own backfill UPDATE before re-tightening.

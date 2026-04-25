@@ -132,6 +132,11 @@ def parse_frontmatter(content: str) -> dict[str, str]:
             continue
         if isinstance(value, str):
             fm[key] = value.strip()
-        elif isinstance(value, (int, float, bool)):
+        elif isinstance(value, bool):
+            # Match YAML wire form ("true"/"false") not Python's "True"/"False".
+            # Callers comparing against literal "true" wouldn't expect Python
+            # capitalization to leak through.
+            fm[key] = "true" if value else "false"
+        elif isinstance(value, (int, float)):
             fm[key] = str(value)
     return fm

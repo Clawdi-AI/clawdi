@@ -74,10 +74,14 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 				// Strip `node_modules/`, `.git/`, build output, virtualenvs, etc.
 				// The `tar` package passes both files and directories through this
 				// filter; returning false for a directory excludes the whole subtree.
-				// `path` is relative to `cwd` and uses POSIX separators.
+				// `path` is relative to `cwd` and uses POSIX separators, so the
+				// first segment is always the skill's own directory name. Skip it
+				// when checking against the exclude set — otherwise a skill
+				// legitimately named `dist`/`build`/`out` would be packaged as an
+				// empty tarball. Match remaining segments only.
 				filter: (path) => {
-					const segments = path.split("/");
-					return !segments.some((seg) => SKILL_TAR_EXCLUDE.has(seg));
+					const [, ...rest] = path.split("/");
+					return !rest.some((seg) => SKILL_TAR_EXCLUDE.has(seg));
 				},
 			},
 			[dirName],

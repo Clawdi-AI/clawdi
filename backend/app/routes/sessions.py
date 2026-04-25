@@ -218,17 +218,25 @@ async def batch_create_sessions(
         .on_conflict_do_nothing(constraint="uq_sessions_user_local")
         .returning(Session.id)
     )
-    # The pre-flight check above closes the common case, but there's still a
-    # window between the SELECT and this INSERT where another request can
+    # The pre-flight check above closes the common case, but there's still
+    # a window between the SELECT and this INSERT where another request can
     # `DELETE /api/environments/{id}`. The FK + `ON DELETE SET NULL` lets us
-    # detect that here as an IntegrityError and return the same 400 the
-    # caller sees on a stale env_id, instead of a 500.
+    # detect that here as an IntegrityError → 400, instead of bubbling a 500.
+    #
+    # Narrow to FK violations specifically (PG sqlstate 23503). Without this
+    # guard a future check/exclude/unique constraint failure would land in
+    # the same branch and get mislabeled as `unknown_environment`. The
+    # `uq_sessions_user_local` unique constraint can't trip here because
+    # `on_conflict_do_nothing` swallows it on the way in.
     try:
         result = await db.execute(stmt)
         inserted = result.scalars().all()
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
+        sqlstate = getattr(e.orig, "sqlstate", None) or getattr(e.orig, "pgcode", None)
+        if sqlstate != "23503":
+            raise
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail={

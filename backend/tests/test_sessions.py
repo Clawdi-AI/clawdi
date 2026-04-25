@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _register_env(client: httpx.AsyncClient) -> str:
@@ -195,12 +197,21 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
 
 
 @pytest.mark.asyncio
-async def test_delete_environment_orphans_sessions_via_fk(client: httpx.AsyncClient):
+async def test_delete_environment_orphans_sessions_via_fk(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
     """Deleting an environment must keep historical sessions but null out
     the FK so the list query renders them as unlabeled — never 500.
     The FK + ON DELETE SET NULL is what makes this safe under concurrent
     deletion (the previous SELECT-then-INSERT race could create orphans
-    that violated invariants the codebase implicitly relied on)."""
+    that violated invariants the codebase implicitly relied on).
+
+    This test asserts at *both* layers:
+      1. HTTP — the dashboard list endpoint returns the row with null
+         agent label (could pass without an FK, just via outerjoin).
+      2. Raw SQL — `sessions.environment_id IS NULL` after delete. This
+         is what proves `ON DELETE SET NULL` actually fired; without the
+         FK the column would still hold the deleted UUID."""
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
@@ -218,19 +229,33 @@ async def test_delete_environment_orphans_sessions_via_fk(client: httpx.AsyncCli
         },
     )
 
-    # Delete the environment.
     r = await client.delete(f"/api/environments/{env_id}")
     assert r.status_code == 204, r.text
 
-    # The environment row is gone; the session row is not.
     listing = (await client.get("/api/sessions")).json()
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
-    # FK SET NULL means the outer-join contributes null label fields —
-    # the UI renders these as "Unknown" but the session is intact.
     assert item["agent_type"] is None
     assert item["machine_name"] is None
+
+    # The decisive check: after the DELETE, the session's environment_id
+    # column is NULL (not the deleted UUID). This only happens because the
+    # FK has ON DELETE SET NULL — without the constraint, the column would
+    # still hold the now-dangling reference. Filter by the deleted env_id
+    # so prior test runs (the test DB doesn't fully clean between runs)
+    # don't pollute the count.
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT environment_id FROM sessions "
+                "WHERE local_session_id = :sid "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"sid": "keep-me"},
+        )
+    ).one()
+    assert row.environment_id is None
 
 
 @pytest.mark.asyncio

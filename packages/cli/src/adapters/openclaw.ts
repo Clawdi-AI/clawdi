@@ -47,7 +47,14 @@ function listAgentDirs(): string[] {
 		return readdirSync(root, { withFileTypes: true })
 			.filter((d) => d.isDirectory() && !d.name.startsWith("."))
 			.map((d) => join(root, d.name));
-	} catch {
+	} catch (e) {
+		// `agents/` is present but unreadable (perm bits, encrypted-at-rest,
+		// stale fuse mount, …). Silently treating that as "no agents" hides
+		// the fact that we actively skipped data — surface it on stderr so
+		// `clawdi push` doesn't appear to succeed with 0 sessions.
+		console.warn(
+			`[openclaw] could not enumerate ${root}: ${e instanceof Error ? e.message : String(e)}`,
+		);
 		return [];
 	}
 }
@@ -266,14 +273,15 @@ export class OpenClawAdapter implements AgentAdapter {
 
 	async collectSkills(): Promise<RawSkill[]> {
 		const skills: RawSkill[] = [];
-		const seen = new Set<string>();
+		const seen = new Map<string, string>(); // skillKey → first-winning agentDir
 
 		// Skills can live under any `agents/<id>/skills/` — iterate every
 		// agent the user has on disk so a deployment with multiple
 		// personalities (issue #28) doesn't lose six of seven skill sets.
 		// Dedup by `skillKey`: identical names across agents collapse to
 		// the first occurrence (server-side `skill_key` is per-user, so
-		// we'd 409 on the second push anyway).
+		// we'd 409 on the second push anyway). Warn on collision so the
+		// user can rename or pick an explicit OPENCLAW_AGENT_ID.
 		for (const agentRoot of listAgentDirs()) {
 			const dir = join(agentRoot, "skills");
 			if (!existsSync(dir)) continue;
@@ -281,15 +289,23 @@ export class OpenClawAdapter implements AgentAdapter {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
 				if (SKIP_DIRS.has(entry.name)) continue;
-				if (seen.has(entry.name)) continue;
 				const dirPath = join(dir, entry.name);
 				const skillMd = join(dirPath, "SKILL.md");
 				if (!existsSync(skillMd)) continue;
 
+				const existing = seen.get(entry.name);
+				if (existing) {
+					console.warn(
+						`[openclaw] skipping duplicate skill "${entry.name}" at ${dirPath} ` +
+							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to scope explicitly.`,
+					);
+					continue;
+				}
+
 				const content = readFileSync(skillMd, "utf-8");
 				const fileCount = readdirSync(dirPath, { recursive: true }).length;
 
-				seen.add(entry.name);
+				seen.set(entry.name, dirPath);
 				skills.push({
 					skillKey: entry.name,
 					name: entry.name,
