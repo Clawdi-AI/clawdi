@@ -283,11 +283,14 @@ export async function maybeAutoUpdate(): Promise<void> {
 
 	// Redirect installer output to a logfile so silent failures (network
 	// flake, perms error, npm 4xx) leave a trail. `stdio: "ignore"` would
-	// throw the diagnosis away.
+	// throw the diagnosis away. Append (`"a"`) instead of truncate (`"w"`)
+	// so two concurrent CLI invocations spawning their own installs (which
+	// is rare but legal — the lock is gone on purpose) don't clobber each
+	// other's logs.
 	const logPath = join(getClawdiDir(), "auto-update.log");
 	let logFd: number;
 	try {
-		logFd = openSync(logPath, "w");
+		logFd = openSync(logPath, "a");
 	} catch {
 		// Fall back to ignore — best-effort. The install can still succeed.
 		logFd = -1;
