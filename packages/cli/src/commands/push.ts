@@ -265,14 +265,34 @@ export async function push(opts: {
 		const skillSpinner = p.spinner();
 		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
+		const skipped: { key: string; reason: string }[] = [];
 		try {
 			for (const skill of skills) {
 				const tarBytes = await tarSkillDir(skill.directoryPath);
-				await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`);
-				pushed++;
-				skillSpinner.message(`Uploading skills (${pushed}/${skills.length})...`);
+				try {
+					await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`);
+					pushed++;
+				} catch (e) {
+					// 413 = upstream (Cloudflare / nginx) refused the body. Almost
+					// always a single oversized skill; skip it and keep going so
+					// one fat tarball doesn't kill the whole batch. Other errors
+					// (auth, 5xx, network) still bubble out and abort.
+					const is413 =
+						e instanceof ApiError && (e.status === 413 || /413|payload too large/i.test(e.body));
+					if (!is413) throw e;
+					const mb = (tarBytes.length / 1024 / 1024).toFixed(1);
+					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
+				}
+				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);
 			}
-			skillSpinner.stop(`Pushed ${pushed} skill${pushed === 1 ? "" : "s"}`);
+			const parts = [`Pushed ${pushed} skill${pushed === 1 ? "" : "s"}`];
+			if (skipped.length > 0) {
+				parts.push(`skipped ${skipped.length} (too large)`);
+			}
+			skillSpinner.stop(parts.join(", "));
+			for (const s of skipped) {
+				p.log.warn(`Skipped ${s.key} — ${s.reason}`);
+			}
 		} catch (e) {
 			skillSpinner.stop(`Failed after ${pushed} skill${pushed === 1 ? "" : "s"}.`);
 			throw e;

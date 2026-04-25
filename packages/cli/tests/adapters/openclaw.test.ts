@@ -32,9 +32,11 @@ describe("OpenClawAdapter.detect", () => {
 	});
 
 	it("detects alternative home names (.clawdbot / .moltbot) via getOpenClawHome", async () => {
-		// Point HOME to a dir that has .clawdbot but not .openclaw
+		// Point HOME to a dir that has .clawdbot but not .openclaw, with a
+		// real agent dir inside so the stricter detect() (sessions index OR
+		// agent dir) recognizes it as a usable install.
 		const alt = `${tmpHome}-alt`;
-		mkdirSync(join(alt, ".clawdbot"), { recursive: true });
+		mkdirSync(join(alt, ".clawdbot", "agents", "main"), { recursive: true });
 		process.env.HOME = alt;
 		const a = new OpenClawAdapter();
 		expect(await a.detect()).toBe(true);

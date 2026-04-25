@@ -120,26 +120,29 @@ function AgentTab() {
 				Copy this prompt and send it to your AI agent (Claude Code, Cursor, etc.):
 			</p>
 
-			<div className="relative rounded-lg border bg-muted/30 p-4">
-				<pre className="whitespace-pre-wrap pr-28 font-mono text-sm">{prompt}</pre>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={() => copy(prompt)}
-					className="absolute right-3 top-3"
-				>
-					{copied ? (
-						<>
-							<Check />
-							Copied
-						</>
-					) : (
-						<>
-							<Copy />
-							Copy
-						</>
-					)}
-				</Button>
+			<div className="rounded-lg border bg-muted/30">
+				<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+					<span className="text-xs uppercase tracking-wide text-muted-foreground">Prompt</span>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => copy(prompt)}
+						className="h-7 gap-1.5 px-2 text-xs"
+					>
+						{copied ? (
+							<>
+								<Check className="size-3.5" />
+								Copied
+							</>
+						) : (
+							<>
+								<Copy className="size-3.5" />
+								Copy
+							</>
+						)}
+					</Button>
+				</div>
+				<pre className="whitespace-pre-wrap p-4 font-mono text-sm leading-relaxed">{prompt}</pre>
 			</div>
 
 			<div className="flex flex-col gap-3">

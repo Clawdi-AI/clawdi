@@ -14,7 +14,8 @@ import {
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { AgentLabel } from "@/components/dashboard/agent-label";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
 import { DetailHeader } from "@/components/detail-header";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
@@ -148,13 +149,7 @@ export default function SessionDetailPage() {
 								message={msg}
 								userAvatar={user?.imageUrl}
 								userName={user?.fullName || "You"}
-								agentName={
-									session.agent_type === "hermes"
-										? "Hermes"
-										: session.agent_type === "claude_code"
-											? "Claude"
-											: "AI"
-								}
+								agentType={session.agent_type}
 							/>
 						))}
 					</div>
@@ -195,26 +190,32 @@ function MessageBlock({
 	message,
 	userAvatar,
 	userName,
-	agentName,
+	agentType,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
 	userName: string;
-	agentName: string;
+	agentType: string | null | undefined;
 }) {
 	const isUser = message.role === "user";
+	const agentName = agentTypeLabel(agentType);
 
 	return (
 		<div className="flex gap-3">
-			{/* Avatar column — user gets their avatar, assistant gets nothing (spacer) */}
+			{/* Avatar column — user gets their Clerk avatar; assistant gets the
+			    agent's brand logo so the conversation reads as "you ↔ Claude/Codex/…" */}
 			<div className="w-7 shrink-0 pt-0.5">
-				{isUser && userAvatar ? (
-					<Image src={userAvatar} alt="" width={28} height={28} className="rounded-full" />
-				) : isUser ? (
-					<div className="size-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-medium">
-						{userName[0]}
-					</div>
-				) : null}
+				{isUser ? (
+					userAvatar ? (
+						<Image src={userAvatar} alt="" width={28} height={28} className="rounded-full" />
+					) : (
+						<div className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
+							{userName[0]}
+						</div>
+					)
+				) : (
+					<AgentIcon agent={agentType} className="size-7 rounded-full" />
+				)}
 			</div>
 
 			{/* Content */}

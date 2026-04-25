@@ -73,7 +73,10 @@ export class OpenClawAdapter implements AgentAdapter {
 	readonly agentType = "openclaw" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(openclawDir());
+		// OpenClaw creates `agents/{id}/` per agent. Require either the
+		// sessions index (after first run) or the agent dir itself.
+		if (!existsSync(openclawDir())) return false;
+		return existsSync(sessionsIndexPath()) || existsSync(agentDir());
 	}
 
 	async getVersion(): Promise<string | null> {

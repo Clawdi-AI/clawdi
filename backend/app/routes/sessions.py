@@ -119,6 +119,28 @@ async def get_environment(
     )
 
 
+@router.delete("/api/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_environment(
+    environment_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete an agent environment. Existing sessions remain (orphaned)
+    so users don't lose history when removing a machine. The session
+    list query uses an outer-join so orphaned rows still render."""
+    result = await db.execute(
+        select(AgentEnvironment).where(
+            AgentEnvironment.id == environment_id,
+            AgentEnvironment.user_id == auth.user_id,
+        )
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await db.delete(env)
+    await db.commit()
+
+
 @router.post("/api/sessions/batch")
 async def batch_create_sessions(
     body: SessionBatchRequest,

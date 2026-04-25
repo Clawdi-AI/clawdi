@@ -106,14 +106,32 @@ def tar_from_content(skill_key: str, content: str) -> tuple[bytes, int]:
 
 
 def parse_frontmatter(content: str) -> dict[str, str]:
-    """Extract YAML frontmatter from SKILL.md."""
+    """Extract YAML frontmatter from SKILL.md.
+
+    Returns a flat dict[str, str] — only string-valued top-level keys are kept.
+    Lists/maps/etc. are dropped (callers want simple metadata: name, description).
+    Multiline scalars (`description: |\\n  ...`) are joined and stripped.
+    """
+    import yaml
+
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
     if not match:
         return {}
 
+    try:
+        loaded = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return {}
+
+    if not isinstance(loaded, dict):
+        return {}
+
     fm: dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fm[key.strip()] = value.strip().strip('"').strip("'")
+    for key, value in loaded.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, str):
+            fm[key] = value.strip()
+        elif isinstance(value, (int, float, bool)):
+            fm[key] = str(value)
     return fm
