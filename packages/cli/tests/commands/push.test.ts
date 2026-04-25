@@ -29,14 +29,12 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
-let origExitCode: number | string | undefined;
 
 function setup(agent: AgentKey): {
 	sent: ReturnType<typeof mockFetch>["captured"];
 	restore: () => void;
 } {
 	origHome = process.env.HOME;
-	origExitCode = process.exitCode;
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -46,9 +44,10 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
-	// push/pull now set process.exitCode=1 on abort paths — reset so a later
-	// test file's `bun test` result isn't polluted.
-	process.exitCode = origExitCode;
+	// `push` sets `process.exitCode = 1` on abort paths (not logged in,
+	// no env). Reset to 0 so subsequent test files start clean —
+	// `bun test` (1.3.13+) inherits the file's final exitCode.
+	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
 

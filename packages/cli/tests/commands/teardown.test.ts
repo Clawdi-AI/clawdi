@@ -15,7 +15,6 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
-let origExitCode: number | string | undefined;
 let origIsTTY: boolean | undefined;
 
 function setup(agent: AgentKey): {
@@ -23,7 +22,6 @@ function setup(agent: AgentKey): {
 	skillPath: string;
 } {
 	origHome = process.env.HOME;
-	origExitCode = process.exitCode;
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -48,7 +46,7 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
-	process.exitCode = origExitCode;
+	process.exitCode = 0;
 	if (origIsTTY !== undefined) {
 		Object.defineProperty(process.stdin, "isTTY", { value: origIsTTY, configurable: true });
 		origIsTTY = undefined;
