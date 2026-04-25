@@ -89,10 +89,14 @@ jobs:
       # because the step above already built everything; rerunning wastes
       # ~10s of CI time and risks a silent re-bundle with stale env.
       #
-      # `--provenance` is intentionally omitted: npm requires the source
-      # repository to be public to verify provenance attestations, and
-      # `Clawdi-AI/clawdi` is internal. If the repo ever goes public, add
-      # `--provenance` back and the OIDC + sigstore flow takes over.
+      # `--provenance` attaches a SLSA provenance attestation. Requires:
+      #   - `repository.url` in package.json points at a public GitHub repo
+      #     (Clawdi-AI/clawdi — confirmed public)
+      #   - workflow has `id-token: write` (above) for OIDC token minting
+      #   - npm trusted-publisher OIDC enabled for the package (env: npm)
+      # Once published, `npm view clawdi --json` shows a `dist.attestations`
+      # block, and the package page on npmjs.com gets the green "provenance"
+      # badge linking back to this exact workflow run.
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --provenance --ignore-scripts
