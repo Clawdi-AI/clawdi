@@ -37,6 +37,13 @@ createdb -O clawdi clawdi
 
 If you already have Postgres running under a different user / port, skip the role creation and just edit `DATABASE_URL` in `backend/.env` to match (e.g. `postgresql+asyncpg://<you>@localhost:5432/clawdi`).
 
+> **Upgrading from a pre-rename branch?** The database was renamed from
+> `clawdi_cloud` → `clawdi`. Migrate your local data in one line:
+> ```bash
+> createdb -O clawdi clawdi && pg_dump clawdi_cloud | psql clawdi
+> ```
+> Then drop the old DB (`dropdb clawdi_cloud`) once you've verified.
+
 ---
 
 ## Repository layout
@@ -170,7 +177,7 @@ Stored at `~/.clawdi/config.json`. The `CLAWDI_API_URL` env var always wins over
 ### Authenticate once
 
 ```bash
-clawdi login             # paste the API key from the web dashboard
+clawdi auth login             # paste the API key from the web dashboard
 clawdi status            # verify auth works
 ```
 
@@ -274,7 +281,7 @@ Agents don't run this directly — they spawn it via their MCP registration from
 
 | Command | What it does |
 |---|---|
-| `clawdi login` / `logout` / `status` | Authenticate the CLI / inspect auth state |
+| `clawdi auth login` / `logout` / `status` | Authenticate the CLI / inspect auth state |
 | `clawdi config list / get / set / unset` | Read or change CLI config (`apiUrl`, etc.) |
 | `clawdi setup [--agent <type>]` | Register local agent(s), install MCP + clawdi skill |
 | `clawdi push` | Push sessions + skills to the cloud |
@@ -291,7 +298,7 @@ All subcommands accept `--help` for full options.
 
 ## Troubleshooting
 
-**`clawdi login` fails with 401**
+**`clawdi auth login` fails with 401**
 Your API key is wrong or revoked. Re-create one from the web dashboard → user menu → API Keys.
 
 **Backend crashes on startup: "extension vector is not available"**

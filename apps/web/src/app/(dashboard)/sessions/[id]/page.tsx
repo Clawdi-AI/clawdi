@@ -167,7 +167,7 @@ export default function SessionDetailPage() {
 						<>
 							Content not synced yet. Run{" "}
 							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-								clawdi sync up --modules sessions
+								clawdi push --modules sessions
 							</code>{" "}
 							to upload session content.
 						</>

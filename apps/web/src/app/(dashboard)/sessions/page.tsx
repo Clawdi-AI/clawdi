@@ -69,7 +69,7 @@ export default function SessionsPage() {
 					emptyMessage={
 						debouncedSearch
 							? "No sessions match your search."
-							: "No sessions yet. Run clawdi sync up on a connected agent."
+							: "No sessions yet. Run clawdi push on a connected agent."
 					}
 					onRowClick={(s) => router.push(`/sessions/${s.id}`)}
 					pagination={pagination}

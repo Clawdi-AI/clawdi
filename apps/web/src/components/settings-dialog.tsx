@@ -287,8 +287,10 @@ function ApiKeysPanel() {
 				description={
 					<>
 						Create bearer keys for the CLI. Run{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi login</code> and
-						paste the key when prompted.
+						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+							clawdi auth login
+						</code>{" "}
+						and paste the key when prompted.
 					</>
 				}
 			/>

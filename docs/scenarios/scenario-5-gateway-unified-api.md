@@ -58,7 +58,7 @@ clawdi run -- claude
 
 ```bash
 # Sign up for Clawdi, no API keys at all
-clawdi login
+clawdi auth login
 clawdi setup
 
 # Just use it — Gateway fills in automatically

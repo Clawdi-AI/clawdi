@@ -28,7 +28,7 @@ const CLI_STEPS = [
 	},
 	{
 		title: "Log in",
-		code: "clawdi login",
+		code: "clawdi auth login",
 		description: "Enter your API key from Settings → API Keys",
 	},
 	{
@@ -37,8 +37,8 @@ const CLI_STEPS = [
 		description: "Detects Claude Code, registers MCP server and installs skill",
 	},
 	{
-		title: "Sync sessions",
-		code: "clawdi sync up",
+		title: "Push sessions",
+		code: "clawdi push --modules sessions",
 		description: "Upload your conversation history to the cloud",
 	},
 ];

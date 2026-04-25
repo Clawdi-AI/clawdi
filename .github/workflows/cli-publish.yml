@@ -64,17 +64,19 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: bun run typecheck
 
-      - name: Test
-        if: steps.check.outputs.skip != 'true'
-        run: bun test
-
-      # `prepublishOnly` (in packages/cli/package.json) re-runs `bun run build`
-      # but we build explicitly here so a build failure is its own visible
-      # step, not buried inside the publish log.
+      # Build before Test so the smoke test in tests/smoke.test.ts — which
+      # execs the bundled `dist/index.js` — has its artifact ready.
       - name: Build
         if: steps.check.outputs.skip != 'true'
         run: bun run build
 
+      - name: Test
+        if: steps.check.outputs.skip != 'true'
+        run: bun test
+
+      # `prepublishOnly` would re-run the build. We pass `--ignore-scripts`
+      # because the step above already built everything; rerunning wastes
+      # ~10s of CI time and risks a silent re-bundle with stale env.
       - name: Publish to npm with provenance
         if: steps.check.outputs.skip != 'true'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --ignore-scripts

@@ -85,15 +85,33 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 	console.log(chalk.gray(`\n  ${memories.length} result${memories.length === 1 ? "" : "s"}`));
 }
 
-export async function memoryAdd(content: string) {
+const VALID_CATEGORIES = ["fact", "preference", "pattern", "decision", "context"] as const;
+type MemoryCategory = (typeof VALID_CATEGORIES)[number];
+
+export async function memoryAdd(content: string, opts: { category?: string } = {}) {
 	requireAuth();
+
+	const category: MemoryCategory = (VALID_CATEGORIES as readonly string[]).includes(
+		opts.category ?? "",
+	)
+		? (opts.category as MemoryCategory)
+		: "fact";
+
+	if (opts.category && category === "fact" && opts.category !== "fact") {
+		console.log(
+			chalk.yellow(
+				`⚠ Unknown category "${opts.category}". Valid: ${VALID_CATEGORIES.join(", ")}. Defaulting to "fact".`,
+			),
+		);
+	}
+
 	const api = new ApiClient();
 	const result = unwrap(
 		await api.POST("/api/memories", {
-			body: { content, category: "fact", source: "manual" },
+			body: { content, category, source: "manual" },
 		}),
 	);
-	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)}`));
+	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)} (${category})`));
 }
 
 export async function memoryRm(id: string) {

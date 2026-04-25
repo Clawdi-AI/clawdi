@@ -111,8 +111,8 @@ export default function DashboardPage() {
 							emptyMessage={
 								<>
 									No sessions yet. Run{" "}
-									<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> on
-									a connected agent.
+									<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi push</code> on a
+									connected agent.
 								</>
 							}
 						/>

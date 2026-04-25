@@ -69,7 +69,7 @@ Does NOT qualify:
 
 export async function startMcpServer() {
 	if (!isLoggedIn()) {
-		process.stderr.write("Not logged in. Run `clawdi login` first.\n");
+		process.stderr.write("Not logged in. Run `clawdi auth login` first.\n");
 		process.exit(1);
 	}
 

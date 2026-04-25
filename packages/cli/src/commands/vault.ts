@@ -20,7 +20,11 @@ function requireAuth() {
  */
 async function ensureVault(api: ApiClient, slug: string, name = slug) {
 	const created = await api.POST("/api/vault", { body: { slug, name } });
-	if (created.error !== undefined && created.response.status !== 409) {
+	// `response` is only populated when the server actually replied — on a
+	// network-level failure `response` is undefined, so optional-chain it
+	// before inspecting the status, then let `unwrap` raise the right
+	// ApiError (either the HTTP one or a synthetic network one).
+	if (created.error !== undefined && created.response?.status !== 409) {
 		unwrap(created);
 	}
 }

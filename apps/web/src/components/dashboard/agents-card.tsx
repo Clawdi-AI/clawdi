@@ -32,7 +32,7 @@ export function AgentsCard({
 
 	let description: string;
 	if (total === 0) {
-		description = "Run `clawdi login` on a machine to register your first agent.";
+		description = "Run `clawdi auth login` on a machine to register your first agent.";
 	} else if (activeCount > 0) {
 		description = `${activeCount} active now · ${total} total`;
 	} else if (mostRecent) {

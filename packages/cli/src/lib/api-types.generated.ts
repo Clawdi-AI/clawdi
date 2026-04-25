@@ -630,6 +630,10 @@ export interface paths {
          *
          *     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
          *     the hybrid provider (FTS + trgm + optional pgvector) for quality.
+         *
+         *     A single failing source (e.g. the memory provider briefly unavailable)
+         *     degrades to partial results rather than failing the whole request —
+         *     palette UX beats strict all-or-nothing consistency here.
          */
         get: operations["global_search_api_search_get"];
         put?: never;
@@ -1171,7 +1175,7 @@ export interface components {
          * SessionMessageResponse
          * @description One agent message inside a session content file.
          *
-         *     Mirrors the shape the CLI writes via `clawdi sync up` — the JSON stored
+         *     Mirrors the shape the CLI writes via `clawdi push` — the JSON stored
          *     in the file store is a list of these. Declared here so it lives in the
          *     OpenAPI schema and flows through to generated TS types; keeps the frontend
          *     from having to maintain a parallel interface.

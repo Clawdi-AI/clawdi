@@ -324,9 +324,13 @@ memoryCmd
 memoryCmd
 	.command("add <content>")
 	.description("Add a memory")
-	.action(async (content) => {
+	.option(
+		"--category <cat>",
+		"One of: fact, preference, pattern, decision, context (default: fact)",
+	)
+	.action(async (content, opts) => {
 		const { memoryAdd } = await import("./commands/memory.js");
-		await memoryAdd(content);
+		await memoryAdd(content, opts);
 	});
 
 memoryCmd

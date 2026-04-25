@@ -31,8 +31,8 @@ npm i -g clawdi
 | `clawdi skill install <repo> [-a --agent] [-l --list] [-y]` | Install a GitHub skill into cloud and one or more agents |
 | `clawdi skill rm <key>` | Remove a cloud skill |
 | `clawdi skill init [name]` | Scaffold a new `SKILL.md` template |
-| `clawdi memory list [--json --limit --category --since]` | List memories |
-| `clawdi memory search <query> [--json --limit --category --since]` | Search memories by text |
+| `clawdi memory list [--json --limit --category]` | List memories |
+| `clawdi memory search <query> [--json --limit --category]` | Search memories by text |
 | `clawdi memory add <content>` / `rm <id>` | Add or delete a memory |
 | `clawdi vault set <key>` / `list [--json]` / `import <file>` | Manage secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected into env |

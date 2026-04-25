@@ -51,7 +51,7 @@ All keyed off Clerk `user_id`:
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
 | `agent_environments` | One row per (machine × agent). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup` |
-| `sessions` | Per-conversation metadata: `environment_id`, `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi sync up` |
+| `sessions` | Per-conversation metadata: `environment_id`, `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi push` |
 | `skills` | Per-skill metadata + tar.gz body in file store | CLI `skill add / install`, dashboard upload |
 | `vaults` + `vault_items` | Three-level secrets: vault → section → field. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts and returns plain values; CLI-only | `clawdi vault set` |
 | `memories` | Long-term recall. `content` (text), `category`, `tags`, plus three search columns (`content_tsv` generated tsvector, `embedding vector(768)`) | CLI and MCP `memory_add` |
@@ -134,7 +134,7 @@ The MCP server registration path also differs per agent — see `commands/setup.
 
 ## Sync engine
 
-`clawdi sync up` and `clawdi sync down` share a selector that picks the target agent:
+`clawdi push` and `clawdi pull` share a selector that picks the target agent:
 
 1. Explicit `--agent <type>` flag wins.
 2. Else look at `~/.clawdi/environments/*.json` — if exactly one registered, pick it.
@@ -188,7 +188,7 @@ Several items were scoped but not built. Named for discoverability if someone pi
 - **CronJobs** — no `cron_job` table, no scheduler. `scripts/embed_memories.py` exists as a manual operator-level tool.
 - **Channels (Telegram / Discord / Slack bots)** — no code, no table.
 - **Cognee memory provider** — only `Builtin` and `Mem0`.
-- **Browser-based `clawdi login`** — the implemented flow is "paste your API key", same UX but no OAuth dance.
+- **Browser-based `clawdi auth login`** — the implemented flow is "paste your API key", same UX but no OAuth dance.
 - **`bun build --compile` single-binary distribution** — currently `bun link` over the workspace.
 
 If you pick any of these up, add an ADR or module plan under `docs/plans/` before implementing — this top-level doc is descriptive of what exists, not speculative.

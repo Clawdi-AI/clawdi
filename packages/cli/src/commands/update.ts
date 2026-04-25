@@ -52,13 +52,27 @@ async function fetchLatest(timeoutMs = 3000): Promise<string | null> {
 	}
 }
 
+// Parse an npm version string ("1.2.3" or "1.2.3-beta.4") into comparable
+// parts. The numeric triple dominates; the pre-release suffix is a tiebreaker
+// where a stable version beats any `-pre`-tagged build at the same triple
+// (npm semver: `1.2.3 > 1.2.3-beta.4`).
+function parseVersion(v: string): { triple: [number, number, number]; pre: string | null } {
+	const [core, pre] = v.split("-", 2);
+	const [a = 0, b = 0, c = 0] = (core ?? "").split(".").map((n) => Number.parseInt(n, 10) || 0);
+	return { triple: [a, b, c], pre: pre ?? null };
+}
+
 function isNewer(latest: string, current: string): boolean {
-	const parse = (v: string) => v.split(".").map((n) => Number.parseInt(n, 10) || 0);
-	const [la = 0, lb = 0, lc = 0] = parse(latest);
-	const [ca = 0, cb = 0, cc = 0] = parse(current);
-	if (la !== ca) return la > ca;
-	if (lb !== cb) return lb > cb;
-	return lc > cc;
+	const L = parseVersion(latest);
+	const C = parseVersion(current);
+	for (let i = 0; i < 3; i++) {
+		if (L.triple[i] !== C.triple[i]) return L.triple[i] > C.triple[i];
+	}
+	// Same numeric triple: stable (no pre) > pre-release; otherwise string cmp.
+	if (L.pre === C.pre) return false;
+	if (L.pre === null) return true;
+	if (C.pre === null) return false;
+	return L.pre > C.pre;
 }
 
 /**

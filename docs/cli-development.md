@@ -53,12 +53,12 @@ workspace deps leaking into `dependencies`, …):
 ```bash
 cd packages/cli
 bun run build
-bun pm pack                                  # → clawdi-cli-0.1.0.tgz
-tar -tzf clawdi-cli-0.1.0.tgz | head   # inspect contents
-bun install -g ./clawdi-cli-0.1.0.tgz
+bun pm pack                                  # → clawdi-0.1.0.tgz
+tar -tzf clawdi-0.1.0.tgz | head   # inspect contents
+bun install -g ./clawdi-0.1.0.tgz
 clawdi --version
 bun uninstall -g clawdi
-rm clawdi-cli-*.tgz
+rm clawdi-*.tgz
 ```
 
 ## Install into a dockerized agent
@@ -76,7 +76,7 @@ Example with Hermes (`nousresearch/hermes-agent`). Prerequisite:
 # 0. Pack the CLI on the host.
 cd packages/cli
 bun run build
-bun pm pack                # → clawdi-cli-0.1.0.tgz
+bun pm pack                # → clawdi-0.1.0.tgz
 
 # 1. Start the container. The upstream ENTRYPOINT bootstraps
 #    $HERMES_HOME and launches the Hermes TUI as PID 1 — we leave it
@@ -101,13 +101,13 @@ docker run -dit --name hermes \
 docker exec -it hermes hermes
 
 # 3. Copy tarball in, install Bun + CLI.
-docker cp clawdi-cli-*.tgz hermes:/tmp/
+docker cp clawdi-*.tgz hermes:/tmp/
 docker exec hermes bash -lc '
   apt-get update -qq && apt-get install -y -qq curl unzip
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
   echo "export PATH=\$HOME/.bun/bin:\$PATH" >> ~/.bashrc
-  bun install -g /tmp/clawdi-cli-*.tgz
+  bun install -g /tmp/clawdi-*.tgz
 '
 
 # 4. Verify. `host.docker.internal` resolves to your host (auto on
@@ -121,7 +121,7 @@ docker exec hermes bash -lc '
 
 # 5. Cleanup.
 docker rm -f hermes
-rm clawdi-cli-*.tgz
+rm clawdi-*.tgz
 ```
 
 Two image-specific wrinkles worth knowing:
