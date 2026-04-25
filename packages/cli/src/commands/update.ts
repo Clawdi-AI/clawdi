@@ -6,7 +6,12 @@ import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { getCliVersion } from "../lib/version";
 
 const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
+// 1 hour: short enough that a fresh release reaches users within an hour of
+// publication, long enough that we don't hammer the npm registry on every
+// CLI invocation. Originally 24h — that meant a new release could sit
+// invisible to active users for a full day, which made `--auto-update`
+// feel broken whenever a fix shipped.
+const CACHE_TTL_MS = 60 * 60 * 1000;
 
 interface UpdateCache {
 	checkedAt: string;
@@ -77,9 +82,13 @@ function isNewer(latest: string, current: string): boolean {
 }
 
 /**
- * Manual `clawdi update` command — forces a registry fetch and prints result.
+ * Manual `clawdi update` — forces a registry fetch and, if a newer version
+ * exists, installs it inline (foreground, blocking, with the installer's
+ * own progress output). Pass `--check` to keep the old "diagnose only"
+ * behavior. JSON / non-TTY runs always stay diagnose-only because piping
+ * into a script and silently mutating the global install would surprise.
  */
-export async function update(opts: { json?: boolean } = {}) {
+export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 	const current = getCliVersion();
 	const latest = await fetchLatest();
 
@@ -107,16 +116,57 @@ export async function update(opts: { json?: boolean } = {}) {
 
 	console.log(chalk.gray(`current:  ${current}`));
 	console.log(chalk.gray(`latest:   ${latest}`));
-	if (isNewer(latest, current)) {
+
+	if (!isNewer(latest, current)) {
+		console.log(chalk.green("\n✓ You're up to date."));
+		return;
+	}
+
+	// `--check` keeps the old display-only behavior for users who scripted
+	// against it (CI guards, custom dashboards). Default is now to install.
+	if (opts.check) {
 		console.log();
 		console.log(
 			chalk.cyan(`A newer version is available. Install with:`) +
 				"\n  " +
 				chalk.white("npm i -g clawdi"),
 		);
-	} else {
-		console.log(chalk.green("\n✓ You're up to date."));
+		return;
 	}
+
+	const installer = detectInstaller();
+	if (!installer) {
+		console.log();
+		console.log(
+			chalk.yellow("Neither bun nor npm is on PATH; install manually:") +
+				"\n  " +
+				chalk.white("npm i -g clawdi"),
+		);
+		return;
+	}
+
+	const args = installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+	console.log();
+	console.log(chalk.cyan(`Installing v${latest} via ${installer}…`));
+	const result = spawnSync(installer, args, { stdio: "inherit" });
+	if (result.status !== 0) {
+		console.log();
+		console.log(
+			chalk.red(`Install failed (${installer} exited ${result.status}). Try manually:`) +
+				"\n  " +
+				chalk.white("npm i -g clawdi"),
+		);
+		process.exitCode = result.status ?? 1;
+		return;
+	}
+	// Update last-version so the post-install run prints "Updated to v…".
+	try {
+		writeFileSync(lastVersionPath(), current, { mode: 0o644 });
+	} catch {
+		// best-effort
+	}
+	console.log();
+	console.log(chalk.green(`✓ clawdi v${latest} installed.`));
 }
 
 /**
