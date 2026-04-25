@@ -50,7 +50,9 @@ export class HermesAdapter implements AgentAdapter {
 	readonly agentType = "hermes" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(hermesDir());
+		// Hermes stores state in a SQLite db. The dir alone may exist as a
+		// leftover; the db is the only file every Hermes install creates.
+		return existsSync(stateDbPath());
 	}
 
 	async getVersion(): Promise<string | null> {

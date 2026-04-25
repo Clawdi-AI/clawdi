@@ -99,7 +99,11 @@ export class CodexAdapter implements AgentAdapter {
 	readonly agentType = "codex" as const;
 
 	async detect(): Promise<boolean> {
-		return existsSync(codexDir());
+		// Bare `~/.codex/` could be a leftover. Require either the sessions
+		// dir (created on first `codex` run) or `config.toml` (created when
+		// the user edits codex config).
+		if (!existsSync(codexDir())) return false;
+		return existsSync(sessionsDir()) || existsSync(join(codexDir(), "config.toml"));
 	}
 
 	async getVersion(): Promise<string | null> {

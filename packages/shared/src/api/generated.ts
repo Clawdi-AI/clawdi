@@ -173,7 +173,13 @@ export interface paths {
 		get: operations["get_environment_api_environments__environment_id__get"];
 		put?: never;
 		post?: never;
-		delete?: never;
+		/**
+		 * Delete Environment
+		 * @description Delete an agent environment. Existing sessions remain (orphaned)
+		 *     so users don't lose history when removing a machine. The session
+		 *     list query uses an outer-join so orphaned rows still render.
+		 */
+		delete: operations["delete_environment_api_environments__environment_id__delete"];
 		options?: never;
 		head?: never;
 		patch?: never;
@@ -1193,7 +1199,10 @@ export interface components {
 		};
 		/** SessionCreate */
 		SessionCreate: {
-			/** Environment Id */
+			/**
+			 * Environment Id
+			 * Format: uuid
+			 */
 			environment_id: string;
 			/** Local Session Id */
 			local_session_id: string;
@@ -1926,6 +1935,35 @@ export interface operations {
 				content: {
 					"application/json": components["schemas"]["EnvironmentResponse"];
 				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	delete_environment_api_environments__environment_id__delete: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				environment_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
 			};
 			/** @description Validation Error */
 			422: {

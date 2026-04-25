@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
@@ -119,6 +120,28 @@ async def get_environment(
     )
 
 
+@router.delete("/api/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_environment(
+    environment_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete an agent environment. Existing sessions remain (orphaned)
+    so users don't lose history when removing a machine. The session
+    list query uses an outer-join so orphaned rows still render."""
+    result = await db.execute(
+        select(AgentEnvironment).where(
+            AgentEnvironment.id == environment_id,
+            AgentEnvironment.user_id == auth.user_id,
+        )
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await db.delete(env)
+    await db.commit()
+
+
 @router.post("/api/sessions/batch")
 async def batch_create_sessions(
     body: SessionBatchRequest,
@@ -195,9 +218,35 @@ async def batch_create_sessions(
         .on_conflict_do_nothing(constraint="uq_sessions_user_local")
         .returning(Session.id)
     )
-    result = await db.execute(stmt)
-    inserted = result.scalars().all()
-    await db.commit()
+    # The pre-flight check above closes the common case, but there's still
+    # a window between the SELECT and this INSERT where another request can
+    # `DELETE /api/environments/{id}`. The FK + `ON DELETE SET NULL` lets us
+    # detect that here as an IntegrityError → 400, instead of bubbling a 500.
+    #
+    # Narrow to FK violations specifically (PG sqlstate 23503). Without this
+    # guard a future check/exclude/unique constraint failure would land in
+    # the same branch and get mislabeled as `unknown_environment`. The
+    # `uq_sessions_user_local` unique constraint can't trip here because
+    # `on_conflict_do_nothing` swallows it on the way in.
+    try:
+        result = await db.execute(stmt)
+        inserted = result.scalars().all()
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        sqlstate = getattr(e.orig, "sqlstate", None) or getattr(e.orig, "pgcode", None)
+        if sqlstate != "23503":
+            raise
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "unknown_environment",
+                "message": (
+                    "Environment was removed mid-upload. "
+                    "Run `clawdi setup` to re-register this machine, then retry."
+                ),
+            },
+        ) from e
     return SessionBatchResponse(synced=len(inserted))
 
 
