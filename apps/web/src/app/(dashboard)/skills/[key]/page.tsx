@@ -1,15 +1,16 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ExternalLink, Trash2 } from "lucide-react";
+import { AlertCircle, ExternalLink, FileText, Tag, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { Markdown } from "@/components/markdown";
+import { Stat } from "@/components/meta/stat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { errorMessage, relativeTime } from "@/lib/utils";
@@ -75,64 +76,57 @@ export default function SkillDetailPage() {
 				</Card>
 			) : skill ? (
 				<>
-					<Card>
-						<CardHeader>
-							<CardTitle className="truncate font-semibold text-lg tracking-tight">
-								{skill.name}
-							</CardTitle>
-							<div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-								<Badge variant="secondary">v{skill.version}</Badge>
-								<span>{skill.file_count} files</span>
-								<span>·</span>
-								<span>{skill.source}</span>
-								{skill.source_repo ? (
-									<>
-										<span>·</span>
-										<a
-											href={`https://github.com/${skill.source_repo}`}
-											target="_blank"
-											rel="noreferrer"
-											className="inline-flex items-center gap-1 hover:text-foreground"
-										>
-											{skill.source_repo}
-											<ExternalLink className="size-3" />
-										</a>
-									</>
-								) : null}
-							</div>
-							{skill.description ? (
-								<p className="mt-2 text-sm text-muted-foreground">{skill.description}</p>
+					{/* Flat header — matches sessions/[id] hierarchy.
+					    h1 = name, identity row = source/repo/installed,
+					    stats row = version + file count. No card wrapping a
+					    single entity's metadata; cards earn their existence. */}
+					<div className="space-y-2">
+						<h1 className="truncate font-semibold text-lg tracking-tight">{skill.name}</h1>
+						<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+							<span>{skill.source}</span>
+							{skill.source_repo ? (
+								<>
+									<span>·</span>
+									<a
+										href={`https://github.com/${skill.source_repo}`}
+										target="_blank"
+										rel="noreferrer"
+										className="inline-flex items-center gap-1 hover:text-foreground"
+									>
+										{skill.source_repo}
+										<ExternalLink className="size-3" />
+									</a>
+								</>
 							) : null}
-						</CardHeader>
-					</Card>
+							{skill.created_at ? (
+								<>
+									<span>·</span>
+									<span>installed {relativeTime(skill.created_at)}</span>
+								</>
+							) : null}
+						</div>
+					</div>
 
-					{skill.content ? (
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-base">SKILL.md</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<div className="prose prose-sm max-w-none dark:prose-invert">
-									<Markdown content={skill.content} />
-								</div>
-							</CardContent>
-						</Card>
+					<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+						<Stat icon={Tag} label={`v${skill.version}`} />
+						<Stat
+							icon={FileText}
+							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
+						/>
+					</div>
+
+					{skill.description ? (
+						<p className="text-sm text-muted-foreground">{skill.description}</p>
 					) : null}
 
-					<Card>
-						<CardContent className="py-4">
-							<dl className="grid gap-3 text-sm sm:grid-cols-2">
-								<div>
-									<dt className="text-xs text-muted-foreground">Installed</dt>
-									<dd>{skill.created_at ? relativeTime(skill.created_at) : "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">Key</dt>
-									<dd className="font-mono text-xs">{skill.skill_key}</dd>
-								</div>
-							</dl>
-						</CardContent>
-					</Card>
+					{skill.content ? (
+						<>
+							<Separator />
+							<div className="prose prose-sm max-w-none dark:prose-invert">
+								<Markdown content={skill.content} />
+							</div>
+						</>
+					) : null}
 				</>
 			) : null}
 		</div>

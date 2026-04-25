@@ -8,7 +8,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -87,23 +87,40 @@ export default function SessionDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			{/* Header — the back-link DetailHeader is gone; the global
-			    breadcrumb (Sessions › <summary>) is the only back affordance. */}
-			<div>
-				<h1 className="text-lg font-semibold tracking-tight">{summaryText}</h1>
-				<p className="mt-1 text-xs text-muted-foreground">
-					{session.project_path || "No project path"} · {relativeTime(session.started_at)}
-				</p>
+			{/* Header. Three lines:
+			    1. h1 = session summary (matches the breadcrumb title)
+			    2. Identity row — agent + project + relative time. Single-line so
+			       the page reads "where this happened" at a glance.
+			    3. Stats row — model + counts. Decoupled from identity so the
+			       sizes match (no 2-line AgentLabel mixed with 1-line Stats). */}
+			<div className="space-y-2">
+				<h1 className="font-semibold text-lg tracking-tight">{summaryText}</h1>
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+					{session.agent_type || session.machine_name ? (
+						<span className="inline-flex items-center gap-1.5">
+							<AgentIcon agent={session.agent_type} className="size-4 rounded-sm" />
+							<span className="font-medium text-foreground">
+								{session.machine_name || agentTypeLabel(session.agent_type)}
+							</span>
+							{session.machine_name && session.agent_type ? (
+								<span className="text-muted-foreground">
+									· {agentTypeLabel(session.agent_type)}
+								</span>
+							) : null}
+						</span>
+					) : null}
+					{session.project_path ? (
+						<>
+							<span>·</span>
+							<span className="truncate font-mono">{session.project_path}</span>
+						</>
+					) : null}
+					<span>·</span>
+					<span>{relativeTime(session.started_at)}</span>
+				</div>
 			</div>
 
-			{/* Stats bar — agent label is the visual anchor on the left;
-			    everything else aligns on the same baseline. `items-center`
-			    + matched `h-5` on the model pill keeps icons and text on
-			    one line at every viewport. */}
 			<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-				{session.agent_type || session.machine_name ? (
-					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
-				) : null}
 				<ModelBadge modelId={session.model} />
 				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
 				<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />

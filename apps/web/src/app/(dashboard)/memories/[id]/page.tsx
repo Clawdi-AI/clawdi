@@ -83,21 +83,28 @@ export default function MemoryDetailPage() {
 			) : memory ? (
 				<>
 					{/* Title treatment parallels Sessions/Skills detail: the content
-					    IS the memory, so it becomes the h1; a subtitle row below
-					    carries the meta (category / source / created). */}
+					    IS the memory, so it becomes the h1; a subtitle row carries
+					    the category / source / created meta. The redundant footer
+					    Card with full timestamp + ID was removed — created is in
+					    the subtitle, ID is in the URL/breadcrumb. */}
 					<div className="space-y-2">
 						<h1 className="whitespace-pre-wrap font-semibold text-lg leading-snug tracking-tight">
 							{memory.content}
 						</h1>
-						<div className="flex flex-wrap items-center gap-2 text-sm">
-							<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
+						<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+							<Badge
+								variant="secondary"
+								className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
+							>
 								{memory.category}
 							</Badge>
-							<span className="text-muted-foreground">{memory.source}</span>
+							<span>{memory.source}</span>
 							{memory.created_at ? (
 								<>
-									<span className="text-muted-foreground">·</span>
-									<span className="text-muted-foreground">{relativeTime(memory.created_at)}</span>
+									<span>·</span>
+									<span title={new Date(memory.created_at).toLocaleString()}>
+										{relativeTime(memory.created_at)}
+									</span>
 								</>
 							) : null}
 						</div>
@@ -113,21 +120,6 @@ export default function MemoryDetailPage() {
 							))}
 						</div>
 					) : null}
-
-					<Card>
-						<CardContent className="py-4">
-							<dl className="grid gap-3 text-sm sm:grid-cols-2">
-								<div>
-									<dt className="text-xs text-muted-foreground">Created</dt>
-									<dd>{memory.created_at ? new Date(memory.created_at).toLocaleString() : "—"}</dd>
-								</div>
-								<div>
-									<dt className="text-xs text-muted-foreground">ID</dt>
-									<dd className="font-mono text-xs">{memory.id}</dd>
-								</div>
-							</dl>
-						</CardContent>
-					</Card>
 				</>
 			) : (
 				<Alert>
