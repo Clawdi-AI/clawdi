@@ -593,9 +593,35 @@ export interface paths {
 		};
 		/**
 		 * List Available Apps
-		 * @description List all available Composio apps.
+		 * @description Paginated Composio app catalog. Server holds the full list in a
+		 *     5-min in-process cache and slices per request, so paginating doesn't
+		 *     cost a Composio roundtrip per page and the browser only ships one
+		 *     page at a time. Search is substring across slug, display name, and
+		 *     description (server-side, before pagination).
 		 */
 		get: operations["list_available_apps_api_connectors_available_get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/connectors/available/{app_name}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * Get Available App
+		 * @description Single-app metadata lookup — used by the detail page so it doesn't
+		 *     have to page through the whole catalog to find one app's display name.
+		 *     Re-uses the cache that `/available` populates.
+		 */
+		get: operations["get_available_app_api_connectors_available__app_name__get"];
 		put?: never;
 		post?: never;
 		delete?: never;
@@ -1119,6 +1145,17 @@ export interface components {
 			access_count?: number | null;
 			/** Created At */
 			created_at?: string | null;
+		};
+		/** Paginated[ConnectorAvailableAppResponse] */
+		Paginated_ConnectorAvailableAppResponse_: {
+			/** Items */
+			items: components["schemas"]["ConnectorAvailableAppResponse"][];
+			/** Total */
+			total: number;
+			/** Page */
+			page: number;
+			/** Page Size */
+			page_size: number;
 		};
 		/** Paginated[MemoryResponse] */
 		Paginated_MemoryResponse_: {
@@ -2862,6 +2899,8 @@ export interface operations {
 		parameters: {
 			query?: {
 				search?: string | null;
+				page?: number;
+				page_size?: number;
 			};
 			header?: never;
 			path?: never;
@@ -2875,7 +2914,38 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["ConnectorAvailableAppResponse"][];
+					"application/json": components["schemas"]["Paginated_ConnectorAvailableAppResponse_"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	get_available_app_api_connectors_available__app_name__get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				app_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ConnectorAvailableAppResponse"];
 				};
 			};
 			/** @description Validation Error */
