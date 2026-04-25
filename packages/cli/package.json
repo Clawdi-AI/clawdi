@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
@@ -15,15 +15,15 @@
 		"README.md"
 	],
 	"engines": {
-		"node": ">=18"
+		"node": ">=22.5"
 	},
 	"publishConfig": {
 		"access": "public"
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --external better-sqlite3 --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' && cp -r skills dist/skills",
-		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node --external better-sqlite3 && cp -r skills dist/skills",
+		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' && cp -r skills dist/skills",
+		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"test:watch": "bun test --watch",
@@ -53,7 +53,6 @@
 	"dependencies": {
 		"@clack/prompts": "^1.2.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-		"better-sqlite3": "^12.9.0",
 		"chalk": "^5.4.0",
 		"commander": "^13.0.0",
 		"openapi-fetch": "^0.17.0",
@@ -62,12 +61,8 @@
 	},
 	"devDependencies": {
 		"@clawdi/shared": "workspace:*",
-		"@types/better-sqlite3": "^7.6.12",
 		"@types/bun": "^1.3.12",
 		"@types/node": "^22.0.0",
 		"typescript": "^5.9.0"
-	},
-	"trustedDependencies": [
-		"better-sqlite3"
-	]
+	}
 }

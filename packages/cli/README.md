@@ -19,7 +19,7 @@ clawdi doctor            # verify everything's wired up
 
 ## Requirements
 
-- **Node ≥ 18**
+- **Node ≥ 22.5** (uses the built-in `node:sqlite` module for the Hermes adapter)
 - At least one supported agent installed on the machine (detected automatically)
 
 ## Commands

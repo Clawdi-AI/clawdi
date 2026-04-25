@@ -5,8 +5,8 @@ import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base"
 import { getHermesHome, SKIP_DIRS } from "./paths";
 
 /**
- * Minimal SQLite shape that both `bun:sqlite` and `better-sqlite3` implement.
- * Enough for our read-only Hermes access pattern.
+ * Minimal SQLite shape that both `bun:sqlite` and Node's built-in
+ * `node:sqlite` implement. Enough for our read-only Hermes access pattern.
  */
 interface SqliteStatement {
 	all(...params: unknown[]): unknown[];
@@ -17,23 +17,25 @@ interface SqliteDatabase {
 }
 
 /**
- * Open a Hermes SQLite db using whichever native binding the current
- * runtime supports:
+ * Open a Hermes SQLite db using the runtime's built-in binding:
  * - Under Bun: `bun:sqlite` (built-in, the dev/test default).
- * - Under Node: `better-sqlite3` (npm dep, ships prebuilds for major
- *   platforms; Bun cannot load it — see oven-sh/bun#4290).
+ * - Under Node 22.5+: `node:sqlite` (built-in; Node 22.x still emits an
+ *   ExperimentalWarning at first import, harmless and one-shot).
+ *
+ * Neither cross-loads — Bun has no `node:sqlite` (oven-sh/bun#15561) and
+ * Node has no `bun:sqlite`. Importing lazily means users who never touch
+ * Hermes don't pay the load cost or hear the experimental warning.
  *
  * Both expose a `prepare(sql).all(args)` surface, so call sites stay
- * runtime-agnostic. Imported lazily so users who never touch Hermes
- * don't pay the native-load cost.
+ * runtime-agnostic.
  */
 async function openHermesDb(path: string): Promise<SqliteDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
 		return new Database(path, { readonly: true }) as unknown as SqliteDatabase;
 	}
-	const { default: Database } = await import("better-sqlite3");
-	return new Database(path, { readonly: true }) as unknown as SqliteDatabase;
+	const { DatabaseSync } = await import("node:sqlite");
+	return new DatabaseSync(path, { readOnly: true }) as unknown as SqliteDatabase;
 }
 
 function hermesDir() {
