@@ -37,7 +37,6 @@ export async function push(opts: {
 
 	const adapter = await selectAdapter(opts.agent);
 	if (!adapter) {
-		p.log.error("No supported agent detected on this machine.");
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
 		return;

@@ -11,6 +11,7 @@ import {
 } from "../adapters/registry";
 import { getClawdiDir } from "./config";
 import { askOne } from "./prompts";
+import { isInteractive } from "./tty";
 
 export function getEnvIdByAgent(agentType: string): string | null {
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
@@ -34,6 +35,13 @@ export function listRegisteredAgentTypes(): AgentType[] {
 	return types;
 }
 
+/**
+ * Resolve the agent adapter to operate on. Prints a specific error message
+ * to stdout before returning null so callers can simply abort — distinguishing
+ * "no agents found" from "ambiguous, can't pick without a prompt" is critical
+ * in non-interactive contexts (CI, AI agents, piped stdout) where the user
+ * sees a misleading "no supported agent" message if we collapse the cases.
+ */
 export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 	// 1. Explicit --agent wins.
 	if (agentOpt) {
@@ -54,6 +62,13 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 1 && registered[0]) return adapterForType(registered[0]);
 	if (registered.length > 1) {
+		if (!isInteractive()) {
+			console.log(chalk.red("Multiple agents are registered on this machine."));
+			console.log(
+				chalk.gray(`Pass --agent <type> to choose one. Registered: ${registered.join(", ")}`),
+			);
+			return null;
+		}
 		const picked = await askOne<AgentType>(
 			"Multiple agents registered. Select one:",
 			registered.map((t) => ({ value: t, label: adapterRegistry[t].displayName })),
@@ -66,8 +81,20 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 	const detected = (
 		await Promise.all(allAdapters.map(async (a) => ((await a.detect()) ? a : null)))
 	).filter((a): a is AgentAdapter => a !== null);
-	if (detected.length === 0) return null;
+	if (detected.length === 0) {
+		console.log(chalk.red("No supported agent detected on this machine."));
+		console.log(
+			chalk.gray(`Install one or pass --agent <type>. Available types: ${AGENT_TYPES.join(", ")}`),
+		);
+		return null;
+	}
 	if (detected.length === 1 && detected[0]) return detected[0];
+	if (!isInteractive()) {
+		const types = detected.map((a) => a.agentType);
+		console.log(chalk.red("Multiple agents detected on this machine."));
+		console.log(chalk.gray(`Pass --agent <type> to choose one. Detected: ${types.join(", ")}`));
+		return null;
+	}
 	const picked = await askOne<AgentType>(
 		"Multiple agents detected. Select one:",
 		detected.map((a) => ({

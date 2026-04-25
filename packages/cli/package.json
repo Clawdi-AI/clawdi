@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
