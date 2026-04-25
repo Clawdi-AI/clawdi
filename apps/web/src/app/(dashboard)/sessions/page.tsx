@@ -2,7 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumns } from "@/components/sessions/session-columns";
@@ -17,7 +16,6 @@ import { errorMessage } from "@/lib/utils";
 
 export default function SessionsPage() {
 	const api = useApi();
-	const router = useRouter();
 	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 	const [search, setSearch] = useState("");
 	const debouncedSearch = useDebouncedValue(search, 250);
@@ -71,7 +69,8 @@ export default function SessionsPage() {
 							? "No sessions match your search."
 							: "No sessions yet. Run clawdi push on a connected agent."
 					}
-					onRowClick={(s) => router.push(`/sessions/${s.id}`)}
+					getRowHref={(s) => `/sessions/${s.id}`}
+					rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 					pagination={pagination}
 					onPaginationChange={setPagination}
 					pageCount={pageCount}

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
-import { DetailActions, DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
@@ -97,21 +97,6 @@ export default function AgentDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailActions>
-				{agent && !isLoading ? (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={onRemove}
-						disabled={remove.isPending}
-						className="text-destructive hover:text-destructive"
-					>
-						<Trash2 />
-						Remove agent
-					</Button>
-				) : null}
-			</DetailActions>
-
 			{error ? (
 				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
@@ -121,14 +106,26 @@ export default function AgentDetailPage() {
 				</div>
 			) : agent ? (
 				<>
-					{/* Same flat header as sessions/skills/memories. The big
-					    AgentLabel + bordered dl was visually heavy for a
-					    page that's mostly the sessions table below it. */}
+					{/* Title row pairs the h1 with the destructive action so the
+					    button doesn't float on its own line. items-start so a
+					    long machine name wrapping doesn't drag the button down. */}
 					<div className="space-y-2">
-						<DetailTitle className="inline-flex items-center gap-2">
-							<AgentIcon agent={agent.agent_type} className="size-7 rounded" />
-							{agent.machine_name || agentTypeLabel(agent.agent_type)}
-						</DetailTitle>
+						<div className="flex items-start justify-between gap-3">
+							<DetailTitle className="inline-flex items-center gap-2">
+								<AgentIcon agent={agent.agent_type} className="size-7 rounded" />
+								{agent.machine_name || agentTypeLabel(agent.agent_type)}
+							</DetailTitle>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={onRemove}
+								disabled={remove.isPending}
+								className="shrink-0 text-destructive hover:text-destructive"
+							>
+								<Trash2 />
+								Remove agent
+							</Button>
+						</div>
 						<DetailMeta>
 							<span>{agentTypeLabel(agent.agent_type)}</span>
 							{agent.agent_version ? (
@@ -163,7 +160,8 @@ export default function AgentDetailPage() {
 							columns={sessionColumns}
 							data={sessionsPage?.items ?? []}
 							isLoading={sessionsLoading}
-							onRowClick={(s) => router.push(`/sessions/${s.id}`)}
+							getRowHref={(s) => `/sessions/${s.id}`}
+							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 							emptyMessage="No sessions synced from this agent yet."
 						/>
 					</section>

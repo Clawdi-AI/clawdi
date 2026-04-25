@@ -18,13 +18,6 @@ import { AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 
-/** Right-aligned action button slot at the top of a detail page.
- * Render nothing if no children (a `null` child collapses to nothing). */
-export function DetailActions({ children }: { children?: React.ReactNode }) {
-	if (!children) return null;
-	return <div className="flex items-center justify-end gap-2">{children}</div>;
-}
-
 /** h1 used by detail pages. Centralized so the size/weight stays in one
  * place. Wrapping is the default — callers that want a single-line
  * truncation pass `className="truncate"` (skills detail does, memories

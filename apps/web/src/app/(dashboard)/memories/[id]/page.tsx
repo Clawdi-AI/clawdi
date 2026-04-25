@@ -5,7 +5,7 @@ import { Brain, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailActions, DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,21 +51,6 @@ export default function MemoryDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailActions>
-				{memory && !isLoading ? (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => deleteMemory.mutate()}
-						disabled={deleteMemory.isPending}
-						className="text-destructive hover:text-destructive"
-					>
-						<Trash2 />
-						Delete
-					</Button>
-				) : null}
-			</DetailActions>
-
 			{error ? (
 				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
 			) : isLoading ? (
@@ -77,7 +62,21 @@ export default function MemoryDetailPage() {
 			) : memory ? (
 				<>
 					<div className="space-y-2">
-						<DetailTitle className="whitespace-pre-wrap leading-snug">{memory.content}</DetailTitle>
+						<div className="flex items-start justify-between gap-3">
+							<DetailTitle className="whitespace-pre-wrap leading-snug">
+								{memory.content}
+							</DetailTitle>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => deleteMemory.mutate()}
+								disabled={deleteMemory.isPending}
+								className="shrink-0 text-destructive hover:text-destructive"
+							>
+								<Trash2 />
+								Delete
+							</Button>
+						</div>
 						<DetailMeta>
 							<Badge
 								variant="secondary"

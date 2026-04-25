@@ -5,13 +5,7 @@ import { ExternalLink, FileText, Tag, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import {
-	DetailActions,
-	DetailMeta,
-	DetailNotFound,
-	DetailStats,
-	DetailTitle,
-} from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { Button } from "@/components/ui/button";
@@ -51,21 +45,6 @@ export default function SkillDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailActions>
-				{skill && !isLoading ? (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => uninstall.mutate()}
-						disabled={uninstall.isPending}
-						className="text-destructive hover:text-destructive"
-					>
-						<Trash2 />
-						Uninstall
-					</Button>
-				) : null}
-			</DetailActions>
-
 			{error ? (
 				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
 			) : isLoading ? (
@@ -76,7 +55,19 @@ export default function SkillDetailPage() {
 			) : skill ? (
 				<>
 					<div className="space-y-2">
-						<DetailTitle className="truncate">{skill.name}</DetailTitle>
+						<div className="flex items-start justify-between gap-3">
+							<DetailTitle className="truncate">{skill.name}</DetailTitle>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => uninstall.mutate()}
+								disabled={uninstall.isPending}
+								className="shrink-0 text-destructive hover:text-destructive"
+							>
+								<Trash2 />
+								Uninstall
+							</Button>
+						</div>
 						<DetailMeta>
 							<span>{skill.source}</span>
 							{skill.source_repo ? (

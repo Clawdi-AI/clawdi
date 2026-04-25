@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
@@ -21,7 +20,6 @@ const RECENT_SESSIONS_LIMIT = 15;
 
 export default function DashboardPage() {
 	const api = useApi();
-	const router = useRouter();
 
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -112,7 +110,8 @@ export default function DashboardPage() {
 							columns={sessionColumnsCompact}
 							data={sessions ?? []}
 							isLoading={sessionsLoading}
-							onRowClick={(s) => router.push(`/sessions/${s.id}`)}
+							getRowHref={(s) => `/sessions/${s.id}`}
+							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 							emptyMessage={
 								<>
 									No sessions yet. Run{" "}
