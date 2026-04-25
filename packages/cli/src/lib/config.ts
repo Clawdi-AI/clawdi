@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -18,11 +18,14 @@ function authFile() {
 
 export interface ClawdiConfig {
 	apiUrl: string;
+	// Default-on. Set to "false" to opt out of background auto-updates.
+	// `CLAWDI_NO_AUTO_UPDATE=1` env var has the same effect for ad-hoc opt-out.
+	autoUpdate?: "true" | "false";
 }
 
 // Keys accepted by `clawdi config set/get/unset`. Add a new entry here
 // when introducing a new persistent setting.
-export const CONFIG_KEYS = ["apiUrl"] as const;
+export const CONFIG_KEYS = ["apiUrl", "autoUpdate"] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
 export interface ClawdiAuth {
@@ -90,10 +93,16 @@ export function setAuth(auth: ClawdiAuth) {
 }
 
 export function clearAuth() {
-	const { unlinkSync } = require("node:fs");
 	const p = authFile();
 	if (existsSync(p)) {
 		unlinkSync(p);
+	}
+	// Drop cached environment ids too — they belong to the user that just
+	// logged out. Surviving across an account switch is exactly how a stale
+	// env_id ends up in the next user's session uploads.
+	const envDir = join(clawdiDir(), "environments");
+	if (existsSync(envDir)) {
+		rmSync(envDir, { recursive: true, force: true });
 	}
 }
 

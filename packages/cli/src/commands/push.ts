@@ -2,13 +2,16 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { RawSession, RawSkill } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, unwrap } from "../lib/api-client";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { getEnvIdByAgent, selectAdapter } from "../lib/select-adapter";
 import { readModuleState, writeModuleState } from "../lib/state";
 import { tarSkillDir } from "../lib/tar";
+
+const RESETUP_HINT =
+	"This machine's environment is no longer registered. Run `clawdi setup` again.";
 
 const UP_MODULES = [
 	{ value: "sessions", label: "Sessions", hint: "agent conversation history" },
@@ -46,6 +49,40 @@ export async function push(opts: {
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
 		return;
+	}
+
+	// Probe the cached env_id before doing any local work. The CLI keeps a
+	// per-agent file under ~/.clawdi/environments/, but the corresponding row
+	// can disappear server-side (account switch, prod reset, env teardown).
+	// Catching that here means the user runs `clawdi setup` once and is back
+	// in business — instead of pushing 60 sessions that all show up as
+	// "Unknown" in the dashboard.
+	if (!opts.dryRun && envId) {
+		const probe = new ApiClient();
+		try {
+			const res = await probe.GET("/api/environments/{environment_id}", {
+				params: { path: { environment_id: envId } },
+			});
+			if (res.error || !res.data) {
+				const status = res.response?.status ?? 0;
+				if (status === 404) {
+					p.log.error(RESETUP_HINT);
+					p.outro(chalk.red("Aborted."));
+					process.exitCode = 1;
+					return;
+				}
+				// Anything else (401, network, 5xx) — let the actual upload bubble
+				// up the proper error; don't double-report here.
+			}
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 404) {
+				p.log.error(RESETUP_HINT);
+				p.outro(chalk.red("Aborted."));
+				process.exitCode = 1;
+				return;
+			}
+			// Same reasoning as above — fall through and let upload surface it.
+		}
 	}
 
 	let modules: string[];
@@ -209,6 +246,16 @@ export async function push(opts: {
 			// Stop the spinner with a plain "failed" message — handleError
 			// will render the final red error box, so we avoid double-red.
 			sessionSpinner.stop("Session upload failed.");
+			// Translate the backend's "unknown_environment" 400 into the same
+			// re-setup hint the up-front probe uses. The probe catches the
+			// common case; this catches a race where the env was deleted
+			// between probe and batch.
+			if (e instanceof ApiError && e.status === 400 && e.body.includes("unknown_environment")) {
+				p.log.error(RESETUP_HINT);
+				p.outro(chalk.red("Aborted."));
+				process.exitCode = 1;
+				return;
+			}
 			throw e;
 		}
 		moduleState.sessions = { lastActivityAt: new Date().toISOString() };

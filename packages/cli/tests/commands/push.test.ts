@@ -3,7 +3,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { type CapturedRequest, jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+import {
+	type CapturedRequest,
+	jsonResponse,
+	mockFetch,
+	okEnvironmentProbe,
+	seedAuthAndEnv,
+} from "./helpers";
 
 /** Narrow the JSON-parsed request body of `/api/sessions/batch`. */
 interface BatchSession {
@@ -55,6 +61,7 @@ describe("push — Hermes fixture", () => {
 	it("uploads the 2 non-empty sessions plus per-session content", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 2 }) },
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
 		]);
@@ -99,6 +106,7 @@ describe("push — Hermes fixture", () => {
 	it("skills module uploads multipart per skill", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{
 				method: "POST",
 				path: "/api/skills/upload",
@@ -119,6 +127,7 @@ describe("push — Hermes fixture", () => {
 		setup("hermes");
 		writeFileSync(join(tmpHome, ".clawdi", "state.json"), "{ not valid json");
 		const { restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 2 }) },
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
 		]);
@@ -136,6 +145,7 @@ describe("push — Claude Code fixture", () => {
 	it("uploads the single fixture session", async () => {
 		setup("claude-code");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
 		]);
@@ -160,6 +170,7 @@ describe("push — Codex fixture", () => {
 	it("uploads the single fixture session with Codex token counters", async () => {
 		setup("codex");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
 		]);
@@ -183,6 +194,7 @@ describe("push — OpenClaw fixture", () => {
 	it("uploads the single fixture session with OpenClaw tokens + cwd", async () => {
 		setup("openclaw");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "POST", path: "/api/sessions/batch", response: () => jsonResponse({ synced: 1 }) },
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
 		]);
@@ -198,6 +210,57 @@ describe("push — OpenClaw fixture", () => {
 		expect(sessions[0]?.local_session_id).toBe("oc-session-001");
 		expect(sessions[0]?.project_path).toBe("/Users/fixture/project");
 		expect(sessions[0]?.input_tokens).toBe(12);
+	});
+});
+
+describe("push — env_id probe (Codex plan A)", () => {
+	it("aborts with exitCode=1 when cached env_id 404s", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/environments/env-test",
+				response: () => new Response("", { status: 404 }),
+			},
+		]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+		expect(process.exitCode).toBe(1);
+		// No batch upload — we bailed before doing any work.
+		expect(captured.find((c) => c.path === "/api/sessions/batch")).toBeUndefined();
+	});
+
+	it("aborts on 400 unknown_environment from batch endpoint (race after probe)", async () => {
+		setup("hermes");
+		const { restore } = mockFetch([
+			okEnvironmentProbe(), // probe succeeds…
+			{
+				// …but a parallel teardown could delete the env between probe and
+				// batch. The CLI must catch the structured 400 the same way.
+				method: "POST",
+				path: "/api/sessions/batch",
+				response: () =>
+					jsonResponse(
+						{
+							detail: {
+								code: "unknown_environment",
+								message: "Run `clawdi setup`",
+								environment_ids: ["env-test"],
+							},
+						},
+						400,
+					),
+			},
+		]);
+		try {
+			await push({ agent: "hermes", modules: "sessions", all: true });
+		} finally {
+			restore();
+		}
+		expect(process.exitCode).toBe(1);
 	});
 });
 

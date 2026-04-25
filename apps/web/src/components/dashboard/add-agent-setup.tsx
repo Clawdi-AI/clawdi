@@ -17,7 +17,7 @@ function useAgentPrompt() {
 	useEffect(() => {
 		setOrigin(window.location.origin);
 	}, []);
-	return `Read ${origin}/skill.md and follow the instructions to connect to Clawdi Cloud.`;
+	return `Set up Clawdi Cloud on this machine. Fetch ${origin}/skill.md, then run every shell command in its code blocks. Confirm with \`clawdi doctor\`.`;
 }
 
 const CLI_STEPS = [
@@ -121,7 +121,7 @@ function AgentTab() {
 			</p>
 
 			<div className="relative rounded-lg border bg-muted/30 p-4">
-				<pre className="whitespace-pre-wrap pr-10 font-mono text-sm">{prompt}</pre>
+				<pre className="whitespace-pre-wrap pr-28 font-mono text-sm">{prompt}</pre>
 				<Button
 					variant="outline"
 					size="sm"

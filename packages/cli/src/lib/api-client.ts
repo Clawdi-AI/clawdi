@@ -1,5 +1,5 @@
+import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
-import type { components, paths } from "./api-types.generated";
 import { getAuth, getConfig } from "./config";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
@@ -108,30 +108,6 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 	);
 }
 
-// Duplicated verbatim from `@clawdi/shared/api/error-detail`. The CLI
-// publishes to npm as a standalone `clawdi` package and deliberately
-// doesn't depend on the shared workspace package. If this diverges from
-// the shared copy, update both.
-function extractApiDetail(err: unknown): string {
-	if (typeof err === "object" && err !== null && "detail" in err) {
-		const d = (err as { detail: unknown }).detail;
-		if (typeof d === "string") return d;
-		if (Array.isArray(d)) {
-			return d
-				.map((e) => {
-					const loc = Array.isArray((e as { loc?: unknown[] })?.loc)
-						? ((e as { loc: unknown[] }).loc as unknown[]).join(".")
-						: "";
-					const msg = (e as { msg?: string })?.msg ?? "";
-					return loc ? `${loc}: ${msg}` : msg;
-				})
-				.filter(Boolean)
-				.join("; ");
-		}
-	}
-	return typeof err === "string" ? err : JSON.stringify(err);
-}
-
 /**
  * openapi-fetch client configured for the CLI: `Authorization: Bearer`
  * auth, network + 5xx retry, and per-request timeout. Typecheck sees the
@@ -145,10 +121,17 @@ export class ApiClient {
 	readonly apiKey: string;
 	private readonly client: Client<paths>;
 
-	constructor() {
+	/**
+	 * @param opts.requireAuth — Default true. Set false for the device-flow
+	 *   login bootstrap, which has to call `/api/cli/auth/device` and
+	 *   `/api/cli/auth/poll` before any credentials exist. Unauthenticated
+	 *   instances skip the Authorization header entirely.
+	 */
+	constructor(opts: { requireAuth?: boolean } = {}) {
+		const requireAuth = opts.requireAuth ?? true;
 		const config = getConfig();
 		const auth = getAuth();
-		if (!auth) {
+		if (requireAuth && !auth) {
 			throw new ApiError({
 				status: 401,
 				body: "",
@@ -156,14 +139,16 @@ export class ApiClient {
 			});
 		}
 		this.baseUrl = config.apiUrl;
-		this.apiKey = auth.apiKey;
+		this.apiKey = auth?.apiKey ?? "";
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
 			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS),
 		});
 		this.client.use({
 			onRequest: ({ request }) => {
-				request.headers.set("Authorization", `Bearer ${this.apiKey}`);
+				if (this.apiKey) {
+					request.headers.set("Authorization", `Bearer ${this.apiKey}`);
+				}
 				return request;
 			},
 		});

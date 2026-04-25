@@ -84,7 +84,7 @@ export function DataTable<TData, TValue>({
 			{typeof toolbar === "function" ? toolbar(table) : toolbar}
 
 			<div className="overflow-hidden rounded-lg border bg-card">
-				<Table>
+				<Table className="table-fixed">
 					<TableHeader className="bg-muted/40">
 						{table.getHeaderGroups().map((headerGroup) => (
 							<TableRow key={headerGroup.id} className="hover:bg-transparent">

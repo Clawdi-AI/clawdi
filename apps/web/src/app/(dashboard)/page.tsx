@@ -10,7 +10,7 @@ import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { PageHeader } from "@/components/page-header";
-import { sessionColumns } from "@/components/sessions/session-columns";
+import { sessionColumnsCompact } from "@/components/sessions/session-columns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -65,8 +65,13 @@ export default function DashboardPage() {
 			<PageHeader title="Overview" description="Your agent cloud at a glance." />
 
 			<div className="grid gap-4 lg:grid-cols-3">
-				{/* Left column — live status + activity */}
-				<div className="space-y-4 lg:col-span-2">
+				{/* Left column — live status + activity. `min-w-0` is load-bearing:
+				    grid items default to `min-width: auto` (= min-content), so a
+				    fixed-width child (table-fixed table, code block, etc.) makes
+				    the grid track grow past its declared 1fr/2fr share. Below the
+				    `lg` breakpoint that means single-column overflow → cards
+				    spill past the viewport. */}
+				<div className="min-w-0 space-y-4 lg:col-span-2">
 					{isEmptyState ? (
 						<OnboardingCard />
 					) : (
@@ -104,7 +109,7 @@ export default function DashboardPage() {
 							</Button>
 						</div>
 						<DataTable
-							columns={sessionColumns}
+							columns={sessionColumnsCompact}
 							data={sessions ?? []}
 							isLoading={sessionsLoading}
 							onRowClick={(s) => router.push(`/sessions/${s.id}`)}
@@ -122,7 +127,7 @@ export default function DashboardPage() {
 				{/* Right column — once agents exist, "Connect another" lives here
 				    as a secondary action. Empty state hides it entirely because
 				    the hero card above is already the onboarding. */}
-				<div className="space-y-4">
+				<div className="min-w-0 space-y-4">
 					{hasAgents ? <OnboardingCard /> : null}
 					<ResourcesCard stats={stats} />
 					<ThisWeekCard stats={stats} contribution={contribution} />

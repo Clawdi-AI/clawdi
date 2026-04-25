@@ -126,3 +126,18 @@ async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
     if not auth.is_cli:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
     return auth
+
+
+async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
+    """Require dashboard authentication (Clerk JWT only, not API key).
+
+    Used by endpoints whose intent is human-in-the-browser — e.g. the device
+    authorization approval flow. Refusing API keys here means a leaked key
+    can't be turned into a *new* API key by an attacker calling the approve
+    endpoint themselves.
+    """
+    if auth.is_cli:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
+        )
+    return auth

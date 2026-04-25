@@ -1,6 +1,7 @@
-// Ergonomic aliases over the auto-generated OpenAPI types. Regenerate the
-// source file with `bun run generate-api` after backend schema changes.
-import type { components } from "./api-types.generated";
+// Ergonomic aliases over the auto-generated OpenAPI types. Source of truth
+// is `@clawdi/shared/api/generated.ts`; regenerate with `bun run generate-api`
+// from the repo root after backend schema changes.
+import type { components } from "@clawdi/shared/api";
 
 type Schemas = components["schemas"];
 

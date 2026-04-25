@@ -13,6 +13,7 @@ from app.core.database import get_session
 from app.core.sentry import init_sentry
 from app.middleware.request_id import RequestIDMiddleware
 from app.routes.auth import router as auth_router
+from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
@@ -104,6 +105,7 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 
 app.include_router(auth_router)
+app.include_router(cli_auth_router)
 app.include_router(sessions_router)
 app.include_router(dashboard_router)
 app.include_router(skills_router)

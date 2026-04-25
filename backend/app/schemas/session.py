@@ -1,4 +1,5 @@
 import re
+import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -22,7 +23,9 @@ SafeLocalSessionId = Annotated[
 
 
 class SessionCreate(BaseModel):
-    environment_id: str
+    # Typed as UUID so Pydantic returns a 422 on garbage input — without this
+    # the route's `uuid.UUID(...)` raises and FastAPI surfaces a 500.
+    environment_id: uuid.UUID
     local_session_id: SafeLocalSessionId
     project_path: str | None = None
     started_at: datetime

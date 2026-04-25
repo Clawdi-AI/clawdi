@@ -1,6 +1,5 @@
 import json
 import logging
-import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -135,10 +134,43 @@ async def batch_create_sessions(
     if not body.sessions:
         return SessionBatchResponse(synced=0)
 
+    # Reject any environment_id the caller doesn't own. Without this check the
+    # CLI's local cache (a stale env id from a previous account / a deleted
+    # env) lands in the DB and turns up as "Unknown" agent in the dashboard
+    # because the outerjoin in list_sessions returns nulls. Refuse the whole
+    # batch — partial accept would silently drop the user's sessions and
+    # they'd never know.
+    requested_env_ids = {s.environment_id for s in body.sessions}
+    valid_env_ids = set(
+        (
+            await db.execute(
+                select(AgentEnvironment.id).where(
+                    AgentEnvironment.id.in_(requested_env_ids),
+                    AgentEnvironment.user_id == auth.user_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    missing = requested_env_ids - valid_env_ids
+    if missing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "unknown_environment",
+                "message": (
+                    "Environment id is no longer registered for this account. "
+                    "Run `clawdi setup` to re-register this machine, then retry."
+                ),
+                "environment_ids": [str(e) for e in missing],
+            },
+        )
+
     rows = [
         {
             "user_id": auth.user_id,
-            "environment_id": uuid.UUID(s.environment_id),
+            "environment_id": s.environment_id,
             "local_session_id": s.local_session_id,
             "project_path": s.project_path,
             "started_at": s.started_at,

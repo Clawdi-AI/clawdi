@@ -26,6 +26,7 @@ Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
+  CLAWDI_NO_AUTO_UPDATE    Skip background auto-update (also disables via \`config set autoUpdate false\`)
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes; push requires Bun)
@@ -43,11 +44,12 @@ const authCmd = program.command("auth").description("Authenticate with Clawdi Cl
 
 authCmd
 	.command("login")
-	.description("Paste an API key and verify it")
-	.addHelpText("after", "\nExample:\n  $ clawdi auth login")
-	.action(async () => {
+	.description("Authorize this machine via the dashboard (browser-based)")
+	.option("--manual", "Skip the browser flow and paste an API key instead")
+	.addHelpText("after", "\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --manual")
+	.action(async (opts: { manual?: boolean }) => {
 		const { authLogin } = await import("./commands/auth.js");
-		await authLogin();
+		await authLogin(opts);
 	});
 
 authCmd
@@ -387,4 +389,15 @@ program
 		await run(args);
 	});
 
-program.parseAsync().catch(handleError);
+// Auto-update tick: prints any "✓ Updated to v…" notice from a previous
+// run's background install, and (when due) kicks off another detached
+// install. Best-effort and fully off-the-hot-path — see commands/update.ts.
+(async () => {
+	try {
+		const { maybeAutoUpdate } = await import("./commands/update.js");
+		await maybeAutoUpdate();
+	} catch {
+		// auto-update is opportunistic; never let it kill the CLI invocation
+	}
+	await program.parseAsync().catch(handleError);
+})();

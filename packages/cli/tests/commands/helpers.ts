@@ -87,3 +87,24 @@ export const jsonResponse = (data: unknown, status = 200) =>
 		status,
 		headers: { "content-type": "application/json" },
 	});
+
+/**
+ * `clawdi push` now probes /api/environments/{id} before doing any work, to
+ * fail fast on a stale local env_id. Tests that exercise the happy path need
+ * the probe to return 200 — drop this handler near the top of the handler
+ * list and all push tests "just work".
+ */
+export const okEnvironmentProbe = (envId = "env-test") => ({
+	method: "GET",
+	path: `/api/environments/${envId}`,
+	response: () =>
+		jsonResponse({
+			id: envId,
+			machine_name: "Test Mac",
+			agent_type: "claude_code",
+			agent_version: "0.1.0",
+			os: "darwin",
+			last_seen_at: new Date().toISOString(),
+			created_at: new Date().toISOString(),
+		}),
+});

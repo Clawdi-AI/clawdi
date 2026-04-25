@@ -38,6 +38,35 @@ describe("ApiClient construction", () => {
 		const { ApiClient } = await import("../src/lib/api-client");
 		expect(() => new ApiClient()).toThrow(ApiError);
 	});
+
+	it("`requireAuth: false` constructs without credentials (device-flow bootstrap)", async () => {
+		// The CLI auth login flow needs a transport BEFORE a key exists. Any
+		// other caller passing this flag is a bug — gate it behind an explicit
+		// review. This test pins the contract so a refactor that makes
+		// `requireAuth: false` the default will fail loudly.
+		const { ApiClient } = await import("../src/lib/api-client");
+		const api = new ApiClient({ requireAuth: false });
+		expect(api).toBeDefined();
+		// And — crucially — Authorization header must NOT be sent when no
+		// credentials are present. Otherwise an unauth-construction call
+		// could send `Bearer ` (empty value) and the server might log it.
+		const origFetch = globalThis.fetch;
+		let sentAuth: string | null = null;
+		globalThis.fetch = async (input: RequestInfo | URL) => {
+			const req = input instanceof Request ? input : new Request(input);
+			sentAuth = req.headers.get("authorization");
+			return new Response("{}", {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		};
+		try {
+			await api.GET("/api/auth/me");
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+		expect(sentAuth).toBeNull();
+	});
 });
 
 describe("ApiClient error classification", () => {

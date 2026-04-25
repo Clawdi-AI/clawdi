@@ -25,8 +25,7 @@ npm install -g clawdi
 clawdi auth login
 ```
 
-This will prompt for an API key. Tell the user to get it from the Clawdi Cloud dashboard:
-**Settings → API Keys → Create New Key**
+This opens the user's browser to a one-click authorization page on the Clawdi Cloud dashboard. Tell them to confirm the request — the CLI will pick up the credentials automatically. If their environment can't open a browser (SSH, container), tell them to run `clawdi auth login --manual` and paste an API key from **Settings → API Keys**.
 
 ## Step 3: Set up agent
 
@@ -39,7 +38,15 @@ This will:
 - Register the MCP server (gives you `memory_search`, `memory_add`, and connector tools)
 - Install the Clawdi skill
 
-## Step 4: Sync sessions (optional)
+## Step 4: Verify
+
+```bash
+clawdi doctor
+```
+
+Confirms auth, API reachability, agent installation, and MCP wiring. Resolve any failing check before continuing.
+
+## Step 5: Sync sessions (optional)
 
 ```bash
 clawdi push --modules sessions

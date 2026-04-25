@@ -6,7 +6,15 @@ from alembic import context
 
 from app.core.config import settings
 from app.models.base import Base
-from app.models import user, session, skill, vault, api_key, memory  # noqa: F401 - register models
+from app.models import (  # noqa: F401 - register models
+    api_key,
+    device_authorization,
+    memory,
+    session,
+    skill,
+    user,
+    vault,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))

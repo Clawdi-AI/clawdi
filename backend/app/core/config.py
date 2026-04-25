@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # e.g. https://api.clawdi.example.
     public_api_url: str = "http://localhost:8000"
 
+    # Externally reachable URL for the WEB DASHBOARD. The CLI device-flow
+    # `verification_uri` resolves through this — backend hands the CLI a URL
+    # the user opens in a browser. Dev default is the Next.js dev server; in
+    # prod set to e.g. https://cloud.clawdi.example.
+    web_origin: str = "http://localhost:3000"
+
     database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi"
 
     # Observability (both optional; no-op if not set)

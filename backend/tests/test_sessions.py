@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 import httpx
@@ -146,3 +147,48 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
     for hit in body["results"]:
         assert hit["title"]
         assert hit["href"].startswith("/")
+
+
+@pytest.mark.asyncio
+async def test_session_batch_rejects_unowned_environment_id(client: httpx.AsyncClient):
+    """A stale environment_id (deleted env, prod reset, leaked across accounts)
+    must not slip through batch insert. The 400 carries a structured `code`
+    so the CLI can react automatically."""
+    payload = {
+        "sessions": [
+            {
+                "environment_id": str(uuid.uuid4()),  # never registered
+                "local_session_id": "stale-1",
+                "started_at": datetime.now(UTC).isoformat(),
+                "message_count": 1,
+                "model": "claude-opus-4",
+            }
+        ]
+    }
+    r = await client.post("/api/sessions/batch", json=payload)
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "unknown_environment"
+    assert "clawdi setup" in detail["message"]
+    # Listing must show 0 sessions — the whole batch is rejected, not partially
+    # accepted. Half-accept would silently drop the user's data.
+    listing = (await client.get("/api/sessions")).json()
+    assert listing["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: httpx.AsyncClient):
+    """Malformed environment_id used to crash the route with a 500. Pydantic's
+    UUID validation now catches it as a 422 before ever entering the handler."""
+    payload = {
+        "sessions": [
+            {
+                "environment_id": "not-a-real-uuid",
+                "local_session_id": "x",
+                "started_at": datetime.now(UTC).isoformat(),
+                "message_count": 1,
+            }
+        ]
+    }
+    r = await client.post("/api/sessions/batch", json=payload)
+    assert r.status_code == 422

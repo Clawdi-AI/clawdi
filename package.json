@@ -28,6 +28,7 @@
 		"test": "turbo test",
 		"check": "biome ci .",
 		"check:fix": "biome check --write .",
+		"generate-api": "openapi-typescript http://localhost:8000/openapi.json -o packages/shared/src/api/generated.ts",
 		"lint": "biome lint .",
 		"lint:fix": "biome lint --write .",
 		"format": "biome format --write .",

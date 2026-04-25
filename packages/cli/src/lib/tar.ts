@@ -25,6 +25,12 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 
 /**
  * Create a tar.gz buffer from a skill directory.
+ *
+ * `follow: true` dereferences symlinks at archive time. gstack-style skills
+ * use symlinks heavily (e.g. `autoplan/SKILL.md` → a shared template) and the
+ * backend rejects archives containing symlink entries for security. Following
+ * inlines the real file content, which is what the user actually wants
+ * uploaded anyway.
  */
 export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 	const parentDir = resolve(dirPath, "..");
@@ -32,7 +38,7 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 
 	const chunks: Buffer[] = [];
 	await tar
-		.create({ gzip: true, cwd: parentDir }, [dirName])
+		.create({ gzip: true, cwd: parentDir, follow: true }, [dirName])
 		.on("data", (chunk: Buffer) => chunks.push(chunk))
 		.promise();
 	return Buffer.concat(chunks);

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import { getClawdiDir } from "../lib/config";
+import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { getCliVersion } from "../lib/version";
 
 const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
@@ -150,4 +151,168 @@ export async function maybeNotifyOutdated(): Promise<void> {
 		.catch(() => {
 			// best-effort
 		});
+}
+
+const LAST_VERSION_FILE = "last-version";
+
+function lastVersionPath(): string {
+	return join(getClawdiDir(), LAST_VERSION_FILE);
+}
+
+function isMajorBump(current: string, latest: string): boolean {
+	return parseVersion(latest).triple[0] > parseVersion(current).triple[0];
+}
+
+function detectInstaller(): "bun" | "npm" | null {
+	for (const name of ["bun", "npm"] as const) {
+		try {
+			const r = spawnSync(name, ["--version"], { stdio: "ignore" });
+			if (r.status === 0) return name;
+		} catch {
+			// fall through
+		}
+	}
+	return null;
+}
+
+// `npx clawdi …` and `bunx clawdi …` install the package into a per-call
+// temp dir. Running `npm i -g clawdi` from that temp invocation would put a
+// global binary on the user's PATH that they didn't ask for. Detect those
+// paths and skip auto-update — the next npx call will fetch latest anyway.
+//
+// Normalise backslashes first so Windows `C:\Users\…\_npx\…` matches the
+// same regex; otherwise the guard quietly fails open and a Windows npx
+// invocation tries to globally install itself. The patterns are anchored
+// to a leading slash to avoid false positives on legit paths that happen
+// to contain `npx` somewhere.
+function isTransientInvocation(): boolean {
+	const argv1 = (process.argv[1] ?? "").replace(/\\/g, "/");
+	return /\/_npx\/|\/\.bunx-|\/bun\/install\/cache\//.test(argv1);
+}
+
+/**
+ * Default-on auto-updater. On startup:
+ *   1. If the binary version differs from `last-version` on disk, print a
+ *      one-line "updated to v…" notice (the previous run's spawn finished).
+ *   2. If a newer release exists in the cache, kick off a detached
+ *      `npm/bun add -g clawdi@latest` so the next invocation gets it. Only
+ *      patch + minor — major bumps print a hint and require explicit opt-in.
+ *
+ * Opt-out: `CLAWDI_NO_AUTO_UPDATE=1` env, `clawdi config set autoUpdate
+ * false`, non-TTY (CI), or running via npx/bunx.
+ */
+export async function maybeAutoUpdate(): Promise<void> {
+	const current = getCliVersion();
+
+	// Notify on the FIRST run after a successful background install — the
+	// new binary's `getCliVersion()` no longer matches what we wrote last
+	// time. After-the-fact is the only honest signal we have, since the
+	// detached spawn can't write a marker that the parent reliably sees.
+	const lastFile = lastVersionPath();
+	try {
+		if (existsSync(lastFile)) {
+			const last = readFileSync(lastFile, "utf-8").trim();
+			if (last && last !== current && isNewer(current, last)) {
+				console.log(
+					`${chalk.green("✓")} ${chalk.gray(`Updated clawdi to v${current} (was v${last})`)}`,
+				);
+			}
+		}
+		writeFileSync(lastFile, current, { mode: 0o644 });
+	} catch {
+		// best-effort
+	}
+
+	if (process.env.CLAWDI_NO_AUTO_UPDATE) return;
+	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
+	if (!process.stdout.isTTY) return;
+	if (isTransientInvocation()) return;
+
+	// `clawdi config set autoUpdate false` writes the literal string "false";
+	// fall back to a boolean compare for direct mutators of config.json.
+	const stored = getStoredConfig() as { autoUpdate?: unknown };
+	if (stored.autoUpdate === false || stored.autoUpdate === "false") return;
+
+	const cached = readCache();
+	const now = Date.now();
+	let latest: string | null = cached?.latest ?? null;
+
+	if (!cached) {
+		// First run on this machine — no cache to fall back on. Block briefly
+		// for a registry lookup (3 s timeout); without this the first
+		// auto-update opportunity is silently dropped, costing the user one
+		// stale invocation before the system kicks in.
+		latest = await fetchLatest();
+		if (latest) writeCache(latest);
+	} else if (now - new Date(cached.checkedAt).getTime() > CACHE_TTL_MS) {
+		// Have stale data — use it now, refresh in the background for the
+		// next invocation. Keeps the hot path snappy after the first run.
+		fetchLatest()
+			.then((l) => {
+				if (l) writeCache(l);
+			})
+			.catch(() => {});
+	}
+
+	if (!latest) return;
+	if (!isNewer(latest, current)) return;
+
+	if (isMajorBump(current, latest)) {
+		console.log();
+		console.log(
+			chalk.cyan(`Major release v${latest} available — run \`clawdi update\` to install.`),
+		);
+		return;
+	}
+
+	const installer = detectInstaller();
+	if (!installer) return;
+
+	// Single-flight: a `mkdir` is atomic on every POSIX fs and on Windows,
+	// so if two clawdi processes race here only one creates the lock dir
+	// and only one spawns the install. The other returns silently. Stale
+	// locks are cleared on `clawdi update --apply`-style manual runs;
+	// they're harmless at worst (one extra invocation skips the spawn).
+	const lockDir = join(getClawdiDir(), ".auto-update.lock");
+	try {
+		mkdirSync(lockDir);
+	} catch {
+		return;
+	}
+
+	// Use `clawdi@latest` (not the pinned version we read from cache). If a
+	// newer patch landed between cache write and now, the install picks it
+	// up; combined with the `last-version` check next run, that keeps the
+	// system idempotent — no infinite re-install loop when the registry
+	// races ahead of our cache.
+	const args = installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+
+	// Redirect installer output to a logfile so silent failures (network
+	// flake, perms error, npm 4xx) leave a trail. `stdio: "ignore"` would
+	// throw the diagnosis away.
+	const logPath = join(getClawdiDir(), "auto-update.log");
+	let logFd: number;
+	try {
+		logFd = openSync(logPath, "w");
+	} catch {
+		// Fall back to ignore — best-effort. The install can still succeed.
+		logFd = -1;
+	}
+
+	console.log(chalk.gray(`Updating clawdi v${current} → v${latest} in background…`));
+	const child = spawn(installer, args, {
+		stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+		detached: true,
+		// Pass env explicitly so a future change to spawn defaults can't
+		// strip NPM_CONFIG_PREFIX / BUN_INSTALL and silently install into
+		// the wrong global location.
+		env: process.env,
+	});
+	child.on("error", () => {
+		rmSync(lockDir, { recursive: true, force: true });
+	});
+	child.on("exit", () => {
+		rmSync(lockDir, { recursive: true, force: true });
+	});
+	child.unref();
 }
