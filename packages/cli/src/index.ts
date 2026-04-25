@@ -358,7 +358,8 @@ program
 
 program
 	.command("update")
-	.description("Check for a newer CLI version on npm")
+	.description("Install the latest CLI from npm (--check to only diagnose)")
+	.option("--check", "Only check for updates, don't install")
 	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { update } = await import("./commands/update.js");
