@@ -5,11 +5,9 @@ import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
-let origExitCode: number | string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
-	origExitCode = process.exitCode;
 	tmpHome = copyFixtureToTmp("hermes");
 	process.env.HOME = tmpHome;
 });
@@ -17,7 +15,7 @@ beforeEach(() => {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
-	process.exitCode = origExitCode;
+	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
 

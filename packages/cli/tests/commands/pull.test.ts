@@ -17,11 +17,9 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
-let origExitCode: number | string | undefined;
 
 function setup(agent: AgentKey) {
 	origHome = process.env.HOME;
-	origExitCode = process.exitCode;
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -30,7 +28,7 @@ function setup(agent: AgentKey) {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
-	process.exitCode = origExitCode;
+	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
 
