@@ -45,9 +45,8 @@ function countFiles(dir: string): number {
 export async function skillList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const { items: skills } = unwrap(
-		await api.GET("/api/skills", { params: { query: { page_size: 200 } } }),
-	);
+	const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+	const skills = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(skills, null, 2));
@@ -66,7 +65,11 @@ export async function skillList(opts: { json?: boolean } = {}) {
 		const files = s.file_count ? chalk.gray(` ${s.file_count} files`) : "";
 		console.log(`  ${chalk.white(key)}  v${s.version ?? "?"}  ${chalk.gray(src)}${repo}${files}`);
 	}
-	console.log(chalk.gray(`\n  ${skills.length} skill${skills.length === 1 ? "" : "s"} total`));
+	const summary =
+		page.total > skills.length
+			? `${skills.length} of ${page.total} skills (first ${skills.length})`
+			: `${skills.length} skill${skills.length === 1 ? "" : "s"} total`;
+	console.log(chalk.gray(`\n  ${summary}`));
 }
 
 export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {

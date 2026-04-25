@@ -37,13 +37,6 @@ createdb -O clawdi clawdi
 
 If you already have Postgres running under a different user / port, skip the role creation and just edit `DATABASE_URL` in `backend/.env` to match (e.g. `postgresql+asyncpg://<you>@localhost:5432/clawdi`).
 
-> **Upgrading from a pre-rename branch?** The database was renamed from
-> `clawdi_cloud` → `clawdi`. Migrate your local data in one line:
-> ```bash
-> createdb -O clawdi clawdi && pg_dump clawdi_cloud | psql clawdi
-> ```
-> Then drop the old DB (`dropdb clawdi_cloud`) once you've verified.
-
 ---
 
 ## Repository layout
