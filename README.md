@@ -1,10 +1,31 @@
-# Clawdi
+<h1 align="center">Clawdi</h1>
 
-![Clawdi dashboard](docs/images/dashboard-preview.png)
+<p align="center">
+  <strong>The best home for all your AI agents — environments, sessions, memory, skills, cron jobs, and app connections.</strong>
+</p>
 
-> iCloud for AI agents. Share memory, skills, sessions, and secrets across Claude Code, Codex, OpenClaw, Hermes, and whatever agent you wire up next.
+<p align="center">
+  <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="800">
+</p>
 
-Clawdi gives local coding agents a shared context layer. Install one CLI, connect your agents once, and they can remember durable facts, reuse skills, sync session history, and run commands with vault secrets without copying state between tools.
+<p align="center">
+  <a href="https://www.npmjs.com/package/clawdi"><img src="https://img.shields.io/npm/v/clawdi?style=for-the-badge&logo=npm&color=cb3837" alt="npm version"></a>
+  <a href="https://github.com/Clawdi-AI/clawdi/actions/workflows/cli-publish.yml"><img src="https://img.shields.io/github/actions/workflow/status/Clawdi-AI/clawdi/cli-publish.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI" alt="CI status"></a>
+  <a href="https://github.com/Clawdi-AI/clawdi/stargazers"><img src="https://img.shields.io/github/stars/Clawdi-AI/clawdi?style=for-the-badge&logo=github" alt="GitHub stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+</p>
+
+<p align="center">
+  <a href="https://clawdi.ai">Website</a> ·
+  <a href="https://github.com/Clawdi-AI/clawdi">GitHub</a> ·
+  <a href="https://www.npmjs.com/package/clawdi">npm</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#cli-reference">CLI Reference</a> ·
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
+
+> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.
 
 The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, Next.js dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
@@ -26,6 +47,10 @@ That gets you:
 - The bundled `clawdi` skill installed into each detected agent
 - A health check that verifies auth, agent paths, vault access, and MCP config
 
+By default the CLI talks to hosted Clawdi Cloud. Want to run your own backend? See [Own the Stack](#own-the-stack).
+
+Requires Node ≥ 22.5 (the CLI uses the built-in `node:sqlite` module).
+
 You can also try without installing:
 
 ```bash
@@ -38,53 +63,59 @@ Headless environment? Use the manual flow:
 clawdi auth login --manual
 ```
 
-## Why Clawdi Exists
+## Why Clawdi
 
-AI agents are still treated like isolated apps. Claude Code has one set of sessions and instructions. Codex has another. Secrets sit in shell profiles and `.env` files. Useful memories get trapped in whichever agent happened to learn them.
+AI agents are still treated like isolated apps. Claude Code has one set of sessions and instructions. Codex has another. Secrets sit in shell profiles and `.env` files. Useful memories get trapped in whichever agent happened to learn them. App integrations get rebuilt from scratch every time you switch tools.
 
 Clawdi is the shared layer underneath:
 
-- **Cross-agent memory** - Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
-- **Portable skills** - Upload or install agent instructions once, then sync them into every registered agent.
-- **Session sync** - Push local session history to the dashboard for review and recall.
-- **Vault secrets** - Store secrets server-side and inject them only when running a command.
-- **MCP tools** - Agents get memory and connector tools through the Model Context Protocol.
-- **Open stack** - The CLI, backend, web dashboard, migrations, and local development path live in this repository under the MIT license.
+- **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
+- **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
+- **Session sync** — Push local session history to the dashboard for review and recall.
+- **Vault secrets** — Store secrets server-side and inject them only when running a command.
+- **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
+- **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 
-## How It Feels
-
-Teach one agent something:
+In practice — teach one agent something:
 
 ```text
 remember that this repo uses Bun for TypeScript and PDM for backend scripts
 ```
 
-Later, in a different agent or a fresh session:
+Later, in a different agent or a fresh session, ask "what package manager should I use here?" — it can call Clawdi memory search and answer from your actual context instead of guessing.
 
-```text
-what package manager should I use here?
-```
-
-The agent can call Clawdi memory search, recover the stored preference, and answer from your actual context instead of guessing.
-
-Run with secrets without putting them on disk:
+Run a command with vault secrets without putting them on disk:
 
 ```bash
 clawdi vault set OPENAI_API_KEY
 clawdi run -- python scripts/ingest.py
 ```
 
-Sync your local work:
-
-```bash
-clawdi push
-```
-
-Install a shared skill everywhere:
+Install a shared skill into every registered agent at once:
 
 ```bash
 clawdi skill install anthropics/skills/artifacts-builder
 ```
+
+## Roadmap
+
+Today Clawdi gives one person a shared layer across their agents. Two bigger bets come next.
+
+The first is autonomy. Agents should work without you at the keyboard.
+
+- Cron jobs for recurring agent runs.
+- Remote control for agents on any of your machines.
+- Automatic memory built from session history.
+
+The second is making Clawdi multi-player. Today every Clawdi belongs to one person. That's the wrong shape for teams.
+
+- Shared memory, skills, and connections, with access controls.
+- An agent-to-agent channel for handoff and ask-for-help.
+- Task tracking that every connected agent can use.
+
+We'll also keep adding adapters. Cursor, OpenCode, Amp, Pi, and others. The same memory, skills, and connections follow you everywhere.
+
+Want any of this sooner? [Open an issue](https://github.com/Clawdi-AI/clawdi/issues). What's loud is what we build first.
 
 ## Hosted or Self-Hosted
 
@@ -137,7 +168,7 @@ clawdi config set apiUrl http://localhost:8000
 
 Local self-hosting currently expects:
 
-- Node.js 22+ and Bun 1.3+
+- Node.js 22.5+ and Bun 1.3+
 - Python 3.12 with PDM
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
@@ -196,6 +227,8 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi mcp` | Start the MCP stdio server used by agents |
 
 Every command supports `--help`.
+
+App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai) and surface inside agents automatically over MCP — there is no CLI command to manage them.
 
 ## Development
 
