@@ -15,41 +15,45 @@ import { createContext, useContext, useEffect, useState } from "react";
  * the breadcrumb goes back to its URL-derived label — which is correct
  * on top-level pages (`/sessions` → "Sessions") and during loading
  * states.
+ *
+ * Implementation note: read and write live in *separate* contexts. If
+ * we put `{title, setTitle}` in one object, every render of the provider
+ * makes a new object identity — useEffect's deps change on every render,
+ * the cleanup fires, and the title flickers to null between renders.
+ * Splitting the contexts means the setter is stable (useState setters
+ * always are), so the effect only re-runs when the *title input* changes.
  */
 
-type Ctx = {
-	title: string | null;
-	setTitle: (t: string | null) => void;
-};
-
-const BreadcrumbTitleContext = createContext<Ctx | null>(null);
+const TitleContext = createContext<string | null>(null);
+type Setter = (t: string | null) => void;
+const SetTitleContext = createContext<Setter>(() => {});
 
 export function BreadcrumbTitleProvider({ children }: { children: React.ReactNode }) {
 	const [title, setTitle] = useState<string | null>(null);
 	return (
-		<BreadcrumbTitleContext.Provider value={{ title, setTitle }}>
-			{children}
-		</BreadcrumbTitleContext.Provider>
+		<TitleContext.Provider value={title}>
+			<SetTitleContext.Provider value={setTitle}>{children}</SetTitleContext.Provider>
+		</TitleContext.Provider>
 	);
 }
 
 /** Read-only accessor for the breadcrumb component itself. */
 export function useBreadcrumbTitle(): string | null {
-	return useContext(BreadcrumbTitleContext)?.title ?? null;
+	return useContext(TitleContext);
 }
 
 /**
  * Detail pages call this with their human-readable title. Pass `null`
  * (or wait until data is ready) to fall back to the URL segment.
  *
- * The cleanup on unmount means navigating away clears the override — the
- * next page sees the URL-derived label until it sets its own.
+ * Safe to call unconditionally — if `title` is null/undefined the effect
+ * still runs but with no-op semantics. **Call this BEFORE any conditional
+ * early-return**; React requires hook order to be stable across renders.
  */
 export function useSetBreadcrumbTitle(title: string | null | undefined) {
-	const ctx = useContext(BreadcrumbTitleContext);
+	const setTitle = useContext(SetTitleContext);
 	useEffect(() => {
-		if (!ctx) return;
-		ctx.setTitle(title?.trim() || null);
-		return () => ctx.setTitle(null);
-	}, [ctx, title]);
+		setTitle(title?.trim() || null);
+		return () => setTitle(null);
+	}, [setTitle, title]);
 }

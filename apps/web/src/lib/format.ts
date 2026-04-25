@@ -4,48 +4,88 @@
  * with the tiny `cn` / `errorMessage` helpers.
  */
 
+const ANTHROPIC_FAMILIES = new Set(["opus", "sonnet", "haiku"]);
+
+function titleCase(s: string): string {
+	return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/** Strip a trailing date suffix from a model id token list:
+ *   ["opus","4","20250514"]  → ["opus","4"]
+ *   ["opus","4","1","20251001"] → ["opus","4","1"]
+ *   ["4o","2024","08","06"]  → ["4o"]
+ * Matches both `YYYYMMDD` (single 6+digit token) and `YYYY-MM-DD` (three
+ * trailing date-shaped tokens). */
+function stripDateSuffix(tokens: string[]): string[] {
+	if (tokens.length === 0) return tokens;
+	if (/^\d{6,}$/.test(tokens[tokens.length - 1])) return tokens.slice(0, -1);
+	if (
+		tokens.length >= 3 &&
+		/^\d{4}$/.test(tokens[tokens.length - 3]) &&
+		/^\d{2}$/.test(tokens[tokens.length - 2]) &&
+		/^\d{2}$/.test(tokens[tokens.length - 1])
+	) {
+		return tokens.slice(0, -3);
+	}
+	return tokens;
+}
+
 /**
  * Humanize an Anthropic / OpenAI model id for the UI.
  *
- * Accepts the raw id we get from the API (`claude-opus-4-7`,
- * `gpt-5.4-codex-preview`, etc.) and returns something a human reads as
- * a name, not a slug. Heuristics — not authoritative — but consistent
- * across the dashboard, which was the actual user complaint ("opus-4-7
- * 这个是原始的id吗").
- *
- *   claude-opus-4-7        → Opus 4.7
- *   claude-sonnet-4-6      → Sonnet 4.6
- *   claude-haiku-4-5-20251 → Haiku 4.5
- *   gpt-5.4-codex          → GPT 5.4 Codex
- *   gpt-5.3-codex-preview  → GPT 5.3 Codex (preview)
+ *   claude-opus-4-7              → Opus 4.7
+ *   claude-opus-4-1-20250105     → Opus 4.1
+ *   claude-opus-4-20250514       → Opus 4
+ *   claude-3-5-sonnet-20241022   → Sonnet 3.5
+ *   claude-haiku-4-5             → Haiku 4.5
+ *   gpt-5.4-codex                → GPT 5.4 Codex
+ *   gpt-5.4-codex-preview        → GPT 5.4 Codex Preview
+ *   gpt-4o-2024-08-06            → GPT 4o
+ *   o3                           → O3
+ *   o4-mini                      → O4 Mini
  *
  * Unknown shapes pass through unchanged so a new vendor doesn't render
- * as gibberish — better to show the raw id than the wrong name.
+ * as gibberish — better to show the raw id than a wrong name.
+ *
+ * Strategy: tokenize on `-`, drop trailing date-shaped tokens, then route
+ * by prefix. The previous implementation used one regex per family and
+ * fell over on the cases above (older `claude-3-5-sonnet-…`, single-major
+ * `claude-opus-4-{date}`, GPT with date suffix, the entire o-series).
  */
 export function formatModelLabel(modelId: string | null | undefined): string {
 	if (!modelId) return "";
-	const id = modelId.trim().toLowerCase();
+	const lower = modelId.trim().toLowerCase();
+	if (!lower) return "";
 
-	// Anthropic family — strip the `claude-` prefix, replace dashes with
-	// dots in the version segment, capitalize the family name. Drop a
-	// trailing date suffix (`claude-haiku-4-5-20251001` → `Haiku 4.5`)
-	// since it's noise to non-API readers.
-	const claudeMatch = id.match(/^claude-(opus|sonnet|haiku)-(\d+)-(\d+)(?:-\d{6,})?(.*)$/);
-	if (claudeMatch) {
-		const [, family, major, minor, rest] = claudeMatch;
-		const name = family.charAt(0).toUpperCase() + family.slice(1);
-		const tail = rest ? rest.replace(/^-/, " ").trim() : "";
-		return `${name} ${major}.${minor}${tail ? ` (${tail})` : ""}`;
+	// --- Anthropic ---
+	if (lower.startsWith("claude-")) {
+		const tokens = stripDateSuffix(lower.slice("claude-".length).split("-"));
+		const familyIdx = tokens.findIndex((t) => ANTHROPIC_FAMILIES.has(t));
+		if (familyIdx === -1) return modelId;
+		const family = titleCase(tokens[familyIdx]);
+		const numbers = tokens.filter((t) => /^\d+$/.test(t));
+		if (numbers.length >= 2) return `${family} ${numbers[0]}.${numbers[1]}`;
+		if (numbers.length === 1) return `${family} ${numbers[0]}`;
+		return family;
 	}
 
-	// GPT family — `gpt-5.4-codex-preview` → `GPT 5.4 Codex (preview)`.
-	const gptMatch = id.match(/^gpt-(\d+(?:\.\d+)?)(?:-([a-z]+))?(?:-([a-z]+))?$/);
-	if (gptMatch) {
-		const [, ver, variant, suffix] = gptMatch;
-		const parts = ["GPT", ver];
-		if (variant) parts.push(variant.charAt(0).toUpperCase() + variant.slice(1));
-		const out = parts.join(" ");
-		return suffix ? `${out} (${suffix})` : out;
+	// --- OpenAI GPT --- accepts `gpt-N`, `gpt-N.M`, `gpt-No` (4o), `gpt-Noo`...
+	if (lower.startsWith("gpt-")) {
+		const tokens = stripDateSuffix(lower.slice("gpt-".length).split("-"));
+		if (tokens.length === 0) return modelId;
+		// Version is the first token; everything after is variant labels.
+		const [version, ...variants] = tokens;
+		const variantPart = variants.map(titleCase).join(" ");
+		return variantPart ? `GPT ${version} ${variantPart}` : `GPT ${version}`;
+	}
+
+	// --- OpenAI o-series --- `o3`, `o4-mini`, `o3-pro`...
+	if (/^o\d/.test(lower)) {
+		const tokens = stripDateSuffix(lower.split("-"));
+		const [base, ...variants] = tokens;
+		const baseFormatted = base.toUpperCase();
+		const variantPart = variants.map(titleCase).join(" ");
+		return variantPart ? `${baseFormatted} ${variantPart}` : baseFormatted;
 	}
 
 	// Unknown shape — pass through.

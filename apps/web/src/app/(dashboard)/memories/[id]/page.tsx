@@ -1,14 +1,14 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Brain, Trash2 } from "lucide-react";
+import { Brain, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { DetailActions, DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
@@ -51,8 +51,8 @@ export default function MemoryDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			{memory && !isLoading ? (
-				<div className="flex items-center justify-end gap-2">
+			<DetailActions>
+				{memory && !isLoading ? (
 					<Button
 						variant="outline"
 						size="sm"
@@ -63,35 +63,22 @@ export default function MemoryDetailPage() {
 						<Trash2 />
 						Delete
 					</Button>
-				</div>
-			) : null}
+				) : null}
+			</DetailActions>
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Memory not found</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<Card>
-					<CardContent className="space-y-4 py-6">
-						<Skeleton className="h-5 w-24" />
-						<Skeleton className="h-24 w-full" />
-						<Skeleton className="h-4 w-48" />
-					</CardContent>
-				</Card>
+				<div className="space-y-4 py-2">
+					<Skeleton className="h-5 w-24" />
+					<Skeleton className="h-24 w-full" />
+					<Skeleton className="h-4 w-48" />
+				</div>
 			) : memory ? (
 				<>
-					{/* Title treatment parallels Sessions/Skills detail: the content
-					    IS the memory, so it becomes the h1; a subtitle row carries
-					    the category / source / created meta. The redundant footer
-					    Card with full timestamp + ID was removed — created is in
-					    the subtitle, ID is in the URL/breadcrumb. */}
 					<div className="space-y-2">
-						<h1 className="whitespace-pre-wrap font-semibold text-lg leading-snug tracking-tight">
-							{memory.content}
-						</h1>
-						<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+						<DetailTitle className="whitespace-pre-wrap leading-snug">{memory.content}</DetailTitle>
+						<DetailMeta>
 							<Badge
 								variant="secondary"
 								className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
@@ -107,7 +94,7 @@ export default function MemoryDetailPage() {
 									</span>
 								</>
 							) : null}
-						</div>
+						</DetailMeta>
 					</div>
 
 					{memory.tags?.length ? (

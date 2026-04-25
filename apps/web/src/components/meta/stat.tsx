@@ -13,14 +13,22 @@ import { cn } from "@/lib/utils";
 export function Stat({
 	icon: Icon,
 	label,
+	title,
 	className,
 }: {
 	icon: LucideIcon;
 	label: string;
+	/** Tooltip shown on hover — useful when `label` is truncated (e.g. a
+	 * short hash) and the full value should be reachable without leaving
+	 * the page. */
+	title?: string;
 	className?: string;
 }) {
 	return (
-		<span className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground", className)}>
+		<span
+			title={title}
+			className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground", className)}
+		>
 			<Icon className="size-3.5 shrink-0" />
 			<span className="truncate">{label}</span>
 		</span>

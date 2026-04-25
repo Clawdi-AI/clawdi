@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -60,6 +61,15 @@ export default function SessionDetailPage() {
 		},
 	});
 
+	// Hooks must run on every render in the same order — this includes the
+	// breadcrumb title hook. Compute the title (nullable while loading) and
+	// register it BEFORE any early return; AppBreadcrumb's UUID fallback
+	// handles the loading state in the meantime.
+	const summaryText = session
+		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
+		: null;
+	useSetBreadcrumbTitle(summaryText);
+
 	if (isSessionLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
@@ -68,7 +78,7 @@ export default function SessionDetailPage() {
 		);
 	}
 
-	if (!session) {
+	if (!session || !summaryText) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<p className="text-muted-foreground">Session not found.</p>
@@ -77,25 +87,12 @@ export default function SessionDetailPage() {
 	}
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
-	const summaryText =
-		formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12);
-
-	// Drives the breadcrumb's last segment so it shows the human title
-	// instead of the raw UUID. AppBreadcrumb's UUID fallback handles the
-	// loading state in the meantime.
-	useSetBreadcrumbTitle(summaryText);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			{/* Header. Three lines:
-			    1. h1 = session summary (matches the breadcrumb title)
-			    2. Identity row — agent + project + relative time. Single-line so
-			       the page reads "where this happened" at a glance.
-			    3. Stats row — model + counts. Decoupled from identity so the
-			       sizes match (no 2-line AgentLabel mixed with 1-line Stats). */}
 			<div className="space-y-2">
-				<h1 className="font-semibold text-lg tracking-tight">{summaryText}</h1>
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+				<DetailTitle>{summaryText}</DetailTitle>
+				<DetailMeta>
 					{session.agent_type || session.machine_name ? (
 						<span className="inline-flex items-center gap-1.5">
 							<AgentIcon agent={session.agent_type} className="size-4 rounded-sm" />
@@ -103,9 +100,7 @@ export default function SessionDetailPage() {
 								{session.machine_name || agentTypeLabel(session.agent_type)}
 							</span>
 							{session.machine_name && session.agent_type ? (
-								<span className="text-muted-foreground">
-									· {agentTypeLabel(session.agent_type)}
-								</span>
+								<span>· {agentTypeLabel(session.agent_type)}</span>
 							) : null}
 						</span>
 					) : null}
@@ -117,18 +112,22 @@ export default function SessionDetailPage() {
 					) : null}
 					<span>·</span>
 					<span>{relativeTime(session.started_at)}</span>
-				</div>
+				</DetailMeta>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+			<DetailStats>
 				<ModelBadge modelId={session.model} />
 				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
 				<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
 				{session.duration_seconds ? (
 					<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
 				) : null}
-				<Stat icon={Hash} label={session.local_session_id.slice(0, 8)} />
-			</div>
+				<Stat
+					icon={Hash}
+					label={session.local_session_id.slice(0, 8)}
+					title={session.local_session_id}
+				/>
+			</DetailStats>
 
 			{/* Divider */}
 			<Separator />

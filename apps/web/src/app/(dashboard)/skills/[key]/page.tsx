@@ -1,15 +1,20 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ExternalLink, FileText, Tag, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Tag, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import {
+	DetailActions,
+	DetailMeta,
+	DetailNotFound,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
@@ -46,8 +51,8 @@ export default function SkillDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			{skill && !isLoading ? (
-				<div className="flex items-center justify-end gap-2">
+			<DetailActions>
+				{skill && !isLoading ? (
 					<Button
 						variant="outline"
 						size="sm"
@@ -58,31 +63,21 @@ export default function SkillDetailPage() {
 						<Trash2 />
 						Uninstall
 					</Button>
-				</div>
-			) : null}
+				) : null}
+			</DetailActions>
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Skill not found</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<Card>
-					<CardContent className="space-y-3 py-6">
-						<Skeleton className="h-6 w-48" />
-						<Skeleton className="h-4 w-64" />
-					</CardContent>
-				</Card>
+				<div className="space-y-3 py-2">
+					<Skeleton className="h-6 w-48" />
+					<Skeleton className="h-4 w-64" />
+				</div>
 			) : skill ? (
 				<>
-					{/* Flat header — matches sessions/[id] hierarchy.
-					    h1 = name, identity row = source/repo/installed,
-					    stats row = version + file count. No card wrapping a
-					    single entity's metadata; cards earn their existence. */}
 					<div className="space-y-2">
-						<h1 className="truncate font-semibold text-lg tracking-tight">{skill.name}</h1>
-						<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+						<DetailTitle className="truncate">{skill.name}</DetailTitle>
+						<DetailMeta>
 							<span>{skill.source}</span>
 							{skill.source_repo ? (
 								<>
@@ -104,16 +99,16 @@ export default function SkillDetailPage() {
 									<span>installed {relativeTime(skill.created_at)}</span>
 								</>
 							) : null}
-						</div>
+						</DetailMeta>
 					</div>
 
-					<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+					<DetailStats>
 						<Stat icon={Tag} label={`v${skill.version}`} />
 						<Stat
 							icon={FileText}
 							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
 						/>
-					</div>
+					</DetailStats>
 
 					{skill.description ? (
 						<p className="text-sm text-muted-foreground">{skill.description}</p>
