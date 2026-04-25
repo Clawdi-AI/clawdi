@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Link2Off, Lock, Plug, PlugZap, Search, Shield } from "lucide-react";
+import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
@@ -358,16 +358,7 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 					<span className="font-normal text-muted-foreground/60">({tools.length})</span>
 				</h2>
 				{tools.length > 8 && (
-					<div className="relative w-56">
-						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							type="text"
-							placeholder="Search..."
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-							className="pl-9"
-						/>
-					</div>
+					<SearchInput value={search} onChange={setSearch} placeholder="Search…" className="w-56" />
 				)}
 			</div>
 			<div className="max-h-[32rem] overflow-y-auto rounded-lg border">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug, Search, X } from "lucide-react";
+import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -11,12 +11,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
-const PAGE_SIZE = 30;
+// Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
+// always full at every viewport — no orphan cards on the bottom.
+const PAGE_SIZE = 24;
 
 const CONNECTOR_CARD_CLASS = "gap-0 rounded-lg border-border/60 py-0 shadow-none";
 const CONNECTOR_CARD_CONTENT_CLASS = "flex items-start gap-3 p-3";
@@ -73,10 +75,15 @@ export default function ConnectorsPage() {
 					a.description.toLowerCase().includes(q),
 			);
 		}
+		// Stable sort: connected → everyone else, preserving Composio's
+		// own default order (`/v1/apps` returns gmail / github / slack /
+		// notion / … which is curated by popularity upstream). JavaScript's
+		// Array.prototype.sort is stable since ES2019, so equal keys keep
+		// their input order.
 		items.sort((a, b) => {
-			const ac = connectedNames.has(a.name) ? 1 : 0;
-			const bc = connectedNames.has(b.name) ? 1 : 0;
-			return bc - ac;
+			const ac = connectedNames.has(a.name) ? 0 : 1;
+			const bc = connectedNames.has(b.name) ? 0 : 1;
+			return ac - bc;
 		});
 		return items;
 	}, [availableApps, deferredQuery, connectedNames]);
@@ -106,27 +113,7 @@ export default function ConnectorsPage() {
 				}
 			/>
 
-			<div className="relative">
-				<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-				<Input
-					type="text"
-					value={query}
-					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Search connectors..."
-					className="pl-9 pr-9"
-				/>
-				{query ? (
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						onClick={() => setQuery("")}
-						className="absolute right-1 top-1/2 -translate-y-1/2"
-						aria-label="Clear search"
-					>
-						<X className="size-4" />
-					</Button>
-				) : null}
-			</div>
+			<SearchInput value={query} onChange={setQuery} placeholder="Search connectors…" />
 
 			{error ? (
 				<Alert variant="destructive">
