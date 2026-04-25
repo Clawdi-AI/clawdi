@@ -29,7 +29,7 @@ Environment:
   CLAWDI_NO_AUTO_UPDATE    Skip background auto-update (also disables via \`config set autoUpdate false\`)
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
-  HERMES_HOME              Custom Hermes home (else ~/.hermes; push requires Bun)
+  HERMES_HOME              Custom Hermes home (else ~/.hermes)
   OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI

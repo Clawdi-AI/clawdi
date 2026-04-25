@@ -21,7 +21,6 @@ clawdi doctor            # verify everything's wired up
 
 - **Node ≥ 18**
 - At least one supported agent installed on the machine (detected automatically)
-- Bun is only required if you ingest Hermes sessions (`clawdi push --agent hermes`) — `bun:sqlite` is loaded on demand.
 
 ## Commands
 
