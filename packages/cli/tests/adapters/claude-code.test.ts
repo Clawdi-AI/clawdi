@@ -8,10 +8,12 @@ import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 let tmpHome: string;
 let origHome: string | undefined;
 let origConfigDir: string | undefined;
+let origPath: string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origConfigDir = process.env.CLAUDE_CONFIG_DIR;
+	origPath = process.env.PATH;
 	delete process.env.CLAUDE_CONFIG_DIR;
 	tmpHome = copyFixtureToTmp("claude-code");
 	process.env.HOME = tmpHome;
@@ -22,6 +24,7 @@ afterEach(() => {
 	else delete process.env.HOME;
 	if (origConfigDir) process.env.CLAUDE_CONFIG_DIR = origConfigDir;
 	else delete process.env.CLAUDE_CONFIG_DIR;
+	if (origPath !== undefined) process.env.PATH = origPath;
 	cleanupTmp(tmpHome);
 });
 
@@ -31,10 +34,30 @@ describe("ClaudeCodeAdapter.detect", () => {
 		expect(await a.detect()).toBe(true);
 	});
 
-	it("returns false when $HOME/.claude is absent", async () => {
+	it("returns false when $HOME/.claude is absent and `claude` binary is unreachable", async () => {
 		process.env.HOME = `/tmp/clawdi-nowhere-${Date.now()}`;
 		const a = new ClaudeCodeAdapter();
+		// Stub the binary-fallback to fail (CI/dev machines often have `claude`
+		// in PATH; `process.env.PATH = ""` doesn't reliably hide it because
+		// child_process inherits a cached env on some platforms).
+		(a as { getVersion: () => Promise<string | null> }).getVersion = async () => null;
 		expect(await a.detect()).toBe(false);
+	});
+
+	it("falls back to `claude --version` when the home dir has no artifacts", async () => {
+		// Bare `~/.claude/` with no artifacts shouldn't false-positive — but a
+		// reachable `claude` binary still indicates a real install.
+		const bareHome = `${tmpHome}-bare`;
+		const { mkdirSync, rmSync } = await import("node:fs");
+		mkdirSync(join(bareHome, ".claude"), { recursive: true });
+		process.env.HOME = bareHome;
+
+		const a = new ClaudeCodeAdapter();
+		(a as { getVersion: () => Promise<string | null> }).getVersion = async () => null;
+		expect(await a.detect()).toBe(false);
+		(a as { getVersion: () => Promise<string | null> }).getVersion = async () => "claude 0.1.0";
+		expect(await a.detect()).toBe(true);
+		rmSync(bareHome, { recursive: true, force: true });
 	});
 
 	it("honors $CLAUDE_CONFIG_DIR override", async () => {

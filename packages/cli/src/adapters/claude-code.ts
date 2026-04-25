@@ -37,12 +37,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		// leftover. Require at least one artifact that a real Claude Code
 		// install creates: the projects dir (after first run), settings.json
 		// (configured via the IDE), or a top-level CLAUDE.md.
-		if (!existsSync(claudeDir())) return false;
-		return (
-			existsSync(projectsDir()) ||
-			existsSync(join(claudeDir(), "settings.json")) ||
-			existsSync(join(claudeDir(), "CLAUDE.md"))
-		);
+		// Last resort: `claude --version` succeeding — covers a brand-new
+		// install where the binary is in PATH but the user hasn't started a
+		// session yet (none of the artifacts exist).
+		if (
+			existsSync(claudeDir()) &&
+			(existsSync(projectsDir()) ||
+				existsSync(join(claudeDir(), "settings.json")) ||
+				existsSync(join(claudeDir(), "CLAUDE.md")))
+		) {
+			return true;
+		}
+		return (await this.getVersion()) !== null;
 	}
 
 	async getVersion(): Promise<string | null> {

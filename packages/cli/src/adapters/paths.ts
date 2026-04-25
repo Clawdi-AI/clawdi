@@ -33,8 +33,12 @@ export function getHermesHome(): string {
 }
 
 /**
- * OpenClaw: honors `$OPENCLAW_STATE_DIR`, else probes `.openclaw` → `.clawdbot` → `.moltbot`
- * (same multi-name fallback vercel/skills uses in `getOpenClawGlobalSkillsDir`).
+ * OpenClaw: honors `$OPENCLAW_STATE_DIR`, else probes home-relative names
+ * (`.openclaw` → `.clawdbot` → `.moltbot` — same multi-name fallback
+ * vercel/skills uses in `getOpenClawGlobalSkillsDir`), then system-wide
+ * deployment paths (`/data/openclaw`, `/var/openclaw`) for server installs
+ * where state lives outside `$HOME`. Falls back to `~/.openclaw` so the
+ * default-write path stays in user-space.
  */
 export function getOpenClawHome(): string {
 	const override = process.env.OPENCLAW_STATE_DIR?.trim();
@@ -42,6 +46,9 @@ export function getOpenClawHome(): string {
 	const h = home();
 	for (const name of [".openclaw", ".clawdbot", ".moltbot"]) {
 		const dir = join(h, name);
+		if (existsSync(dir)) return dir;
+	}
+	for (const dir of ["/data/openclaw", "/var/openclaw"]) {
 		if (existsSync(dir)) return dir;
 	}
 	return join(h, ".openclaw");

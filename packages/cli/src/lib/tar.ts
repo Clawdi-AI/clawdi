@@ -2,6 +2,34 @@ import { basename, resolve } from "node:path";
 import * as tar from "tar";
 
 /**
+ * Directories that should never end up inside an uploaded skill tarball.
+ * Skills are agent instructions + small helper files — `node_modules/` and
+ * build artifacts blow past the upstream 100MB cap and aren't useful to the
+ * recipient anyway. Mirrors `SKIP_DIRS` from `adapters/paths.ts` (kept
+ * duplicated to avoid an adapter→tar import edge) and extends it with
+ * ecosystem dirs that the adapters' enumeration doesn't otherwise filter.
+ */
+const SKILL_TAR_EXCLUDE = new Set([
+	"node_modules",
+	".git",
+	".turbo",
+	".next",
+	".cache",
+	"dist",
+	"build",
+	"out",
+	"target",
+	"__pycache__",
+	".venv",
+	"venv",
+	".pytest_cache",
+	".mypy_cache",
+	".ruff_cache",
+	".tox",
+	"coverage",
+]);
+
+/**
  * Extract a gzipped tar archive into `cwd`.
  *
  * Use this instead of `tar.extract({...}).end(bytes)` — `.end()` returns the
@@ -38,7 +66,22 @@ export async function tarSkillDir(dirPath: string): Promise<Buffer> {
 
 	const chunks: Buffer[] = [];
 	await tar
-		.create({ gzip: true, cwd: parentDir, follow: true }, [dirName])
+		.create(
+			{
+				gzip: true,
+				cwd: parentDir,
+				follow: true,
+				// Strip `node_modules/`, `.git/`, build output, virtualenvs, etc.
+				// The `tar` package passes both files and directories through this
+				// filter; returning false for a directory excludes the whole subtree.
+				// `path` is relative to `cwd` and uses POSIX separators.
+				filter: (path) => {
+					const segments = path.split("/");
+					return !segments.some((seg) => SKILL_TAR_EXCLUDE.has(seg));
+				},
+			},
+			[dirName],
+		)
 		.on("data", (chunk: Buffer) => chunks.push(chunk))
 		.promise();
 	return Buffer.concat(chunks);

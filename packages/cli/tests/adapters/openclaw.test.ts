@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -8,11 +8,14 @@ import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 let tmpHome: string;
 let origHome: string | undefined;
 let origStateDir: string | undefined;
+let origAgentId: string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origStateDir = process.env.OPENCLAW_STATE_DIR;
+	origAgentId = process.env.OPENCLAW_AGENT_ID;
 	delete process.env.OPENCLAW_STATE_DIR;
+	delete process.env.OPENCLAW_AGENT_ID;
 	tmpHome = copyFixtureToTmp("openclaw");
 	process.env.HOME = tmpHome;
 });
@@ -22,8 +25,55 @@ afterEach(() => {
 	else delete process.env.HOME;
 	if (origStateDir) process.env.OPENCLAW_STATE_DIR = origStateDir;
 	else delete process.env.OPENCLAW_STATE_DIR;
+	if (origAgentId) process.env.OPENCLAW_AGENT_ID = origAgentId;
+	else delete process.env.OPENCLAW_AGENT_ID;
 	cleanupTmp(tmpHome);
 });
+
+/**
+ * Drop a second agent (`financial`) into the fixture with one session — used
+ * to verify the multi-agent scanning fix from issue #28.
+ */
+function addFinancialAgent(stateRoot: string, sessionId = "oc-financial-001") {
+	const agentRoot = join(stateRoot, "agents", "financial");
+	mkdirSync(join(agentRoot, "sessions"), { recursive: true });
+	mkdirSync(join(agentRoot, "skills", "fin-skill"), { recursive: true });
+	writeFileSync(
+		join(agentRoot, "sessions", "sessions.json"),
+		JSON.stringify({
+			[sessionId]: {
+				sessionId,
+				updatedAt: 1776247300000,
+				sessionFile: `${sessionId}.jsonl`,
+				model: "gpt-5.3-codex",
+				inputTokens: 5,
+				outputTokens: 3,
+				cacheRead: 0,
+				displayName: "Financial briefing",
+				acp: { cwd: "/Users/fixture/finance", lastActivityAt: 1776247300000 },
+			},
+		}),
+	);
+	writeFileSync(
+		join(agentRoot, "sessions", `${sessionId}.jsonl`),
+		[
+			JSON.stringify({
+				type: "message",
+				timestamp: 1776247200000,
+				message: { role: "user", content: "stocks" },
+			}),
+			JSON.stringify({
+				type: "message",
+				timestamp: 1776247205000,
+				message: { role: "assistant", content: "analyzing" },
+			}),
+		].join("\n"),
+	);
+	writeFileSync(
+		join(agentRoot, "skills", "fin-skill", "SKILL.md"),
+		"---\nname: fin-skill\ndescription: Finance assistant\n---\n",
+	);
+}
 
 describe("OpenClawAdapter.detect", () => {
 	it("returns true when $HOME/.openclaw exists", async () => {
@@ -98,8 +148,31 @@ describe("OpenClawAdapter.collectSessions", () => {
 	it("returns empty when sessions.json is missing", async () => {
 		const { rmSync } = await import("node:fs");
 		rmSync(join(tmpHome, ".openclaw", "agents", "main", "sessions", "sessions.json"));
+		// Also remove the fixture's `agents/main` dir so listAgentDirs returns
+		// no candidates. (Otherwise scanning continues over the dir, finds no
+		// index, and short-circuits — same observable behavior, but only by
+		// accident.)
+		rmSync(join(tmpHome, ".openclaw", "agents", "main"), { recursive: true, force: true });
 		const a = new OpenClawAdapter();
 		expect(await a.collectSessions()).toEqual([]);
+	});
+
+	it("scans every agents/<id>/ subdir (issue #28)", async () => {
+		// Default fixture has `main`. Drop in a second agent and confirm both
+		// are picked up without setting OPENCLAW_AGENT_ID.
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		const a = new OpenClawAdapter();
+		const sessions = await a.collectSessions();
+		const ids = sessions.map((s) => s.localSessionId).sort();
+		expect(ids).toEqual(["oc-financial-001", "oc-session-001"]);
+	});
+
+	it("OPENCLAW_AGENT_ID still narrows to a single agent", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		process.env.OPENCLAW_AGENT_ID = "financial";
+		const a = new OpenClawAdapter();
+		const sessions = await a.collectSessions();
+		expect(sessions.map((s) => s.localSessionId)).toEqual(["oc-financial-001"]);
 	});
 });
 
@@ -109,6 +182,13 @@ describe("OpenClawAdapter.collectSkills", () => {
 		const skills = await a.collectSkills();
 		// Fixture has demo/ (real) and node_modules/ (SKIP_DIRS sentinel).
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
+	});
+
+	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		const a = new OpenClawAdapter();
+		const keys = (await a.collectSkills()).map((s) => s.skillKey).sort();
+		expect(keys).toEqual(["demo", "fin-skill"]);
 	});
 });
 

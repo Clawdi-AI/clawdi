@@ -61,18 +61,31 @@ export default function AgentDetailPage() {
 						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (machine label dropped).`
 						: undefined,
 			});
-			queryClient.invalidateQueries({ queryKey: ["environments"] });
-			queryClient.invalidateQueries({ queryKey: ["sessions"] });
+			// Invalidate every query that may render this environment — the
+			// dashboard agents card, sessions list (which joins agent labels),
+			// and the per-agent session lookup. Use predicate-form so we catch
+			// query keys with extra params like ["sessions", { page, q }].
+			queryClient.invalidateQueries({
+				predicate: (q) => {
+					const k = q.queryKey[0];
+					return k === "environments" || k === "sessions" || k === "agent";
+				},
+			});
 			router.push("/");
 		},
 		onError: (e) => toast.error("Failed to remove agent", { description: errorMessage(e) }),
 	});
 
 	const onRemove = () => {
-		const msg =
+		// Spell out *both* consequences so the user can't be surprised:
+		//   1. Sessions stay but lose their machine label (server-side state).
+		//   2. The CLI on this machine is now pointed at a deleted env_id;
+		//      next `clawdi push` will hard-fail and prompt for re-setup.
+		const sessionLine =
 			sessionTotal > 0
-				? `Remove this agent? ${sessionTotal} session${sessionTotal === 1 ? "" : "s"} will be kept but lose the machine label.`
-				: "Remove this agent?";
+				? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} will be kept but lose the machine label.\n\n`
+				: "";
+		const msg = `Remove this agent?\n\n${sessionLine}If this machine still has the clawdi CLI installed, you'll need to run \`clawdi setup\` again before the next push.`;
 		if (window.confirm(msg)) remove.mutate();
 	};
 

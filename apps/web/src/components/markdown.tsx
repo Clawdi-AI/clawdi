@@ -2,17 +2,29 @@
 
 import { Check, Copy } from "lucide-react";
 import {
+	Children,
 	type ComponentPropsWithoutRef,
+	createContext,
 	isValidElement,
 	memo,
 	type ReactElement,
 	type ReactNode,
+	useContext,
 	useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+
+/**
+ * Tracks whether we're rendering inside a fenced `<pre>`. The `code` override
+ * uses this to decide between inline-code styling and naked passthrough — using
+ * `className?.startsWith("language-")` alone misses two real cases:
+ *   - ``` ``` (no language) — react-markdown emits `<code>` with no className
+ *   - rehype plugins that decorate inline code with a non-language className
+ */
+const InsidePreContext = createContext(false);
 
 function useCopyToClipboard(duration = 2000) {
 	const [copied, setCopied] = useState(false);
@@ -32,9 +44,15 @@ function useCopyToClipboard(duration = 2000) {
  * at the child to know the language + grab the raw text for the Copy button.
  */
 function extractCodeMeta(children: ReactNode): { lang: string | null; code: string } {
-	const child = isValidElement(children)
-		? (children as ReactElement<{ className?: string; children?: ReactNode }>)
-		: null;
+	// `children` may be a single element or an array (whitespace text nodes
+	// can appear when remark plugins or fenced-block formatting introduce
+	// gaps). Pick the first valid React element — that's the `<code>` we
+	// care about for language + raw text extraction.
+	const elements = Children.toArray(children).filter(isValidElement);
+	const child = (elements[0] ?? null) as ReactElement<{
+		className?: string;
+		children?: ReactNode;
+	}> | null;
 	const className = child?.props?.className ?? "";
 	const match = /language-(\w+)/.exec(className);
 	const lang = match?.[1] ?? null;
@@ -47,32 +65,37 @@ function CodeBlockFrame({ children }: { children?: ReactNode }) {
 	const { copied, copy } = useCopyToClipboard();
 	const { lang, code } = extractCodeMeta(children);
 	return (
-		<div className="my-2 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
-			<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5 text-xs">
-				<span className="font-medium text-muted-foreground lowercase">{lang ?? "text"}</span>
-				<button
-					type="button"
-					onClick={() => copy(code)}
-					aria-label={`Copy ${lang ?? "code"}`}
-					className="p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-				>
-					{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-				</button>
+		<InsidePreContext.Provider value={true}>
+			<div className="my-2 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
+				<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5 text-xs">
+					<span className="font-medium text-muted-foreground lowercase">{lang ?? "text"}</span>
+					<button
+						type="button"
+						onClick={() => copy(code)}
+						aria-label={`Copy ${lang ?? "code"}`}
+						className="p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+					>
+						{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+					</button>
+				</div>
+				<pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">{children}</pre>
 			</div>
-			<pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">{children}</pre>
-		</div>
+		</InsidePreContext.Provider>
 	);
 }
 
 /**
- * Inline `<code>` (no language). Block code is handed off to the `pre`
- * override above, which uses `CodeBlockFrame` to render the boxed UI.
+ * Inline `<code>` styling. When rendered inside a fenced `<pre>` block we
+ * pass through — `CodeBlockFrame` already provides the boxed wrapper, and
+ * applying the inline-code border/padding here would draw a second frame
+ * around the code text. The `InsidePreContext` flag is the source of truth;
+ * we don't rely on `className` because:
+ *   - fenced blocks without a language have no className at all
+ *   - rehype/remark plugins can decorate inline code with non-language classes
  */
 function InlineCode({ className, children, ...props }: ComponentPropsWithoutRef<"code">) {
-	// react-markdown sets `language-…` on the `<code>` inside fenced blocks.
-	// When that's present, we're being called from within `<pre>` — render
-	// naked so the `pre` override can do the framing work.
-	if (className) {
+	const insidePre = useContext(InsidePreContext);
+	if (insidePre) {
 		return (
 			<code className={className} {...props}>
 				{children}
