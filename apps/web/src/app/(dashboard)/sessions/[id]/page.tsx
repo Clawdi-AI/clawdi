@@ -2,44 +2,24 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import {
-	ChevronRight,
-	Clock,
-	Hash,
-	type LucideIcon,
-	MessageSquare,
-	Terminal,
-	Zap,
-} from "lucide-react";
+import { ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
-import { DetailHeader } from "@/components/detail-header";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
-import { Badge } from "@/components/ui/badge";
+import { ModelBadge } from "@/components/meta/model-badge";
+import { Stat } from "@/components/meta/stat";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
-import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
-
-function formatDuration(seconds: number | null): string {
-	if (!seconds) return "-";
-	if (seconds < 60) return `${seconds}s`;
-	const mins = Math.floor(seconds / 60);
-	if (mins < 60) return `${mins}m`;
-	return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
-
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-	return String(n);
-}
+import { formatDuration } from "@/lib/format";
+import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
@@ -97,38 +77,39 @@ export default function SessionDetailPage() {
 	}
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
+	const summaryText =
+		formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12);
+
+	// Drives the breadcrumb's last segment so it shows the human title
+	// instead of the raw UUID. AppBreadcrumb's UUID fallback handles the
+	// loading state in the meantime.
+	useSetBreadcrumbTitle(summaryText);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader backHref="/sessions" backLabel="Back to sessions" />
-
-			{/* Header */}
+			{/* Header — the back-link DetailHeader is gone; the global
+			    breadcrumb (Sessions › <summary>) is the only back affordance. */}
 			<div>
-				<h1 className="text-lg font-semibold tracking-tight">
-					{formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)}
-				</h1>
-				<p className="text-xs text-muted-foreground mt-1">
+				<h1 className="text-lg font-semibold tracking-tight">{summaryText}</h1>
+				<p className="mt-1 text-xs text-muted-foreground">
 					{session.project_path || "No project path"} · {relativeTime(session.started_at)}
 				</p>
 			</div>
 
-			{/* Stats bar — agent label (2-line) has more height than the inline
-			    badges/stats, so align to start and let the badges sit along the
-			    baseline of the first line. */}
-			<div className="flex flex-wrap items-start gap-4">
+			{/* Stats bar — agent label is the visual anchor on the left;
+			    everything else aligns on the same baseline. `items-center`
+			    + matched `h-5` on the model pill keeps icons and text on
+			    one line at every viewport. */}
+			<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
 				{session.agent_type || session.machine_name ? (
 					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
 				) : null}
-				{session.model && (
-					<Badge variant="outline" className="border-primary/30 text-primary">
-						{session.model.replace("claude-", "")}
-					</Badge>
-				)}
+				<ModelBadge modelId={session.model} />
 				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
-				<Stat icon={Zap} label={`${formatTokens(totalTokens)} tokens`} />
-				{session.duration_seconds && (
+				<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
+				{session.duration_seconds ? (
 					<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
-				)}
+				) : null}
 				<Stat icon={Hash} label={session.local_session_id.slice(0, 8)} />
 			</div>
 
@@ -177,15 +158,6 @@ export default function SessionDetailPage() {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function Stat({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
-	return (
-		<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-			<Icon className="size-3.5" />
-			{label}
-		</span>
-	);
-}
-
 function MessageBlock({
 	message,
 	userAvatar,
@@ -221,19 +193,17 @@ function MessageBlock({
 			{/* Content */}
 			<div className="min-w-0 flex-1">
 				{/* Author line */}
-				<div className="flex items-center gap-2 mb-1">
+				<div className="mb-1 flex items-center gap-2">
 					<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
-					{!isUser && message.model && (
-						<Badge variant="secondary">{message.model.replace("claude-", "")}</Badge>
-					)}
-					{message.timestamp && (
+					{isUser ? null : <ModelBadge modelId={message.model} />}
+					{message.timestamp ? (
 						<span className="text-xs text-muted-foreground">
 							{new Date(message.timestamp).toLocaleTimeString([], {
 								hour: "2-digit",
 								minute: "2-digit",
 							})}
 						</span>
-					)}
+					) : null}
 				</div>
 
 				{/* Message body */}

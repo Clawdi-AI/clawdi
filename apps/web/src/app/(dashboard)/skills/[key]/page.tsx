@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ExternalLink, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { Markdown } from "@/components/markdown";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +30,8 @@ export default function SkillDetailPage() {
 			unwrap(await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
 	});
 
+	useSetBreadcrumbTitle(skill?.name || (skill ? key : null));
+
 	const uninstall = useMutation({
 		mutationFn: async () =>
 			unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } })),
@@ -43,24 +45,20 @@ export default function SkillDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/skills"
-				backLabel="Back to skills"
-				actions={
-					skill && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => uninstall.mutate()}
-							disabled={uninstall.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Uninstall
-						</Button>
-					) : null
-				}
-			/>
+			{skill && !isLoading ? (
+				<div className="flex items-center justify-end gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => uninstall.mutate()}
+						disabled={uninstall.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Uninstall
+					</Button>
+				</div>
+			) : null}
 
 			{error ? (
 				<Alert variant="destructive">

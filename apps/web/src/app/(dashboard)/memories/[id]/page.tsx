@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Brain, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,12 @@ export default function MemoryDetailPage() {
 			unwrap(await api.GET("/api/memories/{memory_id}", { params: { path: { memory_id: id } } })),
 	});
 
+	// First sentence (or 80 chars) — keeps the breadcrumb readable.
+	const memoryTitle = memory?.content
+		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
+		: null;
+	useSetBreadcrumbTitle(memoryTitle);
+
 	const deleteMemory = useMutation({
 		mutationFn: async () =>
 			unwrap(
@@ -45,24 +51,20 @@ export default function MemoryDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/memories"
-				backLabel="Back to memories"
-				actions={
-					memory && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => deleteMemory.mutate()}
-							disabled={deleteMemory.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Delete
-						</Button>
-					) : null
-				}
-			/>
+			{memory && !isLoading ? (
+				<div className="flex items-center justify-end gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => deleteMemory.mutate()}
+						disabled={deleteMemory.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Delete
+					</Button>
+				</div>
+			) : null}
 
 			{error ? (
 				<Alert variant="destructive">

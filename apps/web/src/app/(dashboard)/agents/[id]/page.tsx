@@ -4,8 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AgentLabel } from "@/components/dashboard/agent-label";
-import { DetailHeader } from "@/components/detail-header";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,9 @@ export default function AgentDetailPage() {
 	});
 
 	const sessionTotal = sessionsPage?.total ?? 0;
+
+	useSetBreadcrumbTitle(agent?.machine_name || agentTypeLabel(agent?.agent_type));
+
 	const remove = useMutation({
 		mutationFn: async () =>
 			unwrap(
@@ -91,24 +94,23 @@ export default function AgentDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<DetailHeader
-				backHref="/"
-				backLabel="Back to Overview"
-				actions={
-					agent && !isLoading ? (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={onRemove}
-							disabled={remove.isPending}
-							className="text-destructive hover:text-destructive"
-						>
-							<Trash2 />
-							Remove agent
-						</Button>
-					) : null
-				}
-			/>
+			{/* Action row — back nav lives in the global breadcrumb now. Right-
+			    align so the destructive button has the same gravity as the rest
+			    of the dashboard's "actions on the right" convention. */}
+			{agent && !isLoading ? (
+				<div className="flex items-center justify-end gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={onRemove}
+						disabled={remove.isPending}
+						className="text-destructive hover:text-destructive"
+					>
+						<Trash2 />
+						Remove agent
+					</Button>
+				</div>
+			) : null}
 
 			{error ? (
 				<Alert variant="destructive">
