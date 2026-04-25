@@ -7,6 +7,7 @@ import {
 	ChevronsUpDown,
 	CircleHelp,
 	CirclePlus,
+	ExternalLink,
 	Key,
 	LayoutDashboard,
 	LogOut,
@@ -15,6 +16,7 @@ import {
 	Monitor,
 	Moon,
 	Plug,
+	Rocket,
 	Search,
 	Settings,
 	Sparkles,
@@ -111,6 +113,23 @@ export function AppSidebar() {
 									>
 										<CirclePlus />
 										<span>Add an agent</span>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+								<SidebarMenuItem>
+									{/* Sibling action to "Add an agent": adding connects an
+									    existing local agent, deploying spawns a brand-new
+									    one in clawdi.ai's SaaS. External link → opens in a
+									    new tab so the user doesn't lose dashboard state. */}
+									<SidebarMenuButton asChild tooltip="Deploy a new agent">
+										<a
+											href="https://www.clawdi.ai/dashboard"
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<Rocket />
+											<span>Deploy a new agent</span>
+											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+										</a>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
 							</SidebarMenu>
