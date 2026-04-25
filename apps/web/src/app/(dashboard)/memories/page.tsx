@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { makeMemoryColumns } from "@/components/memories/memory-columns";
@@ -47,7 +46,6 @@ const ALL = "all";
 export default function MemoriesPage() {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const router = useRouter();
 	const [search, setSearch] = useState("");
 	const [category, setCategory] = useState<string>(ALL);
 	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -160,7 +158,8 @@ export default function MemoriesPage() {
 					columns={columns}
 					data={memories ?? []}
 					isLoading={isLoading}
-					onRowClick={(m) => router.push(`/memories/${m.id}`)}
+					getRowHref={(m) => `/memories/${m.id}`}
+					rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
 					emptyMessage={
 						debouncedSearch || apiCategory
 							? "No matches — try a different search or category."

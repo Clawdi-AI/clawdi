@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -67,7 +68,13 @@ export function AppBreadcrumb() {
 								{isLast ? (
 									<BreadcrumbPage className="max-w-[420px] truncate">{label}</BreadcrumbPage>
 								) : (
-									<BreadcrumbLink href={href}>{label}</BreadcrumbLink>
+									// asChild + next/link: shadcn's default BreadcrumbLink is
+									// a raw <a> which forces a full page reload + drops
+									// prefetch. asChild lets us pass our own anchor — Next's
+									// Link gives SPA navigation and hover-prefetch.
+									<BreadcrumbLink asChild>
+										<Link href={href}>{label}</Link>
+									</BreadcrumbLink>
 								)}
 							</BreadcrumbItem>
 							{!isLast ? <BreadcrumbSeparator /> : null}

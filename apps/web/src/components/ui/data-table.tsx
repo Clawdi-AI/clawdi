@@ -9,6 +9,7 @@ import {
 	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table";
+import Link from "next/link";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -19,6 +20,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => `row-${i}`);
 
@@ -32,6 +34,17 @@ interface DataTableProps<TData, TValue> {
 	data: TData[];
 	isLoading?: boolean;
 	emptyMessage?: React.ReactNode;
+	/**
+	 * Make every row clickable and navigable. Preferred over `onRowClick`
+	 * for *navigation* — the row gets a stretched Next.js `<Link>` overlay
+	 * so middle-click opens a new tab, hover triggers prefetch, and
+	 * keyboard tab-order works. Use `onRowClick` only for non-nav side
+	 * effects (selection, expand-in-place, etc).
+	 */
+	getRowHref?: (row: TData) => string;
+	/** Used as the stretched link's aria-label so screen readers know
+	 * what activating the row does. Required when `getRowHref` is set. */
+	rowAriaLabel?: (row: TData) => string;
 	onRowClick?: (row: TData) => void;
 
 	// Server-mode state. All required together — DataTable no longer keeps
@@ -52,6 +65,8 @@ export function DataTable<TData, TValue>({
 	data,
 	isLoading,
 	emptyMessage = "No results.",
+	getRowHref,
+	rowAriaLabel,
 	onRowClick,
 	sorting,
 	onSortingChange,
@@ -110,21 +125,40 @@ export function DataTable<TData, TValue>({
 								</TableRow>
 							))
 						) : table.getRowModel().rows.length ? (
-							table.getRowModel().rows.map((row) => (
-								<TableRow
-									key={row.id}
-									onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-									// `group` lets column cells do group-hover tricks (e.g. a
-									// delete icon that reveals only on row hover).
-									className={onRowClick ? "group cursor-pointer" : "group"}
-								>
-									{row.getVisibleCells().map((cell) => (
-										<TableCell key={cell.id}>
-											{flexRender(cell.column.columnDef.cell, cell.getContext())}
-										</TableCell>
-									))}
-								</TableRow>
-							))
+							table.getRowModel().rows.map((row) => {
+								const href = getRowHref?.(row.original);
+								const interactive = !!href || !!onRowClick;
+								return (
+									<TableRow
+										key={row.id}
+										onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+										// `group` lets cells do group-hover tricks (e.g. a delete
+										// icon that reveals only on row hover).
+										// `relative` hosts the stretched <Link> overlay below.
+										className={cn("group", interactive && "cursor-pointer", href && "relative")}
+									>
+										{row.getVisibleCells().map((cell, idx) => (
+											<TableCell key={cell.id}>
+												{idx === 0 && href ? (
+													// Stretched-link pattern: an absolute anchor
+													// covers the whole row so middle-click opens a
+													// new tab and hover triggers Next.js prefetch.
+													// Sits behind cell content; cells are static-
+													// positioned so their text doesn't intercept the
+													// click. Interactive elements inside cells need
+													// `relative z-10` to escape the link's hit area.
+													<Link
+														href={href}
+														aria-label={rowAriaLabel?.(row.original) ?? "Open"}
+														className="absolute inset-0"
+													/>
+												) : null}
+												{flexRender(cell.column.columnDef.cell, cell.getContext())}
+											</TableCell>
+										))}
+									</TableRow>
+								);
+							})
 						) : (
 							<TableRow className="hover:bg-transparent">
 								<TableCell
