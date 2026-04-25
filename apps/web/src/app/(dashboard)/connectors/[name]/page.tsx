@@ -30,9 +30,17 @@ export default function ConnectorDetailPage() {
 	const api = useApi();
 	const queryClient = useQueryClient();
 
-	const { data: apps, isLoading: isAppsLoading } = useQuery({
-		queryKey: ["available-apps"],
-		queryFn: async () => unwrap(await api.GET("/api/connectors/available")),
+	// One app's metadata via the single-app endpoint — not the full
+	// paginated catalog. Detail pages shouldn't pay for 1000+ entries
+	// just to render one display name.
+	const { data: app, isLoading: isAppLoading } = useQuery({
+		queryKey: ["available-app", name],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/connectors/available/{app_name}", {
+					params: { path: { app_name: name } },
+				}),
+			),
 	});
 
 	const { data: connections, isLoading: isConnectionsLoading } = useQuery({
@@ -105,10 +113,9 @@ export default function ConnectorDetailPage() {
 		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
 	});
 
-	const app = apps?.find((a) => a.name === name);
 	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
 	const isConnected = activeConnections.length > 0;
-	const isLoading = isAppsLoading || isConnectionsLoading;
+	const isLoading = isAppLoading || isConnectionsLoading;
 
 	const displayName = app?.display_name || formatName(name);
 

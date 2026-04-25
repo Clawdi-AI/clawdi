@@ -230,8 +230,30 @@ def _extract_display_name(slug: str, description: str) -> str:
     return spaced.title()
 
 
-async def get_available_apps(search: str | None = None) -> list[dict]:
-    """List available Composio apps."""
+_apps_cache: list[dict] | None = None
+_apps_cache_at: datetime | None = None
+_APPS_CACHE_TTL = timedelta(minutes=5)
+
+
+async def _get_all_apps() -> list[dict]:
+    """Fetch and cache the full Composio app catalog.
+
+    The catalog is ~1000 entries and changes rarely; loading it on every
+    page-flip wastes both Composio's quota and our request latency. Cache
+    in process for 5 minutes — short enough that newly-published apps
+    show up the same hour, long enough that paginating through doesn't
+    cost a roundtrip per page.
+
+    Order is preserved from Composio's `/v1/apps` response — that IS the
+    popularity-curated ordering they ship (gmail / github / slack /
+    notion / …). Do NOT alphabetize.
+    """
+    global _apps_cache, _apps_cache_at
+    now = datetime.now(UTC)
+    if _apps_cache is not None and _apps_cache_at is not None:
+        if (now - _apps_cache_at) < _APPS_CACHE_TTL:
+            return _apps_cache
+
     client = get_composio_client()
 
     def _list():
@@ -244,12 +266,6 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
             display = _extract_display_name(key, app.description or "")
             logo = app.logo or ""
             desc = app.description or ""
-            if (
-                search
-                and search.lower() not in key.lower()
-                and search.lower() not in display.lower()
-            ):
-                continue
             result.append(
                 {
                     "name": key,
@@ -258,6 +274,53 @@ async def get_available_apps(search: str | None = None) -> list[dict]:
                     "description": desc[:200] if desc else "",
                 }
             )
-        return sorted(result, key=lambda x: x["display_name"].lower())
+        return result
 
-    return await run_in_threadpool(_list)
+    fresh = await run_in_threadpool(_list)
+    _apps_cache = fresh
+    _apps_cache_at = now
+    return fresh
+
+
+async def get_app_by_name(name: str) -> dict | None:
+    """Look up a single app by Composio slug. Used by the detail page so
+    it doesn't have to fetch the entire paginated catalog just to learn
+    one app's display name + logo. Re-uses the same in-process cache."""
+    items = await _get_all_apps()
+    for app in items:
+        if app["name"] == name:
+            return app
+    return None
+
+
+async def get_available_apps(
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 24,
+) -> dict:
+    """Paginated catalog query.
+
+    Caching the full list and slicing locally avoids the dual problem of
+    (a) shipping 1000+ entries to every browser and (b) hitting Composio
+    per page while the user paginates. Search is substring across slug /
+    display name / description — the same fields the v1 SDK exposes.
+    """
+    items = await _get_all_apps()
+    if search:
+        q = search.lower()
+        items = [
+            a
+            for a in items
+            if q in a["name"].lower()
+            or q in a["display_name"].lower()
+            or q in a["description"].lower()
+        ]
+    total = len(items)
+    start = max(0, (page - 1) * page_size)
+    end = start + page_size
+    return {
+        "items": items[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
