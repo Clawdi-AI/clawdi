@@ -192,3 +192,48 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
     }
     r = await client.post("/api/sessions/batch", json=payload)
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_delete_environment_orphans_sessions_via_fk(client: httpx.AsyncClient):
+    """Deleting an environment must keep historical sessions but null out
+    the FK so the list query renders them as unlabeled — never 500.
+    The FK + ON DELETE SET NULL is what makes this safe under concurrent
+    deletion (the previous SELECT-then-INSERT race could create orphans
+    that violated invariants the codebase implicitly relied on)."""
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "keep-me",
+                    "started_at": started,
+                    "message_count": 1,
+                    "summary": "should survive deletion",
+                }
+            ]
+        },
+    )
+
+    # Delete the environment.
+    r = await client.delete(f"/api/environments/{env_id}")
+    assert r.status_code == 204, r.text
+
+    # The environment row is gone; the session row is not.
+    listing = (await client.get("/api/sessions")).json()
+    assert listing["total"] == 1
+    item = listing["items"][0]
+    assert item["local_session_id"] == "keep-me"
+    # FK SET NULL means the outer-join contributes null label fields —
+    # the UI renders these as "Unknown" but the session is intact.
+    assert item["agent_type"] is None
+    assert item["machine_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
+    r = await client.delete(f"/api/environments/{uuid.uuid4()}")
+    assert r.status_code == 404

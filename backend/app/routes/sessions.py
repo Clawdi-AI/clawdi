@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
@@ -217,9 +218,27 @@ async def batch_create_sessions(
         .on_conflict_do_nothing(constraint="uq_sessions_user_local")
         .returning(Session.id)
     )
-    result = await db.execute(stmt)
-    inserted = result.scalars().all()
-    await db.commit()
+    # The pre-flight check above closes the common case, but there's still a
+    # window between the SELECT and this INSERT where another request can
+    # `DELETE /api/environments/{id}`. The FK + `ON DELETE SET NULL` lets us
+    # detect that here as an IntegrityError and return the same 400 the
+    # caller sees on a stale env_id, instead of a 500.
+    try:
+        result = await db.execute(stmt)
+        inserted = result.scalars().all()
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "unknown_environment",
+                "message": (
+                    "Environment was removed mid-upload. "
+                    "Run `clawdi setup` to re-register this machine, then retry."
+                ),
+            },
+        ) from e
     return SessionBatchResponse(synced=len(inserted))
 
 
