@@ -17,7 +17,7 @@ from app.schemas.memory import (
     MemoryResponse,
 )
 from app.services.embedding import resolve_embedder
-from app.services.memory_provider import get_memory_provider
+from app.services.memory_provider import get_memory_provider, memory_to_dict
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ async def get_memory(
     memory = result.scalar_one_or_none()
     if not memory:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-    return MemoryResponse.model_validate(memory)
+    return MemoryResponse.model_validate(memory_to_dict(memory))
 
 
 @router.post("")

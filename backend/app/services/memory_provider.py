@@ -188,7 +188,7 @@ class BuiltinProvider:
             )
         out: list[dict] = []
         for mem, dist in rows:
-            d = _memory_to_dict(mem)
+            d = memory_to_dict(mem)
             # cosine distance ∈ [0, 2]; convert to similarity ∈ [0, 1].
             sim = max(0.0, 1.0 - float(dist))
             d["vector_score"] = sim
@@ -232,7 +232,7 @@ class BuiltinProvider:
         order_col = Memory.created_at.asc() if order == "asc" else Memory.created_at.desc()
         q = q.order_by(order_col).limit(limit).offset(offset)
         result = await self.db.execute(q)
-        return [_memory_to_dict(m) for m in result.scalars().all()]
+        return [memory_to_dict(m) for m in result.scalars().all()]
 
     async def count(self, user_id: str, category: str | None = None) -> int:
         from sqlalchemy import func as sqlfunc
@@ -343,7 +343,7 @@ class Mem0Provider:
 # ---------- helpers ----------
 
 
-def _memory_to_dict(m: Memory) -> dict:
+def memory_to_dict(m: Memory) -> dict:
     return {
         "id": str(m.id),
         "content": m.content,
