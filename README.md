@@ -1,320 +1,263 @@
-# Clawdi Cloud
+# Clawdi
 
-> iCloud for AI Agents. Centralized management of sessions, skills, vault secrets, and cross-agent memory for Claude Code, Codex, OpenClaw, Hermes, and more.
+> iCloud for AI agents. Share memory, skills, sessions, and secrets across Claude Code, Codex, OpenClaw, Hermes, and whatever agent you wire up next.
 
-This README covers how to run the project locally, install the `clawdi` CLI on your machine, and use the day-to-day commands. For architecture and design notes see `CLAUDE.md`.
+Clawdi gives local coding agents a shared context layer. Install one CLI, connect your agents once, and they can remember durable facts, reuse skills, sync session history, and run commands with vault secrets without copying state between tools.
 
----
+The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, Next.js dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
-## Prerequisites
-
-- **Node.js 22+** and **[Bun](https://bun.sh) 1.3+** — web app, CLI, monorepo tooling (pinned in `package.json → engines`)
-- **Python 3.12** and **[uv](https://docs.astral.sh/uv/)** (or `pdm`) — backend
-- **PostgreSQL 16** with the `pg_trgm` and `pgvector` extensions (a `docker-compose.yml` is provided so you don't have to install locally)
-- A **[Clerk](https://clerk.com)** account for auth (dev instance is fine)
-
-No Redis, no Celery — background work has been removed from this codebase; the backend is a single FastAPI process.
-
-### PostgreSQL via Docker (recommended)
+## Quickstart
 
 ```bash
-docker compose up -d postgres
-# Listens on localhost:5433 with database clawdi, user/pass clawdi/clawdi_dev.
+npm i -g clawdi
+
+clawdi auth login
+clawdi setup
+clawdi doctor
 ```
 
-### PostgreSQL native (macOS example)
+That gets you:
+
+- Browser-based login to Clawdi Cloud
+- Agent auto-detection for Claude Code, Codex, Hermes, and OpenClaw
+- MCP registration so your agent can call Clawdi tools
+- The bundled `clawdi` skill installed into each detected agent
+- A health check that verifies auth, agent paths, vault access, and MCP config
+
+You can also try without installing:
 
 ```bash
-brew install postgresql@16 pgvector
-brew services start postgresql@16
-
-createuser -s clawdi
-psql postgres -c "ALTER USER clawdi WITH PASSWORD 'clawdi_dev';"
-createdb -O clawdi clawdi
+npx clawdi --help
 ```
 
-`pg_trgm` ships with PostgreSQL; `pgvector` is the `brew install pgvector` package above. Both extensions are enabled by our Alembic migrations — you don't have to `CREATE EXTENSION` manually.
+Headless environment? Use the manual flow:
 
-If you already have Postgres running under a different user / port, skip the role creation and just edit `DATABASE_URL` in `backend/.env` to match (e.g. `postgresql+asyncpg://<you>@localhost:5432/clawdi`).
-
----
-
-## Repository layout
-
-```
-apps/web/          Next.js 16 dashboard (Clerk auth, shadcn/ui, Tailwind v4)
-packages/cli/      `clawdi` CLI (TypeScript, Bun, Commander)
-packages/shared/   Shared types / constants between web and CLI
-backend/           Python FastAPI backend (async SQLAlchemy, asyncpg, Alembic)
-docs/              Design docs, scenarios, plans
+```bash
+clawdi auth login --manual
 ```
 
----
+## Why Clawdi Exists
 
-## First-time setup
+AI agents are still treated like isolated apps. Claude Code has one set of sessions and instructions. Codex has another. Secrets sit in shell profiles and `.env` files. Useful memories get trapped in whichever agent happened to learn them.
 
-### 1. Clone and install JS/TS dependencies
+Clawdi is the shared layer underneath:
+
+- **Cross-agent memory** - Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
+- **Portable skills** - Upload or install agent instructions once, then sync them into every registered agent.
+- **Session sync** - Push local session history to the dashboard for review and recall.
+- **Vault secrets** - Store secrets server-side and inject them only when running a command.
+- **MCP tools** - Agents get memory and connector tools through the Model Context Protocol.
+- **Open stack** - The CLI, backend, web dashboard, migrations, and local development path live in this repository under the MIT license.
+
+## How It Feels
+
+Teach one agent something:
+
+```text
+remember that this repo uses Bun for TypeScript and PDM for backend scripts
+```
+
+Later, in a different agent or a fresh session:
+
+```text
+what package manager should I use here?
+```
+
+The agent can call Clawdi memory search, recover the stored preference, and answer from your actual context instead of guessing.
+
+Run with secrets without putting them on disk:
+
+```bash
+clawdi vault set OPENAI_API_KEY
+clawdi run -- python scripts/ingest.py
+```
+
+Sync your local work:
+
+```bash
+clawdi push
+```
+
+Install a shared skill everywhere:
+
+```bash
+clawdi skill install anthropics/skills/artifacts-builder
+```
+
+## Hosted or Self-Hosted
+
+Clawdi has two intended paths.
+
+### Use Clawdi Cloud
+
+Best for trying it in minutes.
+
+```bash
+npm i -g clawdi
+clawdi auth login
+clawdi setup
+```
+
+The published CLI defaults to the hosted API. You get the least setup friction and can focus on wiring agents, memories, skills, and vault secrets.
+
+### Own the Stack
+
+Best when you want to inspect, modify, self-host, or build on Clawdi.
 
 ```bash
 git clone https://github.com/Clawdi-AI/clawdi.git
 cd clawdi
 bun install
+docker compose up -d postgres
 ```
 
-This installs workspace deps for `apps/web`, `packages/cli`, `packages/shared`.
-
-### 2. Set up the backend
+Then run the backend and dashboard locally:
 
 ```bash
 cd backend
 cp .env.example .env
-
-# Fill in at minimum:
-#   CLERK_PEM_PUBLIC_KEY   — from Clerk dashboard → JWT public key
-#   VAULT_ENCRYPTION_KEY   — generate with: python3 -c "import os; print(os.urandom(32).hex())"
-#   ENCRYPTION_KEY         — same format as VAULT_ENCRYPTION_KEY
-#   DATABASE_URL           — adjust if your PG isn't at the .env.example default
-#                            (clawdi:clawdi_dev@localhost:5433/clawdi)
-#   COMPOSIO_API_KEY       — optional, only if you want connector tools (Gmail / GitHub / etc.)
-
-# Memory embedder is configured via env too. Default works out of the box
-# (Local mode downloads ~1GB of ONNX on first use, no API key needed).
-# For OpenAI / OpenRouter instead, set:
-#   MEMORY_EMBEDDING_MODE=api
-#   MEMORY_EMBEDDING_API_KEY=sk-...
-#   MEMORY_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1   (optional)
-
-pdm install                           # install Python deps
-pdm migrate                           # apply all Alembic migrations
+pdm install
+pdm migrate
+pdm dev
 ```
-
-### 3. Configure the web dashboard
 
 ```bash
 cd ../apps/web
 cp .env.example .env.local
-
-# Fill in:
-#   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-#   CLERK_SECRET_KEY=sk_test_...
-#   NEXT_PUBLIC_API_URL=http://localhost:8000  (default usually fine)
+bun run dev
 ```
 
----
+Point your CLI at your local backend:
 
-## Running locally
+```bash
+clawdi config set apiUrl http://localhost:8000
+```
 
-Two processes, two terminals:
+Local self-hosting currently expects:
 
-**Terminal 1 — backend** (FastAPI on `:8000`):
+- Node.js 22+ and Bun 1.3+
+- Python 3.12 with PDM
+- PostgreSQL 16 with `pg_trgm` and `pgvector`
+- Clerk keys for dashboard auth
+- Two generated encryption keys for vault data and MCP proxy JWTs
+
+See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`](apps/web/.env.example) for the exact environment variables.
+
+## What Is In This Repo
+
+```text
+apps/web/          Next.js 16 dashboard with Clerk auth, shadcn/ui, Tailwind v4
+packages/cli/      Published `clawdi` CLI, agent adapters, and MCP server
+packages/shared/   Shared API types, schemas, and constants
+backend/           FastAPI backend, SQLAlchemy models, Alembic migrations
+docs/              Architecture notes, scenarios, and development guides
+```
+
+The system is deliberately boring where it should be:
+
+- FastAPI API server
+- PostgreSQL for structured data and memory search
+- File storage for session and skill bodies
+- Local CLI state under `~/.clawdi`
+- MCP stdio server spawned by each agent
+- No Redis, Celery, or hidden worker fleet required for the core local stack
+
+For the deeper map, read [`docs/architecture.md`](docs/architecture.md).
+
+## Supported Agents
+
+| Agent | Sessions | Skills | MCP setup |
+| --- | --- | --- | --- |
+| Claude Code | Yes | Yes | Automatic |
+| Codex | Yes | Yes | Automatic |
+| Hermes | Yes | Yes | Automatic |
+| OpenClaw | Yes | Yes | Manual MCP hint where required |
+
+Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli/src/adapters). Adding another agent means implementing the same adapter shape: detect it, read sessions, read/write skills, and define how commands run with injected env.
+
+## CLI Reference
+
+| Command | What it does |
+| --- | --- |
+| `clawdi auth login` / `logout` | Authenticate this machine |
+| `clawdi status [--json]` | Show auth and sync state |
+| `clawdi setup [--agent <type>]` | Register local agents, install MCP, install the bundled skill |
+| `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
+| `clawdi push` | Upload sessions and skills |
+| `clawdi pull` | Download cloud skills into registered agents |
+| `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
+| `clawdi skill list/add/install/rm/init` | Manage portable skills |
+| `clawdi vault set/list/import` | Manage encrypted secrets |
+| `clawdi run -- <cmd>` | Run a command with vault secrets injected |
+| `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
+| `clawdi update` | Check for a newer CLI version |
+| `clawdi mcp` | Start the MCP stdio server used by agents |
+
+Every command supports `--help`.
+
+## Development
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Run the web app and workspace dev tasks:
+
+```bash
+bun run dev
+```
+
+Run the backend:
+
 ```bash
 cd backend
 pdm dev
 ```
 
-**Terminal 2 — web dashboard** (Next.js on `:3000`):
+Run checks:
+
 ```bash
-bun run dev              # from repo root
-# or: cd apps/web && bun run dev
+bun run check
+bun run typecheck
+
+cd backend
+pdm lint
+pdm test
 ```
 
-Open <http://localhost:3000>, sign in via Clerk, then go to the user menu → **API Keys** → create one. You'll need it to authenticate the CLI.
+Run the CLI from source:
 
----
+```bash
+bun run packages/cli/src/index.ts --help
+```
 
-## Installing the `clawdi` CLI
-
-The CLI is a TypeScript/Bun tool that connects a local agent (Claude Code, Codex, etc.) to your Clawdi Cloud account.
+Build and link the CLI locally:
 
 ```bash
 cd packages/cli
-bun install              # first time only (already done by root `bun install`)
-bun run build            # bundles to dist/index.js
-bun link                 # exposes `clawdi` on your PATH via Bun's global bin
-```
-
-Verify:
-```bash
+bun run build
+bun link
 clawdi --version
-clawdi --help
 ```
-
-**Rebuilding after CLI changes**: `bun run build` in `packages/cli/`. Since `bun link` symlinks to `dist/index.js`, rebuild is all that's needed — no re-link.
-
-**During CLI development** (no rebuild loop): `bun run packages/cli/src/index.ts <command>` from repo root runs source directly.
-
----
-
-## Using the CLI
-
-### Point the CLI at your backend (if not localhost)
-
-The CLI defaults to `http://localhost:8000`. To point at a deployed instance:
-
-```bash
-clawdi config set apiUrl https://clawdi.your-company.com
-
-# or, one-off override without writing to disk:
-export CLAWDI_API_URL=https://clawdi.your-company.com
-```
-
-Inspect / change / clear config:
-```bash
-clawdi config list
-clawdi config get apiUrl
-clawdi config unset apiUrl
-```
-
-Stored at `~/.clawdi/config.json`. The `CLAWDI_API_URL` env var always wins over the stored value.
-
-### Authenticate once
-
-```bash
-clawdi auth login             # paste the API key from the web dashboard
-clawdi status            # verify auth works
-```
-
-Credentials live in `~/.clawdi/auth.json` (mode 0600).
-
-### Connect your agent
-
-```bash
-clawdi setup             # auto-detect installed agents, register each
-# or target one explicitly:
-clawdi setup --agent claude_code
-```
-
-This does three things per agent:
-1. Registers the machine as an `AgentEnvironment` in the backend
-2. Registers the clawdi MCP server with the agent (e.g. `claude mcp add-json clawdi ...`, `codex mcp add clawdi ...`, or edits Hermes's YAML)
-3. Installs the bundled `clawdi` skill into the agent's skills directory so it gets memory-retrieval guidance
-
-Supported agents: `claude_code`, `codex`, `hermes`, `openclaw`.
-
-### Sync
-
-Push local sessions and skills up to the cloud, or pull cloud skills down to your agents:
-
-```bash
-clawdi push            # upload sessions + skills from the current agent
-clawdi pull          # download cloud skills into local agent directories
-
-# Optional flags:
-clawdi push --agent codex --modules sessions       # specific agent + only sessions
-clawdi push --since 2026-01-01                     # override the stored cursor
-clawdi push --project /path/to/project             # only this project (default: cwd)
-clawdi push --all                                  # all projects, ignore cwd filter
-clawdi push --dry-run                              # preview, no uploads
-```
-
-When multiple agents are registered on the same machine, the interactive arrow-key picker chooses one; `--agent` skips the prompt.
-
-### Memory (cross-agent long-term recall)
-
-```bash
-clawdi memory list                    # list all memories
-clawdi mem list                       # same, shorter alias
-clawdi memory search "<query>"        # natural-language search (any language)
-clawdi memory add "<content>"         # store a memory
-clawdi memory rm <id>                 # delete by id
-```
-
-**How memory works in your agent**: after `clawdi setup`, your agent has three MCP tools plus a `clawdi` skill that tells it when to use them:
-
-- `memory_search` — called automatically when you reference your own context. "What do I usually use for X?" or "we discussed before how to …" auto-triggers it.
-- `memory_add` — called automatically when you say "remember this" or when the agent learns a durable preference / decision.
-- `memory_extract` — batch-propose memories from the current conversation. Say "extract memories" at the end of a session; the agent lists up to 5 candidates, you confirm, and only then are they saved. Works the same across Claude Code / Codex / Hermes / OpenClaw.
-
-### Vault (secrets)
-
-Store secrets server-side; inject them into subprocesses at runtime. Secrets never reach the web dashboard — `vault/resolve` only accepts API-key (CLI) auth.
-
-```bash
-clawdi vault set API_KEY              # prompts for the value (masked)
-clawdi vault set mydb/prod/password   # three-level path: vault/section/field
-clawdi vault list                     # see stored keys (values never shown)
-clawdi vault import .env              # bulk import from a .env file
-
-clawdi run -- python app.py           # run a command with vault secrets in env
-clawdi run -- docker compose up
-```
-
-### Skills (portable agent instructions)
-
-```bash
-clawdi skill list                          # list synced skills in the cloud
-clawdi skill add ./path/to/my-skill/       # upload a directory (must contain SKILL.md)
-clawdi skill add ./my-skill.md             # upload a single file
-clawdi skill install anthropics/skills     # install a skill from a GitHub repo
-clawdi skill install anthropics/skills/artifacts-builder   # specific path inside a repo
-clawdi skill rm <skill-key>                # remove from cloud
-```
-
-After a `skill install`, the tar.gz is also extracted into **every** registered agent's local skills directory on your machine, so you don't have to `pull` separately.
-
-### MCP server mode
-
-```bash
-clawdi mcp                 # runs the MCP server (stdio transport)
-```
-
-Agents don't run this directly — they spawn it via their MCP registration from `clawdi setup`. Listed here for debugging.
-
----
-
-## Daily workflow (what you'll actually do)
-
-1. Morning: open Claude Code / Codex in a project. They're already connected from the one-time `clawdi setup`.
-2. Work as usual. When you tell Claude "remember that the user prefers X", it calls `memory_add`; when you later ask "what do I usually X?" in a fresh session, it calls `memory_search` automatically.
-3. Before knocking off: `clawdi push` (or set up a cron) to push your sessions to the cloud so they appear in the web dashboard for you to review later.
-
----
-
-## Command reference (cheat sheet)
-
-| Command | What it does |
-|---|---|
-| `clawdi auth login` / `logout` / `status` | Authenticate the CLI / inspect auth state |
-| `clawdi config list / get / set / unset` | Read or change CLI config (`apiUrl`, etc.) |
-| `clawdi setup [--agent <type>]` | Register local agent(s), install MCP + clawdi skill |
-| `clawdi push` | Push sessions + skills to the cloud |
-| `clawdi pull` | Pull skills from the cloud to local agent dirs |
-| `clawdi vault set / list / import` | Store / list / bulk-import secrets |
-| `clawdi skill list / add / install / rm` | Manage skills (cloud + local) |
-| `clawdi memory list / search / add / rm` (`mem` alias) | Cross-agent long-term memory |
-| `clawdi mcp` | Start MCP stdio server (invoked by agents) |
-| `clawdi run -- <cmd>` | Run a command with vault secrets injected |
-
-All subcommands accept `--help` for full options.
-
----
 
 ## Troubleshooting
 
-**`clawdi auth login` fails with 401**
-Your API key is wrong or revoked. Re-create one from the web dashboard → user menu → API Keys.
+Run the diagnostic first:
 
-**Backend crashes on startup: "extension vector is not available"**
-`pgvector` isn't installed in your PostgreSQL. On macOS: `brew install pgvector` and restart Postgres.
+```bash
+clawdi doctor
+```
 
-**Memory search in Claude Code returns empty for obvious queries**
-Restart Claude Code so it re-fetches MCP tool schemas from the latest `clawdi mcp`. If it still misses, the query may genuinely not match anything embedded — check `clawdi memory search "<query>"` directly to see what the API returns.
+Common issues:
 
-**First `memory_search` / `memory_add` after a backend restart is slow (~10s)**
-Local embedding mode (default) lazy-loads the ~1GB mpnet model on first use. Subsequent calls are <500ms. To skip the local model, set `MEMORY_EMBEDDING_MODE=api` in `backend/.env` and provide an OpenAI / OpenRouter key.
+- **`clawdi auth login` fails** - Re-run login, or use `clawdi auth login --manual` in headless environments.
+- **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, or `--agent openclaw`.
+- **Memory search is empty** - Add a memory first with `clawdi memory add "..."`, then verify with `clawdi memory search "..."`.
+- **Local backend cannot start because `vector` is missing** - Install `pgvector` for your PostgreSQL 16 instance, or use the included Docker Compose database.
+- **Agent MCP tools look stale** - Run `clawdi setup --agent <type>` again and restart the agent.
 
-**`clawdi push` says "No supported agent detected"**
-Run `clawdi setup` first, or pass `--agent claude_code` explicitly if auto-detection is finding the wrong directory.
+## License
 
-**Claude Code's `memory_search` description looks stale**
-You may need to `clawdi setup --agent claude_code` again — it'll now overwrite the installed skill with the latest bundled version.
-
----
-
-## Contributing
-
-- Code comments in English
-- Biome for JS/TS (`bun run check`), Ruff for Python (`pdm lint`)
-- Backend type hints and async/await, no sync DB calls in request handlers
-- Web app follows the Next.js 16 conventions already in the repo — check `CLAUDE.md` and existing files before introducing new patterns
-- `bun run check` and `bun run typecheck` must stay green before you push; a `lefthook` pre-commit hook auto-runs `biome check --write` on staged files
+MIT. See [`LICENSE`](LICENSE).

@@ -1,6 +1,7 @@
 {
 	"name": "clawdi",
 	"private": true,
+	"license": "MIT",
 	"workspaces": [
 		"apps/*",
 		"packages/*"
