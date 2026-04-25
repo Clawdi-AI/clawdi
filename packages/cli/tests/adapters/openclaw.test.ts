@@ -167,6 +167,58 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect(ids).toEqual(["oc-financial-001", "oc-session-001"]);
 	});
 
+	it("handles production schema: composite index keys + absolute sessionFile", async () => {
+		// Mirror what real openclaw writes: index keyed by `agent:main:…`
+		// composite strings, with the UUID in `entry.sessionId` and an
+		// absolute `sessionFile` path. Earlier code used the index key as
+		// `localSessionId` and `path.join`-ed the absolute sessionFile onto
+		// the sessions dir, which produced a non-existent path and silently
+		// dropped every entry.
+		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		const uuid = "11111111-2222-3333-4444-555555555555";
+		const transcriptAbs = join(sessionsDir, `${uuid}.jsonl`);
+		writeFileSync(
+			join(sessionsDir, "sessions.json"),
+			JSON.stringify({
+				"agent:main:main": {
+					sessionId: uuid,
+					updatedAt: 1776247205000,
+					sessionFile: transcriptAbs,
+					model: "claude-opus-4-7",
+					inputTokens: 4,
+					outputTokens: 2,
+					cacheRead: 1,
+					displayName: "Telegram chat",
+					acp: { cwd: "/Users/fixture/project", lastActivityAt: 1776247205000 },
+				},
+			}),
+		);
+		writeFileSync(
+			transcriptAbs,
+			[
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247200000,
+					message: { role: "user", content: "hi" },
+				}),
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247205000,
+					message: { role: "assistant", content: "hello" },
+				}),
+			].join("\n"),
+		);
+
+		const a = new OpenClawAdapter();
+		const sessions = await a.collectSessions();
+		expect(sessions).toHaveLength(1);
+		const s = sessions[0]!;
+		// localSessionId must be the UUID, not the composite index key.
+		expect(s.localSessionId).toBe(uuid);
+		expect(s.messageCount).toBe(2);
+		expect(s.summary).toBe("Telegram chat");
+	});
+
 	it("OPENCLAW_AGENT_ID still narrows to a single agent", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		process.env.OPENCLAW_AGENT_ID = "financial";

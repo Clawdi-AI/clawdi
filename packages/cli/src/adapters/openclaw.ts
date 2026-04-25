@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { extractTarGz } from "../lib/tar";
 import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
@@ -60,8 +60,14 @@ function listAgentDirs(): string[] {
 }
 
 interface SessionEntry {
-	sessionId: string;
+	// Real openclaw indexes key entries by composite strings like
+	// `agent:main:main` or `agent:main:telegram:group:-100…:topic:1`, with
+	// the actual UUID stored in this field. Treat the index key as a label
+	// only and trust `sessionId` for the localSessionId we publish.
+	sessionId?: string;
 	updatedAt?: number;
+	// May be absolute (production openclaw writes the full `/data/openclaw/…`
+	// path) or relative to the agent's `sessions/` dir (older fixtures).
 	sessionFile?: string;
 	model?: string;
 	modelProvider?: string;
@@ -164,7 +170,11 @@ export class OpenClawAdapter implements AgentAdapter {
 				continue;
 			}
 
-			for (const [sessionId, entry] of Object.entries(index)) {
+			for (const [indexKey, entry] of Object.entries(index)) {
+				// Prefer the entry's own `sessionId` (real UUID); fall back to
+				// the index key only for legacy fixtures that use the UUID as
+				// the key directly.
+				const sessionId = entry.sessionId ?? indexKey;
 				const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 				if (!updatedAt) continue;
 				if (updatedAt < sinceMs) continue;
@@ -176,7 +186,9 @@ export class OpenClawAdapter implements AgentAdapter {
 				}
 
 				const transcriptPath = entry.sessionFile
-					? join(sessionsDirForAgent, entry.sessionFile)
+					? isAbsolute(entry.sessionFile)
+						? entry.sessionFile
+						: join(sessionsDirForAgent, entry.sessionFile)
 					: join(sessionsDirForAgent, `${sessionId}.jsonl`);
 
 				const messages: SessionMessage[] = [];
@@ -186,7 +198,15 @@ export class OpenClawAdapter implements AgentAdapter {
 				if (entry.model) modelsUsed.add(entry.model);
 				let currentModel = entry.model ?? null;
 
-				if (existsSync(transcriptPath)) {
+				if (!existsSync(transcriptPath)) {
+					if (entry.sessionFile) {
+						// Index points at an absolute or relative transcript that we
+						// can't reach from this process (different mount, stale path,
+						// path-join bug regression). Surface it instead of silently
+						// dropping the session.
+						console.warn(`[openclaw] transcript missing for ${sessionId}: ${transcriptPath}`);
+					}
+				} else {
 					try {
 						const lines = readFileSync(transcriptPath, "utf-8").split("\n").filter(Boolean);
 						for (const line of lines) {
