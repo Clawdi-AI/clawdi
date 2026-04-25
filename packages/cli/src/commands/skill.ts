@@ -4,23 +4,14 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, ApiError } from "../lib/api-client";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { tarSingleFile, tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
-
-interface SkillRow {
-	skill_key: string;
-	version?: number;
-	source?: string;
-	source_repo?: string;
-	file_count?: number;
-	name?: string;
-	description?: string;
-}
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -54,7 +45,8 @@ function countFiles(dir: string): number {
 export async function skillList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const skills = await api.get<SkillRow[]>("/api/skills");
+	const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+	const skills = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(skills, null, 2));
@@ -73,7 +65,11 @@ export async function skillList(opts: { json?: boolean } = {}) {
 		const files = s.file_count ? chalk.gray(` ${s.file_count} files`) : "";
 		console.log(`  ${chalk.white(key)}  v${s.version ?? "?"}  ${chalk.gray(src)}${repo}${files}`);
 	}
-	console.log(chalk.gray(`\n  ${skills.length} skill${skills.length === 1 ? "" : "s"} total`));
+	const summary =
+		page.total > skills.length
+			? `${skills.length} of ${page.total} skills (first ${skills.length})`
+			: `${skills.length} skill${skills.length === 1 ? "" : "s"} total`;
+	console.log(chalk.gray(`\n  ${summary}`));
 }
 
 export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
@@ -135,12 +131,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
 		}
 	}
 
-	const result = await api.uploadFile<{ skill_key: string; version: number; file_count: number }>(
-		"/api/skills/upload",
-		{ skill_key: skillKey },
-		tarBytes,
-		`${skillKey}.tar.gz`,
-	);
+	const result = await api.uploadSkill(skillKey, tarBytes, `${skillKey}.tar.gz`);
 
 	console.log(
 		chalk.green(
@@ -159,7 +150,7 @@ export async function skillInstall(
 	try {
 		parsed = parseSource(repoInput);
 	} catch (e) {
-		console.log(chalk.red((e as Error).message));
+		console.log(chalk.red(errMessage(e)));
 		process.exit(1);
 	}
 
@@ -189,12 +180,7 @@ export async function skillInstall(
 
 	const api = new ApiClient();
 
-	const installResult = await api.post<{
-		skill_key: string;
-		name: string;
-		version: number;
-		file_count: number;
-	}>("/api/skills/install", { repo, path });
+	const installResult = unwrap(await api.POST("/api/skills/install", { body: { repo, path } }));
 
 	// Select adapters to install to.
 	let adapters = getRegisteredAdapters();
@@ -231,7 +217,7 @@ export async function skillInstall(
 			tarBytes = await api.getBytes(`/api/skills/${installResult.skill_key}/download`);
 		} catch (e) {
 			console.log(
-				chalk.red(`✗ Download failed: ${e instanceof ApiError ? e.message : (e as Error).message}`),
+				chalk.red(`✗ Download failed: ${e instanceof ApiError ? e.message : errMessage(e)}`),
 			);
 			console.log(
 				chalk.gray(
@@ -248,8 +234,8 @@ export async function skillInstall(
 				const skillDir = dirname(adapter.getSkillPath(installResult.skill_key));
 				console.log(chalk.green(`  ✓ ${label} → ${skillDir}/ (${installResult.file_count} files)`));
 			} catch (e) {
-				failed.push({ agent: adapter.agentType, error: (e as Error).message });
-				console.log(chalk.red(`  ✗ ${label} failed: ${(e as Error).message}`));
+				failed.push({ agent: adapter.agentType, error: errMessage(e) });
+				console.log(chalk.red(`  ✗ ${label} failed: ${errMessage(e)}`));
 			}
 		}
 	}
@@ -285,7 +271,7 @@ export async function skillInstall(
 export async function skillRm(key: string) {
 	requireAuth();
 	const api = new ApiClient();
-	await api.delete(`/api/skills/${encodeURIComponent(key)}`);
+	unwrap(await api.DELETE("/api/skills/{skill_key}", { params: { path: { skill_key: key } } }));
 	console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
 }
 

@@ -1,19 +1,34 @@
 "use client";
 
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Key, Plus, Settings, Trash2, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DataTable } from "@/components/ui/data-table";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiError, apiFetch } from "@/lib/api";
-import type { ApiKey, ApiKeyCreated } from "@/lib/api-schemas";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { type ApiError, unwrap, useApi } from "@/lib/api";
+import type { ApiKey } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
 
 type Section = "general" | "profile" | "api-keys";
@@ -24,13 +39,15 @@ const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
 
-interface SettingsDialogProps {
+export function SettingsDialog({
+	open,
+	onClose,
+	initialSection = "general",
+}: {
 	open: boolean;
 	onClose: () => void;
 	initialSection?: Section;
-}
-
-export function SettingsDialog({ open, onClose, initialSection = "general" }: SettingsDialogProps) {
+}) {
 	const [section, setSection] = useState<Section>(initialSection);
 
 	useEffect(() => {
@@ -40,41 +57,45 @@ export function SettingsDialog({ open, onClose, initialSection = "general" }: Se
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent
-				className="flex h-[min(680px,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+				className="flex h-[85vh] max-h-[640px] w-[calc(100%-1rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:h-[560px] sm:max-h-[85vh] sm:max-w-3xl"
 				showCloseButton
 			>
-				<DialogHeader className="border-b px-5 py-3">
-					<DialogTitle className="text-base">Settings</DialogTitle>
+				<DialogHeader className="sr-only">
+					<DialogTitle>Settings</DialogTitle>
+					<DialogDescription>
+						Account, profile, and API key management for Clawdi Cloud.
+					</DialogDescription>
 				</DialogHeader>
 
-				<div className="flex min-h-0 flex-1">
-					{/* Section nav */}
+				<div className="flex min-h-0 flex-1 flex-col sm:grid sm:grid-cols-[200px_1fr]">
 					<nav
 						aria-label="Settings sections"
-						className="w-[180px] shrink-0 space-y-0.5 border-r p-2"
+						className="flex shrink-0 gap-1 border-b p-2 overflow-x-auto sm:flex-col sm:border-r sm:border-b-0 sm:p-3 sm:overflow-x-visible"
 					>
 						{SECTIONS.map((s) => (
-							<Button
+							<button
 								key={s.id}
-								variant="ghost"
-								size="sm"
+								type="button"
 								onClick={() => setSection(s.id)}
 								className={cn(
-									"w-full justify-start font-normal",
-									section === s.id && "bg-muted font-medium text-foreground",
+									"flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-left transition-colors",
+									section === s.id
+										? "bg-accent text-accent-foreground"
+										: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
 								)}
 							>
-								<s.icon />
+								<s.icon className="size-4" />
 								{s.label}
-							</Button>
+							</button>
 						))}
 					</nav>
 
-					{/* Panel */}
-					<div className="flex-1 overflow-y-auto p-6">
-						{section === "general" ? <GeneralPanel /> : null}
-						{section === "profile" ? <ProfilePanel /> : null}
-						{section === "api-keys" ? <ApiKeysPanel /> : null}
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+						<div className="flex flex-col gap-6 px-6 py-6">
+							{section === "general" ? <GeneralPanel /> : null}
+							{section === "profile" ? <ProfilePanel /> : null}
+							{section === "api-keys" ? <ApiKeysPanel /> : null}
+						</div>
 					</div>
 				</div>
 			</DialogContent>
@@ -82,68 +103,96 @@ export function SettingsDialog({ open, onClose, initialSection = "general" }: Se
 	);
 }
 
-function GeneralPanel() {
+// ---------------------------------------------------------------------------
+// Section header — consistent h3 + description across panels.
+// ---------------------------------------------------------------------------
+
+function PanelHeader({ title, description }: { title: string; description?: React.ReactNode }) {
 	return (
-		<div className="space-y-4">
-			<div>
-				<h3 className="text-lg font-medium">General</h3>
-				<p className="mt-1 text-sm text-muted-foreground">
-					General settings for your Clawdi Cloud account.
-				</p>
-			</div>
+		<div className="space-y-1">
+			<h3 className="text-base font-semibold">{title}</h3>
+			{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
 		</div>
 	);
 }
+
+// ---------------------------------------------------------------------------
+// General — theme + app info. Keeps the panel from feeling empty.
+// ---------------------------------------------------------------------------
+
+function GeneralPanel() {
+	const { theme, setTheme } = useTheme();
+
+	return (
+		<>
+			<PanelHeader title="General" />
+			<div className="flex items-center justify-between">
+				<div className="space-y-0.5">
+					<Label htmlFor="settings-theme">Theme</Label>
+					<p className="text-xs text-muted-foreground">
+						Light, dark, or follow the system preference.
+					</p>
+				</div>
+				<Select value={theme ?? "system"} onValueChange={setTheme}>
+					<SelectTrigger id="settings-theme" className="w-[160px]">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="light">Light</SelectItem>
+						<SelectItem value="dark">Dark</SelectItem>
+						<SelectItem value="system">System</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Profile — read-only for now; Clerk owns account editing.
+// ---------------------------------------------------------------------------
 
 function ProfilePanel() {
 	const { user } = useUser();
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 
 	return (
-		<div className="space-y-4">
-			<div>
-				<h3 className="text-lg font-medium">Profile</h3>
-			</div>
+		<>
+			<PanelHeader title="Profile" />
 			<div className="flex items-center gap-4">
 				<Avatar className="size-14">
 					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
 					<AvatarFallback>{initial}</AvatarFallback>
 				</Avatar>
-				<div>
-					<div className="font-medium">{user?.fullName ?? "Anonymous"}</div>
+				<div className="space-y-0.5">
+					<div className="text-sm font-medium">{user?.fullName ?? "Anonymous"}</div>
 					<div className="text-sm text-muted-foreground">
 						{user?.primaryEmailAddress?.emailAddress}
 					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
 
+// ---------------------------------------------------------------------------
+// API Keys — CLI-facing bearer tokens.
+// ---------------------------------------------------------------------------
+
 function ApiKeysPanel() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
 
 	const { data: keys, isLoading } = useQuery({
 		queryKey: ["api-keys"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ApiKey[]>("/api/auth/keys", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/auth/keys")),
 	});
 
 	const createKey = useMutation({
-		mutationFn: async (label: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ApiKeyCreated>("/api/auth/keys", token, {
-				method: "POST",
-				body: JSON.stringify({ label }),
-			});
-		},
+		mutationFn: async (label: string) =>
+			unwrap(await api.POST("/api/auth/keys", { body: { label } })),
 		onSuccess: (data) => {
 			setCreatedKey(data.raw_key);
 			setNewLabel("");
@@ -153,11 +202,12 @@ function ApiKeysPanel() {
 	});
 
 	const revokeKey = useMutation({
-		mutationFn: async (keyId: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/auth/keys/${keyId}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (keyId: string) =>
+			unwrap(
+				await api.DELETE("/api/auth/keys/{key_id}", {
+					params: { path: { key_id: keyId } },
+				}),
+			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 			toast.success("Key revoked");
@@ -165,20 +215,89 @@ function ApiKeysPanel() {
 		onError: (e: ApiError) => toast.error("Couldn't revoke key", { description: e.detail }),
 	});
 
+	const columns = useMemo<ColumnDef<ApiKey>[]>(
+		() => [
+			{
+				accessorKey: "label",
+				header: "Label",
+				cell: ({ row }) => (
+					<div className="flex items-center gap-2">
+						<span className="font-medium">{row.original.label}</span>
+						{row.original.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
+					</div>
+				),
+			},
+			{
+				accessorKey: "key_prefix",
+				header: "Prefix",
+				cell: ({ row }) => (
+					<span className="font-mono text-xs text-muted-foreground">
+						{row.original.key_prefix}…
+					</span>
+				),
+			},
+			{
+				accessorKey: "created_at",
+				header: "Created",
+				cell: ({ row }) => (
+					<span className="text-xs text-muted-foreground">
+						{new Date(row.original.created_at).toLocaleDateString()}
+					</span>
+				),
+			},
+			{
+				accessorKey: "last_used_at",
+				header: "Last used",
+				cell: ({ row }) =>
+					row.original.last_used_at ? (
+						<span className="text-xs text-muted-foreground">
+							{new Date(row.original.last_used_at).toLocaleDateString()}
+						</span>
+					) : (
+						<span className="text-xs text-muted-foreground">—</span>
+					),
+			},
+			{
+				id: "actions",
+				header: "",
+				cell: ({ row }) =>
+					!row.original.revoked_at ? (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							onClick={() => revokeKey.mutate(row.original.id)}
+							disabled={revokeKey.isPending}
+							aria-label="Revoke key"
+							className="text-muted-foreground hover:text-destructive"
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					) : null,
+				size: 40,
+			},
+		],
+		[revokeKey],
+	);
+
 	return (
-		<div className="space-y-4">
-			<div>
-				<h3 className="text-lg font-medium">API Keys</h3>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Create API keys for the CLI. Run{" "}
-					<code className="rounded bg-muted px-1 py-0.5 text-xs">clawdi login</code> and paste the
-					key.
-				</p>
-			</div>
+		<>
+			<PanelHeader
+				title="API Keys"
+				description={
+					<>
+						Create bearer keys for the CLI. Run{" "}
+						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+							clawdi auth login
+						</code>{" "}
+						and paste the key when prompted.
+					</>
+				}
+			/>
 
 			{/* Create form */}
 			<form
-				className="space-y-2"
+				className="flex gap-2 border-t pt-4"
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (newLabel) createKey.mutate(newLabel);
@@ -187,23 +306,22 @@ function ApiKeysPanel() {
 				<Label htmlFor="new-key-label" className="sr-only">
 					New API key label
 				</Label>
-				<div className="flex gap-2">
-					<Input
-						id="new-key-label"
-						value={newLabel}
-						onChange={(e) => setNewLabel(e.target.value)}
-						placeholder="Key label (e.g. my-laptop)"
-					/>
-					<Button type="submit" disabled={!newLabel || createKey.isPending}>
-						<Plus />
-						Create
-					</Button>
-				</div>
+				<Input
+					id="new-key-label"
+					value={newLabel}
+					onChange={(e) => setNewLabel(e.target.value)}
+					placeholder="Key label (e.g. my-laptop)"
+					className="flex-1"
+				/>
+				<Button type="submit" disabled={!newLabel || createKey.isPending}>
+					<Plus />
+					Create
+				</Button>
 			</form>
 
 			{/* Created key banner */}
 			{createdKey ? (
-				<div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
+				<div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-4">
 					<div className="text-sm font-medium text-primary">
 						Key created — copy it now, it won't be shown again.
 					</div>
@@ -227,48 +345,12 @@ function ApiKeysPanel() {
 				</div>
 			) : null}
 
-			{/* Key list */}
-			{isLoading ? (
-				<div className="space-y-2">
-					{[1, 2].map((i) => (
-						<Skeleton key={i} className="h-14 w-full" />
-					))}
-				</div>
-			) : keys?.length ? (
-				<div className="divide-y rounded-lg border">
-					{keys.map((k) => (
-						<div key={k.id} className="flex items-center justify-between gap-3 px-4 py-3">
-							<div className="min-w-0">
-								<div className="flex items-center gap-2 text-sm font-medium">
-									<span className="truncate">{k.label}</span>
-									{k.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
-								</div>
-								<div className="mt-0.5 truncate text-xs text-muted-foreground">
-									{k.key_prefix}… · Created {new Date(k.created_at).toLocaleDateString()}
-									{k.last_used_at
-										? ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`
-										: ""}
-								</div>
-							</div>
-							{!k.revoked_at ? (
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									onClick={() => revokeKey.mutate(k.id)}
-									disabled={revokeKey.isPending}
-									aria-label="Revoke key"
-									className="text-muted-foreground hover:text-destructive"
-								>
-									<Trash2 />
-								</Button>
-							) : null}
-						</div>
-					))}
-				</div>
-			) : (
-				<p className="text-sm text-muted-foreground">No API keys yet.</p>
-			)}
-		</div>
+			<DataTable
+				columns={columns}
+				data={keys ?? []}
+				isLoading={isLoading}
+				emptyMessage="No API keys yet."
+			/>
+		</>
 	);
 }

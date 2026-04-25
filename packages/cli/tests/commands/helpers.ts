@@ -27,19 +27,26 @@ export function mockFetch(
 	const captured: CapturedRequest[] = [];
 
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		// openapi-fetch passes a Request object; legacy call sites pass a
+		// string/URL + init. Normalise so either shape yields the same fields.
+		const isRequest = input instanceof Request;
 		const url =
 			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		const method = (init?.method ?? "GET").toUpperCase();
+		const method = (isRequest ? input.method : (init?.method ?? "GET")).toUpperCase();
 		const path = url.replace(/^https?:\/\/[^/]+/, "");
-		const contentType = (init?.headers as Record<string, string> | undefined)?.["Content-Type"];
-		const isMultipart = init?.body instanceof FormData;
+
+		const headers = isRequest ? input.headers : new Headers(init?.headers);
+		const contentType = headers.get("content-type") ?? "";
+		const rawBody = isRequest ? input.body : init?.body;
+		const isMultipart = rawBody instanceof FormData;
 
 		let body: unknown;
-		if (!isMultipart && typeof init?.body === "string" && contentType?.includes("json")) {
+		if (!isMultipart && contentType.includes("json")) {
 			try {
-				body = JSON.parse(init.body);
+				const text = isRequest ? await input.clone().text() : String(rawBody ?? "");
+				body = text ? JSON.parse(text) : undefined;
 			} catch {
-				body = init.body;
+				body = undefined;
 			}
 		}
 

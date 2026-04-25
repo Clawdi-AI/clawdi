@@ -33,7 +33,7 @@ Environment:
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI
 
-Docs: https://github.com/Clawdi-AI/clawdi-cloud`,
+Docs: https://github.com/Clawdi-AI/clawdi`,
 	);
 
 // ─────────────────────────────────────────────────────────────
@@ -301,7 +301,6 @@ memoryCmd
 	.option("--json", "Output as JSON")
 	.option("--limit <n>", "Max number of memories")
 	.option("--category <cat>", "Filter by category (fact/preference/pattern/decision/context)")
-	.option("--since <date>", "Only memories after this date")
 	.action(async (opts) => {
 		const { memoryList } = await import("./commands/memory.js");
 		await memoryList(opts);
@@ -313,7 +312,6 @@ memoryCmd
 	.option("--json", "Output as JSON")
 	.option("--limit <n>", "Max number of memories")
 	.option("--category <cat>", "Filter by category")
-	.option("--since <date>", "Only memories after this date")
 	.addHelpText(
 		"after",
 		'\nExamples:\n  $ clawdi memory search redis\n  $ clawdi memory search "typing styles" --limit 5',
@@ -326,9 +324,13 @@ memoryCmd
 memoryCmd
 	.command("add <content>")
 	.description("Add a memory")
-	.action(async (content) => {
+	.option(
+		"--category <cat>",
+		"One of: fact, preference, pattern, decision, context (default: fact)",
+	)
+	.action(async (content, opts) => {
 		const { memoryAdd } = await import("./commands/memory.js");
-		await memoryAdd(content);
+		await memoryAdd(content, opts);
 	});
 
 memoryCmd

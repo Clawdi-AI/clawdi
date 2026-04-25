@@ -73,6 +73,7 @@ class SessionListItemResponse(BaseModel):
     local_session_id: str
     project_path: str | None
     agent_type: str | None
+    machine_name: str | None = None
     started_at: datetime
     ended_at: datetime | None
     duration_seconds: int | None
@@ -99,7 +100,7 @@ class SessionUploadResponse(BaseModel):
 class SessionMessageResponse(BaseModel):
     """One agent message inside a session content file.
 
-    Mirrors the shape the CLI writes via `clawdi sync up` — the JSON stored
+    Mirrors the shape the CLI writes via `clawdi push` — the JSON stored
     in the file store is a list of these. Declared here so it lives in the
     OpenAPI schema and flows through to generated TS types; keeps the frontend
     from having to maintain a parallel interface.

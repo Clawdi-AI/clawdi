@@ -9,7 +9,7 @@ End-to-end guide for connecting Claude Code to Clawdi Cloud and using it day-to-
 ### 1. Log in
 
 ```bash
-$ clawdi login
+$ clawdi auth login
 To get an API key:
   1. Go to the Clawdi Cloud dashboard
   2. Open user menu → API Keys
@@ -113,17 +113,17 @@ Claude: → memory_extract()
           [empty]
 
         Found 3 candidate memories:
-        1. [preference] The user prefers pnpm over npm in the clawdi-cloud monorepo.
+        1. [preference] The user prefers pnpm over npm in the clawdi monorepo.
         2. [decision]   Clawdi chose Clerk for auth because the team already had a Clerk account.
-        3. [pattern]    All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+        3. [pattern]    All code comments in clawdi must be in English (per CLAUDE.md).
 
         Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
 
 You: save 1 and 3
 
-Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi-cloud monorepo.", category: "preference" })
+Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi monorepo.", category: "preference" })
           ✓ abc12345
-        → memory_add({ content: "All code comments in clawdi-cloud must be in English (per CLAUDE.md).", category: "pattern" })
+        → memory_add({ content: "All code comments in clawdi must be in English (per CLAUDE.md).", category: "pattern" })
           ✓ def67890
 
         Saved:
@@ -203,7 +203,7 @@ Inside Claude Code, skills become available via `/skill` or when Claude decides 
 After a day of work in Claude Code:
 
 ```bash
-$ clawdi sync up
+$ clawdi push
 Agent:   Claude Code
 Modules: sessions, skills
 
@@ -227,22 +227,22 @@ Proceed with upload? [Y/n] y
 Only sessions from the current project are pushed by default (uses `cwd` at invocation time). To sync everything:
 
 ```bash
-$ clawdi sync up --all
+$ clawdi push --all
 ```
 
 Other useful flags:
 
 ```bash
-$ clawdi sync up --modules sessions      # only sessions, skip skills
-$ clawdi sync up --since 2026-04-01      # manual cursor
-$ clawdi sync up --agent claude_code     # skip the agent picker on multi-agent machines
-$ clawdi sync up --dry-run               # preview, no uploads
+$ clawdi push --modules sessions      # only sessions, skip skills
+$ clawdi push --since 2026-04-01      # manual cursor
+$ clawdi push --agent claude_code     # skip the agent picker on multi-agent machines
+$ clawdi push --dry-run               # preview, no uploads
 ```
 
 Pull skills the other direction:
 
 ```bash
-$ clawdi sync down
+$ clawdi pull
 ```
 
 After sync, open <http://localhost:3000/sessions> in the web dashboard to browse the conversations, see tokens consumed per session, re-read Claude's responses rendered as markdown, etc.
@@ -253,7 +253,7 @@ After sync, open <http://localhost:3000/sessions> in the web dashboard to browse
 
 ```bash
 # Day 1 — bootstrap
-$ clawdi login
+$ clawdi auth login
 $ clawdi setup --agent claude_code
 # (restart Claude Code)
 
@@ -293,7 +293,7 @@ If you also have Codex / Hermes / OpenClaw installed on this machine:
 $ clawdi setup                   # auto-detects and asks to register each one
 ```
 
-Any memory you add from Claude Code is visible from every other agent you've registered, and vice-versa. `clawdi sync up` then prompts you to pick which agent's sessions/skills to push:
+Any memory you add from Claude Code is visible from every other agent you've registered, and vice-versa. `clawdi push` then prompts you to pick which agent's sessions/skills to push:
 
 ```
 Multiple agents registered. Select one:
@@ -306,7 +306,7 @@ Choice: 1
 Or skip the prompt with `--agent`:
 
 ```bash
-$ clawdi sync up --agent codex
+$ clawdi push --agent codex
 ```
 
 ---
@@ -315,11 +315,11 @@ $ clawdi sync up --agent codex
 
 | Command | Purpose |
 |---|---|
-| `clawdi login` / `logout` / `status` | Auth and state |
+| `clawdi auth login` / `logout` / `status` | Auth and state |
 | `clawdi config set apiUrl <url>` | Point CLI at a non-default backend (env: `CLAWDI_API_URL`) |
 | `clawdi setup --agent claude_code` | One-time: register Claude Code + MCP + skill |
-| `clawdi sync up` | Push sessions + skills to the cloud |
-| `clawdi sync down` | Pull skills from the cloud into Claude Code's skills dir |
+| `clawdi push` | Push sessions + skills to the cloud |
+| `clawdi pull` | Pull skills from the cloud into Claude Code's skills dir |
 | `clawdi memory list / search / add / rm` | Inspect or edit cross-agent memory (alias: `mem`) |
 | `clawdi vault set / list / import` | Manage runtime secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |
@@ -338,7 +338,7 @@ Quit Claude Code fully (`/exit` or Cmd+Q) and reopen. It caches MCP tool descrip
 **`clawdi memory list` works but Claude says "no memory found"**
 Verify Claude actually called the tool — look in your Claude Code transcript for a tool-use entry. If it didn't call: try a more specific phrasing ("what's my X?", "remember Y"). If it did call and still got nothing: the stored phrasing and query may be too far apart in semantic space; check with `clawdi memory search "<same query>"` directly.
 
-**`clawdi sync up` says "No environment registered"**
+**`clawdi push` says "No environment registered"**
 Run `clawdi setup --agent claude_code` first. It creates the `AgentEnvironment` row sync needs.
 
 **`/mcp` in Claude Code doesn't list clawdi**

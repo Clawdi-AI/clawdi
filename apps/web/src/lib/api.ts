@@ -1,7 +1,11 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+"use client";
 
-/** Build a full backend URL — use when you need raw `fetch` (e.g. streaming, non-JSON bodies). */
-export const apiUrl = (path: string): string => `${API_URL}${path}`;
+import { extractApiDetail, type paths } from "@clawdi/shared/api";
+import { useAuth } from "@clerk/nextjs";
+import createClient from "openapi-fetch";
+import { useMemo } from "react";
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export class ApiError extends Error {
 	constructor(
@@ -13,39 +17,41 @@ export class ApiError extends Error {
 	}
 }
 
-export async function apiFetch<T>(path: string, token: string, options?: RequestInit): Promise<T> {
-	const res = await fetch(apiUrl(path), {
-		...options,
-		headers: {
-			Authorization: `Bearer ${token}`,
-			"Content-Type": "application/json",
-			...options?.headers,
-		},
-	});
+/**
+ * openapi-fetch client authenticated via Clerk. Response types are inferred
+ * from the OpenAPI path + method, so call sites never pass a manual generic.
+ *
+ * Use inside a React component/hook — Clerk's `getToken` is only available
+ * in the browser tree.
+ */
+export function useApi() {
+	const { getToken } = useAuth();
+	return useMemo(() => {
+		const client = createClient<paths>({ baseUrl: API_URL });
+		client.use({
+			async onRequest({ request }) {
+				const token = await getToken();
+				if (token) request.headers.set("Authorization", `Bearer ${token}`);
+				return request;
+			},
+		});
+		return client;
+	}, [getToken]);
+}
 
-	if (!res.ok) {
-		const body = await res.text();
-		let detail = body;
-		try {
-			// FastAPI puts the human message in `detail`. 4xx from pydantic validation
-			// returns it as an array of {loc, msg, type} objects — join into a readable line.
-			const parsed = JSON.parse(body);
-			if (parsed && typeof parsed.detail === "string") {
-				detail = parsed.detail;
-			} else if (parsed && Array.isArray(parsed.detail)) {
-				detail = parsed.detail
-					.map((e: { loc?: unknown[]; msg?: string }) => {
-						const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
-						return loc ? `${loc}: ${e.msg ?? ""}` : (e.msg ?? "");
-					})
-					.filter(Boolean)
-					.join("; ");
-			}
-		} catch {
-			// body wasn't JSON — fall back to the raw text
-		}
-		throw new ApiError(res.status, detail);
+/**
+ * Unwrap an openapi-fetch result. Throws ApiError on non-2xx so TanStack
+ * Query routes it through its usual error path; returns `data` otherwise.
+ *
+ * On 2xx-with-no-body (rare: the backend always returns a typed response
+ * envelope — even DELETEs return e.g. `{status: "deleted"}`) this returns
+ * `undefined` cast to T. Callers that dereference `.foo` on a true 204
+ * will runtime-crash, which is fine: that's a contract violation, not a
+ * silently-wrong value.
+ */
+export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
+	if (result.error !== undefined) {
+		throw new ApiError(result.response.status, extractApiDetail(result.error));
 	}
-
-	return res.json() as Promise<T>;
+	return result.data as T;
 }

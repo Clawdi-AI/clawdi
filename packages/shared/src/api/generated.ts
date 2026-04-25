@@ -74,6 +74,23 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/environments/{environment_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Get Environment */
+		get: operations["get_environment_api_environments__environment_id__get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/sessions/batch": {
 		parameters: {
 			query?: never;
@@ -323,7 +340,8 @@ export interface paths {
 			path?: never;
 			cookie?: never;
 		};
-		get?: never;
+		/** Get Memory */
+		get: operations["get_memory_api_memories__memory_id__get"];
 		put?: never;
 		post?: never;
 		/** Delete Memory */
@@ -590,6 +608,36 @@ export interface paths {
 		 * @description Handle MCP JSON-RPC requests using Composio SDK directly.
 		 */
 		post: operations["mcp_proxy_post_api_mcp_proxy_post"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/search": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * Global Search
+		 * @description Fan out to each entity searcher and concat results.
+		 *
+		 *     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
+		 *     4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+		 *
+		 *     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
+		 *     the hybrid provider (FTS + trgm + optional pgvector) for quality.
+		 *
+		 *     A single failing source (e.g. the memory provider briefly unavailable)
+		 *     degrades to partial results rather than failing the whole request —
+		 *     palette UX beats strict all-or-nothing consistency here.
+		 */
+		get: operations["global_search_api_search_get"];
+		put?: never;
+		post?: never;
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -913,6 +961,73 @@ export interface components {
 			/** Created At */
 			created_at?: string | null;
 		};
+		/** Paginated[MemoryResponse] */
+		Paginated_MemoryResponse_: {
+			/** Items */
+			items: components["schemas"]["MemoryResponse"][];
+			/** Total */
+			total: number;
+			/** Page */
+			page: number;
+			/** Page Size */
+			page_size: number;
+		};
+		/** Paginated[SessionListItemResponse] */
+		Paginated_SessionListItemResponse_: {
+			/** Items */
+			items: components["schemas"]["SessionListItemResponse"][];
+			/** Total */
+			total: number;
+			/** Page */
+			page: number;
+			/** Page Size */
+			page_size: number;
+		};
+		/** Paginated[SkillSummaryResponse] */
+		Paginated_SkillSummaryResponse_: {
+			/** Items */
+			items: components["schemas"]["SkillSummaryResponse"][];
+			/** Total */
+			total: number;
+			/** Page */
+			page: number;
+			/** Page Size */
+			page_size: number;
+		};
+		/** Paginated[VaultResponse] */
+		Paginated_VaultResponse_: {
+			/** Items */
+			items: components["schemas"]["VaultResponse"][];
+			/** Total */
+			total: number;
+			/** Page */
+			page: number;
+			/** Page Size */
+			page_size: number;
+		};
+		/** SearchHit */
+		SearchHit: {
+			/**
+			 * Type
+			 * @enum {string}
+			 */
+			type: "session" | "memory" | "skill" | "vault";
+			/** Id */
+			id: string;
+			/** Title */
+			title: string;
+			/** Subtitle */
+			subtitle?: string | null;
+			/** Href */
+			href: string;
+		};
+		/** SearchResponse */
+		SearchResponse: {
+			/** Query */
+			query: string;
+			/** Results */
+			results: components["schemas"]["SearchHit"][];
+		};
 		/** SessionBatchRequest */
 		SessionBatchRequest: {
 			/** Sessions */
@@ -984,6 +1099,8 @@ export interface components {
 			project_path: string | null;
 			/** Agent Type */
 			agent_type: string | null;
+			/** Machine Name */
+			machine_name?: string | null;
 			/**
 			 * Started At
 			 * Format: date-time
@@ -1024,6 +1141,8 @@ export interface components {
 			project_path: string | null;
 			/** Agent Type */
 			agent_type: string | null;
+			/** Machine Name */
+			machine_name?: string | null;
 			/**
 			 * Started At
 			 * Format: date-time
@@ -1056,7 +1175,7 @@ export interface components {
 		 * SessionMessageResponse
 		 * @description One agent message inside a session content file.
 		 *
-		 *     Mirrors the shape the CLI writes via `clawdi sync up` — the JSON stored
+		 *     Mirrors the shape the CLI writes via `clawdi push` — the JSON stored
 		 *     in the file store is a list of these. Declared here so it lives in the
 		 *     OpenAPI schema and flows through to generated TS types; keeps the frontend
 		 *     from having to maintain a parallel interface.
@@ -1472,6 +1591,37 @@ export interface operations {
 			};
 		};
 	};
+	get_environment_api_environments__environment_id__get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				environment_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["EnvironmentResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
 	batch_create_sessions_api_sessions_batch_post: {
 		parameters: {
 			query?: never;
@@ -1508,8 +1658,16 @@ export interface operations {
 	list_sessions_api_sessions_get: {
 		parameters: {
 			query?: {
-				limit?: number;
-				offset?: number;
+				/** @description Fuzzy search on summary/project/id */
+				q?: string | null;
+				/** @description Filter by agent_type */
+				agent?: string | null;
+				/** @description Filter by agent environment */
+				environment_id?: string | null;
+				sort?: string;
+				order?: string;
+				page?: number;
+				page_size?: number;
 				since?: string | null;
 			};
 			header?: never;
@@ -1524,7 +1682,7 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["SessionListItemResponse"][];
+					"application/json": components["schemas"]["Paginated_SessionListItemResponse_"];
 				};
 			};
 			/** @description Validation Error */
@@ -1700,6 +1858,10 @@ export interface operations {
 	list_skills_api_skills_get: {
 		parameters: {
 			query?: {
+				/** @description Search name / description / skill_key */
+				q?: string | null;
+				page?: number;
+				page_size?: number;
 				include_content?: boolean;
 			};
 			header?: never;
@@ -1714,7 +1876,7 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["SkillSummaryResponse"][];
+					"application/json": components["schemas"]["Paginated_SkillSummaryResponse_"];
 				};
 			};
 			/** @description Validation Error */
@@ -1890,10 +2052,11 @@ export interface operations {
 	list_memories_api_memories_get: {
 		parameters: {
 			query?: {
-				limit?: number;
-				offset?: number;
+				page?: number;
+				page_size?: number;
 				category?: string | null;
 				q?: string | null;
+				order?: string;
 			};
 			header?: never;
 			path?: never;
@@ -1907,7 +2070,7 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["MemoryResponse"][];
+					"application/json": components["schemas"]["Paginated_MemoryResponse_"];
 				};
 			};
 			/** @description Validation Error */
@@ -1941,6 +2104,37 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["MemoryCreatedResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	get_memory_api_memories__memory_id__get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				memory_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["MemoryResponse"];
 				};
 			};
 			/** @description Validation Error */
@@ -2073,7 +2267,12 @@ export interface operations {
 	};
 	list_vaults_api_vault_get: {
 		parameters: {
-			query?: never;
+			query?: {
+				/** @description Filter by slug / name */
+				q?: string | null;
+				page?: number;
+				page_size?: number;
+			};
 			header?: never;
 			path?: never;
 			cookie?: never;
@@ -2086,7 +2285,16 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["VaultResponse"][];
+					"application/json": components["schemas"]["Paginated_VaultResponse_"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
 				};
 			};
 		};
@@ -2460,6 +2668,37 @@ export interface operations {
 				};
 				content: {
 					"application/json": unknown;
+				};
+			};
+		};
+	};
+	global_search_api_search_get: {
+		parameters: {
+			query: {
+				q: string;
+			};
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SearchResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
 				};
 			};
 		};

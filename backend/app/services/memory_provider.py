@@ -33,8 +33,15 @@ class MemoryProvider(Protocol):
     ) -> list[dict]: ...
 
     async def list_all(
-        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        category: str | None = None,
+        order: str = "desc",
     ) -> list[dict]: ...
+
+    async def count(self, user_id: str, category: str | None = None) -> int: ...
 
     async def delete(self, user_id: str, memory_id: str) -> None: ...
 
@@ -212,14 +219,28 @@ class BuiltinProvider:
         return (await self.db.execute(stmt)).all()
 
     async def list_all(
-        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        category: str | None = None,
+        order: str = "desc",
     ) -> list[dict]:
         q = select(Memory).where(Memory.user_id == uuid.UUID(user_id))
         if category:
             q = q.where(Memory.category == category)
-        q = q.order_by(Memory.created_at.desc()).limit(limit).offset(offset)
+        order_col = Memory.created_at.asc() if order == "asc" else Memory.created_at.desc()
+        q = q.order_by(order_col).limit(limit).offset(offset)
         result = await self.db.execute(q)
         return [_memory_to_dict(m) for m in result.scalars().all()]
+
+    async def count(self, user_id: str, category: str | None = None) -> int:
+        from sqlalchemy import func as sqlfunc
+
+        q = select(sqlfunc.count()).select_from(Memory).where(Memory.user_id == uuid.UUID(user_id))
+        if category:
+            q = q.where(Memory.category == category)
+        return (await self.db.execute(q)).scalar_one()
 
     async def delete(self, user_id: str, memory_id: str) -> None:
         result = await self.db.execute(
@@ -283,8 +304,15 @@ class Mem0Provider:
         return out
 
     async def list_all(
-        self, user_id: str, limit: int = 50, offset: int = 0, category: str | None = None
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        category: str | None = None,
+        order: str = "desc",  # mem0 returns in insertion order; accepted for
+        # Protocol compatibility but ignored here.
     ) -> list[dict]:
+        del order  # intentionally unused for mem0 provider
         results = self.client.get_all(user_id=user_id)
         items = results if isinstance(results, list) else results.get("results", [])
         if category:
@@ -300,6 +328,13 @@ class Mem0Provider:
             }
             for r in items[offset : offset + limit]
         ]
+
+    async def count(self, user_id: str, category: str | None = None) -> int:
+        results = self.client.get_all(user_id=user_id)
+        items = results if isinstance(results, list) else results.get("results", [])
+        if category:
+            items = [i for i in items if i.get("metadata", {}).get("category") == category]
+        return len(items)
 
     async def delete(self, user_id: str, memory_id: str) -> None:
         self.client.delete(memory_id)

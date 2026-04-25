@@ -10,13 +10,13 @@ Help the user connect to Clawdi Cloud. Follow these steps in order.
 ## Step 1: Install CLI
 
 ```bash
-bun add -g @clawdi/cli
+bun add -g clawdi
 ```
 
 If bun is not available, use npm:
 
 ```bash
-npm install -g @clawdi/cli
+npm install -g clawdi
 ```
 
 ## Step 2: Log in

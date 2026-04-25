@@ -1,8 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { ApiClient } from "../lib/api-client";
-import type { MemoryRecord } from "../lib/api-types";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
 // Minimal shape of a JSON Schema property we care about when mapping
@@ -41,7 +40,7 @@ Otherwise, present the surviving candidates to the user as a numbered list. For 
   Found 3 candidate memories:
   1. [preference] The user prefers rg over grep and fd over find for searching files in their codebase.
   2. [decision] Clawdi chose Clerk for auth because the team already had a Clerk account.
-  3. [pattern] All code comments in clawdi-cloud must be in English (per CLAUDE.md).
+  3. [pattern] All code comments in clawdi must be in English (per CLAUDE.md).
 
   Save all? Or pick (e.g. "save 1 and 3", "edit 2 to say ...", "cancel").
 
@@ -70,7 +69,7 @@ Does NOT qualify:
 
 export async function startMcpServer() {
 	if (!isLoggedIn()) {
-		process.stderr.write("Not logged in. Run `clawdi login` first.\n");
+		process.stderr.write("Not logged in. Run `clawdi auth login` first.\n");
 		process.exit(1);
 	}
 
@@ -81,7 +80,7 @@ export async function startMcpServer() {
 	const cliConfig = getConfig();
 	let mcpConfig: { mcp_url: string; mcp_token: string } | null = null;
 	try {
-		const raw = await api.get<{ mcp_url: string; mcp_token: string }>("/api/connectors/mcp-config");
+		const raw = unwrap(await api.GET("/api/connectors/mcp-config"));
 		// Backend returns localhost URL which may not work in containers;
 		// use the CLI's configured apiUrl instead
 		raw.mcp_url = `${cliConfig.apiUrl}/api/mcp/proxy`;
@@ -118,7 +117,7 @@ export async function startMcpServer() {
 	}
 
 	const server = new McpServer({
-		name: "clawdi-cloud",
+		name: "clawdi",
 		version: "0.0.1",
 	});
 
@@ -137,8 +136,10 @@ export async function startMcpServer() {
 		},
 		async ({ query, limit }) => {
 			try {
-				const results = await api.get<MemoryRecord[]>(
-					`/api/memories?q=${encodeURIComponent(query)}&limit=${limit ?? 10}`,
+				const { items: results } = unwrap(
+					await api.GET("/api/memories", {
+						params: { query: { q: query, page_size: limit ?? 10 } },
+					}),
 				);
 				return {
 					content: [
@@ -177,10 +178,11 @@ export async function startMcpServer() {
 		},
 		async ({ content, category }) => {
 			try {
-				const result = await api.post<{ id: string }>("/api/memories", {
-					content,
-					category: category ?? "fact",
-				});
+				const result = unwrap(
+					await api.POST("/api/memories", {
+						body: { content, category: category ?? "fact", source: "mcp" },
+					}),
+				);
 				return {
 					content: [
 						{

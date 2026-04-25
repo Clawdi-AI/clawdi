@@ -3,8 +3,10 @@ import { dirname } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
+import type { SkillSummary } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
+import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { selectAdapter } from "../lib/select-adapter";
@@ -54,12 +56,13 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 
 	const api = new ApiClient();
 
-	let cloudSkills: Array<{ skill_key: string; name: string }> = [];
+	let cloudSkills: SkillSummary[] = [];
 
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching from cloud...");
 	if (modules.includes("skills")) {
-		cloudSkills = await api.get("/api/skills");
+		const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+		cloudSkills = page.items;
 	}
 	fetchSpinner.stop(
 		`Found ${cloudSkills.length} skill${cloudSkills.length === 1 ? "" : "s"} in cloud`,
@@ -107,7 +110,7 @@ export async function pull(opts: { modules?: string; dryRun?: boolean; agent?: s
 			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 			pulled++;
 		} catch (e) {
-			p.log.warn(`${safeKey} failed: ${(e as Error).message}`);
+			p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
 		}
 	}
 	p.outro(chalk.green(`✓ Pulled ${pulled} skill${pulled === 1 ? "" : "s"}`));

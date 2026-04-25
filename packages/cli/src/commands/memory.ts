@@ -1,14 +1,8 @@
 import chalk from "chalk";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
+import type { Memory } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata } from "../lib/sanitize";
-
-interface MemoryRow {
-	id: string;
-	content: string;
-	category?: string;
-	created_at: string;
-}
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -17,29 +11,30 @@ function requireAuth() {
 	}
 }
 
-function buildQuery(opts: {
+interface ListOpts {
+	json?: boolean;
+	// `limit` is kept for CLI-flag compatibility; the backend names it `page_size`.
 	limit?: string;
 	category?: string;
-	since?: string;
 	q?: string;
-}): string {
-	const params = new URLSearchParams();
-	if (opts.q) params.set("q", opts.q);
-	if (opts.limit) params.set("limit", opts.limit);
-	if (opts.category) params.set("category", opts.category);
-	if (opts.since) params.set("since", opts.since);
-	const qs = params.toString();
-	return qs ? `?${qs}` : "";
 }
 
-function printRows(memories: MemoryRow[], short: boolean) {
+function buildQuery(opts: ListOpts) {
+	return {
+		q: opts.q || undefined,
+		page_size: opts.limit ? Number(opts.limit) : undefined,
+		category: opts.category || undefined,
+	};
+}
+
+function printRows(memories: Memory[], short: boolean) {
 	for (const m of memories) {
 		const content = sanitizeMetadata(m.content);
 		const id = chalk.gray(m.id.slice(0, 8));
 		if (short) {
 			console.log(`  ${id}  ${chalk.white(content.slice(0, 100))}`);
 		} else {
-			const date = new Date(m.created_at).toLocaleDateString();
+			const date = m.created_at ? new Date(m.created_at).toLocaleDateString() : "";
 			const cat = m.category ? sanitizeMetadata(m.category) : "";
 			console.log(
 				`  ${id}  ${chalk.white(content.slice(0, 80))}  ${chalk.gray(cat)}  ${chalk.gray(date)}`,
@@ -48,12 +43,11 @@ function printRows(memories: MemoryRow[], short: boolean) {
 	}
 }
 
-export async function memoryList(
-	opts: { json?: boolean; limit?: string; category?: string; since?: string } = {},
-) {
+export async function memoryList(opts: ListOpts = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<MemoryRow[]>(`/api/memories${buildQuery(opts)}`);
+	const page = unwrap(await api.GET("/api/memories", { params: { query: buildQuery(opts) } }));
+	const memories = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));
@@ -66,18 +60,16 @@ export async function memoryList(
 	}
 
 	printRows(memories, false);
-	console.log(
-		chalk.gray(`\n  ${memories.length} memor${memories.length === 1 ? "y" : "ies"} total`),
-	);
+	console.log(chalk.gray(`\n  ${memories.length} of ${page.total} memories`));
 }
 
-export async function memorySearch(
-	query: string,
-	opts: { json?: boolean; limit?: string; category?: string; since?: string } = {},
-) {
+export async function memorySearch(query: string, opts: ListOpts = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const memories = await api.get<MemoryRow[]>(`/api/memories${buildQuery({ ...opts, q: query })}`);
+	const page = unwrap(
+		await api.GET("/api/memories", { params: { query: buildQuery({ ...opts, q: query }) } }),
+	);
+	const memories = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));
@@ -93,16 +85,38 @@ export async function memorySearch(
 	console.log(chalk.gray(`\n  ${memories.length} result${memories.length === 1 ? "" : "s"}`));
 }
 
-export async function memoryAdd(content: string) {
+const VALID_CATEGORIES = ["fact", "preference", "pattern", "decision", "context"] as const;
+type MemoryCategory = (typeof VALID_CATEGORIES)[number];
+
+export async function memoryAdd(content: string, opts: { category?: string } = {}) {
 	requireAuth();
+
+	const category: MemoryCategory = (VALID_CATEGORIES as readonly string[]).includes(
+		opts.category ?? "",
+	)
+		? (opts.category as MemoryCategory)
+		: "fact";
+
+	if (opts.category && category === "fact" && opts.category !== "fact") {
+		console.log(
+			chalk.yellow(
+				`⚠ Unknown category "${opts.category}". Valid: ${VALID_CATEGORIES.join(", ")}. Defaulting to "fact".`,
+			),
+		);
+	}
+
 	const api = new ApiClient();
-	const result = await api.post<{ id: string }>("/api/memories", { content });
-	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)}`));
+	const result = unwrap(
+		await api.POST("/api/memories", {
+			body: { content, category, source: "manual" },
+		}),
+	);
+	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)} (${category})`));
 }
 
 export async function memoryRm(id: string) {
 	requireAuth();
 	const api = new ApiClient();
-	await api.delete(`/api/memories/${id}`);
+	unwrap(await api.DELETE("/api/memories/{memory_id}", { params: { path: { memory_id: id } } }));
 	console.log(chalk.green("✓ Deleted memory"));
 }

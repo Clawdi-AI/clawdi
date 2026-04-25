@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-	transpilePackages: ["@clawdi-cloud/shared"],
+	transpilePackages: ["@clawdi/shared"],
 	images: {
 		remotePatterns: [{ hostname: "img.clerk.com" }],
 	},

@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2Off, Loader2, Lock, Plug, PlugZap, Search, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
@@ -13,8 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { ConnectorApp, ConnectorConnection, ConnectorTool } from "@/lib/api-schemas";
+import { unwrap, useApi } from "@/lib/api";
+import type { ConnectorTool } from "@/lib/api-schemas";
 import { cn, errorMessage } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
@@ -27,40 +26,40 @@ function formatName(raw: string): string {
 
 export default function ConnectorDetailPage() {
 	const { name } = useParams<{ name: string }>();
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 
 	const { data: apps, isLoading: isAppsLoading } = useQuery({
 		queryKey: ["available-apps"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectorApp[]>("/api/connectors/available", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/connectors/available")),
 	});
 
 	const { data: connections, isLoading: isConnectionsLoading } = useQuery({
 		queryKey: ["connections"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectorConnection[]>("/api/connectors", token);
-		},
+		queryFn: async () => unwrap(await api.GET("/api/connectors")),
 	});
 
 	const { data: tools, isLoading: isToolsLoading } = useQuery({
 		queryKey: ["connector-tools", name],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<ConnectorTool[]>(`/api/connectors/${name}/tools`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/connectors/{app_name}/tools", {
+					params: { path: { app_name: name } },
+				}),
+			),
 	});
 
-	// Track OAuth polling timers so we can clean up on unmount.
+	// Track OAuth polling timers + a cancelled flag. The flag covers a race
+	// where the mutation's `onSuccess` fires after this page has already
+	// unmounted — without it, the first `setTimeout` would register *after*
+	// the cleanup ran and the poll chain would escape, continuing to
+	// invalidate queries for a component no one is watching.
 	const pollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+	const pollCancelled = useRef(false);
 	useEffect(() => {
+		pollCancelled.current = false;
 		return () => {
+			pollCancelled.current = true;
 			for (const t of pollTimers.current) clearTimeout(t);
 			pollTimers.current = [];
 		};
@@ -68,21 +67,22 @@ export default function ConnectorDetailPage() {
 
 	const connectApp = useMutation({
 		mutationFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			const result = await apiFetch<{ connect_url: string }>(
-				`/api/connectors/${name}/connect`,
-				token,
-				{ method: "POST", body: JSON.stringify({}) },
+			const result = unwrap(
+				await api.POST("/api/connectors/{app_name}/connect", {
+					params: { path: { app_name: name } },
+					body: {},
+				}),
 			);
 			window.open(result.connect_url, "_blank", "noopener,noreferrer");
 		},
 		onSuccess: () => {
-			// Poll for connection status — user may take time to complete OAuth
+			// Poll for connection status — user may take time to complete OAuth.
+			if (pollCancelled.current) return;
 			let attempts = 0;
 			const poll = () => {
-				if (attempts++ >= 12) return;
+				if (pollCancelled.current || attempts++ >= 12) return;
 				const id = setTimeout(() => {
+					if (pollCancelled.current) return;
 					queryClient.invalidateQueries({ queryKey: ["connections"] });
 					poll();
 				}, 5000);
@@ -94,13 +94,12 @@ export default function ConnectorDetailPage() {
 	});
 
 	const disconnectApp = useMutation({
-		mutationFn: async (connectionId: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/connectors/${connectionId}`, token, {
-				method: "DELETE",
-			});
-		},
+		mutationFn: async (connectionId: string) =>
+			unwrap(
+				await api.DELETE("/api/connectors/{connection_id}", {
+					params: { path: { connection_id: connectionId } },
+				}),
+			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
 		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
 	});

@@ -7,7 +7,7 @@ import { CodexAdapter } from "../adapters/codex";
 import { HermesAdapter } from "../adapters/hermes";
 import { OpenClawAdapter } from "../adapters/openclaw";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, ApiError } from "../lib/api-client";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 
 interface Check {
@@ -41,7 +41,7 @@ async function checkApiReachable(): Promise<Check> {
 	}
 	try {
 		const api = new ApiClient();
-		await api.get("/api/auth/me");
+		unwrap(await api.GET("/api/auth/me"));
 		return { name: "API reachability", ok: true, detail: config.apiUrl };
 	} catch (e) {
 		const msg =
@@ -112,7 +112,7 @@ async function checkVault(): Promise<Check> {
 	}
 	try {
 		const api = new ApiClient();
-		const env = await api.post<Record<string, string>>("/api/vault/resolve");
+		const env = unwrap(await api.POST("/api/vault/resolve", {}));
 		return {
 			name: "Vault resolve",
 			ok: true,
@@ -134,7 +134,7 @@ async function checkMcp(): Promise<Check> {
 	}
 	try {
 		const api = new ApiClient();
-		await api.get("/api/connectors/mcp-config");
+		unwrap(await api.GET("/api/connectors/mcp-config"));
 		return { name: "MCP connectors", ok: true, detail: "config reachable" };
 	} catch (e) {
 		return {

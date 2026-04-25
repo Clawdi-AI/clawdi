@@ -26,10 +26,10 @@ for dev builds (`bun run dev` / `build:dev`).
 ```bash
 cd packages/cli
 bun run build          # bin/clawdi.mjs imports ../dist/index.js
-bun link               # register @clawdi/cli for linking
+bun link               # register clawdi for linking
 
 # In any other directory
-bun link @clawdi/cli
+bun link clawdi
 which clawdi           # ~/.bun/install/global/.../clawdi
 clawdi --version
 ```
@@ -40,7 +40,7 @@ executes the compiled bundle.
 Clean up:
 
 ```bash
-bun unlink @clawdi/cli    # in the other directory
+bun unlink clawdi    # in the other directory
 cd packages/cli && bun unlink   # in the package
 ```
 
@@ -53,12 +53,12 @@ workspace deps leaking into `dependencies`, …):
 ```bash
 cd packages/cli
 bun run build
-bun pm pack                                  # → clawdi-cli-0.1.0.tgz
-tar -tzf clawdi-cli-0.1.0.tgz | head   # inspect contents
-bun install -g ./clawdi-cli-0.1.0.tgz
+bun pm pack                                  # → clawdi-0.1.0.tgz
+tar -tzf clawdi-0.1.0.tgz | head   # inspect contents
+bun install -g ./clawdi-0.1.0.tgz
 clawdi --version
-bun uninstall -g @clawdi/cli
-rm clawdi-cli-*.tgz
+bun uninstall -g clawdi
+rm clawdi-*.tgz
 ```
 
 ## Install into a dockerized agent
@@ -76,7 +76,7 @@ Example with Hermes (`nousresearch/hermes-agent`). Prerequisite:
 # 0. Pack the CLI on the host.
 cd packages/cli
 bun run build
-bun pm pack                # → clawdi-cli-0.1.0.tgz
+bun pm pack                # → clawdi-0.1.0.tgz
 
 # 1. Start the container. The upstream ENTRYPOINT bootstraps
 #    $HERMES_HOME and launches the Hermes TUI as PID 1 — we leave it
@@ -101,13 +101,13 @@ docker run -dit --name hermes \
 docker exec -it hermes hermes
 
 # 3. Copy tarball in, install Bun + CLI.
-docker cp clawdi-cli-*.tgz hermes:/tmp/
+docker cp clawdi-*.tgz hermes:/tmp/
 docker exec hermes bash -lc '
   apt-get update -qq && apt-get install -y -qq curl unzip
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
   echo "export PATH=\$HOME/.bun/bin:\$PATH" >> ~/.bashrc
-  bun install -g /tmp/clawdi-cli-*.tgz
+  bun install -g /tmp/clawdi-*.tgz
 '
 
 # 4. Verify. `host.docker.internal` resolves to your host (auto on
@@ -121,7 +121,7 @@ docker exec hermes bash -lc '
 
 # 5. Cleanup.
 docker rm -f hermes
-rm clawdi-cli-*.tgz
+rm clawdi-*.tgz
 ```
 
 Two image-specific wrinkles worth knowing:
@@ -220,18 +220,72 @@ bun test tests/commands/push.test.ts  # just push regression
 bun run test:watch                    # watch mode
 ```
 
-## Release checklist (manual)
+## Releasing
 
-Before publishing `@clawdi/cli`:
+Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
+for changes under `packages/cli/` and publishes to npm when it sees a
+version bump. A merge with no version change is a no-op — the workflow
+diffs `packages/cli/package.json` against `npm view clawdi version` and
+exits early on a match.
 
-1. `bun test` passes
-2. `bun run build` produces a `dist/` that `node bin/clawdi.mjs --version` runs
-3. On a machine with each agent actually installed, run:
-   - `clawdi setup --yes` — registers every detected agent + installs the bundled `clawdi` skill + wires up MCP where possible
-   - `clawdi doctor` — expects all ✓
-   - `clawdi push --agent claude_code --dry-run` (sanity: session count looks right)
-   - `clawdi push --agent codex --dry-run`
-   - `clawdi push --agent hermes --dry-run` (will warn about no project filter; needs Bun)
-   - `clawdi push --agent openclaw --dry-run`
-4. `clawdi teardown --agent claude_code --yes` then re-run `clawdi setup --agent claude_code --yes` — verifies the inverse cleanly removes env file + bundled skill + MCP entry, and re-setup restores everything
-5. `clawdi mcp` launched from a real Claude Code `.mcp.json`; call `memory_search` and see a response
+### Bootstrap (one-time, before the workflow can do anything)
+
+npm's trusted-publisher OIDC requires the package to already exist on the
+registry before it'll accept a GitHub Action as a publisher. So the very
+first version has to be published manually:
+
+```bash
+cd packages/cli
+npm login                    # use a maintainer account that owns the org
+bun run build                # produces dist/
+npm publish --access public  # plain publish, no --provenance
+```
+
+The workflow detects this case (`npm view clawdi` returns nothing → falls
+back to `"0.0.0"`) and stays inert until the package exists. After the
+first publish, configure trusted publisher (next section) and from v0.1.1
+onward releases are automatic.
+
+### To ship a new version (after bootstrap)
+
+1. Bump `version` in `packages/cli/package.json` (follow semver).
+2. Merge to `main`.
+3. The workflow runs typecheck → `bun run build` → `bun test` →
+   `npm publish --access public --provenance`. Each step is a separate
+   job so a failing test doesn't pollute the publish log.
+4. Watch the Actions tab; on green, `npm view clawdi version` will
+   reflect the new number within ~60s.
+
+A manual run is available under `workflow_dispatch` if the auto-run
+needs a nudge (e.g. npm was transiently unavailable).
+
+### Smoke checks before bumping the version
+
+These don't block the release, but catch adapter-level regressions that
+unit tests miss. Run on a machine with the real agents installed:
+
+- `clawdi setup --yes` — registers every detected agent + installs the
+  bundled `clawdi` skill + wires up MCP where possible
+- `clawdi doctor` — expects all ✓
+- `clawdi push --agent claude_code --dry-run` — session count looks right
+- `clawdi push --agent codex --dry-run`
+- `clawdi push --agent hermes --dry-run` (warns about no project filter)
+- `clawdi push --agent openclaw --dry-run`
+- `clawdi teardown --agent claude_code --yes` then re-run
+  `clawdi setup --agent claude_code --yes` — verifies the inverse cleanly
+  removes the env file + bundled skill + MCP entry, and that re-setup
+  restores everything
+- `clawdi mcp` launched from a real Claude Code `.mcp.json`; call
+  `memory_search` and see a response
+
+### Trusted publisher (OIDC)
+
+The workflow publishes without an `NPM_TOKEN` secret. It uses npm's
+[trusted publisher](https://docs.npmjs.com/trusted-publishers) flow via
+the `id-token: write` permission + `environment: npm` gate. Configure
+this one-time on npmjs.com:
+
+1. `Access` tab of the `clawdi` package → `Trusted Publisher`
+2. Select GitHub Actions, enter `Clawdi-AI/clawdi`, workflow
+   `cli-publish.yml`, environment `npm`
+3. Save. Subsequent pushes to `main` with a version bump auto-publish.

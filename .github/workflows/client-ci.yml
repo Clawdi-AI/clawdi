@@ -102,9 +102,9 @@ jobs:
           - target: web
             filter: "web"
           - target: cli
-            filter: "@clawdi/cli"
+            filter: "clawdi"
           - target: shared
-            filter: "@clawdi-cloud/shared"
+            filter: "@clawdi/shared"
     steps:
       - name: Guard — run only if this target changed
         id: guard

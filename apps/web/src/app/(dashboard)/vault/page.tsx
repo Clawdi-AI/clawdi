@@ -1,49 +1,46 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, Key, Loader2, Plus, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { Vault, VaultItems } from "@/lib/api-schemas";
-import { cn, errorMessage } from "@/lib/utils";
+import { unwrap, useApi } from "@/lib/api";
+import type { Vault } from "@/lib/api-schemas";
+import { errorMessage } from "@/lib/utils";
+
+interface VaultField {
+	key: string;
+	name: string;
+	section: string;
+}
 
 export default function VaultPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [newVaultSlug, setNewVaultSlug] = useState("");
 
-	const {
-		data: vaults,
-		isLoading,
-		error,
-	} = useQuery({
+	const { data, isLoading, error } = useQuery({
 		queryKey: ["vaults"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<Vault[]>("/api/vault", token);
-		},
+		// Vaults list is small; fetch one large page so the UI doesn't need
+		// its own paginator here.
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } })),
 	});
+	const vaults = data?.items;
 
 	const createVault = useMutation({
-		mutationFn: async (slug: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>("/api/vault", token, {
-				method: "POST",
-				body: JSON.stringify({ slug, name: slug }),
-			});
-		},
+		mutationFn: async (slug: string) =>
+			unwrap(await api.POST("/api/vault", { body: { slug, name: slug } })),
 		onSuccess: () => {
 			setNewVaultSlug("");
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
@@ -52,11 +49,8 @@ export default function VaultPage() {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async (slug: string) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${slug}`, token, { method: "DELETE" });
-		},
+		mutationFn: async (slug: string) =>
+			unwrap(await api.DELETE("/api/vault/{slug}", { params: { path: { slug } } })),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
 		onError: (e) => toast.error("Failed to delete vault", { description: errorMessage(e) }),
 	});
@@ -103,19 +97,19 @@ export default function VaultPage() {
 				</Alert>
 			) : null}
 
-			{/* Vault list */}
+			{/* Vault list — flat sections, no per-vault outer card. Skeleton
+			    mirrors the actual shape: heading line + 3 table-row bars. */}
 			{isLoading ? (
-				<div className="space-y-4">
+				<div className="space-y-6">
 					{Array.from({ length: 2 }).map((_, i) => (
-						<div key={i} className="rounded-lg border bg-card p-4 space-y-3">
-							<Skeleton className="h-4 w-32" />
-							<Skeleton className="h-3 w-48" />
-							<Skeleton className="h-3 w-40" />
+						<div key={i} className="space-y-2">
+							<Skeleton className="h-4 w-24" />
+							<Skeleton className="h-24 w-full rounded-lg" />
 						</div>
 					))}
 				</div>
 			) : vaults?.length ? (
-				<div className="space-y-3">
+				<div className="space-y-6">
 					{vaults.map((v) => (
 						<VaultCard
 							key={v.id}
@@ -150,7 +144,7 @@ function VaultCard({
 	onDelete: () => void;
 	isDeleting: boolean;
 }) {
-	const { getToken } = useAuth();
+	const api = useApi();
 	const queryClient = useQueryClient();
 	const [adding, setAdding] = useState(false);
 	const [newKey, setNewKey] = useState("");
@@ -158,30 +152,18 @@ function VaultCard({
 
 	const { data: items } = useQuery({
 		queryKey: ["vault-items", vault.slug],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<VaultItems>(`/api/vault/${vault.slug}/items`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault/{slug}/items", { params: { path: { slug: vault.slug } } })),
 	});
 
 	const upsertItem = useMutation({
-		mutationFn: async ({
-			section,
-			key,
-			value,
-		}: {
-			section: string;
-			key: string;
-			value: string;
-		}) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
-				method: "PUT",
-				body: JSON.stringify({ section, fields: { [key]: value } }),
-			});
-		},
+		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
+			unwrap(
+				await api.PUT("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug } },
+					body: { section, fields: { [key]: value } },
+				}),
+			),
 		onSuccess: () => {
 			setNewKey("");
 			setNewValue("");
@@ -194,14 +176,13 @@ function VaultCard({
 	});
 
 	const deleteItem = useMutation({
-		mutationFn: async ({ section, name }: { section: string; name: string }) => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<unknown>(`/api/vault/${vault.slug}/items`, token, {
-				method: "DELETE",
-				body: JSON.stringify({ section, fields: [name] }),
-			});
-		},
+		mutationFn: async ({ section, name }: { section: string; name: string }) =>
+			unwrap(
+				await api.DELETE("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug } },
+					body: { section, fields: [name] },
+				}),
+			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
 				queryKey: ["vault-items", vault.slug],
@@ -210,7 +191,7 @@ function VaultCard({
 		onError: (e) => toast.error("Failed to delete key", { description: errorMessage(e) }),
 	});
 
-	const allFields = items
+	const allFields: VaultField[] = items
 		? Object.entries(items).flatMap(([section, fields]) =>
 				fields.map((f) => ({
 					key: section === "(default)" ? f : `${section}/${f}`,
@@ -220,14 +201,54 @@ function VaultCard({
 			)
 		: [];
 
-	const hasBody = adding || allFields.length > 0;
+	const columns = useMemo<ColumnDef<VaultField>[]>(
+		() => [
+			{
+				accessorKey: "key",
+				header: "Key",
+				cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
+			},
+			{
+				id: "value",
+				header: "Value",
+				cell: () => <span className="font-mono text-xs text-muted-foreground">••••••••</span>,
+				size: 120,
+			},
+			{
+				id: "actions",
+				header: "",
+				cell: ({ row }) => (
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onClick={(e) => {
+							e.stopPropagation();
+							deleteItem.mutate({ section: row.original.section, name: row.original.name });
+						}}
+						disabled={deleteItem.isPending}
+						className="text-muted-foreground hover:text-destructive"
+						aria-label={`Delete ${row.original.key}`}
+					>
+						<Trash2 className="size-3.5" />
+					</Button>
+				),
+				size: 40,
+			},
+		],
+		[deleteItem],
+	);
+
+	// Flat section layout — heading + action row on top, then the table.
+	// No outer card/border wrapping so it reads like Sessions/Memories and
+	// doesn't stack a card inside a card.
 	return (
-		<div className="group/vault rounded-lg border bg-card">
-			{/* Header */}
-			<div className={cn("flex items-center justify-between px-4 py-3", hasBody && "border-b")}>
-				<div className="flex items-center gap-2">
-					<Key className="size-4 text-primary" />
-					<span className="font-medium text-sm">{vault.slug}</span>
+		<section className="space-y-2">
+			{/* Scope group/header to the heading row only — otherwise the delete
+			    icon pops in whenever the cursor moves anywhere in the table body
+			    below. */}
+			<div className="group/header flex items-center justify-between gap-2 px-1">
+				<div className="flex items-baseline gap-2">
+					<h3 className="font-semibold text-sm">{vault.slug}</h3>
 					<span className="text-xs text-muted-foreground">
 						{allFields.length} {allFields.length === 1 ? "key" : "keys"}
 					</span>
@@ -247,7 +268,7 @@ function VaultCard({
 						size="icon-sm"
 						onClick={onDelete}
 						disabled={isDeleting}
-						className="text-muted-foreground opacity-0 group-hover/vault:opacity-100 hover:text-destructive"
+						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
 						aria-label="Delete vault"
 					>
 						<Trash2 className="size-3.5" />
@@ -255,91 +276,67 @@ function VaultCard({
 				</div>
 			</div>
 
-			{/* Add key form */}
-			{adding && (
-				<div className="border-b bg-muted/30 px-4 py-3">
-					<div className="flex gap-2">
-						<Label htmlFor={`key-${vault.slug}`} className="sr-only">
-							Key name
-						</Label>
-						<Input
-							id={`key-${vault.slug}`}
-							value={newKey}
-							onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-							placeholder="KEY_NAME"
-							className="flex-1 font-mono"
-						/>
-						<Label htmlFor={`value-${vault.slug}`} className="sr-only">
-							Secret value
-						</Label>
-						<Input
-							id={`value-${vault.slug}`}
-							type="password"
-							value={newValue}
-							onChange={(e) => setNewValue(e.target.value)}
-							placeholder="secret value"
-							className="flex-1"
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && newKey && newValue)
-									upsertItem.mutate({ section: "", key: newKey, value: newValue });
-							}}
-						/>
-						<Button
-							onClick={() =>
-								newKey &&
-								newValue &&
-								upsertItem.mutate({ section: "", key: newKey, value: newValue })
-							}
-							disabled={!newKey || !newValue || upsertItem.isPending}
-						>
-							{upsertItem.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-							Save
-						</Button>
-						<Button
-							variant="ghost"
-							size="icon"
-							onClick={() => {
-								setAdding(false);
-								setNewKey("");
-								setNewValue("");
-							}}
-							aria-label="Cancel"
-						>
-							<X />
-						</Button>
-					</div>
+			{/* Inline add form, when toggled */}
+			{adding ? (
+				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
+					<Label htmlFor={`key-${vault.slug}`} className="sr-only">
+						Key name
+					</Label>
+					<Input
+						id={`key-${vault.slug}`}
+						value={newKey}
+						onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+						placeholder="KEY_NAME"
+						className="max-w-[220px] flex-1 font-mono"
+					/>
+					<Label htmlFor={`value-${vault.slug}`} className="sr-only">
+						Secret value
+					</Label>
+					<Input
+						id={`value-${vault.slug}`}
+						type="password"
+						value={newValue}
+						onChange={(e) => setNewValue(e.target.value)}
+						placeholder="secret value"
+						className="flex-1"
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && newKey && newValue)
+								upsertItem.mutate({ section: "", key: newKey, value: newValue });
+						}}
+					/>
+					<Button
+						onClick={() =>
+							newKey && newValue && upsertItem.mutate({ section: "", key: newKey, value: newValue })
+						}
+						disabled={!newKey || !newValue || upsertItem.isPending}
+						size="sm"
+					>
+						{upsertItem.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+						Save
+					</Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onClick={() => {
+							setAdding(false);
+							setNewKey("");
+							setNewValue("");
+						}}
+						aria-label="Cancel"
+					>
+						<X />
+					</Button>
 				</div>
-			)}
+			) : null}
 
-			{/* Keys list — hide body entirely when empty; header still invites action */}
-			{allFields.length > 0 && (
-				<div>
-					{allFields.map((f, i) => (
-						<div
-							key={f.key}
-							className={cn(
-								"group flex items-center justify-between px-4 py-2.5",
-								i > 0 && "border-t",
-							)}
-						>
-							<span className="font-mono text-xs">{f.key}</span>
-							<div className="flex items-center gap-1">
-								<span className="text-xs text-muted-foreground mr-1">••••••••</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									onClick={() => deleteItem.mutate({ section: f.section, name: f.name })}
-									disabled={deleteItem.isPending}
-									className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
-									aria-label={`Delete key ${f.key}`}
-								>
-									<Trash2 className="size-3.5" />
-								</Button>
-							</div>
-						</div>
-					))}
-				</div>
-			)}
-		</div>
+			{allFields.length > 0 ? (
+				<DataTable columns={columns} data={allFields} />
+			) : !adding ? (
+				<p className="px-1 text-sm text-muted-foreground">
+					No keys yet. Click <span className="font-medium">Add Key</span> to store your first
+					secret.
+				</p>
+			) : null}
+		</section>
 	);
 }

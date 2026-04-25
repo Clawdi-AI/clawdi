@@ -5,22 +5,25 @@ import {
 	BarChart3,
 	Brain,
 	ChevronsUpDown,
+	CirclePlus,
 	Key,
 	LayoutDashboard,
 	LogOut,
 	Monitor,
 	Moon,
 	Plug,
+	Search,
 	Settings,
 	Sparkles,
 	Sun,
-	User,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useState } from "react";
+import { useCommandPalette } from "@/components/command-palette";
+import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -41,12 +44,11 @@ import {
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
-	SidebarGroupLabel,
+	SidebarGroupContent,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
-	SidebarRail,
 	useSidebar,
 } from "@/components/ui/sidebar";
 
@@ -65,20 +67,13 @@ export function AppSidebar() {
 	const { user } = useUser();
 	const { isMobile } = useSidebar();
 	const { theme, setTheme } = useTheme();
+	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [settingsSection, setSettingsSection] = useState<"general" | "profile" | "api-keys">(
-		"general",
-	);
-
-	const openSettings = (section: "general" | "profile" | "api-keys") => {
-		setSettingsSection(section);
-		setSettingsOpen(true);
-	};
+	const [addAgentOpen, setAddAgentOpen] = useState(false);
 
 	return (
 		<>
 			<Sidebar collapsible="icon" variant="inset">
-				{/* Brand — logo already has its own colors, no filled background */}
 				<SidebarHeader>
 					<SidebarMenu>
 						<SidebarMenuItem>
@@ -99,24 +94,63 @@ export function AppSidebar() {
 				</SidebarHeader>
 
 				<SidebarContent>
+					{/* Primary nav — mirrors dashboard-01's NavMain: a Quick Create
+					    button up top, main nav items below. */}
 					<SidebarGroup>
-						<SidebarGroupLabel>Workspace</SidebarGroupLabel>
-						<SidebarMenu>
-							{navItems.map((item) => {
-								const active =
-									pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-								return (
-									<SidebarMenuItem key={item.href}>
-										<SidebarMenuButton asChild isActive={active} tooltip={item.label}>
-											<Link href={item.href}>
-												<item.icon />
-												<span>{item.label}</span>
-											</Link>
-										</SidebarMenuButton>
-									</SidebarMenuItem>
-								);
-							})}
-						</SidebarMenu>
+						<SidebarGroupContent className="flex flex-col gap-2">
+							<SidebarMenu>
+								<SidebarMenuItem>
+									<SidebarMenuButton
+										tooltip="Add an agent"
+										onClick={() => setAddAgentOpen(true)}
+										className="bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
+									>
+										<CirclePlus />
+										<span>Add an agent</span>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+							</SidebarMenu>
+							<SidebarMenu>
+								{navItems.map((item) => {
+									const active =
+										pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+									return (
+										<SidebarMenuItem key={item.href}>
+											<SidebarMenuButton asChild isActive={active} tooltip={item.label}>
+												<Link href={item.href}>
+													<item.icon />
+													<span>{item.label}</span>
+												</Link>
+											</SidebarMenuButton>
+										</SidebarMenuItem>
+									);
+								})}
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+
+					{/* Secondary nav pinned to the bottom of SidebarContent — matches
+					    dashboard-01's NavSecondary pattern. */}
+					<SidebarGroup className="mt-auto">
+						<SidebarGroupContent>
+							<SidebarMenu>
+								<SidebarMenuItem>
+									<SidebarMenuButton tooltip="Search (⌘K)" onClick={() => setPaletteOpen(true)}>
+										<Search />
+										<span>Search</span>
+										<kbd className="pointer-events-none ml-auto hidden select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+											⌘K
+										</kbd>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+								<SidebarMenuItem>
+									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
+										<Settings />
+										<span>Settings</span>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+							</SidebarMenu>
+						</SidebarGroupContent>
 					</SidebarGroup>
 				</SidebarContent>
 
@@ -171,18 +205,6 @@ export function AppSidebar() {
 										</div>
 									</DropdownMenuLabel>
 									<DropdownMenuSeparator />
-									<DropdownMenuItem onClick={() => openSettings("general")}>
-										<Settings />
-										Settings
-									</DropdownMenuItem>
-									<DropdownMenuItem onClick={() => openSettings("profile")}>
-										<User />
-										Profile
-									</DropdownMenuItem>
-									<DropdownMenuItem onClick={() => openSettings("api-keys")}>
-										<Key />
-										API Keys
-									</DropdownMenuItem>
 									<DropdownMenuSub>
 										<DropdownMenuSubTrigger>
 											{theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
@@ -215,15 +237,10 @@ export function AppSidebar() {
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarFooter>
-
-				<SidebarRail />
 			</Sidebar>
 
-			<SettingsDialog
-				open={settingsOpen}
-				onClose={() => setSettingsOpen(false)}
-				initialSection={settingsSection}
-			/>
+			<SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+			<AddAgentDialog open={addAgentOpen} onClose={() => setAddAgentOpen(false)} />
 		</>
 	);
 }

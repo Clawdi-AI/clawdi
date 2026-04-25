@@ -18,7 +18,7 @@ Two-phase setup: `clawdi setup` registers a local MCP server into Claude Code's 
 brew install clawdi
 
 # Login (OAuth Device Auth, RFC 8628)
-$ clawdi login
+$ clawdi auth login
 > Visit: https://clawdi.ai/activate
 > Enter code: WDJB-MJHT
 > Waiting...
@@ -211,7 +211,7 @@ Cursor:
 | Aspect | Remote MCP (original design) | CLI-First (this approach) |
 |--------|------------------------------|---------------------------|
 | Connectors/Memory | Agent connects to `mcp.clawdi.ai` directly | Local MCP server, proxies to API |
-| Auth | Each agent needs its own token | `clawdi login` once, CLI manages tokens |
+| Auth | Each agent needs its own token | `clawdi auth login` once, CLI manages tokens |
 | Network dependency | Agent must reach mcp.clawdi.ai | Local IPC, only API calls go over network |
 | Agent config | Fill URL+token in each agent's MCP config | `clawdi setup` once, then `clawdi run -- <agent>` |
 | Offline | Not possible | Memory can have local cache, partial offline support |
@@ -220,6 +220,6 @@ Cursor:
 
 ## Key Principle
 
-**First-time: `clawdi login && clawdi setup`. Daily use: `clawdi run -- claude`.**
+**First-time: `clawdi auth login && clawdi setup`. Daily use: `clawdi run -- claude`.**
 
 Setup registers the MCP server once. After that, `clawdi run` only handles vault injection — Claude Code spawns the MCP server automatically on every launch.

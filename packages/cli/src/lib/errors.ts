@@ -1,6 +1,13 @@
 import chalk from "chalk";
 import { ApiError } from "./api-client";
 
+/** Best-effort `String`-of an `unknown` caught from a try/catch. */
+export function errMessage(e: unknown): string {
+	if (e instanceof Error) return e.message;
+	if (typeof e === "string") return e;
+	return "Something went wrong.";
+}
+
 /** Top-level error handler wired into `program.parseAsync().catch(handleError)`. */
 export function handleError(err: unknown): never {
 	if (err instanceof ApiError) {

@@ -1,32 +1,45 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, MessageSquare } from "lucide-react";
-import { EmptyState } from "@/components/empty-state";
+import { AlertCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
-import { SessionRow, SessionRowSkeleton } from "@/components/sessions/session-row";
+import { sessionColumns } from "@/components/sessions/session-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { apiFetch } from "@/lib/api";
-import type { SessionListItem } from "@/lib/api-schemas";
+import { DataTable } from "@/components/ui/data-table";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
+import { unwrap, useApi } from "@/lib/api";
+import { useDebouncedValue } from "@/lib/use-debounced";
 import { errorMessage } from "@/lib/utils";
 
 export default function SessionsPage() {
-	const { getToken } = useAuth();
+	const api = useApi();
+	const router = useRouter();
+	const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+	const [search, setSearch] = useState("");
+	const debouncedSearch = useDebouncedValue(search, 250);
 
-	const {
-		data: sessions,
-		isLoading,
-		error,
-	} = useQuery({
-		queryKey: ["sessions"],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionListItem[]>("/api/sessions?limit=100", token);
-		},
+	const { data, isLoading, error } = useQuery({
+		queryKey: ["sessions", pagination.pageIndex, pagination.pageSize, debouncedSearch],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions", {
+					params: {
+						query: {
+							page: pagination.pageIndex + 1,
+							page_size: pagination.pageSize,
+							q: debouncedSearch || undefined,
+						},
+					},
+				}),
+			),
 	});
+
+	const total = data?.total ?? 0;
+	const pageCount = Math.max(1, Math.ceil(total / pagination.pageSize));
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -34,9 +47,9 @@ export default function SessionsPage() {
 				title="Sessions"
 				description="Agent conversations synced from your machines."
 				actions={
-					sessions ? (
+					data ? (
 						<Badge variant="secondary">
-							{sessions.length} session{sessions.length === 1 ? "" : "s"}
+							{total} session{total === 1 ? "" : "s"}
 						</Badge>
 					) : null
 				}
@@ -48,27 +61,38 @@ export default function SessionsPage() {
 					<AlertTitle>Failed to load sessions</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
-			) : isLoading ? (
-				<div className="divide-y rounded-lg border bg-card">
-					{Array.from({ length: 6 }).map((_, i) => (
-						<SessionRowSkeleton key={i} />
-					))}
-				</div>
-			) : sessions?.length ? (
-				<div className="divide-y rounded-lg border bg-card">
-					{sessions.map((s) => (
-						<SessionRow key={s.id} session={s} />
-					))}
-				</div>
 			) : (
-				<EmptyState
-					icon={MessageSquare}
-					title="No sessions yet"
-					description={
-						<>
-							Run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi sync up</code> on
-							a connected agent to start syncing.
-						</>
+				<DataTable
+					columns={sessionColumns}
+					data={data?.items ?? []}
+					isLoading={isLoading}
+					emptyMessage={
+						debouncedSearch
+							? "No sessions match your search."
+							: "No sessions yet. Run clawdi push on a connected agent."
+					}
+					onRowClick={(s) => router.push(`/sessions/${s.id}`)}
+					pagination={pagination}
+					onPaginationChange={setPagination}
+					pageCount={pageCount}
+					toolbar={
+						<DataTableToolbar
+							value={search}
+							onChange={(v) => {
+								setSearch(v);
+								setPagination((p) => ({ ...p, pageIndex: 0 }));
+							}}
+							placeholder="Search summary, project, ID…"
+						/>
+					}
+					footer={
+						<DataTablePagination
+							page={pagination.pageIndex + 1}
+							pageSize={pagination.pageSize}
+							total={total}
+							onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
+							onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+						/>
 					}
 				/>
 			)}

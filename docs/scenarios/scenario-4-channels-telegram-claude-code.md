@@ -358,7 +358,7 @@ clawdi channel serve my-telegram --agent claude --projects '{
 │                        └──────────────────────┘      │
 │                                                      │
 │  Bot token: from Vault (clawdi channel add)          │
-│  Auth: from ~/.clawdi/config (clawdi login)          │
+│  Auth: from ~/.clawdi/config (clawdi auth login)          │
 └──────────────────────────────────────────────────────┘
 ```
 

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata } from "../lib/sanitize";
 
@@ -9,6 +9,23 @@ function requireAuth() {
 	if (!isLoggedIn()) {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exit(1);
+	}
+}
+
+/**
+ * Create a vault if it doesn't exist. 409 is the common "already exists"
+ * response and is expected when the caller is about to PUT items into a
+ * pre-existing vault; everything else propagates as a normal ApiError so
+ * users see auth/network failures instead of a silent skip.
+ */
+async function ensureVault(api: ApiClient, slug: string, name = slug) {
+	const created = await api.POST("/api/vault", { body: { slug, name } });
+	// `response` is only populated when the server actually replied — on a
+	// network-level failure `response` is undefined, so optional-chain it
+	// before inspecting the status, then let `unwrap` raise the right
+	// ApiError (either the HTTP one or a synthetic network one).
+	if (created.error !== undefined && created.response?.status !== 409) {
+		unwrap(created);
 	}
 }
 
@@ -24,17 +41,14 @@ export async function vaultSet(key: string) {
 	}
 
 	const api = new ApiClient();
+	await ensureVault(api, vaultSlug);
 
-	try {
-		await api.post("/api/vault", { slug: vaultSlug, name: vaultSlug });
-	} catch {
-		// Already exists — fine
-	}
-
-	await api.request(`/api/vault/${vaultSlug}/items`, {
-		method: "PUT",
-		body: JSON.stringify({ section, fields: { [field]: value } }),
-	});
+	unwrap(
+		await api.PUT("/api/vault/{slug}/items", {
+			params: { path: { slug: vaultSlug } },
+			body: { section, fields: { [field]: value } },
+		}),
+	);
 
 	console.log(chalk.green(`✓ Stored ${key}`));
 }
@@ -42,13 +56,20 @@ export async function vaultSet(key: string) {
 export async function vaultList(opts: { json?: boolean } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const vaults = await api.get<Array<{ slug: string; name: string }>>("/api/vault");
+	// `page_size=100` covers ~all realistic tenants; if someone crosses it we
+	// surface the overflow below rather than silently dropping vaults.
+	const VAULT_PAGE_SIZE = 100;
+	const page = unwrap(
+		await api.GET("/api/vault", { params: { query: { page_size: VAULT_PAGE_SIZE } } }),
+	);
+	const vaults = page.items;
+
+	const fetchItems = (slug: string) =>
+		api.GET("/api/vault/{slug}/items", { params: { path: { slug } } }).then(unwrap);
 
 	if (opts.json || !process.stdout.isTTY) {
-		const out: Record<string, Record<string, string[]>> = {};
-		for (const v of vaults) {
-			out[v.slug] = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
-		}
+		const out: Record<string, Awaited<ReturnType<typeof fetchItems>>> = {};
+		for (const v of vaults) out[v.slug] = await fetchItems(v.slug);
 		console.log(JSON.stringify(out, null, 2));
 		return;
 	}
@@ -58,8 +79,14 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 		return;
 	}
 
+	if (page.total > vaults.length) {
+		console.log(
+			chalk.yellow(`  Showing ${vaults.length} of ${page.total} vaults (first page only).`),
+		);
+	}
+
 	for (const v of vaults) {
-		const items = await api.get<Record<string, string[]>>(`/api/vault/${v.slug}/items`);
+		const items = await fetchItems(v.slug);
 		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
 		for (const [section, fields] of Object.entries(items)) {
 			for (const field of fields) {
@@ -80,11 +107,7 @@ export async function vaultImport(file: string) {
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	try {
-		await api.post("/api/vault", { slug: "default", name: "Default" });
-	} catch {
-		// Already exists
-	}
+	await ensureVault(api, "default", "Default");
 
 	const fields: Record<string, string> = {};
 	for (const line of lines) {
@@ -114,10 +137,12 @@ export async function vaultImport(file: string) {
 		return;
 	}
 
-	await api.request("/api/vault/default/items", {
-		method: "PUT",
-		body: JSON.stringify({ section: "", fields }),
-	});
+	unwrap(
+		await api.PUT("/api/vault/{slug}/items", {
+			params: { path: { slug: "default" } },
+			body: { section: "", fields },
+		}),
+	);
 
 	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to vault "default"`));
 }

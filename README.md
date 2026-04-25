@@ -19,7 +19,7 @@ No Redis, no Celery — background work has been removed from this codebase; the
 
 ```bash
 docker compose up -d postgres
-# Listens on localhost:5433 with database clawdi_cloud, user/pass clawdi/clawdi_dev.
+# Listens on localhost:5433 with database clawdi, user/pass clawdi/clawdi_dev.
 ```
 
 ### PostgreSQL native (macOS example)
@@ -30,12 +30,12 @@ brew services start postgresql@16
 
 createuser -s clawdi
 psql postgres -c "ALTER USER clawdi WITH PASSWORD 'clawdi_dev';"
-createdb -O clawdi clawdi_cloud
+createdb -O clawdi clawdi
 ```
 
 `pg_trgm` ships with PostgreSQL; `pgvector` is the `brew install pgvector` package above. Both extensions are enabled by our Alembic migrations — you don't have to `CREATE EXTENSION` manually.
 
-If you already have Postgres running under a different user / port, skip the role creation and just edit `DATABASE_URL` in `backend/.env` to match (e.g. `postgresql+asyncpg://<you>@localhost:5432/clawdi_cloud`).
+If you already have Postgres running under a different user / port, skip the role creation and just edit `DATABASE_URL` in `backend/.env` to match (e.g. `postgresql+asyncpg://<you>@localhost:5432/clawdi`).
 
 ---
 
@@ -56,8 +56,8 @@ docs/              Design docs, scenarios, plans
 ### 1. Clone and install JS/TS dependencies
 
 ```bash
-git clone <this-repo>.git clawdi-cloud
-cd clawdi-cloud
+git clone https://github.com/Clawdi-AI/clawdi.git
+cd clawdi
 bun install
 ```
 
@@ -74,7 +74,7 @@ cp .env.example .env
 #   VAULT_ENCRYPTION_KEY   — generate with: python3 -c "import os; print(os.urandom(32).hex())"
 #   ENCRYPTION_KEY         — same format as VAULT_ENCRYPTION_KEY
 #   DATABASE_URL           — adjust if your PG isn't at the .env.example default
-#                            (clawdi:clawdi_dev@localhost:5433/clawdi_cloud)
+#                            (clawdi:clawdi_dev@localhost:5433/clawdi)
 #   COMPOSIO_API_KEY       — optional, only if you want connector tools (Gmail / GitHub / etc.)
 
 # Memory embedder is configured via env too. Default works out of the box
@@ -170,7 +170,7 @@ Stored at `~/.clawdi/config.json`. The `CLAWDI_API_URL` env var always wins over
 ### Authenticate once
 
 ```bash
-clawdi login             # paste the API key from the web dashboard
+clawdi auth login             # paste the API key from the web dashboard
 clawdi status            # verify auth works
 ```
 
@@ -196,15 +196,15 @@ Supported agents: `claude_code`, `codex`, `hermes`, `openclaw`.
 Push local sessions and skills up to the cloud, or pull cloud skills down to your agents:
 
 ```bash
-clawdi sync up            # upload sessions + skills from the current agent
-clawdi sync down          # download cloud skills into local agent directories
+clawdi push            # upload sessions + skills from the current agent
+clawdi pull          # download cloud skills into local agent directories
 
 # Optional flags:
-clawdi sync up --agent codex --modules sessions       # specific agent + only sessions
-clawdi sync up --since 2026-01-01                     # override the stored cursor
-clawdi sync up --project /path/to/project             # only this project (default: cwd)
-clawdi sync up --all                                  # all projects, ignore cwd filter
-clawdi sync up --dry-run                              # preview, no uploads
+clawdi push --agent codex --modules sessions       # specific agent + only sessions
+clawdi push --since 2026-01-01                     # override the stored cursor
+clawdi push --project /path/to/project             # only this project (default: cwd)
+clawdi push --all                                  # all projects, ignore cwd filter
+clawdi push --dry-run                              # preview, no uploads
 ```
 
 When multiple agents are registered on the same machine, the interactive arrow-key picker chooses one; `--agent` skips the prompt.
@@ -250,7 +250,7 @@ clawdi skill install anthropics/skills/artifacts-builder   # specific path insid
 clawdi skill rm <skill-key>                # remove from cloud
 ```
 
-After a `skill install`, the tar.gz is also extracted into **every** registered agent's local skills directory on your machine, so you don't have to `sync down` separately.
+After a `skill install`, the tar.gz is also extracted into **every** registered agent's local skills directory on your machine, so you don't have to `pull` separately.
 
 ### MCP server mode
 
@@ -266,7 +266,7 @@ Agents don't run this directly — they spawn it via their MCP registration from
 
 1. Morning: open Claude Code / Codex in a project. They're already connected from the one-time `clawdi setup`.
 2. Work as usual. When you tell Claude "remember that the user prefers X", it calls `memory_add`; when you later ask "what do I usually X?" in a fresh session, it calls `memory_search` automatically.
-3. Before knocking off: `clawdi sync up` (or set up a cron) to push your sessions to the cloud so they appear in the web dashboard for you to review later.
+3. Before knocking off: `clawdi push` (or set up a cron) to push your sessions to the cloud so they appear in the web dashboard for you to review later.
 
 ---
 
@@ -274,11 +274,11 @@ Agents don't run this directly — they spawn it via their MCP registration from
 
 | Command | What it does |
 |---|---|
-| `clawdi login` / `logout` / `status` | Authenticate the CLI / inspect auth state |
+| `clawdi auth login` / `logout` / `status` | Authenticate the CLI / inspect auth state |
 | `clawdi config list / get / set / unset` | Read or change CLI config (`apiUrl`, etc.) |
 | `clawdi setup [--agent <type>]` | Register local agent(s), install MCP + clawdi skill |
-| `clawdi sync up` | Push sessions + skills to the cloud |
-| `clawdi sync down` | Pull skills from the cloud to local agent dirs |
+| `clawdi push` | Push sessions + skills to the cloud |
+| `clawdi pull` | Pull skills from the cloud to local agent dirs |
 | `clawdi vault set / list / import` | Store / list / bulk-import secrets |
 | `clawdi skill list / add / install / rm` | Manage skills (cloud + local) |
 | `clawdi memory list / search / add / rm` (`mem` alias) | Cross-agent long-term memory |
@@ -291,7 +291,7 @@ All subcommands accept `--help` for full options.
 
 ## Troubleshooting
 
-**`clawdi login` fails with 401**
+**`clawdi auth login` fails with 401**
 Your API key is wrong or revoked. Re-create one from the web dashboard → user menu → API Keys.
 
 **Backend crashes on startup: "extension vector is not available"**
@@ -303,7 +303,7 @@ Restart Claude Code so it re-fetches MCP tool schemas from the latest `clawdi mc
 **First `memory_search` / `memory_add` after a backend restart is slow (~10s)**
 Local embedding mode (default) lazy-loads the ~1GB mpnet model on first use. Subsequent calls are <500ms. To skip the local model, set `MEMORY_EMBEDDING_MODE=api` in `backend/.env` and provide an OpenAI / OpenRouter key.
 
-**`clawdi sync up` says "No supported agent detected"**
+**`clawdi push` says "No supported agent detected"**
 Run `clawdi setup` first, or pass `--agent claude_code` explicitly if auto-detection is finding the wrong directory.
 
 **Claude Code's `memory_search` description looks stale**

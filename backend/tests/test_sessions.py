@@ -64,4 +64,85 @@ async def test_session_batch_dedupes_by_local_session_id(client: httpx.AsyncClie
     assert r2.json() == {"synced": 0}
 
     listing = (await client.get("/api/sessions")).json()
-    assert {s["local_session_id"] for s in listing} == {"sess-abc", "sess-xyz"}
+    assert listing["total"] == 2
+    assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncClient):
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    sessions = [
+        {
+            "environment_id": env_id,
+            "local_session_id": f"sess-pagination-{i:02d}",
+            "started_at": started,
+            "message_count": i,
+            "model": "claude-opus-4",
+            "summary": f"Debug run number {i}" if i % 2 == 0 else f"Ship feature {i}",
+        }
+        for i in range(30)
+    ]
+    await client.post("/api/sessions/batch", json={"sessions": sessions})
+
+    # Default page size (25) caps the first response — paging state is surfaced
+    # so the frontend can render a "Page 1 of N" indicator.
+    r = await client.get("/api/sessions")
+    body = r.json()
+    assert body["total"] == 30
+    assert body["page"] == 1
+    assert body["page_size"] == 25
+    assert len(body["items"]) == 25
+
+    # Second page returns the tail.
+    r = await client.get("/api/sessions?page=2&page_size=25")
+    assert len(r.json()["items"]) == 5
+
+    # `q` filters against summary/project/local_session_id via ILIKE.
+    r = await client.get("/api/sessions?q=ship")
+    items = r.json()["items"]
+    assert len(items) > 0
+    assert all("Ship feature" in s["summary"] for s in items)
+
+    # Invalid sort key should be rejected by the regex-constrained param.
+    r = await client.get("/api/sessions?sort=summary")
+    assert r.status_code == 422
+
+    # `tokens` is a synthetic sort — the backend resolves it to
+    # `input_tokens + output_tokens` so the display column and sort agree.
+    r = await client.get("/api/sessions?sort=tokens&order=desc&page_size=5")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient):
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-searchable",
+                    "started_at": started,
+                    "message_count": 1,
+                    "summary": "Investigate alpha bug in billing",
+                    "model": "claude-opus-4",
+                }
+            ]
+        },
+    )
+    await client.post("/api/vault", json={"slug": "alpha-keys", "name": "alpha-keys"})
+
+    r = await client.get("/api/search?q=alpha")
+    assert r.status_code == 200
+    body = r.json()
+    types = {hit["type"] for hit in body["results"]}
+    # Session summary matched, vault slug matched.
+    assert "session" in types
+    assert "vault" in types
+    # Every hit has the fields the UI depends on to render.
+    for hit in body["results"]:
+        assert hit["title"]
+        assert hit["href"].startswith("/")

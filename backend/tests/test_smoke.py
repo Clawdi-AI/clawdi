@@ -40,10 +40,13 @@ async def test_unauthenticated_request_rejected():
 
 @pytest.mark.asyncio
 async def test_list_memories_empty(client: httpx.AsyncClient):
-    """A fresh user sees an empty memories list, not an error."""
+    """A fresh user sees an empty paginated memories page, not an error."""
     r = await client.get("/api/memories")
     assert r.status_code == 200, r.text
-    assert r.json() == []
+    body = r.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["page"] == 1
 
 
 @pytest.mark.asyncio
@@ -57,7 +60,7 @@ async def test_create_and_list_memory(client: httpx.AsyncClient):
 
     r = await client.get("/api/memories")
     assert r.status_code == 200
-    items = r.json()
+    items = r.json()["items"]
     assert any("smoke test memory" in (m.get("content") or m.get("text") or "") for m in items), (
         items
     )

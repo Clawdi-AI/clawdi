@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import {
 	ChevronRight,
@@ -14,14 +14,16 @@ import {
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DetailHeader } from "@/components/detail-header";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, apiFetch } from "@/lib/api";
-import type { SessionDetail, SessionMessage } from "@/lib/api-schemas";
+import { ApiError, unwrap, useApi } from "@/lib/api";
+import type { SessionMessage } from "@/lib/api-schemas";
 import { cn, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 function formatDuration(seconds: number | null): string {
@@ -40,16 +42,13 @@ function formatTokens(n: number): string {
 
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
-	const { getToken } = useAuth();
+	const api = useApi();
 	const { user } = useUser();
 
 	const { data: session, isLoading: isSessionLoading } = useQuery({
 		queryKey: ["session", id],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionDetail>(`/api/sessions/${id}`, token);
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/sessions/{session_id}", { params: { path: { session_id: id } } })),
 		// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
 		// recover on retry and the default 3× retry makes the page hang in
 		// "Loading..." for seconds before the user learns the URL is bogus.
@@ -66,11 +65,12 @@ export default function SessionDetailPage() {
 		isError: isContentError,
 	} = useQuery({
 		queryKey: ["session-content", id],
-		queryFn: async () => {
-			const token = await getToken();
-			if (!token) throw new Error("Not authenticated");
-			return apiFetch<SessionMessage[]>(`/api/sessions/${id}/content`, token);
-		},
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions/{session_id}/content", {
+					params: { path: { session_id: id } },
+				}),
+			),
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
 			const status = err instanceof ApiError ? err.status : 0;
@@ -99,6 +99,8 @@ export default function SessionDetailPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
+			<DetailHeader backHref="/sessions" backLabel="Back to sessions" />
+
 			{/* Header */}
 			<div>
 				<h1 className="text-lg font-semibold tracking-tight">
@@ -109,17 +111,13 @@ export default function SessionDetailPage() {
 				</p>
 			</div>
 
-			{/* Stats bar */}
-			<div className="flex flex-wrap items-center gap-3">
-				{session.agent_type && (
-					<Badge variant="secondary">
-						{session.agent_type === "claude_code"
-							? "Claude Code"
-							: session.agent_type === "hermes"
-								? "Hermes"
-								: session.agent_type}
-					</Badge>
-				)}
+			{/* Stats bar — agent label (2-line) has more height than the inline
+			    badges/stats, so align to start and let the badges sit along the
+			    baseline of the first line. */}
+			<div className="flex flex-wrap items-start gap-4">
+				{session.agent_type || session.machine_name ? (
+					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
+				) : null}
 				{session.model && (
 					<Badge variant="outline" className="border-primary/30 text-primary">
 						{session.model.replace("claude-", "")}
@@ -169,7 +167,7 @@ export default function SessionDetailPage() {
 						<>
 							Content not synced yet. Run{" "}
 							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-								clawdi sync up --modules sessions
+								clawdi push --modules sessions
 							</code>{" "}
 							to upload session content.
 						</>

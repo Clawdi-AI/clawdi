@@ -20,7 +20,7 @@ data/
 
 # OS
 .DS_Store
-.claude/settings.local.json
+.claude/
 .gstack/
 
 # Test fixtures deliberately use these names as SKIP_DIRS sentinels — the
@@ -31,3 +31,10 @@ data/
 !/packages/cli/tests/fixtures/**/dist/**
 !/packages/cli/tests/fixtures/**/__pycache__
 !/packages/cli/tests/fixtures/**/__pycache__/**
+
+# PDM (local interpreter path — machine-specific)
+.pdm-python
+
+# Local dev seed scripts — they embed user-specific paths and personal
+# memory content; keep them out of the repo.
+backend/scripts/seed_demo.py

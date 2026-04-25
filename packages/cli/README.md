@@ -1,4 +1,4 @@
-# @clawdi/cli
+# clawdi
 
 iCloud for AI Agents. One CLI to share sessions, skills, memory, and vault secrets across Claude Code, Codex, OpenClaw, and Hermes — with an MCP server on the other end of the pipe.
 
@@ -11,8 +11,8 @@ iCloud for AI Agents. One CLI to share sessions, skills, memory, and vault secre
 ## Install
 
 ```bash
-npm i -g @clawdi/cli
-# or: bun add -g @clawdi/cli
+npm i -g clawdi
+# or: bun add -g clawdi
 ```
 
 ## Commands
@@ -31,8 +31,8 @@ npm i -g @clawdi/cli
 | `clawdi skill install <repo> [-a --agent] [-l --list] [-y]` | Install a GitHub skill into cloud and one or more agents |
 | `clawdi skill rm <key>` | Remove a cloud skill |
 | `clawdi skill init [name]` | Scaffold a new `SKILL.md` template |
-| `clawdi memory list [--json --limit --category --since]` | List memories |
-| `clawdi memory search <query> [--json --limit --category --since]` | Search memories by text |
+| `clawdi memory list [--json --limit --category]` | List memories |
+| `clawdi memory search <query> [--json --limit --category]` | Search memories by text |
 | `clawdi memory add <content>` / `rm <id>` | Add or delete a memory |
 | `clawdi vault set <key>` / `list [--json]` / `import <file>` | Manage secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected into env |

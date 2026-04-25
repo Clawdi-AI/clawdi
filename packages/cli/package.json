@@ -1,5 +1,5 @@
 {
-	"name": "@clawdi/cli",
+	"name": "clawdi",
 	"version": "0.1.0",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "SEE LICENSE IN LICENSE",
@@ -32,13 +32,13 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/Clawdi-AI/clawdi-cloud.git",
+		"url": "git+https://github.com/Clawdi-AI/clawdi.git",
 		"directory": "packages/cli"
 	},
 	"bugs": {
-		"url": "https://github.com/Clawdi-AI/clawdi-cloud/issues"
+		"url": "https://github.com/Clawdi-AI/clawdi/issues"
 	},
-	"homepage": "https://github.com/Clawdi-AI/clawdi-cloud#readme",
+	"homepage": "https://github.com/Clawdi-AI/clawdi#readme",
 	"keywords": [
 		"cli",
 		"claude-code",
@@ -56,6 +56,7 @@
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"chalk": "^5.4.0",
 		"commander": "^13.0.0",
+		"openapi-fetch": "^0.17.0",
 		"tar": "^7.5.13",
 		"zod": "^4.3.6"
 	},
