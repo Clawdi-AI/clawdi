@@ -43,13 +43,24 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Skip if version already published
+      - name: Skip if no publish needed
         id: check
+        # Three skip cases:
+        #   1. Local version matches what's already on npm (no bump → no publish).
+        #   2. Package has never been published (`npm view` fails, fallback "0.0.0").
+        #      The first publish must be manual — `npm publish --access public`
+        #      from a maintainer's machine — because npm trusted-publisher OIDC
+        #      requires the package to already exist on the registry to accept
+        #      a workflow as the publisher. Until that bootstrap happens, the
+        #      workflow stays inert.
         run: |
           LOCAL=$(node -p "require('./package.json').version")
           REMOTE=$(npm view clawdi version 2>/dev/null || echo "0.0.0")
           echo "local=$LOCAL remote=$REMOTE"
-          if [ "$LOCAL" = "$REMOTE" ]; then
+          if [ "$REMOTE" = "0.0.0" ]; then
+            echo "Package not on npm yet — bootstrap with manual publish first."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$LOCAL" = "$REMOTE" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"

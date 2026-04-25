@@ -228,11 +228,29 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
-### To ship a new version
+### Bootstrap (one-time, before the workflow can do anything)
+
+npm's trusted-publisher OIDC requires the package to already exist on the
+registry before it'll accept a GitHub Action as a publisher. So the very
+first version has to be published manually:
+
+```bash
+cd packages/cli
+npm login                    # use a maintainer account that owns the org
+bun run build                # produces dist/
+npm publish --access public  # plain publish, no --provenance
+```
+
+The workflow detects this case (`npm view clawdi` returns nothing → falls
+back to `"0.0.0"`) and stays inert until the package exists. After the
+first publish, configure trusted publisher (next section) and from v0.1.1
+onward releases are automatic.
+
+### To ship a new version (after bootstrap)
 
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
-3. The workflow runs typecheck → `bun test` → `bun run build` →
+3. The workflow runs typecheck → `bun run build` → `bun test` →
    `npm publish --access public --provenance`. Each step is a separate
    job so a failing test doesn't pollute the publish log.
 4. Watch the Actions tab; on green, `npm view clawdi version` will
