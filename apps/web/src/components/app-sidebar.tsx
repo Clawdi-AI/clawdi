@@ -3,6 +3,7 @@
 import { useClerk, useUser } from "@clerk/nextjs";
 import {
 	BarChart3,
+	BookOpen,
 	Brain,
 	ChevronsUpDown,
 	CircleHelp,
@@ -60,6 +61,7 @@ import {
 
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
+	{ href: "/wiki", label: "Wiki", icon: BookOpen },
 	{ href: "/sessions", label: "Sessions", icon: BarChart3 },
 	{ href: "/memories", label: "Memories", icon: Brain },
 	{ href: "/skills", label: "Skills", icon: Sparkles },
