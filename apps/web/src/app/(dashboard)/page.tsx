@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
-import { AgentsCard } from "@/components/dashboard/agents-card";
+import { useMemo } from "react";
+import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
@@ -14,7 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { unwrap, useApi } from "@/lib/api";
+import { IS_HOSTED } from "@/lib/hosted";
+import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 
@@ -52,11 +56,43 @@ export default function DashboardPage() {
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
-	// Zero-state promotion: when the user has no agents yet, the primary CTA
-	// (connect one) belongs in the hero slot — not tucked into the sidebar
-	// behind an empty "Agents" card that tells them to "use the panel below".
+	// Hosted-side query — fetches user's deployments from the
+	// clawdi-monorepo deploy API. Disabled (no fetch) when not hosted.
+	const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
+
+	const selfManagedTiles: AgentTile[] = useMemo(() => {
+		return (environments ?? []).map((env) => ({
+			id: env.id,
+			source: "self-managed" as const,
+			name: env.machine_name,
+			agentType: env.agent_type,
+			runtimeLabel: `${formatRuntime(env.agent_type)} · ${inferMode(env.agent_type)}`,
+			statusLabel: env.last_seen_at ? `Synced ${relativeTime(env.last_seen_at)}` : "Never seen",
+			lastSeenAt: env.last_seen_at,
+			href: `/agents/${env.id}`,
+			active: isAgentActive(env.last_seen_at),
+		}));
+	}, [environments]);
+
+	const agentTiles: AgentTile[] = useMemo(
+		() => [...hosted.tiles, ...selfManagedTiles],
+		[hosted.tiles, selfManagedTiles],
+	);
+
+	// Zero-state promotion: when the user has no agents yet, the
+	// secondary CTA (connect one) lives in the right column. Hosted
+	// users with zero deployments still see the AgentsCard's empty
+	// state which mentions both connect AND deploy paths.
 	const hasAgents = !envsLoading && (environments?.length ?? 0) > 0;
-	const isEmptyState = !envsLoading && (environments?.length ?? 0) === 0;
+	// `!hosted.error` matters: when hosted fetch fails AND the user has zero
+	// self-managed agents, we want AgentsCard's error banner to surface the
+	// failure instead of silently dropping into the OnboardingCard hero.
+	const isEmptyState =
+		!envsLoading &&
+		(environments?.length ?? 0) === 0 &&
+		hosted.tiles.length === 0 &&
+		!hosted.isLoading &&
+		!hosted.error;
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -73,7 +109,13 @@ export default function DashboardPage() {
 					{isEmptyState ? (
 						<OnboardingCard />
 					) : (
-						<AgentsCard environments={environments} isLoading={envsLoading} />
+						<AgentsCard
+							agents={agentTiles}
+							isLoading={envsLoading}
+							hostedStatus={
+								IS_HOSTED ? { isLoading: hosted.isLoading, error: hosted.error } : undefined
+							}
+						/>
 					)}
 
 					<Card>
@@ -134,4 +176,27 @@ export default function DashboardPage() {
 			</div>
 		</div>
 	);
+}
+
+function formatRuntime(agentType: string): string {
+	switch (agentType) {
+		case "openclaw":
+			return "OpenClaw";
+		case "hermes":
+			return "Hermes";
+		case "claude_code":
+		case "claude-code":
+			return "Claude Code";
+		case "codex":
+			return "Codex";
+		default:
+			return agentType;
+	}
+}
+
+function inferMode(agentType: string): "Daemon" | "CLI" {
+	// OpenClaw and Hermes are long-running daemon processes; the rest
+	// (Claude Code, Codex) are stdio CLI tools invoked per command.
+	if (agentType === "openclaw" || agentType === "hermes") return "Daemon";
+	return "CLI";
 }

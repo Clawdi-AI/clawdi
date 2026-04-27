@@ -7,7 +7,6 @@ import {
 	ChevronsUpDown,
 	CircleHelp,
 	CirclePlus,
-	ExternalLink,
 	Key,
 	LayoutDashboard,
 	LogOut,
@@ -16,7 +15,6 @@ import {
 	Monitor,
 	Moon,
 	Plug,
-	Rocket,
 	Search,
 	Settings,
 	Sparkles,
@@ -57,6 +55,8 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
+import { DeployTrigger } from "@/hosted/deploy-trigger";
+import { IS_HOSTED } from "@/lib/hosted";
 
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
@@ -150,23 +150,7 @@ export function AppSidebar() {
 										</KbdGroup>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
-								<SidebarMenuItem>
-									{/* Cross-product link: this app manages already-deployed
-									    agents; clawdi.ai's dashboard is where users spin up
-									    a brand-new one. External link, new tab, with the
-									    arrow icon so the destination isn't a surprise. */}
-									<SidebarMenuButton asChild tooltip="Deploy a new agent">
-										<a
-											href="https://www.clawdi.ai/dashboard"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<Rocket />
-											<span>Deploy a new agent</span>
-											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-										</a>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
+								{IS_HOSTED && <DeployTrigger />}
 								<SidebarMenuItem>
 									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
 										<Settings />
