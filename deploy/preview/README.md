@@ -1,9 +1,14 @@
 # Preview Deployments (Coolify + Cloudflare Tunnel)
 
-Per-PR / per-branch preview environments deployed by Coolify on the team's
-office server, fronted by Cloudflare Tunnel (no public IP, no inbound ports
-needed). See `docs/superpowers/specs/2026-04-28-preview-snapshot-pipeline-design.md`
+Per-PR / per-branch preview environments deployed by Coolify on a self-hosted
+server, fronted by Cloudflare Tunnel (no public IP, no inbound ports needed).
+See `docs/superpowers/specs/2026-04-28-preview-snapshot-pipeline-design.md`
 for the design rationale.
+
+This file uses placeholders (`<your-domain>`, `<your-team-email-domain>`,
+`<your-tunnel-id>`, `<dashboard-subdomain>`, `<owner>`/`<repo>`,
+`<production-tracking-branch>`, `<prod-host>`, `<coolify-host>`) — substitute
+your own values when applying.
 
 ## How a preview boots
 
@@ -14,27 +19,30 @@ for the design rationale.
    `/var/clawdi-snapshots/` into a fresh `pgdata` volume + `files` volume,
    then exits.
 5. `api` starts, runs `uv sync && alembic upgrade head && uvicorn`.
-6. `web` starts, runs `bun install && bun run dev`.
-7. Cloudflare Tunnel routes `{{pr_id}}-preview.clawdi.ai` (web) and
-   `{{pr_id}}-preview-api.clawdi.ai` (api) into Coolify's proxy.
+6. `web` starts, runs `bun install && bun run build && bun run start`.
+7. Cloudflare Tunnel routes `<pr_id>-preview.<your-domain>` (web) and
+   `<pr_id>-preview-api.<your-domain>` (api) into Coolify's proxy.
 
 PR closed/merged → Coolify tears the stack down, including all volumes.
 
 ## Hostname pattern
 
 Both URLs are one label below the apex so Cloudflare's free Universal SSL
-cert covers them:
+covers them under the wildcard `*.<your-domain>`:
 
-- web: `{{pr_id}}-preview.clawdi.ai`
-- api: `{{pr_id}}-preview-api.clawdi.ai`
+- web: `<pr_id>-preview.<your-domain>`
+- api: `<pr_id>-preview-api.<your-domain>`
 
-Configure these patterns in Coolify per-application: **Application → General
-→ Domains** for each service.
+Configure these patterns in Coolify per-application: **Application → Domains**
+for each service.
 
-## One-time operator setup (office server)
+## One-time operator setup (self-hosted server)
 
 1. **Install Coolify** per upstream docs:
    `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash`.
+   If your server's LAN already uses any 10.x.x.x subnets (e.g. WireGuard),
+   pass `DOCKER_ADDRESS_POOL_BASE=172.20.0.0/14 DOCKER_ADDRESS_POOL_SIZE=24`
+   to the installer to keep Docker out of that range.
 
 2. **Install `cloudflared`** as a Docker service. In Cloudflare Zero Trust
    dashboard: **Networks → Tunnels → Create tunnel**. Copy the install
@@ -46,100 +54,121 @@ Configure these patterns in Coolify per-application: **Application → General
      --network coolify \
      cloudflare/cloudflared:latest tunnel --no-autoupdate run --token <token>
    ```
-   In the tunnel's **Public Hostnames** tab, add an ingress rule:
-   - Subdomain: `*`
-   - Domain: `clawdi.ai`
-   - Service type: `HTTP`
-   - URL: `coolify-proxy:80`
-     (NOT `localhost:80` — the proxy is what does per-deploy routing.)
+   In the tunnel's **Public Hostnames** tab, add ingress rules in this
+   order (more-specific first):
+   - `<dashboard-subdomain>.<your-domain>` → `http://coolify:8080`
+     (Coolify dashboard, exposed for GitHub webhook delivery)
+   - `*.<your-domain>` → `https://coolify-proxy:443` (with **No TLS Verify**)
+     (catch-all → Coolify's Traefik for per-deploy routing; HTTPS to skip
+     Coolify's HTTP→HTTPS redirect loop)
 
-3. **Cloudflare DNS for clawdi.ai:** add a wildcard CNAME:
+3. **Cloudflare DNS for `<your-domain>`:** add a wildcard CNAME:
    - Type: `CNAME`
    - Name: `*`
-   - Target: `<tunnel-id>.cfargotunnel.com`
+   - Target: `<your-tunnel-id>.cfargotunnel.com`
    - Proxy status: **Proxied** (orange cloud)
 
-   Confirm explicit one-label records (`api.clawdi.ai`, `cloud.clawdi.ai`,
-   `cloud-api.clawdi.ai`, etc.) are still present and unchanged — explicit
-   records always win over the wildcard.
+   Confirm any explicit one-label records you have are still present and
+   unchanged — explicit records always win over the wildcard.
 
 4. **Cloudflare SSL/TLS:** zone-level mode = **Full** (not Full Strict).
-   Cloudflare terminates TLS at the edge with Universal SSL; tunnel ↔
-   coolify-proxy is HTTP within the trusted Docker network.
+   Cloudflare terminates TLS at the edge with Universal SSL.
 
 5. **Snapshot dir:**
    ```bash
    sudo mkdir -p /var/clawdi-snapshots
    sudo chown <coolify-user> /var/clawdi-snapshots
    ```
+   Coolify auto-suffixes host bind paths with `-pr-<N>` per preview deploy
+   (e.g. `/var/clawdi-snapshots-pr-57`). Pre-create symlinks so each
+   preview can find the same shared snapshot:
+   ```bash
+   sudo bash -c "for n in \$(seq 1 1000); do
+     ln -sfT /var/clawdi-snapshots /var/clawdi-snapshots-pr-\$n
+   done"
+   ```
+   Add to `/etc/cron.hourly/` so future PRs > 1000 also work.
 
-6. **Coolify GitHub source:** Sources → New → GitHub App. Install on
-   `Clawdi-AI/clawdi-oss`. Then create the application: New Resource →
-   Public/Private repo → select `clawdi-oss` → Build pack: **Docker
-   Compose** → compose file: `deploy/preview/docker-compose.yml`.
+6. **Coolify GitHub source:** Sources → New → GitHub App. Install on the
+   target repo. Then create the application: New Resource → repo →
+   Build pack: **Docker Compose** → compose file:
+   `deploy/preview/docker-compose.yml`. Ports: `3000,8000`.
 
-7. **Enable preview deployments:** in the application's settings, enable
-   **Preview Deployments**, choose **Pull Request ID** as the slug source.
-   Set hostname patterns:
-   - web (port 3000): `{{pr_id}}-preview.clawdi.ai`
-   - api (port 8000): `{{pr_id}}-preview-api.clawdi.ai`
+7. **Configure preview deployments:**
+   - Set the application's `docker_compose_domains` (Coolify UI: Domains tab):
+     - web: `http://preview.<your-domain>`
+     - api: `http://preview-api.<your-domain>`
+   - Set the application's `preview_url_template` to `{{pr_id}}-{{domain}}`
+     (single-line field in the Coolify UI).
+   - Enable preview deploys (Settings → Preview Deployments → on).
 
 8. **Approve the snapshot bind mount:** on first deploy, Coolify prompts
    for approval of the `/var/clawdi-snapshots:/snapshots:ro` bind mount.
    Approve once per resource.
 
-9. **Preview environment variables** (Coolify keeps these separate from
-   prod env vars). Copy from prod's `/opt/clawdi-cloud/backend/.env` on
-   the prod VM:
+9. **Configure Coolify's `APP_URL`** to its public hostname so the
+   GitHub App's webhook URL is reachable from github.com:
+   ```bash
+   echo "APP_URL=https://<dashboard-subdomain>.<your-domain>" | \
+     sudo tee -a /data/coolify/source/.env
+   cd /data/coolify/source && \
+     sudo docker compose --env-file .env -f docker-compose.yml \
+       -f docker-compose.prod.yml up -d coolify --force-recreate
    ```
-   CLERK_PEM_PUBLIC_KEY=...
-   VAULT_ENCRYPTION_KEY=...
-   ENCRYPTION_KEY=...
-   COMPOSIO_API_KEY=...
-   MEMORY_EMBEDDING_MODE=...
-   MEMORY_EMBEDDING_API_KEY=...
-   MEMORY_EMBEDDING_BASE_URL=...
-   MEMORY_EMBEDDING_MODEL=...
-   ```
-   And from Vercel's web project env:
-   ```
-   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
-   CLERK_SECRET_KEY=...
-   ```
-   Per-preview substitutions Coolify computes:
-   ```
-   PUBLIC_API_URL=https://{{pr_id}}-preview-api.clawdi.ai
-   WEB_ORIGIN=https://{{pr_id}}-preview.clawdi.ai
-   CORS_ORIGINS=["https://{{pr_id}}-preview.clawdi.ai"]
-   NEXT_PUBLIC_API_URL=https://{{pr_id}}-preview-api.clawdi.ai
-   ALLOWED_EMAIL_DOMAINS=@phala.network
-   PG_PASSWORD=preview_local   # compose-internal only; not externally reachable
-   ```
+   Then in github.com → Apps → your-app → General → Webhook URL: set to
+   `https://<dashboard-subdomain>.<your-domain>/webhooks/source/github/events`.
 
-10. **Clerk dashboard:** add `https://*.clawdi.ai` to **Allowed Origins**
-    and `https://*.clawdi.ai/sign-in/sso-callback` to **Authorized Redirect
-    URLs** for the prod Clerk app.
+10. **Preview environment variables** (Coolify UI → Application → Environment
+    Variables → check "Preview deploys" so they apply to PR builds). Copy
+    secrets from your production environment:
+    ```
+    CLERK_PEM_PUBLIC_KEY=...
+    VAULT_ENCRYPTION_KEY=...
+    ENCRYPTION_KEY=...
+    COMPOSIO_API_KEY=...
+    MEMORY_EMBEDDING_MODE=...
+    MEMORY_EMBEDDING_MODEL=...
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
+    CLERK_SECRET_KEY=...
+    NEXT_PUBLIC_DEPLOY_API_URL=https://<your-public-prod-api>
+    NEXT_PUBLIC_CLAWDI_HOSTED=true
+    ALLOWED_EMAIL_DOMAINS=<your-team-email-domain>
+    REPO_URL=https://github.com/<owner>/<repo>
+    REPO_REF=<production-tracking-branch>
+    PG_PASSWORD=preview_local
+    ```
+    Per-deploy URL env vars (`PUBLIC_API_URL`, `WEB_ORIGIN`, `CORS_ORIGINS`,
+    `NEXT_PUBLIC_API_URL`) are derived inside each container's startup
+    command from the auto-injected `SERVICE_FQDN_*` — no need to set them
+    in the Coolify UI.
 
-After all ten, opening a PR on the repo deploys a preview automatically.
+11. **Clerk dashboard:** add `https://*.<your-domain>` to **Allowed Origins**
+    and `https://*.<your-domain>/sign-in/sso-callback` to **Authorized Redirect
+    URLs** for the production Clerk app. (Wildcard at the apex covers all
+    one-label preview hostnames.)
+
+After all eleven, opening a PR on the repo deploys a preview automatically.
 
 ## Refreshing the snapshot
 
-Snapshots are produced manually on the prod VM and scp'd to the office
-server:
+Snapshots are produced manually on the production VM and scp'd to the
+self-hosted Coolify server:
 
 ```bash
-# On prod VM:
-ssh clawdi
-cd /opt/clawdi-cloud
-./deploy/snapshot/dump.sh --out /tmp/clawdi-snapshot-$(date -u +%F).tar.gz
+# On production VM:
+ssh <prod-host>
+cd /opt/<app>
+./deploy/snapshot/dump.sh \
+  --email-domain @<your-team-email-domain> \
+  --out /tmp/clawdi-snapshot-$(date -u +%F).tar.gz
 
-# Copy to office:
-scp /tmp/clawdi-snapshot-*.tar.gz coolify-host:/var/clawdi-snapshots/
+# Copy to self-hosted server:
+scp /tmp/clawdi-snapshot-*.tar.gz <coolify-host>:/var/clawdi-snapshots/
 
-# On office Coolify host:
-ssh coolify-host
+# On the Coolify host:
+ssh <coolify-host>
 cd /var/clawdi-snapshots/
-ln -sf clawdi-snapshot-2026-04-28.tar.gz latest.tar.gz
+ln -sf clawdi-snapshot-<date>.tar.gz latest.tar.gz
 ```
 
 Existing previews keep their already-restored DB until they're redeployed
@@ -155,20 +184,27 @@ in Coolify — that drops volumes and re-runs `restore`.
   minutes. Subsequent previews are instant.
 
 - **`restore` service fails with "snapshot not found":** the operator
-  needs to scp a snapshot into `/var/clawdi-snapshots/latest.tar.gz` on
-  the host. Once the file exists, redeploy the preview.
+  needs to scp a snapshot into `/var/clawdi-snapshots/latest.tar.gz` AND
+  the symlink farm `/var/clawdi-snapshots-pr-<N>` must exist (operator
+  setup step 5).
 
 - **`restore` says "snapshot already loaded — skipping" but I want a fresh
   one:** redeploy the preview from Coolify. That drops the `pgdata` and
   `files` volumes; the next `restore` run sees no marker table and
   re-loads.
 
-- **Wildcards don't route through the tunnel:** verify the tunnel's
-  ingress rule points at `coolify-proxy:80`, not `localhost:80`. The proxy
-  is what does per-deploy hostname dispatch. See
+- **Wildcards 404 through the tunnel:** the tunnel's catch-all ingress
+  rule must point at `coolify-proxy` (port 80 or 443), NOT `localhost`.
+  The proxy is what does per-deploy hostname dispatch. See
   https://github.com/coollabsio/coolify/discussions/2926.
 
 - **Preview's Clerk auth fails:** check the Clerk dashboard has
-  `https://*.clawdi.ai` in Allowed Origins. The wildcard at the apex
-  covers all preview hostnames in one entry.
-<!-- coolify preview smoke test 2026-04-28 -->
+  `https://*.<your-domain>` in Allowed Origins.
+
+- **Browser network tab shows requests to literal `{{pr_id}}` hostnames:**
+  Coolify only substitutes `{{pr_id}}` in URL-template fields, NOT in env
+  var values. This compose builds URLs from `SERVICE_FQDN_*` (Coolify
+  auto-injects per-deploy values) inside each service's startup command,
+  so don't set `NEXT_PUBLIC_API_URL`/`PUBLIC_API_URL` in the Coolify UI
+  with `{{pr_id}}` — they'd be ignored anyway since the compose `command`
+  exports the right value at runtime.
