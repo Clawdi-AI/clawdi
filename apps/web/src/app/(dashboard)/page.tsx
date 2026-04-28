@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { useHostedConnections } from "@/hosted/use-hosted-connectors";
 import { unwrap, useApi } from "@/lib/api";
+import { isActiveConnection } from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { relativeTime } from "@/lib/utils";
 
@@ -70,8 +71,14 @@ export default function DashboardPage() {
 	// so the resources card keeps the skeleton up instead of flashing
 	// "0 connectors" before the real count lands.
 	const hostedConnectionsForCount = useHostedConnections({ enabled: IS_HOSTED });
+	// Count only ACTIVE connections so the dashboard "Connectors" stat
+	// matches what the user sees on /connectors. Raw `.length` would
+	// inflate the number with INITIALIZING rows from abandoned OAuth
+	// flows and EXPIRED tokens that no longer work.
 	const connectorsCountOverride =
-		IS_HOSTED && hostedConnectionsForCount.data ? hostedConnectionsForCount.data.length : undefined;
+		IS_HOSTED && hostedConnectionsForCount.data
+			? hostedConnectionsForCount.data.filter(isActiveConnection).length
+			: undefined;
 
 	const selfManagedTiles: AgentTile[] = useMemo(() => {
 		return (environments ?? []).map((env) => ({

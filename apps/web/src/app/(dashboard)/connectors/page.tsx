@@ -96,8 +96,12 @@ export default function ConnectorsPage() {
 	// "Search active" hides the Connected rail so the search results are
 	// the only thing on screen — connected apps still match the search
 	// (catalog includes them) and surface in the catalog grid via their
-	// regular checkmark, so they're not lost.
-	const showConnectedRail = !debouncedQuery && connected.activeConnections.length > 0;
+	// regular checkmark, so they're not lost. We also surface the rail
+	// when `connected.error` is set, even with no known connections —
+	// otherwise a connections-fetch failure makes the section silently
+	// disappear and the user has no signal anything went wrong.
+	const showConnectedRail =
+		!debouncedQuery && (connected.activeConnections.length > 0 || !!connected.error);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -119,7 +123,11 @@ export default function ConnectorsPage() {
 			<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
 
 			{showConnectedRail ? (
-				<ConnectedRail apps={connected.data} isLoading={connected.isLoading} />
+				<ConnectedRail
+					apps={connected.data}
+					isLoading={connected.isLoading}
+					error={connected.error}
+				/>
 			) : null}
 
 			<CatalogSection
@@ -148,16 +156,27 @@ export default function ConnectorsPage() {
 function ConnectedRail({
 	apps,
 	isLoading,
+	error,
 }: {
 	apps: { name: string; display_name: string; description: string; logo: string }[];
 	isLoading: boolean;
+	error: Error | null;
 }) {
 	return (
 		<section>
 			<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 				Connected
 			</h2>
-			{isLoading && apps.length === 0 ? (
+			{error ? (
+				// Without this, a connections-fetch failure makes the rail
+				// silently disappear and the user only sees "X active" in
+				// the header with no way to find their connections.
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load connections</AlertTitle>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
+				</Alert>
+			) : isLoading && apps.length === 0 ? (
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 4 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />

@@ -54,6 +54,13 @@ export function ConnectorCredentialsDialog({
 	// would reset it, then the user would see the stale error if the
 	// rejection arrived AFTER the reopen effect committed.
 	const openGenRef = useRef(0);
+	// Synchronous single-flight guard. `submit.isPending` is the
+	// post-render TanStack Query state, so two rapid Connect clicks
+	// fired before the next commit would both pass the
+	// `if (… || submit.isPending) return` check below and queue
+	// duplicate POSTs. The ref flips before mutation queues — same
+	// pattern as the OAuth/disconnect handlers in the detail page.
+	const inflightSubmitRef = useRef(false);
 	useEffect(() => {
 		openGenRef.current += 1;
 		setValues({});
@@ -68,11 +75,8 @@ export function ConnectorCredentialsDialog({
 		visibleFields.filter((f) => f.required).every((f) => values[f.name]?.trim());
 
 	async function handleSubmit() {
-		// Defense in depth: the button + form `disabled` props gate this
-		// path, but a fast double-click or programmatic call could still
-		// land two mutations in flight if the disabled flag hasn't yet
-		// propagated to the click handler closure. Bail explicitly.
-		if (!canSubmit || submit.isPending) return;
+		if (!canSubmit || inflightSubmitRef.current) return;
+		inflightSubmitRef.current = true;
 		const gen = openGenRef.current;
 		setSubmitError(null);
 		try {
@@ -92,6 +96,8 @@ export function ConnectorCredentialsDialog({
 		} catch (e) {
 			if (gen !== openGenRef.current) return;
 			setSubmitError(errorMessage(e));
+		} finally {
+			inflightSubmitRef.current = false;
 		}
 	}
 

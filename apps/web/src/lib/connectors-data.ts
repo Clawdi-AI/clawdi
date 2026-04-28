@@ -229,9 +229,14 @@ export function useConnectedAppCards() {
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
 		[connectionsQ.data],
 	);
-	// Stable identity: serialize names so dependent memos and queries
-	// don't re-run when only the array reference changes.
-	const names = useMemo(() => activeConnections.map((c) => c.app_name), [activeConnections]);
+	// Dedupe so multi-account-same-app users don't pay for two catalog
+	// lookups (OSS) or render duplicate cards with colliding React
+	// keys. The Connected rail is per-app, not per-connection — the
+	// detail page is where the user picks between accounts.
+	const names = useMemo(
+		() => Array.from(new Set(activeConnections.map((c) => c.app_name))),
+		[activeConnections],
+	);
 
 	// HOSTED: single shared query, lookup in-memory.
 	const hostedLookup = useHostedAvailableAppsByName({
