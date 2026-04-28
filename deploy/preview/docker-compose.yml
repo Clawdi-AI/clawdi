@@ -105,13 +105,10 @@ services:
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
       DEBUG: "false"
-      # Coolify auto-injects SERVICE_FQDN_API and SERVICE_FQDN_WEB with the
-      # per-deploy hostname (e.g. "57-preview-api.clawdi.ai" for PR 57). Build
-      # full URLs from those — this is the substitution mechanism that works
-      # for env var VALUES; "{{pr_id}}" is only honored in fqdn template fields.
-      PUBLIC_API_URL: https://${SERVICE_FQDN_API}
-      WEB_ORIGIN: https://${SERVICE_FQDN_WEB}
-      CORS_ORIGINS: '["https://${SERVICE_FQDN_WEB}"]'
+      # PUBLIC_API_URL / WEB_ORIGIN / CORS_ORIGINS are derived from SERVICE_FQDN_*
+      # in the container's command at runtime — see below. (Compose-time
+      # ${SERVICE_FQDN_API} would resolve from the project .env which holds the
+      # production tracker's value, not the PR-specific one.)
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@phala.network}
       CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY}
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY}
@@ -126,6 +123,10 @@ services:
     command: >
       bash -c '
         set -e
+        # Derive per-deploy URLs from SERVICE_FQDN_* (per-service runtime env)
+        export PUBLIC_API_URL="https://$$SERVICE_FQDN_API"
+        export WEB_ORIGIN="https://$$SERVICE_FQDN_WEB"
+        export CORS_ORIGINS="[\"https://$$SERVICE_FQDN_WEB\"]"
         if ! command -v uv >/dev/null; then
           pip install --quiet uv
         fi
@@ -145,7 +146,9 @@ services:
       - web-node-modules:/app/node_modules
       - web-app-node-modules:/app/apps/web/node_modules
     environment:
-      NEXT_PUBLIC_API_URL: https://${SERVICE_FQDN_API}
+      # NEXT_PUBLIC_API_URL is derived in the command from SERVICE_FQDN_API
+      # (per-deploy value); it must be exported BEFORE `bun run build` since
+      # NEXT_PUBLIC_* env vars are baked into the JS bundle at build time.
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
     ports:
@@ -153,6 +156,7 @@ services:
     command: >
       bash -c '
         set -e
+        export NEXT_PUBLIC_API_URL="https://$$SERVICE_FQDN_API"
         cd /app
         # --ignore-scripts skips the root lefthook postinstall which needs git
         # (dev-only hook; not needed in containers).
