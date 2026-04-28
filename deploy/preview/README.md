@@ -171,3 +171,4 @@ in Coolify — that drops volumes and re-runs `restore`.
 - **Preview's Clerk auth fails:** check the Clerk dashboard has
   `https://*.clawdi.ai` in Allowed Origins. The wildcard at the apex
   covers all preview hostnames in one entry.
+<!-- coolify preview smoke test 2026-04-28 -->
