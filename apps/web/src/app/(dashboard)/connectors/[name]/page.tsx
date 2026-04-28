@@ -26,6 +26,10 @@ import type { ConnectorTool } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { cn, errorMessage } from "@/lib/utils";
 
+// Auth schemes whose connect flow is a redirect (OAuth family) or
+// instant ("none"); everything else needs the in-page credentials form.
+const REDIRECT_AUTH_TYPES = new Set(["oauth", "oauth1", "oauth2", "composio_link", "none"]);
+
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
 	return raw
@@ -181,13 +185,15 @@ export default function ConnectorDetailPage() {
 
 	const displayName = app?.display_name || formatName(name);
 
-	// Connectors split into OAuth (window.open redirect) and credentials
-	// (in-page dialog) based on Composio's auth scheme. We treat anything
-	// that isn't oauth2/none as needing a credentials dialog so newer
-	// schemes (basic, bearer, etc.) automatically pick up the right UX
+	// Connectors split into redirect flows (OAuth family) and credentials
+	// flows (form-based: API_KEY, BEARER_TOKEN, BASIC, …). Composio
+	// surfaces several scheme strings that all belong to the redirect
+	// path — `oauth`, `oauth1`, `oauth2`, `composio_link` — plus
+	// `none` for instant-connect apps. Anything outside that set goes
+	// to the dialog so newer credential-style schemes default safely
 	// without code changes here.
 	const [credsOpen, setCredsOpen] = useState(false);
-	const usesCredentialsForm = !!app && app.auth_type !== "oauth2" && app.auth_type !== "none";
+	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(app.auth_type);
 	const startConnect = () => {
 		if (usesCredentialsForm) {
 			setCredsOpen(true);

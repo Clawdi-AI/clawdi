@@ -117,6 +117,23 @@ async def auth_fields(
     return ConnectorAuthFieldsResponse.model_validate(fields)
 
 
+def _scrub_credentials(message: str, credentials: dict[str, str]) -> str:
+    """Redact submitted credential values from an error message.
+
+    Composio's validation errors sometimes echo back the value the user
+    submitted (e.g. "invalid api_key 'sk-…'"). Strip any of the user's
+    actual values from the string before it reaches the client. We
+    only redact non-trivial values (>= 4 chars) to avoid eating short
+    placeholder words from generic error templates.
+    """
+    safe = message
+    for v in credentials.values():
+        v = (v or "").strip()
+        if len(v) >= 4:
+            safe = safe.replace(v, "***")
+    return safe
+
+
 @router.post("/{app_name}/connect-credentials")
 async def connect_credentials(
     app_name: str,
@@ -142,6 +159,17 @@ async def connect_credentials(
         result = await connect_with_credentials(str(auth.user_id), app_name, body.credentials)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Composio's SDK raises a mix of `ComposioClientError`,
+        # `ConnectionRequestTimeoutError`, plain `Exception` for
+        # validation failures. Re-raise as 400 with a sanitized message
+        # so we don't leak the user's submitted credential values back
+        # via the error detail (they sometimes appear in upstream
+        # error templates).
+        detail = _scrub_credentials(str(exc), body.credentials) or "Failed to validate credentials"
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail) from exc
     return ConnectorCredentialsConnectResponse.model_validate(result)
 
 
