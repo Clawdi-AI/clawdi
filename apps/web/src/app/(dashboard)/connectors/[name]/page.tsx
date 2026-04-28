@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -35,8 +35,22 @@ function formatName(raw: string): string {
 
 export default function ConnectorDetailPage() {
 	const { name } = useParams<{ name: string }>();
+	const searchParams = useSearchParams();
 	const api = useApi();
 	const queryClient = useQueryClient();
+
+	// OAuth from hosted mode redirects directly back to this page (no
+	// intermediary callback route). If Composio appended `?error=…` we
+	// surface it once and strip the param so a refresh doesn't re-toast.
+	useEffect(() => {
+		const oauthError = searchParams.get("error");
+		if (!oauthError) return;
+		toast.error("Connection failed", { description: oauthError });
+		const url = new URL(window.location.href);
+		url.searchParams.delete("error");
+		url.searchParams.delete("status");
+		window.history.replaceState({}, "", url);
+	}, [searchParams]);
 
 	// Source of truth depends on deployment mode (see list page comment).
 	// All four queries / mutations always-call hooks for stable hook order;

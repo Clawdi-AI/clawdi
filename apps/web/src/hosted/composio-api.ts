@@ -105,17 +105,24 @@ export function unwrapComposio<T>(result: { data?: T; error?: unknown; response:
  * Composio sends the user back here after OAuth so they land on the
  * product they clicked from, not on `clawdi.ai/dashboard`.
  *
+ * Lands directly on the connector's detail page — no intermediary
+ * callback route. The detail page is going to refetch on mount
+ * anyway, and the original tab refetches on window focus, so the
+ * extra hop served only as a 1.5s spinner. If OAuth fails, Composio
+ * appends `?error=…` and the detail page surfaces it via toast.
+ *
  * Computed from the live `window.location` instead of an env var so
  * dev deployments (Vercel preview, localhost, conductor worktrees)
  * each route their callbacks back to themselves without needing a
  * per-environment override.
  */
-export function composioCallbackUrl(): string {
+export function composioCallbackUrl(appName: string): string {
+	const slug = encodeURIComponent(appName);
 	if (typeof window === "undefined") {
 		// Server-side render path — should never actually be called
 		// since composio mutations are user-initiated, but the guard
 		// keeps TS narrowing happy and prevents accidental breakage.
-		return "https://cloud.clawdi.ai/connectors/callback";
+		return `https://cloud.clawdi.ai/connectors/${slug}`;
 	}
-	return `${window.location.origin}/connectors/callback`;
+	return `${window.location.origin}/connectors/${slug}`;
 }

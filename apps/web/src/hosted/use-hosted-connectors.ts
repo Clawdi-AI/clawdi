@@ -173,12 +173,13 @@ export function useHostedConnectMutation() {
 			const data = await unwrapComposio(
 				await api.POST("/connections/{app_name}/connect", {
 					params: { path: { app_name: appName } },
-					body: { redirect_url: composioCallbackUrl() },
+					body: { redirect_url: composioCallbackUrl(appName) },
 				}),
 			);
 			// Monorepo returns `{ url }`; cloud's UI expects `{ connect_url, id }`.
-			// id is unknown until OAuth completes, so we synthesize a placeholder
-			// that the callback page resolves via /verify.
+			// id is unknown until OAuth completes — the user lands on the
+			// detail page directly, which refetches the connection list and
+			// renders the new entry on its own.
 			return { connect_url: data.url, id: "" };
 		},
 		onSuccess: () => {
