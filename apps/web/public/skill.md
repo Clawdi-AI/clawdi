@@ -1,6 +1,5 @@
 ---
 name: clawdi-onboarding
-version: 1
 description: First-time setup walkthrough for connecting this machine to Clawdi Cloud.
 homepage: https://cloud.clawdi.ai
 ---
