@@ -111,21 +111,39 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 	});
 });
 
-describe("app-sidebar dynamically loads DeployTrigger only when hosted", () => {
-	test("DeployTrigger constructor is gated by IS_HOSTED at module level", () => {
-		const sidebar = readFileSync(
-			join(import.meta.dir, "..", "components", "app-sidebar.tsx"),
-			"utf8",
-		);
-		// Module-level dynamic import must be wrapped in an `IS_HOSTED ?
-		// dynamic(…) : null` ternary so the OSS build's bundler
-		// statically eliminates the import() call (and therefore the
-		// hosted chunk). A bare `dynamic(() => import("@/hosted/…"))`
-		// at module top level would still register the chunk in OSS
-		// builds, defeating the point.
-		const gatedAtConstruction = /const\s+DeployTrigger\s*=\s*IS_HOSTED\s*\?\s*dynamic\s*\(/.test(
-			sidebar,
-		);
-		expect(gatedAtConstruction).toBe(true);
+describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
+	test('every `dynamic(import("@/hosted/…"))` is constructed inside `IS_HOSTED ? … : null`', () => {
+		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
+		// at module top level would register the hosted chunk in the OSS
+		// build's webpack/turbopack manifest even though `IS_HOSTED &&
+		// <Component />` keeps it from rendering. The runtime bundler
+		// only eliminates the import() call when the surrounding
+		// expression is provably unreachable — `IS_HOSTED ? dynamic(…)
+		// : null` collapses to `null` at build time once
+		// `NEXT_PUBLIC_CLAWDI_HOSTED` is folded in, taking the entire
+		// import() with it.
+		const offenders: string[] = [];
+		// Anchor on each `dynamic(() => import("@/hosted/…"))` call,
+		// then walk backwards to the most recent `const ` keyword. The
+		// snippet between the two must contain `IS_HOSTED ?` — that's
+		// the gate the bundler folds at build time.
+		const hostedDynamic = /dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/hosted\/[^"']+["']/g;
+		for (const file of walkSrcExceptHosted(SRC_DIR)) {
+			const src = readFileSync(file, "utf8");
+			for (const match of src.matchAll(hostedDynamic)) {
+				const idx = match.index ?? 0;
+				const lastConst = src.lastIndexOf("\nconst ", idx);
+				const start = lastConst >= 0 ? lastConst : 0;
+				const snippet = src.slice(start, idx);
+				if (!/\bIS_HOSTED\s*\?/.test(snippet)) {
+					offenders.push(`${relative(SRC_DIR, file)} — ${match[0].slice(0, 80)}…`);
+				}
+			}
+		}
+		if (offenders.length > 0) {
+			throw new Error(
+				`Ungated dynamic imports of @/hosted/* leak the hosted chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
+			);
+		}
 	});
 });

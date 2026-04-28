@@ -3,7 +3,7 @@
 import { AlertCircle, Check, Link2Off, Plug } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
@@ -45,7 +45,30 @@ function formatName(raw: string): string {
 		.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Same Suspense pattern as `connectors/page.tsx`: nuqs's
+ * `useQueryStates` reads `useSearchParams` under the hood, which
+ * makes Next.js bail out of static generation. Wrapping the body
+ * keeps the page renderable in App Router static-shell mode and
+ * defers only the URL-state-dependent code to the client.
+ */
 export default function ConnectorDetailPage() {
+	return (
+		<Suspense fallback={<DetailSkeletonShell />}>
+			<ConnectorDetail />
+		</Suspense>
+	);
+}
+
+function DetailSkeletonShell() {
+	return (
+		<div className="flex flex-col gap-4 px-4 lg:px-6">
+			<DetailSkeleton />
+		</div>
+	);
+}
+
+function ConnectorDetail() {
 	const { name } = useParams<{ name: string }>();
 
 	// OAuth from hosted mode redirects directly back to this page (no

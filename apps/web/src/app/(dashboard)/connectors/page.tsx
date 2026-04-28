@@ -2,7 +2,7 @@
 
 import { AlertCircle, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { createParser, parseAsString, useQueryState } from "nuqs";
-import { useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import {
 	CONNECTOR_GRID_CLASS,
 	ConnectorCard,
@@ -14,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
@@ -35,7 +36,42 @@ const parseAsPositivePage = createParser({
 	serialize: (n: number) => String(n),
 });
 
+/**
+ * Wrap the nuqs-using body in a Suspense boundary because Next.js
+ * App Router bails out of static generation when a page calls
+ * `useSearchParams` (which nuqs uses under the hood). The bailout
+ * surface is `<Suspense>` rather than `dynamic = "force-dynamic"`
+ * because Next's docs explicitly recommend it — keeps the static
+ * shell renderable, defers only the URL-state-dependent body to
+ * client. Fallback mirrors the loading skeleton the body renders
+ * once mounted.
+ */
 export default function ConnectorsPage() {
+	return (
+		<Suspense fallback={<ConnectorsListSkeleton />}>
+			<ConnectorsList />
+		</Suspense>
+	);
+}
+
+function ConnectorsListSkeleton() {
+	return (
+		<div className="space-y-5 px-4 lg:px-6">
+			<div className="flex flex-col gap-2">
+				<Skeleton className="h-8 w-32" />
+				<Skeleton className="h-4 w-72" />
+			</div>
+			<Skeleton className="h-10 w-full" />
+			<div className={CONNECTOR_GRID_CLASS}>
+				{Array.from({ length: 16 }).map((_, i) => (
+					<ConnectorCardSkeleton key={i} />
+				))}
+			</div>
+		</div>
+	);
+}
+
+function ConnectorsList() {
 	// Page + search live in the URL via nuqs so a deep-link reproduces
 	// the user's filtered view, and the back button restores the prior
 	// page after a detail-page round-trip. `clearOnDefault: true` keeps
