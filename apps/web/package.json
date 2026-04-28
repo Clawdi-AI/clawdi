@@ -13,7 +13,7 @@
 	},
 	"dependencies": {
 		"@clawdi/shared": "workspace:*",
-		"@clerk/nextjs": "^7.2.1",
+		"@clerk/nextjs": "^7.2.7",
 		"@clerk/themes": "^2.4.57",
 		"@radix-ui/react-toggle": "^1.1.10",
 		"@radix-ui/react-toggle-group": "^1.1.11",
