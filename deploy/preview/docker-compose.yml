@@ -1,0 +1,121 @@
+name: clawdi-preview
+
+# Per-preview stack deployed by Coolify on the office server, fronted by
+# Cloudflare Tunnel. See docs/superpowers/specs/2026-04-28-preview-snapshot-pipeline-design.md
+# for the full design.
+#
+# Coolify substitutes per-deploy env vars (PUBLIC_API_URL, WEB_ORIGIN, etc.)
+# from the project's preview-environment-variables set. The bind mount
+# /var/clawdi-snapshots:/snapshots:ro must be approved once per resource in
+# the Coolify UI on first deploy.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: clawdi
+      POSTGRES_USER: clawdi
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-preview_local}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawdi"]
+      interval: 5s
+      retries: 20
+
+  # One-shot init: extracts the snapshot tarball into the postgres + file
+  # store volumes on first boot, no-ops thereafter (idempotent via a marker
+  # table). Snapshots are scp'd into /var/clawdi-snapshots/ on the host by
+  # the operator; see deploy/snapshot/dump.sh for how they're produced.
+  restore:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /var/clawdi-snapshots:/snapshots:ro
+      - files:/data/files
+      - ./restore.sh:/restore.sh:ro
+    environment:
+      DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      SNAPSHOT_PATH: ${SNAPSHOT_PATH:-/snapshots/latest.tar.gz}
+    command: ["sh", "/restore.sh"]
+    restart: "no"
+
+  api:
+    image: python:3.12-slim
+    working_dir: /app/backend
+    depends_on:
+      restore:
+        condition: service_completed_successfully
+    volumes:
+      - ./:/app
+      - api-venv:/app/backend/.venv
+      - uv-cache:/root/.cache/uv
+      - fastembed-cache:/root/.cache/fastembed
+      - files:/data/files
+    environment:
+      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      ENVIRONMENT: preview
+      FILE_STORE_TYPE: local
+      FILE_STORE_LOCAL_PATH: /data/files
+      DEBUG: "false"
+      # Coolify substitutes the rest from preview env vars:
+      #   PUBLIC_API_URL, WEB_ORIGIN, CORS_ORIGINS, ALLOWED_EMAIL_DOMAINS,
+      #   CLERK_PEM_PUBLIC_KEY, VAULT_ENCRYPTION_KEY, ENCRYPTION_KEY,
+      #   COMPOSIO_API_KEY, MEMORY_EMBEDDING_*
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
+      WEB_ORIGIN: ${WEB_ORIGIN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@phala.network}
+      CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY}
+      VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      MEMORY_EMBEDDING_MODE: ${MEMORY_EMBEDDING_MODE:-local}
+      MEMORY_EMBEDDING_API_KEY: ${MEMORY_EMBEDDING_API_KEY:-}
+      MEMORY_EMBEDDING_BASE_URL: ${MEMORY_EMBEDDING_BASE_URL:-}
+      MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
+    ports:
+      - "8000"
+    command: >
+      bash -c '
+        set -e
+        if ! command -v uv >/dev/null; then
+          pip install --quiet uv
+        fi
+        uv sync --frozen
+        uv run alembic upgrade head
+        exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+      '
+
+  web:
+    image: oven/bun:1
+    working_dir: /app/apps/web
+    volumes:
+      - ./:/app
+      - web-node-modules:/app/node_modules
+      - web-app-node-modules:/app/apps/web/node_modules
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+    ports:
+      - "3000"
+    command: >
+      bash -c '
+        set -e
+        cd /app
+        bun install --frozen-lockfile
+        cd apps/web
+        exec bun run dev --hostname 0.0.0.0 --port 3000
+      '
+
+volumes:
+  pgdata:
+  files:
+  api-venv:
+  uv-cache:
+  fastembed-cache:
+  web-node-modules:
+  web-app-node-modules:
