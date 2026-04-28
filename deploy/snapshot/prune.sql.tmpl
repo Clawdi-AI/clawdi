@@ -1,0 +1,56 @@
+-- Prune the snapshot DB to keep only users whose email matches the allowlist.
+-- The schema has no real foreign keys on user_id (only vault_items → vaults
+-- uses ON DELETE CASCADE), so a single DELETE FROM users would orphan rows
+-- everywhere. Each user-owned table is deleted explicitly.
+--
+-- ${EMAIL_LIKE} is substituted by deploy/snapshot/dump.sh (e.g. '%@phala.network').
+-- The operator's --email-domain flag is validated against ^@[a-z0-9.-]+$
+-- before substitution to keep this an operator tool, not a SQL-injection vector.
+
+BEGIN;
+
+CREATE TEMP TABLE keep ON COMMIT DROP AS
+  SELECT user_id FROM users WHERE email LIKE '${EMAIL_LIKE}';
+
+DELETE FROM api_keys             WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM agent_environments   WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM sessions             WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM skills               WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM memories             WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM vaults               WHERE user_id NOT IN (SELECT user_id FROM keep);
+-- vault_items cascades from vaults via the only real FK in the schema.
+DELETE FROM user_settings        WHERE user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM device_authorization WHERE user_id IS NOT NULL
+                                   AND user_id NOT IN (SELECT user_id FROM keep);
+DELETE FROM users                WHERE email NOT LIKE '${EMAIL_LIKE}';
+
+COMMIT;
+
+-- Schema-drift assertion: after the prune, every user_id in any user-owned
+-- table must exist in users. If a future migration adds a new user-owned
+-- table, this query catches it (the table won't have been pruned, so its
+-- rows still reference deleted user_ids).
+DO $$
+DECLARE
+  bad_count integer;
+  bad_table text;
+BEGIN
+  FOREACH bad_table IN ARRAY ARRAY[
+    'api_keys',
+    'agent_environments',
+    'sessions',
+    'skills',
+    'memories',
+    'vaults',
+    'user_settings',
+    'device_authorization'
+  ] LOOP
+    EXECUTE format(
+      'SELECT COUNT(*) FROM %I WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT user_id FROM users)',
+      bad_table
+    ) INTO bad_count;
+    IF bad_count > 0 THEN
+      RAISE EXCEPTION 'orphan rows in %: % rows reference non-existent user_id', bad_table, bad_count;
+    END IF;
+  END LOOP;
+END $$;
