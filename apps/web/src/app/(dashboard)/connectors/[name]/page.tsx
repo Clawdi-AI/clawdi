@@ -181,7 +181,12 @@ export default function ConnectorDetailPage() {
 	// popup is the worst-case experience instead of a credentials
 	// dialog hitting an endpoint that doesn't exist yet.
 	const [credsOpen, setCredsOpen] = useState(false);
-	const authType = app?.auth_type ?? "oauth2";
+	// `||` (not `??`): Composio occasionally returns empty string for
+	// `auth_type` and an older backend may omit the field entirely; both
+	// cases must fall through to the OAuth path. `??` would let `""`
+	// pass and route the user into a credentials dialog calling
+	// `/auth-fields` on a backend that lacks the endpoint.
+	const authType = app?.auth_type || "oauth2";
 	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(authType);
 	// Synchronous single-flight guard for the connect flow. Mirrors the
 	// disconnect ref above: `connectMutation.isPending` only flips after
