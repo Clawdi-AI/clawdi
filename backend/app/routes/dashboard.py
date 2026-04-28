@@ -102,8 +102,13 @@ async def get_stats(
         from app.services.composio import get_connected_accounts
 
         if settings.composio_api_key:
-            accounts = await get_connected_accounts(str(auth.user_id))
-            connectors_count = len(accounts)
+            # Composio entity_id is the Clerk user id, not the local PG
+            # UUID — must match what /api/connectors uses or this stat
+            # silently reads zero for users who actually have connections.
+            accounts = await get_connected_accounts(auth.user.clerk_id)
+            connectors_count = sum(
+                1 for a in accounts if (a.get("status") or "").upper() == "ACTIVE"
+            )
     except Exception:
         pass
 

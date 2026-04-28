@@ -4,10 +4,18 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ConnectRequest(BaseModel):
-    """Empty body kept for future fields. Cloud-api's connect route
-    currently uses defaults for everything (OAuth, Composio-managed
-    callback). Re-add `redirect_url` here when Phase 2 wires it through
-    `create_connect_link`."""
+    """OAuth connect-link request body.
+
+    `redirect_url` is the absolute URL Composio redirects the user
+    back to after the OAuth flow completes. The frontend supplies
+    its own connector detail page (e.g.
+    `https://cloud.example.com/connectors/gmail`); when omitted,
+    Composio uses its own managed callback. Bound the URL length so
+    we can't be talked into routing OAuth through an attacker-
+    controlled multi-megabyte redirect.
+    """
+
+    redirect_url: str | None = Field(default=None, max_length=2048)
 
 
 class ConnectorConnectionResponse(BaseModel):

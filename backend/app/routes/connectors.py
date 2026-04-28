@@ -89,7 +89,7 @@ async def list_connections(
     """List user's connected services."""
     if not settings.composio_api_key:
         return []
-    accounts = await get_connected_accounts(str(auth.user_id))
+    accounts = await get_connected_accounts(auth.user.clerk_id)
     return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
@@ -140,11 +140,18 @@ async def connect_app(
     body: ConnectRequest | None = None,
     auth: AuthContext = Depends(get_auth),
 ) -> ConnectorConnectResponse:
-    """Generate OAuth connect link for an app."""
+    """Generate OAuth connect link for an app.
+
+    Forwards `body.redirect_url` to Composio so the OAuth provider
+    sends the user back to the caller's chosen landing page (e.g.
+    the connector detail page on the frontend). If omitted, Composio
+    falls back to its own managed callback.
+    """
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    redirect_url = body.redirect_url if body else None
     try:
-        result = await create_connect_link(str(auth.user_id), app_name)
+        result = await create_connect_link(auth.user.clerk_id, app_name, redirect_url)
     except HTTPException:
         raise
     except Exception as exc:
@@ -215,7 +222,7 @@ async def connect_credentials(
     if any(not v.strip() for v in body.credentials.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential values cannot be empty")
     try:
-        result = await connect_with_credentials(str(auth.user_id), app_name, body.credentials)
+        result = await connect_with_credentials(auth.user.clerk_id, app_name, body.credentials)
     except TimeoutError as exc:
         # `connect_with_credentials` polls Composio with a bounded
         # timeout; built-in `TimeoutError` is what `wait_until_active`
@@ -247,7 +254,7 @@ async def disconnect(
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
-    accounts = await get_connected_accounts(str(auth.user_id))
+    accounts = await get_connected_accounts(auth.user.clerk_id)
     if not any(a.get("id") == connection_id for a in accounts):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
 
@@ -265,7 +272,7 @@ async def get_mcp_config(
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
-    token = create_proxy_token(str(auth.user_id))
+    token = create_proxy_token(auth.user.clerk_id)
     base = settings.public_api_url.rstrip("/")
 
     return ConnectorMcpConfigResponse(

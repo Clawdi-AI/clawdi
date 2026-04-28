@@ -118,16 +118,34 @@ def _account_display_label(account) -> str | None:
     return None
 
 
-async def create_connect_link(user_id: str, app_name: str) -> dict:
-    """Generate OAuth connect link for an app."""
+async def create_connect_link(
+    entity_id: str, app_name: str, redirect_url: str | None = None
+) -> dict:
+    """Generate OAuth connect link for an app.
+
+    `entity_id` is the Composio per-user identifier — we pass the
+    Clerk user id so a single Composio account can serve many users
+    keyed by their Clerk identity. This must match what
+    `get_connected_accounts` filters by, otherwise the new connection
+    would be invisible to subsequent reads.
+
+    `redirect_url`, when provided, is forwarded to Composio so the
+    OAuth provider sends the user back to the caller's chosen
+    landing page (the connector detail page) instead of Composio's
+    default callback. Lets the frontend skip a polling loop and just
+    refetch on mount when the user lands.
+    """
     client = get_composio_client()
 
     def _create():
         integration = _resolve_integration(client, app_name)
-        result = client.connected_accounts.initiate(
-            integration_id=str(integration.id),
-            entity_id=user_id,
-        )
+        kwargs: dict = {
+            "integration_id": str(integration.id),
+            "entity_id": entity_id,
+        }
+        if redirect_url:
+            kwargs["redirect_url"] = redirect_url
+        result = client.connected_accounts.initiate(**kwargs)
         return {
             "connect_url": result.redirectUrl,
             "id": str(result.connectedAccountId),
