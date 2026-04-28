@@ -19,7 +19,7 @@ export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 /**
  * UI-side projection of an agent for the dashboard grid. The dashboard
  * page composes this from cloud-api environments and (for hosted users)
- * clawdi-monorepo deployments — `AgentsCard` itself stays generic and
+ * clawdi.ai deployments — `AgentsCard` itself stays generic and
  * never imports cross-origin clients or `@/hosted/*`.
  */
 export interface AgentTile {

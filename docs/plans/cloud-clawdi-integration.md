@@ -54,7 +54,7 @@ review. Summary:
 - Gateway library extraction from existing controller (refactor)
 - Schema additions: api_keys.{scopes, deployment_id, allowed_vault_uris}; agent_environments.{deployment_id, migration_epoch}; new tables tunnel_sessions / connect_tokens / redeemed_tokens / agent_environments_history
 
-**TO PORT (existing UI in clawdi-clawdi.ai, not rewrite):**
+**TO PORT (existing UI in clawdi.ai, not rewrite):**
 - Console UI (`apps/web/src/components/console/` — files/logs/terminal/public-ports)
 - `agent-offline-state.tsx`, `use-hermes-target`, `use-hermes-client`, etc.
 
@@ -786,7 +786,7 @@ Composio identity is keyed on `(api_key, entity_id)`. A user
 connecting Gmail in clawdi.ai/dashboard stores tokens under
 `(composio_api_key, clerk_id)`. For cloud.clawdi.ai to surface
 those same connections, hosted users **proxy all `/connectors`
-calls cross-origin to clawdi-clawdi.ai's existing `/connections`
+calls cross-origin to clawdi.ai's existing `/connections`
 API** rather than running a parallel Composio client.
 
 Cloud's own `backend/app/services/composio.py` and `routes/connectors.py`
@@ -814,10 +814,12 @@ clawdi.ai's `POST /connections/{app_name}/connect` already accepts
 `body.redirect_url` (`backend/app/routes/connections.py:481-506`)
 and validates against `_ALLOWED_REDIRECT_SCHEMES = {"https", "exp", "clawdi"}` —
 any HTTPS host passes, so cloud passes
-`redirect_url=https://cloud.clawdi.ai/connectors/callback` and the
-user lands back on cloud after OAuth, not clawdi.ai. The token
-itself is still stored under the user's `clerk_id` entity, so
-both products see the connection. UX matches the product the
+`redirect_url=https://cloud.clawdi.ai/connectors/<app>` (the connector's
+own detail page) and the user lands back on cloud after OAuth, not
+clawdi.ai. The token itself is still stored under the user's
+`clerk_id` entity, so both products see the connection. No
+intermediary callback route — react-query refetches on mount in the
+new tab and on focus in the original. UX matches the product the
 user clicked from.
 
 **Architecture:**
@@ -826,16 +828,16 @@ user clicked from.
        cloud.clawdi.ai (cloud-web)
               │
               ├─ IS_HOSTED=true
-              │   └─ apps/web/src/hosted/composio-api.ts
+              │   └─ apps/web/src/hosted/clawdi-api.ts (shared client)
               │       └─ cross-origin → clawdi.ai/connections/*
               │           └─ entity_id = user.clerk_id
-              │           └─ redirect_url = cloud.clawdi.ai/connectors/callback
+              │           └─ redirect_url = cloud.clawdi.ai/connectors/<app>
               │
               └─ IS_HOSTED=false
                   └─ /api/connectors (cloud-api)
                       └─ entity_id = user.id (local UUID)
 
-       clawdi.ai (clawdi.ai) — owns Composio data + OAuth callbacks
+       clawdi.ai — owns Composio data + OAuth callbacks
               ├─ /connections/* (already exists)
               └─ CORS: cloud.clawdi.ai included via PR #424
 ```
@@ -1590,12 +1592,13 @@ estimates are unhelpful planning fiction.
 - Hosted-only components must be side-effect-free at module top
   level (no env reads, no client construction at import) — see
   Conventions section
-- Composio cross-origin proxy for hosted: `apps/web/src/hosted/composio-api.ts`
-  + `/connectors/*` pages switch data source on `IS_HOSTED`. Hosted
-  users see their `clerk_id`-keyed connections from clawdi.ai;
-  OAuth callbacks return to `cloud.clawdi.ai/connectors/callback`
-  via per-request `redirect_url`. See "Composio cross-origin proxy"
-  section under MCP proxy plane for the full design.
+- Composio cross-origin proxy for hosted: `apps/web/src/hosted/clawdi-api.ts`
+  shared client + `apps/web/src/hosted/use-hosted-connectors.ts`
+  adapter hooks. `/connectors/*` pages switch data source on
+  `IS_HOSTED`. Hosted users see their `clerk_id`-keyed connections
+  from clawdi.ai; OAuth `redirect_url` is the connector's own detail
+  page (no intermediary callback route). See "Composio cross-origin
+  proxy" section under MCP proxy plane for the full design.
 
 No backend change in cloud-api. No new cloud-api dependencies.
 Cross-origin auth piggybacks on the existing Clerk session (both
@@ -1650,7 +1653,7 @@ and `Self-managed` daemons via the broker API. Files live
 OUTSIDE `apps/web/src/hosted/`:
 
 - `apps/web/src/components/agents/chat-panel.tsx` — consumes
-  broker SSE; UI inspired by clawdi-clawdi.ai's existing
+  broker SSE; UI inspired by clawdi.ai's existing
   `apps/web/src/components/console/` (we'll port relevant parts
   rather than rewrite from zero)
 - `apps/web/src/components/agents/logs-panel.tsx` — consumes
@@ -2020,7 +2023,7 @@ nativeUiUrl) which was too shallow. The library extracted from
 the existing controller is the abstraction.
 
 Library code lives at `packages/agent-gateway/` (workspace
-package, exported to clawdi-clawdi.ai via npm or workspace
+package, exported to clawdi.ai via npm or workspace
 symlink). Controller and `clawdi serve` both depend on it.
 
 ### Library config schema (TypeScript)

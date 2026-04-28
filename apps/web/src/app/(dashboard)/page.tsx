@@ -58,10 +58,10 @@ export default function DashboardPage() {
 			: null;
 
 	// Hosted-side query — fetches user's deployments from the
-	// clawdi-monorepo deploy API. Disabled (no fetch) when not hosted.
+	// clawdi.ai deploy API. Disabled (no fetch) when not hosted.
 	const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
 
-	// Hosted users' Composio entity lives in monorepo (keyed off
+	// Hosted users' Composio entity lives in clawdi.ai (keyed off
 	// clerk_id), so cloud-api's `/api/dashboard/stats.connectors_count`
 	// (keyed off local user.id UUID) always reads zero. Pull the real
 	// count cross-origin and override the resources card when hosted.

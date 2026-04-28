@@ -40,12 +40,18 @@ export default function ConnectorDetailPage() {
 	const queryClient = useQueryClient();
 
 	// OAuth from hosted mode redirects directly back to this page (no
-	// intermediary callback route). If Composio appended `?error=…` we
-	// surface it once and strip the param so a refresh doesn't re-toast.
+	// intermediary callback route). Composio sometimes signals failure
+	// via `?error=…` and sometimes via `?status=error|failed` with no
+	// detail; treat both as failure, toast once, and strip the params
+	// so a refresh doesn't re-toast.
 	useEffect(() => {
 		const oauthError = searchParams.get("error");
-		if (!oauthError) return;
-		toast.error("Connection failed", { description: oauthError });
+		const oauthStatus = searchParams.get("status");
+		const failed = oauthError !== null || oauthStatus === "error" || oauthStatus === "failed";
+		if (!failed) return;
+		toast.error("Connection failed", {
+			description: oauthError || "OAuth did not complete. Try again from this page.",
+		});
 		const url = new URL(window.location.href);
 		url.searchParams.delete("error");
 		url.searchParams.delete("status");
@@ -135,10 +141,11 @@ export default function ConnectorDetailPage() {
 		},
 		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
 	});
-	// Hosted variant pops the same OAuth window but talks to clawdi.ai with
-	// `redirect_url=cloud.clawdi.ai/connectors/callback` so the user lands
-	// back on cloud after authorizing, not on clawdi.ai/dashboard. Polling
-	// happens after callback rather than here.
+	// Hosted variant pops the same OAuth window but talks to clawdi.ai
+	// with `redirect_url=<origin>/connectors/<app>` so the user lands
+	// back on this detail page after authorizing, not on
+	// clawdi.ai/dashboard. The connection list refetches on mount in
+	// the new tab and on focus in the original — no manual polling.
 	const hostedConnectMutation = useHostedConnectMutation();
 	const hostedConnect = useMutation({
 		mutationFn: async () => {

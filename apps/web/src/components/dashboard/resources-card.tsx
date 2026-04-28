@@ -29,7 +29,7 @@ function buildResources(
 		: {
 				icon: Plug,
 				label: "Connectors",
-				// Hosted users keep their Composio account in clawdi-monorepo
+				// Hosted users keep their Composio account in clawdi.ai
 				// (entity_id = clerk_id); cloud-api's `stats.connectors_count`
 				// is keyed off the local `user.id` UUID and would always read
 				// zero. The page.tsx caller passes through the hosted count
