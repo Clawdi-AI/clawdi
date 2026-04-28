@@ -29,11 +29,13 @@ services:
       REPO_REF: ${REPO_REF:-main}
     command: >
       sh -c '
-        if [ ! -d /repo/.git ]; then
-          git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
-        else
+        if [ -d /repo/.git ]; then
           echo "source already at $$(git -C /repo rev-parse --short HEAD) — leaving alone"
+          exit 0
         fi
+        # Volume may be non-empty from a previous aborted run; clear it.
+        rm -rf /repo/* /repo/.[!.]* /repo/..?* 2>/dev/null || true
+        git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
       '
     restart: "no"
 
