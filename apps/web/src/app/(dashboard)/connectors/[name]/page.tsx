@@ -151,14 +151,24 @@ export default function ConnectorDetailPage() {
 			return;
 		}
 		// Open the OAuth popup synchronously — counts as user gesture so
-		// the browser doesn't block it. Once the API call resolves with a
-		// real URL, redirect the already-open popup to it. If the API
-		// call fails or the popup was blocked despite our best efforts,
-		// the toast in onError surfaces it.
-		const popup =
-			typeof window !== "undefined"
-				? window.open("about:blank", "_blank", "noopener,noreferrer")
-				: null;
+		// the browser doesn't block it. We deliberately do NOT pass
+		// `noopener` here: per MDN, `window.open(..., "_blank",
+		// "noopener,...")` returns `null`, so we'd lose the handle and
+		// could never redirect the blank popup to the real OAuth URL —
+		// the user would just see a permanent about:blank page. We
+		// detach the opener reference manually right after the call,
+		// which gives us the same security posture without breaking the
+		// late-redirect pattern.
+		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
+		if (popup) {
+			try {
+				popup.opener = null;
+			} catch {
+				// Cross-origin browsers can throw on opener writes; the
+				// blank popup hasn't navigated cross-origin yet so this is
+				// safe in practice, but swallow defensively.
+			}
+		}
 		connectMutation.mutate(
 			{ appName: name },
 			{
