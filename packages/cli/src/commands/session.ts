@@ -8,7 +8,7 @@ import {
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
 
-interface SessionsListOpts {
+interface SessionListOpts {
 	agent?: string;
 	allAgents?: boolean;
 	project?: string;
@@ -30,7 +30,7 @@ interface ListedSession {
 	summary: string | null;
 }
 
-export async function sessionsList(opts: SessionsListOpts) {
+export async function sessionList(opts: SessionListOpts) {
 	// Default to "all registered agents" when neither flag is given. This
 	// command is informational — restricting to a single prompted adapter
 	// would hide history the user wants to see.
@@ -42,7 +42,7 @@ export async function sessionsList(opts: SessionsListOpts) {
 		return;
 	}
 
-	// `sessions list` defaults to no project filter — hiding history would
+	// `session list` defaults to no project filter — hiding history would
 	// defeat the point of the command. `--project` opts back into a filter.
 	const projectFilter = opts.all ? undefined : opts.project;
 	const since = opts.since ? new Date(opts.since) : undefined;
@@ -54,11 +54,15 @@ export async function sessionsList(opts: SessionsListOpts) {
 		if (!adapter) continue;
 		let sessions: RawSession[];
 		try {
-			sessions = await adapter.collectSessions(since, projectFilter);
+			sessions = await adapter.collectSessions({ projectFilter });
 		} catch {
 			continue;
 		}
 		for (const s of sessions) {
+			// `--since` is a post-filter for the listing UX — adapters no
+			// longer filter sessions by session-time (only by file mtime,
+			// internally as a perf hint).
+			if (since && s.startedAt < since) continue;
 			collected.push({
 				id: s.localSessionId,
 				agent: agentType,

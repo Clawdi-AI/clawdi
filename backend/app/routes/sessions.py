@@ -1,10 +1,11 @@
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,12 +151,13 @@ async def batch_create_sessions(
 ) -> SessionBatchResponse:
     """Ingest a batch of sessions from a CLI sync.
 
-    Relies on the `uq_sessions_user_local` unique constraint plus Postgres
-    `ON CONFLICT DO NOTHING` for idempotency — safe under concurrent
-    invocations and a single round-trip to the DB regardless of batch size.
+    Upserts every row by `(user_id, local_session_id)`. The response tells
+    the client which sessions still need a content upload — either because
+    the stored hash differs from the one just sent, or because no content
+    has ever been uploaded for that row (`file_key IS NULL`).
     """
     if not body.sessions:
-        return SessionBatchResponse(synced=0)
+        return SessionBatchResponse(created=0, updated=0, unchanged=0, needs_content=[])
 
     # Reject any environment_id the caller doesn't own. Without this check the
     # CLI's local cache (a stale env id from a previous account / a deleted
@@ -190,6 +192,26 @@ async def batch_create_sessions(
             },
         )
 
+    # Pre-fetch the existing rows for diffing. One indexed lookup against
+    # `uq_sessions_user_local` per batch — cheap, and keeps the diff logic
+    # in Python where it's testable. Doing the diff via a CTE on the upsert
+    # would be slightly faster but much harder to read and harder to keep
+    # in lockstep with the SessionBatchResponse contract.
+    incoming_ids = [s.local_session_id for s in body.sessions]
+    existing_rows = (
+        await db.execute(
+            select(
+                Session.local_session_id,
+                Session.content_hash,
+                Session.file_key,
+            ).where(
+                Session.user_id == auth.user_id,
+                Session.local_session_id.in_(incoming_ids),
+            )
+        )
+    ).all()
+    existing_by_id = {row.local_session_id: row for row in existing_rows}
+
     rows = [
         {
             "user_id": auth.user_id,
@@ -208,29 +230,55 @@ async def batch_create_sessions(
             "summary": s.summary,
             "tags": s.tags,
             "status": s.status,
+            "content_hash": s.content_hash,
         }
         for s in body.sessions
     ]
 
-    stmt = (
-        pg_insert(Session)
-        .values(rows)
-        .on_conflict_do_nothing(constraint="uq_sessions_user_local")
-        .returning(Session.id)
+    insert_stmt = pg_insert(Session).values(rows)
+    # Refresh every metadata field on conflict. Identity (`id`, `user_id`,
+    # `local_session_id`, `created_at`) is preserved, and `file_key` /
+    # `content_uploaded_at` belong to the upload endpoint — don't clobber.
+    upsert_stmt = insert_stmt.on_conflict_do_update(
+        constraint="uq_sessions_user_local",
+        set_={
+            "environment_id": insert_stmt.excluded.environment_id,
+            "project_path": insert_stmt.excluded.project_path,
+            "started_at": insert_stmt.excluded.started_at,
+            "ended_at": insert_stmt.excluded.ended_at,
+            "duration_seconds": insert_stmt.excluded.duration_seconds,
+            "message_count": insert_stmt.excluded.message_count,
+            "input_tokens": insert_stmt.excluded.input_tokens,
+            "output_tokens": insert_stmt.excluded.output_tokens,
+            "cache_read_tokens": insert_stmt.excluded.cache_read_tokens,
+            "model": insert_stmt.excluded.model,
+            "models_used": insert_stmt.excluded.models_used,
+            "summary": insert_stmt.excluded.summary,
+            "tags": insert_stmt.excluded.tags,
+            "status": insert_stmt.excluded.status,
+            "content_hash": insert_stmt.excluded.content_hash,
+            # Only bump `updated_at` when the content actually changed.
+            # Without this, a re-push of unchanged sessions (e.g. empty
+            # client cache, multi-machine sync, manual cache reset) would
+            # touch every row and reshuffle the dashboard's "Last activity"
+            # sort to "everything happened just now". `IS DISTINCT FROM` is
+            # NULL-safe so legacy rows with content_hash IS NULL also
+            # behave correctly: they get a real bump on first proper push.
+            "updated_at": case(
+                (
+                    Session.content_hash.is_distinct_from(insert_stmt.excluded.content_hash),
+                    func.now(),
+                ),
+                else_=Session.updated_at,
+            ),
+        },
     )
-    # The pre-flight check above closes the common case, but there's still
-    # a window between the SELECT and this INSERT where another request can
-    # `DELETE /api/environments/{id}`. The FK + `ON DELETE SET NULL` lets us
-    # detect that here as an IntegrityError → 400, instead of bubbling a 500.
-    #
-    # Narrow to FK violations specifically (PG sqlstate 23503). Without this
-    # guard a future check/exclude/unique constraint failure would land in
-    # the same branch and get mislabeled as `unknown_environment`. The
-    # `uq_sessions_user_local` unique constraint can't trip here because
-    # `on_conflict_do_nothing` swallows it on the way in.
+    # Concurrent `DELETE /api/environments/{id}` between the pre-flight
+    # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
+    # FK violation specifically; anything else (we no longer hit unique
+    # collisions because of the upsert) bubbles as a plain 500.
     try:
-        result = await db.execute(stmt)
-        inserted = result.scalars().all()
+        await db.execute(upsert_stmt)
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
@@ -247,7 +295,38 @@ async def batch_create_sessions(
                 ),
             },
         ) from e
-    return SessionBatchResponse(synced=len(inserted))
+
+    # Categorize each row by comparing the pre-fetch snapshot against the
+    # incoming payload. The pre-fetch sees the row as it was BEFORE this
+    # batch, so we get clean created / updated / unchanged buckets without
+    # needing a second round-trip or PG's `xmax` trick.
+    created = 0
+    updated = 0
+    unchanged = 0
+    needs_content: list[str] = []
+    for s in body.sessions:
+        prev = existing_by_id.get(s.local_session_id)
+        if prev is None:
+            created += 1
+            needs_content.append(s.local_session_id)
+        elif prev.file_key is None:
+            # Row existed but never had content uploaded (e.g. previous
+            # upload failed mid-flight). Treat as updated — metadata may
+            # have changed too, and definitely needs content.
+            updated += 1
+            needs_content.append(s.local_session_id)
+        elif prev.content_hash is None or prev.content_hash != s.content_hash:
+            updated += 1
+            needs_content.append(s.local_session_id)
+        else:
+            unchanged += 1
+
+    return SessionBatchResponse(
+        created=created,
+        updated=updated,
+        unchanged=unchanged,
+        needs_content=needs_content,
+    )
 
 
 # Allow-list of columns the client can sort by. Hard-coded to avoid SQL
@@ -255,6 +334,12 @@ async def batch_create_sessions(
 # Note: `tokens` is a synthetic key — the UI shows total tokens (in + out) so
 # sort by the sum expression, not just one column.
 _SESSION_SORT_COLUMNS = {
+    # `updated_at` is the default — the upsert path bumps it whenever a
+    # session's metadata or content_hash changes, so this orders newest-
+    # activity-first across both first-push and append-message flows.
+    # Sorting by `started_at` would freeze a session in its original spot
+    # forever, even after dozens of new messages.
+    "updated_at": Session.updated_at,
     "started_at": Session.started_at,
     "message_count": Session.message_count,
     "tokens": Session.input_tokens + Session.output_tokens,
@@ -268,7 +353,10 @@ async def list_sessions(
     q: str | None = Query(default=None, description="Fuzzy search on summary/project/id"),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
-    sort: str = Query(default="started_at", pattern=r"^(started_at|message_count|tokens)$"),
+    sort: str = Query(
+        default="updated_at",
+        pattern=r"^(updated_at|started_at|message_count|tokens)$",
+    ),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
@@ -358,13 +446,22 @@ async def upload_session_content(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
     data = await file.read()
+    # Hash the bytes we're about to store so the row's `content_hash`
+    # always describes the actual stored object — not whatever the client
+    # claimed in the batch payload. This is what closes the historical
+    # DB↔file-store drift: even if a multipart proxy mangles bytes, the
+    # hash on disk matches the hash in the row.
+    content_hash = hashlib.sha256(data).hexdigest()
+
     fk = f"sessions/{auth.user_id}/{local_session_id}.json"
     await file_store.put(fk, data)
 
     session.file_key = fk
+    session.content_hash = content_hash
+    session.content_uploaded_at = datetime.now(UTC)
     await db.commit()
 
-    return SessionUploadResponse(status="uploaded", file_key=fk)
+    return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 
 
 @router.get("/api/sessions/{session_id}/content")
@@ -422,6 +519,7 @@ def _session_to_response(
         machine_name=machine_name,
         started_at=s.started_at,
         ended_at=s.ended_at,
+        updated_at=s.updated_at,
         duration_seconds=s.duration_seconds,
         message_count=s.message_count,
         input_tokens=s.input_tokens,
@@ -432,4 +530,5 @@ def _session_to_response(
         summary=s.summary,
         tags=s.tags,
         status=s.status,
+        content_hash=s.content_hash,
     )

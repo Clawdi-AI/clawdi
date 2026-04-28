@@ -34,7 +34,12 @@ export function SessionRow({ session }: { session: SessionListItem }) {
 					<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
 				</div>
 			</div>
-			<span className="shrink-0 text-xs text-muted-foreground">{relativeTime(s.started_at)}</span>
+			<span
+				className="shrink-0 text-xs text-muted-foreground"
+				title={`Started ${relativeTime(s.started_at)}`}
+			>
+				{relativeTime(s.updated_at)}
+			</span>
 		</Link>
 	);
 }

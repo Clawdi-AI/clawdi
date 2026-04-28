@@ -49,16 +49,19 @@ const agentColumn: ColumnDef<SessionListItem> = {
 	size: 180,
 };
 
-const startedColumn: ColumnDef<SessionListItem> = {
-	id: "started_at",
-	accessorKey: "started_at",
-	header: "Started",
+const lastActivityColumn: ColumnDef<SessionListItem> = {
+	id: "updated_at",
+	accessorKey: "updated_at",
+	header: "Last activity",
 	cell: ({ row }) => (
-		<span className="whitespace-nowrap text-sm text-muted-foreground">
-			{relativeTime(row.original.started_at)}
+		<span
+			className="whitespace-nowrap text-sm text-muted-foreground"
+			title={`Started ${relativeTime(row.original.started_at)}`}
+		>
+			{relativeTime(row.original.updated_at)}
 		</span>
 	),
-	size: 110,
+	size: 120,
 };
 
 const projectColumn: ColumnDef<SessionListItem> = {
@@ -109,7 +112,7 @@ export const sessionColumns: ColumnDef<SessionListItem>[] = [
 	projectColumn,
 	messagesColumn,
 	tokensColumn,
-	startedColumn,
+	lastActivityColumn,
 ];
 
 // Compact 3-col layout for the Overview "Recent sessions" widget. Sum of
@@ -117,5 +120,5 @@ export const sessionColumns: ColumnDef<SessionListItem>[] = [
 export const sessionColumnsCompact: ColumnDef<SessionListItem>[] = [
 	summaryColumn,
 	agentColumn,
-	startedColumn,
+	lastActivityColumn,
 ];

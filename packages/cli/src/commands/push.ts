@@ -7,15 +7,16 @@ import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { sha256Hex } from "../lib/hash";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { adapterForType, getEnvIdByAgent, resolveTargetAgentTypes } from "../lib/select-adapter";
 import {
-	type ModuleState,
-	readModuleState,
-	readSessionCursor,
-	writeModuleState,
-	writeSessionCursor,
-} from "../lib/state";
+	cacheKey,
+	readSessionsLock,
+	type SessionsLock,
+	writeSessionsLock,
+} from "../lib/sessions-lock";
+import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
 import { tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
 
@@ -29,7 +30,6 @@ const UP_MODULES = [
 
 interface PushOpts {
 	modules?: string;
-	since?: string;
 	project?: string;
 	excludeProject?: string[];
 	all?: boolean;
@@ -40,7 +40,10 @@ interface PushOpts {
 }
 
 interface AgentPushResult {
-	sessionsPushed: number;
+	sessionsCacheSkipped: number;
+	sessionsCreated: number;
+	sessionsUpdated: number;
+	sessionsUnchanged: number;
 	contentUploaded: number;
 	skillsPushed: number;
 }
@@ -94,7 +97,15 @@ export async function push(opts: PushOpts) {
 	}
 
 	const moduleState = readModuleState();
-	const totals = { sessions: 0, content: 0, skills: 0 };
+	const sessionsLock = readSessionsLock();
+	const totals = {
+		cacheSkipped: 0,
+		created: 0,
+		updated: 0,
+		unchanged: 0,
+		content: 0,
+		skills: 0,
+	};
 	let aborted = false;
 
 	for (const agentType of targetTypes) {
@@ -103,18 +114,27 @@ export async function push(opts: PushOpts) {
 		if (targetTypes.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[agentType].displayName}`));
 		}
-		const result = await pushOneAgent(adapter, modules, opts, moduleState);
+		const result = await pushOneAgent(adapter, modules, opts, moduleState, sessionsLock);
 		if (result === "aborted") {
 			aborted = true;
 			break;
 		}
 		if (result === "skipped") continue;
-		totals.sessions += result.sessionsPushed;
+		totals.cacheSkipped += result.sessionsCacheSkipped;
+		totals.created += result.sessionsCreated;
+		totals.updated += result.sessionsUpdated;
+		totals.unchanged += result.sessionsUnchanged;
 		totals.content += result.contentUploaded;
 		totals.skills += result.skillsPushed;
 	}
 
-	if (!opts.dryRun) writeModuleState(moduleState);
+	if (!opts.dryRun) {
+		writeModuleState(moduleState);
+		// Persist content-hash cache once per push command, even if the
+		// loop aborted partway — entries we mutated for successful agents
+		// are still valid and would otherwise be lost on the next push.
+		writeSessionsLock(sessionsLock);
+	}
 
 	if (aborted) {
 		p.outro(chalk.red("Aborted."));
@@ -129,8 +149,13 @@ export async function push(opts: PushOpts) {
 
 	const parts: string[] = [];
 	if (modules.includes("sessions")) {
-		parts.push(`${totals.sessions} session${totals.sessions === 1 ? "" : "s"}`);
-		parts.push(`${totals.content} content blob${totals.content === 1 ? "" : "s"}`);
+		// Merge `cacheSkipped` into `unchanged` for display — they mean the
+		// same thing to the user ("this session didn't need any work"). The
+		// distinction (client cache hit vs. server hash match) is purely an
+		// internal perf metric and only confuses non-technical users.
+		const unchangedTotal = totals.cacheSkipped + totals.unchanged;
+		parts.push(`${totals.created} new, ${totals.updated} updated, ${unchangedTotal} unchanged`);
+		parts.push(`${totals.content} content upload${totals.content === 1 ? "" : "s"}`);
 	}
 	if (modules.includes("skills")) {
 		parts.push(`${totals.skills} skill${totals.skills === 1 ? "" : "s"}`);
@@ -144,6 +169,7 @@ async function pushOneAgent(
 	modules: string[],
 	opts: PushOpts,
 	moduleState: ModuleState,
+	sessionsLock: SessionsLock,
 ): Promise<AgentPushResult | "aborted" | "skipped"> {
 	const agentType = adapter.agentType;
 	const envId = getEnvIdByAgent(agentType);
@@ -185,10 +211,6 @@ async function pushOneAgent(
 		}
 	}
 
-	const cursorStr = readSessionCursor(moduleState, agentType);
-	const sinceSource: "flag" | "state" | "none" = opts.since ? "flag" : cursorStr ? "state" : "none";
-	const since = opts.since ? new Date(opts.since) : cursorStr ? new Date(cursorStr) : undefined;
-
 	// Project filter: explicit --all wins, then explicit --project, else cwd.
 	const usedCwdDefault = !opts.all && !opts.project;
 	const projectFilter = opts.all ? undefined : (opts.project ?? process.cwd());
@@ -199,10 +221,7 @@ async function pushOneAgent(
 
 	if (modules.includes("sessions")) {
 		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
-		const sinceLabel = since
-			? `since ${since.toISOString()}${sinceSource === "state" ? " (from last push)" : ""}`
-			: "no since cutoff";
-		p.log.info(chalk.gray(`Scanning ${scope}, ${sinceLabel}`));
+		p.log.info(chalk.gray(`Scanning ${scope}`));
 	}
 
 	if (agentType === "hermes" && modules.includes("sessions") && projectFilter !== undefined) {
@@ -216,7 +235,7 @@ async function pushOneAgent(
 	const scanSpinner = p.spinner();
 	scanSpinner.start("Scanning local data...");
 	if (modules.includes("sessions")) {
-		sessions = await adapter.collectSessions(since, projectFilter);
+		sessions = await adapter.collectSessions({ projectFilter });
 	}
 	if (modules.includes("skills")) {
 		skills = await adapter.collectSkills();
@@ -224,6 +243,13 @@ async function pushOneAgent(
 	scanSpinner.stop(
 		`Scanned ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${skills.length} skill${skills.length === 1 ? "" : "s"}`,
 	);
+
+	// Fingerprint each session's content. The server's batch endpoint
+	// compares this against the stored `content_hash` to decide whether
+	// the body needs reupload, so we hash exactly the bytes we'd send.
+	for (const s of sessions) {
+		s.contentHash = sha256Hex(JSON.stringify(s.messages));
+	}
 
 	// Apply --exclude-project after scan. Exact-equality match on normalized
 	// absolute paths — `~/work` does NOT exclude `~/work/foo` (users say what
@@ -255,10 +281,28 @@ async function pushOneAgent(
 		}
 	}
 
+	// Filter against the sessions-lock cache: any session whose hash matches
+	// the stored value can be skipped — the server already has it. This is
+	// the per-entity diff that replaces the old global mtime cursor; scope
+	// filters can't pollute it because each session has its own entry.
+	let sessionsCacheSkipped = 0;
 	if (modules.includes("sessions")) {
-		p.log.message(chalk.gray(`Sessions: ${sessions.length} to upload`));
-		if (sessions.length === 0) {
-			const isFirstRun = !readSessionCursor(moduleState, agentType);
+		const before = sessions.length;
+		sessions = sessions.filter((s) => {
+			const cached = sessionsLock.sessions[cacheKey(agentType, s.localSessionId)];
+			return cached?.hash !== s.contentHash;
+		});
+		sessionsCacheSkipped = before - sessions.length;
+	}
+
+	if (modules.includes("sessions")) {
+		const tail = sessionsCacheSkipped > 0 ? ` (${sessionsCacheSkipped} already in sync)` : "";
+		p.log.message(chalk.gray(`Sessions: ${sessions.length} to upload${tail}`));
+		if (sessions.length === 0 && sessionsCacheSkipped === 0) {
+			// Nothing scanned at all — guide first-run cwd-default users.
+			const isFirstRun = !Object.keys(sessionsLock.sessions).some((k) =>
+				k.startsWith(`${agentType}:`),
+			);
 			if (usedCwdDefault && isFirstRun && !isInteractive()) {
 				p.log.info(
 					chalk.gray(
@@ -268,7 +312,7 @@ async function pushOneAgent(
 			} else if (projectFilter) {
 				p.log.info(
 					chalk.gray(
-						"No sessions matched. Try --all to scan every project, or --since <date> to override the last-push cutoff.",
+						"No sessions matched. Try --all to scan every project, or pass --project <abs-path> for a different scope.",
 					),
 				);
 			}
@@ -279,6 +323,18 @@ async function pushOneAgent(
 	}
 
 	if (sessions.length === 0 && skills.length === 0) {
+		if (sessionsCacheSkipped > 0) {
+			// Cache covered everything. Surface the count to the top-level
+			// totals so the user sees a non-zero "skipped (cache)" number.
+			return {
+				sessionsCacheSkipped,
+				sessionsCreated: 0,
+				sessionsUpdated: 0,
+				sessionsUnchanged: 0,
+				contentUploaded: 0,
+				skillsPushed: 0,
+			};
+		}
 		if (excludeSet.size > 0 && modules.includes("sessions")) {
 			p.log.message(chalk.gray("Nothing left to push after exclusions."));
 		}
@@ -286,8 +342,13 @@ async function pushOneAgent(
 	}
 
 	if (opts.dryRun) {
+		// Dry-run reports the local scan size — we can't know which sessions
+		// the server already has without actually hitting the batch endpoint.
 		return {
-			sessionsPushed: sessions.length,
+			sessionsCacheSkipped,
+			sessionsCreated: sessions.length,
+			sessionsUpdated: 0,
+			sessionsUnchanged: 0,
 			contentUploaded: sessions.length,
 			skillsPushed: skills.length,
 		};
@@ -310,15 +371,18 @@ async function pushOneAgent(
 	}
 
 	const api = new ApiClient();
-	let sessionsPushed = 0;
+	let sessionsCreated = 0;
+	let sessionsUpdated = 0;
+	let sessionsUnchanged = 0;
 	let contentUploaded = 0;
 	let skillsPushed = 0;
 
 	if (sessions.length > 0) {
 		const sessionSpinner = p.spinner();
 		sessionSpinner.start(
-			`Uploading ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
+			`Uploading metadata for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
+		let needsContent: Set<string>;
 		try {
 			const result = unwrap(
 				await api.POST("/api/sessions/batch", {
@@ -338,39 +402,20 @@ async function pushOneAgent(
 							models_used: s.modelsUsed,
 							summary: s.summary,
 							status: "completed",
+							content_hash: s.contentHash ?? null,
 						})),
 					},
 				}),
 			);
-			sessionSpinner.stop(`Pushed ${result.synced} session${result.synced === 1 ? "" : "s"}`);
-			sessionsPushed = result.synced;
-
-			if (result.synced > 0) {
-				const contentSpinner = p.spinner();
-				contentSpinner.start("Uploading session content...");
-				for (const s of sessions) {
-					if (s.messages.length === 0) continue;
-					try {
-						const content = Buffer.from(JSON.stringify(s.messages), "utf-8");
-						await api.uploadSessionContent(s.localSessionId, content, `${s.localSessionId}.json`);
-						contentUploaded++;
-						contentSpinner.message(
-							`Uploading session content (${contentUploaded}/${result.synced})...`,
-						);
-					} catch (e) {
-						// Content upload is best-effort — the session header was
-						// already committed in the batch POST above. Surface the
-						// reason so misconfigured file stores don't appear to
-						// succeed silently.
-						p.log.warn(`Content upload skipped for ${s.localSessionId}: ${errMessage(e)}`);
-					}
-				}
-				contentSpinner.stop(
-					`Uploaded ${contentUploaded} session content${contentUploaded === 1 ? "" : "s"}`,
-				);
-			}
+			needsContent = new Set(result.needs_content);
+			sessionsCreated = result.created;
+			sessionsUpdated = result.updated;
+			sessionsUnchanged = result.unchanged;
+			sessionSpinner.stop(
+				`Metadata: ${sessionsCreated} new, ${sessionsUpdated} updated, ${sessionsUnchanged} unchanged`,
+			);
 		} catch (e) {
-			sessionSpinner.stop("Session upload failed.");
+			sessionSpinner.stop("Session metadata upload failed.");
 			// Translate the backend's "unknown_environment" 400 into the same
 			// re-setup hint the up-front probe uses. The probe catches the
 			// common case; this catches a race where the env was deleted
@@ -381,7 +426,51 @@ async function pushOneAgent(
 			}
 			throw e;
 		}
-		writeSessionCursor(moduleState, agentType, new Date().toISOString());
+
+		// Track which uploads actually landed bytes on the server. Caching
+		// a hash for a session whose upload threw would be a silent footgun:
+		// next push sees cache hit → skips → server still has metadata
+		// without file_key → forever broken until cache is wiped.
+		const uploadedIds = new Set<string>();
+		if (needsContent.size > 0) {
+			const contentSpinner = p.spinner();
+			contentSpinner.start(
+				`Uploading content for ${needsContent.size} session${needsContent.size === 1 ? "" : "s"}...`,
+			);
+			for (const s of sessions) {
+				if (!needsContent.has(s.localSessionId)) continue;
+				if (s.messages.length === 0) continue;
+				try {
+					const content = Buffer.from(JSON.stringify(s.messages), "utf-8");
+					await api.uploadSessionContent(s.localSessionId, content, `${s.localSessionId}.json`);
+					uploadedIds.add(s.localSessionId);
+					contentUploaded++;
+					contentSpinner.message(`Uploading content (${contentUploaded}/${needsContent.size})...`);
+				} catch (e) {
+					// Content upload is best-effort — the metadata row was
+					// already committed in the batch POST above. Surface the
+					// reason so misconfigured file stores don't appear to
+					// succeed silently.
+					p.log.warn(`Content upload skipped for ${s.localSessionId}: ${errMessage(e)}`);
+				}
+			}
+			contentSpinner.stop(
+				`Uploaded ${contentUploaded} content blob${contentUploaded === 1 ? "" : "s"}`,
+			);
+		}
+
+		// Update the per-session lock for sessions that are genuinely in
+		// sync with the server now: either the server already had matching
+		// content (not in `needs_content`), or we just delivered the bytes
+		// (id in `uploadedIds`). Sessions whose upload failed stay un-cached
+		// so the next push retries.
+		for (const s of sessions) {
+			if (!s.contentHash) continue;
+			const id = s.localSessionId;
+			if (needsContent.has(id) && !uploadedIds.has(id)) continue;
+			sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
+		}
+		moduleState[`sessions:${agentType}`] = { lastActivityAt: new Date().toISOString() };
 	}
 
 	if (skills.length > 0) {
@@ -433,7 +522,14 @@ async function pushOneAgent(
 		moduleState.skills = { lastActivityAt: new Date().toISOString() };
 	}
 
-	return { sessionsPushed, contentUploaded, skillsPushed };
+	return {
+		sessionsCacheSkipped,
+		sessionsCreated,
+		sessionsUpdated,
+		sessionsUnchanged,
+		contentUploaded,
+		skillsPushed,
+	};
 }
 
 function normalizeProject(input: string): string {

@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { extractTarGz } from "../lib/tar";
-import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import type {
+	AgentAdapter,
+	CollectSessionsOptions,
+	RawSession,
+	RawSkill,
+	SessionMessage,
+} from "./base";
 import { getClaudeHome, SKIP_DIRS } from "./paths";
 
 function claudeDir() {
@@ -68,8 +74,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return absPath.replace(/\//g, "-");
 	}
 
-	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
 		if (!existsSync(projectsDir())) return [];
+
+		const { projectFilter } = opts;
 
 		const sessions: RawSession[] = [];
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
@@ -102,8 +110,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				try {
 					const parsed = this.parseSessionJsonl(filePath, projectDir.name);
 					if (!parsed) continue;
-
-					if (since && parsed.startedAt < since) continue;
 
 					if (absFilter) {
 						const cwd = parsed.projectPath;

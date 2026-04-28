@@ -22,6 +22,24 @@ export interface RawSession {
 	summary: string | null;
 	messages: SessionMessage[];
 	rawFilePath: string;
+	// Set by `pushOneAgent` after collection — sha256 hex of the JSON
+	// the CLI is about to upload. Adapters do not populate this.
+	contentHash?: string;
+}
+
+/**
+ * Options for `AgentAdapter.collectSessions`.
+ *
+ * `projectFilter` restricts to sessions whose stored `cwd` / project path
+ * equals or is under the given absolute path. Hermes ignores this — its
+ * data model has no project linkage.
+ *
+ * Adapters always do a full scan and return every session that matches
+ * the project filter. Whether to actually push a session to the server
+ * is decided in `pushOneAgent` against `~/.clawdi/sessions-lock.json`.
+ */
+export interface CollectSessionsOptions {
+	projectFilter?: string;
 }
 
 export interface RawSkill {
@@ -39,7 +57,7 @@ export interface AgentAdapter {
 	detect(): Promise<boolean>;
 	getVersion(): Promise<string | null>;
 
-	collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]>;
+	collectSessions(opts?: CollectSessionsOptions): Promise<RawSession[]>;
 	collectSkills(): Promise<RawSkill[]>;
 
 	getSkillPath(key: string): string;

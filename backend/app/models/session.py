@@ -53,3 +53,8 @@ class Session(Base, TimestampMixin):
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     status: Mapped[str] = mapped_column(String(20), server_default="completed")
     file_key: Mapped[str | None] = mapped_column(Text)
+    # SHA-256 hex of the messages JSON the CLI uploaded. Used by the batch
+    # endpoint to skip content re-upload when the local copy is unchanged,
+    # and by `clawdi pull` to diff cloud state against local sidecars.
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    content_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

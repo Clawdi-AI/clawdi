@@ -15,7 +15,7 @@ program
 Examples:
   $ clawdi auth login               Authenticate with Clawdi Cloud
   $ clawdi setup                    Detect agents and register the current machine
-  $ clawdi sessions list            Preview local sessions before pushing
+  $ clawdi session list             Preview local sessions before pushing
   $ clawdi push --modules sessions --all-agents --all  Upload everything
   $ clawdi pull                     Download cloud skills to registered agents
   $ clawdi skill list --json        Machine-readable skill listing
@@ -166,7 +166,6 @@ program
 	.command("push")
 	.description("Push local data (sessions, skills) to the cloud")
 	.option("--modules <modules>", "Comma-separated: sessions,skills")
-	.option("--since <date>", "Only push data modified after this date")
 	.option("--project <path>", "Push a specific project's data (default: current directory)")
 	.option(
 		"--exclude-project <path>",
@@ -186,7 +185,6 @@ Examples:
   $ clawdi push
   $ clawdi push --modules skills
   $ clawdi push --agent claude_code --dry-run
-  $ clawdi push --since 2026-01-01 --all
   $ clawdi push --modules sessions --all-agents --all --yes
   $ clawdi push --modules sessions --all-agents --all --exclude-project ~/scratch --yes`,
 	)
@@ -197,15 +195,20 @@ Examples:
 
 program
 	.command("pull")
-	.description("Pull cloud data (skills) to registered agents")
-	.option("--modules <modules>", "Comma-separated: skills")
+	.description(
+		"Pull cloud data — `skills` writes archives to agent dirs; `sessions` mirrors to ~/.clawdi/sessions/",
+	)
+	.option("--modules <modules>", "Comma-separated: skills,sessions")
 	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
+	.option("--all-agents", "Pull for every registered agent on this machine")
 	.option("--dry-run", "Preview without downloading")
+	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",
 		`
 Examples:
   $ clawdi pull
+  $ clawdi pull --modules sessions --all-agents --yes
   $ clawdi pull --agent claude_code --dry-run`,
 	)
 	.action(async (opts) => {
@@ -312,11 +315,11 @@ skillCmd
 	});
 
 // ─────────────────────────────────────────────────────────────
-// sessions
+// session
 // ─────────────────────────────────────────────────────────────
-const sessionsCmd = program.command("sessions").description("Inspect local agent sessions");
+const sessionCmd = program.command("session").description("Inspect local agent sessions");
 
-sessionsCmd
+sessionCmd
 	.command("list")
 	.description("List local agent sessions (use before `clawdi push` to preview)")
 	.option("--agent <type>", "Single agent (claude_code, codex, hermes, openclaw)")
@@ -330,13 +333,13 @@ sessionsCmd
 		"after",
 		`
 Examples:
-  $ clawdi sessions list
-  $ clawdi sessions list --json
-  $ clawdi sessions list --agent claude_code --project ~/work/foo`,
+  $ clawdi session list
+  $ clawdi session list --json
+  $ clawdi session list --agent claude_code --project ~/work/foo`,
 	)
 	.action(async (opts) => {
-		const { sessionsList } = await import("./commands/sessions.js");
-		await sessionsList(opts);
+		const { sessionList } = await import("./commands/session.js");
+		await sessionList(opts);
 	});
 
 // ─────────────────────────────────────────────────────────────

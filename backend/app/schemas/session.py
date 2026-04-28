@@ -40,6 +40,11 @@ class SessionCreate(BaseModel):
     summary: str | None = None
     tags: list[str] | None = None
     status: str = "completed"
+    # SHA-256 hex of the JSON-serialized messages array. Server compares
+    # against the stored value to decide whether content needs reupload.
+    # Optional so old clients that don't compute hashes still get inserted;
+    # legacy rows with NULL hash are always treated as "needs content".
+    content_hash: str | None = None
 
 
 class SessionBatchRequest(BaseModel):
@@ -68,7 +73,17 @@ class EnvironmentResponse(BaseModel):
 
 
 class SessionBatchResponse(BaseModel):
-    synced: int
+    # Rows that didn't exist before the batch.
+    created: int
+    # Rows that existed but were modified — either metadata changed,
+    # the content hash differs, or the row had no `file_key` yet.
+    updated: int
+    # Rows whose hash matched and `file_key` was already set — no work to do.
+    unchanged: int
+    # local_session_ids that need a follow-up content upload. Always a
+    # superset of `created` (new rows have no content yet); also includes
+    # any updated row whose stored bytes are stale.
+    needs_content: list[str]
 
 
 class SessionListItemResponse(BaseModel):
@@ -79,6 +94,10 @@ class SessionListItemResponse(BaseModel):
     machine_name: str | None = None
     started_at: datetime
     ended_at: datetime | None
+    # Last time the row's metadata or content was touched on the server.
+    # Bumped on every batch upsert and content upload. The dashboard sorts
+    # by this so sessions with new messages bubble to the top.
+    updated_at: datetime
     duration_seconds: int | None
     message_count: int
     input_tokens: int
@@ -89,6 +108,9 @@ class SessionListItemResponse(BaseModel):
     summary: str | None
     tags: list[str] | None
     status: str
+    # Surfaced so `clawdi pull` can diff cloud vs. local sidecar without
+    # downloading the content body.
+    content_hash: str | None = None
 
 
 class SessionDetailResponse(SessionListItemResponse):
@@ -98,6 +120,10 @@ class SessionDetailResponse(SessionListItemResponse):
 class SessionUploadResponse(BaseModel):
     status: Literal["uploaded"]
     file_key: str
+    # Hash of the bytes the server just stored. Lets the client confirm the
+    # round-trip matched what it computed locally — divergence here would
+    # indicate a multipart corruption or a charset issue worth surfacing.
+    content_hash: str
 
 
 class SessionMessageResponse(BaseModel):

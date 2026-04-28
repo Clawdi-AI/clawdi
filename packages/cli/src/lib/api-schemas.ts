@@ -10,6 +10,7 @@ export type Memory = Schemas["MemoryResponse"];
 export type SkillSummary = Schemas["SkillSummaryResponse"];
 export type SkillDetail = Schemas["SkillDetailResponse"];
 export type ConnectorMcpConfig = Schemas["ConnectorMcpConfigResponse"];
+export type SessionListItem = Schemas["SessionListItemResponse"];
 
 // ── Write responses ───────────────────────────────────────────────────────
 export type MemoryCreated = Schemas["MemoryCreatedResponse"];
@@ -22,4 +23,5 @@ export type VaultSections = Schemas["VaultSectionsResponse"];
 // ── Pagination ────────────────────────────────────────────────────────────
 export type PaginatedMemories = Schemas["Paginated_MemoryResponse_"];
 export type PaginatedSkills = Schemas["Paginated_SkillSummaryResponse_"];
+export type PaginatedSessions = Schemas["Paginated_SessionListItemResponse_"];
 export type PaginatedVaults = Schemas["Paginated_VaultResponse_"];

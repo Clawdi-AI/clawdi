@@ -198,9 +198,10 @@ export interface paths {
 		 * Batch Create Sessions
 		 * @description Ingest a batch of sessions from a CLI sync.
 		 *
-		 *     Relies on the `uq_sessions_user_local` unique constraint plus Postgres
-		 *     `ON CONFLICT DO NOTHING` for idempotency — safe under concurrent
-		 *     invocations and a single round-trip to the DB regardless of batch size.
+		 *     Upserts every row by `(user_id, local_session_id)`. The response tells
+		 *     the client which sessions still need a content upload — either because
+		 *     the stored hash differs from the one just sent, or because no content
+		 *     has ever been uploaded for that row (`file_key IS NULL`).
 		 */
 		post: operations["batch_create_sessions_api_sessions_batch_post"];
 		delete?: never;
@@ -1231,8 +1232,14 @@ export interface components {
 		};
 		/** SessionBatchResponse */
 		SessionBatchResponse: {
-			/** Synced */
-			synced: number;
+			/** Created */
+			created: number;
+			/** Updated */
+			updated: number;
+			/** Unchanged */
+			unchanged: number;
+			/** Needs Content */
+			needs_content: string[];
 		};
 		/** SessionCreate */
 		SessionCreate: {
@@ -1287,6 +1294,8 @@ export interface components {
 			 * @default completed
 			 */
 			status: string;
+			/** Content Hash */
+			content_hash?: string | null;
 		};
 		/** SessionDetailResponse */
 		SessionDetailResponse: {
@@ -1307,6 +1316,11 @@ export interface components {
 			started_at: string;
 			/** Ended At */
 			ended_at: string | null;
+			/**
+			 * Updated At
+			 * Format: date-time
+			 */
+			updated_at: string;
 			/** Duration Seconds */
 			duration_seconds: number | null;
 			/** Message Count */
@@ -1327,6 +1341,8 @@ export interface components {
 			tags: string[] | null;
 			/** Status */
 			status: string;
+			/** Content Hash */
+			content_hash?: string | null;
 			/** Has Content */
 			has_content: boolean;
 		};
@@ -1349,6 +1365,11 @@ export interface components {
 			started_at: string;
 			/** Ended At */
 			ended_at: string | null;
+			/**
+			 * Updated At
+			 * Format: date-time
+			 */
+			updated_at: string;
 			/** Duration Seconds */
 			duration_seconds: number | null;
 			/** Message Count */
@@ -1369,6 +1390,8 @@ export interface components {
 			tags: string[] | null;
 			/** Status */
 			status: string;
+			/** Content Hash */
+			content_hash?: string | null;
 		};
 		/**
 		 * SessionMessageResponse
@@ -1401,6 +1424,8 @@ export interface components {
 			status: "uploaded";
 			/** File Key */
 			file_key: string;
+			/** Content Hash */
+			content_hash: string;
 		};
 		/** SettingsResponse */
 		SettingsResponse: {

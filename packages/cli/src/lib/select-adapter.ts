@@ -107,7 +107,7 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 
 /**
  * Resolve a list of agent targets for commands that operate across multiple
- * agents at once (`push --all-agents`, `sessions list --all-agents`).
+ * agents at once (`push --all-agents`, `session list --all-agents`).
  *
  * Returns the empty array when the caller should abort — same convention as
  * `selectAdapter`. The caller has already printed an explanatory message in

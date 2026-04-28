@@ -1,184 +1,163 @@
 ---
-name: clawdi-setup
-description: "Set up Clawdi Cloud CLI for the current user. Follow these steps exactly — onboarding is not done until this user's local sessions are visible in the dashboard."
+name: clawdi-onboarding
+version: 1
+description: First-time setup walkthrough for connecting this machine to Clawdi Cloud.
+homepage: https://cloud.clawdi.ai
 ---
 
 # Clawdi Cloud Setup
 
-Help the user connect to Clawdi Cloud. The end state of onboarding is the user's local agent sessions appearing in the Clawdi Cloud dashboard. **Do not skip Step 4. Do not declare onboarding complete before sessions have been uploaded** (or the user has explicitly chosen to skip Step 4).
+You're helping the user connect this machine to Clawdi Cloud — a centralized dashboard for AI agent sessions, skills, memory, and secrets across machines.
 
-## Step 1: Install CLI
+This walkthrough takes 2-3 minutes. The end state: the user's existing session history shows up at their Clawdi Cloud dashboard. If you stop earlier, the dashboard stays empty and they assume the product is broken.
+
+## Install the CLI
 
 ```bash
 bun add -g clawdi
 ```
 
-If bun is not available:
+If `bun` isn't installed on the system, fall back to npm:
 
 ```bash
 npm install -g clawdi
 ```
 
-## Step 2: Log in (two phases)
+Verify it landed:
 
-This is a two-phase flow so the agent never blocks waiting on the user.
+```bash
+clawdi --version
+```
 
-**Phase 2a — start authorization:**
+## Authenticate
+
+The CLI hands the user a verification URL; they approve in their browser; you complete the handshake. Two phases because you can't block waiting for a browser click.
+
+Start the authorization:
 
 ```bash
 clawdi auth login
 ```
 
-The command prints a **verification URL** and a short **user code**, then exits. Show both to the user in chat and ask them to:
+This prints a verification URL and a short user code, then exits immediately. Show both to the user in chat. Tell them: open the URL, confirm the code matches, click approve, and reply when they're done.
 
-1. Open the URL.
-2. Confirm the code matches.
-3. Click approve.
-4. Reply "done" here when finished — wait for that reply before Phase 2b.
-
-**Phase 2b — after the user replies:**
+When they reply, finish the handshake:
 
 ```bash
 clawdi auth complete
 ```
 
-If this exits with **"Still waiting for approval"** (exit code 2), the user hasn't approved yet — ask them to finish in the browser, then re-run `clawdi auth complete`. The 10-minute window starts at Phase 2a; if it expires, restart from Phase 2a.
+If it prints "Still waiting for approval" (exit code 2), the user hasn't clicked approve yet. Ask them to finish in the browser, then re-run `clawdi auth complete`. The 10-minute window starts at `auth login`; if it expires, restart from there.
 
-Do **not** pass `--manual` — it requires a TTY and will fail in agent sessions.
+⚠️ Don't pass `--manual` to `auth login` — that flag wants an interactive TTY password prompt and fails in agent contexts.
 
-## Step 3: Register agents on this machine
+## Register agents on this machine
 
 ```bash
 clawdi setup
 ```
 
-This auto-detects every installed agent (Claude Code, Codex, Hermes, OpenClaw), registers each with the cloud, installs the MCP server, and drops the bundled `clawdi` skill into each agent's home. In non-interactive contexts (you), it picks all detected agents automatically. **Do not pass `--agent`** — register everything that's installed so Step 4 can sync from all of them.
+Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw), registers each with the cloud, and installs the Clawdi MCP server in each agent's home. Without an `--agent` flag it picks up everything detected — which is what you want, so the next step can sync from all of them.
 
-## Step 4: Upload sessions to the dashboard (REQUIRED)
+## Sync the user's sessions
 
-This is the step that gives the user something to see in the dashboard. Do not mark setup complete before this finishes.
+This step fills the dashboard with the user's conversation history. Don't ask them to make a decision in the abstract — show them what's actually on their machine first, then ask. Like `git status` before `git commit`.
 
-**Ask the user once, exactly one question:**
-
-> Want me to upload your existing agent sessions to the Clawdi Cloud dashboard?
->
-> **(a) Upload everything** from every agent on this machine — recommended, takes a minute or two.
->
-> **(b) Show me a summary first** — I'll show how many sessions are where, and you can pick a constraint (skip a sensitive project, only upload one agent, etc.).
->
-> **skip** — don't upload now (you can run `clawdi push` later).
->
-> Reply "a", "b", or "skip".
-
-Wait for the reply. Branch on it:
-
-### Branch (a) — upload everything
-
-Run:
+### Scan first
 
 ```bash
-clawdi push --modules sessions --all-agents --all --yes
+clawdi session list --all-agents --all --limit 10000 --json
 ```
 
-Flags:
-- `--all-agents` — iterate every registered agent (Claude Code, Codex, Hermes, OpenClaw — whichever are registered).
-- `--all` — disable the cwd project filter; scan every project's sessions. **Critical**: without this, the CLI would only scan the directory you're invoked from, which is rarely where the user's history lives.
-- `--yes` — skip the interactive confirmation (you have already confirmed with the user).
+`--limit 10000` is important — the default is 100, which would silently truncate any user with more sessions and you'd aggregate from a partial set.
 
-Note the "Pushed N session(s)" total from the output — you'll cite it in Step 5.
+If this fails (network error, no agents registered, etc.), tell the user *"I couldn't list your local sessions — going ahead with the default upload, let me know if you want to stop."* and skip to running `clawdi push --modules sessions --all-agents --all --yes`. Don't halt onboarding for this.
 
-If it prints "0 sessions to upload", that's not necessarily an error — the user may have just installed the agent. Tell them so, then continue to Step 5.
+If the JSON is empty (`[]`), tell the user *"No sessions found on this machine — nothing to sync. Run `clawdi push` later if you start using one of the supported agents."* and continue to the next step. Skip the upload entirely.
 
-### Branch (b) — summary, then targeted push
+### Show a bounded summary, then ask
 
-First run:
+Parse the JSON locally. Group by `agent`, then by `project`. Count sessions per project. Sort by count descending.
 
-```bash
-clawdi sessions list --all-agents --all --json
-```
+**Cap the displayed projects per agent at top 5.** A user with 100 active projects would otherwise produce a 100-line wall of text that buries the question. If there are more than 5, append a single `…and N more projects` line so they know the list is truncated. Always state the per-agent total counts (sessions and projects) so the scale is visible.
 
-**Do not paste the raw JSON or list every session back to the user.** Most users have dozens of sessions; a flat list is noise and asking them to pick by id is more friction than just "upload all". Instead, parse the JSON yourself, group by `agent` then by `project`, count, and render a compact summary like:
+Render something like (use the user's actual paths and counts, not these numbers):
 
-```
-Claude Code: 47 sessions
-  ~/work/clawdi-cloud       23
-  ~/work/client-acme        12
-  ~/personal/blog            8
-  ~/scratch                  4
+> I found 215 sessions on this machine:
+>
+> **Claude Code** (180 sessions across 47 projects):
+> - `~/work/clawdi-cloud` — 23 sessions
+> - `~/work/client-acme` — 18 sessions
+> - `~/personal/blog` — 12 sessions
+> - `~/work/api-gateway` — 9 sessions
+> - `~/scratch` — 7 sessions
+> - …and 42 more projects
+>
+> **Codex** (35 sessions across 8 projects):
+> - `~/work/clawdi-cloud` — 11 sessions
+> - `~/work/client-acme` — 8 sessions
+> - `~/work/api-gateway` — 6 sessions
+> - `~/personal/blog` — 5 sessions
+> - `~/scratch` — 3 sessions
+> - …and 3 more projects
+>
+> Want me to upload all of them to your Clawdi Cloud dashboard? Or are there any projects you'd rather skip — anything client-confidential, NDA work, etc.? You can name a project even if it's not in the list above.
 
-Codex: 12 sessions
-  ~/work/clawdi-cloud        7
-  ~/work/client-acme         5
+The closing line about "even if it's not in the list above" is important: the cap might hide a low-session-count NDA repo the user actually cares about excluding. Accept any project path they name, listed or not.
 
-59 sessions total. Upload everything (recommended), or restrict by agent / project / time?
-```
+### Translate the answer to a push command
 
-In your message, **explicitly recommend "upload everything"** — most "show me first" users don't actually need to exclude anything; they just wanted the transparency. Only branch when they name a real constraint (sensitive project, agent they don't use, recency window).
+The user references real project names from the summary you just showed them. Match their reply to a command:
 
-Translate the user's reply by **dimension** (never by id):
-
-| user said | command |
-|---|---|
-| "all", "go", "ok", "looks good" | `clawdi push --modules sessions --all-agents --all --yes` |
+| User says | Command |
+| --- | --- |
+| "all" / "go ahead" / "upload everything" | `clawdi push --modules sessions --all-agents --all --yes` |
+| "skip client-acme" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --yes` |
+| "skip client-acme and scratch" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --exclude-project ~/scratch --yes` |
 | "only Claude Code" | `clawdi push --modules sessions --agent claude_code --all --yes` |
-| "only ~/work/foo" | `clawdi push --modules sessions --all-agents --project ~/work/foo --yes` |
-| "exclude ~/scratch" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/scratch --yes` |
-| "exclude ~/scratch and ~/work/acme" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/scratch --exclude-project ~/work/acme --yes` |
-| "last week only" | `clawdi push --modules sessions --all-agents --all --since <ISO date 7d ago> --yes` |
+| "only ~/work/clawdi-cloud" | `clawdi push --modules sessions --all-agents --project ~/work/clawdi-cloud --yes` |
+| "skip entirely" / "not now" | (skip — tell them *"Run `clawdi push --modules sessions --all-agents --all` whenever you want to sync."* and continue) |
 
-Resolve `~` to an absolute path before passing to the CLI. Note the "Pushed N session(s)" total from the output — you'll cite it in Step 5.
+Resolve `~` to an absolute path before passing to the CLI.
 
-### Branch — "skip"
+Note the "X new, Y updated, Z unchanged" total from the push output — you'll cite it next.
 
-Tell the user: *"Skipped. Run `clawdi push --modules sessions --all-agents --all` whenever you want to sync."* Continue to Step 5.
-
-## Step 5: Confirm
+## Verify
 
 ```bash
 clawdi doctor
 ```
 
-All checks should be green. Then tell the user:
+Every check should be green. Then point the user at their dashboard:
 
-> Open the Clawdi Cloud dashboard — you should see N sessions across {registered agents} synced from this machine.
+> All set. Open your Clawdi Cloud dashboard — you should see N sessions from this machine across {agents}.
 
-Where **N** is the total from Step 4's "Pushed N session(s)" line and **{registered agents}** is the list from Step 3.
+Where N = `new + updated + unchanged` from the previous step, and {agents} is the list registered in setup.
 
-If Step 4 was the skip branch, just say all setup checks passed and remind them how to push later.
+If they opted out of session upload, just confirm setup checks passed and remind them how to push later.
 
-## Done
+## What the user got
 
-After setup the user has:
-- **Memory tools** (`memory_search`, `memory_add`) for cross-agent recall
-- **Connector tools** (Gmail, GitHub, Notion, etc.) — they connect services in the dashboard
-- **Session sync** — uploaded today; future sessions sync via `clawdi push`
-- **Vault** — encrypted secrets injected via `clawdi run`
+After this their account has:
+
+- **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall.
+- **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
+- **Session sync** — pushed today; future sessions sync via `clawdi push`.
+- **Vault** — encrypted secrets injected into commands via `clawdi run`.
 
 ## Troubleshooting
 
-**Step 4 says "0 sessions" but the user has history**
-Re-run with an explicit cutoff:
+**Push reports "0 sessions" but the user has history.** The local hash cache may have drifted from the cloud (e.g. after a server-side data restore). Reset it and re-push:
 
 ```bash
-clawdi push --modules sessions --all-agents --all --since 2020-01-01 --yes
+rm -f ~/.clawdi/sessions-lock.json
+clawdi push --modules sessions --all-agents --all --yes
 ```
 
-This bypasses the per-agent incremental cursor in `~/.clawdi/state.json`.
+**`clawdi auth complete` keeps saying "Still waiting for approval".** The user hasn't clicked approve yet. Re-running is safe within the 10-minute window. If it expired, restart from `clawdi auth login`.
 
-**Older CLI doesn't recognize `--all-agents`**
-Loop manually over each registered agent — Step 3's output told you which were registered:
+**Older CLI doesn't recognize `--all-agents`.** Loop manually over the agents that registered in setup: `clawdi push --modules sessions --agent claude_code --all --yes`, then `--agent codex`, and so on.
 
-```bash
-clawdi push --modules sessions --agent claude_code --all --yes
-clawdi push --modules sessions --agent codex --all --yes
-# etc.
-```
+**Older CLI doesn't recognize `--exclude-project`.** Tell the user to upgrade (`bun add -g clawdi` again) or accept the limitation — without it, only positive selection (`--project`) works.
 
-**Older CLI doesn't recognize `--exclude-project`**
-Drop that flag and tell the user: *"Your CLI is too old to skip a specific project. Either upgrade (`bun add -g clawdi` again), upload everything, or upload only one project at a time with `--project <path>`."*
-
-**Older CLI doesn't have `clawdi sessions list`**
-For Branch (b), fall back to `clawdi push --modules sessions --all-agents --all --dry-run` — it prints scan totals per agent (without per-project breakdown). Less rich, but enough to tell the user "Claude Code: N sessions, Codex: M sessions" before they confirm.
-
-**`clawdi auth complete` keeps saying "Still waiting for approval"**
-The user hasn't clicked approve in the browser yet. Re-running is safe within the 10-minute window. If the window expired, restart from Phase 2a.
+**Older CLI doesn't have `clawdi session list`.** Use `clawdi push --modules sessions --all-agents --all --dry-run` — it prints scan totals per agent without the per-project breakdown.

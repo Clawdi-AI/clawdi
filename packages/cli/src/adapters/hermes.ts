@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { extractTarGz } from "../lib/tar";
-import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import type {
+	AgentAdapter,
+	CollectSessionsOptions,
+	RawSession,
+	RawSkill,
+	SessionMessage,
+} from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
 
 /**
@@ -86,13 +92,15 @@ export class HermesAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(since?: Date, _projectFilter?: string): Promise<RawSession[]> {
+	async collectSessions(_opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
+		// Hermes' SQLite is a single file with no per-row stat info, so we
+		// always scan the whole `sessions` table. Cost is negligible
+		// (dozens to hundreds of rows). `projectFilter` has no analogue
+		// in Hermes' data model and is silently ignored.
 		if (!existsSync(stateDbPath())) return [];
 
 		const db = await openHermesDb(stateDbPath());
 		try {
-			const sinceEpoch = since ? since.getTime() / 1000 : 0;
-
 			interface SessionRow {
 				id: string;
 				source: string | null;
@@ -116,10 +124,9 @@ export class HermesAdapter implements AgentAdapter {
 					SELECT id, source, model, title, started_at, ended_at,
 					       message_count, input_tokens, output_tokens, cache_read_tokens
 					FROM sessions
-					WHERE started_at >= ?
 					ORDER BY started_at DESC
 				`)
-				.all(sinceEpoch) as SessionRow[];
+				.all() as SessionRow[];
 
 			const msgStmt = db.prepare(`
 				SELECT role, content, timestamp

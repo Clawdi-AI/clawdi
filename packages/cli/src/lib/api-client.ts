@@ -202,6 +202,11 @@ export class ApiClient {
 		);
 	}
 
+	/** Download session content (an array of messages) from the cloud. */
+	async getSessionContent(sessionId: string): Promise<Buffer> {
+		return this.getBytes(`/api/sessions/${encodeURIComponent(sessionId)}/content`);
+	}
+
 	/** Shared multipart POST; never retried (non-idempotent). */
 	private async multipartPost<T>(
 		path: string,

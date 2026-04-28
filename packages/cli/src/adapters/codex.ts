@@ -1,15 +1,13 @@
-import {
-	type Dirent,
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	statSync,
-} from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { extractTarGz } from "../lib/tar";
-import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import type {
+	AgentAdapter,
+	CollectSessionsOptions,
+	RawSession,
+	RawSkill,
+	SessionMessage,
+} from "./base";
 import { getCodexHome, SKIP_DIRS } from "./paths";
 
 function codexDir() {
@@ -56,14 +54,13 @@ function extractMessageText(content: unknown): string {
 		.join("\n");
 }
 
-function collectJsonlFiles(root: string, since?: Date): string[] {
+function collectJsonlFiles(root: string): string[] {
 	const results: string[] = [];
 	if (!existsSync(root)) return results;
 
-	const sinceTime = since?.getTime() ?? 0;
-
-	// Directory layout: YYYY/MM/DD/rollout-*.jsonl. Walk lexicographically so the
-	// since cursor can prune whole day directories cheaply.
+	// Directory layout: YYYY/MM/DD/rollout-*.jsonl. Full walk every push —
+	// the content-hash cache in `lib/sessions-lock.ts` decides which files
+	// to actually upload, so there's no point pruning at the FS level.
 	const walk = (dir: string) => {
 		let entries: Dirent[];
 		try {
@@ -78,14 +75,6 @@ function collectJsonlFiles(root: string, since?: Date): string[] {
 			if (entry.isDirectory()) {
 				walk(full);
 			} else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-				if (since) {
-					try {
-						const stats = statSync(full);
-						if (stats.mtimeMs < sinceTime) continue;
-					} catch {
-						// fall through — include the file
-					}
-				}
 				results.push(full);
 			}
 		}
@@ -116,8 +105,10 @@ export class CodexAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
 		if (!existsSync(sessionsDir())) return [];
+
+		const { projectFilter } = opts;
 
 		let absFilter: string | null = null;
 		if (projectFilter) {
@@ -125,7 +116,7 @@ export class CodexAdapter implements AgentAdapter {
 			absFilter = resolve(projectFilter);
 		}
 
-		const files = collectJsonlFiles(sessionsDir(), since);
+		const files = collectJsonlFiles(sessionsDir());
 		const sessions: RawSession[] = [];
 
 		for (const filePath of files) {
@@ -207,8 +198,6 @@ export class CodexAdapter implements AgentAdapter {
 			}
 
 			if (!sessionId || messages.length === 0 || !startedAt) continue;
-
-			if (since && startedAt < since) continue;
 
 			if (absFilter) {
 				if (!projectPath) continue;

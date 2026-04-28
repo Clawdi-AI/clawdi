@@ -1,18 +1,19 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import type { AgentType } from "../adapters/registry";
 import { getClawdiDir } from "./config";
 
 /**
- * Per-module activity timestamps tracked in `~/.clawdi/state.json`.
- * Both `push` and `pull` update the relevant module's `lastActivityAt`.
- * `push --since` uses it as an incremental cursor when no explicit
- * `--since` is supplied.
+ * Per-module activity tracked in `~/.clawdi/state.json`.
+ *
+ * `lastActivityAt` is informational — surfaced by `clawdi status` so users
+ * know when a module last did anything. The session sync's content-hash
+ * cache lives separately in `~/.clawdi/sessions-lock.json`; see
+ * `lib/sessions-lock.ts`.
  */
 export interface ModuleState {
 	[module: string]: {
-		lastActivityAt: string;
+		lastActivityAt?: string;
 	};
 }
 
@@ -37,19 +38,4 @@ export function readModuleState(): ModuleState {
 export function writeModuleState(state: ModuleState) {
 	const path = join(getClawdiDir(), STATE_FILE);
 	writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-}
-
-/**
- * Per-agent session sync cursor. Earlier versions stored a single shared
- * `sessions.lastActivityAt` across all agents — Claude Code's push would
- * advance Codex's cursor. Now each agent's cursor lives under
- * `sessions:<agentType>`. Reads fall back to the legacy key for users
- * upgrading from the shared-cursor era.
- */
-export function readSessionCursor(state: ModuleState, agentType: AgentType): string | undefined {
-	return state[`sessions:${agentType}`]?.lastActivityAt ?? state.sessions?.lastActivityAt;
-}
-
-export function writeSessionCursor(state: ModuleState, agentType: AgentType, isoTs: string) {
-	state[`sessions:${agentType}`] = { lastActivityAt: isoTs };
 }

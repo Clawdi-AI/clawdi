@@ -36,7 +36,7 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_session_batch_dedupes_by_local_session_id(client: httpx.AsyncClient):
+async def test_session_batch_upserts_and_returns_needs_content(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     payload = {
@@ -47,6 +47,7 @@ async def test_session_batch_dedupes_by_local_session_id(client: httpx.AsyncClie
                 "started_at": started,
                 "message_count": 3,
                 "model": "claude-opus-4",
+                "content_hash": "a" * 64,
             },
             {
                 "environment_id": env_id,
@@ -54,21 +55,244 @@ async def test_session_batch_dedupes_by_local_session_id(client: httpx.AsyncClie
                 "started_at": started,
                 "message_count": 7,
                 "model": "claude-sonnet-4",
+                "content_hash": "b" * 64,
             },
         ]
     }
     r = await client.post("/api/sessions/batch", json=payload)
     assert r.status_code == 200, r.text
-    assert r.json() == {"synced": 2}
+    body = r.json()
+    # Both rows are brand new — no `file_key` yet, so both must be in
+    # needs_content and counted as `created`.
+    assert body["created"] == 2
+    assert body["updated"] == 0
+    assert body["unchanged"] == 0
+    assert set(body["needs_content"]) == {"sess-abc", "sess-xyz"}
 
-    # Re-posting identical rows should sync 0 — dedupe is by local_session_id,
-    # which is the client's offline idempotency key.
-    r2 = await client.post("/api/sessions/batch", json=payload)
-    assert r2.json() == {"synced": 0}
-
+    # Listing the rows surfaces the metadata we just upserted.
     listing = (await client.get("/api/sessions")).json()
     assert listing["total"] == 2
     assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
+
+
+@pytest.mark.asyncio
+async def test_session_batch_unchanged_when_hash_matches_and_content_uploaded(
+    client: httpx.AsyncClient,
+):
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    body_bytes = b'[{"role":"user","content":"hi"}]'
+    import hashlib
+
+    expected_hash = hashlib.sha256(body_bytes).hexdigest()
+
+    # 1. First push declares the hash; row is new, content needed.
+    first = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-stable",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": expected_hash,
+                }
+            ]
+        },
+    )
+    assert first.json()["needs_content"] == ["sess-stable"]
+
+    # 2. Upload content. The endpoint hashes the bytes and stores it on
+    # the row, so subsequent batches with the same hash will be unchanged.
+    upload = await client.post(
+        "/api/sessions/sess-stable/upload",
+        files={"file": ("sess-stable.json", body_bytes, "application/json")},
+    )
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["content_hash"] == expected_hash
+
+    # 3. Re-push with the same hash → unchanged, content not requested.
+    second = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-stable",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": expected_hash,
+                }
+            ]
+        },
+    )
+    body = second.json()
+    assert body["unchanged"] == 1
+    assert body["created"] == 0
+    assert body["updated"] == 0
+    assert body["needs_content"] == []
+
+
+@pytest.mark.asyncio
+async def test_unchanged_repush_does_not_bump_updated_at(client: httpx.AsyncClient):
+    """The dashboard sorts by `updated_at`. A re-push of unchanged sessions
+    (e.g. empty client cache, fresh machine restoring from cloud) must NOT
+    refresh `updated_at` — that would reshuffle the entire list to
+    "everything happened just now" and bury the user's actual recent work.
+    """
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    body_bytes = b'[{"role":"user","content":"hi"}]'
+    import asyncio
+    import hashlib
+
+    expected_hash = hashlib.sha256(body_bytes).hexdigest()
+
+    # Initial push + content upload.
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-quiet",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": expected_hash,
+                }
+            ]
+        },
+    )
+    await client.post(
+        "/api/sessions/sess-quiet/upload",
+        files={"file": ("sess-quiet.json", body_bytes, "application/json")},
+    )
+
+    before = (await client.get("/api/sessions")).json()
+    before_ts = next(
+        s["updated_at"] for s in before["items"] if s["local_session_id"] == "sess-quiet"
+    )
+
+    # Sleep long enough that any wall-clock bump would be visible at
+    # millisecond resolution.
+    await asyncio.sleep(0.05)
+
+    # Re-push with identical hash — server should treat as unchanged
+    # and leave updated_at alone.
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-quiet",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": expected_hash,
+                }
+            ]
+        },
+    )
+
+    after = (await client.get("/api/sessions")).json()
+    after_ts = next(
+        s["updated_at"] for s in after["items"] if s["local_session_id"] == "sess-quiet"
+    )
+    assert after_ts == before_ts, "updated_at must not advance for unchanged re-push"
+
+
+@pytest.mark.asyncio
+async def test_session_batch_hash_change_triggers_needs_content(
+    client: httpx.AsyncClient,
+):
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+
+    # Insert + upload some content.
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-mut",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": "a" * 64,
+                }
+            ]
+        },
+    )
+    await client.post(
+        "/api/sessions/sess-mut/upload",
+        files={"file": ("sess-mut.json", b'[{"role":"user","content":"v1"}]', "application/json")},
+    )
+
+    # Re-push with a DIFFERENT hash — simulates the user appending a message.
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-mut",
+                    "started_at": started,
+                    "message_count": 2,
+                    "content_hash": "c" * 64,
+                }
+            ]
+        },
+    )
+    body = r.json()
+    assert body["needs_content"] == ["sess-mut"]
+    assert body["created"] == 0
+    assert body["updated"] == 1
+    assert body["unchanged"] == 0
+
+    # Metadata refreshed too (message_count went 1 → 2).
+    listing = (await client.get("/api/sessions")).json()
+    items = {s["local_session_id"]: s for s in listing["items"]}
+    assert items["sess-mut"]["message_count"] == 2
+    assert items["sess-mut"]["content_hash"] == "c" * 64
+
+
+@pytest.mark.asyncio
+async def test_session_upload_records_content_hash_and_uploaded_at(
+    client: httpx.AsyncClient,
+):
+    """Round-trip the upload endpoint: hash the bytes, write to the file
+    store, persist the hash and timestamp on the row."""
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-up",
+                    "started_at": started,
+                    "message_count": 1,
+                    "content_hash": "deadbeef" * 8,
+                }
+            ]
+        },
+    )
+
+    body_bytes = b'[{"role":"user","content":"x"}]'
+    r = await client.post(
+        "/api/sessions/sess-up/upload",
+        files={"file": ("sess-up.json", body_bytes, "application/json")},
+    )
+    assert r.status_code == 200, r.text
+    payload = r.json()
+
+    import hashlib
+
+    assert payload["content_hash"] == hashlib.sha256(body_bytes).hexdigest()
+    assert payload["status"] == "uploaded"
+    assert payload["file_key"].startswith("sessions/")
 
 
 @pytest.mark.asyncio

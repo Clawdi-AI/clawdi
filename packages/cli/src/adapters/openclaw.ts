@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { extractTarGz } from "../lib/tar";
-import type { AgentAdapter, RawSession, RawSkill, SessionMessage } from "./base";
+import type {
+	AgentAdapter,
+	CollectSessionsOptions,
+	RawSession,
+	RawSkill,
+	SessionMessage,
+} from "./base";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
 
 function openclawDir() {
@@ -145,11 +151,11 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(since?: Date, projectFilter?: string): Promise<RawSession[]> {
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
 		const agentDirs = listAgentDirs();
 		if (agentDirs.length === 0) return [];
 
-		const sinceMs = since?.getTime() ?? 0;
+		const { projectFilter } = opts;
 		let absFilter: string | null = null;
 		if (projectFilter) {
 			const { resolve } = await import("node:path");
@@ -177,7 +183,6 @@ export class OpenClawAdapter implements AgentAdapter {
 				const sessionId = entry.sessionId ?? indexKey;
 				const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 				if (!updatedAt) continue;
-				if (updatedAt < sinceMs) continue;
 
 				const projectPath = entry.acp?.cwd ?? null;
 				if (absFilter) {
