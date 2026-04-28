@@ -1,12 +1,9 @@
-import { currentUser } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
-import { isEmailAllowed } from "@/lib/email-allowlist";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
 // SidebarInset. Below that width the constraint is inert; above it (27"/4K
@@ -16,17 +13,7 @@ import { isEmailAllowed } from "@/lib/email-allowlist";
 // it means adding one.
 const CONTENT_MAX_WIDTH = "max-w-[96rem]";
 
-export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-	// Private-beta gate. Only runs when ALLOWED_EMAIL_DOMAINS is set; otherwise
-	// isEmailAllowed returns true for everyone. See lib/email-allowlist.ts.
-	const user = await currentUser();
-	const primaryEmail = user?.emailAddresses.find(
-		(e) => e.id === user.primaryEmailAddressId,
-	)?.emailAddress;
-	if (!isEmailAllowed(primaryEmail)) {
-		redirect("/access-denied");
-	}
-
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarProvider
 			style={

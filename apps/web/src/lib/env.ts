@@ -24,18 +24,6 @@ const httpsOrHttp = () =>
  */
 export const env = createEnv({
 	server: {
-		// Comma-separated email-domain allowlist parsed into a normalized
-		// string[] at validation time so call sites don't need to splitter
-		// the raw value themselves. Empty / unset == no restriction.
-		ALLOWED_EMAIL_DOMAINS: z
-			.string()
-			.optional()
-			.transform((s) =>
-				(s ?? "")
-					.split(",")
-					.map((d) => d.trim().toLowerCase())
-					.filter(Boolean),
-			),
 		// Vercel-injected; only present in production deploys.
 		VERCEL_PROJECT_PRODUCTION_URL: z.string().optional(),
 		VERCEL_URL: z.string().optional(),
@@ -67,7 +55,6 @@ export const env = createEnv({
 			.transform((v) => v === "true"),
 	},
 	runtimeEnv: {
-		ALLOWED_EMAIL_DOMAINS: process.env.ALLOWED_EMAIL_DOMAINS,
 		VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
 		VERCEL_URL: process.env.VERCEL_URL,
 		VERCEL_ENV: process.env.VERCEL_ENV,
