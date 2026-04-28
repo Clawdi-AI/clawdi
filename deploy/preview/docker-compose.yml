@@ -1,8 +1,7 @@
 name: clawdi-preview
 
-# Per-preview stack deployed by Coolify on the office server, fronted by
-# Cloudflare Tunnel. See docs/superpowers/specs/2026-04-28-preview-snapshot-pipeline-design.md
-# for the full design.
+# Per-preview stack deployed by Coolify, fronted by Cloudflare Tunnel.
+# See deploy/preview/README.md for operator setup.
 #
 # Coolify substitutes per-deploy env vars (PUBLIC_API_URL, WEB_ORIGIN, etc.)
 # from the project's preview-environment-variables set. The bind mount

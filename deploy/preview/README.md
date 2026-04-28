@@ -2,8 +2,6 @@
 
 Per-PR / per-branch preview environments deployed by Coolify on a self-hosted
 server, fronted by Cloudflare Tunnel (no public IP, no inbound ports needed).
-See `docs/superpowers/specs/2026-04-28-preview-snapshot-pipeline-design.md`
-for the design rationale.
 
 This file uses placeholders (`<your-domain>`, `<your-team-email-domain>`,
 `<your-tunnel-id>`, `<dashboard-subdomain>`, `<owner>`/`<repo>`,
