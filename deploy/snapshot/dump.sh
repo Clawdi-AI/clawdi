@@ -62,9 +62,10 @@ main() {
     return 1
   fi
 
-  local workdir
+  local workdir=""
+  # Trap evaluates in global scope; use ${var-} default-if-unset to survive set -u.
+  trap 'if [ -n "${workdir-}" ]; then rm -rf "$workdir"; fi; sudo -nu postgres dropdb --if-exists "'"$temp_db"'" >/dev/null 2>&1 || true' EXIT
   workdir="$(mktemp -d)"
-  trap 'rm -rf "$workdir"; sudo -nu postgres dropdb --if-exists "$temp_db" >/dev/null 2>&1 || true' EXIT
   mkdir -p "$workdir/files"
 
   echo "[dump] (re)creating temp DB '$temp_db' ..."

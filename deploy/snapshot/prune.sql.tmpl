@@ -7,29 +7,43 @@
 -- The operator's --email-domain flag is validated against ^@[a-z0-9.-]+$
 -- before substitution to keep this an operator tool, not a SQL-injection vector.
 
-BEGIN;
+-- Each DELETE is gated by `to_regclass` so the script tolerates schema drift
+-- between this repo's models and the prod DB (e.g. a table declared in the
+-- repo but not yet migrated, or vice versa). The schema-drift assertion at
+-- the bottom catches the inverse case (a user-owned table this script
+-- forgets to prune).
+DO $$
+DECLARE
+  user_owned text[] := ARRAY[
+    'api_keys',
+    'agent_environments',
+    'sessions',
+    'skills',
+    'memories',
+    'vaults',
+    'user_settings',
+    'device_authorization'
+  ];
+  t text;
+BEGIN
+  CREATE TEMP TABLE keep ON COMMIT DROP AS
+    SELECT id AS user_id FROM users WHERE email LIKE '${EMAIL_LIKE}';
 
-CREATE TEMP TABLE keep ON COMMIT DROP AS
-  SELECT user_id FROM users WHERE email LIKE '${EMAIL_LIKE}';
+  FOREACH t IN ARRAY user_owned LOOP
+    IF to_regclass(t) IS NOT NULL THEN
+      EXECUTE format(
+        'DELETE FROM %I WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT user_id FROM keep)',
+        t
+      );
+    END IF;
+  END LOOP;
 
-DELETE FROM api_keys             WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM agent_environments   WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM sessions             WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM skills               WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM memories             WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM vaults               WHERE user_id NOT IN (SELECT user_id FROM keep);
--- vault_items cascades from vaults via the only real FK in the schema.
-DELETE FROM user_settings        WHERE user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM device_authorization WHERE user_id IS NOT NULL
-                                   AND user_id NOT IN (SELECT user_id FROM keep);
-DELETE FROM users                WHERE email NOT LIKE '${EMAIL_LIKE}';
-
-COMMIT;
+  DELETE FROM users WHERE email NOT LIKE '${EMAIL_LIKE}';
+END $$;
 
 -- Schema-drift assertion: after the prune, every user_id in any user-owned
--- table must exist in users. If a future migration adds a new user-owned
--- table, this query catches it (the table won't have been pruned, so its
--- rows still reference deleted user_ids).
+-- table must reference an extant users.id. Other tables use `user_id` as the
+-- FK-by-convention column name; users itself uses `id` as the PK.
 DO $$
 DECLARE
   bad_count integer;
@@ -45,8 +59,11 @@ BEGIN
     'user_settings',
     'device_authorization'
   ] LOOP
+    IF to_regclass(bad_table) IS NULL THEN
+      CONTINUE;
+    END IF;
     EXECUTE format(
-      'SELECT COUNT(*) FROM %I WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT user_id FROM users)',
+      'SELECT COUNT(*) FROM %I WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT id FROM users)',
       bad_table
     ) INTO bad_count;
     IF bad_count > 0 THEN

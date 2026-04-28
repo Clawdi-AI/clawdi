@@ -8,8 +8,33 @@ name: clawdi-preview
 # from the project's preview-environment-variables set. The bind mount
 # /var/clawdi-snapshots:/snapshots:ro must be approved once per resource in
 # the Coolify UI on first deploy.
+#
+# Coolify auto-injects COOLIFY_BRANCH on every service. The `clone` init
+# uses it to check out the matching branch (or PR head) into the `source`
+# volume; api + web mount the populated volume.
 
 services:
+  # One-shot init: clone the repo at COOLIFY_BRANCH into the `source` named
+  # volume on first boot. Subsequent boots see `.git` and exit immediately —
+  # so dev edits inside the containers (`docker compose exec api git pull`)
+  # are preserved across restarts.
+  clone:
+    image: alpine/git
+    volumes:
+      - source:/repo
+    environment:
+      REPO_URL: ${REPO_URL}
+      REPO_REF: ${COOLIFY_BRANCH}
+    command: >
+      sh -c '
+        if [ ! -d /repo/.git ]; then
+          git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
+        else
+          echo "source already at $$(git -C /repo rev-parse --short HEAD) — leaving alone"
+        fi
+      '
+    restart: "no"
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -27,19 +52,23 @@ services:
   # store volumes on first boot, no-ops thereafter (idempotent via a marker
   # table). Snapshots are scp'd into /var/clawdi-snapshots/ on the host by
   # the operator; see deploy/snapshot/dump.sh for how they're produced.
+  # The script itself is read from the source volume (post-clone) so we
+  # don't need a host-side bind mount for it.
   restore:
     image: postgres:16-alpine
     depends_on:
+      clone:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     volumes:
+      - source:/source:ro
       - /var/clawdi-snapshots:/snapshots:ro
       - files:/data/files
-      - ./restore.sh:/restore.sh:ro
     environment:
       DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
       SNAPSHOT_PATH: ${SNAPSHOT_PATH:-/snapshots/latest.tar.gz}
-    command: ["sh", "/restore.sh"]
+    command: ["sh", "/source/deploy/preview/restore.sh"]
     restart: "no"
 
   api:
@@ -49,7 +78,7 @@ services:
       restore:
         condition: service_completed_successfully
     volumes:
-      - ./:/app
+      - source:/app
       - api-venv:/app/backend/.venv
       - uv-cache:/root/.cache/uv
       - fastembed-cache:/root/.cache/fastembed
@@ -60,10 +89,6 @@ services:
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
       DEBUG: "false"
-      # Coolify substitutes the rest from preview env vars:
-      #   PUBLIC_API_URL, WEB_ORIGIN, CORS_ORIGINS, ALLOWED_EMAIL_DOMAINS,
-      #   CLERK_PEM_PUBLIC_KEY, VAULT_ENCRYPTION_KEY, ENCRYPTION_KEY,
-      #   COMPOSIO_API_KEY, MEMORY_EMBEDDING_*
       PUBLIC_API_URL: ${PUBLIC_API_URL}
       WEB_ORIGIN: ${WEB_ORIGIN}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -92,8 +117,11 @@ services:
   web:
     image: oven/bun:1
     working_dir: /app/apps/web
+    depends_on:
+      clone:
+        condition: service_completed_successfully
     volumes:
-      - ./:/app
+      - source:/app
       - web-node-modules:/app/node_modules
       - web-app-node-modules:/app/apps/web/node_modules
     environment:
@@ -112,6 +140,7 @@ services:
       '
 
 volumes:
+  source:
   pgdata:
   files:
   api-venv:
