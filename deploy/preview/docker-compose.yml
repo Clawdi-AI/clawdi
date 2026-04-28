@@ -20,11 +20,13 @@ services:
   # are preserved across restarts.
   clone:
     image: alpine/git
+    # alpine/git's ENTRYPOINT is `git`, so we override to run a shell.
+    entrypoint: [""]
     volumes:
       - source:/repo
     environment:
       REPO_URL: ${REPO_URL}
-      REPO_REF: ${COOLIFY_BRANCH}
+      REPO_REF: ${REPO_REF:-main}
     command: >
       sh -c '
         if [ ! -d /repo/.git ]; then
