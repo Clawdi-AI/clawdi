@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.models.wiki import WikiLink, WikiLogEntry, WikiPage
+from app.services.wiki_extraction import extract_for_user
+from app.services.wiki_synthesis import synthesize_for_user
 
 log = logging.getLogger(__name__)
 
@@ -272,6 +274,44 @@ async def get_page(
         outgoing_links=outgoing,
         backlinks=backlinks,
     )
+
+
+class RefreshRequest(BaseModel):
+    """Trigger an extraction + synthesis pass for the current user."""
+
+    extract: bool = True
+    synthesize: bool = True
+    # When true, re-synthesize every eligible page even if not stale.
+    # Useful for the first run after a backfill or model change.
+    force_synthesis: bool = False
+
+
+class RefreshResponse(BaseModel):
+    extraction: dict | None = None
+    synthesis: dict | None = None
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_wiki(
+    body: RefreshRequest,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RefreshResponse:
+    """Run the wiki pipeline once for the authenticated user.
+
+    Idempotent for extraction (atoms processed once stay processed).
+    Synthesis re-runs only stale pages unless force_synthesis is true.
+    Designed to be safe to call from a scheduled job, the dashboard's
+    "rebuild wiki" button, or an ops shell.
+    """
+    out = RefreshResponse()
+    if body.extract:
+        out.extraction = await extract_for_user(db, auth.user_id)
+    if body.synthesize:
+        out.synthesis = await synthesize_for_user(
+            db, auth.user_id, force=body.force_synthesis
+        )
+    return out
 
 
 @router.get("/log", response_model=LogList)
