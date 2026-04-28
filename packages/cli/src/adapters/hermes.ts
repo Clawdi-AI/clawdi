@@ -207,6 +207,11 @@ export class HermesAdapter implements AgentAdapter {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
+			// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
+			// for the full reasoning. Hermes only filters at the top level
+			// — nested skills with the literal name "clawdi" deeper in the
+			// tree are an unlikely edge case not worth handling.
+			if (dir === skillsDir() && entry.name === "clawdi") continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
 

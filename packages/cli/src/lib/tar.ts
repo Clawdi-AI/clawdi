@@ -8,8 +8,16 @@ import * as tar from "tar";
  * recipient anyway. Mirrors `SKIP_DIRS` from `adapters/paths.ts` (kept
  * duplicated to avoid an adapter→tar import edge) and extends it with
  * ecosystem dirs that the adapters' enumeration doesn't otherwise filter.
+ *
+ * Exported because `lib/skills-lock.ts`'s file-tree hash function MUST
+ * filter the same set — what we hash has to equal what we'd tar, otherwise
+ * the cache could "match" while the actual archive contains different
+ * bytes. See lib/skills-lock.ts for the hash-side use. The Python side
+ * (`backend/app/routes/skills.py:_SKILL_HASH_EXCLUDE`) mirrors this list
+ * with a comment pointing back here; if you add a directory, add it in
+ * both places.
  */
-const SKILL_TAR_EXCLUDE = new Set([
+export const SKILL_TAR_EXCLUDE = new Set([
 	"node_modules",
 	".git",
 	".turbo",

@@ -121,6 +121,26 @@ Resolve `~` to an absolute path before passing to the CLI.
 
 Note the "X new, Y updated, Z unchanged" total from the push output — you'll cite it next.
 
+## Sync skills (optional)
+
+If the user has authored custom skills under `~/.claude/skills/`, `~/.codex/skills/`, etc., back them up to the cloud:
+
+```bash
+clawdi push --modules skills --all-agents --yes
+```
+
+Most users have zero or a handful of authored skills — no preview needed (unlike sessions, skills are deliberately created and don't have privacy concerns). The bundled `clawdi` skill that `clawdi setup` installs is automatically excluded. Re-running this is a no-op for unchanged skills.
+
+If the user is on a new machine and already has skills in their Clawdi Cloud account, pull them down:
+
+```bash
+clawdi pull --modules skills --all-agents --yes
+```
+
+This installs cloud skills into every registered agent's home directory. Like push, it's idempotent — running again is a no-op when nothing's new.
+
+If the user has zero authored skills, both commands are no-ops. Run them anyway to confirm; the output makes it obvious.
+
 ## Verify
 
 ```bash
@@ -142,6 +162,7 @@ After this their account has:
 - **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall.
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
 - **Session sync** — pushed today; future sessions sync via `clawdi push`.
+- **Skill sync** — authored skills backed up to the cloud and available across registered agents via `clawdi pull --modules skills`.
 - **Vault** — encrypted secrets injected into commands via `clawdi run`.
 
 ## Troubleshooting

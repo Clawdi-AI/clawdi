@@ -242,6 +242,9 @@ export class CodexAdapter implements AgentAdapter {
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
+			// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
+			// for the full reasoning.
+			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir(), entry.name);
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;

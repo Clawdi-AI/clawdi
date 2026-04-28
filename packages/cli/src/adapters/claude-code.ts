@@ -242,6 +242,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
+			// Bundled by `clawdi setup` — not user-authored content. Without
+			// this filter every user's `clawdi push --modules skills` would
+			// upload the bundled skill to their cloud account, and pulling
+			// on another machine would re-download it on top of what
+			// `clawdi setup` already installs there.
+			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir, entry.name);
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;

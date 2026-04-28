@@ -1,4 +1,6 @@
 import hashlib
+import io
+import tarfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
@@ -32,12 +34,73 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 file_store = get_file_store()
 
 
-def _content_hash(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def _file_key(user_id, skill_key: str) -> str:
     return f"skills/{user_id}/{skill_key}.tar.gz"
+
+
+# Mirror of SKILL_TAR_EXCLUDE in packages/cli/src/lib/tar.ts:12-30. The two
+# MUST match — what's hashed must equal what's tarred. If you change one,
+# change the other in the same commit. The TS file's filter at
+# tar.ts:82-85 uses the same shape: skip if any path segment after the
+# skill-key root is in this set.
+_SKILL_HASH_EXCLUDE = {
+    "node_modules",
+    ".git",
+    ".turbo",
+    ".next",
+    ".cache",
+    "dist",
+    "build",
+    "out",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    "coverage",
+}
+
+
+def _compute_file_tree_hash(tar_bytes: bytes) -> str:
+    """File-tree content hash of a skill tar.gz.
+
+    Walks each file in the archive (skipping directories and any path
+    whose segments include the exclude set above), sorts by relative
+    path, then sha256 over `path + content` per file. Mirrors the TS
+    `computeSkillFolderHash` in `packages/cli/src/lib/skills-lock.ts` so
+    server-side and client-side hashes are identical for the same tar.
+
+    Used in two places:
+    - `upload_skill` fallback when the client (CLI <= 0.3.3) doesn't send
+      `content_hash`.
+    - `install_skill` for marketplace tars fetched from GitHub.
+    """
+    files: list[tuple[str, bytes]] = []
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tf:
+        for member in tf.getmembers():
+            if not member.isfile():
+                continue
+            # Names are like "<skill_key>/foo/bar.txt" — drop the first
+            # segment (the skill dir itself), then check remaining
+            # segments against the exclude set. Same shape as tar.ts's
+            # filter.
+            parts = member.name.split("/")
+            if any(p in _SKILL_HASH_EXCLUDE for p in parts[1:]):
+                continue
+            extracted = tf.extractfile(member)
+            if extracted is None:
+                continue
+            files.append((member.name, extracted.read()))
+
+    files.sort(key=lambda x: x[0])
+    h = hashlib.sha256()
+    for path, content in files:
+        h.update(path.encode("utf-8"))
+        h.update(content)
+    return h.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +218,17 @@ async def get_skill(
 async def upload_skill(
     skill_key: str = Form(...),
     file: UploadFile = File(...),
+    # Optional for backwards compat with CLI <= 0.3.3 that doesn't send
+    # this field. New clients (>= 0.3.4) compute the file-tree hash and
+    # send it; the server trusts it (sync optimization, not a security
+    # boundary). When absent, server falls back to computing it from the
+    # uploaded tar so the rest of the flow still gates on a real hash.
+    content_hash: str | None = Form(
+        None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
@@ -174,7 +248,28 @@ async def upload_skill(
     name = fm.get("name", skill_key)
     description = fm.get("description", "")
 
-    content_hash = _content_hash(data)
+    if content_hash is None:
+        content_hash = _compute_file_tree_hash(data)
+
+    # Pre-fetch existing row so we can skip both file_store.put AND the
+    # upsert when the bytes are identical to what's already stored. Saves
+    # an R2/S3 PUT and prevents the cosmetic version+1 bump.
+    existing_result = await db.execute(
+        select(Skill).where(
+            Skill.user_id == auth.user_id,
+            Skill.skill_key == skill_key,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+
+    if existing and existing.content_hash == content_hash:
+        return SkillUploadResponse(
+            skill_key=existing.skill_key,
+            name=existing.name,
+            version=existing.version,
+            file_count=file_count,
+        )
+
     fk = _file_key(auth.user_id, skill_key)
     await file_store.put(fk, data)
 
@@ -280,7 +375,7 @@ async def install_skill(
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
-    content_hash = _content_hash(fetched.tar_bytes)
+    content_hash = _compute_file_tree_hash(fetched.tar_bytes)
     skill_key = fetched.name.lower().replace(" ", "-")
     fk = _file_key(auth.user_id, skill_key)
     await file_store.put(fk, fetched.tar_bytes)
@@ -332,6 +427,14 @@ async def _upsert_skill(
     skill = result.scalar_one_or_none()
 
     if skill:
+        if skill.content_hash == content_hash:
+            # Defense in depth — even if the upload endpoint's pre-fetch
+            # gets bypassed by a future caller, the upsert won't bump
+            # `version + 1` or refresh fields when nothing changed.
+            # `updated_at` only advances on actual UPDATE statements
+            # (TimestampMixin's `onupdate`), so an early return preserves
+            # the original timestamp too.
+            return skill
         skill.name = name
         skill.description = description
         skill.content_hash = content_hash

@@ -10,6 +10,7 @@ import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { adapterForType, resolveTargetAgentTypes } from "../lib/select-adapter";
+import { readSkillsLock, type SkillsLock, writeSkillsLock } from "../lib/skills-lock";
 
 const DOWN_MODULES = [
 	{ value: "skills", label: "Skills", hint: "pull skill archives to agent directories" },
@@ -63,17 +64,28 @@ export async function pull(opts: PullOpts) {
 		p.log.info(`Targets: ${targetTypes.map((t) => adapterRegistry[t].displayName).join(", ")}`);
 	}
 
-	const totals = { skills: 0, sessionsNew: 0, sessionsUpdated: 0, sessionsUnchanged: 0 };
+	const totals = {
+		skills: 0,
+		skillsAlreadyInSync: 0,
+		sessionsNew: 0,
+		sessionsUpdated: 0,
+		sessionsUnchanged: 0,
+	};
 	const api = new ApiClient();
+	// Read once before the loop, mutate as we go, persist once at the end —
+	// matches the push-side pattern. Lost work on partial failure is safe
+	// (re-running a pull is idempotent: cloud diff just kicks in again).
+	const skillsLock = modules.includes("skills") ? readSkillsLock() : null;
 
 	for (const agentType of targetTypes) {
 		if (targetTypes.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[agentType].displayName}`));
 		}
 
-		if (modules.includes("skills")) {
-			const pulled = await pullSkills(api, agentType, opts);
-			totals.skills += pulled;
+		if (modules.includes("skills") && skillsLock) {
+			const counts = await pullSkills(api, agentType, opts, skillsLock);
+			totals.skills += counts.pulled;
+			totals.skillsAlreadyInSync += counts.alreadyInSync;
 		}
 
 		if (modules.includes("sessions")) {
@@ -84,14 +96,21 @@ export async function pull(opts: PullOpts) {
 		}
 	}
 
+	if (!opts.dryRun && skillsLock) writeSkillsLock(skillsLock);
+
 	if (opts.dryRun) {
 		p.outro(chalk.gray("Dry run complete."));
 		return;
 	}
 
 	const parts: string[] = [];
-	if (modules.includes("skills"))
-		parts.push(`${totals.skills} skill${totals.skills === 1 ? "" : "s"}`);
+	if (modules.includes("skills")) {
+		const skillsLabel =
+			totals.skillsAlreadyInSync > 0
+				? `${totals.skills} skill${totals.skills === 1 ? "" : "s"} downloaded, ${totals.skillsAlreadyInSync} already in sync`
+				: `${totals.skills} skill${totals.skills === 1 ? "" : "s"}`;
+		parts.push(skillsLabel);
+	}
 	if (modules.includes("sessions")) {
 		parts.push(
 			`${totals.sessionsNew} new sessions, ${totals.sessionsUpdated} updated, ${totals.sessionsUnchanged} unchanged`,
@@ -100,9 +119,19 @@ export async function pull(opts: PullOpts) {
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
 }
 
-async function pullSkills(api: ApiClient, agentType: AgentType, opts: PullOpts): Promise<number> {
+interface SkillPullCounts {
+	pulled: number;
+	alreadyInSync: number;
+}
+
+async function pullSkills(
+	api: ApiClient,
+	agentType: AgentType,
+	opts: PullOpts,
+	skillsLock: SkillsLock,
+): Promise<SkillPullCounts> {
 	const adapter = adapterForType(agentType);
-	if (!adapter) return 0;
+	if (!adapter) return { pulled: 0, alreadyInSync: 0 };
 
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching skills...");
@@ -112,21 +141,39 @@ async function pullSkills(api: ApiClient, agentType: AgentType, opts: PullOpts):
 		`Found ${cloudSkills.length} skill${cloudSkills.length === 1 ? "" : "s"} in cloud`,
 	);
 
-	if (cloudSkills.length === 0) return 0;
+	if (cloudSkills.length === 0) return { pulled: 0, alreadyInSync: 0 };
 
-	const newCount = cloudSkills.filter((s) => !existsSync(adapter.getSkillPath(s.skill_key))).length;
-	const existingCount = cloudSkills.length - newCount;
-	p.log.message(chalk.gray(`${newCount} new, ${existingCount} existing`));
+	// Diff: a skill is "in sync" iff its cloud `content_hash` matches our
+	// cached hash AND we have a local file for it. The local-file check
+	// catches the case where the user wiped `~/.claude/skills/` but kept
+	// the lock file — we'd otherwise silently skip and never restore.
+	const toDownload: SkillSummary[] = [];
+	let alreadyInSync = 0;
+	for (const skill of cloudSkills) {
+		const cached = skillsLock.skills[skill.skill_key]?.hash;
+		const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
+		if (cached && cached === skill.content_hash && localExists) {
+			alreadyInSync++;
+			continue;
+		}
+		toDownload.push(skill);
+	}
 
-	if (opts.dryRun) return 0;
+	const newCount = toDownload.filter((s) => !existsSync(adapter.getSkillPath(s.skill_key))).length;
+	const updatedCount = toDownload.length - newCount;
+	p.log.message(
+		chalk.gray(`${newCount} new, ${updatedCount} updated, ${alreadyInSync} already in sync`),
+	);
+
+	if (opts.dryRun || toDownload.length === 0) return { pulled: 0, alreadyInSync };
 
 	if (!opts.yes) {
 		const ok = await askYesNo("Proceed with skill download?");
-		if (!ok) return 0;
+		if (!ok) return { pulled: 0, alreadyInSync };
 	}
 
 	let pulled = 0;
-	for (const skill of cloudSkills) {
+	for (const skill of toDownload) {
 		const safeKey = sanitizeMetadata(skill.skill_key);
 		const dest = adapter.getSkillPath(skill.skill_key);
 		if (existsSync(dest) && !opts.yes) {
@@ -140,6 +187,7 @@ async function pullSkills(api: ApiClient, agentType: AgentType, opts: PullOpts):
 		try {
 			const tarBytes = await api.getBytes(`/api/skills/${skill.skill_key}/download`);
 			await adapter.writeSkillArchive(skill.skill_key, tarBytes);
+			skillsLock.skills[skill.skill_key] = { hash: skill.content_hash };
 			const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
 			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 			pulled++;
@@ -147,7 +195,7 @@ async function pullSkills(api: ApiClient, agentType: AgentType, opts: PullOpts):
 			p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
 		}
 	}
-	return pulled;
+	return { pulled, alreadyInSync };
 }
 
 interface SessionMirrorMeta {

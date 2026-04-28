@@ -9,6 +9,7 @@ import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
+import { computeSkillFolderHash } from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { tarSingleFile, tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
@@ -84,6 +85,11 @@ export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
 	let skillDescription: string | undefined;
 	let fileCount: number | undefined;
 	let skillMdSource: string;
+	// File-tree hash for the directory case so the server can early-return
+	// on identical re-uploads. Single-file case omits the hash and lets the
+	// server compute its own from the synthesized tar — the saving doesn't
+	// matter for one-shot ad-hoc uploads.
+	let contentHash: string | undefined;
 
 	if (stat.isDirectory()) {
 		const skillMdPath = join(resolved, "SKILL.md");
@@ -95,6 +101,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
 		skillKey = sanitizeName(basename(resolved));
 		fileCount = countFiles(resolved);
 		tarBytes = await tarSkillDir(resolved);
+		contentHash = await computeSkillFolderHash(resolved);
 	} else {
 		skillMdSource = readFileSync(resolved, "utf-8");
 		skillKey = sanitizeName(basename(resolved, ".md"));
@@ -131,7 +138,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean } = {}) {
 		}
 	}
 
-	const result = await api.uploadSkill(skillKey, tarBytes, `${skillKey}.tar.gz`);
+	const result = await api.uploadSkill(skillKey, tarBytes, `${skillKey}.tar.gz`, contentHash);
 
 	console.log(
 		chalk.green(

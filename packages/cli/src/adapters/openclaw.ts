@@ -314,6 +314,9 @@ export class OpenClawAdapter implements AgentAdapter {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
 				if (SKIP_DIRS.has(entry.name)) continue;
+				// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
+				// for the full reasoning.
+				if (entry.name === "clawdi") continue;
 				const dirPath = join(dir, entry.name);
 				const skillMd = join(dirPath, "SKILL.md");
 				if (!existsSync(skillMd)) continue;

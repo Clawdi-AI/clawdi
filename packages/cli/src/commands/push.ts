@@ -16,6 +16,12 @@ import {
 	type SessionsLock,
 	writeSessionsLock,
 } from "../lib/sessions-lock";
+import {
+	computeSkillFolderHash,
+	readSkillsLock,
+	type SkillsLock,
+	writeSkillsLock,
+} from "../lib/skills-lock";
 import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
 import { tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
@@ -45,6 +51,7 @@ interface AgentPushResult {
 	sessionsUpdated: number;
 	sessionsUnchanged: number;
 	contentUploaded: number;
+	skillsCacheSkipped: number;
 	skillsPushed: number;
 }
 
@@ -98,12 +105,14 @@ export async function push(opts: PushOpts) {
 
 	const moduleState = readModuleState();
 	const sessionsLock = readSessionsLock();
+	const skillsLock = readSkillsLock();
 	const totals = {
 		cacheSkipped: 0,
 		created: 0,
 		updated: 0,
 		unchanged: 0,
 		content: 0,
+		skillsCacheSkipped: 0,
 		skills: 0,
 	};
 	let aborted = false;
@@ -114,7 +123,14 @@ export async function push(opts: PushOpts) {
 		if (targetTypes.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[agentType].displayName}`));
 		}
-		const result = await pushOneAgent(adapter, modules, opts, moduleState, sessionsLock);
+		const result = await pushOneAgent(
+			adapter,
+			modules,
+			opts,
+			moduleState,
+			sessionsLock,
+			skillsLock,
+		);
 		if (result === "aborted") {
 			aborted = true;
 			break;
@@ -125,15 +141,17 @@ export async function push(opts: PushOpts) {
 		totals.updated += result.sessionsUpdated;
 		totals.unchanged += result.sessionsUnchanged;
 		totals.content += result.contentUploaded;
+		totals.skillsCacheSkipped += result.skillsCacheSkipped;
 		totals.skills += result.skillsPushed;
 	}
 
 	if (!opts.dryRun) {
 		writeModuleState(moduleState);
-		// Persist content-hash cache once per push command, even if the
+		// Persist content-hash caches once per push command, even if the
 		// loop aborted partway — entries we mutated for successful agents
 		// are still valid and would otherwise be lost on the next push.
 		writeSessionsLock(sessionsLock);
+		writeSkillsLock(skillsLock);
 	}
 
 	if (aborted) {
@@ -158,7 +176,11 @@ export async function push(opts: PushOpts) {
 		parts.push(`${totals.content} content upload${totals.content === 1 ? "" : "s"}`);
 	}
 	if (modules.includes("skills")) {
-		parts.push(`${totals.skills} skill${totals.skills === 1 ? "" : "s"}`);
+		const skillsLabel =
+			totals.skillsCacheSkipped > 0
+				? `${totals.skills} skill${totals.skills === 1 ? "" : "s"} uploaded, ${totals.skillsCacheSkipped} already in sync`
+				: `${totals.skills} skill${totals.skills === 1 ? "" : "s"}`;
+		parts.push(skillsLabel);
 	}
 	parts.push(`across ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}`);
 	p.outro(chalk.green(`✓ Push complete — ${parts.join(", ")}`));
@@ -170,6 +192,7 @@ async function pushOneAgent(
 	opts: PushOpts,
 	moduleState: ModuleState,
 	sessionsLock: SessionsLock,
+	skillsLock: SkillsLock,
 ): Promise<AgentPushResult | "aborted" | "skipped"> {
 	const agentType = adapter.agentType;
 	const envId = getEnvIdByAgent(agentType);
@@ -332,6 +355,7 @@ async function pushOneAgent(
 				sessionsUpdated: 0,
 				sessionsUnchanged: 0,
 				contentUploaded: 0,
+				skillsCacheSkipped: 0,
 				skillsPushed: 0,
 			};
 		}
@@ -350,6 +374,7 @@ async function pushOneAgent(
 			sessionsUpdated: 0,
 			sessionsUnchanged: 0,
 			contentUploaded: sessions.length,
+			skillsCacheSkipped: 0,
 			skillsPushed: skills.length,
 		};
 	}
@@ -473,17 +498,29 @@ async function pushOneAgent(
 		moduleState[`sessions:${agentType}`] = { lastActivityAt: new Date().toISOString() };
 	}
 
+	let skillsCacheSkipped = 0;
 	if (skills.length > 0) {
 		const skillSpinner = p.spinner();
-		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
+		skillSpinner.start(`Hashing ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
 		const skipped: { key: string; reason: string }[] = [];
 		try {
 			for (const skill of skills) {
+				// Compute the file-tree hash first. Cheap (no tar build) — if
+				// it matches the cache, we skip the whole upload path.
+				const computedHash = await computeSkillFolderHash(skill.directoryPath);
+				if (skillsLock.skills[skill.skillKey]?.hash === computedHash) {
+					skillsCacheSkipped++;
+					skillSpinner.message(
+						`Hashing skills (${pushed + skipped.length + skillsCacheSkipped}/${skills.length})...`,
+					);
+					continue;
+				}
 				const tarBytes = await tarSkillDir(skill.directoryPath);
 				try {
-					await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`);
+					await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`, computedHash);
 					pushed++;
+					skillsLock.skills[skill.skillKey] = { hash: computedHash };
 				} catch (e) {
 					// 413 = upstream (Cloudflare / nginx) refused the body. Almost
 					// always a single oversized skill; skip it and keep going so
@@ -504,9 +541,14 @@ async function pushOneAgent(
 					const mb = (tarBytes.length / 1024 / 1024).toFixed(1);
 					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
 				}
-				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);
+				skillSpinner.message(
+					`Uploading skills (${pushed + skipped.length + skillsCacheSkipped}/${skills.length})...`,
+				);
 			}
 			const summary = [`Pushed ${pushed} skill${pushed === 1 ? "" : "s"}`];
+			if (skillsCacheSkipped > 0) {
+				summary.push(`${skillsCacheSkipped} already in sync`);
+			}
 			if (skipped.length > 0) {
 				summary.push(`skipped ${skipped.length} (too large)`);
 			}
@@ -528,6 +570,7 @@ async function pushOneAgent(
 		sessionsUpdated,
 		sessionsUnchanged,
 		contentUploaded,
+		skillsCacheSkipped,
 		skillsPushed,
 	};
 }
