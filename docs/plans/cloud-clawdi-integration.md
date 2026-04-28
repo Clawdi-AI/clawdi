@@ -1521,11 +1521,11 @@ indicator per connected daemon:
 
 ```
 ─── Connected agents ──────────────────────────────────────
-   Daemons (with live tunnel)                              
+   Daemons (with live tunnel)
    ● prod-openclaw      vps.example.com    Online · 4d 3h
    ● dev-hermes         home-server        Online · 12m
-                                                            
-   CLI-mode (sync only, no tunnel)                          
+
+   CLI-mode (sync only, no tunnel)
    ─ macbook-codex      macbook-pro        Last push 1h ago
 ─────────────────────────────────────────────────────────────
                                           [+ Connect a new agent]

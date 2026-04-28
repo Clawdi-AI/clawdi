@@ -1,18 +1,5 @@
 import logging
 
-from composio.exceptions import (
-    ComposioSDKError,
-    SDKTimeoutError,
-)
-from composio.exceptions import (
-    HTTPError as ComposioHTTPError,
-)
-from composio.exceptions import (
-    NotFoundError as ComposioNotFoundError,
-)
-from composio.exceptions import (
-    ValidationError as ComposioValidationError,
-)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.auth import AuthContext, get_auth
@@ -49,19 +36,36 @@ router = APIRouter(prefix="/api/connectors", tags=["connectors"])
 def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) -> HTTPException:
     """Translate Composio SDK exceptions into deterministic HTTP responses.
 
-    The SDK throws structured exception subclasses for the cases we
-    care about (slug missing, credential validation, upstream timeout,
-    upstream HTTP failure). Bucket each into the appropriate HTTP
-    status so the frontend can branch on category instead of parsing
-    free-text. Unknown exceptions get logged on the server with the
-    full traceback and surface to the client as a generic 502 — never
-    `str(exc)`, which can echo internal IDs, stack info, or the user's
-    own credentials back over the wire.
+    Imports `composio.exceptions` lazily — the package initializes a
+    filesystem cache directory at import time, which breaks cold
+    starts in read-only / sandboxed environments. We mirror the
+    lazy-import pattern already used in `app/services/composio.py` so
+    the route module stays importable without a writable home dir.
+
+    Buckets the SDK's structured exception subclasses (slug missing,
+    credential validation, upstream timeout, upstream HTTP failure)
+    into specific HTTP codes. Unknown exceptions get logged on the
+    server with the full traceback and surface as a generic 502 —
+    never `str(exc)`, which can echo internal IDs, stack info, or the
+    user's own credentials back over the wire.
 
     `scrub` is the user's submitted credentials map; when present, any
     >=4-char value is redacted from the message text returned to the
     client (Composio sometimes echoes them in upstream templates).
     """
+    from composio.exceptions import (
+        HTTPError as ComposioHTTPError,
+    )
+    from composio.exceptions import (
+        NotFoundError as ComposioNotFoundError,
+    )
+    from composio.exceptions import (
+        SDKTimeoutError,
+    )
+    from composio.exceptions import (
+        ValidationError as ComposioValidationError,
+    )
+
     if isinstance(exc, (ComposioNotFoundError, ValueError)):
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     if isinstance(exc, SDKTimeoutError):
@@ -141,7 +145,9 @@ async def connect_app(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     try:
         result = await create_connect_link(str(auth.user_id), app_name)
-    except (ComposioSDKError, ValueError) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise _map_composio_error(exc) from exc
     return ConnectorConnectResponse.model_validate(result)
 
@@ -162,7 +168,9 @@ async def auth_fields(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     try:
         fields = await get_auth_fields(app_name)
-    except (ComposioSDKError, ValueError) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise _map_composio_error(exc) from exc
     return ConnectorAuthFieldsResponse.model_validate(fields)
 
@@ -218,7 +226,9 @@ async def connect_credentials(
             status.HTTP_504_GATEWAY_TIMEOUT,
             "Composio did not validate the connection in time. Please retry.",
         ) from exc
-    except (ComposioSDKError, ValueError) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise _map_composio_error(exc, scrub=body.credentials) from exc
     return ConnectorCredentialsConnectResponse.model_validate(result)
 

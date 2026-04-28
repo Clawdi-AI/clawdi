@@ -174,8 +174,15 @@ export default function ConnectorDetailPage() {
 	// `none` for instant-connect apps. Anything outside that set goes
 	// to the dialog so newer credential-style schemes default safely
 	// without code changes here.
+	//
+	// `app.auth_type` may be missing during a frontend-deployed-before-
+	// backend window (older backend without the new field). Treat
+	// undefined as "oauth2" — the safe redirect path — so the OAuth
+	// popup is the worst-case experience instead of a credentials
+	// dialog hitting an endpoint that doesn't exist yet.
 	const [credsOpen, setCredsOpen] = useState(false);
-	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(app.auth_type);
+	const authType = app?.auth_type ?? "oauth2";
+	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(authType);
 	// Synchronous single-flight guard for the connect flow. Mirrors the
 	// disconnect ref above: `connectMutation.isPending` only flips after
 	// TanStack Query notifies subscribers (next microtask + render), so a
