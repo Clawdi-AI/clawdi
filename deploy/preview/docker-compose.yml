@@ -142,7 +142,13 @@ services:
         # (dev-only hook; not needed in containers).
         bun install --frozen-lockfile --ignore-scripts
         cd apps/web
-        exec bun run dev --hostname 0.0.0.0 --port 3000
+        # Production build (no HMR, no dev-mode WS — Cloudflare Tunnel proxies HTTP
+        # cleanly but the dev WebSocket /_next/webpack-hmr fails through it).
+        # First boot: ~2 min build. Subsequent restarts: skip build if .next exists.
+        if [ ! -d .next ]; then
+          bun run build
+        fi
+        exec bun run start --hostname 0.0.0.0 --port 3000
       '
 
 volumes:
