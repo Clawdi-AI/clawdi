@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
+	isActiveConnection,
 	useAvailableApp,
 	useConnect,
 	useConnections,
@@ -159,7 +160,8 @@ export default function ConnectorDetailPage() {
 	};
 	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
 
-	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
+	const activeConnections =
+		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || isConnectionsLoading;
 

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAvailableApps, useConnections } from "@/lib/connectors-data";
+import { isActiveConnection, useAvailableApps, useConnections } from "@/lib/connectors-data";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -93,9 +93,17 @@ export default function ConnectorsPage() {
 	const isFetching = catalogQ.isFetching;
 	const error = catalogQ.error;
 
-	const connectedNames = useMemo(
-		() => new Set(connections?.map((c) => c.app_name) ?? []),
+	// Only count ACTIVE connections — INITIALIZING/INITIATED rows exist
+	// before OAuth completes (and stick around if abandoned), and
+	// EXPIRED/FAILED need re-connection. Surfacing them as "Connected"
+	// would mislead users into thinking unusable apps work.
+	const activeConnections = useMemo(
+		() => connections?.filter(isActiveConnection) ?? [],
 		[connections],
+	);
+	const connectedNames = useMemo(
+		() => new Set(activeConnections.map((c) => c.app_name)),
+		[activeConnections],
 	);
 
 	const items = pageData?.items ?? [];
@@ -132,9 +140,7 @@ export default function ConnectorsPage() {
 						{total > 0 ? (
 							<Badge variant="secondary">{total.toLocaleString()} available</Badge>
 						) : null}
-						{connections && connections.length > 0 ? (
-							<Badge>{connections.length} active</Badge>
-						) : null}
+						{activeConnections.length > 0 ? <Badge>{activeConnections.length} active</Badge> : null}
 					</>
 				}
 			/>

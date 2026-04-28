@@ -198,6 +198,25 @@ export function useDisconnect() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Status helpers
+//
+// Composio's connection lifecycle has many states (INITIALIZING →
+// INITIATED → ACTIVE → … → EXPIRED / FAILED / INACTIVE). Only ACTIVE
+// connections are usable: an INITIALIZING row exists before OAuth
+// completes (and may stick around forever if the user abandons), an
+// EXPIRED row needs reconnection, and FAILED / INACTIVE are dead.
+// Surfacing any of these as "Connected" misleads the user — list
+// pages show a Connected checkmark for an app that doesn't work, and
+// detail pages show a Disconnect button on a row that isn't real yet.
+// Filter user-facing lists with `isActiveConnection`. Re-connecting
+// from the UI lets Composio update or replace the old row, so we
+// don't lose the user's ability to recover from EXPIRED/FAILED.
+
+export function isActiveConnection(c: { status: string }): boolean {
+	return c.status.toUpperCase() === "ACTIVE";
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Re-export the unified shapes the page UI consumes.
 
 export type { CloudShapedAuthFields, CloudShapedAvailableApp, CloudShapedConnection };
