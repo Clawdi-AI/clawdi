@@ -4,7 +4,7 @@
  *
  *     bun --cwd apps/web run generate-deploy-api
  *
- * (requires clawdi-monorepo's backend running on :50021).
+ * (requires clawdi.ai running on :50021).
  */
 import type { components as DeployComponents } from "./deploy-generated";
 

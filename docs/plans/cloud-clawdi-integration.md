@@ -28,7 +28,7 @@ except they run the agent runtime themselves.
 ## Source-grounding status (verified 2026-04-24)
 
 Every architectural assertion in this doc was cross-referenced
-against actual source in `~/Programs/clawdi` (private monorepo)
+against actual source in `~/Programs/clawdi` (private clawdi.ai)
 and `~/Programs/clawdi-cloud` (this repo) during round-8 codex
 review. Summary:
 
@@ -54,7 +54,7 @@ review. Summary:
 - Gateway library extraction from existing controller (refactor)
 - Schema additions: api_keys.{scopes, deployment_id, allowed_vault_uris}; agent_environments.{deployment_id, migration_epoch}; new tables tunnel_sessions / connect_tokens / redeemed_tokens / agent_environments_history
 
-**TO PORT (existing UI in clawdi-monorepo, not rewrite):**
+**TO PORT (existing UI in clawdi-clawdi.ai, not rewrite):**
 - Console UI (`apps/web/src/components/console/` — files/logs/terminal/public-ports)
 - `agent-offline-state.tsx`, `use-hermes-target`, `use-hermes-client`, etc.
 
@@ -433,7 +433,7 @@ PUT  /api/api-keys/{id}/vault-allowlist        replace URI allowlist (Clerk)
 
 Earlier drafts framed direct-connect as "CLI tunnel as the
 universal middle layer." Source-code review showed that today's
-clawdi monorepo agent-image already ships a **Hono-based controller
+clawdi clawdi.ai agent-image already ships a **Hono-based controller
 on port 18789** that handles chat / file-browse / tail-logs /
 terminal / native UI proxying for hosted pods, with `gateway_token`
 auth derived from `MASTER_KEY`. The dashboard at clawdi.ai/dashboard
@@ -786,7 +786,7 @@ Composio identity is keyed on `(api_key, entity_id)`. A user
 connecting Gmail in clawdi.ai/dashboard stores tokens under
 `(composio_api_key, clerk_id)`. For cloud.clawdi.ai to surface
 those same connections, hosted users **proxy all `/connectors`
-calls cross-origin to clawdi-monorepo's existing `/connections`
+calls cross-origin to clawdi-clawdi.ai's existing `/connections`
 API** rather than running a parallel Composio client.
 
 Cloud's own `backend/app/services/composio.py` and `routes/connectors.py`
@@ -804,18 +804,18 @@ SDK takes `redirect_url` as a per-request parameter
 *new* connections can callback wherever you want. But existing
 tokens can't be transferred — Composio has no token-rename API.
 Migrating means forcing every user to re-OAuth every connection.
-Proxy avoids that entirely: monorepo's existing
+Proxy avoids that entirely: clawdi.ai's existing
 `clerk_id`-keyed connections stay where they are; cloud reads/
 mutates the same store via cross-origin call.
 
 **Per-request callback URL:**
 
-Monorepo's `POST /connections/{app_name}/connect` already accepts
+clawdi.ai's `POST /connections/{app_name}/connect` already accepts
 `body.redirect_url` (`backend/app/routes/connections.py:481-506`)
 and validates against `_ALLOWED_REDIRECT_SCHEMES = {"https", "exp", "clawdi"}` —
 any HTTPS host passes, so cloud passes
 `redirect_url=https://cloud.clawdi.ai/connectors/callback` and the
-user lands back on cloud after OAuth, not monorepo. The token
+user lands back on cloud after OAuth, not clawdi.ai. The token
 itself is still stored under the user's `clerk_id` entity, so
 both products see the connection. UX matches the product the
 user clicked from.
@@ -835,13 +835,13 @@ user clicked from.
                   └─ /api/connectors (cloud-api)
                       └─ entity_id = user.id (local UUID)
 
-       clawdi.ai (monorepo) — owns Composio data + OAuth callbacks
+       clawdi.ai (clawdi.ai) — owns Composio data + OAuth callbacks
               ├─ /connections/* (already exists)
               └─ CORS: cloud.clawdi.ai included via PR #424
 ```
 
 **Cross-origin auth:** same Clerk JWT pattern as the deploy listing.
-Monorepo's `get_current_user` accepts the `cloud.clawdi.ai`-issued
+clawdi.ai's `get_current_user` accepts the `cloud.clawdi.ai`-issued
 Clerk token because both apps use the same Clerk project. No
 service-to-service tokens, no audience juggling.
 
@@ -1578,9 +1578,9 @@ estimates are unhelpful planning fiction.
 - Hosted listing in the unified Agents grid: `useHostedAgentTiles`
   fans `Deployment.config_info.onboarded_agents` out to one tile per
   runtime (OpenClaw / Hermes are separate dashboard surfaces in
-  monorepo)
+  clawdi.ai)
 - Per-tile `Manage ↗` deep-links to `clawdi.ai/dashboard?deployment=
-  X&agent_type=openclaw|hermes` — paired with monorepo PR #425 which
+  X&agent_type=openclaw|hermes` — paired with clawdi.ai PR #425 which
   hydrates the runtime selector from the URL param
 - Convention: every hosted-only component sets `data-hosted="true"`
   on its root element
@@ -1592,24 +1592,24 @@ estimates are unhelpful planning fiction.
   Conventions section
 - Composio cross-origin proxy for hosted: `apps/web/src/hosted/composio-api.ts`
   + `/connectors/*` pages switch data source on `IS_HOSTED`. Hosted
-  users see their `clerk_id`-keyed connections from monorepo;
+  users see their `clerk_id`-keyed connections from clawdi.ai;
   OAuth callbacks return to `cloud.clawdi.ai/connectors/callback`
   via per-request `redirect_url`. See "Composio cross-origin proxy"
   section under MCP proxy plane for the full design.
 
 No backend change in cloud-api. No new cloud-api dependencies.
 Cross-origin auth piggybacks on the existing Clerk session (both
-apps share the Clerk project), so monorepo just adds
-`cloud.clawdi.ai` to its CORS allowlist (PR #424). Monorepo's
+apps share the Clerk project), so clawdi.ai just adds
+`cloud.clawdi.ai` to its CORS allowlist (PR #424). clawdi.ai's
 `POST /connections/{app}/connect` already takes `body.redirect_url`,
-so no monorepo change is required for callbacks either.
+so no clawdi.ai change is required for callbacks either.
 
 ### Phase 2 — Gateway library extraction + cloud-api broker + state plane sync UX  (keystone — biggest phase)
 
 This phase has three intertwined work items, sequenced to land
 together because they validate each other:
 
-**Phase 2a: Extract gateway library** (in clawdi monorepo,
+**Phase 2a: Extract gateway library** (in clawdi clawdi.ai,
 new package `packages/agent-gateway/`):
 - Move route registration code from controller into the library
   with injected config (`FileRouteConfig`, `LogRouteConfig`, etc.)
@@ -1650,7 +1650,7 @@ and `Self-managed` daemons via the broker API. Files live
 OUTSIDE `apps/web/src/hosted/`:
 
 - `apps/web/src/components/agents/chat-panel.tsx` — consumes
-  broker SSE; UI inspired by clawdi-monorepo's existing
+  broker SSE; UI inspired by clawdi-clawdi.ai's existing
   `apps/web/src/components/console/` (we'll port relevant parts
   rather than rewrite from zero)
 - `apps/web/src/components/agents/logs-panel.tsx` — consumes
@@ -1676,7 +1676,7 @@ testing).
 
 ### Phase 4 — Hosted deploy + auto-registration + starter skills + vault allowlist  (large)
 
-In clawdi monorepo (private):
+In clawdi clawdi.ai (private):
 - CORS allowlist for `cloud.clawdi.ai` (controller already has
   `CLAWDI_DASHBOARD_ORIGINS` env support — extend default list)
 - `/openapi.json` for type generation
@@ -1786,7 +1786,7 @@ In this repo:
 - `migration_epoch` column + lease-claim fencing (the codex
   round-3 critical primitive)
 
-In clawdi monorepo:
+In clawdi clawdi.ai:
 - Lease-loss → teardown webhook receiver: cloud-api notifies
   clawdi-api when a self-managed daemon has claimed the lease;
   clawdi-api distinguishes `replaced` (safe to teardown) from
@@ -1809,7 +1809,7 @@ guessing this is rare; let demand prove it).
 
 - `validateSkillForRuntime` adapter contract extension
 - Step 2 of migrate-dialog — per-skill compatibility matrix
-- `POST /api/deployments/migrate` in clawdi monorepo (atomic image
+- `POST /api/deployments/migrate` in clawdi clawdi.ai (atomic image
   swap on existing env_id)
 - `agent_environments.declared_agent_type` column for self-managed
   runtime swap UX
@@ -1988,7 +1988,7 @@ OSS UI must contain ZERO traces of hosted features:
 OSS user awareness of the hosted version comes from README and
 GitHub landing — not the in-product UI. Deliberate trust trade-off.
 
-### What goes private (clawdi monorepo)
+### What goes private (clawdi clawdi.ai)
 
 - k8s / compute-orchestration driver, billing, legacy chat
   pairing flow (now obsolete with CLI tunnel — to be deleted)
@@ -2020,7 +2020,7 @@ nativeUiUrl) which was too shallow. The library extracted from
 the existing controller is the abstraction.
 
 Library code lives at `packages/agent-gateway/` (workspace
-package, exported to clawdi-monorepo via npm or workspace
+package, exported to clawdi-clawdi.ai via npm or workspace
 symlink). Controller and `clawdi serve` both depend on it.
 
 ### Library config schema (TypeScript)
@@ -2169,7 +2169,7 @@ PARTITION BY RANGE (created_at);
 -- after 90 days hot retention + 1 year archive.
 ```
 
-## Appendix: clawdi monorepo deploy API surface
+## Appendix: clawdi clawdi.ai deploy API surface
 
 ```
 POST   /api/deployments                       deploy + mint registration token (private)

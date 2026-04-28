@@ -1,31 +1,24 @@
 "use client";
 
+import type { Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import {
-	type Deployment,
-	deploymentManageUrl,
-	unwrapDeploy,
-	useDeployApi,
-} from "@/hosted/deploy-api";
+import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 
 /**
- * Bridge between clawdi-monorepo's `Deployment` and the unified
- * `AgentTile` shape rendered by `AgentsCard`.
- *
- * Lives in `apps/web/src/hosted/` so the cross-origin `deploy-api`
- * import stays inside the hosted directory boundary — `AgentsCard`
- * itself never imports from `@/hosted/*`.
+ * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
+ * shape rendered by `AgentsCard`. Hosted-side projection lives here so
+ * `AgentsCard` itself never imports from `@/hosted/*`.
  */
 export function useHostedAgentTiles({ enabled }: { enabled: boolean }) {
-	const api = useDeployApi();
+	const api = useClawdiApi();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
-		queryFn: async () => unwrapDeploy(await api.GET("/deployments")),
+		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
 		enabled,
 		// Status changes (Provisioning → Ready) — refetch periodically
 		// while a deployment is still spinning up. 10s is the balance
-		// between snappy feedback and not hammering clawdi-monorepo.
+		// between snappy feedback and not hammering clawdi.ai.
 		refetchInterval: (q) => {
 			const items = q.state.data ?? [];
 			const transient = items.some((d) => isTransientStatus(d.status));
@@ -51,7 +44,7 @@ function isKnownRuntime(s: string): s is Runtime {
 /**
  * One deployment fans out to one tile per onboarded runtime. OpenClaw
  * (:18789) and Hermes (:18793) are completely separate dashboard
- * surfaces in clawdi-monorepo — different web servers, capability
+ * surfaces in clawdi.ai — different web servers, capability
  * sets, management URLs — so the unified grid renders them as
  * distinct agents.
  *
@@ -114,7 +107,7 @@ function runtimeDisplayName(runtime: Runtime): string {
 }
 
 /**
- * Strip monorepo's auto-generated `openclaw-` / `hermes-` prefix
+ * Strip clawdi.ai's auto-generated `openclaw-` / `hermes-` prefix
  * from a deployment name. The prefix is an app-slug artifact (every
  * pod gets it regardless of which runtimes are active), so it reads
  * as misleading runtime metadata on a tile for the *other* runtime.
@@ -138,4 +131,19 @@ function displayStatus(status: string): string {
 
 function isTransientStatus(status: string): boolean {
 	return status === "pending" || status === "provisioning" || status === "starting";
+}
+
+/**
+ * Deep-link into clawdi.ai/dashboard for one (deployment, runtime).
+ * Pairs with clawdi.ai's `useAgentTypeStore` which hydrates from
+ * `?agent_type=` so the sidebar dropdown matches the tile clicked.
+ * Override the base via `NEXT_PUBLIC_DEPLOY_DASHBOARD_URL`.
+ */
+function deploymentManageUrl(deployment: Deployment, runtime?: string): string {
+	const base = process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL || "https://www.clawdi.ai/dashboard";
+	const params = new URLSearchParams({ deployment: deployment.id });
+	if (runtime === "openclaw" || runtime === "hermes") {
+		params.set("agent_type", runtime);
+	}
+	return `${base}?${params.toString()}`;
 }

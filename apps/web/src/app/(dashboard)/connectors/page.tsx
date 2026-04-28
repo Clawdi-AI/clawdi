@@ -48,7 +48,7 @@ export default function ConnectorsPage() {
 	const debouncedQuery = useDebouncedValue(query, 250);
 
 	// Source of truth depends on deployment mode:
-	//   - Hosted: cross-origin to monorepo's `/connections/*` so users
+	//   - Hosted: cross-origin to clawdi.ai's `/connections/*` so users
 	//     see their `clerk_id`-keyed Composio entity (shared with
 	//     clawdi.ai/dashboard); cloud-api is bypassed for connectors.
 	//   - OSS / self-host: cloud-api's `/api/connectors`, keyed by the

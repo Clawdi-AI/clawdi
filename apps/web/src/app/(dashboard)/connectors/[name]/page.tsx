@@ -135,7 +135,7 @@ export default function ConnectorDetailPage() {
 		},
 		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
 	});
-	// Hosted variant pops the same OAuth window but talks to monorepo with
+	// Hosted variant pops the same OAuth window but talks to clawdi.ai with
 	// `redirect_url=cloud.clawdi.ai/connectors/callback` so the user lands
 	// back on cloud after authorizing, not on clawdi.ai/dashboard. Polling
 	// happens after callback rather than here.

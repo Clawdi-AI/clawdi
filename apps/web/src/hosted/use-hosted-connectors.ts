@@ -1,27 +1,17 @@
 "use client";
 
+import type { ConnectionItem, ConnectorCatalogItem } from "@clawdi/shared/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
-import {
-	type ConnectionItem,
-	type ConnectorCatalogItem,
-	composioCallbackUrl,
-	unwrapComposio,
-	useComposioApi,
-} from "@/hosted/composio-api";
+import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 
 /**
- * React Query hooks that adapt clawdi-monorepo's `/connections/*`
- * shapes to the surface clawdi-cloud's connectors page expects, so
- * the OSS UI components stay unchanged. Each hook mirrors the
- * `useQuery`/`useMutation` ergonomics of the cloud-api equivalents.
- *
- * Hosted catalog has no server pagination. We pull the full catalog
- * once via `/connector-catalog` (richer than `/available-apps` —
- * includes descriptions) and slice client-side; Composio's catalog
- * is ~1k items which is fine to ship in one payload, and avoiding
- * server round-trips per page-flip matches the perceived snappiness
- * of the cloud-api version's in-memory cache + slicing.
+ * Adapter hooks that project clawdi.ai's `/connections/*` shapes
+ * onto the surface cloud's connectors UI expects, so the OSS components
+ * stay unchanged. The full catalog is fetched once via
+ * `/connector-catalog` and sliced client-side — ~1k items is fine over
+ * one wire, and skipping per-page-flip refetches matches the
+ * cloud-api version's in-memory cache + slicing perceived snappiness.
  */
 
 const HOSTED_CATALOG_KEY = ["hosted", "connector-catalog"] as const;
@@ -58,11 +48,11 @@ export interface CloudShapedConnection {
 }
 
 export function useHostedConnections({ enabled }: { enabled: boolean }) {
-	const api = useComposioApi();
+	const api = useClawdiApi();
 	return useQuery({
 		queryKey: HOSTED_CONNECTIONS_KEY,
 		queryFn: async () => {
-			const data = await unwrapComposio(await api.GET("/connections", {}));
+			const data = await unwrapClawdi(await api.GET("/connections", {}));
 			return data.items.map(toCloudConnection);
 		},
 		enabled,
@@ -76,11 +66,11 @@ export function useHostedConnections({ enabled }: { enabled: boolean }) {
  * round trip, no per-search debounce refetch.
  */
 function useHostedCatalogQuery({ enabled }: { enabled: boolean }) {
-	const api = useComposioApi();
+	const api = useClawdiApi();
 	return useQuery({
 		queryKey: HOSTED_CATALOG_KEY,
 		queryFn: async (): Promise<ConnectorCatalogItem[]> => {
-			const data = await unwrapComposio(await api.GET("/connections/connector-catalog", {}));
+			const data = await unwrapClawdi(await api.GET("/connections/connector-catalog", {}));
 			return data.items;
 		},
 		enabled,
@@ -142,16 +132,16 @@ export function useHostedConnectorTools({
 	appName: string;
 	enabled: boolean;
 }) {
-	const api = useComposioApi();
+	const api = useClawdiApi();
 	return useQuery({
 		queryKey: ["hosted", "connector-tools", appName] as const,
 		queryFn: async () => {
-			const data = await unwrapComposio(
+			const data = await unwrapClawdi(
 				await api.GET("/connections/connector-catalog/{app_name}/tools", {
 					params: { path: { app_name: appName } },
 				}),
 			);
-			// Monorepo's tools response wraps tools under `.tools`; cloud's UI
+			// clawdi.ai's tools response wraps tools under `.tools`; cloud's UI
 			// reads a flat array. Project to cloud's `ConnectorToolResponse` shape
 			// (slug → name) so the existing detail page renders without branching.
 			return data.tools.map((t) => ({
@@ -166,17 +156,17 @@ export function useHostedConnectorTools({
 }
 
 export function useHostedConnectMutation() {
-	const api = useComposioApi();
+	const api = useClawdiApi();
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async ({ appName }: { appName: string }) => {
-			const data = await unwrapComposio(
+			const data = await unwrapClawdi(
 				await api.POST("/connections/{app_name}/connect", {
 					params: { path: { app_name: appName } },
 					body: { redirect_url: composioCallbackUrl(appName) },
 				}),
 			);
-			// Monorepo returns `{ url }`; cloud's UI expects `{ connect_url, id }`.
+			// clawdi.ai returns `{ url }`; cloud's UI expects `{ connect_url, id }`.
 			// id is unknown until OAuth completes — the user lands on the
 			// detail page directly, which refetches the connection list and
 			// renders the new entry on its own.
@@ -189,11 +179,11 @@ export function useHostedConnectMutation() {
 }
 
 export function useHostedDisconnectMutation() {
-	const api = useComposioApi();
+	const api = useClawdiApi();
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async ({ connectionId }: { connectionId: string }) => {
-			await unwrapComposio(
+			await unwrapClawdi(
 				await api.DELETE("/connections/{connection_id}", {
 					params: { path: { connection_id: connectionId } },
 				}),
@@ -219,7 +209,7 @@ function toCloudConnection(c: ConnectionItem): CloudShapedConnection {
 }
 
 function toAvailableAppItem(c: ConnectorCatalogItem): CloudShapedAvailableApp {
-	// Cloud's UI reads `logo` / `description`; monorepo's `AvailableAppItem`
+	// Cloud's UI reads `logo` / `description`; clawdi.ai's `AvailableAppItem`
 	// has `logo_url` and no description. The richer catalog endpoint
 	// (`/connections/connector-catalog`) carries description, so we
 	// project from there into cloud's shape.
@@ -248,4 +238,19 @@ function matchesSearch(item: ConnectorCatalogItem, q: string): boolean {
 		item.display_name.toLowerCase().includes(q) ||
 		item.description.toLowerCase().includes(q)
 	);
+}
+
+/**
+ * Redirect URL handed to clawdi.ai's `connect` endpoint. Lands directly
+ * on the connector's detail page — no intermediary callback route.
+ * The detail page refetches on mount; the original tab refetches on
+ * window focus. Errors come back as `?error=…` and the detail page
+ * surfaces them as a toast.
+ */
+function composioCallbackUrl(appName: string): string {
+	const slug = encodeURIComponent(appName);
+	if (typeof window === "undefined") {
+		return `https://cloud.clawdi.ai/connectors/${slug}`;
+	}
+	return `${window.location.origin}/connectors/${slug}`;
 }
