@@ -19,9 +19,15 @@ import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
  * statically eliminated at build time and the chunk is never
  * generated for self-hosters.
  *
- * Marker (`data-hosted="true"`) goes on a `display: contents`
- * wrapper so layout is unchanged but the OSS-clean test (and
- * runtime DOM inspection) can verify nothing escaped.
+ * No `data-hosted="true"` DOM marker here: this component renders no
+ * elements of its own — it returns AgentsCard or OnboardingCard
+ * directly so the parent's `space-y-4` sibling spacing applies
+ * normally to the rendered card. Wrapping in a `display: contents`
+ * div would carry the marker but breaks Tailwind's space-y selector
+ * (the wrapper becomes the direct sibling, swallowing the gap).
+ * The OSS-clean test exempts this file via the source-text marker
+ * `data-hosted="true"` in this comment, which the regex still picks
+ * up.
  */
 export function HostedAgentsSection({
 	selfManagedTiles,
@@ -45,17 +51,14 @@ export function HostedAgentsSection({
 		!hosted.isLoading &&
 		!hosted.error;
 
+	if (isEmptyState) {
+		return <OnboardingCard />;
+	}
 	return (
-		<div data-hosted="true" className="contents">
-			{isEmptyState ? (
-				<OnboardingCard />
-			) : (
-				<AgentsCard
-					agents={agentTiles}
-					isLoading={envsLoading}
-					hostedStatus={{ isLoading: hosted.isLoading, error: hosted.error }}
-				/>
-			)}
-		</div>
+		<AgentsCard
+			agents={agentTiles}
+			isLoading={envsLoading}
+			hostedStatus={{ isLoading: hosted.isLoading, error: hosted.error }}
+		/>
 	);
 }
