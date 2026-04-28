@@ -14,6 +14,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
+// Strip the leading `---\n...\n---` YAML frontmatter so the markdown
+// renderer doesn't show "name:" / "description:" lines (already
+// rendered above as DetailTitle + description) and so the closing
+// `---` doesn't render as a stray `<hr>` next to the Separator.
+function stripFrontmatter(raw: string): string {
+	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
+	return m ? (m[1] ?? "") : raw;
+}
+
 export default function SkillDetailPage() {
 	const { key } = useParams<{ key: string }>();
 	const router = useRouter();
@@ -109,7 +118,7 @@ export default function SkillDetailPage() {
 						<>
 							<Separator />
 							<div className="prose prose-sm max-w-none dark:prose-invert">
-								<Markdown content={skill.content} />
+								<Markdown content={stripFrontmatter(skill.content)} />
 							</div>
 						</>
 					) : null}
