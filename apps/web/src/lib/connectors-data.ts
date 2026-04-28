@@ -182,9 +182,13 @@ export function useConnectedAppCards() {
 	// Dedupe so multi-account-same-app users don't pay for two catalog
 	// lookups or render duplicate cards with colliding React keys. The
 	// rail is per-app, not per-connection — the detail page is where
-	// the user picks between accounts.
+	// the user picks between accounts. Filter out connections with a
+	// missing/empty `app_name` defensively — Composio always returns
+	// it in practice, but a malformed row would otherwise become an
+	// `undefined` Set entry and fan out a useQueries with a broken
+	// path param.
 	const names = useMemo(
-		() => Array.from(new Set(activeConnections.map((c) => c.app_name))),
+		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
 		[activeConnections],
 	);
 
