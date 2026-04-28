@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
@@ -22,11 +23,14 @@ from app.schemas.session import (
     SessionBatchRequest,
     SessionBatchResponse,
     SessionDetailResponse,
+    SessionExtractResponse,
     SessionListItemResponse,
     SessionMessageResponse,
     SessionUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.memory_extraction import extract_memories_from_session
+from app.services.memory_provider import get_memory_provider
 
 router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
@@ -504,6 +508,93 @@ async def get_session_content(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
     return [SessionMessageResponse.model_validate(m) for m in raw]
+
+
+@router.post("/api/sessions/{local_session_id}/extract")
+async def extract_session_memories(
+    local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> SessionExtractResponse:
+    """Extract memories from a session's content via the configured LLM.
+
+    Uses `local_session_id` for path lookup (mirrors the upload endpoint
+    pattern) — `uq_sessions_user_local` makes that a unique index.
+
+    Not idempotent — every call hits the LLM. Onboarding loops over
+    each session exactly once; the future dashboard button is a
+    user-initiated single click. Tracking "already extracted" state
+    on the server would force us to also reason about session updates
+    (re-pushed content with new turns), which is more complexity than
+    a one-shot $0.001 LLM call is worth.
+    """
+    if not settings.llm_api_key:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "LLM is not configured on this deployment",
+        )
+
+    session = (
+        await db.execute(
+            select(Session).where(
+                Session.user_id == auth.user_id,
+                Session.local_session_id == local_session_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if not session.file_key:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Session content has not been uploaded",
+        )
+
+    try:
+        data = await file_store.get(session.file_key)
+    except Exception:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found")
+
+    try:
+        messages = json.loads(data)
+    except json.JSONDecodeError:
+        log.exception("session %s content is not valid JSON", session.id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+    if not isinstance(messages, list):
+        log.error(
+            "session %s content is not a JSON array (got %s)",
+            session.id,
+            type(messages).__name__,
+        )
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+
+    # Local import keeps the openai SDK off the cold-start critical path
+    # for routes that don't need it.
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=settings.llm_base_url or None,
+        api_key=settings.llm_api_key,
+    )
+    extracted = await extract_memories_from_session(
+        messages,
+        project_path=session.project_path,
+        client=client,
+        model=settings.llm_model,
+    )
+
+    provider = await get_memory_provider(str(auth.user_id), db)
+    for m in extracted:
+        await provider.add(
+            user_id=str(auth.user_id),
+            content=m.content,
+            category=m.category,
+            source="session",
+            tags=m.tags or None,
+            source_session_id=session.id,
+        )
+
+    return SessionExtractResponse(memories_created=len(extracted))
 
 
 def _session_to_response(

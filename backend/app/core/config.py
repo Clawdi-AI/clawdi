@@ -66,5 +66,17 @@ class Settings(BaseSettings):
     memory_embedding_base_url: str = ""
     memory_embedding_model: str = "text-embedding-3-small"
 
+    # Shared LLM credentials for any feature that needs chat completions
+    # (memory extraction today; session summarization, auto-tagging, etc.
+    # tomorrow). OpenAI-compatible endpoint — works with OpenAI itself,
+    # OpenRouter, Anthropic-via-proxy, local llama.cpp, etc. Empty
+    # `api_key` is the disable signal — features that depend on the LLM
+    # return 503 with a clear hint when it's missing. `llm_model` is a
+    # process-wide default; individual features can override at the call
+    # site if they need a stronger/cheaper model.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+
 
 settings = Settings()

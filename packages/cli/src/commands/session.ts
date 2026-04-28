@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { isLoggedIn } from "../lib/config";
 import {
 	adapterForType,
 	listRegisteredAgentTypes,
@@ -158,4 +160,56 @@ function relativeTime(then: Date): string {
 	if (mon < 12) return `${mon}mo ago`;
 	const yr = Math.floor(mon / 12);
 	return `${yr}y ago`;
+}
+
+interface SessionExtractOpts {
+	json?: boolean;
+}
+
+/** Thin 1:1 wrapper around `POST /api/sessions/{local_session_id}/extract`.
+ *
+ * No orchestration, no idempotency. The route always calls the LLM;
+ * callers (onboarding skill, future dashboard button) decide which
+ * sessions to feed in. 503 is the special "extraction not configured"
+ * signal the onboarding skill watches for to skip the step cleanly.
+ */
+export async function sessionExtract(sessionId: string, opts: SessionExtractOpts = {}) {
+	if (!isLoggedIn()) {
+		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		process.exit(1);
+	}
+	const api = new ApiClient();
+	try {
+		const result = unwrap(
+			await api.POST("/api/sessions/{local_session_id}/extract", {
+				params: { path: { local_session_id: sessionId } },
+			}),
+		);
+
+		if (opts.json || !process.stdout.isTTY) {
+			console.log(JSON.stringify({ session_id: sessionId, ...result }));
+			return;
+		}
+
+		const n = result.memories_created;
+		console.log(chalk.green(`✓ ${n} memor${n === 1 ? "y" : "ies"} extracted from ${sessionId}`));
+	} catch (e) {
+		// 503 means the deployment hasn't configured a memory-extraction LLM.
+		// Exit 2 so onboarding scripts can branch on it without parsing stderr.
+		if (e instanceof ApiError && e.status === 503) {
+			if (opts.json || !process.stdout.isTTY) {
+				console.log(
+					JSON.stringify({
+						session_id: sessionId,
+						error: "not_configured",
+						message: e.body || e.hint,
+					}),
+				);
+			} else {
+				console.log(chalk.yellow(`Memory extraction is not configured on this deployment.`));
+			}
+			process.exit(2);
+		}
+		throw e;
+	}
 }

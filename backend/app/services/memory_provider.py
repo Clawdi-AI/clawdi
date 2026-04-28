@@ -26,6 +26,7 @@ class MemoryProvider(Protocol):
         category: str = "fact",
         source: str = "manual",
         tags: list[str] | None = None,
+        source_session_id: uuid.UUID | None = None,
     ) -> dict: ...
 
     async def search(
@@ -65,6 +66,7 @@ class BuiltinProvider:
         category: str = "fact",
         source: str = "manual",
         tags: list[str] | None = None,
+        source_session_id: uuid.UUID | None = None,
     ) -> dict:
         vec: list[float] | None = None
         if self.embedder is not None:
@@ -82,6 +84,7 @@ class BuiltinProvider:
             category=category,
             source=source,
             tags=tags,
+            source_session_id=source_session_id,
             embedding=vec,
         )
         self.db.add(memory)
@@ -270,11 +273,17 @@ class Mem0Provider:
         category: str = "fact",
         source: str = "manual",
         tags: list[str] | None = None,
+        source_session_id: uuid.UUID | None = None,
     ) -> dict:
+        # Mem0 has no native column for `source_session_id`; persist it in
+        # metadata so the linkage isn't lost across providers.
+        metadata: dict = {"category": category, "source": source, "tags": tags or []}
+        if source_session_id is not None:
+            metadata["source_session_id"] = str(source_session_id)
         result = self.client.add(
             [{"role": "user", "content": content}],
             user_id=user_id,
-            metadata={"category": category, "source": source, "tags": tags or []},
+            metadata=metadata,
         )
         mem_id = result[0]["id"] if result else str(uuid.uuid4())
         return {"id": mem_id}

@@ -342,6 +342,26 @@ Examples:
 		await sessionList(opts);
 	});
 
+sessionCmd
+	.command("extract <session-id>")
+	.description("Extract memories from a session via the cloud's configured LLM")
+	.option("--json", "Output result as JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi session extract a1b2c3d4-...
+  $ clawdi session extract a1b2c3d4-... --json
+  # Loop the recent 10 sessions (the onboarding skill does this):
+  $ clawdi session list --limit 10 --json | \\
+      jq -r '.[].id' | \\
+      xargs -I{} clawdi session extract {} --json`,
+	)
+	.action(async (sessionId, opts) => {
+		const { sessionExtract } = await import("./commands/session.js");
+		await sessionExtract(sessionId, opts);
+	});
+
 // ─────────────────────────────────────────────────────────────
 // memory
 // ─────────────────────────────────────────────────────────────

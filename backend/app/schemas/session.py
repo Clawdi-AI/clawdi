@@ -126,6 +126,12 @@ class SessionUploadResponse(BaseModel):
     content_hash: str
 
 
+class SessionExtractResponse(BaseModel):
+    """Result of `POST /api/sessions/{local_session_id}/extract`."""
+
+    memories_created: int
+
+
 class SessionMessageResponse(BaseModel):
     """One agent message inside a session content file.
 

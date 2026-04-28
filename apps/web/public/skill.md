@@ -141,6 +141,44 @@ This installs cloud skills into every registered agent's home directory. Like pu
 
 If the user has zero authored skills, both commands are no-ops. Run them anyway to confirm; the output makes it obvious.
 
+## Extract memories from sessions (optional)
+
+Seed the user's Memory module by extracting facts, preferences, and decisions from the sessions they just pushed. The cloud's configured LLM does the extraction — the agent loops over recent sessions and calls the per-session endpoint via the CLI.
+
+If the user opted out of session upload above, skip this step entirely (there's nothing in the cloud to extract from).
+
+### List recent sessions
+
+```bash
+clawdi session list --all-agents --limit 5 --json
+```
+
+Parse the JSON. Take the `id` of each session (these are the local session ids — the same key the upload endpoint uses).
+
+If the JSON is empty (`[]`), tell the user *"No recent sessions to extract from — skipping memory bootstrap."* and continue to Verify.
+
+### Extract per session
+
+For each session id from the list above, run:
+
+```bash
+clawdi session extract <id> --json
+```
+
+Each call returns `{session_id, memories_created}`. Sum `memories_created` across all 5 calls.
+
+**Stop the loop early if the FIRST call exits with code 2** — that means the deployment hasn't configured memory extraction. Tell the user *"Memory extraction isn't configured on this deployment — skipping."* and continue to Verify.
+
+For other failures (5xx, network), keep going — one bad session shouldn't halt the batch. Note the failure count for the summary.
+
+### Report
+
+Tell the user:
+
+> ✓ Extracted N memories from M sessions{P failed if any}
+
+If extraction was unconfigured, say that instead. Either way, continue to Verify.
+
 ## Verify
 
 ```bash
@@ -159,7 +197,7 @@ If they opted out of session upload, just confirm setup checks passed and remind
 
 After this their account has:
 
-- **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall.
+- **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
 - **Session sync** — pushed today; future sessions sync via `clawdi push`.
 - **Skill sync** — authored skills backed up to the cloud and available across registered agents via `clawdi pull --modules skills`.

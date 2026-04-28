@@ -486,3 +486,106 @@ async def test_delete_environment_orphans_sessions_via_fk(
 async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
     r = await client.delete(f"/api/environments/{uuid.uuid4()}")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/sessions/{local_session_id}/extract
+# ---------------------------------------------------------------------------
+
+
+async def _seed_session_with_content(
+    client: httpx.AsyncClient, local_id: str, *, content: bytes | None = None
+) -> str:
+    """Register env + create a session row + upload content. Returns
+    `local_session_id` (path key for the extract endpoint)."""
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": local_id,
+                    "started_at": started,
+                    "message_count": 2,
+                    "content_hash": "c" * 64,
+                }
+            ]
+        },
+    )
+    body = content or b'[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]'
+    await client.post(
+        f"/api/sessions/{local_id}/upload",
+        files={"file": (f"{local_id}.json", body, "application/json")},
+    )
+    return local_id
+
+
+@pytest.mark.asyncio
+async def test_extract_creates_memories_linked_to_session(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Happy path: stub the LLM call to return 2 memories; assert they
+    land in the DB with `source="session"` and `source_session_id` set."""
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.services import memory_extraction
+
+    monkeypatch.setattr(app_settings, "llm_api_key", "test-key")
+
+    async def fake_extract(messages, *, project_path, client, model):
+        return [
+            memory_extraction.ExtractedMemory(
+                content="User prefers bun over npm", category="preference", tags=["tooling"]
+            ),
+            memory_extraction.ExtractedMemory(
+                content="Adopted Drizzle for type inference", category="decision", tags=[]
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "app.routes.sessions.extract_memories_from_session", fake_extract
+    )
+
+    local_id = "sess-extract-1"
+    await _seed_session_with_content(client, local_id)
+
+    r = await client.post(f"/api/sessions/{local_id}/extract")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"memories_created": 2}
+
+    # Verify the rows landed with the right source + linkage.
+    # Scope the lookup to this test's user — Memory has no FK cascade so
+    # rows from other tests can outlive their user fixture.
+    from sqlalchemy import select
+
+    rows = (
+        await db_session.execute(select(Memory).where(Memory.user_id == seed_user.id))
+    ).scalars().all()
+    assert len(rows) == 2
+    assert {m.source for m in rows} == {"session"}
+    assert all(m.source_session_id is not None for m in rows)
+    contents = {m.content for m in rows}
+    assert "User prefers bun over npm" in contents
+
+
+@pytest.mark.asyncio
+async def test_extract_503_when_not_configured(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """503 with a clear hint when the deployment hasn't supplied an LLM
+    key — onboarding skill watches for this to skip the step cleanly."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "llm_api_key", "")
+
+    local_id = "sess-extract-noconf"
+    await _seed_session_with_content(client, local_id)
+
+    r = await client.post(f"/api/sessions/{local_id}/extract")
+    assert r.status_code == 503
+    assert "not configured" in r.json()["detail"].lower()

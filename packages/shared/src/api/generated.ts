@@ -284,6 +284,36 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/sessions/{local_session_id}/extract": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/**
+		 * Extract Session Memories
+		 * @description Extract memories from a session's content via the configured LLM.
+		 *
+		 *     Uses `local_session_id` for path lookup (mirrors the upload endpoint
+		 *     pattern) — `uq_sessions_user_local` makes that a unique index.
+		 *
+		 *     Not idempotent — every call hits the LLM. Onboarding loops over
+		 *     each session exactly once; the future dashboard button is a
+		 *     user-initiated single click. Tracking "already extracted" state
+		 *     on the server would force us to also reason about session updates
+		 *     (re-pushed content with new turns), which is more complexity than
+		 *     a one-shot $0.001 LLM call is worth.
+		 */
+		post: operations["extract_session_memories_api_sessions__local_session_id__extract_post"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/dashboard/stats": {
 		parameters: {
 			query?: never;
@@ -862,6 +892,8 @@ export interface components {
 			skill_key: string;
 			/** File */
 			file: string;
+			/** Content Hash */
+			content_hash?: string | null;
 		};
 		/** ConnectRequest */
 		ConnectRequest: {
@@ -1345,6 +1377,14 @@ export interface components {
 			content_hash?: string | null;
 			/** Has Content */
 			has_content: boolean;
+		};
+		/**
+		 * SessionExtractResponse
+		 * @description Result of `POST /api/sessions/{local_session_id}/extract`.
+		 */
+		SessionExtractResponse: {
+			/** Memories Created */
+			memories_created: number;
 		};
 		/** SessionListItemResponse */
 		SessionListItemResponse: {
@@ -2196,6 +2236,37 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["SessionMessageResponse"][];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	extract_session_memories_api_sessions__local_session_id__extract_post: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				local_session_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionExtractResponse"];
 				};
 			};
 			/** @description Validation Error */
