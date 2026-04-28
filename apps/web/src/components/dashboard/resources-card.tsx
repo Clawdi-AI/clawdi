@@ -17,7 +17,7 @@ type Resource = {
 	emptyCta: string;
 };
 
-function buildResources(stats: DashboardStats): Resource[] {
+function buildResources(stats: DashboardStats, connectorsCountOverride?: number): Resource[] {
 	return [
 		{
 			icon: Brain,
@@ -43,14 +43,25 @@ function buildResources(stats: DashboardStats): Resource[] {
 		{
 			icon: Plug,
 			label: "Connectors",
-			count: stats.connectors_count ?? 0,
+			// Hosted users keep their Composio account in clawdi-monorepo
+			// (entity_id = clerk_id); cloud-api's `stats.connectors_count`
+			// is keyed off the local `user.id` UUID and would always read
+			// zero. The page.tsx caller passes through the hosted count
+			// when applicable so the dashboard total reflects reality.
+			count: connectorsCountOverride ?? stats.connectors_count ?? 0,
 			href: "/connectors",
 			emptyCta: "Connect an app",
 		},
 	];
 }
 
-export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) {
+export function ResourcesCard({
+	stats,
+	connectorsCountOverride,
+}: {
+	stats: DashboardStats | undefined;
+	connectorsCountOverride?: number;
+}) {
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -60,7 +71,9 @@ export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) 
 			<CardContent className="p-0">
 				<div className="divide-y">
 					{stats
-						? buildResources(stats).map((r) => <ResourceRow key={r.href} resource={r} />)
+						? buildResources(stats, connectorsCountOverride).map((r) => (
+								<ResourceRow key={r.href} resource={r} />
+							))
 						: Array.from({ length: 4 }).map((_, i) => (
 								<div key={i} className="flex items-center gap-3 px-6 py-3">
 									<Skeleton className="size-4" />

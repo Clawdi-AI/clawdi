@@ -16,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
+import { useHostedConnections } from "@/hosted/use-hosted-connectors";
 import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
 import { relativeTime } from "@/lib/utils";
@@ -59,6 +60,15 @@ export default function DashboardPage() {
 	// Hosted-side query — fetches user's deployments from the
 	// clawdi-monorepo deploy API. Disabled (no fetch) when not hosted.
 	const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
+
+	// Hosted users' Composio entity lives in monorepo (keyed off
+	// clerk_id), so cloud-api's `/api/dashboard/stats.connectors_count`
+	// (keyed off local user.id UUID) always reads zero. Pull the real
+	// count cross-origin and override the resources card when hosted.
+	const hostedConnectionsForCount = useHostedConnections({ enabled: IS_HOSTED });
+	const connectorsCountOverride = IS_HOSTED
+		? (hostedConnectionsForCount.data?.length ?? 0)
+		: undefined;
 
 	const selfManagedTiles: AgentTile[] = useMemo(() => {
 		return (environments ?? []).map((env) => ({
@@ -170,7 +180,7 @@ export default function DashboardPage() {
 				    the hero card above is already the onboarding. */}
 				<div className="min-w-0 space-y-4">
 					{hasAgents ? <OnboardingCard /> : null}
-					<ResourcesCard stats={stats} />
+					<ResourcesCard stats={stats} connectorsCountOverride={connectorsCountOverride} />
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>

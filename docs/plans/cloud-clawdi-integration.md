@@ -780,6 +780,77 @@ agent runtime ──▶ MCP proxy URL ──▶ cloud-api /api/mcp/proxy ──�
 `mcp_token` is provisioned in the pod's environment by the redeem
 flow alongside the `api_key`.
 
+### Composio cross-origin proxy (hosted only)
+
+Composio identity is keyed on `(api_key, entity_id)`. A user
+connecting Gmail in clawdi.ai/dashboard stores tokens under
+`(composio_api_key, clerk_id)`. For cloud.clawdi.ai to surface
+those same connections, hosted users **proxy all `/connectors`
+calls cross-origin to clawdi-monorepo's existing `/connections`
+API** rather than running a parallel Composio client.
+
+Cloud's own `backend/app/services/composio.py` and `routes/connectors.py`
+keep working for OSS / self-host users — they call their own
+Composio API key with `auth.user_id` (local UUID) as the entity.
+Hosted users skip cloud-api entirely for connectors.
+
+**Why proxy beats migrate:**
+
+The naive "unify entity_id to clerk_id everywhere" plan fails for
+OAuth callback portability. Composio's
+`connected_accounts.initiate(integration_id, entity_id, redirect_url=...)`
+SDK takes `redirect_url` as a per-request parameter
+(`composio/client/collections.py:284` in the 0.7.21 release), so
+*new* connections can callback wherever you want. But existing
+tokens can't be transferred — Composio has no token-rename API.
+Migrating means forcing every user to re-OAuth every connection.
+Proxy avoids that entirely: monorepo's existing
+`clerk_id`-keyed connections stay where they are; cloud reads/
+mutates the same store via cross-origin call.
+
+**Per-request callback URL:**
+
+Monorepo's `POST /api/connections/{app_name}/connect` already
+accepts `body.redirect_url` (`backend/app/routes/connections.py:481-506`)
+and validates against `_ALLOWED_REDIRECT_SCHEMES = {"https", "exp", "clawdi"}` —
+any HTTPS host passes, so cloud passes
+`redirect_url=https://cloud.clawdi.ai/connectors/callback` and the
+user lands back on cloud after OAuth, not monorepo. The token
+itself is still stored under the user's `clerk_id` entity, so
+both products see the connection. UX matches the product the
+user clicked from.
+
+**Architecture:**
+
+```
+       cloud.clawdi.ai (cloud-web)
+              │
+              ├─ IS_HOSTED=true
+              │   └─ apps/web/src/hosted/composio-api.ts
+              │       └─ cross-origin → clawdi.ai/api/connections/*
+              │           └─ entity_id = user.clerk_id
+              │           └─ redirect_url = cloud.clawdi.ai/connectors/callback
+              │
+              └─ IS_HOSTED=false
+                  └─ /api/connectors (cloud-api)
+                      └─ entity_id = user.id (local UUID)
+
+       clawdi.ai (monorepo) — owns Composio data + OAuth callbacks
+              ├─ /api/connections/* (already exists)
+              └─ CORS: cloud.clawdi.ai included via PR #424
+```
+
+**Cross-origin auth:** same Clerk JWT pattern as the deploy listing.
+Monorepo's `get_current_user` accepts the `cloud.clawdi.ai`-issued
+Clerk token because both apps use the same Clerk project. No
+service-to-service tokens, no audience juggling.
+
+**OSS / self-host users:** unchanged. `IS_HOSTED=false` keeps
+cloud's own `/api/connectors` endpoints active. Their entity_id
+stays `user.id` (local UUID), their Composio API key is theirs,
+their OAuth callbacks point to their own host. Two independent
+worlds; the cross-origin proxy only swaps in for hosted.
+
 ## Onboarding & first-day UX
 
 The opinionated first-90-seconds for a new hosted user.
@@ -1499,7 +1570,7 @@ Each phase is sized in *relative scope*, not engineer-days. The
 implementation runs primarily on AI-paired coding so absolute time
 estimates are unhelpful planning fiction.
 
-### Phase 1 — Flag + hosted listing + cross-product link  (small)
+### Phase 1 — Flag + hosted listing + cross-product link + Composio proxy  (medium)
 
 - `apps/web/src/lib/hosted.ts` exports `IS_HOSTED`
 - `apps/web/src/hosted/` directory with README explaining the convention
@@ -1519,11 +1590,19 @@ estimates are unhelpful planning fiction.
 - Hosted-only components must be side-effect-free at module top
   level (no env reads, no client construction at import) — see
   Conventions section
+- Composio cross-origin proxy for hosted: `apps/web/src/hosted/composio-api.ts`
+  + `/connectors/*` pages switch data source on `IS_HOSTED`. Hosted
+  users see their `clerk_id`-keyed connections from monorepo;
+  OAuth callbacks return to `cloud.clawdi.ai/connectors/callback`
+  via per-request `redirect_url`. See "Composio cross-origin proxy"
+  section under MCP proxy plane for the full design.
 
-No backend change. No new cloud-api dependencies. Cross-origin auth
-piggybacks on the existing Clerk session (both apps share the Clerk
-project), so monorepo just adds `cloud.clawdi.ai` to its CORS
-allowlist (PR #424).
+No backend change in cloud-api. No new cloud-api dependencies.
+Cross-origin auth piggybacks on the existing Clerk session (both
+apps share the Clerk project), so monorepo just adds
+`cloud.clawdi.ai` to its CORS allowlist (PR #424). Monorepo's
+`POST /api/connections/{app}/connect` already takes `body.redirect_url`,
+so no monorepo change is required for callbacks either.
 
 ### Phase 2 — Gateway library extraction + cloud-api broker + state plane sync UX  (keystone — biggest phase)
 
