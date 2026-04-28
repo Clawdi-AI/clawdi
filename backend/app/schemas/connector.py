@@ -10,12 +10,22 @@ class ConnectRequest(BaseModel):
     back to after the OAuth flow completes. The frontend supplies
     its own connector detail page (e.g.
     `https://cloud.example.com/connectors/gmail`); when omitted,
-    Composio uses its own managed callback. Bound the URL length so
-    we can't be talked into routing OAuth through an attacker-
-    controlled multi-megabyte redirect.
+    Composio uses its own managed callback. Length is capped and
+    the scheme is restricted to http(s) so a hostile caller can't
+    route OAuth through `javascript:` / `data:` / arbitrary schemes
+    that Composio (or some downstream) might honor.
     """
 
     redirect_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("redirect_url")
+    @classmethod
+    def _http_scheme(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("redirect_url must start with http:// or https://")
+        return v
 
 
 class ConnectorConnectionResponse(BaseModel):

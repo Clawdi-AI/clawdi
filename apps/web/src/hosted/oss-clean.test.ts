@@ -69,18 +69,64 @@ describe("IS_HOSTED flag", () => {
 	});
 });
 
+// Strip JS/TS comments (`// …` line and `/* … */` block) before
+// checking the source. JSX attributes never live inside comments,
+// so this prevents marker-in-JSDoc from accidentally satisfying the
+// `data-hosted` invariant — a real DOM attribute is required.
+function stripComments(src: string): string {
+	let out = "";
+	let i = 0;
+	while (i < src.length) {
+		const c = src[i];
+		const n = src[i + 1];
+		if (c === "/" && n === "/") {
+			i += 2;
+			while (i < src.length && src[i] !== "\n") i++;
+		} else if (c === "/" && n === "*") {
+			i += 2;
+			while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+			i += 2;
+		} else if (c === '"' || c === "'" || c === "`") {
+			out += c;
+			i++;
+			while (i < src.length && src[i] !== c) {
+				if (src[i] === "\\") {
+					out += src[i] + (src[i + 1] ?? "");
+					i += 2;
+				} else {
+					out += src[i];
+					i++;
+				}
+			}
+			out += src[i] ?? "";
+			i++;
+		} else {
+			out += c;
+			i++;
+		}
+	}
+	return out;
+}
+
 describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
 		const files = listHostedTsx();
 		expect(files.length).toBeGreaterThan(0);
 
 		for (const file of files) {
-			const src = readFileSync(file, "utf8");
+			const src = stripComments(readFileSync(file, "utf8"));
 			// Tight match: explicit `data-hosted="true"` or `data-hosted={"true"}`.
 			// Rejects `data-hosted="false"`, typos, and arbitrary expression forms
-			// that would slip past the original looser pattern.
+			// that would slip past the original looser pattern. Source has had
+			// comments stripped so a JSDoc reference to `data-hosted="true"`
+			// can no longer satisfy the invariant — a real JSX attribute is
+			// required.
 			const hasDataHosted = /\bdata-hosted=(?:"true"|\{"true"\})/.test(src);
-			expect(hasDataHosted).toBe(true);
+			if (!hasDataHosted) {
+				throw new Error(
+					`${relative(SRC_DIR, file)}: hosted .tsx must set data-hosted="true" on its rendered root`,
+				);
+			}
 		}
 	});
 });
