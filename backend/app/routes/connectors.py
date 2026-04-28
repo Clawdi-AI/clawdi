@@ -4,20 +4,25 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.schemas.common import Paginated
 from app.schemas.connector import (
+    ConnectorAuthFieldsResponse,
     ConnectorAvailableAppResponse,
     ConnectorConnectionResponse,
     ConnectorConnectResponse,
+    ConnectorCredentialsConnectRequest,
+    ConnectorCredentialsConnectResponse,
     ConnectorDisconnectResponse,
     ConnectorMcpConfigResponse,
     ConnectorToolResponse,
     ConnectRequest,
 )
 from app.services.composio import (
+    connect_with_credentials,
     create_connect_link,
     create_proxy_token,
     disconnect_account,
     get_app_by_name,
     get_app_tools,
+    get_auth_fields,
     get_available_apps,
     get_connected_accounts,
 )
@@ -89,6 +94,50 @@ async def connect_app(
 
     result = await create_connect_link(str(auth.user_id), app_name)
     return ConnectorConnectResponse.model_validate(result)
+
+
+@router.get("/{app_name}/auth-fields")
+async def auth_fields(
+    app_name: str,
+    auth: AuthContext = Depends(get_auth),
+) -> ConnectorAuthFieldsResponse:
+    """Return the auth scheme + credential fields for non-OAuth apps.
+
+    Used by the Connect dialog to render the right form (input names,
+    secret vs. plaintext, required markers). The frontend only opens
+    this dialog when the connector's `auth_type` is API-key style;
+    OAuth apps short-circuit to `window.open(connect_url)` instead.
+    """
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        fields = await get_auth_fields(app_name)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found") from exc
+    return ConnectorAuthFieldsResponse.model_validate(fields)
+
+
+@router.post("/{app_name}/connect-credentials")
+async def connect_credentials(
+    app_name: str,
+    body: ConnectorCredentialsConnectRequest,
+    auth: AuthContext = Depends(get_auth),
+) -> ConnectorCredentialsConnectResponse:
+    """Create a connection from user-supplied API-key credentials.
+
+    Composio validates the credentials synchronously, so a successful
+    return means the connection is usable immediately — no polling
+    required, unlike the OAuth path.
+    """
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    if not body.credentials:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credentials required")
+    try:
+        result = await connect_with_credentials(str(auth.user_id), app_name, body.credentials)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found") from exc
+    return ConnectorCredentialsConnectResponse.model_validate(result)
 
 
 @router.delete("/{connection_id}")

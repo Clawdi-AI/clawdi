@@ -1599,8 +1599,17 @@ estimates are unhelpful planning fiction.
   from clawdi.ai; OAuth `redirect_url` is the connector's own detail
   page (no intermediary callback route). See "Composio cross-origin
   proxy" section under MCP proxy plane for the full design.
+- API-key connector flow at parity with OAuth, both paths:
+  cloud-api adds `GET /api/connectors/{app}/auth-fields` and
+  `POST /api/connectors/{app}/connect-credentials`; the
+  available-apps catalog now surfaces `auth_type` so the detail
+  page picks OAuth (`window.open(connect_url)`) vs in-page
+  credentials dialog at click time. `apps/web/src/components/connectors/
+  credentials-dialog.tsx` renders the dynamic form (password type
+  for `is_secret` or name-pattern matches), source-aware via the
+  same `IS_HOSTED` switch.
 
-No backend change in cloud-api. No new cloud-api dependencies.
+No new cloud-api dependencies.
 Cross-origin auth piggybacks on the existing Clerk session (both
 apps share the Clerk project), so clawdi.ai just adds
 `cloud.clawdi.ai` to its CORS allowlist (PR #424). clawdi.ai's

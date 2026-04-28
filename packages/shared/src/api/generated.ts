@@ -681,6 +681,55 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/connectors/{app_name}/auth-fields": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * Auth Fields
+		 * @description Return the auth scheme + credential fields for non-OAuth apps.
+		 *
+		 *     Used by the Connect dialog to render the right form (input names,
+		 *     secret vs. plaintext, required markers). The frontend only opens
+		 *     this dialog when the connector's `auth_type` is API-key style;
+		 *     OAuth apps short-circuit to `window.open(connect_url)` instead.
+		 */
+		get: operations["auth_fields_api_connectors__app_name__auth_fields_get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/connectors/{app_name}/connect-credentials": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/**
+		 * Connect Credentials
+		 * @description Create a connection from user-supplied API-key credentials.
+		 *
+		 *     Composio validates the credentials synchronously, so a successful
+		 *     return means the connection is usable immediately — no polling
+		 *     required, unlike the OAuth path.
+		 */
+		post: operations["connect_credentials_api_connectors__app_name__connect_credentials_post"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/connectors/{connection_id}": {
 		parameters: {
 			query?: never;
@@ -900,6 +949,53 @@ export interface components {
 			/** Redirect Url */
 			redirect_url?: string | null;
 		};
+		/**
+		 * ConnectorAuthFieldResponse
+		 * @description One input expected from the user when connecting via API key.
+		 */
+		ConnectorAuthFieldResponse: {
+			/** Name */
+			name: string;
+			/** Display Name */
+			display_name: string;
+			/**
+			 * Description
+			 * @default
+			 */
+			description: string;
+			/**
+			 * Type
+			 * @default string
+			 */
+			type: string;
+			/**
+			 * Required
+			 * @default true
+			 */
+			required: boolean;
+			/**
+			 * Is Secret
+			 * @default false
+			 */
+			is_secret: boolean;
+			/**
+			 * Expected From Customer
+			 * @default true
+			 */
+			expected_from_customer: boolean;
+			/** Default */
+			default?: string | null;
+		};
+		/**
+		 * ConnectorAuthFieldsResponse
+		 * @description Schema describing how the user should authenticate this connector.
+		 */
+		ConnectorAuthFieldsResponse: {
+			/** Auth Scheme */
+			auth_scheme: string;
+			/** Expected Input Fields */
+			expected_input_fields: components["schemas"]["ConnectorAuthFieldResponse"][];
+		};
 		/** ConnectorAvailableAppResponse */
 		ConnectorAvailableAppResponse: {
 			/** Name */
@@ -910,6 +1006,11 @@ export interface components {
 			logo: string;
 			/** Description */
 			description: string;
+			/**
+			 * Auth Type
+			 * @default oauth2
+			 */
+			auth_type: string;
 		};
 		/** ConnectorConnectResponse */
 		ConnectorConnectResponse: {
@@ -928,6 +1029,25 @@ export interface components {
 			status: string;
 			/** Created At */
 			created_at: string;
+		};
+		/**
+		 * ConnectorCredentialsConnectRequest
+		 * @description User-supplied credentials for an API-key style connector.
+		 */
+		ConnectorCredentialsConnectRequest: {
+			/** Credentials */
+			credentials: {
+				[key: string]: string;
+			};
+		};
+		/** ConnectorCredentialsConnectResponse */
+		ConnectorCredentialsConnectResponse: {
+			/** Id */
+			id: string;
+			/** Status */
+			status: string;
+			/** Ok */
+			ok: boolean;
 		};
 		/** ConnectorDisconnectResponse */
 		ConnectorDisconnectResponse: {
@@ -3077,6 +3197,72 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["ConnectorConnectResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	auth_fields_api_connectors__app_name__auth_fields_get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				app_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ConnectorAuthFieldsResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	connect_credentials_api_connectors__app_name__connect_credentials_post: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				app_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["ConnectorCredentialsConnectRequest"];
+			};
+		};
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ConnectorCredentialsConnectResponse"];
 				};
 			};
 			/** @description Validation Error */

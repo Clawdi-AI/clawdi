@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -180,6 +181,22 @@ export default function ConnectorDetailPage() {
 
 	const displayName = app?.display_name || formatName(name);
 
+	// Connectors split into OAuth (window.open redirect) and credentials
+	// (in-page dialog) based on Composio's auth scheme. We treat anything
+	// that isn't oauth2/none as needing a credentials dialog so newer
+	// schemes (basic, bearer, etc.) automatically pick up the right UX
+	// without code changes here.
+	const [credsOpen, setCredsOpen] = useState(false);
+	const usesCredentialsForm = !!app && app.auth_type !== "oauth2" && app.auth_type !== "none";
+	const startConnect = () => {
+		if (usesCredentialsForm) {
+			setCredsOpen(true);
+		} else {
+			connectApp.mutate();
+		}
+	};
+	const isStarting = connectApp.isPending;
+
 	if (isLoading) {
 		return (
 			<div className="flex flex-col gap-4 px-4 lg:px-6">
@@ -221,17 +238,8 @@ export default function ConnectorDetailPage() {
 						</p>
 					</div>
 					{activeConnections.length > 0 && (
-						<Button
-							variant="outline"
-							size="xs"
-							onClick={() => connectApp.mutate()}
-							disabled={connectApp.isPending}
-						>
-							{connectApp.isPending ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<Plug className="size-3.5" />
-							)}
+						<Button variant="outline" size="xs" onClick={startConnect} disabled={isStarting}>
+							{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
 							Connect
 						</Button>
 					)}
@@ -243,13 +251,9 @@ export default function ConnectorDetailPage() {
 						bordered
 						description="No connected accounts yet."
 						action={
-							<Button onClick={() => connectApp.mutate()} disabled={connectApp.isPending}>
-								{connectApp.isPending ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<Plug className="size-3.5" />
-								)}
-								{connectApp.isPending ? "Connecting..." : "Connect"}
+							<Button onClick={startConnect} disabled={isStarting}>
+								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+								{isStarting ? "Connecting..." : "Connect"}
 							</Button>
 						}
 					/>
@@ -337,6 +341,13 @@ export default function ConnectorDetailPage() {
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
 			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} />
+
+			<ConnectorCredentialsDialog
+				open={credsOpen}
+				onOpenChange={setCredsOpen}
+				appName={name}
+				displayName={displayName}
+			/>
 		</div>
 	);
 }

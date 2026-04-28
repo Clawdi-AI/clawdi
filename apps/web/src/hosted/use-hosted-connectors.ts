@@ -18,16 +18,33 @@ const HOSTED_CATALOG_KEY = ["hosted", "connector-catalog"] as const;
 const HOSTED_CONNECTIONS_KEY = ["hosted", "connections"] as const;
 
 /**
- * Cloud-shaped catalog item (matches `ConnectorAvailableAppResponse`
- * from the cloud-api side: `name`, `display_name`, `logo`,
- * `description`). Both source paths converge to this shape so the UI
- * doesn't branch on source.
+ * Cloud-shaped catalog item (matches `ConnectorAvailableAppResponse`:
+ * `name`, `display_name`, `logo`, `description`, `auth_type`). Both
+ * source paths converge to this shape so the UI doesn't branch.
  */
 export interface CloudShapedAvailableApp {
 	name: string;
 	display_name: string;
 	logo: string;
 	description: string;
+	auth_type: string;
+}
+
+/** Single field the API-key credentials dialog needs to render. */
+export interface CloudShapedAuthField {
+	name: string;
+	display_name: string;
+	description: string;
+	type: string;
+	required: boolean;
+	is_secret: boolean;
+	expected_from_customer: boolean;
+	default?: string | null;
+}
+
+export interface CloudShapedAuthFields {
+	auth_scheme: string;
+	expected_input_fields: CloudShapedAuthField[];
 }
 
 export interface HostedCatalogPage {
@@ -155,6 +172,49 @@ export function useHostedConnectorTools({
 	});
 }
 
+export function useHostedAuthFields({ appName, enabled }: { appName: string; enabled: boolean }) {
+	const api = useClawdiApi();
+	return useQuery({
+		queryKey: ["hosted", "auth-fields", appName] as const,
+		queryFn: async (): Promise<CloudShapedAuthFields> => {
+			const data = await unwrapClawdi(
+				await api.GET("/connections/{app_name}/auth-fields", {
+					params: { path: { app_name: appName } },
+				}),
+			);
+			return {
+				auth_scheme: data.auth_scheme,
+				expected_input_fields: data.expected_input_fields.map(toCloudAuthField),
+			};
+		},
+		enabled,
+	});
+}
+
+export function useHostedConnectCredentialsMutation() {
+	const api = useClawdiApi();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async ({
+			appName,
+			credentials,
+		}: {
+			appName: string;
+			credentials: Record<string, string>;
+		}) => {
+			return unwrapClawdi(
+				await api.POST("/connections/{app_name}/connect-credentials", {
+					params: { path: { app_name: appName } },
+					body: { credentials },
+				}),
+			);
+		},
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: HOSTED_CONNECTIONS_KEY });
+		},
+	});
+}
+
 export function useHostedConnectMutation() {
 	const api = useClawdiApi();
 	const qc = useQueryClient();
@@ -208,16 +268,43 @@ function toCloudConnection(c: ConnectionItem): CloudShapedConnection {
 	};
 }
 
+// Heuristic for "should this input render as a password?" — clawdi.ai's
+// `AuthFieldItem` doesn't carry a dedicated `is_secret` flag, so we
+// follow the same name-pattern check the OAuth dashboard uses (key /
+// token / secret / password). Cloud-api's response DOES carry the flag
+// so the OSS path uses it directly without this fallback.
+const SECRET_HINT = /\b(key|token|secret|password)\b/i;
+
+function toCloudAuthField(f: {
+	name: string;
+	display_name: string;
+	description: string;
+	type: string;
+	required: boolean;
+	expected_from_customer?: boolean | null;
+}): CloudShapedAuthField {
+	return {
+		name: f.name,
+		display_name: f.display_name,
+		description: f.description,
+		type: f.type,
+		required: f.required,
+		is_secret: f.type === "password" || SECRET_HINT.test(f.name),
+		expected_from_customer: f.expected_from_customer ?? true,
+	};
+}
+
 function toAvailableAppItem(c: ConnectorCatalogItem): CloudShapedAvailableApp {
-	// Cloud's UI reads `logo` / `description`; clawdi.ai's `AvailableAppItem`
-	// has `logo_url` and no description. The richer catalog endpoint
-	// (`/connections/connector-catalog`) carries description, so we
-	// project from there into cloud's shape.
+	// Cloud's UI reads `logo` / `description` / `auth_type`; clawdi.ai's
+	// `ConnectorCatalogItem` has `logo_url` and `auth_type`. The catalog
+	// endpoint carries description and auth_type natively, so we project
+	// from there into cloud's shape.
 	return {
 		name: c.name,
 		display_name: c.display_name,
 		logo: c.logo_url,
 		description: c.description,
+		auth_type: (c.auth_type ?? "oauth2").toLowerCase(),
 	};
 }
 

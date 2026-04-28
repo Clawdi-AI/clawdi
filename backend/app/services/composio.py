@@ -123,6 +123,92 @@ async def create_connect_link(user_id: str, app_name: str) -> dict:
     return await run_in_threadpool(_create)
 
 
+def _resolve_integration(client, app_name: str):
+    """Find an existing integration for the app or create a new one.
+
+    Composio integrations are app-level metadata describing how the
+    OAuth/API-key flow is configured. We look up the user's existing
+    integration first; if none exists yet we create one with the
+    Composio-managed default so the OAuth/credentials flow can run
+    without requiring the user to provide their own client secrets.
+    Returns the IntegrationModel from the SDK.
+    """
+    integrations = client.integrations.get(app_name=app_name)
+    if isinstance(integrations, list) and integrations:
+        return integrations[0]
+    app_info = client.apps.get(name=app_name)
+    if isinstance(app_info, list):
+        app_info = app_info[0] if app_info else None
+    if not app_info:
+        raise ValueError(f"App '{app_name}' not found")
+    return client.integrations.create(app_id=app_info.appId, use_composio_auth=True)
+
+
+async def get_auth_fields(app_name: str) -> dict:
+    """Return the auth scheme + expected user-provided fields for an app.
+
+    Used by the connectors UI to decide between an OAuth window and an
+    API-key form when the user clicks Connect. The fields list is
+    Composio-canonical (`name`, `displayName`, `is_secret`, etc.) — we
+    pass it straight through since the frontend already maps it to
+    HTML input attributes.
+    """
+    client = get_composio_client()
+
+    def _get():
+        integration = _resolve_integration(client, app_name)
+        return {
+            "auth_scheme": integration.authScheme,
+            "expected_input_fields": [
+                {
+                    "name": f.name,
+                    "display_name": f.displayName,
+                    "description": f.description,
+                    "type": f.type,
+                    "required": f.required,
+                    "is_secret": f.is_secret,
+                    "expected_from_customer": f.expected_from_customer,
+                    "default": f.default,
+                }
+                for f in integration.expectedInputFields
+            ],
+        }
+
+    return await run_in_threadpool(_get)
+
+
+async def connect_with_credentials(
+    user_id: str, app_name: str, credentials: dict[str, str]
+) -> dict:
+    """Create a connection using API-key credentials (no OAuth).
+
+    Composio's `initiate()` doubles as the credentials creator when
+    `params` is populated — for non-OAuth schemes it stores the values
+    directly and returns an active connection rather than a redirect
+    URL. We never log `credentials` because they are user secrets.
+    """
+    client = get_composio_client()
+
+    def _connect():
+        integration = _resolve_integration(client, app_name)
+        result = client.connected_accounts.initiate(
+            integration_id=str(integration.id),
+            entity_id=user_id,
+            params=credentials,
+        )
+        # `connectionStatus` may be missing on some SDK versions; default
+        # to "active" since for credential flows the connection is
+        # validated synchronously and either creates active or raises.
+        status = getattr(result, "connectionStatus", None) or "active"
+        return {
+            "id": str(result.connectedAccountId),
+            "status": status,
+            "ok": True,
+        }
+
+    return await run_in_threadpool(_connect)
+
+
 async def disconnect_account(connected_account_id: str) -> bool:
     """Disconnect/revoke a connected account."""
     client = get_composio_client()
@@ -230,6 +316,24 @@ def _extract_display_name(slug: str, description: str) -> str:
     return spaced.title()
 
 
+def _primary_auth_type(app) -> str:
+    """Lowercase short auth scheme for the connector card UI.
+
+    The Composio SDK reports `no_auth: bool` plus `auth_schemes` (a
+    list of `AppAuthScheme`, each with `auth_mode` like `"OAUTH2"` or
+    `"API_KEY"`). Most apps have one entry; we surface the first.
+    Falls back to `"oauth2"` so click handlers behave like before
+    when the SDK doesn't fill in the field.
+    """
+    if getattr(app, "no_auth", False):
+        return "none"
+    schemes = getattr(app, "auth_schemes", None) or []
+    if schemes:
+        mode = getattr(schemes[0], "auth_mode", None) or ""
+        return str(mode).lower() or "oauth2"
+    return "oauth2"
+
+
 _apps_cache: list[dict] | None = None
 _apps_cache_at: datetime | None = None
 _APPS_CACHE_TTL = timedelta(minutes=5)
@@ -272,6 +376,7 @@ async def _get_all_apps() -> list[dict]:
                     "display_name": display,
                     "logo": logo,
                     "description": desc[:200] if desc else "",
+                    "auth_type": _primary_auth_type(app),
                 }
             )
         return result
