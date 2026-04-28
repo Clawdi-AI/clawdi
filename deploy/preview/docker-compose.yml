@@ -138,7 +138,9 @@ services:
       bash -c '
         set -e
         cd /app
-        bun install --frozen-lockfile
+        # --ignore-scripts skips the root lefthook postinstall which needs git
+        # (dev-only hook; not needed in containers).
+        bun install --frozen-lockfile --ignore-scripts
         cd apps/web
         exec bun run dev --hostname 0.0.0.0 --port 3000
       '
