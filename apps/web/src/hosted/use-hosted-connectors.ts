@@ -1,6 +1,7 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import {
 	type ConnectionItem,
 	type ConnectorCatalogItem,
@@ -69,12 +70,28 @@ export function useHostedConnections({ enabled }: { enabled: boolean }) {
 }
 
 /**
- * Pull the full hosted catalog and project to cloud's
- * `AvailableAppItem`-equivalent shape, with client-side filter +
- * pagination so the page component can stay shape-agnostic.
- *
- * `keepPreviousData` matches the cloud-api version's behavior:
- * page-flips and search-debounces don't flash skeleton.
+ * Single fetch of the full catalog, shared by all callers via the
+ * stable `HOSTED_CATALOG_KEY`. Pagination and single-app lookup are
+ * memoized client-side off this one cache entry — no per-page-flip
+ * round trip, no per-search debounce refetch.
+ */
+function useHostedCatalogQuery({ enabled }: { enabled: boolean }) {
+	const api = useComposioApi();
+	return useQuery({
+		queryKey: HOSTED_CATALOG_KEY,
+		queryFn: async (): Promise<ConnectorCatalogItem[]> => {
+			const data = await unwrapComposio(await api.GET("/connections/connector-catalog", {}));
+			return data.items;
+		},
+		enabled,
+	});
+}
+
+/**
+ * Page slice over the cached catalog. Filter + pagination happen
+ * inside `useMemo` so neither changing page nor typing into search
+ * triggers a network request — the underlying query is keyed only
+ * on `HOSTED_CATALOG_KEY`.
  */
 export function useHostedAvailableApps({
 	enabled,
@@ -87,35 +104,35 @@ export function useHostedAvailableApps({
 	pageSize: number;
 	search?: string;
 }) {
-	const api = useComposioApi();
-	return useQuery({
-		queryKey: [...HOSTED_CATALOG_KEY, { page, pageSize, search }] as const,
-		queryFn: async (): Promise<HostedCatalogPage> => {
-			const data = await unwrapComposio(await api.GET("/connections/connector-catalog", {}));
-			return paginateCatalog(data.items, { page, pageSize, search });
-		},
-		enabled,
-		placeholderData: keepPreviousData,
-	});
+	const q = useHostedCatalogQuery({ enabled });
+	const data = useMemo(
+		() => (q.data ? paginateCatalog(q.data, { page, pageSize, search }) : undefined),
+		[q.data, page, pageSize, search],
+	);
+	return {
+		data,
+		isLoading: q.isLoading,
+		isFetching: q.isFetching,
+		error: q.error,
+	};
 }
 
 export function useHostedAvailableApp({ appName, enabled }: { appName: string; enabled: boolean }) {
-	const api = useComposioApi();
-	return useQuery({
-		queryKey: [...HOSTED_CATALOG_KEY, "single", appName] as const,
-		queryFn: async (): Promise<CloudShapedAvailableApp> => {
-			// Single-app lookup isn't a dedicated monorepo endpoint —
-			// the catalog is already cached, so we slice it. The catalog
-			// fetch happens once across the page session.
-			const data = await unwrapComposio(await api.GET("/connections/connector-catalog", {}));
-			const item = data.items.find((i: ConnectorCatalogItem) => i.name === appName);
-			if (!item) {
-				throw new Error(`Connector "${appName}" not found`);
-			}
-			return toAvailableAppItem(item);
-		},
-		enabled,
-	});
+	const q = useHostedCatalogQuery({ enabled });
+	const data = useMemo(() => {
+		if (!q.data) return undefined;
+		const item = q.data.find((i) => i.name === appName);
+		return item ? toAvailableAppItem(item) : undefined;
+	}, [q.data, appName]);
+	// 404 condition: catalog loaded but the requested slug isn't in it.
+	// Surface as an error so the consumer's error path renders, instead
+	// of leaving the page in an indeterminate "still loading" state.
+	const notFound = q.data !== undefined && data === undefined;
+	return {
+		data,
+		isLoading: q.isLoading,
+		error: notFound ? new Error(`Connector "${appName}" not found`) : q.error,
+	};
 }
 
 export function useHostedConnectorTools({

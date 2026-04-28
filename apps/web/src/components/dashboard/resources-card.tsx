@@ -17,7 +17,27 @@ type Resource = {
 	emptyCta: string;
 };
 
-function buildResources(stats: DashboardStats, connectorsCountOverride?: number): Resource[] {
+type ResourceMaybeLoading = Resource | { loading: true; key: string };
+
+function buildResources(
+	stats: DashboardStats,
+	connectorsCountOverride: number | undefined,
+	connectorsLoading: boolean,
+): ResourceMaybeLoading[] {
+	const connectorsRow: ResourceMaybeLoading = connectorsLoading
+		? { loading: true, key: "/connectors" }
+		: {
+				icon: Plug,
+				label: "Connectors",
+				// Hosted users keep their Composio account in clawdi-monorepo
+				// (entity_id = clerk_id); cloud-api's `stats.connectors_count`
+				// is keyed off the local `user.id` UUID and would always read
+				// zero. The page.tsx caller passes through the hosted count
+				// when applicable so the dashboard total reflects reality.
+				count: connectorsCountOverride ?? stats.connectors_count ?? 0,
+				href: "/connectors",
+				emptyCta: "Connect an app",
+			};
 	return [
 		{
 			icon: Brain,
@@ -40,27 +60,24 @@ function buildResources(stats: DashboardStats, connectorsCountOverride?: number)
 			href: "/vault",
 			emptyCta: "Create your first",
 		},
-		{
-			icon: Plug,
-			label: "Connectors",
-			// Hosted users keep their Composio account in clawdi-monorepo
-			// (entity_id = clerk_id); cloud-api's `stats.connectors_count`
-			// is keyed off the local `user.id` UUID and would always read
-			// zero. The page.tsx caller passes through the hosted count
-			// when applicable so the dashboard total reflects reality.
-			count: connectorsCountOverride ?? stats.connectors_count ?? 0,
-			href: "/connectors",
-			emptyCta: "Connect an app",
-		},
+		connectorsRow,
 	];
 }
 
 export function ResourcesCard({
 	stats,
 	connectorsCountOverride,
+	connectorsLoading = false,
 }: {
 	stats: DashboardStats | undefined;
 	connectorsCountOverride?: number;
+	/**
+	 * When hosted's connector fetch is in-flight, the connectors row
+	 * stays as a skeleton instead of flashing the (always-zero)
+	 * `stats.connectors_count` from cloud-api. Other rows can render
+	 * as soon as stats arrive — they're independent.
+	 */
+	connectorsLoading?: boolean;
 }) {
 	return (
 		<Card className="gap-0 pb-0">
@@ -71,19 +88,27 @@ export function ResourcesCard({
 			<CardContent className="p-0">
 				<div className="divide-y">
 					{stats
-						? buildResources(stats, connectorsCountOverride).map((r) => (
-								<ResourceRow key={r.href} resource={r} />
-							))
-						: Array.from({ length: 4 }).map((_, i) => (
-								<div key={i} className="flex items-center gap-3 px-6 py-3">
-									<Skeleton className="size-4" />
-									<Skeleton className="h-4 flex-1" />
-									<Skeleton className="h-4 w-8" />
-								</div>
-							))}
+						? buildResources(stats, connectorsCountOverride, connectorsLoading).map((r) =>
+								"loading" in r ? (
+									<ResourceRowSkeleton key={r.key} />
+								) : (
+									<ResourceRow key={r.href} resource={r} />
+								),
+							)
+						: Array.from({ length: 4 }).map((_, i) => <ResourceRowSkeleton key={i} />)}
 				</div>
 			</CardContent>
 		</Card>
+	);
+}
+
+function ResourceRowSkeleton() {
+	return (
+		<div className="flex items-center gap-3 px-6 py-3">
+			<Skeleton className="size-4" />
+			<Skeleton className="h-4 flex-1" />
+			<Skeleton className="h-4 w-8" />
+		</div>
 	);
 }
 

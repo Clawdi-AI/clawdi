@@ -810,8 +810,8 @@ mutates the same store via cross-origin call.
 
 **Per-request callback URL:**
 
-Monorepo's `POST /api/connections/{app_name}/connect` already
-accepts `body.redirect_url` (`backend/app/routes/connections.py:481-506`)
+Monorepo's `POST /connections/{app_name}/connect` already accepts
+`body.redirect_url` (`backend/app/routes/connections.py:481-506`)
 and validates against `_ALLOWED_REDIRECT_SCHEMES = {"https", "exp", "clawdi"}` —
 any HTTPS host passes, so cloud passes
 `redirect_url=https://cloud.clawdi.ai/connectors/callback` and the
@@ -827,7 +827,7 @@ user clicked from.
               │
               ├─ IS_HOSTED=true
               │   └─ apps/web/src/hosted/composio-api.ts
-              │       └─ cross-origin → clawdi.ai/api/connections/*
+              │       └─ cross-origin → clawdi.ai/connections/*
               │           └─ entity_id = user.clerk_id
               │           └─ redirect_url = cloud.clawdi.ai/connectors/callback
               │
@@ -836,7 +836,7 @@ user clicked from.
                       └─ entity_id = user.id (local UUID)
 
        clawdi.ai (monorepo) — owns Composio data + OAuth callbacks
-              ├─ /api/connections/* (already exists)
+              ├─ /connections/* (already exists)
               └─ CORS: cloud.clawdi.ai included via PR #424
 ```
 
@@ -1601,7 +1601,7 @@ No backend change in cloud-api. No new cloud-api dependencies.
 Cross-origin auth piggybacks on the existing Clerk session (both
 apps share the Clerk project), so monorepo just adds
 `cloud.clawdi.ai` to its CORS allowlist (PR #424). Monorepo's
-`POST /api/connections/{app}/connect` already takes `body.redirect_url`,
+`POST /connections/{app}/connect` already takes `body.redirect_url`,
 so no monorepo change is required for callbacks either.
 
 ### Phase 2 — Gateway library extraction + cloud-api broker + state plane sync UX  (keystone — biggest phase)

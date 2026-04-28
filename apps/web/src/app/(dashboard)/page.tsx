@@ -65,10 +65,13 @@ export default function DashboardPage() {
 	// clerk_id), so cloud-api's `/api/dashboard/stats.connectors_count`
 	// (keyed off local user.id UUID) always reads zero. Pull the real
 	// count cross-origin and override the resources card when hosted.
+	//
+	// While the hosted query is in-flight we pass `undefined` (not 0)
+	// so the resources card keeps the skeleton up instead of flashing
+	// "0 connectors" before the real count lands.
 	const hostedConnectionsForCount = useHostedConnections({ enabled: IS_HOSTED });
-	const connectorsCountOverride = IS_HOSTED
-		? (hostedConnectionsForCount.data?.length ?? 0)
-		: undefined;
+	const connectorsCountOverride =
+		IS_HOSTED && hostedConnectionsForCount.data ? hostedConnectionsForCount.data.length : undefined;
 
 	const selfManagedTiles: AgentTile[] = useMemo(() => {
 		return (environments ?? []).map((env) => ({
@@ -180,7 +183,11 @@ export default function DashboardPage() {
 				    the hero card above is already the onboarding. */}
 				<div className="min-w-0 space-y-4">
 					{hasAgents ? <OnboardingCard /> : null}
-					<ResourcesCard stats={stats} connectorsCountOverride={connectorsCountOverride} />
+					<ResourcesCard
+						stats={stats}
+						connectorsCountOverride={connectorsCountOverride}
+						connectorsLoading={IS_HOSTED && hostedConnectionsForCount.isLoading}
+					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>

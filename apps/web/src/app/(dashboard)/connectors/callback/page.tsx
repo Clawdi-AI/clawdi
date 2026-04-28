@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,20 +11,30 @@ import { IS_HOSTED } from "@/lib/hosted";
 /**
  * OAuth callback landing for Composio connect flows initiated from
  * cloud's connectors page in hosted mode. Monorepo's
- * `POST /api/connections/{app}/connect` round-trips the user through
- * the third-party (Gmail / Slack / etc.) and back here via the
+ * `POST /connections/{app}/connect` round-trips the user through the
+ * third-party (Gmail / Slack / etc.) and back here via the
  * `redirect_url` we passed when creating the connect link.
  *
  * Composio's success page redirects with no consistent query
  * contract — sometimes `status=success`, sometimes `?connection_id=`,
- * sometimes nothing. We read what we get, invalidate the cached
- * connection list so the detail page refreshes the moment the user
- * navigates back, and bounce them to either the originating app's
- * detail page (if `app=` was preserved by the caller) or the list.
+ * sometimes nothing at all. We deliberately do NOT display a
+ * "Connected" confirmation here: the only signal of truth is the
+ * verify endpoint (or the connection list refetch after invalidation).
+ * Instead we show neutral "Authorization complete — returning…" and
+ * let the detail page render the actual connection status. Errors
+ * still get the destructive treatment because OAuth failures usually
+ * do come back with `?error=` populated.
  *
  * Self-host (IS_HOSTED=false) doesn't use this route — cloud-api's
  * connect flow opens OAuth in a new tab and polls in-place.
  */
+
+// Slug allowlist matches monorepo's `_SLUG_RE` for connector app names
+// (lowercase letters, digits, underscore, dash). Keeps a crafted
+// `?app=https://evil.com` from sneaking past `encodeURIComponent` and
+// landing the user somewhere useful for an attacker.
+const APP_SLUG_RE = /^[a-z0-9_-]{1,200}$/;
+
 export default function ConnectorCallbackPage() {
 	return (
 		<Suspense
@@ -45,9 +55,10 @@ function CallbackInner() {
 	const router = useRouter();
 	const qc = useQueryClient();
 
-	const status = params.get("status") ?? "success";
+	const status = params.get("status");
 	const error = params.get("error");
-	const appName = params.get("app");
+	const rawApp = params.get("app");
+	const appName = rawApp && APP_SLUG_RE.test(rawApp) ? rawApp : null;
 
 	const failed = error !== null || status === "error" || status === "failed";
 
@@ -58,10 +69,12 @@ function CallbackInner() {
 		// since OSS users don't reach this route.
 		void qc.invalidateQueries({ queryKey: ["hosted", "connections"] });
 
-		// Redirect after a beat so the user sees confirmation before we
-		// jump them away. 1.5s is the standard "feedback then go" interval.
+		// Redirect after a beat so the user sees the spinner before we
+		// jump them away. 1.5s is the standard "feedback then go"
+		// interval. Slug already validated at parse time — no path
+		// injection possible.
 		const id = setTimeout(() => {
-			const target = appName ? `/connectors/${encodeURIComponent(appName)}` : "/connectors";
+			const target = appName ? `/connectors/${appName}` : "/connectors";
 			router.replace(target);
 		}, 1500);
 		return () => clearTimeout(id);
@@ -92,8 +105,8 @@ function CallbackInner() {
 
 	return (
 		<CallbackShell>
-			<Check className="size-5 text-emerald-600 dark:text-emerald-500" />
-			<p className="text-sm font-medium">Connected</p>
+			<Spinner className="size-5 text-muted-foreground" />
+			<p className="text-sm font-medium">Authorization complete</p>
 			<p className="text-xs text-muted-foreground">Returning to connectors…</p>
 		</CallbackShell>
 	);
