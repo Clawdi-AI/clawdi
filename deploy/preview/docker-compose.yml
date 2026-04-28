@@ -70,7 +70,7 @@ services:
       - /var/clawdi-snapshots:/snapshots:ro
       - files:/data/files
     environment:
-      DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
       SNAPSHOT_PATH: ${SNAPSHOT_PATH:-/snapshots/latest.tar.gz}
     command: ["sh", "/source/deploy/preview/restore.sh"]
     restart: "no"
@@ -88,7 +88,7 @@ services:
       - fastembed-cache:/root/.cache/fastembed
       - files:/data/files
     environment:
-      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
       ENVIRONMENT: preview
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
