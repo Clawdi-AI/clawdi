@@ -20,6 +20,7 @@ import {
 	Sparkles,
 	Sun,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -55,8 +56,15 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
-import { DeployTrigger } from "@/hosted/deploy-trigger";
 import { IS_HOSTED } from "@/lib/hosted";
+
+// Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
+// builds collapse the conditional, the bundler eliminates the
+// import() site, and the hosted DeployTrigger chunk (which carries
+// the `https://www.clawdi.ai/dashboard` URL constant) never ships.
+const DeployTrigger = IS_HOSTED
+	? dynamic(() => import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })))
+	: null;
 
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
@@ -150,7 +158,9 @@ export function AppSidebar() {
 										</KbdGroup>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
-								{IS_HOSTED && <DeployTrigger />}
+								{/* `DeployTrigger` is `null` in OSS builds — the dynamic import is
+								    only constructed when `IS_HOSTED` is true (see top of file). */}
+								{DeployTrigger ? <DeployTrigger /> : null}
 								<SidebarMenuItem>
 									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
 										<Settings />

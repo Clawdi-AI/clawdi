@@ -85,41 +85,47 @@ describe("hosted/ directory invariants", () => {
 	});
 });
 
-describe("non-hosted callers gate hosted/ usage behind IS_HOSTED", () => {
-	test("any non-hosted file importing @/hosted/* references IS_HOSTED", () => {
-		const callers: string[] = [];
+describe("no static @/hosted/* imports outside hosted/", () => {
+	test("non-hosted files only reach hosted/ via dynamic imports", () => {
+		// Static imports of `@/hosted/*` from any OSS-reachable file
+		// would pull the hosted chunk into the OSS main bundle even
+		// when the runtime usage is gated by `IS_HOSTED`. The fix is
+		// always `dynamic(() => import("@/hosted/…"))` constructed
+		// inside an `IS_HOSTED ? … : null` ternary so the OSS bundler
+		// statically eliminates the import() site. This test fails if
+		// anyone re-introduces a static `from "@/hosted/…"` import.
+		const offenders: string[] = [];
 		for (const file of walkSrcExceptHosted(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			if (/from\s+["']@\/hosted\/[^"']+["']/.test(src)) {
-				callers.push(file);
+			// Match top-of-file `import … from "@/hosted/…"` — `dynamic`
+			// arrow-callbacks use `import("…")` (no `from` keyword).
+			if (/^\s*import\s+[^"']+from\s+["']@\/hosted\//m.test(src)) {
+				offenders.push(relative(SRC_DIR, file));
 			}
 		}
-		// Sanity: at least the known consumers (app-sidebar, dashboard page)
-		// should show up. If this drops to 0 the test is broken, not the code.
-		expect(callers.length).toBeGreaterThan(0);
-
-		for (const caller of callers) {
-			const src = readFileSync(caller, "utf8");
-			const usesFlag = /\bIS_HOSTED\b/.test(src);
-			if (!usesFlag) {
-				const rel = relative(SRC_DIR, caller);
-				throw new Error(
-					`${rel} imports from @/hosted/* but never references IS_HOSTED — gate the JSX usage or pass {enabled: IS_HOSTED} to hooks.`,
-				);
-			}
+		if (offenders.length > 0) {
+			throw new Error(
+				`Static @/hosted/* imports leak the hosted chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nUse dynamic imports gated on IS_HOSTED instead.`,
+			);
 		}
 	});
 });
 
-describe("app-sidebar gates DeployTrigger behind IS_HOSTED", () => {
-	test("rendering of DeployTrigger is guarded by IS_HOSTED", () => {
+describe("app-sidebar dynamically loads DeployTrigger only when hosted", () => {
+	test("DeployTrigger constructor is gated by IS_HOSTED at module level", () => {
 		const sidebar = readFileSync(
 			join(import.meta.dir, "..", "components", "app-sidebar.tsx"),
 			"utf8",
 		);
-		// Any JSX usage of <DeployTrigger /> must be preceded by
-		// `IS_HOSTED && ` in the same expression.
-		const guarded = /IS_HOSTED\s*&&\s*<DeployTrigger\b/.test(sidebar);
-		expect(guarded).toBe(true);
+		// Module-level dynamic import must be wrapped in an `IS_HOSTED ?
+		// dynamic(…) : null` ternary so the OSS build's bundler
+		// statically eliminates the import() call (and therefore the
+		// hosted chunk). A bare `dynamic(() => import("@/hosted/…"))`
+		// at module top level would still register the chunk in OSS
+		// builds, defeating the point.
+		const gatedAtConstruction = /const\s+DeployTrigger\s*=\s*IS_HOSTED\s*\?\s*dynamic\s*\(/.test(
+			sidebar,
+		);
+		expect(gatedAtConstruction).toBe(true);
 	});
 });

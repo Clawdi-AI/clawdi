@@ -19,22 +19,32 @@ OSS users running their own clawdi-cloud see none of this UI.
    invariant would be overkill). Tightens runtime debugging too:
    anything carrying `data-hosted="true"` in OSS DevTools is a leak.
 
-3. **Imports from outside `hosted/` use the IS_HOSTED gate.**
+3. **Imports from outside `hosted/` go through `next/dynamic`,
+   gated on `IS_HOSTED` at the construction site.**
    ```tsx
+   import dynamic from "next/dynamic";
    import { IS_HOSTED } from "@/lib/hosted";
-   import { DeployTrigger } from "@/hosted/deploy-trigger";
 
-   {IS_HOSTED && <DeployTrigger />}
+   const DeployTrigger = IS_HOSTED
+     ? dynamic(() =>
+         import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })),
+       )
+     : null;
+
+   // …
+
+   {DeployTrigger ? <DeployTrigger /> : null}
    ```
-   For hooks, pass the flag through:
-   ```tsx
-   const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
-   ```
-   Top-level imports of `@/hosted/*` modules are fine — only the
-   JSX usage / fetch trigger needs the flag, since unused JSX gets
-   dead-code-eliminated and disabled queries don't fetch.
-   `oss-clean.test.ts` enforces that any non-hosted file importing
-   from `@/hosted/*` references `IS_HOSTED` somewhere.
+   Why this shape: the bundler folds `IS_HOSTED ? … : null` at
+   build time using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS
+   builds the conditional collapses to `null`, the `dynamic(…)` call
+   is unreachable, the `import()` site is eliminated, and the
+   hosted chunk never ships. A bare `dynamic(() => import(…))` at
+   module top level would still register the chunk in OSS builds —
+   that's why the ternary matters.
+   `oss-clean.test.ts` fails the build if anyone reintroduces a
+   static `import … from "@/hosted/…"` outside the hosted/
+   directory.
 
 ## What lives here today
 

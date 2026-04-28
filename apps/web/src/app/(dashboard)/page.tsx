@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo } from "react";
 import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
@@ -15,12 +16,25 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
 import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
+
+// Dynamic import gated on a build-time-constant `IS_HOSTED`. When the
+// flag is false (OSS), the conditional collapses, the `dynamic(…)`
+// call is unreachable, the bundler eliminates the `import()` site,
+// and the entire `@/hosted/hosted-agents-section.tsx` chunk — along
+// with its `clawdi-api.ts` and `use-hosted-agent-tiles.ts`
+// dependencies — never ships in the OSS bundle.
+const HostedAgentsSection = IS_HOSTED
+	? dynamic(() =>
+			import("@/hosted/hosted-agents-section").then((m) => ({
+				default: m.HostedAgentsSection,
+			})),
+		)
+	: null;
 
 export default function DashboardPage() {
 	const api = useApi();
@@ -56,10 +70,6 @@ export default function DashboardPage() {
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
-	// Hosted-side query — fetches user's deployments from the
-	// clawdi.ai deploy API. Disabled (no fetch) when not hosted.
-	const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
-
 	const selfManagedTiles: AgentTile[] = useMemo(() => {
 		return (environments ?? []).map((env) => ({
 			id: env.id,
@@ -74,25 +84,15 @@ export default function DashboardPage() {
 		}));
 	}, [environments]);
 
-	const agentTiles: AgentTile[] = useMemo(
-		() => [...hosted.tiles, ...selfManagedTiles],
-		[hosted.tiles, selfManagedTiles],
-	);
-
 	// Zero-state promotion: when the user has no agents yet, the
-	// secondary CTA (connect one) lives in the right column. Hosted
-	// users with zero deployments still see the AgentsCard's empty
-	// state which mentions both connect AND deploy paths.
-	const hasAgents = !envsLoading && (environments?.length ?? 0) > 0;
-	// `!hosted.error` matters: when hosted fetch fails AND the user has zero
-	// self-managed agents, we want AgentsCard's error banner to surface the
-	// failure instead of silently dropping into the OnboardingCard hero.
-	const isEmptyState =
-		!envsLoading &&
-		(environments?.length ?? 0) === 0 &&
-		hosted.tiles.length === 0 &&
-		!hosted.isLoading &&
-		!hosted.error;
+	// secondary CTA (connect one) lives in the right column. The
+	// hosted code path may still render an AgentsCard if the user has
+	// deployed agents on clawdi.ai — that decision lives inside
+	// `<HostedAgentsSection>` so this page doesn't need the hosted
+	// counts at all.
+	const selfManagedCount = environments?.length ?? 0;
+	const hasAgents = !envsLoading && selfManagedCount > 0;
+	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -106,16 +106,16 @@ export default function DashboardPage() {
 				    `lg` breakpoint that means single-column overflow → cards
 				    spill past the viewport. */}
 				<div className="min-w-0 space-y-4 lg:col-span-2">
-					{isEmptyState ? (
+					{HostedAgentsSection ? (
+						<HostedAgentsSection
+							selfManagedTiles={selfManagedTiles}
+							envsLoading={envsLoading}
+							selfManagedCount={selfManagedCount}
+						/>
+					) : ossIsEmptyState ? (
 						<OnboardingCard />
 					) : (
-						<AgentsCard
-							agents={agentTiles}
-							isLoading={envsLoading}
-							hostedStatus={
-								IS_HOSTED ? { isLoading: hosted.isLoading, error: hosted.error } : undefined
-							}
-						/>
+						<AgentsCard agents={selfManagedTiles} isLoading={envsLoading} />
 					)}
 
 					<Card>
