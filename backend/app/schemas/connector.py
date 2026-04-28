@@ -4,7 +4,10 @@ from pydantic import BaseModel
 
 
 class ConnectRequest(BaseModel):
-    redirect_url: str | None = None
+    """Empty body kept for future fields. Cloud-api's connect route
+    currently uses defaults for everything (OAuth, Composio-managed
+    callback). Re-add `redirect_url` here when Phase 2 wires it through
+    `create_connect_link`."""
 
 
 class ConnectorConnectionResponse(BaseModel):

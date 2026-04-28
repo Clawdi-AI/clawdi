@@ -2,8 +2,8 @@
 
 import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import Link from "next/link";
-import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
-import { useEffect, useMemo } from "react";
+import { createParser, parseAsString, useQueryState } from "nuqs";
+import { useMemo } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -20,6 +20,18 @@ import { cn, errorMessage } from "@/lib/utils";
 // Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
 // always full at every viewport — no orphan cards on the bottom.
 const PAGE_SIZE = 24;
+
+// 1-indexed page parser. Rejects 0/negative/non-numeric URL values so
+// `?page=-5` doesn't reach the slicer (which would compute a negative
+// offset and wrap around). Returning `null` from `parse` makes nuqs
+// fall back to the parser's default.
+const parseAsPositivePage = createParser({
+	parse: (raw: string) => {
+		const n = Number.parseInt(raw, 10);
+		return Number.isFinite(n) && n >= 1 ? n : null;
+	},
+	serialize: (n: number) => String(n),
+});
 
 const CONNECTOR_CARD_CLASS = "gap-0 rounded-lg border-border/60 py-0 shadow-none";
 const CONNECTOR_CARD_CONTENT_CLASS = "flex items-start gap-3 p-3";
@@ -50,9 +62,19 @@ export default function ConnectorsPage() {
 	);
 	const [page, setPage] = useQueryState(
 		"page",
-		parseAsInteger.withDefault(1).withOptions({ clearOnDefault: true }),
+		parseAsPositivePage.withDefault(1).withOptions({ clearOnDefault: true }),
 	);
 	const debouncedQuery = useDebouncedValue(query, 250);
+
+	// Couple "search changed → page resets to 1" to the user-action site
+	// instead of an effect on `[debouncedQuery]`. The effect form fires
+	// on initial mount too, which would clobber a deep link like
+	// `/connectors?q=gmail&page=3` back to page 1. Doing it inline here
+	// only resets when the user types — exactly the case we want.
+	const handleQueryChange = (next: string) => {
+		void setQuery(next);
+		if (page !== 1) void setPage(1);
+	};
 
 	// Hosted (cross-origin to clawdi.ai/connections, keyed off
 	// `clerk_id`) vs OSS (cloud-api `/api/connectors`, keyed off local
@@ -74,13 +96,6 @@ export default function ConnectorsPage() {
 		() => new Set(connections?.map((c) => c.app_name) ?? []),
 		[connections],
 	);
-
-	// Reset to page 1 when the search term changes — staying on page 5
-	// of "github" while typing a different query would show empty results
-	// because the new query has fewer total pages.
-	useEffect(() => {
-		setPage(1);
-	}, [debouncedQuery]);
 
 	const items = pageData?.items ?? [];
 	const total = pageData?.total ?? 0;
@@ -114,7 +129,7 @@ export default function ConnectorsPage() {
 				}
 			/>
 
-			<SearchInput value={query} onChange={setQuery} placeholder="Search connectors…" />
+			<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
 
 			{error ? (
 				<Alert variant="destructive">

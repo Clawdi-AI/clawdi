@@ -160,6 +160,22 @@ export default function ConnectorDetailPage() {
 		);
 	}
 
+	// `appQ.error` covers both "connector not found" (404 from cloud-api,
+	// thrown 404 from the hosted catalog adapter) and outright network
+	// failures. Surface it so the user sees what's wrong instead of a
+	// silently-broken connect page.
+	if (appQ.error) {
+		return (
+			<div className="flex flex-col gap-4 px-4 lg:px-6">
+				<EmptyState
+					icon={Plug}
+					title="Connector unavailable"
+					description={errorMessage(appQ.error)}
+				/>
+			</div>
+		);
+	}
+
 	return (
 		<div className="flex flex-col gap-4 px-4 lg:px-6">
 			{/* Header — matches clawdi ConnectorHeader */}

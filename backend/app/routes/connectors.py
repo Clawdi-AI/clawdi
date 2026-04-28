@@ -161,13 +161,19 @@ async def connect_credentials(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found") from exc
     except HTTPException:
         raise
+    except TimeoutError as exc:
+        # `connect_with_credentials` polls Composio until ACTIVE with a
+        # bounded timeout; surface that as 504 so the frontend can
+        # distinguish a "your credentials look wrong" 400 from "we
+        # couldn't reach Composio in time, try again".
+        raise HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "Composio did not validate the connection in time. Please retry.",
+        ) from exc
     except Exception as exc:
-        # Composio's SDK raises a mix of `ComposioClientError`,
-        # `ConnectionRequestTimeoutError`, plain `Exception` for
-        # validation failures. Re-raise as 400 with a sanitized message
-        # so we don't leak the user's submitted credential values back
-        # via the error detail (they sometimes appear in upstream
-        # error templates).
+        # SDK validation failures end up here. Sanitize the message so
+        # we don't leak the user's submitted values back via the error
+        # detail (Composio sometimes echoes them in upstream templates).
         detail = _scrub_credentials(str(exc), body.credentials) or "Failed to validate credentials"
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail) from exc
     return ConnectorCredentialsConnectResponse.model_validate(result)
