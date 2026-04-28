@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
+import { AlertCircle, Check, Link2Off, Plug } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -12,7 +12,6 @@ import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -373,55 +372,6 @@ export default function ConnectorDetailPage() {
 				)}
 			</section>
 
-			{/* Info Sections — matches clawdi ConnectorInfoSections */}
-			<div className="flex flex-col gap-4">
-				{/* Setup Steps */}
-				<Card>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<PlugZap className="size-4" />
-							Setup Steps
-						</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<ol className="flex flex-col gap-2">
-							{[
-								"Click Connect to authorize access",
-								"Complete authentication in the popup window",
-								"Return here to verify connection",
-							].map((step, i) => (
-								<li key={step} className="flex items-center gap-3">
-									<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-										{i + 1}
-									</span>
-									<span className="text-sm">{step}</span>
-								</li>
-							))}
-						</ol>
-					</CardContent>
-				</Card>
-
-				{/* Permissions */}
-				<Card>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<Shield className="size-4" />
-							Permissions
-						</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<ul className="flex flex-col gap-2">
-							{["Read data from your account", "Perform actions on your behalf"].map((perm) => (
-								<li key={perm} className="flex items-center gap-2 text-sm">
-									<Lock className="size-3 text-muted-foreground" />
-									{perm}
-								</li>
-							))}
-						</ul>
-					</CardContent>
-				</Card>
-			</div>
-
 			{/* Tools — matches clawdi ConnectorToolsList */}
 			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} error={toolsQ.error} />
 
@@ -458,17 +408,6 @@ function DetailSkeleton() {
 					<Skeleton className="mx-auto h-9 w-28 rounded-lg" />
 				</div>
 			</div>
-			{/* Info sections */}
-			<Card>
-				<CardContent className="space-y-3">
-					<Skeleton className="h-3.5 w-24" />
-					<div className="space-y-2">
-						<Skeleton className="h-4 w-56" />
-						<Skeleton className="h-4 w-64" />
-						<Skeleton className="h-4 w-48" />
-					</div>
-				</CardContent>
-			</Card>
 			{/* Tools */}
 			<div className="space-y-3">
 				<Skeleton className="h-3.5 w-32" />
