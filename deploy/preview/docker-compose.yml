@@ -144,8 +144,11 @@ services:
         cd apps/web
         # Production build (no HMR, no dev-mode WS — Cloudflare Tunnel proxies HTTP
         # cleanly but the dev WebSocket /_next/webpack-hmr fails through it).
-        # First boot: ~2 min build. Subsequent restarts: skip build if .next exists.
-        if [ ! -d .next ]; then
+        # First boot: ~2 min build. Subsequent restarts: skip build if BUILD_ID
+        # exists (the canonical "this is a real production build" marker). A
+        # bare `.next/` dir from a prior `next dev` run does NOT have BUILD_ID.
+        if [ ! -f .next/BUILD_ID ]; then
+          rm -rf .next
           bun run build
         fi
         exec bun run start --hostname 0.0.0.0 --port 3000
