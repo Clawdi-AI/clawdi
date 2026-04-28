@@ -3,7 +3,7 @@
 -- uses ON DELETE CASCADE), so a single DELETE FROM users would orphan rows
 -- everywhere. Each user-owned table is deleted explicitly.
 --
--- ${EMAIL_LIKE} is substituted by deploy/snapshot/dump.sh (e.g. '%@phala.network').
+-- ${EMAIL_LIKE} is substituted by deploy/snapshot/dump.sh (e.g. '%@example.com').
 -- The operator's --email-domain flag is validated against ^@[a-z0-9.-]+$
 -- before substitution to keep this an operator tool, not a SQL-injection vector.
 

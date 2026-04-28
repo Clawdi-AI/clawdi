@@ -6,7 +6,7 @@
 #   files/            — file_keys referenced by surviving sessions/skills
 #
 # Usage:
-#   dump.sh [--email-domain @phala.network] [--out <path>]
+#   dump.sh [--email-domain @example.com] [--out <path>]
 #
 # Env overrides:
 #   PROD_DB     prod postgres DB name      (default clawdi_cloud_prod)
@@ -18,12 +18,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: dump.sh [--email-domain @phala.network] [--out <path>]
+Usage: dump.sh [--email-domain @example.com] [--out <path>]
 EOF
 }
 
 main() {
-  local email_domain="@phala.network"
+  local email_domain="@example.com"
   local out=""
   while [ $# -gt 0 ]; do
     case "$1" in

@@ -109,7 +109,7 @@ services:
       # in the container's command at runtime — see below. (Compose-time
       # ${SERVICE_FQDN_API} would resolve from the project .env which holds the
       # production tracker's value, not the PR-specific one.)
-      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@phala.network}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@example.com}
       CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY}
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
