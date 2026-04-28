@@ -1,9 +1,9 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
+import { useEffect, useMemo } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -13,9 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useHostedAvailableApps, useHostedConnections } from "@/hosted/use-hosted-connectors";
-import { unwrap, useApi } from "@/lib/api";
-import { IS_HOSTED } from "@/lib/hosted";
+import { useAvailableApps, useConnections } from "@/lib/connectors-data";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -42,58 +40,35 @@ function ConnectorCardSkeleton() {
 }
 
 export default function ConnectorsPage() {
-	const api = useApi();
-	const [query, setQuery] = useState("");
-	const [page, setPage] = useState(1);
+	// Page + search live in the URL via nuqs so a deep-link reproduces
+	// the user's filtered view, and the back button restores the prior
+	// page after a detail-page round-trip. `clearOnDefault: true` keeps
+	// `/connectors` clean when the value matches the default.
+	const [query, setQuery] = useQueryState(
+		"q",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+	);
+	const [page, setPage] = useQueryState(
+		"page",
+		parseAsInteger.withDefault(1).withOptions({ clearOnDefault: true }),
+	);
 	const debouncedQuery = useDebouncedValue(query, 250);
 
-	// Source of truth depends on deployment mode:
-	//   - Hosted: cross-origin to clawdi.ai's `/connections/*` so users
-	//     see their `clerk_id`-keyed Composio entity (shared with
-	//     clawdi.ai/dashboard); cloud-api is bypassed for connectors.
-	//   - OSS / self-host: cloud-api's `/api/connectors`, keyed by the
-	//     local `user.id` UUID. Independent Composio account.
-	// Both queries call hooks unconditionally; `enabled` gates the
-	// network fetch so only the active source costs anything.
-	const cloudConnections = useQuery({
-		queryKey: ["connections"],
-		queryFn: async () => unwrap(await api.GET("/api/connectors")),
-		enabled: !IS_HOSTED,
-	});
-	const hostedConnections = useHostedConnections({ enabled: IS_HOSTED });
-	const connections = IS_HOSTED ? hostedConnections.data : cloudConnections.data;
-
-	// Server pagination on cloud-api; client-side slicing in the hosted
-	// hook (catalog ~1k items, fetched once and cached). Both return
-	// the same `{ items, total, page, page_size }` shape so the UI below
-	// stays branch-free.
-	const cloudCatalog = useQuery({
-		queryKey: ["available-apps", { page, search: debouncedQuery }],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/available", {
-					params: {
-						query: {
-							page,
-							page_size: PAGE_SIZE,
-							...(debouncedQuery ? { search: debouncedQuery } : {}),
-						},
-					},
-				}),
-			),
-		placeholderData: keepPreviousData,
-		enabled: !IS_HOSTED,
-	});
-	const hostedCatalog = useHostedAvailableApps({
-		enabled: IS_HOSTED,
+	// Hosted (cross-origin to clawdi.ai/connections, keyed off
+	// `clerk_id`) vs OSS (cloud-api `/api/connectors`, keyed off local
+	// `user.id`) is decided inside `connectors-data.ts`. Both call paths
+	// surface the same shapes to keep this page branch-free.
+	const connectionsQ = useConnections();
+	const catalogQ = useAvailableApps({
 		page,
 		pageSize: PAGE_SIZE,
 		search: debouncedQuery || undefined,
 	});
-	const pageData = IS_HOSTED ? hostedCatalog.data : cloudCatalog.data;
-	const isLoading = IS_HOSTED ? hostedCatalog.isLoading : cloudCatalog.isLoading;
-	const isFetching = IS_HOSTED ? hostedCatalog.isFetching : cloudCatalog.isFetching;
-	const error = IS_HOSTED ? hostedCatalog.error : cloudCatalog.error;
+	const connections = connectionsQ.data;
+	const pageData = catalogQ.data;
+	const isLoading = catalogQ.isLoading;
+	const isFetching = catalogQ.isFetching;
+	const error = catalogQ.error;
 
 	const connectedNames = useMemo(
 		() => new Set(connections?.map((c) => c.app_name) ?? []),

@@ -342,11 +342,11 @@ function matchesSearch(item: ConnectorCatalogItem, q: string): boolean {
  * The detail page refetches on mount; the original tab refetches on
  * window focus. Errors come back as `?error=…` and the detail page
  * surfaces them as a toast.
+ *
+ * Built via the `URL` constructor so the slug gets percent-encoded
+ * correctly without manual `encodeURIComponent` interpolation.
  */
 function composioCallbackUrl(appName: string): string {
-	const slug = encodeURIComponent(appName);
-	if (typeof window === "undefined") {
-		return `https://cloud.clawdi.ai/connectors/${slug}`;
-	}
-	return `${window.location.origin}/connectors/${slug}`;
+	const origin = typeof window === "undefined" ? "https://cloud.clawdi.ai" : window.location.origin;
+	return new URL(`/connectors/${appName}`, origin).toString();
 }

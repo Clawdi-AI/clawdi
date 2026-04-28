@@ -1,6 +1,5 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,13 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import {
-	type CloudShapedAuthFields,
-	useHostedAuthFields,
-	useHostedConnectCredentialsMutation,
-} from "@/hosted/use-hosted-connectors";
-import { unwrap, useApi } from "@/lib/api";
-import { IS_HOSTED } from "@/lib/hosted";
+import { useAuthFields, useConnectCredentials } from "@/lib/connectors-data";
 import { errorMessage } from "@/lib/utils";
 
 /**
@@ -30,10 +23,9 @@ import { errorMessage } from "@/lib/utils";
  * Connectors split into two flows server-side: OAuth (handled by the
  * detail page's existing `window.open(connect_url)`) and credentials
  * (this dialog). The dialog fetches the field schema lazily on open
- * so the user pays no cost for OAuth-only deployments, and submits
- * via the same source-aware adapter pattern as the rest of the
- * connectors page — `IS_HOSTED` picks the hosted vs cloud-api path,
- * UI is identical.
+ * so the user pays no cost for OAuth-only deployments. All hosted vs
+ * OSS branching is encapsulated in `useAuthFields` /
+ * `useConnectCredentials` from `@/lib/connectors-data`.
  */
 export function ConnectorCredentialsDialog({
 	open,
@@ -46,8 +38,8 @@ export function ConnectorCredentialsDialog({
 	appName: string;
 	displayName: string;
 }) {
-	const fields = useAuthFieldsForUI({ appName, enabled: open });
-	const submit = useConnectCredentialsForUI();
+	const fields = useAuthFields(appName, { enabled: open });
+	const submit = useConnectCredentials();
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -158,51 +150,4 @@ export function ConnectorCredentialsDialog({
 
 function DialogBody({ children }: { children: ReactNode }) {
 	return <div className="py-2">{children}</div>;
-}
-
-// ──────────────────────────────────────────────────────────────────
-// Source adapters — hosted users hit clawdi.ai via the hosted hooks;
-// OSS / self-host users hit cloud-api directly. Both paths return the
-// same `CloudShapedAuthFields` so the dialog stays branch-free.
-
-function useAuthFieldsForUI({ appName, enabled }: { appName: string; enabled: boolean }) {
-	const api = useApi();
-	const cloud = useQuery({
-		queryKey: ["auth-fields", appName],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/{app_name}/auth-fields", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		enabled: enabled && !IS_HOSTED,
-	});
-	const hosted = useHostedAuthFields({ appName, enabled: enabled && IS_HOSTED });
-	const data: CloudShapedAuthFields | undefined = IS_HOSTED ? hosted.data : cloud.data;
-	const isLoading = IS_HOSTED ? hosted.isLoading : cloud.isLoading;
-	const error = IS_HOSTED ? hosted.error : cloud.error;
-	return { data, isLoading, error };
-}
-
-function useConnectCredentialsForUI() {
-	const api = useApi();
-	const qc = useQueryClient();
-	const cloud = useMutation({
-		mutationFn: async ({
-			appName,
-			credentials,
-		}: {
-			appName: string;
-			credentials: Record<string, string>;
-		}) =>
-			unwrap(
-				await api.POST("/api/connectors/{app_name}/connect-credentials", {
-					params: { path: { app_name: appName } },
-					body: { credentials },
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
-	});
-	const hosted = useHostedConnectCredentialsMutation();
-	return IS_HOSTED ? hosted : cloud;
 }

@@ -4,6 +4,7 @@ import type { Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
+import { env } from "@/lib/env";
 
 /**
  * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
@@ -140,10 +141,10 @@ function isTransientStatus(status: string): boolean {
  * Override the base via `NEXT_PUBLIC_DEPLOY_DASHBOARD_URL`.
  */
 function deploymentManageUrl(deployment: Deployment, runtime?: string): string {
-	const base = process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL || "https://www.clawdi.ai/dashboard";
-	const params = new URLSearchParams({ deployment: deployment.id });
+	const url = new URL(env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL);
+	url.searchParams.set("deployment", deployment.id);
 	if (runtime === "openclaw" || runtime === "hermes") {
-		params.set("agent_type", runtime);
+		url.searchParams.set("agent_type", runtime);
 	}
-	return `${base}?${params.toString()}`;
+	return url.toString();
 }

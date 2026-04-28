@@ -4,6 +4,7 @@ import { type DeployPaths, extractApiDetail } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { env } from "@/lib/env";
 
 /**
  * Shared cross-origin client for the clawdi.ai backend.
@@ -15,7 +16,7 @@ import { useMemo } from "react";
  * carries the full schema, including `/connections/*`.
  */
 
-const CLAWDI_API_URL = process.env.NEXT_PUBLIC_DEPLOY_API_URL || "http://localhost:50021";
+const CLAWDI_API_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
 
 export class ClawdiApiError extends Error {
 	constructor(

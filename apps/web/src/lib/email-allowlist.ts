@@ -4,20 +4,12 @@
  *
  *   ALLOWED_EMAIL_DOMAINS=example.com,another.org
  *
- * Kept here as a pure function (no Clerk imports) so tests can exercise
- * it without mocking the auth stack.
+ * Splitting + normalization happens inside the env schema
+ * (`lib/env.ts`), which already exposes `ALLOWED_EMAIL_DOMAINS` as a
+ * normalized `string[]`. This module just consumes it.
  */
 
-function parseAllowlist(raw: string | undefined): ReadonlySet<string> {
-	return new Set(
-		(raw ?? "")
-			.split(",")
-			.map((d) => d.trim().toLowerCase())
-			.filter(Boolean),
-	);
-}
-
-const ALLOWED_DOMAINS = parseAllowlist(process.env.ALLOWED_EMAIL_DOMAINS);
+import { env } from "@/lib/env";
 
 /**
  * Return true when the given email (primary email from Clerk) is allowed
@@ -26,14 +18,14 @@ const ALLOWED_DOMAINS = parseAllowlist(process.env.ALLOWED_EMAIL_DOMAINS);
  * is empty we pass everyone through so local dev doesn't need the var.
  */
 export function isEmailAllowed(email: string | null | undefined): boolean {
-	if (ALLOWED_DOMAINS.size === 0) return true;
+	if (env.ALLOWED_EMAIL_DOMAINS.length === 0) return true;
 	if (!email) return false;
 	const at = email.lastIndexOf("@");
 	if (at < 0) return false;
 	const domain = email.slice(at + 1).toLowerCase();
-	return ALLOWED_DOMAINS.has(domain);
+	return env.ALLOWED_EMAIL_DOMAINS.includes(domain);
 }
 
 export function allowlistIsActive(): boolean {
-	return ALLOWED_DOMAINS.size > 0;
+	return env.ALLOWED_EMAIL_DOMAINS.length > 0;
 }

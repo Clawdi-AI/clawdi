@@ -3,6 +3,7 @@ import { shadcn } from "@clerk/themes";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
@@ -24,11 +25,11 @@ const fontMono = Geist_Mono({
 // The `cloud.clawdi.ai` literal stays only as a hard fallback for
 // non-Vercel builds that still want reasonable absolute URLs.
 function resolveSiteUrl(): string {
-	if (process.env.VERCEL_ENV === "production" && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-		return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+	if (env.VERCEL_ENV === "production" && env.VERCEL_PROJECT_PRODUCTION_URL) {
+		return `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`;
 	}
-	if (process.env.VERCEL_URL) {
-		return `https://${process.env.VERCEL_URL}`;
+	if (env.VERCEL_URL) {
+		return `https://${env.VERCEL_URL}`;
 	}
 	return "https://cloud.clawdi.ai";
 }

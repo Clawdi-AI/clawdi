@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
+import { parseAsString, useQueryStates } from "nuqs";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -14,15 +15,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import {
-	useHostedAvailableApp,
-	useHostedConnections,
-	useHostedConnectMutation,
-	useHostedConnectorTools,
-	useHostedDisconnectMutation,
-} from "@/hosted/use-hosted-connectors";
-import { unwrap, useApi } from "@/lib/api";
 import type { ConnectorTool } from "@/lib/api-schemas";
+import {
+	useAvailableApp,
+	useConnect,
+	useConnections,
+	useConnectorTools,
+	useDisconnect,
+} from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -40,68 +40,39 @@ function formatName(raw: string): string {
 
 export default function ConnectorDetailPage() {
 	const { name } = useParams<{ name: string }>();
-	const searchParams = useSearchParams();
-	const api = useApi();
 	const queryClient = useQueryClient();
 
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
 	// via `?error=…` and sometimes via `?status=error|failed` with no
-	// detail; treat both as failure, toast once, and strip the params
-	// so a refresh doesn't re-toast.
+	// detail; treat both as failure, toast once, and clear the params
+	// via nuqs so a refresh doesn't re-toast.
+	const [oauthState, setOauthState] = useQueryStates({
+		error: parseAsString,
+		status: parseAsString,
+	});
 	useEffect(() => {
-		const oauthError = searchParams.get("error");
-		const oauthStatus = searchParams.get("status");
-		const failed = oauthError !== null || oauthStatus === "error" || oauthStatus === "failed";
+		const failed =
+			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
 		toast.error("Connection failed", {
-			description: oauthError || "OAuth did not complete. Try again from this page.",
+			description: oauthState.error || "OAuth did not complete. Try again from this page.",
 		});
-		const url = new URL(window.location.href);
-		url.searchParams.delete("error");
-		url.searchParams.delete("status");
-		window.history.replaceState({}, "", url);
-	}, [searchParams]);
+		void setOauthState({ error: null, status: null }, { history: "replace" });
+	}, [oauthState.error, oauthState.status, setOauthState]);
 
-	// Source of truth depends on deployment mode (see list page comment).
-	// All four queries / mutations always-call hooks for stable hook order;
-	// `enabled` gates the network so only the active source costs anything.
-	const cloudApp = useQuery({
-		queryKey: ["available-app", name],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/available/{app_name}", {
-					params: { path: { app_name: name } },
-				}),
-			),
-		enabled: !IS_HOSTED,
-	});
-	const hostedApp = useHostedAvailableApp({ appName: name, enabled: IS_HOSTED });
-	const app = IS_HOSTED ? hostedApp.data : cloudApp.data;
-	const isAppLoading = IS_HOSTED ? hostedApp.isLoading : cloudApp.isLoading;
-
-	const cloudConnections = useQuery({
-		queryKey: ["connections"],
-		queryFn: async () => unwrap(await api.GET("/api/connectors")),
-		enabled: !IS_HOSTED,
-	});
-	const hostedConnections = useHostedConnections({ enabled: IS_HOSTED });
-	const connections = IS_HOSTED ? hostedConnections.data : cloudConnections.data;
-	const isConnectionsLoading = IS_HOSTED ? hostedConnections.isLoading : cloudConnections.isLoading;
-
-	const cloudTools = useQuery({
-		queryKey: ["connector-tools", name],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/{app_name}/tools", {
-					params: { path: { app_name: name } },
-				}),
-			),
-		enabled: !IS_HOSTED,
-	});
-	const hostedTools = useHostedConnectorTools({ appName: name, enabled: IS_HOSTED });
-	const tools = IS_HOSTED ? hostedTools.data : cloudTools.data;
-	const isToolsLoading = IS_HOSTED ? hostedTools.isLoading : cloudTools.isLoading;
+	// All hosted/cloud branching is encapsulated in the `connectors-data`
+	// hooks — both branches are always-called, network is gated by the
+	// `enabled` flag inside, and the returned shapes are unified.
+	const appQ = useAvailableApp(name);
+	const connectionsQ = useConnections();
+	const toolsQ = useConnectorTools(name);
+	const app = appQ.data;
+	const isAppLoading = appQ.isLoading;
+	const connections = connectionsQ.data;
+	const isConnectionsLoading = connectionsQ.isLoading;
+	const tools = toolsQ.data;
+	const isToolsLoading = toolsQ.isLoading;
 
 	// Track OAuth polling timers + a cancelled flag. The flag covers a race
 	// where the mutation's `onSuccess` fires after this page has already
@@ -119,19 +90,22 @@ export default function ConnectorDetailPage() {
 		};
 	}, []);
 
-	const cloudConnect = useMutation({
+	// Connect mutation: opens OAuth in a new tab. The same window.open
+	// pattern works for both sources — only difference is the URL host
+	// (cloud-api or clawdi.ai), already handled by `useConnect`. The
+	// post-connect refresh path is symmetric: on cloud-api we poll the
+	// connections list briefly because OAuth happens in a separate
+	// tab; in hosted mode the user lands back on this same page after
+	// OAuth and react-query refetches on focus, so no polling needed.
+	const connectMutation = useConnect();
+	const startConnectOAuth = useMutation({
 		mutationFn: async () => {
-			const result = unwrap(
-				await api.POST("/api/connectors/{app_name}/connect", {
-					params: { path: { app_name: name } },
-					body: {},
-				}),
-			);
+			const result = await connectMutation.mutateAsync({ appName: name });
 			window.open(result.connect_url, "_blank", "noopener,noreferrer");
+			return result;
 		},
 		onSuccess: () => {
-			// Poll for connection status — user may take time to complete OAuth.
-			if (pollCancelled.current) return;
+			if (IS_HOSTED || pollCancelled.current) return;
 			let attempts = 0;
 			const poll = () => {
 				if (pollCancelled.current || attempts++ >= 12) return;
@@ -146,38 +120,13 @@ export default function ConnectorDetailPage() {
 		},
 		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
 	});
-	// Hosted variant pops the same OAuth window but talks to clawdi.ai
-	// with `redirect_url=<origin>/connectors/<app>` so the user lands
-	// back on this detail page after authorizing, not on
-	// clawdi.ai/dashboard. The connection list refetches on mount in
-	// the new tab and on focus in the original — no manual polling.
-	const hostedConnectMutation = useHostedConnectMutation();
-	const hostedConnect = useMutation({
-		mutationFn: async () => {
-			const result = await hostedConnectMutation.mutateAsync({ appName: name });
-			window.open(result.connect_url, "_blank", "noopener,noreferrer");
-		},
-		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
-	});
-	const connectApp = IS_HOSTED ? hostedConnect : cloudConnect;
+	const connectApp = startConnectOAuth;
 
-	const cloudDisconnect = useMutation({
-		mutationFn: async (connectionId: string) =>
-			unwrap(
-				await api.DELETE("/api/connectors/{connection_id}", {
-					params: { path: { connection_id: connectionId } },
-				}),
-			),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
+	const disconnectMutation = useDisconnect();
+	const disconnectApp = useMutation({
+		mutationFn: async (connectionId: string) => disconnectMutation.mutateAsync({ connectionId }),
 		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
 	});
-	const hostedDisconnectMutation = useHostedDisconnectMutation();
-	const hostedDisconnect = useMutation({
-		mutationFn: async (connectionId: string) =>
-			hostedDisconnectMutation.mutateAsync({ connectionId }),
-		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
-	});
-	const disconnectApp = IS_HOSTED ? hostedDisconnect : cloudDisconnect;
 
 	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
 	const isConnected = activeConnections.length > 0;
