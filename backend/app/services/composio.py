@@ -85,11 +85,37 @@ async def get_connected_accounts(user_id: str) -> list[dict]:
                 "app_name": a.appName,
                 "status": a.status,
                 "created_at": str(a.createdAt) if a.createdAt else "",
+                # Composio returns `connectionParams.connectionLabel` for
+                # OAuth (the user's email/handle), or sometimes a
+                # field on `meta.label`. Fall back through what the SDK
+                # exposes; treat any AttributeError or missing value
+                # as `None` so the UI shows its short-id fallback.
+                "account_display": _account_display_label(a),
             }
             for a in accounts
         ]
 
     return await run_in_threadpool(_list)
+
+
+def _account_display_label(account) -> str | None:
+    """Best-effort identity label for a Composio connected account.
+
+    Composio surfaces the user-facing identity (e.g. the connected
+    Gmail address) in different fields across SDK versions:
+    `connectionParams.connectionLabel`, `meta.label`, or sometimes the
+    nested account dict. Try them in order and return None if nothing
+    looks usable so the UI falls back to its short-id placeholder.
+    """
+    candidates = (
+        getattr(getattr(account, "connectionParams", None), "connectionLabel", None),
+        getattr(getattr(account, "meta", None), "label", None),
+        getattr(account, "connectionLabel", None),
+    )
+    for v in candidates:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
 
 
 async def create_connect_link(user_id: str, app_name: str) -> dict:

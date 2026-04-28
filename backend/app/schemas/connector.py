@@ -15,6 +15,11 @@ class ConnectorConnectionResponse(BaseModel):
     app_name: str
     status: str
     created_at: str
+    # User-facing identity label (e.g. their Gmail address). `None` when
+    # Composio hasn't resolved it yet, which is common right after OAuth
+    # completes. Surfacing it lets the UI tell apart multiple
+    # connections to the same app.
+    account_display: str | None = None
 
 
 class ConnectorAvailableAppResponse(BaseModel):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
@@ -124,11 +124,25 @@ export default function ConnectorDetailPage() {
 		poll();
 	};
 
+	// Track per-row disconnect state. The shared `disconnectMutation
+	// .isPending` is a single boolean across the whole page, so binding
+	// every card's spinner to it would flash *all* Disconnect buttons
+	// when the user clicks one — they need per-row state. We track the
+	// in-flight `connectionId` and the row-level `isDisconnecting`
+	// helper compares against it.
 	const disconnectMutation = useDisconnect();
-	const disconnectApp = useMutation({
-		mutationFn: async (connectionId: string) => disconnectMutation.mutateAsync({ connectionId }),
-		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
-	});
+	const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+	const handleDisconnect = (connectionId: string) => {
+		setDisconnectingId(connectionId);
+		disconnectMutation.mutate(
+			{ connectionId },
+			{
+				onSettled: () => setDisconnectingId(null),
+				onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
+			},
+		);
+	};
+	const isDisconnecting = (connectionId: string) => disconnectingId === connectionId;
 
 	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
 	const isConnected = activeConnections.length > 0;
@@ -269,7 +283,14 @@ export default function ConnectorDetailPage() {
 								className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
 							>
 								<div className="min-w-0">
-									<p className="truncate text-sm font-medium">{c.app_name}</p>
+									{/* Identity first — `account_display` (e.g. the user's Gmail
+									    address) is the only thing that tells two same-app rows
+									    apart. Falls back to a shortened connection id so OSS
+									    users (whose backend doesn't surface account_display
+									    yet) still see something distinct per row. */}
+									<p className="truncate text-sm font-medium">
+										{c.account_display || `Account ${c.id.slice(-6)}`}
+									</p>
 									<p className="mt-0.5 text-xs text-muted-foreground">
 										{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
 									</p>
@@ -277,11 +298,11 @@ export default function ConnectorDetailPage() {
 								<Button
 									variant="ghost"
 									size="xs"
-									onClick={() => disconnectApp.mutate(c.id)}
-									disabled={disconnectApp.isPending}
+									onClick={() => handleDisconnect(c.id)}
+									disabled={isDisconnecting(c.id)}
 									className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 								>
-									{disconnectApp.isPending ? (
+									{isDisconnecting(c.id) ? (
 										<Spinner className="size-3.5" />
 									) : (
 										<Link2Off className="size-3.5" />

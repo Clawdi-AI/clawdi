@@ -719,9 +719,10 @@ export interface paths {
 		 * Connect Credentials
 		 * @description Create a connection from user-supplied API-key credentials.
 		 *
-		 *     Composio validates the credentials synchronously, so a successful
-		 *     return means the connection is usable immediately — no polling
-		 *     required, unlike the OAuth path.
+		 *     The service polls Composio's `wait_until_active` (capped at 15s) so
+		 *     a 200 here means the connection is ACTIVE — the frontend can render
+		 *     it immediately without its own polling loop. Slow upstream auth
+		 *     surfaces as 504.
 		 */
 		post: operations["connect_credentials_api_connectors__app_name__connect_credentials_post"];
 		delete?: never;
@@ -944,11 +945,14 @@ export interface components {
 			/** Content Hash */
 			content_hash?: string | null;
 		};
-		/** ConnectRequest */
-		ConnectRequest: {
-			/** Redirect Url */
-			redirect_url?: string | null;
-		};
+		/**
+		 * ConnectRequest
+		 * @description Empty body kept for future fields. Cloud-api's connect route
+		 *     currently uses defaults for everything (OAuth, Composio-managed
+		 *     callback). Re-add `redirect_url` here when Phase 2 wires it through
+		 *     `create_connect_link`.
+		 */
+		ConnectRequest: Record<string, never>;
 		/**
 		 * ConnectorAuthFieldResponse
 		 * @description One input expected from the user when connecting via API key.
@@ -1029,6 +1033,8 @@ export interface components {
 			status: string;
 			/** Created At */
 			created_at: string;
+			/** Account Display */
+			account_display?: string | null;
 		};
 		/**
 		 * ConnectorCredentialsConnectRequest

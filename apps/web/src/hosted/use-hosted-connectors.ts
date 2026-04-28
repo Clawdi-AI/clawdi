@@ -55,13 +55,19 @@ export interface HostedCatalogPage {
 }
 
 /**
- * Cloud-shaped connection (matches `ConnectorConnectionResponse`).
+ * Cloud-shaped connection. Mirrors `ConnectorConnectionResponse`
+ * plus an optional `account_display` (e.g. the user's Gmail address)
+ * surfaced from clawdi.ai's `ConnectionItem` so multiple connections
+ * for the same app can be told apart in the UI.
  */
 export interface CloudShapedConnection {
 	id: string;
 	app_name: string;
 	status: string;
 	created_at: string;
+	/** Identity label like "user@example.com" — `null` when Composio
+	 *  hasn't resolved it yet (especially right after OAuth completes). */
+	account_display?: string | null;
 }
 
 export function useHostedConnections({ enabled }: { enabled: boolean }) {
@@ -265,6 +271,7 @@ function toCloudConnection(c: ConnectionItem): CloudShapedConnection {
 		app_name: c.app_name,
 		status: c.status,
 		created_at: c.created_at,
+		account_display: c.account_display ?? null,
 	};
 }
 
