@@ -94,7 +94,12 @@ function useHostedCatalogQuery({ enabled }: { enabled: boolean }) {
 		queryKey: HOSTED_CATALOG_KEY,
 		queryFn: async (): Promise<ConnectorCatalogItem[]> => {
 			const data = await unwrapClawdi(await api.GET("/connections/connector-catalog", {}));
-			return data.items;
+			// clawdi.ai's catalog still lists items it has marked
+			// `enabled: false` (deprecated, gated, or temporarily off).
+			// Drop them at the boundary so neither the list grid nor the
+			// per-app lookup surfaces a connector the backend will then
+			// refuse to connect.
+			return data.items.filter((i) => i.enabled !== false);
 		},
 		enabled,
 	});

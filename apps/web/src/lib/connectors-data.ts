@@ -76,7 +76,7 @@ export function useAvailableApps({
 }) {
 	const api = useApi();
 	const cloud = useQuery({
-		queryKey: ["available-apps", { page, search }] as const,
+		queryKey: ["available-apps", { page, pageSize, search }] as const,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/connectors/available", {

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,14 +43,21 @@ export function ConnectorCredentialsDialog({
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);
 
-	// Reset the form whenever the dialog closes so reopening it on a
-	// different app doesn't carry over a previous submission's input
-	// or a stale error message.
+	// Generation counter bumped on EVERY open transition (open→close
+	// AND close→open). Each `handleSubmit` captures the generation it
+	// ran under and ignores its own resolution if `gen !==
+	// openGenRef.current` — meaning the dialog has transitioned since
+	// the mutation started. We must bump on close too: if we only
+	// bumped on open, a close-during-pending → rejection → reopen
+	// sequence would leave `gen` matching (close didn't bump), so the
+	// stale catch would write `submitError`, then the reopen effect
+	// would reset it, then the user would see the stale error if the
+	// rejection arrived AFTER the reopen effect committed.
+	const openGenRef = useRef(0);
 	useEffect(() => {
-		if (!open) {
-			setValues({});
-			setSubmitError(null);
-		}
+		openGenRef.current += 1;
+		setValues({});
+		setSubmitError(null);
 	}, [open]);
 
 	const visibleFields = (fields.data?.expected_input_fields ?? []).filter(
@@ -66,6 +73,7 @@ export function ConnectorCredentialsDialog({
 		// land two mutations in flight if the disabled flag hasn't yet
 		// propagated to the click handler closure. Bail explicitly.
 		if (!canSubmit || submit.isPending) return;
+		const gen = openGenRef.current;
 		setSubmitError(null);
 		try {
 			const credentials = Object.fromEntries(
@@ -75,9 +83,14 @@ export function ConnectorCredentialsDialog({
 				}),
 			);
 			await submit.mutateAsync({ appName, credentials });
+			// Drop the result if the dialog has been reopened — toasts
+			// and `onOpenChange(false)` should target the session that
+			// initiated the mutation, not whatever the user is doing now.
+			if (gen !== openGenRef.current) return;
 			toast.success(`${displayName} connected`);
 			onOpenChange(false);
 		} catch (e) {
+			if (gen !== openGenRef.current) return;
 			setSubmitError(errorMessage(e));
 		}
 	}

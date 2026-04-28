@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
+import { AlertCircle, Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -124,25 +125,39 @@ export default function ConnectorDetailPage() {
 		poll();
 	};
 
-	// Track per-row disconnect state. The shared `disconnectMutation
-	// .isPending` is a single boolean across the whole page, so binding
-	// every card's spinner to it would flash *all* Disconnect buttons
-	// when the user clicks one — they need per-row state. We track the
-	// in-flight `connectionId` and the row-level `isDisconnecting`
-	// helper compares against it.
+	// Per-row disconnect single-flight guard.
+	//
+	// The render-state Set (`disconnectingIds`) drives the spinner UI.
+	// The ref (`inflightDisconnectsRef`) is the synchronous gate two
+	// rapid clicks must pass: state updates are queued and read from a
+	// stale snapshot until React commits, so back-to-back clicks both
+	// see "not pending" and would each fire `mutation.mutate`. The ref
+	// flips synchronously and rejects the second click before the
+	// mutation queues. Both are kept in lockstep so the visible spinner
+	// always matches the in-flight set.
 	const disconnectMutation = useDisconnect();
-	const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
+	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
 	const handleDisconnect = (connectionId: string) => {
-		setDisconnectingId(connectionId);
+		if (inflightDisconnectsRef.current.has(connectionId)) return;
+		inflightDisconnectsRef.current.add(connectionId);
+		setDisconnectingIds((s) => new Set(s).add(connectionId));
 		disconnectMutation.mutate(
 			{ connectionId },
 			{
-				onSettled: () => setDisconnectingId(null),
+				onSettled: () => {
+					inflightDisconnectsRef.current.delete(connectionId);
+					setDisconnectingIds((s) => {
+						const next = new Set(s);
+						next.delete(connectionId);
+						return next;
+					});
+				},
 				onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
 			},
 		);
 	};
-	const isDisconnecting = (connectionId: string) => disconnectingId === connectionId;
+	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
 
 	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
 	const isConnected = activeConnections.length > 0;
@@ -159,7 +174,15 @@ export default function ConnectorDetailPage() {
 	// without code changes here.
 	const [credsOpen, setCredsOpen] = useState(false);
 	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(app.auth_type);
+	// Synchronous single-flight guard for the connect flow. Mirrors the
+	// disconnect ref above: `connectMutation.isPending` only flips after
+	// TanStack Query notifies subscribers (next microtask + render), so a
+	// fast double-click would queue two `window.open` calls and two
+	// mutations before React re-renders the disabled button. The ref
+	// rejects the second click synchronously.
+	const inflightConnectRef = useRef(false);
 	const startConnect = () => {
+		if (inflightConnectRef.current) return;
 		if (usesCredentialsForm) {
 			setCredsOpen(true);
 			return;
@@ -174,25 +197,36 @@ export default function ConnectorDetailPage() {
 		// which gives us the same security posture without breaking the
 		// late-redirect pattern.
 		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
-		if (popup) {
-			try {
-				popup.opener = null;
-			} catch {
-				// Cross-origin browsers can throw on opener writes; the
-				// blank popup hasn't navigated cross-origin yet so this is
-				// safe in practice, but swallow defensively.
-			}
+		if (!popup) {
+			// Popup blocker rejected the open. Bail before firing the
+			// mutation so we don't leak a connection request the user
+			// can't complete — and tell them why nothing happened.
+			toast.error("Popup blocked", {
+				description: "Allow popups for this site to continue with OAuth.",
+			});
+			return;
 		}
+		try {
+			popup.opener = null;
+		} catch {
+			// Cross-origin browsers can throw on opener writes; the
+			// blank popup hasn't navigated cross-origin yet so this is
+			// safe in practice, but swallow defensively.
+		}
+		inflightConnectRef.current = true;
 		connectMutation.mutate(
 			{ appName: name },
 			{
 				onSuccess: (result) => {
-					if (popup && !popup.closed) popup.location.href = result.connect_url;
+					if (!popup.closed) popup.location.href = result.connect_url;
 					onConnectSuccess();
 				},
 				onError: (e) => {
-					popup?.close();
+					popup.close();
 					toast.error("Failed to start connection", { description: errorMessage(e) });
+				},
+				onSettled: () => {
+					inflightConnectRef.current = false;
 				},
 			},
 		);
@@ -263,7 +297,17 @@ export default function ConnectorDetailPage() {
 					)}
 				</div>
 
-				{activeConnections.length === 0 ? (
+				{connectionsQ.error ? (
+					// Without this, a failed connections fetch silently renders
+					// the "No connected accounts yet" empty state — the user
+					// would think they have nothing connected when really we
+					// just couldn't load the list.
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Failed to load connections</AlertTitle>
+						<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
+					</Alert>
+				) : activeConnections.length === 0 ? (
 					<EmptyState
 						fillHeight={false}
 						bordered
@@ -365,7 +409,7 @@ export default function ConnectorDetailPage() {
 			</div>
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
-			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} />
+			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} error={toolsQ.error} />
 
 			<ConnectorCredentialsDialog
 				open={credsOpen}
@@ -427,7 +471,15 @@ function DetailSkeleton() {
 	);
 }
 
-function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLoading: boolean }) {
+function ConnectorToolsList({
+	tools,
+	isLoading,
+	error,
+}: {
+	tools: ConnectorTool[];
+	isLoading: boolean;
+	error: Error | null;
+}) {
 	const [search, setSearch] = useState("");
 	const deferredSearch = useDeferredValue(search);
 
@@ -448,6 +500,23 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 				<div className="flex items-center justify-center py-6">
 					<Spinner className="size-5 text-muted-foreground" />
 				</div>
+			</section>
+		);
+	}
+
+	// Surface tool-fetch failures explicitly so a transient backend hiccup
+	// doesn't masquerade as "this connector has no tools".
+	if (error) {
+		return (
+			<section>
+				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					Available Tools
+				</h2>
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load tools</AlertTitle>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
+				</Alert>
 			</section>
 		);
 	}
