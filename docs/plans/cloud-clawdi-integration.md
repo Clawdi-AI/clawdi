@@ -1616,6 +1616,19 @@ apps share the Clerk project), so clawdi.ai just adds
 `POST /connections/{app}/connect` already takes `body.redirect_url`,
 so no clawdi.ai change is required for callbacks either.
 
+**Local dev gotcha — CORS_ORIGINS for the conductor host pattern.**
+When cloud-web runs at `http://clawdi-cloud.localhost:3000` (the
+Conductor worktree pattern with subdomain hosts), monorepo's
+`CORS_ORIGINS` must include that exact origin. The default `.env`
+ships with `localhost:3000` and `https://cloud.clawdi.ai` — neither
+matches the subdomain host. Symptom: every cross-origin call to
+`/deployments` or `/connections/*` fails the OPTIONS preflight with
+"No 'Access-Control-Allow-Origin' header"; the dashboard shows
+"Hosted agents unavailable" and the connectors page never loads.
+Fix: append `http://clawdi-cloud.localhost:3000` to the JSON list in
+`backend/.env`'s `CORS_ORIGINS=[...]` and restart the backend so it
+re-reads the env (not just `--reload`-driven).
+
 ### Phase 2 — Gateway library extraction + cloud-api broker + state plane sync UX  (keystone — biggest phase)
 
 This phase has three intertwined work items, sequenced to land
