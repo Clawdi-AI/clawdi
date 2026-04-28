@@ -673,6 +673,11 @@ export interface paths {
 		/**
 		 * Connect App
 		 * @description Generate OAuth connect link for an app.
+		 *
+		 *     Forwards `body.redirect_url` to Composio so the OAuth provider
+		 *     sends the user back to the caller's chosen landing page (e.g.
+		 *     the connector detail page on the frontend). If omitted, Composio
+		 *     falls back to its own managed callback.
 		 */
 		post: operations["connect_app_api_connectors__app_name__connect_post"];
 		delete?: never;
@@ -947,12 +952,20 @@ export interface components {
 		};
 		/**
 		 * ConnectRequest
-		 * @description Empty body kept for future fields. Cloud-api's connect route
-		 *     currently uses defaults for everything (OAuth, Composio-managed
-		 *     callback). Re-add `redirect_url` here when Phase 2 wires it through
-		 *     `create_connect_link`.
+		 * @description OAuth connect-link request body.
+		 *
+		 *     `redirect_url` is the absolute URL Composio redirects the user
+		 *     back to after the OAuth flow completes. The frontend supplies
+		 *     its own connector detail page (e.g.
+		 *     `https://cloud.example.com/connectors/gmail`); when omitted,
+		 *     Composio uses its own managed callback. Bound the URL length so
+		 *     we can't be talked into routing OAuth through an attacker-
+		 *     controlled multi-megabyte redirect.
 		 */
-		ConnectRequest: Record<string, never>;
+		ConnectRequest: {
+			/** Redirect Url */
+			redirect_url?: string | null;
+		};
 		/**
 		 * ConnectorAuthFieldResponse
 		 * @description One input expected from the user when connecting via API key.
@@ -1039,6 +1052,12 @@ export interface components {
 		/**
 		 * ConnectorCredentialsConnectRequest
 		 * @description User-supplied credentials for an API-key style connector.
+		 *
+		 *     Bounds picked to fit any sane API-key form (Composio's largest
+		 *     schema we've seen has ~6 fields; a single API key fits well under
+		 *     8KB) while rejecting payloads that don't look like credentials at
+		 *     all. Caps protect against accidental large-blob submissions and
+		 *     keep error logs / Composio request bodies small.
 		 */
 		ConnectorCredentialsConnectRequest: {
 			/** Credentials */

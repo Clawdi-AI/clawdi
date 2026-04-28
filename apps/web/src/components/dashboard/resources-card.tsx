@@ -17,27 +17,7 @@ type Resource = {
 	emptyCta: string;
 };
 
-type ResourceMaybeLoading = Resource | { loading: true; key: string };
-
-function buildResources(
-	stats: DashboardStats,
-	connectorsCountOverride: number | undefined,
-	connectorsLoading: boolean,
-): ResourceMaybeLoading[] {
-	const connectorsRow: ResourceMaybeLoading = connectorsLoading
-		? { loading: true, key: "/connectors" }
-		: {
-				icon: Plug,
-				label: "Connectors",
-				// Hosted users keep their Composio account in clawdi.ai
-				// (entity_id = clerk_id); cloud-api's `stats.connectors_count`
-				// is keyed off the local `user.id` UUID and would always read
-				// zero. The page.tsx caller passes through the hosted count
-				// when applicable so the dashboard total reflects reality.
-				count: connectorsCountOverride ?? stats.connectors_count ?? 0,
-				href: "/connectors",
-				emptyCta: "Connect an app",
-			};
+function buildResources(stats: DashboardStats): Resource[] {
 	return [
 		{
 			icon: Brain,
@@ -60,25 +40,17 @@ function buildResources(
 			href: "/vault",
 			emptyCta: "Create your first",
 		},
-		connectorsRow,
+		{
+			icon: Plug,
+			label: "Connectors",
+			count: stats.connectors_count ?? 0,
+			href: "/connectors",
+			emptyCta: "Connect an app",
+		},
 	];
 }
 
-export function ResourcesCard({
-	stats,
-	connectorsCountOverride,
-	connectorsLoading = false,
-}: {
-	stats: DashboardStats | undefined;
-	connectorsCountOverride?: number;
-	/**
-	 * When hosted's connector fetch is in-flight, the connectors row
-	 * stays as a skeleton instead of flashing the (always-zero)
-	 * `stats.connectors_count` from cloud-api. Other rows can render
-	 * as soon as stats arrive — they're independent.
-	 */
-	connectorsLoading?: boolean;
-}) {
+export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) {
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -88,13 +60,7 @@ export function ResourcesCard({
 			<CardContent className="p-0">
 				<div className="divide-y">
 					{stats
-						? buildResources(stats, connectorsCountOverride, connectorsLoading).map((r) =>
-								"loading" in r ? (
-									<ResourceRowSkeleton key={r.key} />
-								) : (
-									<ResourceRow key={r.href} resource={r} />
-								),
-							)
+						? buildResources(stats).map((r) => <ResourceRow key={r.href} resource={r} />)
 						: Array.from({ length: 4 }).map((_, i) => <ResourceRowSkeleton key={i} />)}
 				</div>
 			</CardContent>

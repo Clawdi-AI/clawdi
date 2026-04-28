@@ -8,58 +8,37 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useMemo } from "react";
-import {
-	type CloudShapedAuthFields,
-	type CloudShapedAvailableApp,
-	type CloudShapedConnection,
-	useHostedAuthFields,
-	useHostedAvailableApp,
-	useHostedAvailableApps,
-	useHostedAvailableAppsByName,
-	useHostedConnectCredentialsMutation,
-	useHostedConnections,
-	useHostedConnectMutation,
-	useHostedConnectorTools,
-	useHostedDisconnectMutation,
-} from "@/hosted/use-hosted-connectors";
 import { unwrap, useApi } from "@/lib/api";
-import { IS_HOSTED } from "@/lib/hosted";
 
 /**
- * Source-agnostic data hooks for the connectors UI.
+ * Connector data hooks. Always talk to cloud-api — there is no
+ * hosted/cloud branching here. cloud-api uses the user's Clerk id
+ * as the Composio entity_id, which means a cloud.clawdi.ai
+ * deployment can configure cloud-api with the same Composio API
+ * key clawdi.ai's own backend uses and reach the exact same
+ * connection namespace; self-hosters get an isolated namespace
+ * keyed by their own Clerk app's user ids.
  *
- * Each hook composes a cloud-api `useQuery`/`useMutation` and the
- * matching `useHosted…` hook, then picks the active branch via the
- * compile-time `IS_HOSTED` flag. The returned shape is whatever the
- * cloud-api side already produces — hosted hooks adapt clawdi.ai's
- * payload to that shape, so consumers can stay branch-free.
- *
- * Both branches always-call their hooks (`enabled` gates the network)
- * to keep React's rules-of-hooks happy across IS_HOSTED settings.
- *
- * Naming: `useConnections`, `useAvailableApps`, etc. — no hosted/cloud
- * prefix on the public name. The branching is internal.
+ * The earlier `IS_HOSTED` proxy that pointed connector calls
+ * cross-origin at clawdi.ai has been removed; that bypass made the
+ * connector backend logic live in two places and forced the
+ * frontend to maintain shape adapters. Single source of truth wins.
  */
-
-const PICK = <T>(hosted: T, cloud: T): T => (IS_HOSTED ? hosted : cloud);
 
 // ─────────────────────────────────────────────────────────────────────
 // Reads
 
 export function useConnections() {
 	const api = useApi();
-	const cloud = useQuery({
+	return useQuery({
 		queryKey: ["connections"],
 		queryFn: async () => unwrap(await api.GET("/api/connectors")),
-		enabled: !IS_HOSTED,
 	});
-	const hosted = useHostedConnections({ enabled: IS_HOSTED });
-	return PICK(hosted, cloud);
 }
 
 export function useAvailableApp(appName: string) {
 	const api = useApi();
-	const cloud = useQuery({
+	return useQuery({
 		queryKey: ["available-app", appName],
 		queryFn: async () =>
 			unwrap(
@@ -67,10 +46,7 @@ export function useAvailableApp(appName: string) {
 					params: { path: { app_name: appName } },
 				}),
 			),
-		enabled: !IS_HOSTED,
 	});
-	const hosted = useHostedAvailableApp({ appName, enabled: IS_HOSTED });
-	return PICK(hosted, cloud);
 }
 
 export function useAvailableApps({
@@ -83,7 +59,7 @@ export function useAvailableApps({
 	search?: string;
 }) {
 	const api = useApi();
-	const cloud = useQuery({
+	return useQuery({
 		queryKey: ["available-apps", { page, pageSize, search }] as const,
 		queryFn: async () =>
 			unwrap(
@@ -94,15 +70,12 @@ export function useAvailableApps({
 				}),
 			),
 		placeholderData: keepPreviousData,
-		enabled: !IS_HOSTED,
 	});
-	const hosted = useHostedAvailableApps({ enabled: IS_HOSTED, page, pageSize, search });
-	return PICK(hosted, cloud);
 }
 
 export function useConnectorTools(appName: string) {
 	const api = useApi();
-	const cloud = useQuery({
+	return useQuery({
 		queryKey: ["connector-tools", appName],
 		queryFn: async () =>
 			unwrap(
@@ -110,15 +83,12 @@ export function useConnectorTools(appName: string) {
 					params: { path: { app_name: appName } },
 				}),
 			),
-		enabled: !IS_HOSTED,
 	});
-	const hosted = useHostedConnectorTools({ appName, enabled: IS_HOSTED });
-	return PICK(hosted, cloud);
 }
 
 export function useAuthFields(appName: string, { enabled }: { enabled: boolean }) {
 	const api = useApi();
-	const cloud = useQuery({
+	return useQuery({
 		queryKey: ["auth-fields", appName],
 		queryFn: async () =>
 			unwrap(
@@ -126,21 +96,8 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 					params: { path: { app_name: appName } },
 				}),
 			),
-		enabled: enabled && !IS_HOSTED,
+		enabled,
 	});
-	const hosted = useHostedAuthFields({ appName, enabled: enabled && IS_HOSTED });
-	// Asymmetric pick (per field, not the whole result) because the two
-	// branches have slightly different `UseQueryResult` shapes — the
-	// cloud-api query returns the cloud-api response type directly while
-	// the hosted hook returns the projected `CloudShapedAuthFields`.
-	// Picking field-by-field keeps the unified surface tight without
-	// forcing both branches into the same parameterized result type.
-	const data: CloudShapedAuthFields | undefined = PICK(hosted.data, cloud.data);
-	return {
-		data,
-		isLoading: PICK(hosted.isLoading, cloud.isLoading),
-		error: PICK(hosted.error, cloud.error),
-	};
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -149,24 +106,22 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 export function useConnect() {
 	const api = useApi();
 	const qc = useQueryClient();
-	const cloud = useMutation({
-		mutationFn: async ({ appName }: { appName: string }) =>
+	return useMutation({
+		mutationFn: async ({ appName, redirectUrl }: { appName: string; redirectUrl?: string }) =>
 			unwrap(
 				await api.POST("/api/connectors/{app_name}/connect", {
 					params: { path: { app_name: appName } },
-					body: {},
+					body: redirectUrl ? { redirect_url: redirectUrl } : {},
 				}),
 			),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
 	});
-	const hosted = useHostedConnectMutation();
-	return PICK(hosted, cloud);
 }
 
 export function useConnectCredentials() {
 	const api = useApi();
 	const qc = useQueryClient();
-	const cloud = useMutation({
+	return useMutation({
 		mutationFn: async ({
 			appName,
 			credentials,
@@ -182,17 +137,13 @@ export function useConnectCredentials() {
 			),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
 	});
-	const hosted = useHostedConnectCredentialsMutation();
-	return PICK(hosted, cloud);
 }
 
 export function useDisconnect() {
 	const api = useApi();
 	const qc = useQueryClient();
-	const cloud = useMutation({
+	return useMutation({
 		mutationFn: async ({ connectionId }: { connectionId: string }): Promise<void> => {
-			// Cloud-api returns `{ status: "disconnected" }`; hosted returns
-			// nothing. Drop the body so both branches type-check the same.
 			unwrap(
 				await api.DELETE("/api/connectors/{connection_id}", {
 					params: { path: { connection_id: connectionId } },
@@ -201,78 +152,59 @@ export function useDisconnect() {
 		},
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
 	});
-	const hosted = useHostedDisconnectMutation();
-	return PICK(hosted, cloud);
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Composite hooks
-//
-// Connections carry the user's identity (slug + status + account
-// label) but not the catalog metadata UI cards need (display name,
-// logo, description). `useConnectedAppCards` joins the two so the
-// list page can render a "Connected" rail that's always visible —
-// independent of which catalog page the user is on. This matters
-// because catalog ordering (clawdi.ai's `base_rank`) can place a
-// user's active app on page 30 of 1000 connectors, where the user
-// would never find it without searching.
-//
-// HOSTED: shares the single full-catalog query already cached, so
-// enrichment is in-memory, no extra network.
-// OSS: fans out to per-app `/available/{name}` queries — the active
-// connection count is small (typically <10) so this is cheap enough.
 
+/**
+ * Joins the user's ACTIVE connections with catalog metadata so the
+ * list page can render a "Connected" rail that's always visible,
+ * independent of which catalog page the user is on. Backend
+ * orders the catalog by Composio's popularity (`base_rank`) which
+ * can put a user's active app on page 30 of 1000 connectors —
+ * without this rail, they'd never find their connections without
+ * searching.
+ *
+ * Fan-out: one `/available/{name}` query per unique active app.
+ * Active connection count is small in practice (single-digit per
+ * user), and React Query dedupes against the catalog cache so a
+ * page that already loaded the connector also has its metadata.
+ */
 export function useConnectedAppCards() {
 	const connectionsQ = useConnections();
+	const api = useApi();
 
 	const activeConnections = useMemo(
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
 		[connectionsQ.data],
 	);
 	// Dedupe so multi-account-same-app users don't pay for two catalog
-	// lookups (OSS) or render duplicate cards with colliding React
-	// keys. The Connected rail is per-app, not per-connection — the
-	// detail page is where the user picks between accounts.
+	// lookups or render duplicate cards with colliding React keys. The
+	// rail is per-app, not per-connection — the detail page is where
+	// the user picks between accounts.
 	const names = useMemo(
 		() => Array.from(new Set(activeConnections.map((c) => c.app_name))),
 		[activeConnections],
 	);
 
-	// HOSTED: single shared query, lookup in-memory.
-	const hostedLookup = useHostedAvailableAppsByName({
-		names,
-		enabled: IS_HOSTED && names.length > 0,
+	const lookup = useQueries({
+		queries: names.map((name) => ({
+			queryKey: ["available-app", name] as const,
+			queryFn: async () =>
+				unwrap(
+					await api.GET("/api/connectors/available/{app_name}", {
+						params: { path: { app_name: name } },
+					}),
+				),
+		})),
 	});
 
-	// OSS: per-app queries via `useQueries`. Always-call (rules of
-	// hooks): empty `names` short-circuits to an empty fan-out.
-	const api = useApi();
-	const ossLookup = useQueries({
-		queries: IS_HOSTED
-			? []
-			: names.map((name) => ({
-					queryKey: ["available-app", name] as const,
-					queryFn: async () =>
-						unwrap(
-							await api.GET("/api/connectors/available/{app_name}", {
-								params: { path: { app_name: name } },
-							}),
-						),
-					enabled: !IS_HOSTED,
-				})),
-	});
+	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
+	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
+	const error = connectionsQ.error ?? lookup.find((q) => q.error)?.error ?? null;
 
-	const ossData = useMemo(() => ossLookup.flatMap((q) => (q.data ? [q.data] : [])), [ossLookup]);
-	const ossLoading = ossLookup.some((q) => q.isLoading);
-	const ossError = ossLookup.find((q) => q.error)?.error ?? null;
-
-	const data = PICK(hostedLookup.data, ossData);
-	return {
-		activeConnections,
-		data: data ?? [],
-		isLoading: connectionsQ.isLoading || PICK(hostedLookup.isLoading, ossLoading),
-		error: connectionsQ.error ?? PICK(hostedLookup.error, ossError),
-	};
+	return { activeConnections, data, isLoading, error };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -293,8 +225,3 @@ export function useConnectedAppCards() {
 export function isActiveConnection(c: { status: string }): boolean {
 	return c.status.toUpperCase() === "ACTIVE";
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// Re-export the unified shapes the page UI consumes.
-
-export type { CloudShapedAuthFields, CloudShapedAvailableApp, CloudShapedConnection };

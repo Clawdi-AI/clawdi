@@ -1,6 +1,5 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Link2Off, Plug } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
@@ -24,7 +23,6 @@ import {
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
-import { IS_HOSTED } from "@/lib/hosted";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Auth schemes whose connect flow is a redirect (OAuth family) or
@@ -49,7 +47,6 @@ function formatName(raw: string): string {
 
 export default function ConnectorDetailPage() {
 	const { name } = useParams<{ name: string }>();
-	const queryClient = useQueryClient();
 
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
@@ -83,47 +80,14 @@ export default function ConnectorDetailPage() {
 	const tools = toolsQ.data;
 	const isToolsLoading = toolsQ.isLoading;
 
-	// Track OAuth polling timers + a cancelled flag. The flag covers a race
-	// where the mutation's `onSuccess` fires after this page has already
-	// unmounted — without it, the first `setTimeout` would register *after*
-	// the cleanup ran and the poll chain would escape, continuing to
-	// invalidate queries for a component no one is watching.
-	const pollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-	const pollCancelled = useRef(false);
-	useEffect(() => {
-		pollCancelled.current = false;
-		return () => {
-			pollCancelled.current = true;
-			for (const t of pollTimers.current) clearTimeout(t);
-			pollTimers.current = [];
-		};
-	}, []);
-
-	// Connect mutation: just makes the API call. The popup is opened
-	// synchronously in `startConnect` below before awaiting the
-	// mutation, so the browser counts the popup as a direct user
-	// gesture (Safari / Chrome popup blockers reject `window.open`
-	// fired after an `await`). After the URL resolves we redirect the
-	// already-open popup to it.
+	// Connect mutation: opens the OAuth popup synchronously on click
+	// (browsers count `await`-deferred `window.open` calls as
+	// programmatic and block them) and points it at the OAuth URL once
+	// the backend responds. The popup eventually lands on this same
+	// detail page via the `redirect_url` we send to Composio; React
+	// Query's window-focus refetch picks up the new ACTIVE connection
+	// when the user returns to this tab. No polling loop needed.
 	const connectMutation = useConnect();
-	const onConnectSuccess = () => {
-		// On cloud-api the OAuth happens in a separate tab, so poll the
-		// connections list briefly so the original tab reflects the new
-		// connection without waiting for window-focus refetch. Hosted
-		// mode redirects back to this page directly, no polling needed.
-		if (IS_HOSTED || pollCancelled.current) return;
-		let attempts = 0;
-		const poll = () => {
-			if (pollCancelled.current || attempts++ >= 12) return;
-			const id = setTimeout(() => {
-				if (pollCancelled.current) return;
-				queryClient.invalidateQueries({ queryKey: ["connections"] });
-				poll();
-			}, 5000);
-			pollTimers.current.push(id);
-		};
-		poll();
-	};
 
 	// Per-row disconnect single-flight guard.
 	//
@@ -227,12 +191,17 @@ export default function ConnectorDetailPage() {
 			// safe in practice, but swallow defensively.
 		}
 		inflightConnectRef.current = true;
+		// Send our detail page URL as `redirect_url` so Composio sends the
+		// user back here after OAuth instead of its default callback.
+		// Lets us drop a polling loop — the popup eventually navigates
+		// back to our origin and React Query's window-focus refetch
+		// reflects the new ACTIVE connection.
+		const redirectUrl = window.location.href;
 		connectMutation.mutate(
-			{ appName: name },
+			{ appName: name, redirectUrl },
 			{
 				onSuccess: (result) => {
 					if (!popup.closed) popup.location.href = result.connect_url;
-					onConnectSuccess();
 				},
 				onError: (e) => {
 					popup.close();

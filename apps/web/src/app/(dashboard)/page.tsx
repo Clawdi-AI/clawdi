@@ -16,9 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
-import { useHostedConnections } from "@/hosted/use-hosted-connectors";
 import { unwrap, useApi } from "@/lib/api";
-import { isActiveConnection } from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { relativeTime } from "@/lib/utils";
 
@@ -61,24 +59,6 @@ export default function DashboardPage() {
 	// Hosted-side query — fetches user's deployments from the
 	// clawdi.ai deploy API. Disabled (no fetch) when not hosted.
 	const hosted = useHostedAgentTiles({ enabled: IS_HOSTED });
-
-	// Hosted users' Composio entity lives in clawdi.ai (keyed off
-	// clerk_id), so cloud-api's `/api/dashboard/stats.connectors_count`
-	// (keyed off local user.id UUID) always reads zero. Pull the real
-	// count cross-origin and override the resources card when hosted.
-	//
-	// While the hosted query is in-flight we pass `undefined` (not 0)
-	// so the resources card keeps the skeleton up instead of flashing
-	// "0 connectors" before the real count lands.
-	const hostedConnectionsForCount = useHostedConnections({ enabled: IS_HOSTED });
-	// Count only ACTIVE connections so the dashboard "Connectors" stat
-	// matches what the user sees on /connectors. Raw `.length` would
-	// inflate the number with INITIALIZING rows from abandoned OAuth
-	// flows and EXPIRED tokens that no longer work.
-	const connectorsCountOverride =
-		IS_HOSTED && hostedConnectionsForCount.data
-			? hostedConnectionsForCount.data.filter(isActiveConnection).length
-			: undefined;
 
 	const selfManagedTiles: AgentTile[] = useMemo(() => {
 		return (environments ?? []).map((env) => ({
@@ -190,11 +170,7 @@ export default function DashboardPage() {
 				    the hero card above is already the onboarding. */}
 				<div className="min-w-0 space-y-4">
 					{hasAgents ? <OnboardingCard /> : null}
-					<ResourcesCard
-						stats={stats}
-						connectorsCountOverride={connectorsCountOverride}
-						connectorsLoading={IS_HOSTED && hostedConnectionsForCount.isLoading}
-					/>
+					<ResourcesCard stats={stats} />
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>
