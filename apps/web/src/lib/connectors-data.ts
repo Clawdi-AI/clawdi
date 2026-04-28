@@ -121,6 +121,12 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 		enabled: enabled && !IS_HOSTED,
 	});
 	const hosted = useHostedAuthFields({ appName, enabled: enabled && IS_HOSTED });
+	// Asymmetric pick (per field, not the whole result) because the two
+	// branches have slightly different `UseQueryResult` shapes — the
+	// cloud-api query returns the cloud-api response type directly while
+	// the hosted hook returns the projected `CloudShapedAuthFields`.
+	// Picking field-by-field keeps the unified surface tight without
+	// forcing both branches into the same parameterized result type.
 	const data: CloudShapedAuthFields | undefined = PICK(hosted.data, cloud.data);
 	return {
 		data,

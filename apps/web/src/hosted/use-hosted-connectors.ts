@@ -270,18 +270,23 @@ function toCloudConnection(c: ConnectionItem): CloudShapedConnection {
 
 // Heuristic for "should this input render as a password?" — clawdi.ai's
 // `AuthFieldItem` doesn't carry a dedicated `is_secret` flag, so we
-// follow the same name-pattern check the OAuth dashboard uses, plus
-// the field's declared `type === "password"`. Names are normalized
-// (lowercase + alphanumeric only) before matching so camelCase
-// (`apiKey`), snake_case (`access_token`) and kebab-case all work.
+// match against the field's tokens (split on snake/kebab/camel
+// boundaries) instead of a substring check on the joined string. That
+// way `apiKey` / `access_token` / `webhook-secret` all hit, but
+// `bookkeeper` (which contains the substring "key") doesn't.
 // Cloud-api's response DOES carry the flag so the OSS path uses it
 // directly without this fallback.
-const SECRET_HINT = /(key|token|secret|password|bearer)/;
+const SECRET_TOKENS = new Set(["key", "token", "secret", "password", "bearer"]);
 
 function isLikelySecret(field: { name: string; type: string }): boolean {
 	if (field.type === "password") return true;
-	const normalized = field.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-	return SECRET_HINT.test(normalized);
+	// Split snake/kebab on the separators and camelCase on case
+	// boundaries; lowercase the result and match each token whole.
+	const tokens = field.name
+		.replace(/([a-z])([A-Z])/g, "$1 $2")
+		.split(/[\s_-]+/)
+		.map((t) => t.toLowerCase());
+	return tokens.some((t) => SECRET_TOKENS.has(t));
 }
 
 function toCloudAuthField(f: {

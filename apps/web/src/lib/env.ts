@@ -1,6 +1,16 @@
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
+// Reject anything that isn't a real `https://` or `http://` URL — plain
+// `z.string().url()` would happily accept `ftp:`, `javascript:`, etc.
+const httpsOrHttp = () =>
+	z
+		.string()
+		.url()
+		.refine((s) => /^https?:\/\//i.test(s), {
+			message: "URL must start with http:// or https://",
+		});
+
 /**
  * Typed, validated environment variables.
  *
@@ -32,18 +42,18 @@ export const env = createEnv({
 		VERCEL_ENV: z.enum(["production", "preview", "development"]).optional(),
 	},
 	client: {
-		// cloud-api base URL. Falls through to localhost in dev so the
-		// repo runs without a `.env.local` for local testing.
-		NEXT_PUBLIC_API_URL: z.string().url().default("http://localhost:8000"),
+		// cloud-api base URL. `httpsOrHttp` rejects `ftp:` /
+		// `javascript:` schemes that `z.string().url()` would let through.
+		NEXT_PUBLIC_API_URL: httpsOrHttp().default("http://localhost:8000"),
 
 		// clawdi.ai backend URL — used for cross-origin Composio + deploy
-		// listing in hosted mode. Same dev-fallback story as above.
-		NEXT_PUBLIC_DEPLOY_API_URL: z.string().url().default("http://localhost:50021"),
+		// listing in hosted mode.
+		NEXT_PUBLIC_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
 		// Where the "Manage" link on hosted agent tiles points. Production
 		// override per-environment so dev/preview can route to local
 		// dashboards without a code change.
-		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: z.string().url().default("https://www.clawdi.ai/dashboard"),
+		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: httpsOrHttp().default("https://www.clawdi.ai/dashboard"),
 
 		// Clerk publishable key — required, no sensible default.
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),

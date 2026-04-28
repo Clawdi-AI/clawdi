@@ -68,7 +68,13 @@ export function ConnectorCredentialsDialog({
 		if (!canSubmit || submit.isPending) return;
 		setSubmitError(null);
 		try {
-			await submit.mutateAsync({ appName, credentials: values });
+			const credentials = Object.fromEntries(
+				visibleFields.flatMap((f): [string, string][] => {
+					const value = values[f.name];
+					return value?.trim() ? [[f.name, value]] : [];
+				}),
+			);
+			await submit.mutateAsync({ appName, credentials });
 			toast.success(`${displayName} connected`);
 			onOpenChange(false);
 		} catch (e) {
@@ -93,7 +99,9 @@ export function ConnectorCredentialsDialog({
 							<Spinner className="size-5 text-muted-foreground" />
 						</div>
 					) : fields.error ? (
-						<p className="text-sm text-destructive">{errorMessage(fields.error)}</p>
+						<p role="alert" className="text-sm text-destructive">
+							{errorMessage(fields.error)}
+						</p>
 					) : visibleFields.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							This connector doesn't need any credentials configured here. Try OAuth from the
@@ -129,7 +137,11 @@ export function ConnectorCredentialsDialog({
 									</div>
 								);
 							})}
-							{submitError ? <p className="text-sm text-destructive">{submitError}</p> : null}
+							{submitError ? (
+								<p role="alert" className="text-sm text-destructive">
+									{submitError}
+								</p>
+							) : null}
 						</form>
 					)}
 				</DialogBody>

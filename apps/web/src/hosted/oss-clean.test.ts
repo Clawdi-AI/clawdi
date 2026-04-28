@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { IS_HOSTED } from "@/lib/hosted";
 
 /**
  * OSS-clean invariant tests.
@@ -22,9 +22,17 @@ const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 
 function listHostedTsx(): string[] {
-	return readdirSync(HOSTED_DIR)
-		.filter((name) => name.endsWith(".tsx"))
-		.map((name) => join(HOSTED_DIR, name));
+	const out: string[] = [];
+	const walk = (dir: string) => {
+		for (const entry of readdirSync(dir)) {
+			const full = join(dir, entry);
+			const st = statSync(full);
+			if (st.isDirectory()) walk(full);
+			else if (entry.endsWith(".tsx")) out.push(full);
+		}
+	};
+	walk(HOSTED_DIR);
+	return out;
 }
 
 function walkSrcExceptHosted(dir: string, out: string[] = []): string[] {
@@ -43,10 +51,21 @@ function walkSrcExceptHosted(dir: string, out: string[] = []): string[] {
 
 describe("IS_HOSTED flag", () => {
 	test("defaults to false when env var is unset", () => {
-		// At module load, NEXT_PUBLIC_CLAWDI_HOSTED is undefined in
-		// `bun test` context unless explicitly set. So IS_HOSTED is
-		// the OSS value: false.
-		expect(IS_HOSTED).toBe(false);
+		const env = { ...process.env };
+		delete env.NEXT_PUBLIC_CLAWDI_HOSTED;
+		env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??= "pk_test_dummy_for_unit_tests";
+
+		const result = spawnSync(
+			process.execPath,
+			["-e", 'import { IS_HOSTED } from "../lib/hosted"; console.log(String(IS_HOSTED));'],
+			{ cwd: HOSTED_DIR, env, encoding: "utf8" },
+		);
+
+		if (result.status !== 0) {
+			throw new Error(result.stderr || "failed to import hosted flag in subprocess");
+		}
+
+		expect(result.stdout.trim()).toBe("false");
 	});
 });
 

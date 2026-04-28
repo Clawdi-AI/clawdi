@@ -1828,13 +1828,19 @@ guessing this is rare; let demand prove it).
 
 ## CI / security invariants
 
-1. **OSS-clean UI test** (`apps/web/src/__tests__/oss-clean-ui.test.ts`):
-   render sidebar + agent detail page (with both `Self-managed`
-   and `On Clawdi` agent fixtures) under `IS_HOSTED=false`.
-   Assertions:
-   - No element with `data-hosted="true"` exists in DOM
-   - No element matches text `/deploy|hosted only|upgrade/i`
-   - Build succeeds without `NEXT_PUBLIC_DEPLOY_API_URL` set
+1. **OSS-clean static guards** (`apps/web/src/hosted/oss-clean.test.ts`):
+   walk hosted/ + non-hosted dirs and assert via regex / file walk:
+   - Every `.tsx` under `hosted/` carries `data-hosted="true"` on
+     its root element
+   - Every non-hosted file importing `@/hosted/*` references
+     `IS_HOSTED` somewhere (gate-by-flag invariant)
+   - `app-sidebar.tsx`'s `<DeployTrigger>` JSX is preceded by
+     `IS_HOSTED && ` in the same expression
+   - `IS_HOSTED` defaults to `false` when `NEXT_PUBLIC_CLAWDI_HOSTED`
+     env var is unset
+   The static / file-walk approach was chosen over render tests
+   because apps/web has no jsdom setup and a single env-flag invariant
+   doesn't justify wiring it up.
 
 2. **Tunnel scope test** (`backend/tests/test_tunnel_auth.py`):
    - api_key without `tunnel:proxy` scope is rejected at session mint

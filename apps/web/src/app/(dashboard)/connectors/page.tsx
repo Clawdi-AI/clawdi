@@ -3,7 +3,7 @@
 import { AlertCircle, Check, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import Link from "next/link";
 import { createParser, parseAsString, useQueryState } from "nuqs";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -21,14 +21,15 @@ import { cn, errorMessage } from "@/lib/utils";
 // always full at every viewport — no orphan cards on the bottom.
 const PAGE_SIZE = 24;
 
-// 1-indexed page parser. Rejects 0/negative/non-numeric URL values so
-// `?page=-5` doesn't reach the slicer (which would compute a negative
-// offset and wrap around). Returning `null` from `parse` makes nuqs
+// 1-indexed page parser. Rejects non-integer / 0 / negative URL values
+// so `?page=-5` or `?page=2junk` doesn't reach the slicer. `Number()`
+// (not `parseInt`) is strict — `parseInt("2junk")` would return 2,
+// silently accepting garbage. Returning `null` from `parse` makes nuqs
 // fall back to the parser's default.
 const parseAsPositivePage = createParser({
 	parse: (raw: string) => {
-		const n = Number.parseInt(raw, 10);
-		return Number.isFinite(n) && n >= 1 ? n : null;
+		const n = Number(raw);
+		return Number.isInteger(n) && n >= 1 ? n : null;
 	},
 	serialize: (n: number) => String(n),
 });
@@ -100,6 +101,15 @@ export default function ConnectorsPage() {
 	const items = pageData?.items ?? [];
 	const total = pageData?.total ?? 0;
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+	// `?page=999` past the end shouldn't strand the user on an empty page
+	// with no way back. Once the catalog returns and we know the real
+	// `totalPages`, replace the URL with the last valid page so the grid
+	// renders something AND the pagination control remains visible.
+	useEffect(() => {
+		if (!pageData) return;
+		if (page > totalPages) void setPage(totalPages, { history: "replace" });
+	}, [pageData, page, totalPages, setPage]);
 	// Connected-first within the page, preserving Composio's upstream
 	// popularity order via stable sort.
 	const sorted = useMemo(() => {

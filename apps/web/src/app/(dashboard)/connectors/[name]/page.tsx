@@ -27,8 +27,16 @@ import { IS_HOSTED } from "@/lib/hosted";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Auth schemes whose connect flow is a redirect (OAuth family) or
-// instant ("none"); everything else needs the in-page credentials form.
-const REDIRECT_AUTH_TYPES = new Set(["oauth", "oauth1", "oauth2", "composio_link", "none"]);
+// instant (`none` / `no_auth` — Composio's SDK enum lowercases either
+// way); everything else needs the in-page credentials form.
+const REDIRECT_AUTH_TYPES = new Set([
+	"oauth",
+	"oauth1",
+	"oauth2",
+	"composio_link",
+	"none",
+	"no_auth",
+]);
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -90,37 +98,31 @@ export default function ConnectorDetailPage() {
 		};
 	}, []);
 
-	// Connect mutation: opens OAuth in a new tab. The same window.open
-	// pattern works for both sources — only difference is the URL host
-	// (cloud-api or clawdi.ai), already handled by `useConnect`. The
-	// post-connect refresh path is symmetric: on cloud-api we poll the
-	// connections list briefly because OAuth happens in a separate
-	// tab; in hosted mode the user lands back on this same page after
-	// OAuth and react-query refetches on focus, so no polling needed.
+	// Connect mutation: just makes the API call. The popup is opened
+	// synchronously in `startConnect` below before awaiting the
+	// mutation, so the browser counts the popup as a direct user
+	// gesture (Safari / Chrome popup blockers reject `window.open`
+	// fired after an `await`). After the URL resolves we redirect the
+	// already-open popup to it.
 	const connectMutation = useConnect();
-	const startConnectOAuth = useMutation({
-		mutationFn: async () => {
-			const result = await connectMutation.mutateAsync({ appName: name });
-			window.open(result.connect_url, "_blank", "noopener,noreferrer");
-			return result;
-		},
-		onSuccess: () => {
-			if (IS_HOSTED || pollCancelled.current) return;
-			let attempts = 0;
-			const poll = () => {
-				if (pollCancelled.current || attempts++ >= 12) return;
-				const id = setTimeout(() => {
-					if (pollCancelled.current) return;
-					queryClient.invalidateQueries({ queryKey: ["connections"] });
-					poll();
-				}, 5000);
-				pollTimers.current.push(id);
-			};
-			poll();
-		},
-		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
-	});
-	const connectApp = startConnectOAuth;
+	const onConnectSuccess = () => {
+		// On cloud-api the OAuth happens in a separate tab, so poll the
+		// connections list briefly so the original tab reflects the new
+		// connection without waiting for window-focus refetch. Hosted
+		// mode redirects back to this page directly, no polling needed.
+		if (IS_HOSTED || pollCancelled.current) return;
+		let attempts = 0;
+		const poll = () => {
+			if (pollCancelled.current || attempts++ >= 12) return;
+			const id = setTimeout(() => {
+				if (pollCancelled.current) return;
+				queryClient.invalidateQueries({ queryKey: ["connections"] });
+				poll();
+			}, 5000);
+			pollTimers.current.push(id);
+		};
+		poll();
+	};
 
 	const disconnectMutation = useDisconnect();
 	const disconnectApp = useMutation({
@@ -146,11 +148,32 @@ export default function ConnectorDetailPage() {
 	const startConnect = () => {
 		if (usesCredentialsForm) {
 			setCredsOpen(true);
-		} else {
-			connectApp.mutate();
+			return;
 		}
+		// Open the OAuth popup synchronously — counts as user gesture so
+		// the browser doesn't block it. Once the API call resolves with a
+		// real URL, redirect the already-open popup to it. If the API
+		// call fails or the popup was blocked despite our best efforts,
+		// the toast in onError surfaces it.
+		const popup =
+			typeof window !== "undefined"
+				? window.open("about:blank", "_blank", "noopener,noreferrer")
+				: null;
+		connectMutation.mutate(
+			{ appName: name },
+			{
+				onSuccess: (result) => {
+					if (popup && !popup.closed) popup.location.href = result.connect_url;
+					onConnectSuccess();
+				},
+				onError: (e) => {
+					popup?.close();
+					toast.error("Failed to start connection", { description: errorMessage(e) });
+				},
+			},
+		);
 	};
-	const isStarting = connectApp.isPending;
+	const isStarting = connectMutation.isPending;
 
 	if (isLoading) {
 		return (

@@ -142,9 +142,10 @@ async def connect_credentials(
 ) -> ConnectorCredentialsConnectResponse:
     """Create a connection from user-supplied API-key credentials.
 
-    Composio validates the credentials synchronously, so a successful
-    return means the connection is usable immediately — no polling
-    required, unlike the OAuth path.
+    The service polls Composio's `wait_until_active` (capped at 15s) so
+    a 200 here means the connection is ACTIVE — the frontend can render
+    it immediately without its own polling loop. Slow upstream auth
+    surfaces as 504.
     """
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
