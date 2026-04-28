@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class ConnectRequest(BaseModel):
@@ -55,9 +55,26 @@ class ConnectorAuthFieldsResponse(BaseModel):
 
 
 class ConnectorCredentialsConnectRequest(BaseModel):
-    """User-supplied credentials for an API-key style connector."""
+    """User-supplied credentials for an API-key style connector.
 
-    credentials: dict[str, str]
+    Bounds picked to fit any sane API-key form (Composio's largest
+    schema we've seen has ~6 fields; a single API key fits well under
+    8KB) while rejecting payloads that don't look like credentials at
+    all. Caps protect against accidental large-blob submissions and
+    keep error logs / Composio request bodies small.
+    """
+
+    credentials: dict[str, str] = Field(..., min_length=1, max_length=20)
+
+    @field_validator("credentials")
+    @classmethod
+    def _bounded(cls, v: dict[str, str]) -> dict[str, str]:
+        for k, val in v.items():
+            if len(k) > 64:
+                raise ValueError("Credential field name too long")
+            if len(val) > 8192:
+                raise ValueError("Credential value too long")
+        return v
 
 
 class ConnectorCredentialsConnectResponse(BaseModel):

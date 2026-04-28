@@ -160,34 +160,72 @@ def _resolve_integration(client, app_name: str):
 async def get_auth_fields(app_name: str) -> dict:
     """Return the auth scheme + expected user-provided fields for an app.
 
-    Used by the connectors UI to decide between an OAuth window and an
-    API-key form when the user clicks Connect. The fields list is
-    Composio-canonical (`name`, `displayName`, `is_secret`, etc.) — we
-    pass it straight through since the frontend already maps it to
-    HTML input attributes.
+    Read-only: previously this called `_resolve_integration`, which
+    creates a Composio integration record on first lookup as a side
+    effect of a GET endpoint. The auth schema we surface in the
+    connect form lives on the **app** (global Composio metadata), not
+    on the integration (user-specific OAuth config) — so we can read
+    it from `client.apps.get` without provisioning anything. The
+    integration is only created later when the user actually submits
+    credentials in `connect_with_credentials`.
     """
     client = get_composio_client()
 
     def _get():
-        integration = _resolve_integration(client, app_name)
+        existing = client.integrations.get(app_name=app_name)
+        if isinstance(existing, list) and existing:
+            # An integration already exists for this app — prefer its
+            # exact field list since it reflects the operator's
+            # configured scheme.
+            integration = existing[0]
+            return {
+                "auth_scheme": integration.authScheme,
+                "expected_input_fields": [
+                    _serialize_auth_field(f) for f in integration.expectedInputFields
+                ],
+            }
+        # No integration yet: read the app's primary auth scheme
+        # without creating anything. Composio apps expose
+        # `auth_schemes` listing every supported flow with their
+        # field schemas.
+        app_info = client.apps.get(name=app_name)
+        if isinstance(app_info, list):
+            app_info = app_info[0] if app_info else None
+        if not app_info:
+            raise ValueError(f"App '{app_name}' not found")
+        schemes = getattr(app_info, "auth_schemes", None) or []
+        primary = schemes[0] if schemes else None
+        if primary is None:
+            return {"auth_scheme": "", "expected_input_fields": []}
+        fields = getattr(primary, "fields", None) or []
         return {
-            "auth_scheme": integration.authScheme,
-            "expected_input_fields": [
-                {
-                    "name": f.name,
-                    "display_name": f.displayName,
-                    "description": f.description,
-                    "type": f.type,
-                    "required": f.required,
-                    "is_secret": f.is_secret,
-                    "expected_from_customer": f.expected_from_customer,
-                    "default": f.default,
-                }
-                for f in integration.expectedInputFields
-            ],
+            "auth_scheme": getattr(primary, "auth_mode", "") or getattr(primary, "name", ""),
+            "expected_input_fields": [_serialize_auth_field(f) for f in fields],
         }
 
     return await run_in_threadpool(_get)
+
+
+def _serialize_auth_field(f) -> dict:
+    """Project Composio's SDK field object onto the cloud-api schema.
+
+    Field attribute names differ slightly between IntegrationModel and
+    the App auth_schemes shape, so handle both via getattr. `default`
+    is whatever the SDK exposes; the frontend treats `None` as "leave
+    blank".
+    """
+    return {
+        "name": getattr(f, "name", ""),
+        "display_name": getattr(f, "displayName", None)
+        or getattr(f, "display_name", "")
+        or getattr(f, "name", ""),
+        "description": getattr(f, "description", "") or "",
+        "type": getattr(f, "type", "string") or "string",
+        "required": bool(getattr(f, "required", False)),
+        "is_secret": bool(getattr(f, "is_secret", False)),
+        "expected_from_customer": bool(getattr(f, "expected_from_customer", True)),
+        "default": getattr(f, "default", None),
+    }
 
 
 async def connect_with_credentials(
