@@ -22,16 +22,29 @@ import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 
-// Dynamic import gated on a build-time-constant `IS_HOSTED`. When the
-// flag is false (OSS), the conditional collapses, the `dynamic(…)`
-// call is unreachable, the bundler eliminates the `import()` site,
-// and the entire `@/hosted/hosted-agents-section.tsx` chunk — along
-// with its `clawdi-api.ts` and `use-hosted-agent-tiles.ts`
+// Dynamic imports gated on a build-time-constant `IS_HOSTED`. When
+// the flag is false (OSS), the conditional collapses, the
+// `dynamic(…)` calls are unreachable, the bundler eliminates the
+// `import()` sites, and the entire `@/hosted/hosted-agents-section`
+// chunk — along with its `clawdi-api.ts` and `use-hosted-agent-tiles`
 // dependencies — never ships in the OSS bundle.
+//
+// Two exports from the same module: `HostedAgentsSection` for the
+// left-column agent panel, and `HostedSecondaryCTA` for the
+// right-column "Connect another" CTA. Both call
+// `useHostedAgentTiles` and share its TanStack Query cache, so
+// rendering both still costs only one network request.
 const HostedAgentsSection = IS_HOSTED
 	? dynamic(() =>
 			import("@/hosted/hosted-agents-section").then((m) => ({
 				default: m.HostedAgentsSection,
+			})),
+		)
+	: null;
+const HostedSecondaryCTA = IS_HOSTED
+	? dynamic(() =>
+			import("@/hosted/hosted-agents-section").then((m) => ({
+				default: m.HostedSecondaryCTA,
 			})),
 		)
 	: null;
@@ -165,11 +178,18 @@ export default function DashboardPage() {
 					</section>
 				</div>
 
-				{/* Right column — once agents exist, "Connect another" lives here
-				    as a secondary action. Empty state hides it entirely because
-				    the hero card above is already the onboarding. */}
+				{/* Right column — once any agent exists (hosted OR self-managed),
+				    "Connect another" lives here as a secondary action. Empty
+				    state hides it entirely because the hero card above is
+				    already the onboarding. Hosted mode delegates the decision
+				    to a sibling component so it can include hosted tiles in
+				    the count. */}
 				<div className="min-w-0 space-y-4">
-					{hasAgents ? <OnboardingCard /> : null}
+					{HostedSecondaryCTA ? (
+						<HostedSecondaryCTA selfManagedCount={selfManagedCount} envsLoading={envsLoading} />
+					) : hasAgents ? (
+						<OnboardingCard />
+					) : null}
 					<ResourcesCard stats={stats} />
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>

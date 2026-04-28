@@ -62,3 +62,27 @@ export function HostedAgentsSection({
 		/>
 	);
 }
+
+/**
+ * Right-column "Connect another" CTA — only renders once we know
+ * the user has at least one agent (hosted OR self-managed). Shares
+ * the `useHostedAgentTiles` cache with `HostedAgentsSection` via
+ * TanStack Query, so it costs no extra network. Without this
+ * component the page-level `hasAgents` check would only see
+ * self-managed counts and a hosted-only user would never see the
+ * secondary CTA.
+ */
+export function HostedSecondaryCTA({
+	selfManagedCount,
+	envsLoading,
+}: {
+	selfManagedCount: number;
+	envsLoading: boolean;
+}) {
+	const hosted = useHostedAgentTiles({ enabled: true });
+	// Loading: don't flash an empty slot then pop in. Wait for both
+	// sources to settle before deciding whether to show the CTA.
+	if (envsLoading || hosted.isLoading) return null;
+	const hasAnyAgent = selfManagedCount > 0 || hosted.tiles.length > 0;
+	return hasAnyAgent ? <OnboardingCard /> : null;
+}
