@@ -184,8 +184,12 @@ async def connect_with_credentials(
 
     Composio's `initiate()` doubles as the credentials creator when
     `params` is populated — for non-OAuth schemes it stores the values
-    directly and returns an active connection rather than a redirect
-    URL. We never log `credentials` because they are user secrets.
+    and returns a `ConnectionRequestModel` whose `connectionStatus` is
+    typically `INITIATED` immediately and `ACTIVE` after Composio
+    validates the credentials. The SDK exposes `wait_until_active`
+    which polls for that transition; we cap at 15s so a slow upstream
+    auth check doesn't hang the API for 60s (the SDK default).
+    `credentials` is never logged — these are user secrets.
     """
     client = get_composio_client()
 
@@ -196,13 +200,17 @@ async def connect_with_credentials(
             entity_id=user_id,
             params=credentials,
         )
-        # `connectionStatus` may be missing on some SDK versions; default
-        # to "active" since for credential flows the connection is
-        # validated synchronously and either creates active or raises.
-        status = getattr(result, "connectionStatus", None) or "active"
+        status = (result.connectionStatus or "").upper()
+        if status != "ACTIVE":
+            # Polls Composio until status flips or timeout. Raises on
+            # timeout, which surfaces to the route as a 500 / 502 — the
+            # frontend then leaves the user on the dialog so they can
+            # retry without losing their input.
+            account = result.wait_until_active(client, timeout=15.0)
+            status = (account.status or "ACTIVE").upper()
         return {
             "id": str(result.connectedAccountId),
-            "status": status,
+            "status": status.lower(),
             "ok": True,
         }
 

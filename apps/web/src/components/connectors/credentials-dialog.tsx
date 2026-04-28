@@ -49,11 +49,16 @@ export function ConnectorCredentialsDialog({
 	const fields = useAuthFieldsForUI({ appName, enabled: open });
 	const submit = useConnectCredentialsForUI();
 	const [values, setValues] = useState<Record<string, string>>({});
+	const [submitError, setSubmitError] = useState<string | null>(null);
 
 	// Reset the form whenever the dialog closes so reopening it on a
-	// different app doesn't carry over a previous submission's input.
+	// different app doesn't carry over a previous submission's input
+	// or a stale error message.
 	useEffect(() => {
-		if (!open) setValues({});
+		if (!open) {
+			setValues({});
+			setSubmitError(null);
+		}
 	}, [open]);
 
 	const visibleFields = (fields.data?.expected_input_fields ?? []).filter(
@@ -64,12 +69,18 @@ export function ConnectorCredentialsDialog({
 		visibleFields.filter((f) => f.required).every((f) => values[f.name]?.trim());
 
 	async function handleSubmit() {
+		// Defense in depth: the button + form `disabled` props gate this
+		// path, but a fast double-click or programmatic call could still
+		// land two mutations in flight if the disabled flag hasn't yet
+		// propagated to the click handler closure. Bail explicitly.
+		if (!canSubmit || submit.isPending) return;
+		setSubmitError(null);
 		try {
 			await submit.mutateAsync({ appName, credentials: values });
 			toast.success(`${displayName} connected`);
 			onOpenChange(false);
 		} catch (e) {
-			toast.error(`Failed to connect ${displayName}`, { description: errorMessage(e) });
+			setSubmitError(errorMessage(e));
 		}
 	}
 
@@ -126,6 +137,7 @@ export function ConnectorCredentialsDialog({
 									</div>
 								);
 							})}
+							{submitError ? <p className="text-sm text-destructive">{submitError}</p> : null}
 						</form>
 					)}
 				</DialogBody>

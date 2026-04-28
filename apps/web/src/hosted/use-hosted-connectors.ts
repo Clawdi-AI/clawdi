@@ -270,10 +270,19 @@ function toCloudConnection(c: ConnectionItem): CloudShapedConnection {
 
 // Heuristic for "should this input render as a password?" — clawdi.ai's
 // `AuthFieldItem` doesn't carry a dedicated `is_secret` flag, so we
-// follow the same name-pattern check the OAuth dashboard uses (key /
-// token / secret / password). Cloud-api's response DOES carry the flag
-// so the OSS path uses it directly without this fallback.
-const SECRET_HINT = /\b(key|token|secret|password)\b/i;
+// follow the same name-pattern check the OAuth dashboard uses, plus
+// the field's declared `type === "password"`. Names are normalized
+// (lowercase + alphanumeric only) before matching so camelCase
+// (`apiKey`), snake_case (`access_token`) and kebab-case all work.
+// Cloud-api's response DOES carry the flag so the OSS path uses it
+// directly without this fallback.
+const SECRET_HINT = /(key|token|secret|password|bearer)/;
+
+function isLikelySecret(field: { name: string; type: string }): boolean {
+	if (field.type === "password") return true;
+	const normalized = field.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+	return SECRET_HINT.test(normalized);
+}
 
 function toCloudAuthField(f: {
 	name: string;
@@ -289,7 +298,7 @@ function toCloudAuthField(f: {
 		description: f.description,
 		type: f.type,
 		required: f.required,
-		is_secret: f.type === "password" || SECRET_HINT.test(f.name),
+		is_secret: isLikelySecret(f),
 		expected_from_customer: f.expected_from_customer ?? true,
 	};
 }

@@ -133,6 +133,11 @@ async def connect_credentials(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     if not body.credentials:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credentials required")
+    # Reject blank values up front. The SDK forwards them to Composio
+    # which 400s with a less helpful "field X is required" — surface
+    # the issue here so the user keeps their other inputs in the form.
+    if any(not v.strip() for v in body.credentials.values()):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential values cannot be empty")
     try:
         result = await connect_with_credentials(str(auth.user_id), app_name, body.credentials)
     except ValueError as exc:
