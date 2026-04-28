@@ -35,7 +35,19 @@ services:
         fi
         # Volume may be non-empty from a previous aborted run; clear it.
         rm -rf /repo/* /repo/.[!.]* /repo/..?* 2>/dev/null || true
-        git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
+        # Coolify v4 sets COOLIFY_CONTAINER_NAME=<svc>-<uuid>-pr-<N> for preview
+        # deploys. Detect that to fetch the PR head ref instead of the
+        # production-tracking branch.
+        PR_ID=$$(printf "%s" "$$COOLIFY_CONTAINER_NAME" | sed -nE "s/.*-pr-([0-9]+)$$/\\1/p")
+        if [ -n "$$PR_ID" ]; then
+          echo "PR-$$PR_ID detected — fetching pull request head"
+          git -C /repo init -q
+          git -C /repo remote add origin "$$REPO_URL"
+          git -C /repo fetch --depth 50 origin "refs/pull/$$PR_ID/head"
+          git -C /repo checkout FETCH_HEAD
+        else
+          git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
+        fi
       '
     restart: "no"
 
@@ -70,7 +82,7 @@ services:
       - /var/clawdi-snapshots:/snapshots:ro
       - files:/data/files
     environment:
-      DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      DATABASE_URL: postgresql://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
       SNAPSHOT_PATH: ${SNAPSHOT_PATH:-/snapshots/latest.tar.gz}
     command: ["sh", "/source/deploy/preview/restore.sh"]
     restart: "no"
@@ -88,7 +100,7 @@ services:
       - fastembed-cache:/root/.cache/fastembed
       - files:/data/files
     environment:
-      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@postgres:5432/clawdi
+      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
       ENVIRONMENT: preview
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
