@@ -153,6 +153,31 @@ export function useHostedAvailableApp({ appName, enabled }: { appName: string; e
 	};
 }
 
+/**
+ * Lookup the cloud-shaped catalog item for several names at once.
+ * Backed by the same single `HOSTED_CATALOG_KEY` query, so calling
+ * this for the user's active connections costs no extra network — it
+ * shares the same in-memory copy the list grid uses.
+ */
+export function useHostedAvailableAppsByName({
+	names,
+	enabled,
+}: {
+	names: string[];
+	enabled: boolean;
+}) {
+	const q = useHostedCatalogQuery({ enabled });
+	const data = useMemo(() => {
+		if (!q.data) return undefined;
+		const byName = new Map(q.data.map((i) => [i.name, i] as const));
+		return names.flatMap((n) => {
+			const item = byName.get(n);
+			return item ? [toAvailableAppItem(item)] : [];
+		});
+	}, [q.data, names]);
+	return { data, isLoading: q.isLoading, error: q.error };
+}
+
 export function useHostedConnectorTools({
 	appName,
 	enabled,

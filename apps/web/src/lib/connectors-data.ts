@@ -1,6 +1,13 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo } from "react";
 import {
 	type CloudShapedAuthFields,
 	type CloudShapedAvailableApp,
@@ -8,6 +15,7 @@ import {
 	useHostedAuthFields,
 	useHostedAvailableApp,
 	useHostedAvailableApps,
+	useHostedAvailableAppsByName,
 	useHostedConnectCredentialsMutation,
 	useHostedConnections,
 	useHostedConnectMutation,
@@ -195,6 +203,71 @@ export function useDisconnect() {
 	});
 	const hosted = useHostedDisconnectMutation();
 	return PICK(hosted, cloud);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Composite hooks
+//
+// Connections carry the user's identity (slug + status + account
+// label) but not the catalog metadata UI cards need (display name,
+// logo, description). `useConnectedAppCards` joins the two so the
+// list page can render a "Connected" rail that's always visible —
+// independent of which catalog page the user is on. This matters
+// because catalog ordering (clawdi.ai's `base_rank`) can place a
+// user's active app on page 30 of 1000 connectors, where the user
+// would never find it without searching.
+//
+// HOSTED: shares the single full-catalog query already cached, so
+// enrichment is in-memory, no extra network.
+// OSS: fans out to per-app `/available/{name}` queries — the active
+// connection count is small (typically <10) so this is cheap enough.
+
+export function useConnectedAppCards() {
+	const connectionsQ = useConnections();
+
+	const activeConnections = useMemo(
+		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
+		[connectionsQ.data],
+	);
+	// Stable identity: serialize names so dependent memos and queries
+	// don't re-run when only the array reference changes.
+	const names = useMemo(() => activeConnections.map((c) => c.app_name), [activeConnections]);
+
+	// HOSTED: single shared query, lookup in-memory.
+	const hostedLookup = useHostedAvailableAppsByName({
+		names,
+		enabled: IS_HOSTED && names.length > 0,
+	});
+
+	// OSS: per-app queries via `useQueries`. Always-call (rules of
+	// hooks): empty `names` short-circuits to an empty fan-out.
+	const api = useApi();
+	const ossLookup = useQueries({
+		queries: IS_HOSTED
+			? []
+			: names.map((name) => ({
+					queryKey: ["available-app", name] as const,
+					queryFn: async () =>
+						unwrap(
+							await api.GET("/api/connectors/available/{app_name}", {
+								params: { path: { app_name: name } },
+							}),
+						),
+					enabled: !IS_HOSTED,
+				})),
+	});
+
+	const ossData = useMemo(() => ossLookup.flatMap((q) => (q.data ? [q.data] : [])), [ossLookup]);
+	const ossLoading = ossLookup.some((q) => q.isLoading);
+	const ossError = ossLookup.find((q) => q.error)?.error ?? null;
+
+	const data = PICK(hostedLookup.data, ossData);
+	return {
+		activeConnections,
+		data: data ?? [],
+		isLoading: connectionsQ.isLoading || PICK(hostedLookup.isLoading, ossLoading),
+		error: connectionsQ.error ?? PICK(hostedLookup.error, ossError),
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────
