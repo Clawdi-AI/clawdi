@@ -38,15 +38,20 @@ OSS users running their own clawdi-cloud see none of this UI.
 
 ## What lives here today
 
+- `clawdi-api.ts` — Typed cross-origin client for clawdi.ai's deploy
+  API (port 50021), keyed off the user's Clerk JWT.
+- `use-hosted-agent-tiles.ts` — Lists the user's deployed agents on
+  clawdi.ai, polled while any tile is in a transient state.
 - `deploy-trigger.tsx` — Sidebar entry that opens the Deploy flow.
-  Today: external link to clawdi.ai/dashboard, gated by `IS_HOSTED`
-  so the OSS sidebar is unchanged.
 
-What's coming in later phases (not in this PR — they depend on
-Phase 4's starter-skill seeding actually being implemented):
+The connector flow used to live here too (`use-hosted-connectors.ts`)
+but was removed once cloud-api adopted Clerk-id-based Composio
+entities — both deploy modes now read connectors from the same
+`/api/connectors` route. See `docs/plans/cloud-clawdi-integration.md`
+for the migration rationale.
+
+Future additions (later phases, not yet built):
 
 - `welcome-card.tsx` — First-day onboarding card with starter skills
   preview
 - `deploy-agent-dialog.tsx` — In-app Deploy dialog
-
-See `docs/plans/cloud-clawdi-integration.md` for the full design.

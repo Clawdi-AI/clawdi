@@ -1,7 +1,21 @@
 # Plan: clawdi-cloud as a unified agent dashboard
 
-**Status:** v0.23 (round-8 source-grounded: DDL fixes, model location, Clerk webhook clarified, source-grounding status table added)
-**Updated:** 2026-04-24
+**Status:** v0.24 (round-9: connector flow unified through cloud-api; dropped IS_HOSTED proxy)
+**Updated:** 2026-04-28
+
+> **v0.24 addendum.** Earlier drafts split the connector flow: OSS
+> mode hit cloud-api at `/api/connectors/*`, hosted mode hit
+> clawdi.ai's existing backend at `/connections/*` cross-origin.
+> That bypass was a bridge so cloud.clawdi.ai could ship before
+> running its own cloud-api deployment. It's gone now. Both modes
+> talk to cloud-api; cloud-api uses the user's Clerk id (not the
+> local PG UUID) as the Composio `entity_id`, so a cloud.clawdi.ai
+> deployment configured with clawdi.ai's existing Composio API key
+> reads the same connection namespace clawdi.ai's old backend wrote.
+> The frontend hosted/ directory now contains only what's genuinely
+> hosted-exclusive: the agent-deploy listing and the sidebar Deploy
+> CTA. See commits `26492f4` (backend entity_id switch) and
+> `ff6ea65` (frontend single-source refactor).
 
 ## TL;DR
 
