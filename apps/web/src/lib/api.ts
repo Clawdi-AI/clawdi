@@ -55,3 +55,29 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 	}
 	return result.data as T;
 }
+
+/**
+ * Bearer-authenticated fetch wrapper for endpoints not in the OpenAPI schema
+ * (currently: the `/api/wiki/*` routes — added on `feat/personal-wiki` before
+ * the OpenAPI generator was rerun). Throws ApiError on non-2xx.
+ *
+ * Prefer `useApi()` + `unwrap()` for any endpoint that IS in the schema —
+ * this stays as a fallback so the wiki dashboard builds while the schema
+ * regen lands.
+ */
+export async function apiFetch<T>(path: string, token: string): Promise<T> {
+	const res = await fetch(`${API_URL}${path}`, {
+		headers: token ? { Authorization: `Bearer ${token}` } : {},
+	});
+	if (!res.ok) {
+		let detail = "";
+		try {
+			const body = await res.json();
+			detail = typeof body?.detail === "string" ? body.detail : JSON.stringify(body);
+		} catch {
+			detail = await res.text();
+		}
+		throw new ApiError(res.status, detail);
+	}
+	return (await res.json()) as T;
+}
