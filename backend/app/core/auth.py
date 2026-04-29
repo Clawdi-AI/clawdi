@@ -2,6 +2,7 @@ import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -65,6 +66,62 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     return AuthContext(user=user, api_key=api_key)
 
 
+async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
+    """Look up a Clerk user's verified primary email via the Backend API.
+
+    Returns the email only if Clerk explicitly marks it as the user's primary
+    AND its verification status is "verified". Returns None for any other
+    outcome (network failure, non-200, malformed payload, no primary marked,
+    primary unverified). This is identity-binding: callers use the result to
+    decide which existing user row to take over, so we refuse to guess.
+    """
+    url = f"https://api.clerk.com/v1/users/{clerk_user_id}"
+    # Clerk's API is fronted by Cloudflare, which serves a 403 (error 1010)
+    # for requests lacking a recognizable User-Agent — including httpx's
+    # default. Set an explicit one.
+    headers = {
+        "Authorization": f"Bearer {settings.clerk_secret_key}",
+        "User-Agent": "clawdi-backend/1.0",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            logger.warning(
+                "clerk backend api returned %s for user %s",
+                resp.status_code,
+                clerk_user_id,
+            )
+            return None
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning("clerk backend api lookup failed for %s: %s", clerk_user_id, e)
+        return None
+
+    primary_id = data.get("primary_email_address_id")
+    if not primary_id:
+        logger.warning("clerk user %s has no primary_email_address_id", clerk_user_id)
+        return None
+    for entry in data.get("email_addresses") or []:
+        if entry.get("id") != primary_id:
+            continue
+        verification = entry.get("verification") or {}
+        if verification.get("status") != "verified":
+            logger.warning(
+                "clerk primary email for %s is not verified (status=%s)",
+                clerk_user_id,
+                verification.get("status"),
+            )
+            return None
+        return entry.get("email_address")
+    logger.warning(
+        "clerk user %s primary_email_address_id %s not in email_addresses",
+        clerk_user_id,
+        primary_id,
+    )
+    return None
+
+
 async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
     if not settings.clerk_pem_public_key:
         raise HTTPException(
@@ -88,11 +145,60 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     result = await db.execute(select(User).where(User.clerk_id == clerk_id))
     user = result.scalar_one_or_none()
 
+    email = payload.get("email") or payload.get("email_address")
+
+    # Sub miss + snapshot-rebind opted in: try to attach to an existing
+    # snapshot row by verified email. We deliberately fail closed if any
+    # part of the identity proof is missing or ambiguous — a flaky Clerk
+    # API or a duplicate-email row must NOT silently fall through to
+    # auto-create, because the resulting empty row would then match this
+    # Clerk sub on every subsequent login and permanently shadow the
+    # real snapshot row.
+    if not user and settings.enable_snapshot_email_rebind:
+        if not email and settings.clerk_secret_key:
+            email = await _fetch_clerk_primary_email(clerk_id)
+        if not email:
+            logger.warning(
+                "snapshot rebind: refusing sign-in for clerk_id %s — no verified email",
+                clerk_id,
+            )
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Could not verify account identity for snapshot rebind.",
+            )
+
+        # `users.email` is not unique in the schema (production allows
+        # duplicates). Refuse to pick one if the result is ambiguous —
+        # whoever signs in first would otherwise get to choose which
+        # row they take over.
+        result = await db.execute(
+            select(User).where(User.email == email).order_by(User.created_at).limit(2)
+        )
+        candidates = list(result.scalars())
+        if len(candidates) > 1:
+            logger.error("snapshot rebind: ambiguous email match for %s (>=2 users)", email)
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Multiple accounts match this email; cannot rebind.",
+            )
+        if candidates:
+            user = candidates[0]
+            logger.info(
+                "snapshot rebind: user %s clerk_id %s -> %s (email match)",
+                user.id,
+                user.clerk_id,
+                clerk_id,
+            )
+            user.clerk_id = clerk_id
+            await db.commit()
+            await db.refresh(user)
+
     if not user:
-        # Auto-create user on first login
+        # First login (production path, or rebind enabled with no match):
+        # create a fresh user row bound to this Clerk sub.
         user = User(
             clerk_id=clerk_id,
-            email=payload.get("email") or payload.get("email_address"),
+            email=email,
             name=payload.get("name"),
         )
         db.add(user)
