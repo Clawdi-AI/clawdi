@@ -13,10 +13,13 @@ name: clawdi-preview
 # volume; api + web mount the populated volume.
 
 services:
-  # One-shot init: clone the repo at COOLIFY_BRANCH into the `source` named
-  # volume on first boot. Subsequent boots see `.git` and exit immediately —
-  # so dev edits inside the containers (`docker compose exec api git pull`)
-  # are preserved across restarts.
+  # Pre-deploy sync: hard-reset the `source` volume to the configured ref on
+  # every boot. First boot bootstraps the volume; subsequent boots fast-forward
+  # it. This is what makes a Coolify redeploy actually pick up new commits —
+  # without it the `.git` from the first deploy persists and the api / web
+  # containers run yesterday's code forever. Any in-container edits (e.g.
+  # `docker compose exec api git pull`) are clobbered on the next deploy by
+  # design — deploys must be deterministic.
   clone:
     image: alpine/git
     # alpine/git's ENTRYPOINT is `git`, so we override to run a shell.
@@ -28,25 +31,29 @@ services:
       REPO_REF: ${REPO_REF:-main}
     command: >
       sh -c '
-        if [ -d /repo/.git ]; then
-          echo "source already at $$(git -C /repo rev-parse --short HEAD) — leaving alone"
-          exit 0
-        fi
-        # Volume may be non-empty from a previous aborted run; clear it.
-        rm -rf /repo/* /repo/.[!.]* /repo/..?* 2>/dev/null || true
         # Coolify v4 sets COOLIFY_CONTAINER_NAME=<svc>-<uuid>-pr-<N> for preview
-        # deploys. Detect that to fetch the PR head ref instead of the
+        # deploys. Detect that to sync to the PR head ref instead of the
         # production-tracking branch.
         PR_ID=$$(printf "%s" "$$COOLIFY_CONTAINER_NAME" | sed -nE "s/.*-pr-([0-9]+)$$/\\1/p")
         if [ -n "$$PR_ID" ]; then
-          echo "PR-$$PR_ID detected — fetching pull request head"
-          git -C /repo init -q
-          git -C /repo remote add origin "$$REPO_URL"
-          git -C /repo fetch --depth 50 origin "refs/pull/$$PR_ID/head"
-          git -C /repo checkout FETCH_HEAD
+          REF="refs/pull/$$PR_ID/head"
+          echo "PR-$$PR_ID detected — syncing source to $$REF"
         else
-          git clone --depth 50 --branch "$$REPO_REF" "$$REPO_URL" /repo
+          REF="$$REPO_REF"
+          echo "branch deploy — syncing source to $$REF"
         fi
+
+        # Bootstrap on first boot; reuse the existing repo on subsequent boots.
+        if [ ! -d /repo/.git ]; then
+          # Volume may be non-empty from a previous aborted run; clear it.
+          rm -rf /repo/* /repo/.[!.]* /repo/..?* 2>/dev/null || true
+          git init -q /repo
+          git -C /repo remote add origin "$$REPO_URL"
+        fi
+
+        git -C /repo fetch --depth 50 origin "$$REF"
+        git -C /repo reset --hard FETCH_HEAD
+        echo "source at $$(git -C /repo rev-parse --short HEAD)"
       '
     restart: "no"
 
