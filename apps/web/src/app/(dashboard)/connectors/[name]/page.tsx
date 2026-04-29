@@ -1,21 +1,41 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Link2Off, Lock, Plug, PlugZap, Shield } from "lucide-react";
+import { AlertCircle, Check, Link2Off, Plug } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { parseAsString, useQueryStates } from "nuqs";
+import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
 import type { ConnectorTool } from "@/lib/api-schemas";
+import {
+	isActiveConnection,
+	useAvailableApp,
+	useConnect,
+	useConnections,
+	useConnectorTools,
+	useDisconnect,
+} from "@/lib/connectors-data";
 import { cn, errorMessage } from "@/lib/utils";
+
+// Auth schemes whose connect flow is a redirect (OAuth family) or
+// instant (`none` / `no_auth` — Composio's SDK enum lowercases either
+// way); everything else needs the in-page credentials form.
+const REDIRECT_AUTH_TYPES = new Set([
+	"oauth",
+	"oauth1",
+	"oauth2",
+	"composio_link",
+	"none",
+	"no_auth",
+]);
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -25,104 +45,219 @@ function formatName(raw: string): string {
 		.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Same Suspense pattern as `connectors/page.tsx`: nuqs's
+ * `useQueryStates` reads `useSearchParams` under the hood, which
+ * makes Next.js bail out of static generation. Wrapping the body
+ * keeps the page renderable in App Router static-shell mode and
+ * defers only the URL-state-dependent code to the client.
+ */
 export default function ConnectorDetailPage() {
+	return (
+		<Suspense fallback={<DetailSkeletonShell />}>
+			<ConnectorDetail />
+		</Suspense>
+	);
+}
+
+function DetailSkeletonShell() {
+	return (
+		<div className="flex flex-col gap-4 px-4 lg:px-6">
+			<DetailSkeleton />
+		</div>
+	);
+}
+
+function ConnectorDetail() {
 	const { name } = useParams<{ name: string }>();
-	const api = useApi();
-	const queryClient = useQueryClient();
 
-	// One app's metadata via the single-app endpoint — not the full
-	// paginated catalog. Detail pages shouldn't pay for 1000+ entries
-	// just to render one display name.
-	const { data: app, isLoading: isAppLoading } = useQuery({
-		queryKey: ["available-app", name],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/available/{app_name}", {
-					params: { path: { app_name: name } },
-				}),
-			),
+	// OAuth from hosted mode redirects directly back to this page (no
+	// intermediary callback route). Composio sometimes signals failure
+	// via `?error=…` and sometimes via `?status=error|failed` with no
+	// detail; treat both as failure, toast once, and clear the params
+	// via nuqs so a refresh doesn't re-toast.
+	const [oauthState, setOauthState] = useQueryStates({
+		error: parseAsString,
+		status: parseAsString,
 	});
-
-	const { data: connections, isLoading: isConnectionsLoading } = useQuery({
-		queryKey: ["connections"],
-		queryFn: async () => unwrap(await api.GET("/api/connectors")),
-	});
-
-	const { data: tools, isLoading: isToolsLoading } = useQuery({
-		queryKey: ["connector-tools", name],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/connectors/{app_name}/tools", {
-					params: { path: { app_name: name } },
-				}),
-			),
-	});
-
-	// Track OAuth polling timers + a cancelled flag. The flag covers a race
-	// where the mutation's `onSuccess` fires after this page has already
-	// unmounted — without it, the first `setTimeout` would register *after*
-	// the cleanup ran and the poll chain would escape, continuing to
-	// invalidate queries for a component no one is watching.
-	const pollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-	const pollCancelled = useRef(false);
 	useEffect(() => {
-		pollCancelled.current = false;
-		return () => {
-			pollCancelled.current = true;
-			for (const t of pollTimers.current) clearTimeout(t);
-			pollTimers.current = [];
-		};
-	}, []);
+		const failed =
+			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
+		if (!failed) return;
+		toast.error("Connection failed", {
+			description: oauthState.error || "OAuth did not complete. Try again from this page.",
+		});
+		void setOauthState({ error: null, status: null }, { history: "replace" });
+	}, [oauthState.error, oauthState.status, setOauthState]);
 
-	const connectApp = useMutation({
-		mutationFn: async () => {
-			const result = unwrap(
-				await api.POST("/api/connectors/{app_name}/connect", {
-					params: { path: { app_name: name } },
-					body: {},
-				}),
-			);
-			window.open(result.connect_url, "_blank", "noopener,noreferrer");
-		},
-		onSuccess: () => {
-			// Poll for connection status — user may take time to complete OAuth.
-			if (pollCancelled.current) return;
-			let attempts = 0;
-			const poll = () => {
-				if (pollCancelled.current || attempts++ >= 12) return;
-				const id = setTimeout(() => {
-					if (pollCancelled.current) return;
-					queryClient.invalidateQueries({ queryKey: ["connections"] });
-					poll();
-				}, 5000);
-				pollTimers.current.push(id);
-			};
-			poll();
-		},
-		onError: (e) => toast.error("Failed to start connection", { description: errorMessage(e) }),
-	});
+	// All hosted/cloud branching is encapsulated in the `connectors-data`
+	// hooks — both branches are always-called, network is gated by the
+	// `enabled` flag inside, and the returned shapes are unified.
+	const appQ = useAvailableApp(name);
+	const connectionsQ = useConnections();
+	const toolsQ = useConnectorTools(name);
+	const app = appQ.data;
+	const isAppLoading = appQ.isLoading;
+	const connections = connectionsQ.data;
+	const isConnectionsLoading = connectionsQ.isLoading;
+	const tools = toolsQ.data;
+	const isToolsLoading = toolsQ.isLoading;
 
-	const disconnectApp = useMutation({
-		mutationFn: async (connectionId: string) =>
-			unwrap(
-				await api.DELETE("/api/connectors/{connection_id}", {
-					params: { path: { connection_id: connectionId } },
-				}),
-			),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
-		onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
-	});
+	// Connect mutation: opens the OAuth popup synchronously on click
+	// (browsers count `await`-deferred `window.open` calls as
+	// programmatic and block them) and points it at the OAuth URL once
+	// the backend responds. The popup eventually lands on this same
+	// detail page via the `redirect_url` we send to Composio; React
+	// Query's window-focus refetch picks up the new ACTIVE connection
+	// when the user returns to this tab. No polling loop needed.
+	const connectMutation = useConnect();
 
-	const activeConnections = connections?.filter((c) => c.app_name === name) ?? [];
+	// Per-row disconnect single-flight guard.
+	//
+	// The render-state Set (`disconnectingIds`) drives the spinner UI.
+	// The ref (`inflightDisconnectsRef`) is the synchronous gate two
+	// rapid clicks must pass: state updates are queued and read from a
+	// stale snapshot until React commits, so back-to-back clicks both
+	// see "not pending" and would each fire `mutation.mutate`. The ref
+	// flips synchronously and rejects the second click before the
+	// mutation queues. Both are kept in lockstep so the visible spinner
+	// always matches the in-flight set.
+	const disconnectMutation = useDisconnect();
+	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
+	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
+	const handleDisconnect = (connectionId: string) => {
+		if (inflightDisconnectsRef.current.has(connectionId)) return;
+		inflightDisconnectsRef.current.add(connectionId);
+		setDisconnectingIds((s) => new Set(s).add(connectionId));
+		disconnectMutation.mutate(
+			{ connectionId },
+			{
+				onSettled: () => {
+					inflightDisconnectsRef.current.delete(connectionId);
+					setDisconnectingIds((s) => {
+						const next = new Set(s);
+						next.delete(connectionId);
+						return next;
+					});
+				},
+				onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
+			},
+		);
+	};
+	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
+
+	const activeConnections =
+		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || isConnectionsLoading;
 
 	const displayName = app?.display_name || formatName(name);
 
+	// Connectors split into redirect flows (OAuth family) and credentials
+	// flows (form-based: API_KEY, BEARER_TOKEN, BASIC, …). Composio
+	// surfaces several scheme strings that all belong to the redirect
+	// path — `oauth`, `oauth1`, `oauth2`, `composio_link` — plus
+	// `none` for instant-connect apps. Anything outside that set goes
+	// to the dialog so newer credential-style schemes default safely
+	// without code changes here.
+	//
+	// `app.auth_type` may be missing during a frontend-deployed-before-
+	// backend window (older backend without the new field). Treat
+	// undefined as "oauth2" — the safe redirect path — so the OAuth
+	// popup is the worst-case experience instead of a credentials
+	// dialog hitting an endpoint that doesn't exist yet.
+	const [credsOpen, setCredsOpen] = useState(false);
+	// `||` (not `??`): Composio occasionally returns empty string for
+	// `auth_type` and an older backend may omit the field entirely; both
+	// cases must fall through to the OAuth path. `??` would let `""`
+	// pass and route the user into a credentials dialog calling
+	// `/auth-fields` on a backend that lacks the endpoint.
+	const authType = app?.auth_type || "oauth2";
+	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(authType);
+	// Synchronous single-flight guard for the connect flow. Mirrors the
+	// disconnect ref above: `connectMutation.isPending` only flips after
+	// TanStack Query notifies subscribers (next microtask + render), so a
+	// fast double-click would queue two `window.open` calls and two
+	// mutations before React re-renders the disabled button. The ref
+	// rejects the second click synchronously.
+	const inflightConnectRef = useRef(false);
+	const startConnect = () => {
+		if (inflightConnectRef.current) return;
+		if (usesCredentialsForm) {
+			setCredsOpen(true);
+			return;
+		}
+		// Open the OAuth popup synchronously — counts as user gesture so
+		// the browser doesn't block it. We deliberately do NOT pass
+		// `noopener` here: per MDN, `window.open(..., "_blank",
+		// "noopener,...")` returns `null`, so we'd lose the handle and
+		// could never redirect the blank popup to the real OAuth URL —
+		// the user would just see a permanent about:blank page. We
+		// detach the opener reference manually right after the call,
+		// which gives us the same security posture without breaking the
+		// late-redirect pattern.
+		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
+		if (!popup) {
+			// Popup blocker rejected the open. Bail before firing the
+			// mutation so we don't leak a connection request the user
+			// can't complete — and tell them why nothing happened.
+			toast.error("Popup blocked", {
+				description: "Allow popups for this site to continue with OAuth.",
+			});
+			return;
+		}
+		try {
+			popup.opener = null;
+		} catch {
+			// Cross-origin browsers can throw on opener writes; the
+			// blank popup hasn't navigated cross-origin yet so this is
+			// safe in practice, but swallow defensively.
+		}
+		inflightConnectRef.current = true;
+		// Send our detail page URL as `redirect_url` so Composio sends the
+		// user back here after OAuth instead of its default callback.
+		// Lets us drop a polling loop — the popup eventually navigates
+		// back to our origin and React Query's window-focus refetch
+		// reflects the new ACTIVE connection.
+		const redirectUrl = window.location.href;
+		connectMutation.mutate(
+			{ appName: name, redirectUrl },
+			{
+				onSuccess: (result) => {
+					if (!popup.closed) popup.location.href = result.connect_url;
+				},
+				onError: (e) => {
+					popup.close();
+					toast.error("Failed to start connection", { description: errorMessage(e) });
+				},
+				onSettled: () => {
+					inflightConnectRef.current = false;
+				},
+			},
+		);
+	};
+	const isStarting = connectMutation.isPending;
+
 	if (isLoading) {
 		return (
 			<div className="flex flex-col gap-4 px-4 lg:px-6">
 				<DetailSkeleton />
+			</div>
+		);
+	}
+
+	// `appQ.error` covers both "connector not found" (404 from cloud-api,
+	// thrown 404 from the hosted catalog adapter) and outright network
+	// failures. Surface it so the user sees what's wrong instead of a
+	// silently-broken connect page.
+	if (appQ.error) {
+		return (
+			<div className="flex flex-col gap-4 px-4 lg:px-6">
+				<EmptyState
+					icon={Plug}
+					title="Connector unavailable"
+					description={errorMessage(appQ.error)}
+				/>
 			</div>
 		);
 	}
@@ -160,35 +295,32 @@ export default function ConnectorDetailPage() {
 						</p>
 					</div>
 					{activeConnections.length > 0 && (
-						<Button
-							variant="outline"
-							size="xs"
-							onClick={() => connectApp.mutate()}
-							disabled={connectApp.isPending}
-						>
-							{connectApp.isPending ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<Plug className="size-3.5" />
-							)}
+						<Button variant="outline" size="xs" onClick={startConnect} disabled={isStarting}>
+							{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
 							Connect
 						</Button>
 					)}
 				</div>
 
-				{activeConnections.length === 0 ? (
+				{connectionsQ.error ? (
+					// Without this, a failed connections fetch silently renders
+					// the "No connected accounts yet" empty state — the user
+					// would think they have nothing connected when really we
+					// just couldn't load the list.
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Failed to load connections</AlertTitle>
+						<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
+					</Alert>
+				) : activeConnections.length === 0 ? (
 					<EmptyState
 						fillHeight={false}
 						bordered
 						description="No connected accounts yet."
 						action={
-							<Button onClick={() => connectApp.mutate()} disabled={connectApp.isPending}>
-								{connectApp.isPending ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<Plug className="size-3.5" />
-								)}
-								{connectApp.isPending ? "Connecting..." : "Connect"}
+							<Button onClick={startConnect} disabled={isStarting}>
+								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+								{isStarting ? "Connecting..." : "Connect"}
 							</Button>
 						}
 					/>
@@ -200,7 +332,14 @@ export default function ConnectorDetailPage() {
 								className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
 							>
 								<div className="min-w-0">
-									<p className="truncate text-sm font-medium">{c.app_name}</p>
+									{/* Identity first — `account_display` (e.g. the user's Gmail
+									    address) is the only thing that tells two same-app rows
+									    apart. Falls back to a shortened connection id so OSS
+									    users (whose backend doesn't surface account_display
+									    yet) still see something distinct per row. */}
+									<p className="truncate text-sm font-medium">
+										{c.account_display || `Account ${c.id.slice(-6)}`}
+									</p>
 									<p className="mt-0.5 text-xs text-muted-foreground">
 										{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
 									</p>
@@ -208,11 +347,11 @@ export default function ConnectorDetailPage() {
 								<Button
 									variant="ghost"
 									size="xs"
-									onClick={() => disconnectApp.mutate(c.id)}
-									disabled={disconnectApp.isPending}
+									onClick={() => handleDisconnect(c.id)}
+									disabled={isDisconnecting(c.id)}
 									className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 								>
-									{disconnectApp.isPending ? (
+									{isDisconnecting(c.id) ? (
 										<Spinner className="size-3.5" />
 									) : (
 										<Link2Off className="size-3.5" />
@@ -225,57 +364,15 @@ export default function ConnectorDetailPage() {
 				)}
 			</section>
 
-			{/* Info Sections — matches clawdi ConnectorInfoSections */}
-			<div className="flex flex-col gap-4">
-				{/* Setup Steps */}
-				<Card>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<PlugZap className="size-4" />
-							Setup Steps
-						</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<ol className="flex flex-col gap-2">
-							{[
-								"Click Connect to authorize access",
-								"Complete authentication in the popup window",
-								"Return here to verify connection",
-							].map((step, i) => (
-								<li key={step} className="flex items-center gap-3">
-									<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-										{i + 1}
-									</span>
-									<span className="text-sm">{step}</span>
-								</li>
-							))}
-						</ol>
-					</CardContent>
-				</Card>
-
-				{/* Permissions */}
-				<Card>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<Shield className="size-4" />
-							Permissions
-						</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<ul className="flex flex-col gap-2">
-							{["Read data from your account", "Perform actions on your behalf"].map((perm) => (
-								<li key={perm} className="flex items-center gap-2 text-sm">
-									<Lock className="size-3 text-muted-foreground" />
-									{perm}
-								</li>
-							))}
-						</ul>
-					</CardContent>
-				</Card>
-			</div>
-
 			{/* Tools — matches clawdi ConnectorToolsList */}
-			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} />
+			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} error={toolsQ.error} />
+
+			<ConnectorCredentialsDialog
+				open={credsOpen}
+				onOpenChange={setCredsOpen}
+				appName={name}
+				displayName={displayName}
+			/>
 		</div>
 	);
 }
@@ -303,17 +400,6 @@ function DetailSkeleton() {
 					<Skeleton className="mx-auto h-9 w-28 rounded-lg" />
 				</div>
 			</div>
-			{/* Info sections */}
-			<Card>
-				<CardContent className="space-y-3">
-					<Skeleton className="h-3.5 w-24" />
-					<div className="space-y-2">
-						<Skeleton className="h-4 w-56" />
-						<Skeleton className="h-4 w-64" />
-						<Skeleton className="h-4 w-48" />
-					</div>
-				</CardContent>
-			</Card>
 			{/* Tools */}
 			<div className="space-y-3">
 				<Skeleton className="h-3.5 w-32" />
@@ -330,7 +416,15 @@ function DetailSkeleton() {
 	);
 }
 
-function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLoading: boolean }) {
+function ConnectorToolsList({
+	tools,
+	isLoading,
+	error,
+}: {
+	tools: ConnectorTool[];
+	isLoading: boolean;
+	error: Error | null;
+}) {
 	const [search, setSearch] = useState("");
 	const deferredSearch = useDeferredValue(search);
 
@@ -351,6 +445,23 @@ function ConnectorToolsList({ tools, isLoading }: { tools: ConnectorTool[]; isLo
 				<div className="flex items-center justify-center py-6">
 					<Spinner className="size-5 text-muted-foreground" />
 				</div>
+			</section>
+		);
+	}
+
+	// Surface tool-fetch failures explicitly so a transient backend hiccup
+	// doesn't masquerade as "this connector has no tools".
+	if (error) {
+		return (
+			<section>
+				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					Available Tools
+				</h2>
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to load tools</AlertTitle>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
+				</Alert>
 			</section>
 		);
 	}

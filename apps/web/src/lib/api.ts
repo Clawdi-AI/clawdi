@@ -4,8 +4,9 @@ import { extractApiDetail, type paths } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { env } from "@/lib/env";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_URL = env.NEXT_PUBLIC_API_URL;
 
 export class ApiError extends Error {
 	constructor(

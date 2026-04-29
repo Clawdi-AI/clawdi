@@ -1,0 +1,7 @@
+[test]
+# Make `bun test` run with the env vars validated by `lib/env.ts`. The
+# Clerk key is required by the schema but unused inside oss-clean
+# checks, so a placeholder string is enough — we just need the schema
+# to pass validation so transforms run (e.g. NEXT_PUBLIC_CLAWDI_HOSTED
+# becomes a real boolean instead of staying a raw string).
+preload = ["./test-setup.ts"]

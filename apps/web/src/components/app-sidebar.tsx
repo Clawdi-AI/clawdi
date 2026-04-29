@@ -8,7 +8,6 @@ import {
 	ChevronsUpDown,
 	CircleHelp,
 	CirclePlus,
-	ExternalLink,
 	Key,
 	LayoutDashboard,
 	LogOut,
@@ -17,12 +16,12 @@ import {
 	Monitor,
 	Moon,
 	Plug,
-	Rocket,
 	Search,
 	Settings,
 	Sparkles,
 	Sun,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -58,6 +57,15 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
+import { IS_HOSTED } from "@/lib/hosted";
+
+// Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
+// builds collapse the conditional, the bundler eliminates the
+// import() site, and the hosted DeployTrigger chunk (which carries
+// the `https://www.clawdi.ai/dashboard` URL constant) never ships.
+const DeployTrigger = IS_HOSTED
+	? dynamic(() => import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })))
+	: null;
 
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
@@ -152,23 +160,9 @@ export function AppSidebar() {
 										</KbdGroup>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
-								<SidebarMenuItem>
-									{/* Cross-product link: this app manages already-deployed
-									    agents; clawdi.ai's dashboard is where users spin up
-									    a brand-new one. External link, new tab, with the
-									    arrow icon so the destination isn't a surprise. */}
-									<SidebarMenuButton asChild tooltip="Deploy a new agent">
-										<a
-											href="https://www.clawdi.ai/dashboard"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<Rocket />
-											<span>Deploy a new agent</span>
-											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-										</a>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
+								{/* `DeployTrigger` is `null` in OSS builds — the dynamic import is
+								    only constructed when `IS_HOSTED` is true (see top of file). */}
+								{DeployTrigger ? <DeployTrigger /> : null}
 								<SidebarMenuItem>
 									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
 										<Settings />

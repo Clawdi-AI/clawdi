@@ -673,8 +673,63 @@ export interface paths {
 		/**
 		 * Connect App
 		 * @description Generate OAuth connect link for an app.
+		 *
+		 *     Forwards `body.redirect_url` to Composio so the OAuth provider
+		 *     sends the user back to the caller's chosen landing page (e.g.
+		 *     the connector detail page on the frontend). If omitted, Composio
+		 *     falls back to its own managed callback.
 		 */
 		post: operations["connect_app_api_connectors__app_name__connect_post"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/connectors/{app_name}/auth-fields": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * Auth Fields
+		 * @description Return the auth scheme + credential fields for non-OAuth apps.
+		 *
+		 *     Used by the Connect dialog to render the right form (input names,
+		 *     secret vs. plaintext, required markers). The frontend only opens
+		 *     this dialog when the connector's `auth_type` is API-key style;
+		 *     OAuth apps short-circuit to `window.open(connect_url)` instead.
+		 */
+		get: operations["auth_fields_api_connectors__app_name__auth_fields_get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/connectors/{app_name}/connect-credentials": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/**
+		 * Connect Credentials
+		 * @description Create a connection from user-supplied API-key credentials.
+		 *
+		 *     The service polls Composio's `wait_until_active` (capped at 15s) so
+		 *     a 200 here means the connection is ACTIVE — the frontend can render
+		 *     it immediately without its own polling loop. Slow upstream auth
+		 *     surfaces as 504.
+		 */
+		post: operations["connect_credentials_api_connectors__app_name__connect_credentials_post"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -895,10 +950,68 @@ export interface components {
 			/** Content Hash */
 			content_hash?: string | null;
 		};
-		/** ConnectRequest */
+		/**
+		 * ConnectRequest
+		 * @description OAuth connect-link request body.
+		 *
+		 *     `redirect_url` is the absolute URL Composio redirects the user
+		 *     back to after the OAuth flow completes. The frontend supplies
+		 *     its own connector detail page (e.g.
+		 *     `https://cloud.example.com/connectors/gmail`); when omitted,
+		 *     Composio uses its own managed callback. Bound the URL length so
+		 *     we can't be talked into routing OAuth through an attacker-
+		 *     controlled multi-megabyte redirect.
+		 */
 		ConnectRequest: {
 			/** Redirect Url */
 			redirect_url?: string | null;
+		};
+		/**
+		 * ConnectorAuthFieldResponse
+		 * @description One input expected from the user when connecting via API key.
+		 */
+		ConnectorAuthFieldResponse: {
+			/** Name */
+			name: string;
+			/** Display Name */
+			display_name: string;
+			/**
+			 * Description
+			 * @default
+			 */
+			description: string;
+			/**
+			 * Type
+			 * @default string
+			 */
+			type: string;
+			/**
+			 * Required
+			 * @default true
+			 */
+			required: boolean;
+			/**
+			 * Is Secret
+			 * @default false
+			 */
+			is_secret: boolean;
+			/**
+			 * Expected From Customer
+			 * @default true
+			 */
+			expected_from_customer: boolean;
+			/** Default */
+			default?: string | null;
+		};
+		/**
+		 * ConnectorAuthFieldsResponse
+		 * @description Schema describing how the user should authenticate this connector.
+		 */
+		ConnectorAuthFieldsResponse: {
+			/** Auth Scheme */
+			auth_scheme: string;
+			/** Expected Input Fields */
+			expected_input_fields: components["schemas"]["ConnectorAuthFieldResponse"][];
 		};
 		/** ConnectorAvailableAppResponse */
 		ConnectorAvailableAppResponse: {
@@ -910,6 +1023,11 @@ export interface components {
 			logo: string;
 			/** Description */
 			description: string;
+			/**
+			 * Auth Type
+			 * @default oauth2
+			 */
+			auth_type: string;
 		};
 		/** ConnectorConnectResponse */
 		ConnectorConnectResponse: {
@@ -928,6 +1046,33 @@ export interface components {
 			status: string;
 			/** Created At */
 			created_at: string;
+			/** Account Display */
+			account_display?: string | null;
+		};
+		/**
+		 * ConnectorCredentialsConnectRequest
+		 * @description User-supplied credentials for an API-key style connector.
+		 *
+		 *     Bounds picked to fit any sane API-key form (Composio's largest
+		 *     schema we've seen has ~6 fields; a single API key fits well under
+		 *     8KB) while rejecting payloads that don't look like credentials at
+		 *     all. Caps protect against accidental large-blob submissions and
+		 *     keep error logs / Composio request bodies small.
+		 */
+		ConnectorCredentialsConnectRequest: {
+			/** Credentials */
+			credentials: {
+				[key: string]: string;
+			};
+		};
+		/** ConnectorCredentialsConnectResponse */
+		ConnectorCredentialsConnectResponse: {
+			/** Id */
+			id: string;
+			/** Status */
+			status: string;
+			/** Ok */
+			ok: boolean;
 		};
 		/** ConnectorDisconnectResponse */
 		ConnectorDisconnectResponse: {
@@ -3077,6 +3222,72 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["ConnectorConnectResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	auth_fields_api_connectors__app_name__auth_fields_get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				app_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ConnectorAuthFieldsResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	connect_credentials_api_connectors__app_name__connect_credentials_post: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				app_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["ConnectorCredentialsConnectRequest"];
+			};
+		};
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ConnectorCredentialsConnectResponse"];
 				};
 			};
 			/** @description Validation Error */

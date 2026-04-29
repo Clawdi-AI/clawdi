@@ -61,16 +61,20 @@ export function ResourcesCard({ stats }: { stats: DashboardStats | undefined }) 
 				<div className="divide-y">
 					{stats
 						? buildResources(stats).map((r) => <ResourceRow key={r.href} resource={r} />)
-						: Array.from({ length: 4 }).map((_, i) => (
-								<div key={i} className="flex items-center gap-3 px-6 py-3">
-									<Skeleton className="size-4" />
-									<Skeleton className="h-4 flex-1" />
-									<Skeleton className="h-4 w-8" />
-								</div>
-							))}
+						: Array.from({ length: 4 }).map((_, i) => <ResourceRowSkeleton key={i} />)}
 				</div>
 			</CardContent>
 		</Card>
+	);
+}
+
+function ResourceRowSkeleton() {
+	return (
+		<div className="flex items-center gap-3 px-6 py-3">
+			<Skeleton className="size-4" />
+			<Skeleton className="h-4 flex-1" />
+			<Skeleton className="h-4 w-8" />
+		</div>
 	);
 }
 
