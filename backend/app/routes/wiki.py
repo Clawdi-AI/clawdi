@@ -118,6 +118,11 @@ async def list_pages(
     stale: bool | None = Query(
         default=None, description="Filter by stale flag. Omit to include both."
     ),
+    q: str | None = Query(
+        default=None,
+        description="Full-text search over title + slug + compiled_truth. "
+        "When set, results are ordered by relevance (overrides sort).",
+    ),
     sort: Literal["updated_at", "title", "source_count"] = Query(default="updated_at"),
     order: Literal["asc", "desc"] = Query(default="desc"),
     page: int = Query(default=1, ge=1),
@@ -126,13 +131,81 @@ async def list_pages(
     """List wiki pages for the current user, paginated.
 
     Default ordering shows most-recently-updated first, matching dashboard
-    expectations for an "activity" view.
+    expectations for an "activity" view. When `q` is provided, results are
+    ranked by simple ILIKE relevance (title hits weighted higher than
+    compiled_truth hits).
     """
     base_filters = [WikiPage.user_id == auth.user_id]
     if kind is not None:
         base_filters.append(WikiPage.kind == kind)
     if stale is not None:
         base_filters.append(WikiPage.stale == stale)
+
+    if q:
+        # Simple ranked search: ILIKE pattern across title / slug / compiled_truth.
+        # Title + slug matches outrank compiled_truth matches because page-as-
+        # entity-name lookups are the dominant agent query pattern. ts_rank
+        # over a generated tsvector would be cleaner but requires a migration;
+        # this works against existing pages immediately.
+        from sqlalchemy import case, or_
+
+        pattern = f"%{q}%"
+        title_score = case(
+            (WikiPage.title.ilike(pattern), 1.0),
+            else_=0.0,
+        )
+        slug_score = case(
+            (WikiPage.slug.ilike(pattern), 0.7),
+            else_=0.0,
+        )
+        body_score = case(
+            (WikiPage.compiled_truth.ilike(pattern), 0.3),
+            else_=0.0,
+        )
+        relevance = (title_score + slug_score + body_score).label("relevance")
+
+        base_filters.append(
+            or_(
+                WikiPage.title.ilike(pattern),
+                WikiPage.slug.ilike(pattern),
+                WikiPage.compiled_truth.ilike(pattern),
+            )
+        )
+
+        total = (await db.scalar(select(func.count(WikiPage.id)).where(*base_filters))) or 0
+        rows = (
+            (
+                await db.execute(
+                    select(WikiPage)
+                    .where(*base_filters)
+                    .order_by(relevance.desc(), WikiPage.source_count.desc())
+                    .limit(page_size)
+                    .offset((page - 1) * page_size)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        return PageList(
+            items=[
+                WikiPageSummary(
+                    id=p.id,
+                    slug=p.slug,
+                    title=p.title,
+                    kind=p.kind,
+                    source_count=p.source_count,
+                    stale=p.stale,
+                    last_synthesis_at=p.last_synthesis_at,
+                    created_at=p.created_at,
+                    updated_at=p.updated_at,
+                )
+                for p in rows
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     sort_col = {
         "updated_at": WikiPage.updated_at,
@@ -306,10 +379,46 @@ async def refresh_wiki(
     """
     out = RefreshResponse()
     if body.extract:
-        out.extraction = await extract_for_user(db, auth.user_id)
+        # Prefer LLM-driven extraction when configured. The heuristic
+        # extractor produces too many noise pages (common-word slugs)
+        # and is kept only for environments without an LLM.
+        from app.core.config import settings as _settings
+
+        if _settings.llm_api_key:
+            from app.services.wiki_llm_extraction import llm_extract_for_user
+
+            out.extraction = await llm_extract_for_user(db, auth.user_id)
+        else:
+            out.extraction = await extract_for_user(db, auth.user_id)
     if body.synthesize:
         out.synthesis = await synthesize_for_user(db, auth.user_id, force=body.force_synthesis)
     return out
+
+
+@router.post("/wipe")
+async def wipe_wiki(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete every wiki page, link, and log entry for this user.
+
+    Used to clear out a heuristic-extractor's noise pages before re-running
+    extraction with the LLM-driven path. CASCADE on the FKs takes care of
+    links + log entries when wiki_pages rows are deleted.
+    """
+    from sqlalchemy import delete as sql_delete
+
+    log_count = await db.scalar(
+        select(func.count(WikiLogEntry.id)).where(WikiLogEntry.user_id == auth.user_id)
+    )
+    page_count = await db.scalar(
+        select(func.count(WikiPage.id)).where(WikiPage.user_id == auth.user_id)
+    )
+    await db.execute(sql_delete(WikiLogEntry).where(WikiLogEntry.user_id == auth.user_id))
+    await db.execute(sql_delete(WikiLink).where(WikiLink.user_id == auth.user_id))
+    await db.execute(sql_delete(WikiPage).where(WikiPage.user_id == auth.user_id))
+    await db.commit()
+    return {"deleted_pages": page_count or 0, "deleted_log_entries": log_count or 0}
 
 
 @router.get("/log", response_model=LogList)
