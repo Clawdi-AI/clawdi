@@ -28,12 +28,16 @@ services:
       - source:/repo
     environment:
       REPO_URL: ${REPO_URL}
-      REPO_REF: ${REPO_REF:-main}
+      # COOLIFY_BRANCH is auto-injected by Coolify v4 with the value from the
+      # application's Git Source → Branch field. Falling back to REPO_REF (a
+      # legacy preview env var) and then `main` keeps this compose runnable
+      # outside Coolify.
+      REPO_REF: ${COOLIFY_BRANCH:-${REPO_REF:-main}}
     command: >
       sh -c '
         # Coolify v4 sets COOLIFY_CONTAINER_NAME=<svc>-<uuid>-pr-<N> for preview
         # deploys. Detect that to sync to the PR head ref instead of the
-        # production-tracking branch.
+        # branch ref.
         PR_ID=$$(printf "%s" "$$COOLIFY_CONTAINER_NAME" | sed -nE "s/.*-pr-([0-9]+)$$/\\1/p")
         if [ -n "$$PR_ID" ]; then
           REF="refs/pull/$$PR_ID/head"
