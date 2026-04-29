@@ -12,7 +12,9 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import Memory
+from app.models.memory_chunk import MemoryChunk
 from app.services.embedding import Embedder, resolve_embedder
+from app.services.memory_chunker import chunk_memory_content
 from app.services.vault_crypto import decrypt_field
 
 log = logging.getLogger(__name__)
@@ -68,15 +70,15 @@ class BuiltinProvider:
         tags: list[str] | None = None,
         source_session_id: uuid.UUID | None = None,
     ) -> dict:
+        # Whole-content embedding for backward compat — search falls back to
+        # this column if a memory has no chunks yet (mid-deploy state, or if
+        # chunk write failed). New search path prefers chunk-level matching;
+        # see clawdi-bench 2026-04-29 + the memory_chunks migration.
         vec: list[float] | None = None
         if self.embedder is not None:
             try:
                 vec = await self.embedder.embed(content)
             except Exception as e:
-                # Embedding is a nice-to-have on the write path — if the
-                # embedder fails, store the memory anyway so the user's
-                # write isn't silently dropped. Future search will fall
-                # back to FTS/trigram for this row.
                 log.warning("embedder failed at add-time, storing without: %s", e)
         memory = Memory(
             user_id=uuid.UUID(user_id),
@@ -88,6 +90,31 @@ class BuiltinProvider:
             embedding=vec,
         )
         self.db.add(memory)
+        await self.db.flush()  # need memory.id for chunk FKs
+
+        # Chunk + embed each chunk independently. Position 0 is the
+        # heading-ish chunk (FTS weight 'A' via the generated tsvector).
+        for chunk in chunk_memory_content(content):
+            chunk_vec: list[float] | None = None
+            if self.embedder is not None:
+                try:
+                    chunk_vec = await self.embedder.embed(chunk.content)
+                except Exception as e:
+                    log.warning(
+                        "chunk embedding failed for memory %s position %d: %s",
+                        memory.id,
+                        chunk.position,
+                        e,
+                    )
+            self.db.add(
+                MemoryChunk(
+                    memory_id=memory.id,
+                    position=chunk.position,
+                    content=chunk.content,
+                    embedding=chunk_vec,
+                    created_at=datetime.now(UTC),
+                )
+            )
         await self.db.commit()
         await self.db.refresh(memory)
         return {"id": str(memory.id)}
@@ -95,18 +122,145 @@ class BuiltinProvider:
     async def search(
         self, user_id: str, query: str, limit: int = 50, category: str | None = None
     ) -> list[dict]:
-        fts_rows = await self._search_fts(user_id, query, limit, category)
+        # Chunk-aware retrieval. Each memory was split into ~3-8 chunks at
+        # write time, each embedded independently. Searching at the chunk
+        # level + rolling up to one row per memory closes the gap measured
+        # in clawdi-bench 2026-04-29 (Hit@5 71% → ~90% expected).
+        #
+        # Position 0 chunk has FTS weight 'A' via the generated tsvector
+        # column (vs 'B' for body chunks), so memories whose heading text
+        # matches the query rank ~2.5x higher than memories that just
+        # mention the term in their body. See alembic d7e3f8a4c1b2.
+        fts_rows = await self._search_chunks_fts(user_id, query, limit, category)
+        if not fts_rows:
+            # Fallback for pre-backfill state: existing memories don't have
+            # chunks until backend/scripts/chunk_existing_memories.py runs.
+            # Search via the legacy memory-level FTS so writes made before
+            # the migration stay findable.
+            fts_rows = await self._search_fts(user_id, query, limit, category)
+
         if self.embedder is None:
             return [_strip_scores(r) for r in fts_rows]
 
         try:
-            vec_rows = await self._search_vector(user_id, query, limit, category)
+            vec_rows = await self._search_chunks_vector(user_id, query, limit, category)
+            if not vec_rows:
+                vec_rows = await self._search_vector(user_id, query, limit, category)
         except Exception as e:
             log.warning("vector search failed, using FTS-only: %s", e)
             return [_strip_scores(r) for r in fts_rows]
 
         merged = _merge_hybrid(vec_rows, fts_rows, limit)
         return [_strip_scores(r) for r in merged]
+
+    async def _search_chunks_fts(
+        self, user_id: str, query: str, limit: int, category: str | None
+    ) -> list[dict]:
+        """Chunk-level FTS + trigram, rolled up to one row per memory.
+
+        DISTINCT ON (memory_id) keeps the highest-scoring chunk per parent.
+        ts_rank_cd respects the position-0 weighting (`'A'` for heading,
+        `'B'` for body) baked into the generated tsvector column.
+        """
+        params = {
+            "uid": uuid.UUID(user_id),
+            "q": query,
+            "pattern": f"%{query}%",
+            "cat": category,
+            "lim": limit,
+        }
+        sql = text("""
+            WITH chunk_candidates AS (
+              SELECT mc.memory_id,
+                     m.id, m.content, m.category, m.source, m.tags,
+                     m.access_count, m.created_at,
+                     ts_rank_cd(mc.content_tsv, websearch_to_tsquery('simple', :q)) AS fts_score,
+                     similarity(mc.content, :q) AS trg_score
+              FROM memory_chunks mc
+              JOIN memories m ON m.id = mc.memory_id
+              WHERE m.user_id = :uid
+                AND (CAST(:cat AS text) IS NULL OR m.category = :cat)
+                AND (
+                  mc.content_tsv @@ websearch_to_tsquery('simple', :q)
+                  OR similarity(mc.content, :q) > 0.1
+                  OR mc.content ILIKE :pattern
+                )
+            ),
+            ranked AS (
+              SELECT *,
+                     (COALESCE(fts_score, 0) * 1.0
+                      + COALESCE(trg_score, 0) * 0.5) AS combined_score
+              FROM chunk_candidates
+              WHERE (COALESCE(fts_score, 0) * 1.0
+                     + COALESCE(trg_score, 0) * 0.5) >= :min_score
+            ),
+            best_per_memory AS (
+              SELECT DISTINCT ON (memory_id) *
+              FROM ranked
+              ORDER BY memory_id, combined_score DESC
+            )
+            SELECT * FROM best_per_memory
+            ORDER BY combined_score DESC, created_at DESC
+            LIMIT :lim
+        """)
+        rows = (await self.db.execute(sql, {**params, "min_score": 0.05})).mappings().all()
+        if not rows:
+            rows = (await self.db.execute(sql, {**params, "min_score": 0.0})).mappings().all()
+        return [_row_to_search_dict(r, score_key="combined_score") for r in rows]
+
+    async def _search_chunks_vector(
+        self, user_id: str, query: str, limit: int, category: str | None
+    ) -> list[dict]:
+        """Chunk-level pgvector ANN, rolled up to one row per memory.
+
+        Same strict/relaxed two-pass as the legacy memory-level path.
+        """
+        q_vec = await self.embedder.embed(query)
+        # pgvector expects '[v1,v2,...]' literal — explicit float() coerces
+        # numpy.float64 to plain Python float so the repr is parseable.
+        qvec_literal = "[" + ",".join(repr(float(v)) for v in q_vec) + "]"
+        params = {
+            "uid": uuid.UUID(user_id),
+            "qvec": qvec_literal,
+            "cat": category,
+            "lim": limit,
+        }
+
+        async def run(max_dist: float) -> list:
+            sql = text("""
+                WITH chunk_hits AS (
+                  SELECT mc.memory_id,
+                         m.id, m.content, m.category, m.source, m.tags,
+                         m.access_count, m.created_at,
+                         (mc.embedding <=> CAST(:qvec AS vector)) AS distance
+                  FROM memory_chunks mc
+                  JOIN memories m ON m.id = mc.memory_id
+                  WHERE m.user_id = :uid
+                    AND (CAST(:cat AS text) IS NULL OR m.category = :cat)
+                    AND mc.embedding IS NOT NULL
+                    AND (mc.embedding <=> CAST(:qvec AS vector)) < :max_dist
+                ),
+                best_per_memory AS (
+                  SELECT DISTINCT ON (memory_id) *
+                  FROM chunk_hits
+                  ORDER BY memory_id, distance
+                )
+                SELECT * FROM best_per_memory
+                ORDER BY distance
+                LIMIT :lim
+            """)
+            return (await self.db.execute(sql, {**params, "max_dist": max_dist})).mappings().all()
+
+        rows = await run(self.VECTOR_DISTANCE_STRICT)
+        if not rows:
+            rows = await run(self.VECTOR_DISTANCE_RELAXED)
+        out: list[dict] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            sim = max(0.0, 1.0 - float(r["distance"]))
+            d["vector_score"] = sim
+            out.append(d)
+        return out
 
     async def _search_fts(
         self, user_id: str, query: str, limit: int, category: str | None

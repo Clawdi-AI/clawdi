@@ -10,6 +10,7 @@ from app.models import (  # noqa: F401 - register models
     api_key,
     device_authorization,
     memory,
+    memory_chunk,
     session,
     skill,
     user,
