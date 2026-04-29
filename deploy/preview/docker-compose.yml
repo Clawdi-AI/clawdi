@@ -110,6 +110,14 @@ services:
       # production tracker's value, not the PR-specific one.)
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@example.com}
       CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY}
+      # Snapshot-rebind: opt-in path that reattaches a sign-in to an
+      # existing snapshot user row by verified email when the JWT's
+      # Clerk sub doesn't match (necessary because the preview's Clerk
+      # instance is distinct from the one that issued the snapshot).
+      # CLERK_SECRET_KEY is only consulted by this path and only when
+      # the JWT itself lacks an email claim.
+      ENABLE_SNAPSHOT_EMAIL_REBIND: "true"
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}

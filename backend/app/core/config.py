@@ -19,6 +19,19 @@ class Settings(BaseSettings):
             return ""
         return v
 
+    @field_validator("clerk_secret_key", "clerk_pem_public_key", mode="before")
+    @classmethod
+    def _strip_wrapping_quotes(cls, v: object) -> object:
+        # Coolify's UI sometimes round-trips secret values with literal
+        # surrounding quotes (e.g. `'sk_test_...'`). When that env reaches us
+        # raw, the quotes end up baked into the Authorization header / JWT
+        # public key and Clerk rejects the request with a confusing 401 or
+        # signature-verification error. Strip a single matched pair on load
+        # so downstream code never has to think about it.
+        if isinstance(v, str) and len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            return v[1:-1]
+        return v
+
     app_name: str = "clawdi"
     environment: str = "development"  # development | staging | production
     debug: bool = False
@@ -44,6 +57,25 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.0
 
     clerk_pem_public_key: str = ""
+    # Optional: Clerk Backend API secret. Used by the snapshot-email-rebind
+    # path to fetch a user's verified primary email when the session token
+    # doesn't carry an `email` claim. Only consulted when
+    # `enable_snapshot_email_rebind` is true.
+    clerk_secret_key: str = ""
+
+    # Opt-in for the email-rebind authentication path. When true, an
+    # incoming Clerk JWT whose `sub` doesn't match any existing user is
+    # rebound onto an existing row by exact email match (using the JWT's
+    # email claim, or falling back to a Clerk Backend API lookup if
+    # `clerk_secret_key` is set). Designed for preview deployments fed
+    # from a production snapshot whose users were issued by a different
+    # Clerk instance — sign-in needs to reattach to the snapshot row.
+    #
+    # Must NEVER be true in production: the rebind treats email as an
+    # identity claim, which is only safe when (a) the rebind is gated to
+    # snapshot data the operator already trusts, and (b) account takeover
+    # is bounded by that snapshot's contents.
+    enable_snapshot_email_rebind: bool = False
 
     vault_encryption_key: str = ""
     encryption_key: str = ""  # For JWT signing (MCP proxy tokens)
