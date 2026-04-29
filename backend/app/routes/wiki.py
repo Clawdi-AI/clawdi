@@ -142,35 +142,80 @@ async def list_pages(
         base_filters.append(WikiPage.stale == stale)
 
     if q:
-        # Simple ranked search: ILIKE pattern across title / slug / compiled_truth.
-        # Title + slug matches outrank compiled_truth matches because page-as-
-        # entity-name lookups are the dominant agent query pattern. ts_rank
-        # over a generated tsvector would be cleaner but requires a migration;
-        # this works against existing pages immediately.
+        # Tokenized ranked search: split q into words and OR-match each word
+        # against title / slug / compiled_truth. Sum the per-word scores so
+        # pages that match more query words rank higher. Title hits weighted
+        # 1.0, slug 0.7, body 0.3 (entity-name lookup is the dominant agent
+        # query pattern). ts_rank over a generated tsvector would be cleaner
+        # but requires a migration; this works against existing pages
+        # immediately and handles "Twilio account SID" correctly.
+        import re as _re
+
         from sqlalchemy import case, or_
 
-        pattern = f"%{q}%"
-        title_score = case(
-            (WikiPage.title.ilike(pattern), 1.0),
-            else_=0.0,
-        )
-        slug_score = case(
-            (WikiPage.slug.ilike(pattern), 0.7),
-            else_=0.0,
-        )
-        body_score = case(
-            (WikiPage.compiled_truth.ilike(pattern), 0.3),
-            else_=0.0,
-        )
-        relevance = (title_score + slug_score + body_score).label("relevance")
+        # Tokenize: drop common stopwords + tokens shorter than 3 chars so
+        # noise like "the / what / is / a" doesnt match every page.
+        stopwords = {
+            "the",
+            "a",
+            "an",
+            "what",
+            "whats",
+            "is",
+            "are",
+            "of",
+            "for",
+            "in",
+            "on",
+            "to",
+            "do",
+            "i",
+            "my",
+            "you",
+            "your",
+            "and",
+            "or",
+            "how",
+            "why",
+            "where",
+            "when",
+            "who",
+            "does",
+            "did",
+            "be",
+            "this",
+            "that",
+            "with",
+            "by",
+            "from",
+            "use",
+            "uses",
+            "using",
+        }
+        tokens = [
+            t.lower()
+            for t in _re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", q)
+            if t.lower() not in stopwords
+        ]
+        if not tokens:
+            tokens = [q.strip()]  # fallback: whole string match
 
-        base_filters.append(
-            or_(
-                WikiPage.title.ilike(pattern),
-                WikiPage.slug.ilike(pattern),
-                WikiPage.compiled_truth.ilike(pattern),
-            )
-        )
+        title_terms = []
+        slug_terms = []
+        body_terms = []
+        match_terms = []
+        for tok in tokens:
+            pat = f"%{tok}%"
+            title_terms.append(case((WikiPage.title.ilike(pat), 1.0), else_=0.0))
+            slug_terms.append(case((WikiPage.slug.ilike(pat), 0.7), else_=0.0))
+            body_terms.append(case((WikiPage.compiled_truth.ilike(pat), 0.3), else_=0.0))
+            match_terms.append(WikiPage.title.ilike(pat))
+            match_terms.append(WikiPage.slug.ilike(pat))
+            match_terms.append(WikiPage.compiled_truth.ilike(pat))
+
+        # Sum across tokens — pages that match more of the query rank higher
+        relevance = (sum(title_terms) + sum(slug_terms) + sum(body_terms)).label("relevance")
+        base_filters.append(or_(*match_terms))
 
         total = (await db.scalar(select(func.count(WikiPage.id)).where(*base_filters))) or 0
         rows = (
