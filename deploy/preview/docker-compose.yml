@@ -156,8 +156,6 @@ services:
         rm -rf /app/backend/.venv/lib/python*/site-packages/clawdi_backend* 2>/dev/null || true
         uv sync --frozen
         uv run alembic upgrade head
-        echo "[boot] route check:"
-        uv run python -c "from app.main import app; print([r.path for r in app.routes if str(r.path).startswith(\"/api/\")][:50])" || true
         exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
       '
 
