@@ -148,26 +148,16 @@ services:
         if ! command -v uv >/dev/null; then
           pip install --quiet uv
         fi
-        # Detect stale venv: if /app/backend/app/main.py is newer than the
-        # venvs pyvenv.cfg, the venv was built before the latest source —
-        # uv sync --frozen would reuse the stale workspace install and miss
-        # routes added on a feature branch (the wiki module is the canary).
-        # Wipe the venv in that case so uv recreates it cleanly.
-        SRC_TS=$$(stat -c %Y /app/backend/app/main.py 2>/dev/null || echo 0)
-        VENV_TS=$$(stat -c %Y /app/backend/.venv/pyvenv.cfg 2>/dev/null || echo 0)
-        echo "[boot] source mtime=$$SRC_TS, venv mtime=$$VENV_TS"
-        if [ ! -f /app/backend/.venv/pyvenv.cfg ] || [ "$$SRC_TS" -gt "$$VENV_TS" ]; then
-          echo "[boot] venv stale or missing — wiping"
-          rm -rf /app/backend/.venv
-        fi
-        # --reinstall-package clawdi forces re-link of the workspace package
-        # (its source may have new modules even if pyproject.toml is unchanged
-        # and the lockfile considers the install satisfied).
-        uv sync --frozen --reinstall-package clawdi-backend
+        # Always wipe the workspace package install so a feature-branch's
+        # newly-added modules (e.g. app.routes.wiki) reach site-packages.
+        # Touching pyproject.toml's mtime alone isnt enough — uv sync only
+        # re-links a package when its content hash changes, which it doesnt
+        # for editable workspace installs.
+        rm -rf /app/backend/.venv/lib/python*/site-packages/clawdi_backend* 2>/dev/null || true
+        uv sync --frozen
         uv run alembic upgrade head
-        # Sanity-check: list the wiki route to surface any silent import-skip.
-        echo "[boot] FastAPI route check:"
-        uv run python -c "from app.main import app; print(sorted(r.path for r in app.routes if '/api/wiki' in getattr(r, 'path', '')))"
+        echo "[boot] route check:"
+        uv run python -c "from app.main import app; print([r.path for r in app.routes if str(r.path).startswith(\"/api/\")][:50])" || true
         exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
       '
 
