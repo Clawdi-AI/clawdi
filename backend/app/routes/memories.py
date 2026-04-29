@@ -40,7 +40,10 @@ _NOOP_REJECT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*not enough (session|workspace|conversation) evidence", re.IGNORECASE),
     re.compile(r"^\s*daily memory flush run at", re.IGNORECASE),
     re.compile(r"\bcron .{0,30}\b(no changes|nothing to do|no-?op)\b", re.IGNORECASE),
-    re.compile(r"^\s*nothing (substantive|notable|durable) (happened|to record|to extract)", re.IGNORECASE),
+    re.compile(
+        r"^\s*nothing (substantive|notable|durable) (happened|to record|to extract)",
+        re.IGNORECASE,
+    ),
     re.compile(r"^\s*no (work|activity|memorable events) recorded", re.IGNORECASE),
 )
 
@@ -80,7 +83,10 @@ def _enforce_memory_quality(content: str) -> None:
             detail={
                 "error": "memory_rejected_noop",
                 "reason": noop,
-                "hint": "This content matches a no-op pattern (e.g. 'No substantive activity recorded'). Skip durable memory for low-signal sessions.",
+                "hint": (
+                    "This content matches a no-op pattern (e.g. 'No substantive "
+                    "activity recorded'). Skip durable memory for low-signal sessions."
+                ),
             },
         )
 
@@ -95,7 +101,11 @@ def _enforce_memory_quality(content: str) -> None:
             detail={
                 "error": "memory_rejected_secret",
                 "reason": str(e),
-                "hint": "Memory text appears to contain a credential or API key. Store the literal value in vault (clawdi vault set) and write a sanitized memory referring to the vault scope/key NAME instead.",
+                "hint": (
+                    "Memory text appears to contain a credential or API key. "
+                    "Store the literal value in vault (clawdi vault set) and "
+                    "write a sanitized memory referring to the vault scope/key NAME instead."
+                ),
             },
         ) from None
 

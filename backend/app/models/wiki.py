@@ -38,16 +38,10 @@ from app.models.base import Base, TimestampMixin
 
 class WikiPage(Base, TimestampMixin):
     __tablename__ = "wiki_pages"
-    __table_args__ = (
-        UniqueConstraint("user_id", "slug", name="wiki_pages_user_slug_unique"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "slug", name="wiki_pages_user_slug_unique"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     # Lowercase canonical slug, e.g. "polymarket", "twilio-voice-agent".
     # Resolver maps "Polymarket" / "poly market" / "PolyMarket" → same slug.
     slug: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -91,12 +85,8 @@ class WikiLink(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     from_page_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("wiki_pages.id", ondelete="CASCADE"),
@@ -121,9 +111,7 @@ class WikiLink(Base):
     # Confidence of the extraction (0..1). Low-confidence links surface
     # in the HITL queue rather than auto-applying.
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class WikiLogEntry(Base):
@@ -135,12 +123,8 @@ class WikiLogEntry(Base):
 
     __tablename__ = "wiki_log"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     page_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("wiki_pages.id", ondelete="SET NULL"),
@@ -155,6 +139,4 @@ class WikiLogEntry(Base):
     source_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Free-form metadata: {model: "claude-haiku-4-5", input_tokens: 234, ...}
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
-    ts: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

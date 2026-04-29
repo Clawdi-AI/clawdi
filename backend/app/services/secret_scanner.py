@@ -202,9 +202,7 @@ class SecretScanner:
         if result["pattern_hits"]:
             labels = ", ".join(sorted({label for label, _ in result["pattern_hits"]}))
             bits.append(f"pattern: {labels}")
-        raise SecretLeakError(
-            f"SecretScanner detected leak{ctx}: {'; '.join(bits)}."
-        )
+        raise SecretLeakError(f"SecretScanner detected leak{ctx}: {'; '.join(bits)}.")
 
     def redact(self, text: str) -> str:
         """Replace any detected secrets with `[REDACTED:<label>:N]`.
@@ -222,9 +220,7 @@ class SecretScanner:
             out = out.replace(v, f"[REDACTED:vault_value:{len(v)}]")
         # Pattern layer.
         for label, pattern in _PATTERNS:
-            out = pattern.sub(
-                lambda m, lbl=label: f"[REDACTED:{lbl}:{len(m.group(0))}]", out
-            )
+            out = pattern.sub(lambda m, lbl=label: f"[REDACTED:{lbl}:{len(m.group(0))}]", out)
         return out
 
 

@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.wiki import WikiPage
 
-
 # pg_trgm similarity score required to consider a fuzzy match an alias
 # of an existing page rather than a new page. Tuned conservatively —
 # we'd rather create one extra page than silently merge unrelated

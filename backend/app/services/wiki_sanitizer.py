@@ -13,7 +13,11 @@ remains as a re-export shim — existing imports of `WikiSanitizer` and
 
 from app.services.secret_scanner import (
     MIN_VAULT_VALUE_LENGTH as MIN_LENGTH,
+)
+from app.services.secret_scanner import (
     SecretLeakError as VaultLeakError,
+)
+from app.services.secret_scanner import (
     SecretScanner as WikiSanitizer,
 )
 

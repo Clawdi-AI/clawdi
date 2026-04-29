@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,7 +73,8 @@ You may mention that a vault SCOPE or KEY NAME exists; never write a value, \
 even if you see something that looks like one in a source.
 - Use proper nouns. Avoid pronouns when ambiguous.
 - 200–400 words is plenty. Concise > exhaustive.
-- Output the text directly — no preamble, no markdown headings, no bullet points unless they materially help."""
+- Output the text directly — no preamble, no markdown headings, no bullet points
+  unless they materially help."""
 
 
 def _build_user_prompt(page_title: str, sources: list[str]) -> str:
@@ -98,14 +99,18 @@ async def _gather_sources(
     Vault links surface the scope name only — values are never read.
     """
     link_rows = (
-        await db.execute(
-            select(WikiLink).where(
-                WikiLink.user_id == user_id,
-                WikiLink.from_page_id == page_id,
-                WikiLink.source_type.is_not(None),
+        (
+            await db.execute(
+                select(WikiLink).where(
+                    WikiLink.user_id == user_id,
+                    WikiLink.from_page_id == page_id,
+                    WikiLink.source_type.is_not(None),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     sources: list[str] = []
     for link in link_rows:
@@ -141,9 +146,7 @@ async def _gather_sources(
     return sources
 
 
-async def _load_user_vault_values(
-    db: AsyncSession, user_id: uuid.UUID
-) -> set[str]:
+async def _load_user_vault_values(db: AsyncSession, user_id: uuid.UUID) -> set[str]:
     """Decrypt all vault values for this user — used ONLY by the sanitizer.
 
     Returns an empty set if encryption isn't configured or any decryption
@@ -153,17 +156,15 @@ async def _load_user_vault_values(
     """
     try:
         vaults = (
-            await db.execute(
-                select(Vault.id).where(Vault.user_id == user_id)
-            )
-        ).scalars().all()
+            (await db.execute(select(Vault.id).where(Vault.user_id == user_id))).scalars().all()
+        )
         if not vaults:
             return set()
         items = (
-            await db.execute(
-                select(VaultItem).where(VaultItem.vault_id.in_(vaults))
-            )
-        ).scalars().all()
+            (await db.execute(select(VaultItem).where(VaultItem.vault_id.in_(vaults))))
+            .scalars()
+            .all()
+        )
         values: set[str] = set()
         for item in items:
             try:
@@ -230,7 +231,7 @@ async def synthesize_page(
 
     # Persist.
     page.compiled_truth = text
-    page.last_synthesis_at = datetime.now(timezone.utc)
+    page.last_synthesis_at = datetime.now(UTC)
     page.frontmatter = {
         **(page.frontmatter or {}),
         "synthesis_model": model,
@@ -247,7 +248,7 @@ async def synthesize_page(
                 "sources": len(sources),
                 "output_chars": len(text),
             },
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
         )
     )
 
@@ -299,16 +300,20 @@ async def synthesize_for_user(
     # last_synthesis_at older than the newest link's created_at.
     if force:
         page_rows = (
-            await db.execute(
-                select(WikiPage)
-                .where(
-                    WikiPage.user_id == user_id,
-                    WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
+            (
+                await db.execute(
+                    select(WikiPage)
+                    .where(
+                        WikiPage.user_id == user_id,
+                        WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
+                    )
+                    .order_by(WikiPage.updated_at.desc())
+                    .limit(limit)
                 )
-                .order_by(WikiPage.updated_at.desc())
-                .limit(limit)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     else:
         # "Stale" pages: those where the most recent incoming evidence
         # link is newer than the page's last_synthesis_at (or never
@@ -320,20 +325,24 @@ async def synthesize_for_user(
             .scalar_subquery()
         )
         page_rows = (
-            await db.execute(
-                select(WikiPage)
-                .where(
-                    WikiPage.user_id == user_id,
-                    WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
-                    (
-                        (WikiPage.last_synthesis_at.is_(None))
-                        | (WikiPage.last_synthesis_at < newest_link_ts)
-                    ),
+            (
+                await db.execute(
+                    select(WikiPage)
+                    .where(
+                        WikiPage.user_id == user_id,
+                        WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
+                        (
+                            (WikiPage.last_synthesis_at.is_(None))
+                            | (WikiPage.last_synthesis_at < newest_link_ts)
+                        ),
+                    )
+                    .order_by(WikiPage.updated_at.desc())
+                    .limit(limit)
                 )
-                .order_by(WikiPage.updated_at.desc())
-                .limit(limit)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     summary = {
         "considered": len(page_rows),

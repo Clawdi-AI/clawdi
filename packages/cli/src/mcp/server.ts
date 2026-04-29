@@ -213,13 +213,10 @@ export async function startMcpServer() {
 
 	server.tool(
 		"clawdi_search",
-		"ALWAYS call this BEFORE answering when the user references their own context but the domain is unclear — could be memory, a skill, a session, or a vault key. This is the cross-domain umbrella: one query → ranked results across all 4 domains.\n\nMUST call when the user's message contains ANY of:\n- Vague self-reference where domain is ambiguous: \"the one I set up\", \"like last time\", \"my X\" without naming X's type\n- A topic that could be a skill, vault scope, or memory: \"polymarket\", \"clawdi backend\", \"phala website\", \"my Twitter\"\n- Cross-cutting questions: \"what do I have for X\", \"anything about Y in my stuff\"\n\nReturns mixed types. Each result has type (memory/skill/session/vault), id, title, and href. After getting results, READ the relevant items via skill_get / session_get / memory_search for full content. CITE the IDs in your response — do not paraphrase results away.\n\nDo NOT call for purely textbook programming questions or when the user's intent is unambiguously a single domain (call that domain's tool directly).\n\nFailure mode if skipped: agent answers from general knowledge while the user has the exact answer in their cloud. Looks amnesic; forces the user to re-paste context.",
+		'ALWAYS call this BEFORE answering when the user references their own context but the domain is unclear — could be memory, a skill, a session, or a vault key. This is the cross-domain umbrella: one query → ranked results across all 4 domains.\n\nMUST call when the user\'s message contains ANY of:\n- Vague self-reference where domain is ambiguous: "the one I set up", "like last time", "my X" without naming X\'s type\n- A topic that could be a skill, vault scope, or memory: "polymarket", "clawdi backend", "phala website", "my Twitter"\n- Cross-cutting questions: "what do I have for X", "anything about Y in my stuff"\n\nReturns mixed types. Each result has type (memory/skill/session/vault), id, title, and href. After getting results, READ the relevant items via skill_get / session_get / memory_search for full content. CITE the IDs in your response — do not paraphrase results away.\n\nDo NOT call for purely textbook programming questions or when the user\'s intent is unambiguously a single domain (call that domain\'s tool directly).\n\nFailure mode if skipped: agent answers from general knowledge while the user has the exact answer in their cloud. Looks amnesic; forces the user to re-paste context.',
 		{
 			query: z.string().describe("Natural-language query in any language."),
-			limit: z
-				.number()
-				.optional()
-				.describe("Max results per domain (default 5)."),
+			limit: z.number().optional().describe("Max results per domain (default 5)."),
 		},
 		async ({ query, limit }) => {
 			try {
@@ -245,7 +242,9 @@ export async function startMcpServer() {
 				}
 				const byType: Record<string, typeof data.results> = {};
 				for (const hit of data.results) {
-					(byType[hit.type] ||= []).push(hit);
+					const bucket = byType[hit.type] ?? [];
+					bucket.push(hit);
+					byType[hit.type] = bucket;
 				}
 				const cap = limit ?? 5;
 				const lines: string[] = [];
@@ -269,7 +268,7 @@ export async function startMcpServer() {
 
 	server.tool(
 		"skill_search",
-		"ALWAYS call this BEFORE writing custom code or suggesting a manual approach for any task that might already be a skill. The user has many skills (often 100+) covering deploy, QA, browser automation, voice/SMS, social posting, prediction markets, code review, and more. Skill descriptions are explicit about when to use them — let the search find the right one.\n\nMUST call when the user's request matches ANY of these patterns:\n- \"How do I X\" / \"how can I X\" / \"show me how to X\" — a skill very likely exists\n- Action verbs that map to common workflows: deploy, ship, test, QA, review, browse, post, message, send, search, find, fetch, analyze, draft, summarize\n- Named external services: Twitter, Slack, Notion, Stripe, Polymarket, GitHub, iMessage, Apple Notes/Reminders/FindMy\n- Delegation requests: \"delegate this to claude-code / codex / hermes\" — those are skills\n- Workflow steps: \"investigate this bug\", \"review the plan\", \"do a retro\"\n\nReturns ranked skills (key, name, description, version). After finding the right one, call skill_get(key) to load the full instructions before executing.\n\nDo NOT call for trivial code questions, agent self-questions, or when the user has just told you not to use a skill.\n\nFailure mode if skipped: you write a worse, ad-hoc version of something the user has already built and refined. Cite the skill key when you use one.",
+		'ALWAYS call this BEFORE writing custom code or suggesting a manual approach for any task that might already be a skill. The user has many skills (often 100+) covering deploy, QA, browser automation, voice/SMS, social posting, prediction markets, code review, and more. Skill descriptions are explicit about when to use them — let the search find the right one.\n\nMUST call when the user\'s request matches ANY of these patterns:\n- "How do I X" / "how can I X" / "show me how to X" — a skill very likely exists\n- Action verbs that map to common workflows: deploy, ship, test, QA, review, browse, post, message, send, search, find, fetch, analyze, draft, summarize\n- Named external services: Twitter, Slack, Notion, Stripe, Polymarket, GitHub, iMessage, Apple Notes/Reminders/FindMy\n- Delegation requests: "delegate this to claude-code / codex / hermes" — those are skills\n- Workflow steps: "investigate this bug", "review the plan", "do a retro"\n\nReturns ranked skills (key, name, description, version). After finding the right one, call skill_get(key) to load the full instructions before executing.\n\nDo NOT call for trivial code questions, agent self-questions, or when the user has just told you not to use a skill.\n\nFailure mode if skipped: you write a worse, ad-hoc version of something the user has already built and refined. Cite the skill key when you use one.',
 		{
 			query: z.string().describe("Natural-language query — what the user wants to do."),
 			category: z
@@ -297,9 +296,7 @@ export async function startMcpServer() {
 				}>(`/api/skills?${params.toString()}`);
 				let items = data.items;
 				if (category) {
-					items = items.filter((s) =>
-						s.skill_key.startsWith(`${category}/`),
-					);
+					items = items.filter((s) => s.skill_key.startsWith(`${category}/`));
 				}
 				if (!items.length) {
 					return {
@@ -312,8 +309,7 @@ export async function startMcpServer() {
 					};
 				}
 				const lines = items.map(
-					(s) =>
-						`[${s.skill_key}] ${s.name} (v${s.version}) — ${s.description}`,
+					(s) => `[${s.skill_key}] ${s.name} (v${s.version}) — ${s.description}`,
 				);
 				return {
 					content: [{ type: "text" as const, text: lines.join("\n\n") }],
@@ -332,9 +328,7 @@ export async function startMcpServer() {
 		{
 			skill_key: z
 				.string()
-				.describe(
-					'Skill key, e.g. "research/polymarket", "gstack/qa", "apple/imessage".',
-				),
+				.describe('Skill key, e.g. "research/polymarket", "gstack/qa", "apple/imessage".'),
 		},
 		async ({ skill_key }) => {
 			try {
@@ -361,7 +355,14 @@ export async function startMcpServer() {
 						content: [
 							{
 								type: "text" as const,
-								text: `Skill "${skill_key}" not found.${data.items.length ? ` Did you mean: ${data.items.slice(0, 3).map((s) => s.skill_key).join(", ")}?` : ""}`,
+								text: `Skill "${skill_key}" not found.${
+									data.items.length
+										? ` Did you mean: ${data.items
+												.slice(0, 3)
+												.map((s) => s.skill_key)
+												.join(", ")}?`
+										: ""
+								}`,
 							},
 						],
 					};
@@ -370,9 +371,7 @@ export async function startMcpServer() {
 					content: [
 						{
 							type: "text" as const,
-							text:
-								match.content ??
-								"(skill body not available — backend did not return content)",
+							text: match.content ?? "(skill body not available — backend did not return content)",
 						},
 					],
 				};
@@ -386,7 +385,7 @@ export async function startMcpServer() {
 
 	server.tool(
 		"session_search",
-		"Call when the user references prior conversation work — \"what did I figure out\", \"where did we leave off\", \"what was that thing about X\". Searches summary across all your past sessions on Clawdi (across every agent: Claude Code, Codex, OpenClaw, Hermes).\n\nMUST call when:\n- \"What did I/we do/figure out about X\" — past-tense recall\n- \"Continue from where we left off\" / \"pick up where we stopped\"\n- \"Show me that conversation about X\"\n- \"Last week / last month, when I was working on X\"\n\nReturns sessions ranked by relevance (id, agent_type, started_at, summary). After finding the right session, call session_get(id) only if the summary isn't enough.\n\nDo NOT call for the current session — you can already see that.\n\nFailure mode if skipped: you re-derive a decision the user already made, or re-do investigation work that's already done. Wasted effort + looks amnesic.",
+		'Call when the user references prior conversation work — "what did I figure out", "where did we leave off", "what was that thing about X". Searches summary across all your past sessions on Clawdi (across every agent: Claude Code, Codex, OpenClaw, Hermes).\n\nMUST call when:\n- "What did I/we do/figure out about X" — past-tense recall\n- "Continue from where we left off" / "pick up where we stopped"\n- "Show me that conversation about X"\n- "Last week / last month, when I was working on X"\n\nReturns sessions ranked by relevance (id, agent_type, started_at, summary). After finding the right session, call session_get(id) only if the summary isn\'t enough.\n\nDo NOT call for the current session — you can already see that.\n\nFailure mode if skipped: you re-derive a decision the user already made, or re-do investigation work that\'s already done. Wasted effort + looks amnesic.',
 		{
 			query: z.string().describe("Natural-language query."),
 			agent: z
@@ -445,7 +444,7 @@ export async function startMcpServer() {
 
 	server.tool(
 		"session_get",
-		'Call after session_search if the summary isn\'t enough and you need the full message-by-message transcript. Expensive — sessions can be 100+ messages. Use sparingly.\n\nMUST call only when the user explicitly asks "show me the full session" or when the summary genuinely doesn\'t contain the detail you need (e.g. you need an exact code snippet they wrote).\n\nPrefer session summary first. If that\'s enough, do NOT call this.\n\nFailure mode if over-called: blows context budget on transcript noise.',
+		"Call after session_search if the summary isn't enough and you need the full message-by-message transcript. Expensive — sessions can be 100+ messages. Use sparingly.\n\nMUST call only when the user explicitly asks \"show me the full session\" or when the summary genuinely doesn't contain the detail you need (e.g. you need an exact code snippet they wrote).\n\nPrefer session summary first. If that's enough, do NOT call this.\n\nFailure mode if over-called: blows context budget on transcript noise.",
 		{
 			session_id: z.string().describe("UUID from session_search."),
 		},
@@ -495,9 +494,7 @@ export async function startMcpServer() {
 					}>(`/api/vault/${encodeURIComponent(scope)}/items`);
 					let items = data.items ?? [];
 					if (q) {
-						items = items.filter((i) =>
-							i.name.toLowerCase().includes(q.toLowerCase()),
-						);
+						items = items.filter((i) => i.name.toLowerCase().includes(q.toLowerCase()));
 					}
 					if (!items.length) {
 						return {
@@ -539,8 +536,7 @@ export async function startMcpServer() {
 					};
 				}
 				const lines = data.items.map(
-					(s) =>
-						`${s.slug}${s.item_count != null ? ` (${s.item_count} keys)` : ""}`,
+					(s) => `${s.slug}${s.item_count != null ? ` (${s.item_count} keys)` : ""}`,
 				);
 				return {
 					content: [
@@ -565,10 +561,7 @@ export async function startMcpServer() {
 		"Search the user's personal wiki for synthesized entity pages — one page per real-world thing in their life (a tool, project, service, person, concept), aggregating evidence from memory + skills + sessions + vault. PREFER this over memory_search when the user asks broadly about 'what do we know about X' or 'tell me about my Y' — wiki pages are LLM-synthesized 1–2 paragraph summaries, much higher signal than raw memory fragments.\n\nMUST call when:\n- User asks for an OVERVIEW: 'what do I have about polymarket', 'tell me about my Stripe setup', 'what's the status of our voice agent work'\n- The question is about a NAMED thing (entity, project, brand, service)\n- You'd otherwise need to read 5+ memories to give a coherent answer\n\nReturns ranked pages: {slug, title, kind, source_count, last_synthesis_at}. Then call wiki_get(slug) to read the compiled_truth.\n\nDo NOT call for highly specific factual lookups ('what's the API endpoint URL') — memory_search is faster there. Wiki is for the WHOLE PICTURE on a thing.\n\nFailure mode if skipped: you read 7 noisy memory fragments and paraphrase them, when one synthesized page would have answered cleanly.",
 		{
 			query: z.string().describe("Natural-language query — entity name or topic."),
-			limit: z
-				.number()
-				.optional()
-				.describe("Max results (default 10)."),
+			limit: z.number().optional().describe("Max results (default 10)."),
 		},
 		async ({ query, limit }) => {
 			try {
@@ -586,9 +579,7 @@ export async function startMcpServer() {
 				}>(`/api/wiki/pages?${params.toString()}`);
 				const q = query.toLowerCase();
 				const matches = data.items.filter(
-					(p) =>
-						p.title.toLowerCase().includes(q) ||
-						p.slug.toLowerCase().includes(q),
+					(p) => p.title.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q),
 				);
 				if (!matches.length) {
 					return {
@@ -647,9 +638,7 @@ export async function startMcpServer() {
 					`# ${data.title}`,
 					`slug: ${data.slug}  ·  kind: ${data.kind}  ·  ${data.source_count} sources` +
 						(data.stale ? "  ·  STALE" : "") +
-						(data.last_synthesis_at
-							? ""
-							: "  ·  not yet synthesized"),
+						(data.last_synthesis_at ? "" : "  ·  not yet synthesized"),
 					"",
 				];
 
@@ -658,17 +647,18 @@ export async function startMcpServer() {
 					lines.push(data.compiled_truth);
 					lines.push("");
 				} else {
-					lines.push(
-						"## Compiled truth\n\n(not yet synthesized — read sources below directly)",
-					);
+					lines.push("## Compiled truth\n\n(not yet synthesized — read sources below directly)");
 				}
 
 				const sources = data.outgoing_links.filter((l) => l.source_type);
 				if (sources.length > 0) {
 					const byType: Record<string, string[]> = {};
 					for (const l of sources) {
-						const t = l.source_type!;
-						(byType[t] ||= []).push(l.source_ref ?? "(unknown)");
+						if (!l.source_type) continue;
+						const t = l.source_type;
+						const bucket = byType[t] ?? [];
+						bucket.push(l.source_ref ?? "(unknown)");
+						byType[t] = bucket;
 					}
 					lines.push("## Sources");
 					for (const [type, refs] of Object.entries(byType)) {

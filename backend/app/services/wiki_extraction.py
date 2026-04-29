@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.memory import Memory
 from app.models.skill import Skill
 from app.models.wiki import WikiLink, WikiLogEntry, WikiPage
-from app.services.slug_resolver import SlugResolver, normalize
+from app.services.slug_resolver import SlugResolver
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +46,7 @@ log = logging.getLogger(__name__)
 # "Hermes + OpenClaw" — well, the + breaks the run, that's fine).
 # We allow 1–4 words to capture both single-word brands ("Stripe") and
 # realistic project names ("Phala Cloud", "Voice Call Twilio Setup").
-_PROPER_NOUN_RE = re.compile(
-    r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3}\b"
-)
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3}\b")
 
 # All-caps acronyms / shouted brand names (POSTHOG, METABASE, etc.).
 # Min 3 chars to avoid noise like "OK", "ID".
@@ -272,7 +270,7 @@ async def _process_atom(
                 source_type=source_type,
                 source_ref=source_ref,
                 metadata_={"candidates": 0},
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
             )
         )
         return {"pages_touched": 0, "links_added": 0, "candidates": []}
@@ -289,9 +287,7 @@ async def _process_atom(
         # Upsert the page.
         if exists:
             page = await db.scalar(
-                select(WikiPage).where(
-                    WikiPage.user_id == user_id, WikiPage.slug == slug
-                )
+                select(WikiPage).where(WikiPage.user_id == user_id, WikiPage.slug == slug)
             )
             if page is None:
                 # Race: resolver said exists but page is gone. Treat as new.
@@ -315,9 +311,7 @@ async def _process_atom(
             pages_touched += 1
 
         # De-dup: don't double-link the same atom to the same page.
-        already = await _link_already_exists(
-            db, user_id, page.id, source_type, source_ref
-        )
+        already = await _link_already_exists(db, user_id, page.id, source_type, source_ref)
         if already:
             continue
 
@@ -330,7 +324,7 @@ async def _process_atom(
                 source_ref=source_ref,
                 link_type="mentions",
                 confidence=0.6,  # heuristic-extraction default; LLM bumps later
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         )
         links_added += 1
@@ -348,7 +342,7 @@ async def _process_atom(
                 "links_added": links_added,
                 "pages_touched": pages_touched,
             },
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
         )
     )
 
@@ -359,21 +353,23 @@ async def _process_atom(
     }
 
 
-async def extract_from_memories(
-    db: AsyncSession, user_id: uuid.UUID, limit: int = 200
-) -> dict:
+async def extract_from_memories(db: AsyncSession, user_id: uuid.UUID, limit: int = 200) -> dict:
     """Run heuristic entity extraction over unprocessed memories."""
     resolver = SlugResolver(db, user_id)
     total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
 
     rows = (
-        await db.execute(
-            select(Memory)
-            .where(Memory.user_id == user_id)
-            .order_by(Memory.created_at.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(Memory)
+                .where(Memory.user_id == user_id)
+                .order_by(Memory.created_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for mem in rows:
         if await _already_processed(db, user_id, "memory", str(mem.id)):
@@ -395,21 +391,23 @@ async def extract_from_memories(
     return total
 
 
-async def extract_from_skills(
-    db: AsyncSession, user_id: uuid.UUID, limit: int = 200
-) -> dict:
+async def extract_from_skills(db: AsyncSession, user_id: uuid.UUID, limit: int = 200) -> dict:
     """Run extraction over skills — title + description form the source text."""
     resolver = SlugResolver(db, user_id)
     total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
 
     rows = (
-        await db.execute(
-            select(Skill)
-            .where(Skill.user_id == user_id, Skill.is_active.is_(True))
-            .order_by(Skill.updated_at.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(Skill)
+                .where(Skill.user_id == user_id, Skill.is_active.is_(True))
+                .order_by(Skill.updated_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for sk in rows:
         # For skills we use skill_key as the source_ref so MCP tools can
@@ -440,9 +438,7 @@ async def extract_from_skills(
     return total
 
 
-async def extract_for_user(
-    db: AsyncSession, user_id: uuid.UUID
-) -> dict:
+async def extract_for_user(db: AsyncSession, user_id: uuid.UUID) -> dict:
     """Run entity extraction across all atom types for a user.
 
     Returns a summary dict suitable for the API response. Idempotent:

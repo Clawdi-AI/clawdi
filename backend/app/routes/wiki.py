@@ -118,9 +118,7 @@ async def list_pages(
     stale: bool | None = Query(
         default=None, description="Filter by stale flag. Omit to include both."
     ),
-    sort: Literal["updated_at", "title", "source_count"] = Query(
-        default="updated_at"
-    ),
+    sort: Literal["updated_at", "title", "source_count"] = Query(default="updated_at"),
     order: Literal["asc", "desc"] = Query(default="desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
@@ -143,19 +141,21 @@ async def list_pages(
     }[sort]
     sort_clause = sort_col.desc() if order == "desc" else sort_col.asc()
 
-    total = (
-        await db.scalar(select(func.count(WikiPage.id)).where(*base_filters))
-    ) or 0
+    total = (await db.scalar(select(func.count(WikiPage.id)).where(*base_filters))) or 0
 
     rows = (
-        await db.execute(
-            select(WikiPage)
-            .where(*base_filters)
-            .order_by(sort_clause)
-            .limit(page_size)
-            .offset((page - 1) * page_size)
+        (
+            await db.execute(
+                select(WikiPage)
+                .where(*base_filters)
+                .order_by(sort_clause)
+                .limit(page_size)
+                .offset((page - 1) * page_size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return PageList(
         items=[
@@ -308,9 +308,7 @@ async def refresh_wiki(
     if body.extract:
         out.extraction = await extract_for_user(db, auth.user_id)
     if body.synthesize:
-        out.synthesis = await synthesize_for_user(
-            db, auth.user_id, force=body.force_synthesis
-        )
+        out.synthesis = await synthesize_for_user(db, auth.user_id, force=body.force_synthesis)
     return out
 
 
@@ -335,9 +333,7 @@ async def list_log(
     if action is not None:
         filters.append(WikiLogEntry.action == action)
 
-    total = (
-        await db.scalar(select(func.count(WikiLogEntry.id)).where(*filters))
-    ) or 0
+    total = (await db.scalar(select(func.count(WikiLogEntry.id)).where(*filters))) or 0
 
     rows = (
         await db.execute(
