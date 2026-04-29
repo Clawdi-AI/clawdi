@@ -220,6 +220,109 @@ async def delete_memory(
     return MemoryDeleteResponse(status="deleted")
 
 
+@router.post("/bench-prep")
+async def bench_prep(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """One-shot setup for the clawdi-bench harness:
+
+    1. Delete pre-existing no-op memories (daily-flush, [source:*] stale)
+       so they stop competing for top-5 ranking.
+    2. Chunk + embed every remaining memory. Idempotent — skips memories
+       that already have chunks.
+
+    Exposed as a real API endpoint because Coolify v4 doesnt provide a
+    docker exec endpoint for one-shot maintenance scripts. Auth is the
+    callers regular API key, so they can only modify their own memories.
+    Safe to remove once chunking is wired into write-time AND backfill is
+    run at deploy-time via the api boot script.
+    """
+    from datetime import UTC
+    from datetime import datetime as dt
+
+    from sqlalchemy import delete as sql_delete
+
+    from app.models.memory_chunk import MemoryChunk
+    from app.services.memory_chunker import chunk_memory_content
+
+    noise_pat = re.compile(
+        r"^\s*"
+        r"(\[source:\d{4}-\d{2}-\d{2}\.md\]"
+        r"|\[source:MEMORY\.md\]"
+        r"|daily memory flush run at"
+        r"|no substantive (workspace|session) activity"
+        r"|not enough (session|workspace|conversation) evidence"
+        r"|important finding: there (is|was) not enough"
+        r"|unresolved: (add real work|capture notable)"
+        r"|nothing (substantive|notable|durable) (happened|to record|to extract))",
+        re.IGNORECASE,
+    )
+
+    # 1. Noise cleanup
+    rows = (
+        await db.execute(select(Memory.id, Memory.content).where(Memory.user_id == auth.user_id))
+    ).all()
+    noise_ids = [r[0] for r in rows if noise_pat.match((r[1] or "").strip())]
+    if noise_ids:
+        await db.execute(sql_delete(Memory).where(Memory.id.in_(noise_ids)))
+        await db.commit()
+
+    # 2. Chunk + embed remaining memories
+    embedder = resolve_embedder()
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No embedding provider available; cant chunk-embed.",
+        )
+
+    target_ids = (
+        (await db.execute(select(Memory.id).where(Memory.user_id == auth.user_id))).scalars().all()
+    )
+
+    chunks_created = 0
+    chunks_failed_embed = 0
+    skipped = 0
+    for mem_id in target_ids:
+        # Skip memories that already have chunks (idempotent re-runs)
+        existing = (
+            await db.execute(select(MemoryChunk.id).where(MemoryChunk.memory_id == mem_id).limit(1))
+        ).first()
+        if existing:
+            skipped += 1
+            continue
+
+        mem = await db.get(Memory, mem_id)
+        if mem is None:
+            continue
+        for chunk in chunk_memory_content(mem.content):
+            vec: list[float] | None = None
+            try:
+                vec = await embedder.embed(chunk.content)
+            except Exception as e:
+                chunks_failed_embed += 1
+                log.warning("bench-prep embed failed for %s pos=%d: %s", mem_id, chunk.position, e)
+            db.add(
+                MemoryChunk(
+                    memory_id=mem_id,
+                    position=chunk.position,
+                    content=chunk.content,
+                    embedding=vec,
+                    created_at=dt.now(UTC),
+                )
+            )
+            chunks_created += 1
+        await db.commit()
+
+    return {
+        "deleted_noise": len(noise_ids),
+        "memories_total": len(target_ids),
+        "memories_skipped_already_chunked": skipped,
+        "chunks_created": chunks_created,
+        "chunks_failed_embed": chunks_failed_embed,
+    }
+
+
 @router.post("/embed-backfill")
 async def embed_backfill(
     force: bool = Query(default=False, description="Re-embed rows that already have an embedding."),
