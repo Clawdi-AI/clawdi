@@ -469,8 +469,7 @@ async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int)
             total["skipped_processed"] += 1
             continue
         label = s.local_session_id or str(s.id)[:8]
-        agent = s.agent_type or "agent"
-        text = f"# Session: {label} ({agent})\n\n{s.summary}"
+        text = f"# Session: {label}\n\n{s.summary}"
         hint = _shortlist_existing_slugs(text, existing_slugs, INDEX_HINT_SIZE)
         result = await _process_atom_llm(
             db=db,
