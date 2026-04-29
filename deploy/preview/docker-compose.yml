@@ -148,18 +148,26 @@ services:
         if ! command -v uv >/dev/null; then
           pip install --quiet uv
         fi
-        # Detect stale venv: if .venv was created before the latest source
-        # commit, uv sync --frozen would reuse a stale install of the workspace
-        # package and miss any new module. Delete + re-sync in that case so
-        # routes added on a feature branch actually load.
-        SRC_TS=$$(git -C /app rev-parse HEAD 2>/dev/null && stat -c %Y /app/backend/app/main.py 2>/dev/null || echo 0)
+        # Detect stale venv: if /app/backend/app/main.py is newer than the
+        # venvs pyvenv.cfg, the venv was built before the latest source —
+        # uv sync --frozen would reuse the stale workspace install and miss
+        # routes added on a feature branch (the wiki module is the canary).
+        # Wipe the venv in that case so uv recreates it cleanly.
+        SRC_TS=$$(stat -c %Y /app/backend/app/main.py 2>/dev/null || echo 0)
         VENV_TS=$$(stat -c %Y /app/backend/.venv/pyvenv.cfg 2>/dev/null || echo 0)
-        if [ "$$SRC_TS" -gt "$$VENV_TS" ] || [ ! -f /app/backend/.venv/pyvenv.cfg ]; then
-          echo "venv stale or missing — recreating"
+        echo "[boot] source mtime=$$SRC_TS, venv mtime=$$VENV_TS"
+        if [ ! -f /app/backend/.venv/pyvenv.cfg ] || [ "$$SRC_TS" -gt "$$VENV_TS" ]; then
+          echo "[boot] venv stale or missing — wiping"
           rm -rf /app/backend/.venv
         fi
-        uv sync --frozen
+        # --reinstall-package clawdi forces re-link of the workspace package
+        # (its source may have new modules even if pyproject.toml is unchanged
+        # and the lockfile considers the install satisfied).
+        uv sync --frozen --reinstall-package clawdi-backend
         uv run alembic upgrade head
+        # Sanity-check: list the wiki route to surface any silent import-skip.
+        echo "[boot] FastAPI route check:"
+        uv run python -c "from app.main import app; print(sorted(r.path for r in app.routes if '/api/wiki' in getattr(r, 'path', '')))"
         exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
       '
 
