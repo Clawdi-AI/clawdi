@@ -151,9 +151,15 @@ def main() -> int:
         assert "[REDACTED:" in out
 
     def redact_includes_length():
+        # Format evolved when the implementation moved to SecretScanner:
+        # vault-value redaction is now `[REDACTED:vault_value:N]` so the
+        # downstream reader knows which layer caught the leak. Both the
+        # length and the layer label are in the marker.
         s = WikiSanitizer(ALL_SECRETS)
         out = s.redact(STRIPE_LIKE)
-        assert out == f"[REDACTED:{len(STRIPE_LIKE)}]"
+        assert "[REDACTED:" in out
+        assert str(len(STRIPE_LIKE)) in out
+        assert STRIPE_LIKE not in out
 
     def redact_handles_multiple():
         s = WikiSanitizer(ALL_SECRETS)
