@@ -153,6 +153,12 @@ services:
         # uv sync only re-links a workspace package when its content hash
         # changes, which it does not for editable installs.
         rm -rf /app/backend/.venv/lib/python*/site-packages/clawdi_backend* 2>/dev/null || true
+        echo "[boot] git HEAD at /app:"
+        git -C /app log -1 --oneline 2>/dev/null || echo "(not a git repo)"
+        echo "[boot] /app/backend/app/routes/ contents:"
+        ls /app/backend/app/routes/ 2>/dev/null || echo "(missing)"
+        echo "[boot] main.py wiki include check:"
+        grep -n "wiki_router\|/api/wiki" /app/backend/app/main.py 2>/dev/null || echo "(no wiki refs)"
         uv sync --frozen
         uv run alembic upgrade head
         exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
