@@ -9,7 +9,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, BookOpen, MessageSquare, Network, ShieldAlert } from "lucide-react";
+import { Activity, BookOpen, Loader2, MessageSquare, Network, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -17,6 +17,18 @@ import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type ReviewQueue = { items: unknown[]; total: number };
+
+type WikiStatus = {
+	pages_total: number;
+	pages_synthesized: number;
+	pages_by_kind: Record<string, number>;
+	sessions_total: number;
+	sessions_extracted: number;
+	memories_total: number;
+	last_extraction_at: string | null;
+	last_synthesis_at: string | null;
+	is_active: boolean;
+};
 
 const TABS = [
 	{
@@ -68,6 +80,18 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 		refetchInterval: 30_000,
 	});
 
+	// Status badge — polled every 5s while the user is on a wiki tab. Drives
+	// the "syncing" indicator in the tab bar so users see when a session
+	// upload or memory write is being absorbed into the wiki.
+	const { data: status } = useQuery<WikiStatus>({
+		queryKey: ["wiki", "status"],
+		queryFn: async () => {
+			const token = (await getToken()) ?? "";
+			return apiFetch<WikiStatus>("/api/wiki/status", token);
+		},
+		refetchInterval: 5_000,
+	});
+
 	return (
 		<div className="flex flex-col h-[calc(100svh-7rem)] -mt-4 md:-mt-6 rounded-xl border overflow-hidden bg-card">
 			{/* Top tab bar — replaces the old icon column. Sits inside the dashboard frame. */}
@@ -103,6 +127,9 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 						</Link>
 					);
 				})}
+				<div className="ml-auto">
+					<WikiStatusBadge status={status} />
+				</div>
 			</nav>
 
 			{/* Content area — full horizontal width for graph / pages / source raw files */}
@@ -110,5 +137,36 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 				<div className="px-6 py-6 max-w-none">{children}</div>
 			</main>
 		</div>
+	);
+}
+
+function WikiStatusBadge({ status }: { status?: WikiStatus }) {
+	if (!status) return null;
+
+	if (status.is_active) {
+		return (
+			<span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+				<Loader2 className="size-3.5 animate-spin text-primary" />
+				<span>
+					Syncing wiki · {status.pages_synthesized}/{status.pages_total}
+				</span>
+			</span>
+		);
+	}
+
+	const pct =
+		status.pages_total > 0
+			? Math.round((status.pages_synthesized / status.pages_total) * 100)
+			: 100;
+	return (
+		<span
+			className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+			title={`${status.sessions_extracted}/${status.sessions_total} sessions extracted · ${status.memories_total} memories`}
+		>
+			<span className="inline-block size-1.5 rounded-full bg-emerald-500" />
+			<span>
+				{status.pages_total} page{status.pages_total === 1 ? "" : "s"} · {pct}% synced
+			</span>
+		</span>
 	);
 }

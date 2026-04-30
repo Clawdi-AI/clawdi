@@ -29,6 +29,7 @@ heuristic extractor:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -37,9 +38,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import async_session_factory
 from app.models.session import Session as SessionModel
 from app.models.skill import Skill
 from app.models.vault import Vault
@@ -65,6 +68,12 @@ SESSION_CHUNK_OVERLAP_CHARS = 800
 # part of a session usually carries the conclusion (commit, fix, decision)
 # that we most want indexed; oldest chunks are cheapest to drop.
 MAX_CHUNKS_PER_SESSION = 6
+
+# How many sessions to extract concurrently. The bottleneck is OpenAI latency
+# (~3s per chunk × ~3 chunks = ~9s per session); 8-way parallelism brings a
+# 98-session sweep from ~15min to ~2min without saturating typical OpenAI
+# tier-1 rate limits. Tune lower if rate-limit errors appear in logs.
+EXTRACTION_CONCURRENCY = 8
 
 # Top-N existing entity slugs to surface to the LLM as deduplication hints.
 # Selected by simple keyword overlap with the atom text.
@@ -569,6 +578,76 @@ async def _extract_skills(db, user_id, resolver, client, model, *, limit: int) -
     return total
 
 
+async def _extract_one_session(
+    sem: asyncio.Semaphore,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    client: Any,
+    model: str,
+) -> dict:
+    """Process one session in its own DB session, gated by `sem`.
+
+    Race tolerance: when two parallel tasks extract the same entity, the
+    `(user_id, slug)` unique constraint will reject the second insert. We
+    catch IntegrityError per-atom, roll back, and re-resolve — the existing
+    page from the winner's commit is found via `resolver.resolve` and the
+    losing task simply uses it.
+    """
+    out = {"atoms": 0, "links_added": 0, "pages_created": 0}
+    async with sem, async_session_factory() as db:
+        s = await db.scalar(
+            select(SessionModel).where(
+                SessionModel.id == session_id, SessionModel.user_id == user_id
+            )
+        )
+        if s is None or not s.file_key:
+            return out
+        if await _already_processed(db, user_id, "session", str(s.id)):
+            return {"skipped_processed": 1, **out}
+        transcript = await _load_session_transcript(s)
+        if not transcript:
+            return out
+
+        resolver = SlugResolver(db, user_id)
+        chunks = _chunk_session_transcript(transcript)
+        label = s.local_session_id or str(s.id)[:8]
+        existing_slugs = await _existing_slug_index(db, user_id)
+        for i, chunk in enumerate(chunks):
+            atom_text = f"# Session: {label} [chunk {i + 1}/{len(chunks)}]\n\n{chunk}"
+            hint = _shortlist_existing_slugs(atom_text, existing_slugs, INDEX_HINT_SIZE)
+            try:
+                result = await _process_atom_llm(
+                    db=db,
+                    user_id=user_id,
+                    resolver=resolver,
+                    client=client,
+                    model=model,
+                    source_type="session",
+                    source_ref=str(s.id),
+                    atom_label=f"{label}#{i + 1}",
+                    atom_text=atom_text,
+                    existing_slugs_hint=hint,
+                )
+                await db.commit()
+                out["atoms"] += 1
+                out["links_added"] += result["links_added"]
+                out["pages_created"] += result["pages_touched"]
+            except IntegrityError as e:
+                # Concurrent task created the same slug. Roll back this
+                # chunk's writes and continue — the next iteration's
+                # resolver lookup will find the existing page.
+                await db.rollback()
+                log.info(
+                    "session %s chunk %d: concurrent slug conflict, retrying: %s",
+                    s.id,
+                    i,
+                    str(e)[:120],
+                )
+                # SlugResolver always queries DB on each call — no cache to invalidate.
+            existing_slugs = await _existing_slug_index(db, user_id)
+    return out
+
+
 async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int) -> dict:
     """Extract entities from raw session transcripts (JSONL on the file store).
 
@@ -578,17 +657,20 @@ async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int)
     in harness-and-wiki.md §13.5: wiki reads sessions directly so verbatim
     fidelity is preserved end-to-end.
 
-    Each session gets chunked into windowed slices; each chunk becomes one
-    extraction-LLM call linked back to the session id. The session id is
-    the dedup key for `_already_processed`, so re-running this is a no-op
-    once a session is fully processed (we don't try to extract from
-    individual chunks idempotently — chunking is not stable across versions).
+    Sessions are processed concurrently (up to `EXTRACTION_CONCURRENCY` at
+    a time) — each in its own AsyncSession via async_session_factory so they
+    don't contend on the parent's transaction. Within a session, chunks
+    still run serially against that task's own DB session.
+
+    Idempotency: the session id is the dedup key for `_already_processed`,
+    so re-running this is a no-op once a session is fully processed.
     """
-    total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
+    # `db` and `resolver` are the parent's; we only use them to enumerate
+    # the candidate session ids. The parallel tasks each open fresh sessions.
     rows = (
         (
             await db.execute(
-                select(SessionModel)
+                select(SessionModel.id)
                 .where(SessionModel.user_id == user_id, SessionModel.file_key.is_not(None))
                 .order_by(SessionModel.updated_at.desc().nullslast())
                 .limit(limit)
@@ -597,37 +679,20 @@ async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int)
         .scalars()
         .all()
     )
-    existing_slugs = await _existing_slug_index(db, user_id)
-    for s in rows:
-        if await _already_processed(db, user_id, "session", str(s.id)):
-            total["skipped_processed"] += 1
-            continue
-        transcript = await _load_session_transcript(s)
-        if not transcript:
-            continue
 
-        chunks = _chunk_session_transcript(transcript)
-        label = s.local_session_id or str(s.id)[:8]
-        for i, chunk in enumerate(chunks):
-            atom_text = f"# Session: {label} [chunk {i + 1}/{len(chunks)}]\n\n{chunk}"
-            hint = _shortlist_existing_slugs(atom_text, existing_slugs, INDEX_HINT_SIZE)
-            result = await _process_atom_llm(
-                db=db,
-                user_id=user_id,
-                resolver=resolver,
-                client=client,
-                model=model,
-                source_type="session",
-                source_ref=str(s.id),
-                atom_label=f"{label}#{i + 1}",
-                atom_text=atom_text,
-                existing_slugs_hint=hint,
-            )
-            total["atoms"] += 1
-            total["links_added"] += result["links_added"]
-            total["pages_created"] += result["pages_touched"]
-            await db.commit()
-            existing_slugs = await _existing_slug_index(db, user_id)
+    sem = asyncio.Semaphore(EXTRACTION_CONCURRENCY)
+    results = await asyncio.gather(
+        *(_extract_one_session(sem, user_id, sid, client, model) for sid in rows),
+        return_exceptions=True,
+    )
+
+    total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
+    for r in results:
+        if isinstance(r, BaseException):
+            log.warning("session extraction task failed: %s", r)
+            continue
+        for k, v in r.items():
+            total[k] = total.get(k, 0) + v  # type: ignore[assignment]
     return total
 
 
