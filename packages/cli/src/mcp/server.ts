@@ -565,7 +565,15 @@ export async function startMcpServer() {
 		},
 		async ({ query, limit }) => {
 			try {
-				const params = new URLSearchParams({ page_size: String(limit ?? 10) });
+				// Server-side FTS via `q` param. The previous version fetched
+				// the first N pages without query, then filtered client-side
+				// — which silently returned empty whenever the matching pages
+				// weren't in the recency-sorted first-N slice (very likely
+				// for any specific entity name).
+				const params = new URLSearchParams({
+					q: query,
+					page_size: String(limit ?? 10),
+				});
 				const data = await api.get<{
 					items: Array<{
 						slug: string;
@@ -577,11 +585,7 @@ export async function startMcpServer() {
 					}>;
 					total: number;
 				}>(`/api/wiki/pages?${params.toString()}`);
-				const q = query.toLowerCase();
-				const matches = data.items.filter(
-					(p) => p.title.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q),
-				);
-				if (!matches.length) {
+				if (!data.items?.length) {
 					return {
 						content: [
 							{
@@ -591,7 +595,7 @@ export async function startMcpServer() {
 						],
 					};
 				}
-				const lines = matches.map((p) => {
+				const lines = data.items.map((p) => {
 					const stale = p.stale ? " [STALE]" : "";
 					const synthesized = p.last_synthesis_at ? "" : " [no synthesis yet]";
 					return `[${p.slug}] ${p.title} (${p.kind}, ${p.source_count} sources${stale}${synthesized})`;
