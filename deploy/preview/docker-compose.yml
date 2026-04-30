@@ -200,13 +200,26 @@ services:
         if ! command -v uv >/dev/null; then
           pip install --quiet uv
         fi
-        # Wait for the API to install workspace deps; it owns the
-        # uv sync. Worker just reuses the same venv.
-        until [ -d /app/backend/.venv/lib ]; do
-          echo "[worker] waiting for api to populate venv..."
+        # Wait for the API to finish `uv sync` so arq + the workspace
+        # `clawdi_backend` package are both importable. Polling the venv
+        # directory existence is not enough — the dir exists from a
+        # prior deploy but new deps land asynchronously when the API
+        # boots. Poll the actual import path: arq is installed AND the
+        # workers module loads (the latter catches workspace re-link
+        # races where clawdi_backend is briefly missing).
+        cd /app/backend
+        for i in $$(seq 1 60); do
+          if uv run python -c "import arq, app.workers" 2>/dev/null; then
+            echo "[worker] arq + app.workers importable"
+            break
+          fi
+          echo "[worker] waiting for venv ready ($$i/60)..."
           sleep 5
         done
-        echo "[worker] venv present, starting arq"
+        # Final import probe — fail loud if still broken so Coolify
+        # reports the actual error in container logs.
+        uv run python -c "import arq, app.workers"
+        echo "[worker] starting arq pool (max_jobs=4)"
         exec uv run arq app.workers.WorkerSettings
       '
 
