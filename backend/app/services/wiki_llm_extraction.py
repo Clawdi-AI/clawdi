@@ -275,6 +275,10 @@ async def _process_atom_llm(
     pages_touched = 0
     links_added = 0
     accepted: list[dict[str, Any]] = []
+    # Track all page IDs touched in this atom so we can wire up page→page
+    # co-occurrence edges below. Two entities mentioned in the same atom
+    # are evidence the user uses them together.
+    co_occurring_page_ids: list[uuid.UUID] = []
 
     for ent in entities:
         try:
@@ -338,6 +342,63 @@ async def _process_atom_llm(
         links_added += 1
         page.source_count = (page.source_count or 0) + 1
         accepted.append({"slug": slug, "title": page.title, "confidence": confidence})
+        co_occurring_page_ids.append(page.id)
+
+    # Page→page co-occurrence edges: any two entities the LLM extracted from
+    # the same atom get linked with link_type="co-occurs". The schema's
+    # CHECK constraint requires `to_page_id IS NOT NULL AND source_type IS NULL`
+    # for page→page edges, so we don't pass source_type/source_ref here.
+    # Idempotent via _page_link_already_exists.
+    pp_edges_added = 0
+    if len(co_occurring_page_ids) >= 2:
+        for i, src_id in enumerate(co_occurring_page_ids):
+            for dst_id in co_occurring_page_ids[i + 1 :]:
+                if src_id == dst_id:
+                    continue
+                exists = await db.scalar(
+                    select(func.count(WikiLink.id)).where(
+                        WikiLink.user_id == user_id,
+                        WikiLink.from_page_id == src_id,
+                        WikiLink.to_page_id == dst_id,
+                    )
+                )
+                if exists:
+                    continue
+                db.add(
+                    WikiLink(
+                        user_id=user_id,
+                        from_page_id=src_id,
+                        to_page_id=dst_id,
+                        source_type=None,
+                        source_ref=None,
+                        link_type="co-occurs",
+                        confidence=0.6,  # heuristic — same-atom co-occurrence
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                pp_edges_added += 1
+                # And the reverse direction so backlinks work both ways.
+                exists_rev = await db.scalar(
+                    select(func.count(WikiLink.id)).where(
+                        WikiLink.user_id == user_id,
+                        WikiLink.from_page_id == dst_id,
+                        WikiLink.to_page_id == src_id,
+                    )
+                )
+                if not exists_rev:
+                    db.add(
+                        WikiLink(
+                            user_id=user_id,
+                            from_page_id=dst_id,
+                            to_page_id=src_id,
+                            source_type=None,
+                            source_ref=None,
+                            link_type="co-occurs",
+                            confidence=0.6,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                    pp_edges_added += 1
 
     db.add(
         WikiLogEntry(
@@ -351,6 +412,7 @@ async def _process_atom_llm(
                 "entities_proposed": len(entities),
                 "entities_accepted": len(accepted),
                 "links_added": links_added,
+                "page_to_page_edges_added": pp_edges_added,
                 "pages_touched": pages_touched,
             },
             ts=datetime.now(UTC),

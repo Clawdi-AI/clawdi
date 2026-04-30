@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
+import { Fragment } from "react";
+import { Markdown } from "@/components/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import { cn, relativeTime } from "@/lib/utils";
@@ -164,7 +166,9 @@ function PageContent({ page }: { page: WikiPageDetail }) {
 					Compiled truth
 				</h2>
 				{page.compiled_truth ? (
-					<p className="text-base leading-relaxed whitespace-pre-wrap">{page.compiled_truth}</p>
+					<div className="prose prose-sm dark:prose-invert max-w-none">
+						<CompiledTruthBody body={page.compiled_truth} />
+					</div>
 				) : (
 					<p className="text-sm text-muted-foreground italic">
 						No synthesis yet — the synthesis pipeline runs after at least one source links to this
@@ -255,5 +259,29 @@ function PageContent({ page }: { page: WikiPageDetail }) {
 				</section>
 			)}
 		</article>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// CompiledTruthBody — renders compiled_truth with [[wikilink]] -> /wiki/<slug>
+// ---------------------------------------------------------------------------
+function CompiledTruthBody({ body }: { body: string }) {
+	// Convert [[Slug or Title]] into markdown [Title](/wiki/slug). The synthesis
+	// LLM doesnt currently emit wikilinks (tracked as a follow-up), but if it
+	// does in the future, this preserves them. For now most pages just have
+	// plain prose; we still pass through the markdown renderer for code, lists,
+	// and links the LLM may have emitted.
+	const transformed = body.replace(/\[\[([^\]]+)\]\]/g, (_, raw: string) => {
+		const target = raw.trim();
+		const slug = target
+			.toLowerCase()
+			.replace(/\s+/g, "-")
+			.replace(/[^a-z0-9-]/g, "");
+		return `[${target}](/wiki/${slug})`;
+	});
+	return (
+		<Fragment>
+			<Markdown content={transformed} />
+		</Fragment>
 	);
 }

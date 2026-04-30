@@ -440,6 +440,273 @@ async def refresh_wiki(
     return out
 
 
+class QueryRequest(BaseModel):
+    """Ask a question to the wiki — 4-phase retrieval + LLM answer with citations."""
+
+    q: str
+    # Top-K wiki pages to retrieve as context. ~5 keeps cost predictable;
+    # 20 lets a thorough question pull in more graph-related pages.
+    top_k: int = 8
+    # Whether to follow page-to-page co-occurrence edges from the seed
+    # set to find related pages (graph expansion phase).
+    expand_graph: bool = True
+
+
+class QueryCitation(BaseModel):
+    n: int  # 1-based number used in the answer text
+    slug: str
+    title: str
+    snippet: str | None  # ~280 chars of compiled_truth
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    citations: list[QueryCitation]
+    pages_considered: int
+    mode: str  # "llm" | "no_llm" | "no_match"
+
+
+@router.post("/query", response_model=QueryResponse)
+async def query_wiki(
+    body: QueryRequest,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> QueryResponse:
+    """4-phase retrieval + LLM-answered query against the user's wiki.
+
+    Phase 1 — tokenized FTS over title/slug/compiled_truth (same logic as
+    GET /api/wiki/pages?q=...).
+    Phase 2 — graph expansion: follow page→page co-occurrence edges from
+    the top seeds to surface related pages even if the keyword didn't hit
+    them directly.
+    Phase 3 — budget control: cap to top_k pages by combined relevance.
+    Phase 4 — context assembly: number pages 1..N, send them to the LLM
+    with a system prompt that instructs cite-by-number in the answer.
+    """
+    # ---------- Phase 1: tokenized FTS ----------
+    import re as _re
+
+    from sqlalchemy import case as sql_case
+    from sqlalchemy import or_
+
+    stopwords = {
+        "the",
+        "a",
+        "an",
+        "what",
+        "whats",
+        "is",
+        "are",
+        "of",
+        "for",
+        "in",
+        "on",
+        "to",
+        "do",
+        "i",
+        "my",
+        "you",
+        "your",
+        "and",
+        "or",
+        "how",
+        "why",
+        "where",
+        "when",
+        "who",
+        "does",
+        "did",
+        "be",
+        "this",
+        "that",
+        "with",
+        "by",
+        "from",
+        "use",
+        "uses",
+        "using",
+    }
+    tokens = [
+        t.lower()
+        for t in _re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", body.q)
+        if t.lower() not in stopwords
+    ]
+    if not tokens:
+        tokens = [body.q.strip()]
+
+    title_terms = []
+    slug_terms = []
+    body_terms = []
+    match_terms = []
+    for tok in tokens:
+        pat = f"%{tok}%"
+        title_terms.append(sql_case((WikiPage.title.ilike(pat), 1.0), else_=0.0))
+        slug_terms.append(sql_case((WikiPage.slug.ilike(pat), 0.7), else_=0.0))
+        body_terms.append(sql_case((WikiPage.compiled_truth.ilike(pat), 0.3), else_=0.0))
+        match_terms.append(WikiPage.title.ilike(pat))
+        match_terms.append(WikiPage.slug.ilike(pat))
+        match_terms.append(WikiPage.compiled_truth.ilike(pat))
+
+    relevance = (sum(title_terms) + sum(slug_terms) + sum(body_terms)).label("relevance")
+
+    seed_rows = (
+        (
+            await db.execute(
+                select(WikiPage)
+                .where(WikiPage.user_id == auth.user_id, or_(*match_terms))
+                .order_by(relevance.desc(), WikiPage.source_count.desc())
+                .limit(body.top_k)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # ---------- Phase 2: graph expansion ----------
+    pages_by_id: dict[uuid.UUID, WikiPage] = {p.id: p for p in seed_rows}
+    if body.expand_graph and seed_rows:
+        seed_ids = [p.id for p in seed_rows]
+        # Follow co-occurs edges out from seeds; bring in up to 2x more pages.
+        neighbor_ids = (
+            (
+                await db.execute(
+                    select(WikiLink.to_page_id)
+                    .where(
+                        WikiLink.user_id == auth.user_id,
+                        WikiLink.from_page_id.in_(seed_ids),
+                        WikiLink.to_page_id.is_not(None),
+                        WikiLink.link_type == "co-occurs",
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Cap expansion at body.top_k more pages, prioritizing high-source.
+        if neighbor_ids:
+            new_ids = [nid for nid in neighbor_ids if nid not in pages_by_id]
+            if new_ids:
+                neighbor_pages = (
+                    (
+                        await db.execute(
+                            select(WikiPage)
+                            .where(
+                                WikiPage.user_id == auth.user_id,
+                                WikiPage.id.in_(new_ids),
+                            )
+                            .order_by(WikiPage.source_count.desc())
+                            .limit(body.top_k)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for p in neighbor_pages:
+                    pages_by_id[p.id] = p
+
+    if not pages_by_id:
+        return QueryResponse(
+            answer=(
+                "No matching wiki pages for that query. Try different keywords, "
+                "or run `/api/wiki/refresh` if you've recently added new memories."
+            ),
+            citations=[],
+            pages_considered=0,
+            mode="no_match",
+        )
+
+    # ---------- Phase 3: budget control + numbering ----------
+    # Sort: pages that hit the keyword directly first, then graph-expanded.
+    seed_id_set = {p.id for p in seed_rows}
+    ordered_pages = sorted(
+        pages_by_id.values(),
+        key=lambda p: (
+            0 if p.id in seed_id_set else 1,
+            -(p.source_count or 0),
+        ),
+    )
+
+    # ---------- Phase 4: context assembly + LLM call ----------
+    from app.core.config import settings as _settings
+
+    if not _settings.llm_api_key:
+        # No LLM: return the citations alone, the agent can decide
+        return QueryResponse(
+            answer="LLM not configured; returning ranked pages without synthesis.",
+            citations=[
+                QueryCitation(
+                    n=i + 1,
+                    slug=p.slug,
+                    title=p.title,
+                    snippet=(p.compiled_truth or "")[:280] or None,
+                )
+                for i, p in enumerate(ordered_pages)
+            ],
+            pages_considered=len(ordered_pages),
+            mode="no_llm",
+        )
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=_settings.llm_base_url or None,
+        api_key=_settings.llm_api_key,
+    )
+
+    pages_block: list[str] = []
+    citations: list[QueryCitation] = []
+    for i, p in enumerate(ordered_pages):
+        n = i + 1
+        title_line = f"[{n}] {p.title} ({p.slug})"
+        body_text = (
+            p.compiled_truth or "(no synthesized summary; entity exists with sources)"
+        ).strip()
+        pages_block.append(f"{title_line}\n{body_text}")
+        citations.append(
+            QueryCitation(
+                n=n,
+                slug=p.slug,
+                title=p.title,
+                snippet=(p.compiled_truth or "")[:280] or None,
+            )
+        )
+
+    system_prompt = (
+        "You answer questions from a personal knowledge wiki. "
+        "Each numbered page below is one entity in the user's life — projects, "
+        "tools, services, people they work with. Answer the user's question "
+        "using ONLY the pages provided. Cite pages by their number in [n] form "
+        "after each fact, e.g. 'Twilio is the voice provider [1].'. If the "
+        "pages don't contain the answer, say so directly — do not guess."
+    )
+    user_prompt = f"Question: {body.q}\n\nPages ({len(ordered_pages)}):\n\n" + "\n\n---\n\n".join(
+        pages_block
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=_settings.llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=600,
+            temperature=0.2,
+        )
+        answer = (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        log.warning("wiki_query LLM failed: %s", e)
+        answer = f"LLM error: {str(e)[:200]}. Cited pages still attached below."
+
+    return QueryResponse(
+        answer=answer or "(empty)",
+        citations=citations,
+        pages_considered=len(ordered_pages),
+        mode="llm",
+    )
+
+
 @router.post("/wipe")
 async def wipe_wiki(
     auth: AuthContext = Depends(get_auth),

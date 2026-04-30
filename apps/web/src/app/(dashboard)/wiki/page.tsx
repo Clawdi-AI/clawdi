@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, FileText, Loader2, Search } from "lucide-react";
+import { Activity, BookOpen, FileText, Loader2, MessageSquare, Search } from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,27 +51,24 @@ export default function WikiIndexPage() {
 	const deferredQuery = useDeferredValue(searchQuery);
 
 	const { data, isLoading, isFetching } = useQuery<PageList>({
-		queryKey: ["wiki", "pages", { kind }],
+		queryKey: ["wiki", "pages", { kind, q: deferredQuery }],
 		queryFn: async () => {
 			const token = (await getToken()) ?? "";
 			const params = new URLSearchParams({ page_size: "200" });
 			if (kind) params.set("kind", kind);
+			if (deferredQuery.trim()) params.set("q", deferredQuery.trim());
 			return apiFetch<PageList>(`/api/wiki/pages?${params.toString()}`, token);
 		},
 	});
 
-	// Client-side filter on title/slug — server-side text search comes after
-	// the synthesis pipeline lands and we can index compiled_truth.
-	const filtered = (data?.items ?? []).filter((p) => {
-		if (!deferredQuery) return true;
-		const q = deferredQuery.toLowerCase();
-		return p.title.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q);
-	});
+	// Server-side ranked search via /api/wiki/pages?q=...; no client-side filter
+	// needed. Backend tokenizes the query and ranks by title/slug/compiled_truth.
+	const filtered = data?.items ?? [];
 
 	return (
 		<div className="max-w-5xl mx-auto space-y-6">
 			<header className="space-y-2">
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2 flex-wrap">
 					<BookOpen className="size-6 text-muted-foreground" />
 					<h1 className="text-2xl font-semibold">Wiki</h1>
 					{data && (
@@ -79,6 +76,22 @@ export default function WikiIndexPage() {
 							{data.total} {data.total === 1 ? "page" : "pages"}
 						</span>
 					)}
+					<div className="ml-auto flex items-center gap-2">
+						<Link
+							href="/wiki/chat"
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
+						>
+							<MessageSquare className="size-3.5" />
+							Chat
+						</Link>
+						<Link
+							href="/wiki/log"
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
+						>
+							<Activity className="size-3.5" />
+							Activity
+						</Link>
+					</div>
 				</div>
 				<p className="text-sm text-muted-foreground max-w-prose">
 					Synthesized knowledge across your memory, skills, sessions, and vault. Pages are
@@ -95,7 +108,7 @@ export default function WikiIndexPage() {
 						type="search"
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
-						placeholder="Filter by title or slug…"
+						placeholder="Search title, slug, or content…"
 						className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
 					/>
 				</div>
