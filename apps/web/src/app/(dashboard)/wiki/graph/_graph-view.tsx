@@ -6,6 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import { useQuery } from "@tanstack/react-query";
 import Graph from "graphology";
+import louvain from "graphology-communities-louvain";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import {
 	AlertTriangle,
@@ -79,6 +80,26 @@ const NODE_KIND_COLORS: Record<string, string> = {
 	source: "#94a3b8",
 };
 
+// 12-color palette for Louvain community coloring. Same intent as
+// nashsu/llm_wiki's COMMUNITY_COLORS — picked-by-eye to be perceptually
+// distinct and reasonable in dark mode.
+const COMMUNITY_COLORS = [
+	"#6366f1", // indigo
+	"#ec4899", // pink
+	"#14b8a6", // teal
+	"#f97316", // orange
+	"#a855f7", // violet
+	"#22c55e", // green
+	"#ef4444", // red
+	"#06b6d4", // cyan
+	"#eab308", // yellow
+	"#84cc16", // lime
+	"#f43f5e", // rose
+	"#3b82f6", // blue
+];
+
+type ColorMode = "kind" | "community";
+
 const EDGE_TYPE_COLORS: Record<string, string> = {
 	"co-occurs": "#cbd5e1",
 	mentions: "#cbd5e1",
@@ -109,7 +130,7 @@ const MAX_NODE_SIZE = 22;
 // Sigma graph wiring
 // ---------------------------------------------------------------------------
 
-function GraphLoader({ data }: { data: GraphResponse }) {
+function GraphLoader({ data, colorMode }: { data: GraphResponse; colorMode: ColorMode }) {
 	const loadGraph = useLoadGraph();
 	useEffect(() => {
 		const graph = new Graph({ multi: false, type: "undirected" });
@@ -120,6 +141,7 @@ function GraphLoader({ data }: { data: GraphResponse }) {
 			graph.addNode(n.id, {
 				label: n.title,
 				size,
+				// Initial fill — overwritten below once we know the community.
 				color: NODE_KIND_COLORS[n.kind] ?? "#9ca3af",
 				x: Math.random(),
 				y: Math.random(),
@@ -137,6 +159,33 @@ function GraphLoader({ data }: { data: GraphResponse }) {
 				link_type: e.link_type,
 			});
 		});
+
+		// Louvain community detection — group densely-connected nodes so the
+		// "color by community" mode shows real clusters (e.g. voice-agent +
+		// twilio + openclaw all share a community). Resolution > 1 splits
+		// finer; default works well for ~200-node personal wikis.
+		try {
+			louvain.assign(graph, { resolution: 1 });
+		} catch {
+			// Graph too sparse / disconnected — fall back to assigning every
+			// node its own community so the palette still cycles cleanly.
+			let i = 0;
+			graph.forEachNode((node) => {
+				graph.setNodeAttribute(node, "community", i++);
+			});
+		}
+
+		// Apply the chosen color palette now that community is assigned.
+		graph.forEachNode((node, attrs) => {
+			const c =
+				colorMode === "community"
+					? COMMUNITY_COLORS[((attrs.community as number) ?? 0) % COMMUNITY_COLORS.length]
+					: (NODE_KIND_COLORS[attrs.kind as string] ?? "#9ca3af");
+			graph.setNodeAttribute(node, "color", c);
+			// Save the resolved color for the hover/select dim-and-restore logic.
+			graph.setNodeAttribute(node, "_origColor", c);
+		});
+
 		const settings = forceAtlas2.inferSettings(graph);
 		forceAtlas2.assign(graph, {
 			iterations: 300,
@@ -149,11 +198,75 @@ function GraphLoader({ data }: { data: GraphResponse }) {
 			},
 		});
 		loadGraph(graph);
-	}, [data, loadGraph]);
+	}, [data, colorMode, loadGraph]);
 	return null;
 }
 
-function GraphEvents({ onSelect }: { onSelect: (slug: string) => void }) {
+/**
+ * Reflects the externally-driven `selectedSlug` onto the canvas: highlights
+ * the matching node + its neighbors, dims everything else, and centers the
+ * camera. Mirrors nashsu/llm_wiki's insight-highlight behavior so clicking
+ * a sidebar entry tells you _where_ that entity sits in the graph.
+ */
+function SelectionEffect({ selectedSlug }: { selectedSlug: string | null }) {
+	const sigma = useSigma();
+	useEffect(() => {
+		const graph = sigma.getGraph();
+		if (!selectedSlug || !graph.hasNode(selectedSlug)) {
+			// Reset: restore every node/edge to its base color and uniform size.
+			graph.forEachNode((node, attrs) => {
+				if (attrs._origColor) graph.setNodeAttribute(node, "color", attrs._origColor);
+				graph.setNodeAttribute(node, "highlighted", false);
+				if (attrs._origSize != null) {
+					graph.setNodeAttribute(node, "size", attrs._origSize);
+					graph.removeNodeAttribute(node, "_origSize");
+				}
+			});
+			graph.forEachEdge((edge, attrs) => {
+				if (attrs._origColor) graph.setEdgeAttribute(edge, "color", attrs._origColor);
+			});
+			sigma.refresh();
+			return;
+		}
+
+		const neighbors = new Set<string>([selectedSlug, ...graph.neighbors(selectedSlug)]);
+		graph.forEachNode((node, attrs) => {
+			const inFocus = neighbors.has(node);
+			graph.setNodeAttribute(node, "_origColor", attrs._origColor ?? attrs.color);
+			graph.setNodeAttribute(
+				node,
+				"color",
+				inFocus ? ((attrs._origColor as string | undefined) ?? attrs.color) : "#e5e7eb",
+			);
+			graph.setNodeAttribute(node, "highlighted", node === selectedSlug);
+			if (node === selectedSlug) {
+				graph.setNodeAttribute(node, "_origSize", attrs._origSize ?? attrs.size);
+				graph.setNodeAttribute(node, "size", (attrs.size as number) * 1.5);
+			}
+		});
+		graph.forEachEdge((edge, attrs, src, dst) => {
+			graph.setEdgeAttribute(edge, "_origColor", attrs._origColor ?? attrs.color);
+			const involved = src === selectedSlug || dst === selectedSlug;
+			graph.setEdgeAttribute(edge, "color", involved ? "#475569" : "#f1f5f9");
+		});
+
+		// Smoothly pan + zoom to the selected node.
+		const pos = sigma.getNodeDisplayData(selectedSlug);
+		if (pos) {
+			sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.6 }, { duration: 400 });
+		}
+		sigma.refresh();
+	}, [selectedSlug, sigma]);
+	return null;
+}
+
+function GraphEvents({
+	onSelect,
+	selectedSlug,
+}: {
+	onSelect: (slug: string) => void;
+	selectedSlug: string | null;
+}) {
 	const sigma = useSigma();
 	const registerEvents = useRegisterEvents();
 
@@ -164,6 +277,10 @@ function GraphEvents({ onSelect }: { onSelect: (slug: string) => void }) {
 				onSelect(event.node);
 			},
 			enterNode: (event) => {
+				// When a node is selected, SelectionEffect owns the dim/focus
+				// state. Skipping hover effects here avoids a tug-of-war that
+				// drops the selection's dim on every cursor move.
+				if (selectedSlug) return;
 				const graph = sigma.getGraph();
 				const hovered = event.node;
 				const neighbors = new Set([hovered, ...graph.neighbors(hovered)]);
@@ -184,6 +301,7 @@ function GraphEvents({ onSelect }: { onSelect: (slug: string) => void }) {
 				sigma.refresh();
 			},
 			leaveNode: () => {
+				if (selectedSlug) return;
 				const graph = sigma.getGraph();
 				graph.forEachNode((node, attrs) => {
 					if (attrs._origColor) graph.setNodeAttribute(node, "color", attrs._origColor);
@@ -195,7 +313,7 @@ function GraphEvents({ onSelect }: { onSelect: (slug: string) => void }) {
 				sigma.refresh();
 			},
 		});
-	}, [registerEvents, sigma, onSelect]);
+	}, [registerEvents, sigma, onSelect, selectedSlug]);
 
 	return null;
 }
@@ -207,6 +325,7 @@ function GraphEvents({ onSelect }: { onSelect: (slug: string) => void }) {
 export default function WikiGraphView() {
 	const { getToken } = useAuth();
 	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+	const [colorMode, setColorMode] = useState<ColorMode>("kind");
 
 	const { data, isLoading } = useQuery<GraphResponse>({
 		queryKey: ["wiki", "graph", "full"],
@@ -242,11 +361,45 @@ export default function WikiGraphView() {
 						</p>
 					)}
 				</div>
-				<div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-					<LegendDot color={NODE_KIND_COLORS.entity} label="entity" />
-					<LegendDot color={NODE_KIND_COLORS.synthesis} label="synthesis" />
-					<LegendDot color={NODE_KIND_COLORS.concept} label="concept" />
-					<LegendDot color={NODE_KIND_COLORS.source} label="source" />
+				<div className="flex items-start gap-4 flex-wrap">
+					<div className="flex items-center gap-1 rounded-lg bg-muted/50 p-0.5 text-xs">
+						<button
+							type="button"
+							onClick={() => setColorMode("kind")}
+							className={cn(
+								"px-2.5 py-1 rounded-md font-medium transition-colors",
+								colorMode === "kind"
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground",
+							)}
+						>
+							by kind
+						</button>
+						<button
+							type="button"
+							onClick={() => setColorMode("community")}
+							className={cn(
+								"px-2.5 py-1 rounded-md font-medium transition-colors",
+								colorMode === "community"
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground",
+							)}
+						>
+							by cluster
+						</button>
+					</div>
+					{colorMode === "kind" ? (
+						<div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+							<LegendDot color={NODE_KIND_COLORS.entity} label="entity" />
+							<LegendDot color={NODE_KIND_COLORS.synthesis} label="synthesis" />
+							<LegendDot color={NODE_KIND_COLORS.concept} label="concept" />
+							<LegendDot color={NODE_KIND_COLORS.source} label="source" />
+						</div>
+					) : (
+						<div className="text-xs text-muted-foreground">
+							Louvain communities · {COMMUNITY_COLORS.length} colors cycle
+						</div>
+					)}
 				</div>
 			</header>
 
@@ -277,8 +430,9 @@ export default function WikiGraphView() {
 								zIndex: true,
 							}}
 						>
-							<GraphLoader data={data as GraphResponse} />
-							<GraphEvents onSelect={handleSelect} />
+							<GraphLoader data={data as GraphResponse} colorMode={colorMode} />
+							<GraphEvents onSelect={handleSelect} selectedSlug={selectedSlug} />
+							<SelectionEffect selectedSlug={selectedSlug} />
 						</SigmaContainer>
 					</div>
 
