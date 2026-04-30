@@ -89,15 +89,39 @@ def _build_user_prompt(page_title: str, sources: list[str]) -> str:
     )
 
 
+def _redact_vault_values(text: str, vault_values: set[str]) -> str:
+    """Replace any vault value verbatim-present in `text` with `[REDACTED]`.
+
+    Pre-emptive redaction before LLM synthesis. The downstream sanitizer is
+    still the authoritative leak guard; this is the prevention layer that
+    keeps the LLM from seeing the secret in the first place, so it can't
+    repeat verbatim and can't paraphrase plausibly-but-wrongly.
+
+    Cheap O(n × k) substring replace — k=user's vault size (typically <50).
+    Skips empty/very-short values (3 chars or less) to avoid false positives
+    on common substrings.
+    """
+    if not vault_values or not text:
+        return text
+    for v in vault_values:
+        if v and len(v) > 3:
+            text = text.replace(v, "[REDACTED]")
+    return text
+
+
 async def _gather_sources(
     db: AsyncSession,
     user_id: uuid.UUID,
     page_id: uuid.UUID,
+    vault_values: set[str] | None = None,
 ) -> list[str]:
     """Pull display strings for every link from this page → source atom.
 
     Vault links surface the scope name only — values are never read.
+    Session transcripts are pre-redacted against the user's vault values
+    before being included in the prompt.
     """
+    vault_values = vault_values or set()
     link_rows = (
         (
             await db.execute(
@@ -153,6 +177,12 @@ async def _gather_sources(
                 # Trim per session — full transcripts are huge. Tail-bias:
                 # last messages carry conclusions/decisions worth synthesizing.
                 cached = transcript[-6_000:] if len(transcript) > 6_000 else transcript
+                # Pre-redact vault values so the synthesis LLM never sees them
+                # verbatim. Defense in depth — the post-LLM sanitizer is still
+                # the hard guard, but redacting upstream means we don't waste
+                # LLM tokens (and synthesis attempts) on transcripts that would
+                # leak secrets if regurgitated.
+                cached = _redact_vault_values(cached, vault_values)
                 session_text_cache[link.source_ref] = cached
             sources.append(f"[session:{link.source_ref}] {cached}")
         elif link.source_type == "vault":
@@ -216,7 +246,9 @@ async def synthesize_page(
     (see services/memory_extraction.py). Keeps the openai SDK off cold-start
     paths that don't need it.
     """
-    sources = await _gather_sources(db, user_id, page.id)
+    sources = await _gather_sources(
+        db, user_id, page.id, vault_values=getattr(sanitizer, "_values", set())
+    )
 
     if len(sources) < MIN_SOURCES_FOR_SYNTHESIS:
         return {
@@ -339,6 +371,12 @@ async def synthesize_for_user(
                     .where(
                         WikiPage.user_id == user_id,
                         WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
+                # `kind=source` pages already store the canonical transcript
+                # tail as compiled_truth at creation time; re-running them
+                # through synthesize_page would feed the raw transcript to
+                # the LLM, which regurgitates verbatim secrets and the
+                # sanitizer aborts. They are not entity pages — skip them.
+                WikiPage.kind != "source",
                     )
                     .order_by(WikiPage.updated_at.desc())
                     .limit(limit)
@@ -364,6 +402,12 @@ async def synthesize_for_user(
                     .where(
                         WikiPage.user_id == user_id,
                         WikiPage.source_count >= MIN_SOURCES_FOR_SYNTHESIS,
+                # `kind=source` pages already store the canonical transcript
+                # tail as compiled_truth at creation time; re-running them
+                # through synthesize_page would feed the raw transcript to
+                # the LLM, which regurgitates verbatim secrets and the
+                # sanitizer aborts. They are not entity pages — skip them.
+                WikiPage.kind != "source",
                         (
                             (WikiPage.last_synthesis_at.is_(None))
                             | (WikiPage.last_synthesis_at < newest_link_ts)
