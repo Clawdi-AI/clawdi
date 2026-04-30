@@ -13,6 +13,7 @@ an empty wiki, then lights up as the pipeline starts producing pages.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -2151,26 +2152,38 @@ async def get_graph(
     return GraphResponse(nodes=nodes, edges=edges)
 
 
-async def _bootstrap_one_user(user_id: uuid.UUID) -> None:
-    """BackgroundTask: extract + synthesize wiki for one user.
+# Serializes per-user bootstrap so we don't have N users × 8 chunks each
+# = N×8 concurrent OpenAI calls + DB sessions, which OOMs the worker.
+# Each user still gets internal Semaphore(EXTRACTION_CONCURRENCY=8) for
+# its own chunks; users themselves run one-at-a-time.
+_bootstrap_lock = asyncio.Lock()
 
-    Each user gets a fresh AsyncSession + its own try/except so a single
-    failing user doesn't break the others. Logs progress so the admin can
-    grep the API logs for "bootstrap user=" to follow along.
+
+async def _bootstrap_all_users(user_ids: list[uuid.UUID]) -> None:
+    """BackgroundTask: serially extract + synthesize wiki for each user.
+
+    Single global lock — multiple admin invocations queue cleanly without
+    duplicating work. Each user runs in its own AsyncSession with its own
+    try/except so one failure doesn't break the rest. Logs progress under
+    'bootstrap user=<id>' so the admin can tail Coolify for status.
     """
     from app.core.database import async_session_factory
     from app.services.wiki_llm_extraction import llm_extract_for_user
     from app.services.wiki_synthesis import synthesize_for_user
 
-    log.info("bootstrap user=%s — start", user_id)
-    try:
-        async with async_session_factory() as db:
-            ext = await llm_extract_for_user(db, user_id)
-            log.info("bootstrap user=%s — extraction: %s", user_id, ext)
-            synth = await synthesize_for_user(db, user_id)
-            log.info("bootstrap user=%s — synthesis: %s", user_id, synth)
-    except Exception as e:  # noqa: BLE001 — best-effort per-user job
-        log.warning("bootstrap user=%s — failed: %s", user_id, e)
+    async with _bootstrap_lock:
+        log.info("bootstrap: starting serial sweep over %d users", len(user_ids))
+        for i, user_id in enumerate(user_ids, 1):
+            log.info("bootstrap user=%s (%d/%d) — start", user_id, i, len(user_ids))
+            try:
+                async with async_session_factory() as db:
+                    ext = await llm_extract_for_user(db, user_id)
+                    log.info("bootstrap user=%s — extraction: %s", user_id, ext)
+                    synth = await synthesize_for_user(db, user_id)
+                    log.info("bootstrap user=%s — synthesis: %s", user_id, synth)
+            except Exception as e:  # noqa: BLE001 — best-effort per-user job
+                log.warning("bootstrap user=%s — failed: %s", user_id, e)
+        log.info("bootstrap: serial sweep complete")
 
 
 @router.post("/admin/bootstrap-all-users")
@@ -2230,14 +2243,17 @@ async def bootstrap_all_users(
     user_ids = sorted(user_ids_sessions | user_ids_memories, key=str)
     log.info("bootstrap: found %d active users to enqueue", len(user_ids))
 
-    for uid in user_ids:
-        background.add_task(_bootstrap_one_user, uid)
+    # One BackgroundTask processes ALL users serially under _bootstrap_lock.
+    # Prevents the N-users × Semaphore(8)-per-user fan-out that previously
+    # OOM'd the API worker by holding 40+ in-flight OpenAI calls + DB
+    # sessions simultaneously.
+    background.add_task(_bootstrap_all_users, list(user_ids))
 
     return {
         "users_queued": len(user_ids),
         "user_ids": [str(u) for u in user_ids],
         "note": (
-            "Tasks running in background. "
+            "Single serial BackgroundTask processes all users. "
             "Poll GET /api/wiki/admin/bootstrap-status to track progress."
         ),
     }
