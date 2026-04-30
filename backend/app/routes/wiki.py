@@ -707,6 +707,68 @@ async def query_wiki(
     )
 
 
+@router.post("/recompute-graph")
+async def recompute_graph(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Build page-to-page co-occurs edges from existing source links.
+
+    Two entity pages that both link to the same source atom (memory /
+    skill / session / vault) get a co-occurs edge. Bidirectional.
+
+    Idempotent: skips edges that already exist. Used to retro-fill the
+    graph after deploying the page-to-page edge logic, which only writes
+    edges for NEW atoms processed via the LLM extractor.
+    """
+    from sqlalchemy import text
+
+    sql = text("""
+        WITH pages_per_atom AS (
+            SELECT source_type, source_ref, array_agg(DISTINCT from_page_id) AS page_ids
+            FROM wiki_links
+            WHERE user_id = :uid AND source_type IS NOT NULL
+            GROUP BY source_type, source_ref
+            HAVING COUNT(DISTINCT from_page_id) >= 2
+        ),
+        candidate_edges AS (
+            SELECT DISTINCT a.elem AS p1, b.elem AS p2
+            FROM pages_per_atom,
+                 LATERAL unnest(page_ids) WITH ORDINALITY AS a(elem, idx_a),
+                 LATERAL unnest(page_ids) WITH ORDINALITY AS b(elem, idx_b)
+            WHERE a.elem <> b.elem
+        ),
+        new_edges AS (
+            SELECT ce.p1, ce.p2
+            FROM candidate_edges ce
+            WHERE NOT EXISTS (
+                SELECT 1 FROM wiki_links wl
+                WHERE wl.user_id = :uid
+                  AND wl.from_page_id = ce.p1
+                  AND wl.to_page_id = ce.p2
+            )
+        )
+        INSERT INTO wiki_links (
+            id, user_id, from_page_id, to_page_id, source_type, source_ref,
+            link_type, confidence, created_at
+        )
+        SELECT gen_random_uuid(), :uid, p1, p2, NULL, NULL, 'co-occurs', 0.6, now()
+        FROM new_edges
+        RETURNING id
+    """)
+    res = await db.execute(sql, {"uid": auth.user_id})
+    inserted = len(res.fetchall())
+    await db.commit()
+
+    total_pp = await db.scalar(
+        select(func.count(WikiLink.id)).where(
+            WikiLink.user_id == auth.user_id,
+            WikiLink.to_page_id.is_not(None),
+        )
+    )
+    return {"new_edges": inserted, "total_page_to_page_edges": total_pp or 0}
+
+
 @router.post("/wipe")
 async def wipe_wiki(
     auth: AuthContext = Depends(get_auth),
