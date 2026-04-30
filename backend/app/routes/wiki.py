@@ -45,6 +45,11 @@ class WikiPageSummary(BaseModel):
     slug: str
     title: str
     kind: str
+    # Sub-type from the LLM extractor's `frontmatter.type` —
+    # project/tool/service/person/concept/place for entity pages, or
+    # memory/session for source pages. Surfaces the second layer of
+    # categorization in the Pages browser without a separate fetch.
+    entity_type: str | None = None
     source_count: int
     stale: bool
     last_synthesis_at: datetime | None
@@ -128,6 +133,19 @@ class WikiStatus(BaseModel):
     last_extraction_at: datetime | None
     last_synthesis_at: datetime | None
     is_active: bool
+
+
+def _entity_type_from_frontmatter(fm: dict | None) -> str | None:
+    """Pull the LLM-extractor's `type` (project/tool/service/person/concept/place)
+    out of frontmatter so the Pages browser can sub-group entities. Returns
+    None when frontmatter is missing or malformed.
+    """
+    if not isinstance(fm, dict):
+        return None
+    value = fm.get("type") or fm.get("source_type")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -278,10 +296,10 @@ async def list_pages(
                     slug=p.slug,
                     title=p.title,
                     kind=p.kind,
+                    entity_type=_entity_type_from_frontmatter(p.frontmatter),
                     source_count=p.source_count,
                     stale=p.stale,
                     last_synthesis_at=p.last_synthesis_at,
-                    created_at=p.created_at,
                     updated_at=p.updated_at,
                 )
                 for p in rows
@@ -321,6 +339,7 @@ async def list_pages(
                 slug=p.slug,
                 title=p.title,
                 kind=p.kind,
+                entity_type=_entity_type_from_frontmatter(p.frontmatter),
                 source_count=p.source_count,
                 stale=p.stale,
                 last_synthesis_at=p.last_synthesis_at,

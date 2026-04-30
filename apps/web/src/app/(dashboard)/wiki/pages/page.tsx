@@ -26,11 +26,36 @@ type WikiPageSummary = {
 	slug: string;
 	title: string;
 	kind: string;
+	entity_type: string | null;
 	source_count: number;
 	stale: boolean;
 	last_synthesis_at: string | null;
 	updated_at: string;
 };
+
+// Display labels for the LLM-extractor's `type` enum + the source `source_type`.
+// Order roughly: living things first, abstractions later. Unknown sub-types
+// fall through to a generic bucket.
+const ENTITY_TYPE_LABELS: Record<string, { label: string; order: number }> = {
+	person: { label: "People", order: 0 },
+	project: { label: "Projects", order: 1 },
+	tool: { label: "Tools", order: 2 },
+	service: { label: "Services", order: 3 },
+	place: { label: "Places", order: 4 },
+	concept: { label: "Concepts", order: 5 },
+	memory: { label: "Memory atoms", order: 0 },
+	session: { label: "Session transcripts", order: 1 },
+};
+
+function entityTypeLabel(t: string | null | undefined): string {
+	if (!t) return "Other";
+	return ENTITY_TYPE_LABELS[t]?.label ?? t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function entityTypeOrder(t: string | null | undefined): number {
+	if (!t) return 99;
+	return ENTITY_TYPE_LABELS[t]?.order ?? 50;
+}
 
 type PageList = {
 	items: WikiPageSummary[];
@@ -197,28 +222,50 @@ export default function WikiIndexPage() {
 			) : items.length === 0 ? (
 				<EmptyState query={deferredQuery} hasAny={(data?.total ?? 0) > 0} />
 			) : (
-				<div className="space-y-8">
+				<div className="space-y-10">
 					{groups.map(({ kind: k, pages }) => {
 						const meta = kindMeta(k);
 						const Icon = meta.icon;
+						// Sub-group by entity_type. Pages whose type is null land in
+						// "Other" which renders only when populated.
+						const subGroups = new Map<string, WikiPageSummary[]>();
+						for (const p of pages) {
+							const key = p.entity_type ?? "";
+							const bucket = subGroups.get(key) ?? [];
+							bucket.push(p);
+							subGroups.set(key, bucket);
+						}
+						const subSections = [...subGroups.entries()].sort(
+							([a], [b]) => entityTypeOrder(a) - entityTypeOrder(b),
+						);
 						return (
-							<section key={k} className="space-y-3">
-								<div className="flex items-center gap-2">
-									<Icon className={cn("size-4", meta.color)} />
-									<h2 className="text-sm font-semibold capitalize">
+							<section key={k} className="space-y-4">
+								<div className="flex items-center gap-2 border-b pb-2">
+									<Icon className={cn("size-5", meta.color)} />
+									<h2 className="text-base font-semibold capitalize">
 										{k}
 										<span className="ml-2 text-xs font-normal text-muted-foreground font-mono">
 											{pages.length}
 										</span>
 									</h2>
 								</div>
-								<ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-									{pages.map((p) => (
-										<li key={p.id}>
-											<PageCard page={p} />
-										</li>
-									))}
-								</ul>
+								{subSections.map(([subKey, subPages]) => (
+									<div key={subKey || "_other"} className="space-y-2">
+										<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+											{entityTypeLabel(subKey)}
+											<span className="ml-2 text-[10px] font-mono opacity-70">
+												{subPages.length}
+											</span>
+										</h3>
+										<ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+											{subPages.map((p) => (
+												<li key={p.id}>
+													<PageCard page={p} />
+												</li>
+											))}
+										</ul>
+									</div>
+								))}
 							</section>
 						);
 					})}
