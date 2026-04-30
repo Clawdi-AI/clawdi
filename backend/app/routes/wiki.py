@@ -782,7 +782,19 @@ async def query_wiki(
         # in to_tsquery and threw on apostrophes.
         try:
             ts_q = func.websearch_to_tsquery("english", body.q.strip())
-            ts_v = func.to_tsvector("english", WikiPage.compiled_truth)
+            # Title carries strong signal for curated mem-<id> pages — it's
+            # the first line of the memory content (e.g. "Voice Call Twilio
+            # Setup"). Including it in the FTS surface lets queries like
+            # "what phone number does the voice agent answer at" match the
+            # right source page even when other pages mention 'voice' more.
+            ts_v = func.to_tsvector(
+                "english",
+                func.coalesce(WikiPage.title, "")
+                + " "
+                + func.coalesce(WikiPage.slug, "")
+                + " "
+                + func.coalesce(WikiPage.compiled_truth, ""),
+            )
             rs = (
                 (
                     await db.execute(
@@ -793,7 +805,7 @@ async def query_wiki(
                             ts_v.op("@@")(ts_q),
                         )
                         .order_by(func.ts_rank_cd(ts_v, ts_q).desc())
-                        .limit(3)
+                        .limit(6)
                     )
                 )
                 .scalars()
