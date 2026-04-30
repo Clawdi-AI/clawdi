@@ -673,12 +673,21 @@ async def query_wiki(
         )
 
     system_prompt = (
-        "You answer questions from a personal knowledge wiki. "
-        "Each numbered page below is one entity in the user's life — projects, "
-        "tools, services, people they work with. Answer the user's question "
-        "using ONLY the pages provided. Cite pages by their number in [n] form "
-        "after each fact, e.g. 'Twilio is the voice provider [1].'. If the "
-        "pages don't contain the answer, say so directly — do not guess."
+        "You answer questions from a personal knowledge wiki. Each numbered "
+        "page below is one entity in the user's life — a project, tool, "
+        "service, person, or concept they work with.\n\n"
+        "Answer style:\n"
+        "- Be helpful and synthesize across multiple pages. The wiki captures "
+        "what the user knows; it's fine to draw reasonable inferences from "
+        "the pages even when they don't state the answer literally.\n"
+        "- Cite pages by their number in [n] form when you state a specific "
+        "fact, e.g. 'Twilio is the voice provider [1].'\n"
+        "- For broad questions like 'what is X' or 'how do I debug Y', "
+        "summarize what the user's wiki says about that topic across the "
+        "relevant pages, even if no single page is a complete answer.\n"
+        "- If the pages genuinely contain nothing related, say so directly "
+        "and suggest the user try Deep Research (web-augmented) for that "
+        "question — they can switch to that view from the sidebar."
     )
     user_prompt = f"Question: {body.q}\n\nPages ({len(ordered_pages)}):\n\n" + "\n\n---\n\n".join(
         pages_block
