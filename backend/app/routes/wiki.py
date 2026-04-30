@@ -2243,20 +2243,66 @@ async def bootstrap_all_users(
     user_ids = sorted(user_ids_sessions | user_ids_memories, key=str)
     log.info("bootstrap: found %d active users to enqueue", len(user_ids))
 
-    # One BackgroundTask processes ALL users serially under _bootstrap_lock.
-    # Prevents the N-users × Semaphore(8)-per-user fan-out that previously
-    # OOM'd the API worker by holding 40+ in-flight OpenAI calls + DB
-    # sessions simultaneously.
-    background.add_task(_bootstrap_all_users, list(user_ids))
+    # Prefer the arq worker pool when Redis is configured: each user's
+    # extraction + synthesis runs as its own job in a separate process,
+    # capped by WorkerSettings.max_jobs concurrency. Multiple users
+    # actually run in parallel without touching the FastAPI worker's
+    # memory / connection pool.
+    from app.services.job_queue import enqueue
 
+    job_ids: list[str] = []
+    for uid in user_ids:
+        jid = await enqueue("wiki_extract_user", str(uid))
+        if jid:
+            job_ids.append(jid)
+        synth_jid = await enqueue("wiki_synthesize_user", str(uid))
+        if synth_jid:
+            job_ids.append(synth_jid)
+
+    if job_ids:
+        return {
+            "users_queued": len(user_ids),
+            "user_ids": [str(u) for u in user_ids],
+            "job_ids": job_ids,
+            "mode": "arq",
+            "note": (
+                "Per-user jobs queued to arq worker pool. "
+                "Poll GET /api/wiki/admin/bootstrap-status for per-user page counts "
+                "or GET /api/jobs/{job_id} for individual job state."
+            ),
+        }
+
+    # Fallback for deploys without Redis: single-flight serial BackgroundTask
+    # under _bootstrap_lock. Slower but doesn't require the worker container.
+    background.add_task(_bootstrap_all_users, list(user_ids))
     return {
         "users_queued": len(user_ids),
         "user_ids": [str(u) for u in user_ids],
+        "mode": "inline",
         "note": (
             "Single serial BackgroundTask processes all users. "
             "Poll GET /api/wiki/admin/bootstrap-status to track progress."
         ),
     }
+
+
+@router.get("/admin/jobs/{job_id}")
+async def admin_job_status(
+    job_id: str,
+    auth: AuthContext = Depends(get_auth),  # noqa: ARG001
+) -> dict:
+    """Look up arq job state. Returns 404 if Redis isn't configured or the
+    job has aged out of the result window.
+    """
+    from app.services.job_queue import get_job_status
+
+    info = await get_job_status(job_id)
+    if info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found (or job queue unavailable on this deployment)",
+        )
+    return info
 
 
 @router.get("/admin/bootstrap-status")

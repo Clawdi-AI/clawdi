@@ -82,12 +82,21 @@ services:
     command: ["sh", "/source/deploy/preview/restore.sh"]
     restart: "no"
 
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
   api:
     image: python:3.12-slim
     working_dir: /app/backend
     depends_on:
       restore:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     volumes:
       - source:/app
       - api-venv:/app/backend/.venv
@@ -96,6 +105,7 @@ services:
       - files:/data/files
     environment:
       DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
+      REDIS_URL: redis://${SERVICE_NAME_REDIS:-redis}:6379
       ENVIRONMENT: preview
       FILE_STORE_TYPE: local
       FILE_STORE_LOCAL_PATH: /data/files
@@ -149,6 +159,55 @@ services:
         uv sync --frozen
         uv run alembic upgrade head
         exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+      '
+
+  worker:
+    # Same image + venv + source volume as `api` so we don't pay an extra
+    # uv sync. Runs `arq app.workers.WorkerSettings` instead of uvicorn.
+    image: python:3.12-slim
+    working_dir: /app/backend
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    volumes:
+      - source:/app
+      - api-venv:/app/backend/.venv
+      - uv-cache:/root/.cache/uv
+      - fastembed-cache:/root/.cache/fastembed
+      - files:/data/files
+    environment:
+      DATABASE_URL: postgresql+asyncpg://clawdi:${PG_PASSWORD:-preview_local}@${SERVICE_NAME_POSTGRES:-postgres}:5432/clawdi
+      REDIS_URL: redis://${SERVICE_NAME_REDIS:-redis}:6379
+      ENVIRONMENT: preview
+      FILE_STORE_TYPE: local
+      FILE_STORE_LOCAL_PATH: /data/files
+      DEBUG: "false"
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@example.com}
+      VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MEMORY_EMBEDDING_MODE: ${MEMORY_EMBEDDING_MODE:-local}
+      MEMORY_EMBEDDING_API_KEY: ${MEMORY_EMBEDDING_API_KEY:-}
+      MEMORY_EMBEDDING_BASE_URL: ${MEMORY_EMBEDDING_BASE_URL:-}
+      MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+    command: >
+      bash -c '
+        set -e
+        if ! command -v uv >/dev/null; then
+          pip install --quiet uv
+        fi
+        # Wait for the API to install workspace deps; it owns the
+        # uv sync. Worker just reuses the same venv.
+        until [ -d /app/backend/.venv/lib ]; do
+          echo "[worker] waiting for api to populate venv..."
+          sleep 5
+        done
+        echo "[worker] venv present, starting arq"
+        exec uv run arq app.workers.WorkerSettings
       '
 
   web:

@@ -483,9 +483,18 @@ async def upload_session_content(
     await db.commit()
 
     # Live wiki: extract entities from this freshly-uploaded transcript.
-    # Background-task isolated; failures never affect the upload response.
+    # Prefer arq worker pool when Redis is configured (runs in a separate
+    # process under WorkerSettings.max_jobs concurrency). Fall back to
+    # FastAPI BackgroundTask when Redis isn't set, so single-instance
+    # preview deploys keep working.
     if background is not None:
-        background.add_task(_live_wiki_extract_session, auth.user_id, session.id)
+        from app.services.job_queue import enqueue
+
+        jid = await enqueue(
+            "wiki_extract_session", str(auth.user_id), str(session.id)
+        )
+        if jid is None:
+            background.add_task(_live_wiki_extract_session, auth.user_id, session.id)
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 

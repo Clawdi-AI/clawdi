@@ -175,12 +175,13 @@ async def get_memory(
 
 
 async def _live_wiki_create_mem_source(user_id: UUID, memory_id: str) -> None:
-    """BackgroundTask: insert a kind=source `mem-<id>` page + a defines link
-    so the new memory atom is reachable via wiki/query and the global search
-    fan-out without waiting for the next batch /source-pages run.
+    """BackgroundTask fallback: when Redis isn't configured, insert the
+    kind=source `mem-<id>` page inline. Cheap (no LLM, two DB rows).
+    The arq worker path (`wiki_create_mem_source`) is preferred when Redis
+    is available.
 
-    Cheap (no LLM call — just two DB rows). Failures swallowed: a misbehaving
-    wiki side must never affect the memory write response.
+    Failures swallowed: a misbehaving wiki side must never affect the
+    memory write response.
     """
     from datetime import datetime
     from uuid import UUID as _UUID
@@ -279,7 +280,16 @@ async def create_memory(
         tags=body.tags,
     )
     if created and (mem_id := created.get("id")):
-        background.add_task(_live_wiki_create_mem_source, auth.user_id, str(mem_id))
+        # Prefer arq worker queue when configured — runs in a separate
+        # process so the API worker stays free. Fall back to BackgroundTask
+        # for deploys without Redis.
+        from app.services.job_queue import enqueue
+
+        jid = await enqueue("wiki_create_mem_source", str(auth.user_id), str(mem_id))
+        if jid is None:
+            background.add_task(
+                _live_wiki_create_mem_source, auth.user_id, str(mem_id)
+            )
     return MemoryCreatedResponse.model_validate(created)
 
 
