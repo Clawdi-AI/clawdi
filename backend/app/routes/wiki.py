@@ -707,6 +707,174 @@ async def query_wiki(
     )
 
 
+class DeepResearchRequest(BaseModel):
+    q: str
+    save: bool = False  # auto-save the research result as a wiki page
+
+
+class DeepResearchResponse(BaseModel):
+    answer: str
+    citations: list[dict]  # web sources cited inline
+    saved_slug: str | None
+    mode: str  # "web_search" | "llm_only" | "no_llm"
+
+
+@router.post("/research", response_model=DeepResearchResponse)
+async def deep_research(
+    body: DeepResearchRequest,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> DeepResearchResponse:
+    """Web-augmented research over a question, optionally saved to the wiki.
+
+    Tries the OpenAI Responses API with the `web_search_preview` tool
+    first. If that fails (older model / wrong endpoint / 4xx), falls
+    back to a normal chat completion using the LLM's own knowledge —
+    clearly marking the response as `mode: "llm_only"` so the user knows
+    it's not actually web-augmented.
+
+    With body.save=true, the result is upserted into the wiki as a
+    `synthesis` page so it lives alongside the rest of the user's
+    knowledge graph. Title comes from a slug derived from the question.
+    """
+    from app.core.config import settings as _settings
+
+    if not _settings.llm_api_key:
+        return DeepResearchResponse(
+            answer="LLM not configured on this deployment.",
+            citations=[],
+            saved_slug=None,
+            mode="no_llm",
+        )
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=_settings.llm_base_url or None,
+        api_key=_settings.llm_api_key,
+    )
+
+    answer = ""
+    citations: list[dict] = []
+    mode = "llm_only"
+
+    # Path 1: try OpenAI Responses API with web_search_preview tool.
+    try:
+        response = await client.responses.create(
+            model=_settings.llm_model,
+            input=body.q,
+            tools=[{"type": "web_search_preview"}],
+        )
+        # responses.output is a list; collect text + URL citations.
+        for item in response.output or []:
+            if getattr(item, "type", None) == "message":
+                for content in getattr(item, "content", []) or []:
+                    if getattr(content, "type", None) == "output_text":
+                        answer += getattr(content, "text", "")
+                        for ann in getattr(content, "annotations", []) or []:
+                            if getattr(ann, "type", None) == "url_citation":
+                                citations.append(
+                                    {
+                                        "url": getattr(ann, "url", ""),
+                                        "title": getattr(ann, "title", ""),
+                                        "start_index": getattr(ann, "start_index", 0),
+                                        "end_index": getattr(ann, "end_index", 0),
+                                    }
+                                )
+        mode = "web_search"
+    except Exception as e:
+        log.warning("deep research web_search_preview failed, falling back to chat: %s", e)
+        # Path 2: plain chat completion fallback.
+        try:
+            chat_resp = await client.chat.completions.create(
+                model=_settings.llm_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a research assistant. Answer the user's question "
+                            "thoroughly using your training knowledge. State clearly when "
+                            "you don't have current information about a topic."
+                        ),
+                    },
+                    {"role": "user", "content": body.q},
+                ],
+                max_tokens=1000,
+                temperature=0.3,
+            )
+            answer = (chat_resp.choices[0].message.content or "").strip()
+            mode = "llm_only"
+        except Exception as e2:
+            answer = f"Research failed: {str(e2)[:200]}"
+            mode = "llm_only"
+
+    if not answer:
+        answer = "(no response)"
+
+    saved_slug = None
+    if body.save and answer and answer != "(no response)":
+        # Build a synthesis page. Title from question, body = answer + sources.
+        from app.services.slug_resolver import SlugResolver
+
+        resolver = SlugResolver(db, auth.user_id)
+        title = body.q if len(body.q) <= 80 else f"{body.q[:77]}..."
+        sources_block = ""
+        if citations:
+            sources_block = "\n\n## Web sources\n" + "\n".join(
+                f"- [{c.get('title') or c.get('url')}]({c.get('url')})" for c in citations
+            )
+        body_md = f"**Q:** {body.q}\n\n{answer}{sources_block}"
+
+        try:
+            slug, exists = await resolver.resolve(title)
+            page = None
+            if exists:
+                page = await db.scalar(
+                    select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
+                )
+            if page is None:
+                page = WikiPage(
+                    user_id=auth.user_id,
+                    slug=slug,
+                    title=title,
+                    kind="synthesis",
+                    compiled_truth=body_md,
+                    frontmatter={"source": "deep_research", "mode": mode},
+                    last_synthesis_at=datetime.now(),
+                )
+                db.add(page)
+            else:
+                page.compiled_truth = body_md
+                page.last_synthesis_at = datetime.now()
+                page.frontmatter = {
+                    **(page.frontmatter or {}),
+                    "source": "deep_research",
+                    "mode": mode,
+                }
+            db.add(
+                WikiLogEntry(
+                    user_id=auth.user_id,
+                    page_id=page.id,
+                    action="deep_research_saved",
+                    source_type="manual",
+                    source_ref=None,
+                    metadata_={"mode": mode, "citations": len(citations)},
+                    ts=datetime.now(),
+                )
+            )
+            await db.commit()
+            saved_slug = slug
+        except Exception as e:
+            log.warning("deep research save failed: %s", e)
+
+    return DeepResearchResponse(
+        answer=answer,
+        citations=citations,
+        saved_slug=saved_slug,
+        mode=mode,
+    )
+
+
 class SavePageRequest(BaseModel):
     """Manually save / upsert a wiki page from arbitrary text.
 

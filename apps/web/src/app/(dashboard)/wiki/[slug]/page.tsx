@@ -2,19 +2,9 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import {
-	AlertTriangle,
-	ArrowLeft,
-	Brain,
-	Clock,
-	FileText,
-	Key,
-	Link2,
-	Sparkles,
-} from "lucide-react";
+import { AlertTriangle, Brain, Clock, FileText, Key, Link2, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { Fragment } from "react";
 import { Markdown } from "@/components/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
@@ -88,15 +78,7 @@ export default function WikiPageView() {
 	}
 
 	return (
-		<div className="max-w-4xl mx-auto space-y-6">
-			<Link
-				href="/wiki"
-				className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-			>
-				<ArrowLeft className="size-4" />
-				Back to wiki
-			</Link>
-
+		<div className="max-w-4xl space-y-6">
 			{isLoading ? (
 				<div className="space-y-4">
 					<Skeleton className="h-8 w-1/2" />
@@ -279,9 +261,5 @@ function CompiledTruthBody({ body }: { body: string }) {
 			.replace(/[^a-z0-9-]/g, "");
 		return `[${target}](/wiki/${slug})`;
 	});
-	return (
-		<Fragment>
-			<Markdown content={transformed} />
-		</Fragment>
-	);
+	return <Markdown content={transformed} />;
 }

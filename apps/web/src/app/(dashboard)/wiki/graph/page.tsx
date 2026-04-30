@@ -2,8 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Network } from "lucide-react";
-import Link from "next/link";
+import { Network } from "lucide-react";
 import { useMemo } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
@@ -161,15 +160,7 @@ export default function WikiGraphPage() {
 	const isLoading = listLoading || detailQueries.isLoading;
 
 	return (
-		<div className="max-w-6xl mx-auto space-y-6">
-			<Link
-				href="/wiki"
-				className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-			>
-				<ArrowLeft className="size-4" />
-				Back to wiki
-			</Link>
-
+		<div className="space-y-6">
 			<header className="space-y-2">
 				<div className="flex items-center gap-2">
 					<Network className="size-6 text-muted-foreground" />

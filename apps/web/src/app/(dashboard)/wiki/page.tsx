@@ -1,249 +1,263 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useQuery } from "@tanstack/react-query";
-import {
-	Activity,
-	BookOpen,
-	FileText,
-	Loader2,
-	MessageSquare,
-	Network,
-	Search,
-	ShieldAlert,
-} from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { BookmarkPlus, Check, Loader2, MessageSquare, Send } from "lucide-react";
 import Link from "next/link";
-import { useDeferredValue, useState } from "react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import { cn, relativeTime } from "@/lib/utils";
+import { type FormEvent, Fragment, useState } from "react";
+import { Markdown } from "@/components/markdown";
+import { API_URL } from "@/lib/api";
 
-// ---------------------------------------------------------------------------
-// Types — match backend WikiPageSummary / PageList
-// ---------------------------------------------------------------------------
-
-type WikiPageSummary = {
-	id: string;
+type Citation = {
+	n: number;
 	slug: string;
 	title: string;
-	kind: string;
-	source_count: number;
-	stale: boolean;
-	last_synthesis_at: string | null;
-	updated_at: string;
+	snippet: string | null;
 };
 
-type PageList = {
-	items: WikiPageSummary[];
-	total: number;
-	page: number;
-	page_size: number;
+type QueryResponse = {
+	answer: string;
+	citations: Citation[];
+	pages_considered: number;
+	mode: "llm" | "no_llm" | "no_match";
 };
 
-const KIND_FILTERS = [
-	{ value: "", label: "All" },
-	{ value: "entity", label: "Entities" },
-	{ value: "concept", label: "Concepts" },
-	{ value: "synthesis", label: "Syntheses" },
-] as const;
-
-const KIND_COLORS: Record<string, string> = {
-	entity: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-	concept: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
-	synthesis: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+type ChatMessage = {
+	role: "user" | "wiki";
+	content: string;
+	citations?: Citation[];
+	mode?: string;
 };
 
-export default function WikiIndexPage() {
+export default function WikiChatPage() {
 	const { getToken } = useAuth();
-	const [searchQuery, setSearchQuery] = useState("");
-	const [kind, setKind] = useState<string>("");
-	const deferredQuery = useDeferredValue(searchQuery);
+	const [input, setInput] = useState("");
+	const [history, setHistory] = useState<ChatMessage[]>([]);
 
-	const { data, isLoading, isFetching } = useQuery<PageList>({
-		queryKey: ["wiki", "pages", { kind, q: deferredQuery }],
-		queryFn: async () => {
+	const askWiki = useMutation<QueryResponse, Error, string>({
+		mutationFn: async (q) => {
 			const token = (await getToken()) ?? "";
-			const params = new URLSearchParams({ page_size: "200" });
-			if (kind) params.set("kind", kind);
-			if (deferredQuery.trim()) params.set("q", deferredQuery.trim());
-			return apiFetch<PageList>(`/api/wiki/pages?${params.toString()}`, token);
+			const res = await fetch(`${API_URL}/api/wiki/query`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ q, top_k: 8, expand_graph: true }),
+			});
+			if (!res.ok) {
+				const text = await res.text();
+				throw new Error(`Wiki query failed: ${res.status} ${text.slice(0, 200)}`);
+			}
+			return (await res.json()) as QueryResponse;
+		},
+		onSuccess: (data, q) => {
+			setHistory((h) => [
+				...h,
+				{ role: "user", content: q },
+				{ role: "wiki", content: data.answer, citations: data.citations, mode: data.mode },
+			]);
+			setInput("");
 		},
 	});
 
-	// Server-side ranked search via /api/wiki/pages?q=...; no client-side filter
-	// needed. Backend tokenizes the query and ranks by title/slug/compiled_truth.
-	const filtered = data?.items ?? [];
+	const onSubmit = (e: FormEvent) => {
+		e.preventDefault();
+		if (!input.trim() || askWiki.isPending) return;
+		askWiki.mutate(input.trim());
+	};
 
 	return (
-		<div className="max-w-5xl mx-auto space-y-6">
+		<div className="max-w-3xl space-y-6 pb-24">
 			<header className="space-y-2">
-				<div className="flex items-center gap-2 flex-wrap">
-					<BookOpen className="size-6 text-muted-foreground" />
-					<h1 className="text-2xl font-semibold">Wiki</h1>
-					{data && (
-						<span className="text-sm text-muted-foreground ml-2">
-							{data.total} {data.total === 1 ? "page" : "pages"}
-						</span>
-					)}
-					<div className="ml-auto flex items-center gap-2 flex-wrap">
-						<Link
-							href="/wiki/chat"
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
-						>
-							<MessageSquare className="size-3.5" />
-							Chat
-						</Link>
-						<Link
-							href="/wiki/graph"
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
-						>
-							<Network className="size-3.5" />
-							Graph
-						</Link>
-						<Link
-							href="/wiki/review"
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
-						>
-							<ShieldAlert className="size-3.5" />
-							Review
-						</Link>
-						<Link
-							href="/wiki/log"
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
-						>
-							<Activity className="size-3.5" />
-							Activity
-						</Link>
-					</div>
+				<div className="flex items-center gap-2">
+					<MessageSquare className="size-6 text-muted-foreground" />
+					<h1 className="text-2xl font-semibold">Chat with your wiki</h1>
 				</div>
 				<p className="text-sm text-muted-foreground max-w-prose">
-					Synthesized knowledge across your memory, skills, sessions, and vault. Pages are
-					auto-generated as your data grows; each one aggregates everything we know about one
-					entity, project, or concept.
+					Ask questions across your synthesized knowledge. The wiki retrieves the most relevant
+					entity pages, expands the graph one hop, and answers with cited page numbers.
 				</p>
 			</header>
 
-			{/* Filters */}
-			<div className="flex flex-wrap items-center gap-3">
-				<div className="relative flex-1 min-w-[16rem]">
-					<Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-					<input
-						type="search"
-						value={searchQuery}
-						onChange={(e) => setSearchQuery(e.target.value)}
-						placeholder="Search title, slug, or content…"
-						className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-					/>
+			{/* Conversation */}
+			{history.length === 0 ? (
+				<div className="rounded-xl border border-dashed bg-card/50 p-8 text-center text-sm text-muted-foreground">
+					Try: <em>"What's the bot's name?"</em> · <em>"Why does the voice agent fail?"</em> ·
+					<em> "What's blocking the marvin-claw migration?"</em>
 				</div>
-				<div className="flex items-center gap-1 rounded-lg bg-muted/50 p-0.5">
-					{KIND_FILTERS.map((f) => (
-						<button
-							key={f.value}
-							type="button"
-							onClick={() => setKind(f.value)}
-							className={cn(
-								"px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-								kind === f.value
-									? "bg-background text-foreground shadow-sm"
-									: "text-muted-foreground hover:text-foreground",
-							)}
-						>
-							{f.label}
-						</button>
-					))}
-				</div>
-				{isFetching && !isLoading && (
-					<Loader2 className="size-4 text-muted-foreground animate-spin" />
-				)}
-			</div>
-
-			{/* List */}
-			{isLoading ? (
-				<div className="space-y-2">
-					{[...Array(5)].map((_, i) => (
-						<Skeleton key={i} className="h-20 rounded-lg" />
-					))}
-				</div>
-			) : filtered.length === 0 ? (
-				<EmptyState query={deferredQuery} hasAny={(data?.total ?? 0) > 0} />
 			) : (
-				<ul className="space-y-2">
-					{filtered.map((page) => (
-						<li key={page.id}>
-							<Link
-								href={`/wiki/${page.slug}`}
-								className="block group rounded-lg border bg-card hover:border-foreground/20 hover:bg-accent/30 transition-colors"
-							>
-								<div className="p-4 flex items-start gap-4">
-									<div className="size-10 rounded-lg bg-muted/50 flex items-center justify-center text-muted-foreground shrink-0">
-										<FileText className="size-5" />
-									</div>
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center gap-2 flex-wrap">
-											<h3 className="font-medium group-hover:underline">{page.title}</h3>
-											<span
-												className={cn(
-													"text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide font-medium",
-													KIND_COLORS[page.kind] ?? "bg-muted text-muted-foreground",
-												)}
-											>
-												{page.kind}
-											</span>
-											{page.stale && (
-												<span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide font-medium bg-orange-500/10 text-orange-700 dark:text-orange-400">
-													Stale
-												</span>
-											)}
-										</div>
-										<div className="text-xs text-muted-foreground mt-1 font-mono">{page.slug}</div>
-									</div>
-									<div className="text-xs text-muted-foreground text-right shrink-0 space-y-0.5">
-										<div>
-											{page.source_count} source
-											{page.source_count === 1 ? "" : "s"}
-										</div>
-										<div>{relativeTime(page.updated_at)}</div>
-									</div>
-								</div>
-							</Link>
-						</li>
-					))}
-				</ul>
+				<div className="space-y-6">
+					{history.map((msg, i) => {
+						// For wiki responses, the previous user message is the original question
+						const previousMsg = i > 0 ? history[i - 1] : undefined;
+						const originalQuestion =
+							msg.role === "wiki" && previousMsg?.role === "user" ? previousMsg.content : undefined;
+						return (
+							<MessageBubble
+								key={`${i}-${msg.role}-${msg.content.slice(0, 12)}`}
+								msg={msg}
+								originalQuestion={originalQuestion}
+							/>
+						);
+					})}
+				</div>
+			)}
+
+			{askWiki.isPending && (
+				<div className="flex items-center gap-2 text-sm text-muted-foreground">
+					<Loader2 className="size-4 animate-spin" />
+					Searching wiki, expanding graph, generating answer…
+				</div>
+			)}
+
+			{askWiki.isError && (
+				<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+					{askWiki.error.message}
+				</div>
+			)}
+
+			<form onSubmit={onSubmit} className="fixed bottom-6 left-0 right-0 mx-auto max-w-3xl px-4">
+				<div className="flex items-center gap-2 rounded-xl border bg-background shadow-lg p-2">
+					<input
+						type="text"
+						value={input}
+						onChange={(e) => setInput(e.target.value)}
+						placeholder="Ask your wiki…"
+						disabled={askWiki.isPending}
+						className="flex-1 bg-transparent px-3 py-2 text-sm focus:outline-none"
+					/>
+					<button
+						type="submit"
+						disabled={!input.trim() || askWiki.isPending}
+						className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+					>
+						<Send className="size-4" />
+						Ask
+					</button>
+				</div>
+			</form>
+		</div>
+	);
+}
+
+function MessageBubble({ msg, originalQuestion }: { msg: ChatMessage; originalQuestion?: string }) {
+	if (msg.role === "user") {
+		return (
+			<div className="flex justify-end">
+				<div className="max-w-[80%] rounded-xl bg-primary text-primary-foreground px-4 py-2.5 text-sm">
+					{msg.content}
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="space-y-2">
+			<div className="rounded-xl border bg-card p-4 prose prose-sm dark:prose-invert max-w-none">
+				<Markdown content={msg.content} />
+			</div>
+			{originalQuestion && (
+				<SaveToWikiButton
+					question={originalQuestion}
+					answer={msg.content}
+					citations={msg.citations}
+				/>
+			)}
+			{msg.citations && msg.citations.length > 0 && (
+				<div className="text-xs space-y-1">
+					<div className="text-muted-foreground font-medium uppercase tracking-wide">
+						Cited pages
+					</div>
+					<ol className="space-y-0.5">
+						{msg.citations.map((c) => (
+							<li key={c.n} className="flex items-baseline gap-2">
+								<span className="text-muted-foreground font-mono">[{c.n}]</span>
+								<Link href={`/wiki/${c.slug}`} className="hover:underline font-medium">
+									{c.title}
+								</Link>
+								{c.snippet && (
+									<Fragment>
+										<span className="text-muted-foreground">—</span>
+										<span className="text-muted-foreground line-clamp-1">{c.snippet}</span>
+									</Fragment>
+								)}
+							</li>
+						))}
+					</ol>
+				</div>
+			)}
+			{msg.mode && msg.mode !== "llm" && (
+				<div className="text-xs text-muted-foreground italic">
+					Mode: {msg.mode}
+					{msg.mode === "no_llm" && " — set LLM_API_KEY on the backend to enable answers."}
+				</div>
 			)}
 		</div>
 	);
 }
 
-function EmptyState({ query, hasAny }: { query: string; hasAny: boolean }) {
-	if (query) {
+function SaveToWikiButton({
+	question,
+	answer,
+	citations,
+}: {
+	question: string;
+	answer: string;
+	citations?: Citation[];
+}) {
+	const { getToken } = useAuth();
+	const [saved, setSaved] = useState<{ slug: string } | null>(null);
+
+	const save = useMutation<{ slug: string; title: string; created: boolean }, Error, void>({
+		mutationFn: async () => {
+			const token = (await getToken()) ?? "";
+			// Build a synthesis page from the chat exchange. Title = question.
+			// Body = answer + citation list.
+			const citationsBlock = citations?.length
+				? `\n\n## Cited\n${citations.map((c) => `- [${c.n}] [${c.title}](/wiki/${c.slug})`).join("\n")}`
+				: "";
+			const body = `**Q:** ${question}\n\n${answer}${citationsBlock}`;
+			const res = await fetch(`${API_URL}/api/wiki/save`, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: question.length > 80 ? `${question.slice(0, 77)}...` : question,
+					content: body,
+					kind: "synthesis",
+				}),
+			});
+			if (!res.ok)
+				throw new Error(`Save failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+			return (await res.json()) as { slug: string; title: string; created: boolean };
+		},
+		onSuccess: (data) => setSaved({ slug: data.slug }),
+	});
+
+	if (saved) {
 		return (
-			<div className="text-center py-16 text-muted-foreground">
-				<FileText className="size-10 mx-auto mb-3 opacity-30" />
-				<p className="text-sm">No pages matching &ldquo;{query}&rdquo;.</p>
+			<div className="flex items-center gap-2 text-xs text-muted-foreground">
+				<Check className="size-3.5 text-green-600 dark:text-green-400" />
+				Saved as
+				<Link href={`/wiki/${saved.slug}`} className="font-medium text-foreground hover:underline">
+					{saved.slug}
+				</Link>
 			</div>
 		);
 	}
-	if (hasAny) {
-		return (
-			<div className="text-center py-16 text-muted-foreground">
-				<FileText className="size-10 mx-auto mb-3 opacity-30" />
-				<p className="text-sm">No pages match the current filter.</p>
-			</div>
-		);
-	}
+
 	return (
-		<div className="rounded-xl border border-dashed bg-card/50 p-10 text-center">
-			<BookOpen className="size-10 mx-auto mb-4 text-muted-foreground opacity-50" />
-			<h3 className="font-medium">Your wiki is empty.</h3>
-			<p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-				As your synced memory and sessions grow, Clawdi will auto-generate wiki pages — one per
-				real-world entity, project, or concept. Each page aggregates evidence across all four
-				domains.
-			</p>
-			<p className="text-xs text-muted-foreground mt-4">
-				The synthesis pipeline runs nightly. You&rsquo;ll see your first pages within 24 hours of
-				your next push.
-			</p>
-		</div>
+		<button
+			type="button"
+			onClick={() => save.mutate()}
+			disabled={save.isPending}
+			className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded border bg-background hover:bg-accent/50 transition-colors disabled:opacity-50"
+		>
+			{save.isPending ? (
+				<Loader2 className="size-3 animate-spin" />
+			) : (
+				<BookmarkPlus className="size-3" />
+			)}
+			Save to wiki
+		</button>
 	);
 }
