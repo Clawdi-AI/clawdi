@@ -19,7 +19,6 @@ import {
 	MessageSquare,
 	Network,
 	Search,
-	Settings,
 	ShieldAlert,
 	Sparkles,
 } from "lucide-react";
@@ -120,10 +119,11 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 	}
 
 	return (
-		<div className="flex h-[calc(100vh-3.5rem)] -mx-4 -my-6 sm:-mx-6 lg:-mx-8 border-t">
-			{/* Icon sidebar (fixed width) */}
+		<div className="flex h-[calc(100svh-7rem)] -mt-4 md:-mt-6 rounded-xl border overflow-hidden bg-card">
+			{/* Icon sidebar — sub-nav for the wiki feature.
+			    Stays inside the dashboard frame; doesn't fight the AppSidebar. */}
 			<nav
-				className="w-14 shrink-0 border-r bg-muted/30 flex flex-col items-center py-3 gap-1"
+				className="w-20 shrink-0 border-r bg-muted/30 flex flex-col items-center py-3 gap-0.5"
 				aria-label="Wiki sections"
 			>
 				{NAV_ITEMS.map((item) => {
@@ -137,31 +137,23 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 						<Link
 							key={item.href}
 							href={item.href}
-							title={item.label}
 							className={cn(
-								"size-10 rounded-lg flex items-center justify-center relative transition-colors",
+								"w-16 py-2 rounded-lg flex flex-col items-center gap-1 relative transition-colors text-[10px] font-medium",
 								active
 									? "bg-primary/10 text-primary"
 									: "text-muted-foreground hover:bg-accent hover:text-foreground",
 							)}
 						>
 							<Icon className="size-5" />
+							<span>{item.label}</span>
 							{badge != null && (
-								<span className="absolute -top-1 -right-1 size-4 rounded-full bg-destructive text-[10px] text-destructive-foreground flex items-center justify-center font-medium">
+								<span className="absolute top-1 right-2 size-4 rounded-full bg-destructive text-[10px] text-destructive-foreground flex items-center justify-center font-medium leading-none">
 									{badge}
 								</span>
 							)}
 						</Link>
 					);
 				})}
-				<div className="flex-1" />
-				<Link
-					href="/settings"
-					title="Settings"
-					className="size-10 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-				>
-					<Settings className="size-5" />
-				</Link>
 			</nav>
 
 			{/* Knowledge tree (resizable conceptually; static-width for now) */}
