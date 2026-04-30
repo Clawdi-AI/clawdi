@@ -1,103 +1,44 @@
 "use client";
 
 /**
- * 3-column wiki layout — icon sidebar (left), knowledge tree (collapsible),
- * and the content area on the right.
- *
- * Mirrors nashsu/llm_wiki's AppLayout: chat-first, with persistent global
- * navigation icons on the far left and a contextual file/knowledge tree
- * adjacent to it.
+ * Top-tab wiki layout — graph is the default landing view; chat + deep
+ * research are merged into one page; pages, review, activity sit alongside
+ * as siblings. Full horizontal width is given to the content area so the
+ * graph and entity pages can render at full size.
  */
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import {
-	Activity,
-	BarChart3,
-	BookOpen,
-	ChevronRight,
-	FileText,
-	GitMerge,
-	HelpCircle,
-	Layout as LayoutIcon,
-	Lightbulb,
-	type LucideIcon,
-	MessageSquare,
-	Network,
-	Search,
-	ShieldAlert,
-	Sparkles,
-	Users,
-} from "lucide-react";
+import { Activity, BookOpen, MessageSquare, Network, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type WikiPageSummary = {
-	id: string;
-	slug: string;
-	title: string;
-	kind: string;
-	source_count: number;
-	stale: boolean;
-	last_synthesis_at: string | null;
-	updated_at: string;
-};
-
-type PageList = {
-	items: WikiPageSummary[];
-	total: number;
-};
-
 type ReviewQueue = { items: unknown[]; total: number };
 
-// Knowledge-tree categories — matches nashsu/llm_wiki's TYPE_CONFIG so the
-// sidebar reads the same way. Order drives section order in the tree.
-const KIND_CONFIG: Record<
-	string,
-	{ icon: LucideIcon; label: string; color: string; order: number }
-> = {
-	overview: { icon: LayoutIcon, label: "Overview", color: "text-yellow-500", order: 0 },
-	entity: { icon: Users, label: "Entities", color: "text-blue-500", order: 1 },
-	concept: { icon: Lightbulb, label: "Concepts", color: "text-purple-500", order: 2 },
-	source: { icon: BookOpen, label: "Sources", color: "text-orange-500", order: 3 },
-	synthesis: { icon: GitMerge, label: "Synthesis", color: "text-red-500", order: 4 },
-	comparison: { icon: BarChart3, label: "Comparisons", color: "text-emerald-500", order: 5 },
-	query: { icon: HelpCircle, label: "Queries", color: "text-green-500", order: 6 },
-};
-
-function getKindConfig(kind: string) {
-	return (
-		KIND_CONFIG[kind] ?? {
-			icon: FileText,
-			label: kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "Other",
-			color: "text-muted-foreground",
-			order: 99,
-		}
-	);
-}
-
-const NAV_ITEMS = [
-	{ href: "/wiki", icon: MessageSquare, label: "Chat", match: (p: string) => p === "/wiki" },
+const TABS = [
+	{
+		href: "/wiki",
+		icon: Network,
+		label: "Graph",
+		// Graph is the wiki's default; matches /wiki exactly OR /wiki/<slug>
+		// (page detail still inherits the graph tab as "active" until Pages
+		// becomes the right home for /wiki/[slug]).
+		match: (p: string) => p === "/wiki" || /^\/wiki\/[^/]+$/.test(p),
+	},
+	{
+		href: "/wiki/chat",
+		icon: MessageSquare,
+		label: "Chat",
+		match: (p: string) => p.startsWith("/wiki/chat"),
+	},
 	{
 		href: "/wiki/pages",
 		icon: BookOpen,
 		label: "Pages",
-		match: (p: string) => p.startsWith("/wiki/pages") || p.match(/^\/wiki\/[^/]+$/) !== null,
-	},
-	{
-		href: "/wiki/research",
-		icon: Sparkles,
-		label: "Deep Research",
-		match: (p: string) => p.startsWith("/wiki/research"),
-	},
-	{
-		href: "/wiki/graph",
-		icon: Network,
-		label: "Graph",
-		match: (p: string) => p.startsWith("/wiki/graph"),
+		match: (p: string) => p.startsWith("/wiki/pages"),
 	},
 	{
 		href: "/wiki/review",
@@ -117,21 +58,6 @@ const NAV_ITEMS = [
 export default function WikiLayout({ children }: { children: ReactNode }) {
 	const pathname = usePathname() ?? "/wiki";
 	const { getToken } = useAuth();
-	const [treeOpen, setTreeOpen] = useState(true);
-	const [searchQuery, setSearchQuery] = useState("");
-
-	const { data: pageList } = useQuery<PageList>({
-		queryKey: ["wiki", "tree", searchQuery],
-		queryFn: async () => {
-			const token = (await getToken()) ?? "";
-			const params = new URLSearchParams({ page_size: "200" });
-			if (searchQuery.trim()) params.set("q", searchQuery.trim());
-			return apiFetch<PageList>(`/api/wiki/pages?${params.toString()}`, token);
-		},
-		// Tree refreshes every 60s — picks up newly-created pages without a
-		// hard reload.
-		refetchInterval: 60_000,
-	});
 
 	const { data: reviewQueue } = useQuery<ReviewQueue>({
 		queryKey: ["wiki", "review-badge"],
@@ -142,24 +68,14 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 		refetchInterval: 30_000,
 	});
 
-	// Group pages by kind for the KnowledgeTree.
-	const pagesByKind: Record<string, WikiPageSummary[]> = {};
-	for (const p of pageList?.items ?? []) {
-		const k = p.kind || "entity";
-		const bucket = pagesByKind[k] ?? [];
-		bucket.push(p);
-		pagesByKind[k] = bucket;
-	}
-
 	return (
-		<div className="flex h-[calc(100svh-7rem)] -mt-4 md:-mt-6 rounded-xl border overflow-hidden bg-card">
-			{/* Icon sidebar — sub-nav for the wiki feature.
-			    Stays inside the dashboard frame; doesn't fight the AppSidebar. */}
+		<div className="flex flex-col h-[calc(100svh-7rem)] -mt-4 md:-mt-6 rounded-xl border overflow-hidden bg-card">
+			{/* Top tab bar — replaces the old icon column. Sits inside the dashboard frame. */}
 			<nav
-				className="w-20 shrink-0 border-r bg-muted/30 flex flex-col items-center py-3 gap-0.5"
+				className="flex items-center gap-0.5 px-3 py-2 border-b bg-muted/30 shrink-0"
 				aria-label="Wiki sections"
 			>
-				{NAV_ITEMS.map((item) => {
+				{TABS.map((item) => {
 					const Icon = item.icon;
 					const active = item.match(pathname);
 					const badge =
@@ -171,16 +87,16 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 							key={item.href}
 							href={item.href}
 							className={cn(
-								"w-16 py-2 rounded-lg flex flex-col items-center gap-1 relative transition-colors text-[10px] font-medium",
+								"flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative",
 								active
-									? "bg-primary/10 text-primary"
+									? "bg-background text-foreground shadow-sm"
 									: "text-muted-foreground hover:bg-accent hover:text-foreground",
 							)}
 						>
-							<Icon className="size-5" />
+							<Icon className="size-4" />
 							<span>{item.label}</span>
 							{badge != null && (
-								<span className="absolute top-1 right-2 size-4 rounded-full bg-destructive text-[10px] text-destructive-foreground flex items-center justify-center font-medium leading-none">
+								<span className="ml-1 inline-flex items-center justify-center size-4 rounded-full bg-destructive text-[10px] text-destructive-foreground font-medium leading-none">
 									{badge}
 								</span>
 							)}
@@ -189,125 +105,10 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 				})}
 			</nav>
 
-			{/* Knowledge tree (resizable conceptually; static-width for now) */}
-			<aside
-				className={cn(
-					"shrink-0 border-r bg-muted/10 flex flex-col transition-all overflow-hidden",
-					treeOpen ? "w-72" : "w-0",
-				)}
-			>
-				<div className="p-3 border-b shrink-0 space-y-2">
-					<div className="flex items-center justify-between">
-						<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-							Knowledge tree
-						</h2>
-						<span className="text-[10px] text-muted-foreground font-mono">
-							{pageList?.total ?? 0}
-						</span>
-					</div>
-					<div className="relative">
-						<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-						<input
-							type="search"
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder="Search pages…"
-							className="w-full pl-8 pr-2 py-1.5 text-xs rounded border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-						/>
-					</div>
-				</div>
-				<div className="flex-1 overflow-y-auto p-2 space-y-3">
-					{Object.entries(pagesByKind)
-						.sort(([a], [b]) => getKindConfig(a).order - getKindConfig(b).order)
-						.map(([kind, pages]) => (
-							<TreeGroup key={kind} kind={kind} pages={pages} pathname={pathname} />
-						))}
-					{(pageList?.items.length ?? 0) === 0 && (
-						<div className="text-xs text-muted-foreground text-center py-6">
-							No pages match &ldquo;{searchQuery}&rdquo;.
-						</div>
-					)}
-				</div>
-			</aside>
-
-			{/* Toggle button between tree and content */}
-			<button
-				type="button"
-				onClick={() => setTreeOpen((v) => !v)}
-				title={treeOpen ? "Collapse tree" : "Expand tree"}
-				className="w-3 hover:bg-muted/50 transition-colors flex items-center justify-center group"
-			>
-				<ChevronRight
-					className={cn(
-						"size-3 text-muted-foreground transition-transform",
-						treeOpen ? "rotate-180" : "rotate-0",
-					)}
-				/>
-			</button>
-
-			{/* Content area */}
+			{/* Content area — full horizontal width for graph / pages / source raw files */}
 			<main className="flex-1 overflow-y-auto">
 				<div className="px-6 py-6 max-w-none">{children}</div>
 			</main>
-		</div>
-	);
-}
-
-function TreeGroup({
-	kind,
-	pages,
-	pathname,
-}: {
-	kind: string;
-	pages: WikiPageSummary[];
-	pathname: string;
-}) {
-	const [open, setOpen] = useState(true);
-	const sorted = [...pages].sort((a, b) => b.source_count - a.source_count);
-	const cfg = getKindConfig(kind);
-	const Icon = cfg.icon;
-	return (
-		<div>
-			<button
-				type="button"
-				onClick={() => setOpen((v) => !v)}
-				className="w-full flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors px-1 py-1"
-			>
-				<ChevronRight
-					className={cn("size-3 transition-transform shrink-0", open ? "rotate-90" : "rotate-0")}
-				/>
-				<Icon className={cn("size-3.5 shrink-0", cfg.color)} />
-				<span>{cfg.label}</span>
-				<span className="ml-auto text-[10px] font-mono opacity-60">{pages.length}</span>
-			</button>
-			{open && (
-				<ul className="mt-0.5 space-y-px">
-					{sorted.map((p) => {
-						const active = pathname === `/wiki/${p.slug}` || pathname === `/wiki/pages/${p.slug}`;
-						return (
-							<li key={p.id}>
-								<Link
-									href={`/wiki/${p.slug}`}
-									className={cn(
-										"flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors",
-										active
-											? "bg-accent text-foreground"
-											: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-									)}
-								>
-									<FileText className="size-3 shrink-0 opacity-60" />
-									<span className="truncate flex-1">{p.title}</span>
-									{p.source_count > 0 && (
-										<span className="text-[10px] font-mono opacity-50 shrink-0">
-											{p.source_count}
-										</span>
-									)}
-								</Link>
-							</li>
-						);
-					})}
-				</ul>
-			)}
 		</div>
 	);
 }

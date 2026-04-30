@@ -14,6 +14,7 @@ an empty wiki, then lights up as the pipeline starts producing pages.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -695,14 +696,73 @@ async def query_wiki(
         api_key=_settings.llm_api_key,
     )
 
+    # Pull a couple of source pages whose transcript matches the query —
+    # these carry the verbatim values (IDs, URLs, ports, file paths) that
+    # entity pages' compiled_truth paraphrases away. The user is asking
+    # their own wiki with their own API key; verbatim transcript content
+    # in the LLM context is fine. compiled_truth (which is what gets
+    # synthesized + shared) still goes through the sanitizer pipeline.
+    raw_source_pages: list[WikiPage] = []
+    if body.q.strip():
+        raw_tokens = [t for t in re.split(r"\s+", body.q.strip()) if len(t) >= 3]
+        if raw_tokens:
+            already = set(pages_by_id.keys())
+            ts_q = " | ".join(raw_tokens)
+            try:
+                rs = (
+                    (
+                        await db.execute(
+                            select(WikiPage)
+                            .where(
+                                WikiPage.user_id == auth.user_id,
+                                WikiPage.kind == "source",
+                                func.to_tsvector("english", WikiPage.compiled_truth).op(
+                                    "@@"
+                                )(func.to_tsquery("english", ts_q)),
+                            )
+                            .order_by(
+                                func.ts_rank_cd(
+                                    func.to_tsvector("english", WikiPage.compiled_truth),
+                                    func.to_tsquery("english", ts_q),
+                                ).desc()
+                            )
+                            .limit(3)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                raw_source_pages = [p for p in rs if p.id not in already]
+            except Exception as e:
+                log.warning("/query source-page lookup failed: %s", e)
+
     pages_block: list[str] = []
     citations: list[QueryCitation] = []
-    for i, p in enumerate(ordered_pages):
-        n = i + 1
+    n = 0
+    for p in ordered_pages:
+        n += 1
         title_line = f"[{n}] {p.title} ({p.slug})"
         body_text = (
             p.compiled_truth or "(no synthesized summary; entity exists with sources)"
         ).strip()
+        pages_block.append(f"{title_line}\n{body_text}")
+        citations.append(
+            QueryCitation(
+                n=n,
+                slug=p.slug,
+                title=p.title,
+                snippet=(p.compiled_truth or "")[:280] or None,
+            )
+        )
+    # Append source-page raw transcripts after entity pages so the LLM
+    # treats them as "verbatim source material" — useful for exact-value
+    # questions (SIDs, ports, URLs).
+    for p in raw_source_pages:
+        n += 1
+        title_line = f"[{n}] {p.title} ({p.slug}) [raw transcript excerpt]"
+        # Cap raw chunk size — these are session tails that can be 8k chars
+        # each. 4k per source × 3 sources = 12k extra tokens, fits easily.
+        body_text = (p.compiled_truth or "")[-4_000:]
         pages_block.append(f"{title_line}\n{body_text}")
         citations.append(
             QueryCitation(
