@@ -1164,6 +1164,268 @@ async def resolve_review(
     return {"slug": slug, "stale": False}
 
 
+class WikiContextResponse(BaseModel):
+    purpose: str
+    index: str
+    overview: str
+
+
+@router.get("/context", response_model=WikiContextResponse)
+async def wiki_context(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> WikiContextResponse:
+    """Generate purpose / index / overview context files on demand.
+
+    Mirrors nashsu/llm_wiki's purpose.md / index.md / overview.md context
+    files. We dont store these as wiki_pages — they're derived from the
+    user's existing pages every time. Cached client-side.
+
+    - purpose: who the user is, what they work on (top-3 entities by
+      source_count + their compiled_truth gist)
+    - index: the entity catalog grouped by kind
+    - overview: most-recently-touched pages (activity snapshot)
+    """
+    rows = (
+        (
+            await db.execute(
+                select(WikiPage)
+                .where(WikiPage.user_id == auth.user_id)
+                .order_by(WikiPage.source_count.desc(), WikiPage.updated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return WikiContextResponse(
+            purpose="(no wiki pages yet)",
+            index="(empty)",
+            overview="(empty)",
+        )
+
+    top3 = rows[:3]
+    purpose = "# Purpose\n\nThe top entities in this wiki, by aggregated evidence:\n\n" + "\n".join(
+        f"- **{p.title}** ({p.source_count} sources): "
+        f"{(p.compiled_truth or '(not synthesized yet)').splitlines()[0][:200]}"
+        for p in top3
+    )
+
+    by_kind: dict[str, list[WikiPage]] = {}
+    for p in rows:
+        by_kind.setdefault(p.kind or "entity", []).append(p)
+    index_parts = ["# Index\n"]
+    for kind, pages in sorted(by_kind.items()):
+        index_parts.append(f"\n## {kind} ({len(pages)})\n")
+        for p in pages[:50]:
+            index_parts.append(f"- [{p.title}]({p.slug}) — {p.source_count} sources")
+        if len(pages) > 50:
+            index_parts.append(f"- … and {len(pages) - 50} more")
+    index_md = "\n".join(index_parts)
+
+    by_recent = sorted(rows, key=lambda p: p.updated_at, reverse=True)[:10]
+    overview = "# Overview\n\nMost-recently-touched pages:\n\n" + "\n".join(
+        f"- **{p.title}** ({p.kind}, updated {p.updated_at.date().isoformat()})" for p in by_recent
+    )
+
+    return WikiContextResponse(purpose=purpose, index=index_md, overview=overview)
+
+
+class TypeLinksResponse(BaseModel):
+    typed: int
+    skipped: int
+    failed: int
+
+
+@router.post("/type-links", response_model=TypeLinksResponse)
+async def type_links(
+    sample_size: int = Query(default=200, ge=1, le=2000),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> TypeLinksResponse:
+    """Second-pass LLM call to type co-occurs edges.
+
+    For each co-occurs edge between two pages, ask the LLM to choose a
+    more-specific link_type from {uses, depends-on, defines, mentions,
+    contradicts, supersedes, related} based on the two pages' titles +
+    compiled_truth.
+
+    Idempotent: only edges whose link_type is still "co-occurs" get
+    typed; once an edge has a richer type it stays.
+    """
+    from app.core.config import settings as _settings
+
+    if not _settings.llm_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM not configured",
+        )
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=_settings.llm_base_url or None,
+        api_key=_settings.llm_api_key,
+    )
+
+    # Pull sample untyped edges. Page→page only (source_type IS NULL).
+    edge_rows = (
+        await db.execute(
+            select(WikiLink, WikiPage)
+            .join(WikiPage, WikiPage.id == WikiLink.from_page_id)
+            .where(
+                WikiLink.user_id == auth.user_id,
+                WikiLink.link_type == "co-occurs",
+                WikiLink.to_page_id.is_not(None),
+            )
+            .limit(sample_size)
+        )
+    ).all()
+
+    typed_count = 0
+    skipped = 0
+    failed = 0
+
+    # Cache target page lookups
+    target_ids = list({e.to_page_id for e, _from in edge_rows if e.to_page_id})
+    targets_rows = (
+        (
+            await db.execute(
+                select(WikiPage).where(
+                    WikiPage.user_id == auth.user_id, WikiPage.id.in_(target_ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    targets_by_id = {p.id: p for p in targets_rows}
+
+    SYSTEM = (
+        "You classify the relationship between two entities in a personal "
+        "knowledge wiki. Given the two pages (title + compiled_truth gist), "
+        "respond with ONE of these labels — nothing else:\n"
+        "  uses           — page A uses or invokes page B\n"
+        "  depends-on     — A requires B to function\n"
+        "  defines        — A specifies / configures B\n"
+        "  mentions       — generic loose connection\n"
+        "  contradicts    — A states something opposite to B\n"
+        "  supersedes     — A is a newer version replacing B\n"
+        "  related        — strong topical connection but no specific role\n"
+        "Default to 'related' when uncertain. Output: just the label, lowercase."
+    )
+
+    for edge, from_page in edge_rows:
+        target = targets_by_id.get(edge.to_page_id)
+        if not target:
+            skipped += 1
+            continue
+        ft = (from_page.compiled_truth or from_page.title)[:600]
+        tt = (target.compiled_truth or target.title)[:600]
+        user_prompt = f"Page A: {from_page.title}\n{ft}\n\nPage B: {target.title}\n{tt}\n\nLabel:"
+        try:
+            resp = await client.chat.completions.create(
+                model=_settings.llm_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=8,
+                temperature=0.0,
+            )
+            label = (resp.choices[0].message.content or "").strip().lower().split()[0]
+            if label in {
+                "uses",
+                "depends-on",
+                "defines",
+                "mentions",
+                "contradicts",
+                "supersedes",
+                "related",
+            }:
+                edge.link_type = label
+                edge.confidence = 0.75
+                typed_count += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            failed += 1
+            log.warning("type-links LLM failed: %s", e)
+
+    await db.commit()
+    return TypeLinksResponse(typed=typed_count, skipped=skipped, failed=failed)
+
+
+class GenerateSourcePagesResponse(BaseModel):
+    created: int
+    skipped: int
+
+
+@router.post("/source-pages", response_model=GenerateSourcePagesResponse)
+async def generate_source_pages(
+    limit: int = Query(default=200, ge=1, le=1000),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> GenerateSourcePagesResponse:
+    """Generate kind=source wiki pages for memories.
+
+    One wiki page per memory atom, slug = "src-<memory-id-prefix>".
+    Title = first line of memory content. compiled_truth = the memory
+    text itself (rendered as markdown). This gives users a navigable
+    rendered view of every source, not just a list of UUIDs on entity
+    pages.
+
+    Idempotent: skips memories that already have a kind=source page.
+    """
+    from app.models.memory import Memory
+
+    rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(Memory.user_id == auth.user_id)
+                .order_by(Memory.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for mem in rows:
+        slug = f"src-{str(mem.id)[:8]}"
+        existing = await db.scalar(
+            select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
+        )
+        if existing:
+            skipped += 1
+            continue
+        first_line = (mem.content or "").split("\n", 1)[0].strip().lstrip("# ").strip()
+        if not first_line:
+            first_line = f"Memory {str(mem.id)[:8]}"
+        title = first_line[:80]
+        page = WikiPage(
+            user_id=auth.user_id,
+            slug=slug,
+            title=title,
+            kind="source",
+            compiled_truth=mem.content,
+            frontmatter={
+                "source_type": "memory",
+                "source_ref": str(mem.id),
+                "category": mem.category,
+                "tags": mem.tags or [],
+            },
+            last_synthesis_at=datetime.now(),
+        )
+        db.add(page)
+        created += 1
+    await db.commit()
+    return GenerateSourcePagesResponse(created=created, skipped=skipped)
+
+
 @router.post("/embed-backfill")
 async def embed_backfill_wiki(
     auth: AuthContext = Depends(get_auth),
