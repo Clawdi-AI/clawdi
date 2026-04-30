@@ -328,7 +328,7 @@ async def synthesize_for_user(
     db: AsyncSession,
     user_id: uuid.UUID,
     *,
-    limit: int = 50,
+    limit: int = 300,
     force: bool = False,
 ) -> dict:
     """Run synthesis over pages that have new evidence since last_synthesis_at.
@@ -442,8 +442,11 @@ async def synthesize_for_user(
             summary["skipped"] += 1
         else:
             summary["errored"] += 1
+        # Commit per page so partial work survives a Cloudflare 100s cut
+        # mid-loop. The whole sweep over a few hundred pages takes minutes
+        # to tens of minutes; one terminal commit is all-or-nothing.
+        await db.commit()
 
-    await db.commit()
     return summary
 
 
