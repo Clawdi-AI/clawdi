@@ -781,37 +781,98 @@ async def query_wiki(
         # like "what's the SID" because Postgres won't tokenize stopwords
         # in to_tsquery and threw on apostrophes.
         try:
-            ts_q = func.websearch_to_tsquery("english", body.q.strip())
-            # Title carries strong signal for curated mem-<id> pages — it's
-            # the first line of the memory content (e.g. "Voice Call Twilio
-            # Setup"). Including it in the FTS surface lets queries like
-            # "what phone number does the voice agent answer at" match the
-            # right source page even when other pages mention 'voice' more.
-            ts_v = func.to_tsvector(
-                "english",
-                func.coalesce(WikiPage.title, "")
-                + " "
-                + func.coalesce(WikiPage.slug, "")
-                + " "
-                + func.coalesce(WikiPage.compiled_truth, ""),
-            )
-            rs = (
-                (
-                    await db.execute(
-                        select(WikiPage)
-                        .where(
-                            WikiPage.user_id == auth.user_id,
-                            WikiPage.kind == "source",
-                            ts_v.op("@@")(ts_q),
-                        )
-                        .order_by(func.ts_rank_cd(ts_v, ts_q).desc())
-                        .limit(6)
-                    )
+            # Per-token ILIKE OR — same shape as /api/wiki/pages search.
+            # `websearch_to_tsquery` does AND-of-tokens which excludes the
+            # right page whenever any one query word isn't in it (e.g.
+            # "phone number voice agent answer" misses the Voice Call Twilio
+            # Setup memory because it has 'voice' + 'phone' but no 'agent').
+            # OR-of-tokens with summed score per match brings any page that
+            # touches the topic into candidate set; ts_rank then orders.
+            import re as _re
+            from typing import Any as _Any
+
+            from sqlalchemy import case as _case
+            from sqlalchemy import or_ as _or
+
+            stopwords = {
+                "the",
+                "a",
+                "an",
+                "what",
+                "whats",
+                "is",
+                "are",
+                "of",
+                "for",
+                "in",
+                "on",
+                "to",
+                "do",
+                "i",
+                "my",
+                "you",
+                "your",
+                "and",
+                "or",
+                "how",
+                "why",
+                "where",
+                "when",
+                "who",
+                "does",
+                "did",
+                "be",
+                "this",
+                "that",
+                "with",
+                "by",
+                "from",
+                "use",
+                "uses",
+                "using",
+                "at",
+                "answer",
+            }
+            q_tokens = [
+                t.lower()
+                for t in _re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", body.q)
+                if t.lower() not in stopwords
+            ]
+            if q_tokens:
+                title_terms: list[_Any] = []
+                slug_terms: list[_Any] = []
+                body_terms: list[_Any] = []
+                match_terms: list[_Any] = []
+                for tok in q_tokens:
+                    pat = f"%{tok}%"
+                    # Source pages: title is most discriminative for mem-*
+                    # (first line of memory content), so weight it heaviest.
+                    title_terms.append(_case((WikiPage.title.ilike(pat), 1.5), else_=0.0))
+                    slug_terms.append(_case((WikiPage.slug.ilike(pat), 0.5), else_=0.0))
+                    body_terms.append(_case((WikiPage.compiled_truth.ilike(pat), 0.4), else_=0.0))
+                    match_terms.append(WikiPage.title.ilike(pat))
+                    match_terms.append(WikiPage.slug.ilike(pat))
+                    match_terms.append(WikiPage.compiled_truth.ilike(pat))
+                relevance = (sum(title_terms) + sum(slug_terms) + sum(body_terms)).label(
+                    "relevance"
                 )
-                .scalars()
-                .all()
-            )
-            raw_source_pages = [p for p in rs if p.id not in already]
+                rs = (
+                    (
+                        await db.execute(
+                            select(WikiPage)
+                            .where(
+                                WikiPage.user_id == auth.user_id,
+                                WikiPage.kind == "source",
+                                _or(*match_terms),
+                            )
+                            .order_by(relevance.desc())
+                            .limit(6)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                raw_source_pages = [p for p in rs if p.id not in already]
         except Exception as e:
             log.warning("/query source-page lookup failed: %s", e)
 
