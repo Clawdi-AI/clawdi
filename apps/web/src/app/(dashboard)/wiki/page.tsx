@@ -2,7 +2,16 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, BookOpen, FileText, Loader2, MessageSquare, Search } from "lucide-react";
+import {
+	Activity,
+	BookOpen,
+	FileText,
+	Loader2,
+	MessageSquare,
+	Network,
+	Search,
+	ShieldAlert,
+} from "lucide-react";
 import Link from "next/link";
 import { useDeferredValue, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,13 +85,27 @@ export default function WikiIndexPage() {
 							{data.total} {data.total === 1 ? "page" : "pages"}
 						</span>
 					)}
-					<div className="ml-auto flex items-center gap-2">
+					<div className="ml-auto flex items-center gap-2 flex-wrap">
 						<Link
 							href="/wiki/chat"
 							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
 						>
 							<MessageSquare className="size-3.5" />
 							Chat
+						</Link>
+						<Link
+							href="/wiki/graph"
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
+						>
+							<Network className="size-3.5" />
+							Graph
+						</Link>
+						<Link
+							href="/wiki/review"
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-background hover:bg-accent/50 transition-colors"
+						>
+							<ShieldAlert className="size-3.5" />
+							Review
 						</Link>
 						<Link
 							href="/wiki/log"

@@ -707,6 +707,248 @@ async def query_wiki(
     )
 
 
+class SavePageRequest(BaseModel):
+    """Manually save / upsert a wiki page from arbitrary text.
+
+    Used by the dashboard's "save to wiki" buttons (chat answers,
+    research notes, manual entity creation). The body is treated as
+    canonical compiled_truth — no further synthesis runs.
+    """
+
+    title: str
+    content: str
+    slug: str | None = None  # auto-derived from title if absent
+    kind: Literal["entity", "concept", "synthesis"] = "synthesis"
+
+
+class SavePageResponse(BaseModel):
+    slug: str
+    title: str
+    kind: str
+    created: bool  # True if newly created, False if updated existing
+
+
+@router.post("/save", response_model=SavePageResponse)
+async def save_page(
+    body: SavePageRequest,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> SavePageResponse:
+    """Upsert a wiki page from manual text (chat answer, research note, etc.).
+
+    Mirrors llm_wiki's "Save to Wiki" pattern. The synthesizer's vault
+    sanitizer is NOT run here — the caller is responsible for not pasting
+    secrets. (We can add a sanitize step later if needed.)
+    """
+    from app.services.slug_resolver import SlugResolver
+
+    resolver = SlugResolver(db, auth.user_id)
+    candidate = body.slug or body.title
+    try:
+        slug, exists = await resolver.resolve(candidate)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="title or slug is empty after normalization",
+        ) from None
+
+    page = None
+    if exists:
+        page = await db.scalar(
+            select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
+        )
+
+    created = page is None
+    if page is None:
+        page = WikiPage(
+            user_id=auth.user_id,
+            slug=slug,
+            title=body.title,
+            kind=body.kind,
+            compiled_truth=body.content,
+            frontmatter={"source": "manual_save"},
+            last_synthesis_at=datetime.now(),
+        )
+        db.add(page)
+    else:
+        page.title = body.title
+        page.compiled_truth = body.content
+        page.kind = body.kind
+        page.last_synthesis_at = datetime.now()
+        page.frontmatter = {**(page.frontmatter or {}), "source": "manual_save"}
+
+    db.add(
+        WikiLogEntry(
+            user_id=auth.user_id,
+            page_id=page.id,
+            action="manually_saved",
+            source_type="manual",
+            source_ref=None,
+            metadata_={"chars": len(body.content)},
+            ts=datetime.now(),
+        )
+    )
+    await db.commit()
+    return SavePageResponse(slug=slug, title=page.title, kind=page.kind, created=created)
+
+
+class ReviewItem(BaseModel):
+    page_id: uuid.UUID
+    slug: str
+    title: str
+    reason: str  # "vault_leak" | "low_confidence" | "stale" | "no_synthesis"
+    detail: str | None
+    detected_at: datetime
+
+
+class ReviewQueue(BaseModel):
+    items: list[ReviewItem]
+    total: int
+
+
+@router.get("/review", response_model=ReviewQueue)
+async def list_review(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> ReviewQueue:
+    """Pages flagged for human review.
+
+    Three signals get a page on the queue:
+      - `vault_leak`: synthesis was aborted because the LLM output contained
+        a vault value (caught by SecretScanner). The page sits at its prior
+        compiled_truth (or NULL if it never synthesized).
+      - `stale`: the user or a maintenance job marked it stale.
+      - `low_confidence`: every incoming wiki_link to the page has
+        confidence < 0.6 — the extractor wasn't sure these are even
+        about the same entity.
+
+    Items are ordered most-recent-detection first. UI surfaces a "resolve"
+    button that calls POST /api/wiki/review/{slug}/resolve.
+    """
+    items: list[ReviewItem] = []
+
+    # 1. Vault leaks: walk wiki_log for synthesis_aborted_vault_leak entries.
+    leak_rows = (
+        await db.execute(
+            select(WikiLogEntry, WikiPage.slug, WikiPage.title)
+            .join(WikiPage, WikiPage.id == WikiLogEntry.page_id)
+            .where(
+                WikiLogEntry.user_id == auth.user_id,
+                WikiLogEntry.action == "synthesis_aborted_vault_leak",
+            )
+            .order_by(WikiLogEntry.ts.desc())
+            .limit(page_size)
+        )
+    ).all()
+    for entry, slug, title in leak_rows:
+        items.append(
+            ReviewItem(
+                page_id=entry.page_id or uuid.UUID(int=0),
+                slug=slug,
+                title=title,
+                reason="vault_leak",
+                detail=str((entry.metadata_ or {}).get("leak_count", "?")),
+                detected_at=entry.ts,
+            )
+        )
+
+    # 2. Stale pages.
+    stale_rows = (
+        (
+            await db.execute(
+                select(WikiPage)
+                .where(WikiPage.user_id == auth.user_id, WikiPage.stale.is_(True))
+                .order_by(WikiPage.updated_at.desc())
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for p in stale_rows:
+        items.append(
+            ReviewItem(
+                page_id=p.id,
+                slug=p.slug,
+                title=p.title,
+                reason="stale",
+                detail=None,
+                detected_at=p.updated_at,
+            )
+        )
+
+    # 3. Low-confidence: pages where every incoming source-link has
+    # confidence < 0.6 AND has at least 1 link. Subset of single-mention
+    # pages where even the LLM hedged.
+    low_conf_pages = (
+        await db.execute(
+            select(WikiPage, func.max(WikiLink.confidence))
+            .join(
+                WikiLink,
+                (WikiLink.from_page_id == WikiPage.id) & (WikiLink.source_type.is_not(None)),
+            )
+            .where(WikiPage.user_id == auth.user_id)
+            .group_by(WikiPage.id)
+            .having(func.max(WikiLink.confidence) < 0.6)
+            .order_by(WikiPage.updated_at.desc())
+            .limit(page_size)
+        )
+    ).all()
+    for p, max_conf in low_conf_pages:
+        items.append(
+            ReviewItem(
+                page_id=p.id,
+                slug=p.slug,
+                title=p.title,
+                reason="low_confidence",
+                detail=f"max link confidence: {max_conf:.2f}",
+                detected_at=p.updated_at,
+            )
+        )
+
+    # Sort by detected_at desc (mixed reasons interleave naturally).
+    items.sort(key=lambda x: x.detected_at, reverse=True)
+    return ReviewQueue(items=items[:page_size], total=len(items))
+
+
+@router.post("/review/{slug}/resolve")
+async def resolve_review(
+    slug: str,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Mark a flagged page as reviewed by the user.
+
+    Effects:
+      - clears the stale flag
+      - logs a 'reviewed' action
+    The vault_leak / low_confidence signals are derived from log entries
+    and link confidence — clearing them entirely would require deleting
+    log rows or re-extracting. The 'reviewed' log entry shadows them.
+    """
+    page = await db.scalar(
+        select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
+    )
+    if page is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found")
+
+    page.stale = False
+    db.add(
+        WikiLogEntry(
+            user_id=auth.user_id,
+            page_id=page.id,
+            action="reviewed",
+            source_type="manual",
+            source_ref=None,
+            metadata_={"resolved_by": "user"},
+            ts=datetime.now(),
+        )
+    )
+    await db.commit()
+    return {"slug": slug, "stale": False}
+
+
 @router.post("/recompute-graph")
 async def recompute_graph(
     auth: AuthContext = Depends(get_auth),

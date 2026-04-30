@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, MessageSquare, Send } from "lucide-react";
+import { ArrowLeft, BookmarkPlus, Check, Loader2, MessageSquare, Send } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, Fragment, useState } from "react";
 import { Markdown } from "@/components/markdown";
@@ -96,9 +96,19 @@ export default function WikiChatPage() {
 				</div>
 			) : (
 				<div className="space-y-6">
-					{history.map((msg, i) => (
-						<MessageBubble key={`${i}-${msg.role}-${msg.content.slice(0, 12)}`} msg={msg} />
-					))}
+					{history.map((msg, i) => {
+						// For wiki responses, the previous user message is the original question
+						const previousMsg = i > 0 ? history[i - 1] : undefined;
+						const originalQuestion =
+							msg.role === "wiki" && previousMsg?.role === "user" ? previousMsg.content : undefined;
+						return (
+							<MessageBubble
+								key={`${i}-${msg.role}-${msg.content.slice(0, 12)}`}
+								msg={msg}
+								originalQuestion={originalQuestion}
+							/>
+						);
+					})}
 				</div>
 			)}
 
@@ -139,7 +149,7 @@ export default function WikiChatPage() {
 	);
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({ msg, originalQuestion }: { msg: ChatMessage; originalQuestion?: string }) {
 	if (msg.role === "user") {
 		return (
 			<div className="flex justify-end">
@@ -154,6 +164,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 			<div className="rounded-xl border bg-card p-4 prose prose-sm dark:prose-invert max-w-none">
 				<Markdown content={msg.content} />
 			</div>
+			{originalQuestion && (
+				<SaveToWikiButton
+					question={originalQuestion}
+					answer={msg.content}
+					citations={msg.citations}
+				/>
+			)}
 			{msg.citations && msg.citations.length > 0 && (
 				<div className="text-xs space-y-1">
 					<div className="text-muted-foreground font-medium uppercase tracking-wide">
@@ -184,5 +201,71 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 				</div>
 			)}
 		</div>
+	);
+}
+
+function SaveToWikiButton({
+	question,
+	answer,
+	citations,
+}: {
+	question: string;
+	answer: string;
+	citations?: Citation[];
+}) {
+	const { getToken } = useAuth();
+	const [saved, setSaved] = useState<{ slug: string } | null>(null);
+
+	const save = useMutation<{ slug: string; title: string; created: boolean }, Error, void>({
+		mutationFn: async () => {
+			const token = (await getToken()) ?? "";
+			// Build a synthesis page from the chat exchange. Title = question.
+			// Body = answer + citation list.
+			const citationsBlock = citations?.length
+				? `\n\n## Cited\n${citations.map((c) => `- [${c.n}] [${c.title}](/wiki/${c.slug})`).join("\n")}`
+				: "";
+			const body = `**Q:** ${question}\n\n${answer}${citationsBlock}`;
+			const res = await fetch(`${API_URL}/api/wiki/save`, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: question.length > 80 ? `${question.slice(0, 77)}...` : question,
+					content: body,
+					kind: "synthesis",
+				}),
+			});
+			if (!res.ok)
+				throw new Error(`Save failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+			return (await res.json()) as { slug: string; title: string; created: boolean };
+		},
+		onSuccess: (data) => setSaved({ slug: data.slug }),
+	});
+
+	if (saved) {
+		return (
+			<div className="flex items-center gap-2 text-xs text-muted-foreground">
+				<Check className="size-3.5 text-green-600 dark:text-green-400" />
+				Saved as
+				<Link href={`/wiki/${saved.slug}`} className="font-medium text-foreground hover:underline">
+					{saved.slug}
+				</Link>
+			</div>
+		);
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={() => save.mutate()}
+			disabled={save.isPending}
+			className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded border bg-background hover:bg-accent/50 transition-colors disabled:opacity-50"
+		>
+			{save.isPending ? (
+				<Loader2 className="size-3 animate-spin" />
+			) : (
+				<BookmarkPlus className="size-3" />
+			)}
+			Save to wiki
+		</button>
 	);
 }
