@@ -2286,6 +2286,38 @@ async def bootstrap_all_users(
     }
 
 
+@router.get("/admin/redis-stats")
+async def admin_redis_stats(
+    auth: AuthContext = Depends(get_auth),  # noqa: ARG001
+) -> dict:
+    """Quick diagnostic: queue depth, active workers, recent job ids.
+    Used to verify the worker container is consuming jobs without needing
+    per-container log access through Coolify.
+    """
+    from app.services.job_queue import get_pool
+
+    pool = await get_pool()
+    if pool is None:
+        return {"redis": "unconfigured"}
+    try:
+        # arq's default queue + result keys
+        queue_len = await pool.zcard("arq:queue")
+        # In-progress + complete keys
+        in_prog = await pool.keys("arq:in-progress:*")
+        results = await pool.keys("arq:result:*")
+        # Worker registration / health beat
+        workers = await pool.keys("arq:worker:*")
+        return {
+            "redis": "ok",
+            "queue_depth": int(queue_len),
+            "in_progress": len(in_prog),
+            "results_kept": len(results),
+            "workers_registered": len(workers),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"redis": "error", "error": str(e)[:200]}
+
+
 @router.get("/admin/jobs/{job_id}")
 async def admin_job_status(
     job_id: str,
