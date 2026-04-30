@@ -14,7 +14,6 @@ an empty wiki, then lights up as the pipeline starts producing pages.
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -217,8 +216,19 @@ async def list_pages(
             match_terms.append(WikiPage.slug.ilike(pat))
             match_terms.append(WikiPage.compiled_truth.ilike(pat))
 
-        # Sum across tokens — pages that match more of the query rank higher
-        relevance = (sum(title_terms) + sum(slug_terms) + sum(body_terms)).label("relevance")
+        # Sum across tokens — pages that match more of the query rank higher.
+        # Then bias toward pages with more source links: a personal-wiki entity
+        # mentioned in 30 sessions ("Rico") should outrank a one-shot mention
+        # ("linkedin-reply-bot") even when both match the query token "bot".
+        # log(source_count+1) keeps the boost sublinear so a single very-popular
+        # page can't dominate every search.
+        from sqlalchemy import cast as sql_cast
+        from sqlalchemy.types import Float
+
+        ln = func.ln(sql_cast(WikiPage.source_count, Float) + 1.0)
+        relevance = (
+            sum(title_terms) + sum(slug_terms) + sum(body_terms) + 0.5 * ln
+        ).label("relevance")
         base_filters.append(or_(*match_terms))
 
         total = (await db.scalar(select(func.count(WikiPage.id)).where(*base_filters))) or 0
@@ -704,37 +714,34 @@ async def query_wiki(
     # synthesized + shared) still goes through the sanitizer pipeline.
     raw_source_pages: list[WikiPage] = []
     if body.q.strip():
-        raw_tokens = [t for t in re.split(r"\s+", body.q.strip()) if len(t) >= 3]
-        if raw_tokens:
-            already = set(pages_by_id.keys())
-            ts_q = " | ".join(raw_tokens)
-            try:
-                rs = (
-                    (
-                        await db.execute(
-                            select(WikiPage)
-                            .where(
-                                WikiPage.user_id == auth.user_id,
-                                WikiPage.kind == "source",
-                                func.to_tsvector("english", WikiPage.compiled_truth).op(
-                                    "@@"
-                                )(func.to_tsquery("english", ts_q)),
-                            )
-                            .order_by(
-                                func.ts_rank_cd(
-                                    func.to_tsvector("english", WikiPage.compiled_truth),
-                                    func.to_tsquery("english", ts_q),
-                                ).desc()
-                            )
-                            .limit(3)
+        already = set(pages_by_id.keys())
+        # `websearch_to_tsquery` parses natural-language queries — handles
+        # stopwords, apostrophes, quoted phrases, and `-foo` exclusions. The
+        # previous `to_tsquery` + manual `|` join silently failed on inputs
+        # like "what's the SID" because Postgres won't tokenize stopwords
+        # in to_tsquery and threw on apostrophes.
+        try:
+            ts_q = func.websearch_to_tsquery("english", body.q.strip())
+            ts_v = func.to_tsvector("english", WikiPage.compiled_truth)
+            rs = (
+                (
+                    await db.execute(
+                        select(WikiPage)
+                        .where(
+                            WikiPage.user_id == auth.user_id,
+                            WikiPage.kind == "source",
+                            ts_v.op("@@")(ts_q),
                         )
+                        .order_by(func.ts_rank_cd(ts_v, ts_q).desc())
+                        .limit(3)
                     )
-                    .scalars()
-                    .all()
                 )
-                raw_source_pages = [p for p in rs if p.id not in already]
-            except Exception as e:
-                log.warning("/query source-page lookup failed: %s", e)
+                .scalars()
+                .all()
+            )
+            raw_source_pages = [p for p in rs if p.id not in already]
+        except Exception as e:
+            log.warning("/query source-page lookup failed: %s", e)
 
     pages_block: list[str] = []
     citations: list[QueryCitation] = []
