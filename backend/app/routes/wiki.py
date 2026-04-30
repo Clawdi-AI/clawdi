@@ -2286,6 +2286,33 @@ async def bootstrap_all_users(
     }
 
 
+@router.get("/admin/worker-log")
+async def admin_worker_log(
+    auth: AuthContext = Depends(get_auth),  # noqa: ARG001
+    tail: int = Query(default=80, ge=10, le=2000),
+) -> dict:
+    """Read the worker container's stdout from `/app/.worker.log`.
+    Worker tee's its output to that path on the shared `source` volume so
+    we can diagnose boot/import failures without per-container Coolify
+    log access.
+    """
+    from pathlib import Path
+
+    log_path = Path("/app/.worker.log")
+    if not log_path.exists():
+        return {"exists": False, "path": str(log_path)}
+    try:
+        text = log_path.read_text(errors="replace")
+    except Exception as e:  # noqa: BLE001
+        return {"exists": True, "error": str(e)[:200]}
+    lines = text.splitlines()
+    return {
+        "exists": True,
+        "total_lines": len(lines),
+        "tail": lines[-tail:],
+    }
+
+
 @router.get("/admin/redis-stats")
 async def admin_redis_stats(
     auth: AuthContext = Depends(get_auth),  # noqa: ARG001
@@ -2294,25 +2321,33 @@ async def admin_redis_stats(
     Used to verify the worker container is consuming jobs without needing
     per-container log access through Coolify.
     """
+    from app.core.config import settings as _settings
     from app.services.job_queue import get_pool
 
     pool = await get_pool()
     if pool is None:
-        return {"redis": "unconfigured"}
+        return {"redis": "unconfigured", "redis_url": _settings.redis_url}
     try:
         # arq's default queue + result keys
         queue_len = await pool.zcard("arq:queue")
-        # In-progress + complete keys
         in_prog = await pool.keys("arq:in-progress:*")
         results = await pool.keys("arq:result:*")
-        # Worker registration / health beat
-        workers = await pool.keys("arq:worker:*")
+        # Worker health beat key. arq uses `arq:health-check:<queue_name>`
+        # by default — which is `arq:queue` for this deployment.
+        health_keys = await pool.keys("arq:health-check:*")
+        # Plus arq's worker registration set
+        worker_keys = await pool.keys("arq:worker:*")
+        # All arq keys for full visibility (small alphabet)
+        all_arq = await pool.keys("arq:*")
         return {
             "redis": "ok",
+            "redis_url_api_sees": _settings.redis_url,
             "queue_depth": int(queue_len),
             "in_progress": len(in_prog),
             "results_kept": len(results),
-            "workers_registered": len(workers),
+            "health_keys": [k.decode() if isinstance(k, bytes) else k for k in health_keys],
+            "worker_keys": [k.decode() if isinstance(k, bytes) else k for k in worker_keys],
+            "all_arq_keys_count": len(all_arq),
         }
     except Exception as e:  # noqa: BLE001
         return {"redis": "error", "error": str(e)[:200]}

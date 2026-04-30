@@ -197,17 +197,18 @@ services:
     command: >
       bash -c '
         set -e
+        # All worker stdout/stderr also tees to /app/.worker.log on the
+        # shared `source` volume so the API container can surface it via
+        # /api/wiki/admin/worker-log without per-container Coolify access.
+        exec > >(tee -a /app/.worker.log) 2>&1
+        echo "[worker] === boot $$(date -u +%FT%TZ) ==="
+        echo "[worker] REDIS_URL=$$REDIS_URL"
         if ! command -v uv >/dev/null; then
           pip install --quiet uv
         fi
-        # Wait for the API to finish `uv sync` so arq + the workspace
-        # `clawdi_backend` package are both importable. Polling the venv
-        # directory existence is not enough — the dir exists from a
-        # prior deploy but new deps land asynchronously when the API
-        # boots. Poll the actual import path: arq is installed AND the
-        # workers module loads (the latter catches workspace re-link
-        # races where clawdi_backend is briefly missing).
         cd /app/backend
+        # Wait for arq + clawdi-backend importable. The venv dir exists from
+        # prior deploys but new deps + workspace re-links land async.
         for i in $$(seq 1 60); do
           if uv run python -c "import arq, app.workers" 2>/dev/null; then
             echo "[worker] arq + app.workers importable"
@@ -216,9 +217,8 @@ services:
           echo "[worker] waiting for venv ready ($$i/60)..."
           sleep 5
         done
-        # Final import probe — fail loud if still broken so Coolify
-        # reports the actual error in container logs.
-        uv run python -c "import arq, app.workers"
+        echo "[worker] final import probe (will surface ImportError loudly)"
+        uv run python -c "import arq, app.workers; print(\"[worker] arq=\", arq.__version__)"
         echo "[worker] starting arq pool (max_jobs=4)"
         exec uv run arq app.workers.WorkerSettings
       '

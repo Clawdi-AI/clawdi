@@ -156,10 +156,15 @@ async def wiki_bootstrap_users(ctx: dict[str, Any], user_ids: list[str]) -> dict
 # ---------------------------------------------------------------------------
 
 
-def _redis_settings() -> RedisSettings:
+def _build_redis_settings() -> RedisSettings:
+    """Eagerly build at module import. Worker container is started with
+    REDIS_URL in env, so this succeeds. If it doesn't, arq won't load and
+    the worker boot script's `import arq, app.workers` probe surfaces the
+    error in container logs immediately.
+    """
     if not settings.redis_url:
         raise RuntimeError(
-            "redis_url is empty — set REDIS_URL to run the worker, "
+            "REDIS_URL is empty — set it to run the worker pool, "
             "or run the API in legacy inline-task mode without it."
         )
     return RedisSettings.from_dsn(settings.redis_url)
@@ -183,7 +188,9 @@ class WorkerSettings:
         wiki_create_mem_source,
         wiki_bootstrap_users,
     ]
-    redis_settings = _redis_settings  # arq calls this lazily
+    # arq accepts either a RedisSettings instance or a `redis_pool` callable.
+    # Instance is simpler — module import already gates on REDIS_URL.
+    redis_settings = _build_redis_settings()
     max_jobs = 4
     job_timeout = 1_800  # 30min — extraction + synthesis can be long
     keep_result = 3_600  # keep job results for 1h so /api/jobs/{id} can read
