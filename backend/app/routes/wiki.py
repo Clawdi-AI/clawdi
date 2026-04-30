@@ -114,7 +114,10 @@ class LogList(BaseModel):
 async def list_pages(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-    kind: Literal["entity", "concept", "synthesis"] | None = Query(default=None),
+    kind: Literal[
+        "entity", "concept", "synthesis", "source", "overview", "comparison", "query"
+    ]
+    | None = Query(default=None),
     stale: bool | None = Query(
         default=None, description="Filter by stale flag. Omit to include both."
     ),
@@ -933,7 +936,9 @@ class SavePageRequest(BaseModel):
     title: str
     content: str
     slug: str | None = None  # auto-derived from title if absent
-    kind: Literal["entity", "concept", "synthesis"] = "synthesis"
+    kind: Literal[
+        "entity", "concept", "synthesis", "source", "overview", "comparison", "query"
+    ] = "synthesis"
 
 
 class SavePageResponse(BaseModel):
@@ -1424,6 +1429,45 @@ async def generate_source_pages(
         created += 1
     await db.commit()
     return GenerateSourcePagesResponse(created=created, skipped=skipped)
+
+
+@router.post("/reclassify-kinds")
+async def reclassify_kinds(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """One-shot backfill: promote pages from `entity` to `concept` based on
+    `frontmatter.type` set by the LLM extractor.
+
+    Mirrors nashsu/llm_wiki's `type` field — categories show up grouped in
+    the knowledge tree. Pages whose stored `frontmatter.type == "concept"`
+    are promoted; everything else stays. Idempotent — safe to re-run.
+
+    We never demote (concept -> entity) here because the LLM may revisit
+    the same slug across atoms with different opinions; the highest-fidelity
+    classification (concept) wins.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(WikiPage).where(
+                    WikiPage.user_id == auth.user_id,
+                    WikiPage.kind == "entity",
+                    WikiPage.frontmatter.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    promoted = 0
+    for page in rows:
+        fm_type = (page.frontmatter or {}).get("type")
+        if isinstance(fm_type, str) and fm_type.lower() == "concept":
+            page.kind = "concept"
+            promoted += 1
+    await db.commit()
+    return {"considered": len(rows), "promoted_to_concept": promoted}
 
 
 @router.post("/embed-backfill")

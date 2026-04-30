@@ -295,6 +295,12 @@ async def _process_atom_llm(
         except ValueError:
             continue
 
+        # Map the extractor's fine-grained `type` (project/tool/service/person/
+        # concept/place) onto the wiki page-kind enum used by the UI tree.
+        # Conceptual entities get their own bucket; everything else is `entity`.
+        ent_type = (ent.get("type") or "concept").lower()
+        page_kind = "concept" if ent_type == "concept" else "entity"
+
         if exists:
             page = await db.scalar(
                 select(WikiPage).where(WikiPage.user_id == user_id, WikiPage.slug == slug)
@@ -304,18 +310,25 @@ async def _process_atom_llm(
                     user_id=user_id,
                     slug=slug,
                     title=ent.get("title") or candidate,
-                    kind="entity",
+                    kind=page_kind,
+                    frontmatter={"type": ent_type},
                 )
                 db.add(page)
                 await db.flush()
                 pages_touched += 1
+            elif page.kind == "entity" and page_kind == "concept":
+                # Late re-classification: if a page was first created as
+                # a generic entity but a later atom proves it's a concept,
+                # promote it. We never demote concept → entity.
+                page.kind = "concept"
+                page.frontmatter = {**(page.frontmatter or {}), "type": ent_type}
         else:
             page = WikiPage(
                 user_id=user_id,
                 slug=slug,
                 title=ent.get("title") or candidate,
-                kind="entity",
-                frontmatter={"type": ent.get("type", "concept")},
+                kind=page_kind,
+                frontmatter={"type": ent_type},
             )
             db.add(page)
             await db.flush()

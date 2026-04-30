@@ -13,14 +13,21 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Activity,
+	BarChart3,
 	BookOpen,
 	ChevronRight,
 	FileText,
+	GitMerge,
+	HelpCircle,
+	Layout as LayoutIcon,
+	Lightbulb,
+	type LucideIcon,
 	MessageSquare,
 	Network,
 	Search,
 	ShieldAlert,
 	Sparkles,
+	Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -45,6 +52,32 @@ type PageList = {
 };
 
 type ReviewQueue = { items: unknown[]; total: number };
+
+// Knowledge-tree categories — matches nashsu/llm_wiki's TYPE_CONFIG so the
+// sidebar reads the same way. Order drives section order in the tree.
+const KIND_CONFIG: Record<
+	string,
+	{ icon: LucideIcon; label: string; color: string; order: number }
+> = {
+	overview: { icon: LayoutIcon, label: "Overview", color: "text-yellow-500", order: 0 },
+	entity: { icon: Users, label: "Entities", color: "text-blue-500", order: 1 },
+	concept: { icon: Lightbulb, label: "Concepts", color: "text-purple-500", order: 2 },
+	source: { icon: BookOpen, label: "Sources", color: "text-orange-500", order: 3 },
+	synthesis: { icon: GitMerge, label: "Synthesis", color: "text-red-500", order: 4 },
+	comparison: { icon: BarChart3, label: "Comparisons", color: "text-emerald-500", order: 5 },
+	query: { icon: HelpCircle, label: "Queries", color: "text-green-500", order: 6 },
+};
+
+function getKindConfig(kind: string) {
+	return (
+		KIND_CONFIG[kind] ?? {
+			icon: FileText,
+			label: kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "Other",
+			color: "text-muted-foreground",
+			order: 99,
+		}
+	);
+}
 
 const NAV_ITEMS = [
 	{ href: "/wiki", icon: MessageSquare, label: "Chat", match: (p: string) => p === "/wiki" },
@@ -185,7 +218,7 @@ export default function WikiLayout({ children }: { children: ReactNode }) {
 				</div>
 				<div className="flex-1 overflow-y-auto p-2 space-y-3">
 					{Object.entries(pagesByKind)
-						.sort(([a], [b]) => a.localeCompare(b))
+						.sort(([a], [b]) => getKindConfig(a).order - getKindConfig(b).order)
 						.map(([kind, pages]) => (
 							<TreeGroup key={kind} kind={kind} pages={pages} pathname={pathname} />
 						))}
@@ -231,17 +264,20 @@ function TreeGroup({
 }) {
 	const [open, setOpen] = useState(true);
 	const sorted = [...pages].sort((a, b) => b.source_count - a.source_count);
+	const cfg = getKindConfig(kind);
+	const Icon = cfg.icon;
 	return (
 		<div>
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="w-full flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors px-1 py-0.5"
+				className="w-full flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors px-1 py-1"
 			>
 				<ChevronRight
-					className={cn("size-3 transition-transform", open ? "rotate-90" : "rotate-0")}
+					className={cn("size-3 transition-transform shrink-0", open ? "rotate-90" : "rotate-0")}
 				/>
-				<span>{kind}</span>
+				<Icon className={cn("size-3.5 shrink-0", cfg.color)} />
+				<span>{cfg.label}</span>
 				<span className="ml-auto text-[10px] font-mono opacity-60">{pages.length}</span>
 			</button>
 			{open && (
