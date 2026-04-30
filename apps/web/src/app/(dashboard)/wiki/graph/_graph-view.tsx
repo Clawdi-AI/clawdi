@@ -325,7 +325,7 @@ function GraphEvents({
 export default function WikiGraphView() {
 	const { getToken } = useAuth();
 	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-	const [colorMode, setColorMode] = useState<ColorMode>("kind");
+	const [colorMode, setColorMode] = useState<ColorMode>("community");
 
 	const { data, isLoading } = useQuery<GraphResponse>({
 		queryKey: ["wiki", "graph", "full"],
