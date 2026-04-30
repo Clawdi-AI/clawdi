@@ -1364,6 +1364,7 @@ async def type_links(
 class GenerateSourcePagesResponse(BaseModel):
     created: int
     skipped: int
+    links_added: int = 0
 
 
 @router.post("/source-pages", response_model=GenerateSourcePagesResponse)
@@ -1399,36 +1400,68 @@ async def generate_source_pages(
 
     created = 0
     skipped = 0
+    links_added = 0
     for mem in rows:
         slug = f"src-{str(mem.id)[:8]}"
         existing = await db.scalar(
             select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
         )
-        if existing:
+        if existing is None:
+            first_line = (mem.content or "").split("\n", 1)[0].strip().lstrip("# ").strip()
+            if not first_line:
+                first_line = f"Memory {str(mem.id)[:8]}"
+            title = first_line[:80]
+            page = WikiPage(
+                user_id=auth.user_id,
+                slug=slug,
+                title=title,
+                kind="source",
+                compiled_truth=mem.content,
+                frontmatter={
+                    "source_type": "memory",
+                    "source_ref": str(mem.id),
+                    "category": mem.category,
+                    "tags": mem.tags or [],
+                },
+                last_synthesis_at=datetime.now(),
+                source_count=1,
+            )
+            db.add(page)
+            await db.flush()
+            created += 1
+        else:
+            page = existing
             skipped += 1
-            continue
-        first_line = (mem.content or "").split("\n", 1)[0].strip().lstrip("# ").strip()
-        if not first_line:
-            first_line = f"Memory {str(mem.id)[:8]}"
-        title = first_line[:80]
-        page = WikiPage(
-            user_id=auth.user_id,
-            slug=slug,
-            title=title,
-            kind="source",
-            compiled_truth=mem.content,
-            frontmatter={
-                "source_type": "memory",
-                "source_ref": str(mem.id),
-                "category": mem.category,
-                "tags": mem.tags or [],
-            },
-            last_synthesis_at=datetime.now(),
+
+        # Ensure a WikiLink (source-page -> memory atom) exists. Without it,
+        # graph traversal and bench scoring can't tell that this page IS that
+        # memory's canonical wiki view. Idempotent.
+        link_exists = await db.scalar(
+            select(func.count(WikiLink.id)).where(
+                WikiLink.user_id == auth.user_id,
+                WikiLink.from_page_id == page.id,
+                WikiLink.source_type == "memory",
+                WikiLink.source_ref == str(mem.id),
+            )
         )
-        db.add(page)
-        created += 1
+        if not link_exists:
+            db.add(
+                WikiLink(
+                    user_id=auth.user_id,
+                    from_page_id=page.id,
+                    to_page_id=None,
+                    source_type="memory",
+                    source_ref=str(mem.id),
+                    link_type="defines",
+                    confidence=1.0,
+                    created_at=datetime.now(),
+                )
+            )
+            links_added += 1
     await db.commit()
-    return GenerateSourcePagesResponse(created=created, skipped=skipped)
+    return GenerateSourcePagesResponse(
+        created=created, skipped=skipped, links_added=links_added
+    )
 
 
 @router.post("/reclassify-kinds")
