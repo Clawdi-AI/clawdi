@@ -1370,6 +1370,11 @@ class GenerateSourcePagesResponse(BaseModel):
 @router.post("/source-pages", response_model=GenerateSourcePagesResponse)
 async def generate_source_pages(
     limit: int = Query(default=200, ge=1, le=1000),
+    refresh_titles: bool = Query(
+        default=False,
+        description="When true, re-derive title for existing source pages "
+        "from the transcript (use after changing title heuristics).",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> GenerateSourcePagesResponse:
@@ -1414,7 +1419,25 @@ async def generate_source_pages(
             transcript = await _load_session_transcript(s)
             if not transcript:
                 continue
-            title = (s.local_session_id or f"Session {str(s.id)[:8]}")[:80]
+            # Use the session summary if Paco's distillation populated it;
+            # otherwise pull the first user prompt out of the transcript so
+            # FTS on title actually has signal (the previous fallback to
+            # `local_session_id` produced titles like "claude_code" which
+            # dilute every search).
+            title: str | None = (s.summary or "").strip().split("\n", 1)[0].strip()
+            if not title:
+                for line in transcript.splitlines():
+                    if line.startswith("[user]"):
+                        candidate = line[len("[user]") :].strip()
+                        # Strip wrapping JSON/markup that the agent harness
+                        # sometimes emits (e.g. `<ide_opened_file>...</...>`).
+                        candidate = candidate.split("\n", 1)[0].strip()
+                        if candidate and len(candidate) > 10:
+                            title = candidate
+                            break
+            if not title:
+                title = s.local_session_id or f"Session {str(s.id)[:8]}"
+            title = title[:80]
             # Tail-bias: keep the latest 8K chars — that's where decisions land.
             body = transcript[-8_000:] if len(transcript) > 8_000 else transcript
             page = WikiPage(
@@ -1439,6 +1462,19 @@ async def generate_source_pages(
         else:
             page = existing
             skipped += 1
+            if refresh_titles:
+                transcript = await _load_session_transcript(s)
+                if transcript:
+                    new_title: str | None = (s.summary or "").strip().split("\n", 1)[0].strip()
+                    if not new_title:
+                        for line in transcript.splitlines():
+                            if line.startswith("[user]"):
+                                cand = line[len("[user]") :].strip().split("\n", 1)[0].strip()
+                                if cand and len(cand) > 10:
+                                    new_title = cand
+                                    break
+                    if new_title:
+                        page.title = new_title[:80]
 
         # Ensure a WikiLink (source-page -> session atom) exists.
         link_exists = await db.scalar(
