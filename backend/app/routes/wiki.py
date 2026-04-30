@@ -1566,6 +1566,82 @@ async def generate_source_pages(
                 )
             )
             links_added += 1
+
+    # Memory source pages — slug `mem-<id-prefix>` so they don't collide with
+    # session source pages. Hand-written memory files (Marvin-curated notes
+    # like "Voice Call Twilio Setup") are critical signal that doesn't appear
+    # in any session transcript; without these the wiki misses curated facts
+    # entirely after the session-only extraction shift. Also indexes
+    # session-extracted memories so /api/wiki/query has a second path to the
+    # same content.
+    from app.models.memory import Memory
+
+    mem_rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(Memory.user_id == auth.user_id)
+                .order_by(Memory.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for mem in mem_rows:
+        m_slug = f"mem-{str(mem.id)[:8]}"
+        existing_m = await db.scalar(
+            select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == m_slug)
+        )
+        if existing_m is None:
+            content = mem.content or ""
+            first_line = content.split("\n", 1)[0].strip().lstrip("# ").strip()
+            m_title = (first_line or f"Memory {str(mem.id)[:8]}")[:80]
+            page_m = WikiPage(
+                user_id=auth.user_id,
+                slug=m_slug,
+                title=m_title,
+                kind="source",
+                compiled_truth=content,
+                frontmatter={
+                    "source_type": "memory",
+                    "source_ref": str(mem.id),
+                    "category": mem.category,
+                    "tags": mem.tags or [],
+                },
+                last_synthesis_at=datetime.now(),
+                source_count=1,
+            )
+            db.add(page_m)
+            await db.flush()
+            created += 1
+        else:
+            page_m = existing_m
+            skipped += 1
+
+        link_exists = await db.scalar(
+            select(func.count(WikiLink.id)).where(
+                WikiLink.user_id == auth.user_id,
+                WikiLink.from_page_id == page_m.id,
+                WikiLink.source_type == "memory",
+                WikiLink.source_ref == str(mem.id),
+            )
+        )
+        if not link_exists:
+            db.add(
+                WikiLink(
+                    user_id=auth.user_id,
+                    from_page_id=page_m.id,
+                    to_page_id=None,
+                    source_type="memory",
+                    source_ref=str(mem.id),
+                    link_type="defines",
+                    confidence=1.0,
+                    created_at=datetime.now(),
+                )
+            )
+            links_added += 1
+
     await db.commit()
     return GenerateSourcePagesResponse(
         created=created, skipped=skipped, links_added=links_added
