@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2151,40 +2151,56 @@ async def get_graph(
     return GraphResponse(nodes=nodes, edges=edges)
 
 
+async def _bootstrap_one_user(user_id: uuid.UUID) -> None:
+    """BackgroundTask: extract + synthesize wiki for one user.
+
+    Each user gets a fresh AsyncSession + its own try/except so a single
+    failing user doesn't break the others. Logs progress so the admin can
+    grep the API logs for "bootstrap user=" to follow along.
+    """
+    from app.core.database import async_session_factory
+    from app.services.wiki_llm_extraction import llm_extract_for_user
+    from app.services.wiki_synthesis import synthesize_for_user
+
+    log.info("bootstrap user=%s — start", user_id)
+    try:
+        async with async_session_factory() as db:
+            ext = await llm_extract_for_user(db, user_id)
+            log.info("bootstrap user=%s — extraction: %s", user_id, ext)
+            synth = await synthesize_for_user(db, user_id)
+            log.info("bootstrap user=%s — synthesis: %s", user_id, synth)
+    except Exception as e:  # noqa: BLE001 — best-effort per-user job
+        log.warning("bootstrap user=%s — failed: %s", user_id, e)
+
+
 @router.post("/admin/bootstrap-all-users")
 async def bootstrap_all_users(
+    background: BackgroundTasks,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    """One-shot: run extraction + synthesis for every user with data on
-    this deployment. Used to pre-generate wikis for snapshot-restored
-    colleagues so they land on a populated dashboard instead of an
-    empty one.
+    """Queue extraction + synthesis BackgroundTasks for every user with data.
 
-    Iterates users with at least 1 session OR 1 memory. For each user:
-    1. Open a fresh AsyncSession (prevents transaction pollution across users).
-    2. Run llm_extract_for_user (sessions / skills / vault).
-    3. Generate mem-<id> source pages for hand-written memory files.
-    4. Run synthesize_for_user.
-    5. Embed-backfill any remaining un-embedded compiled_truth.
+    Returns immediately with the list of queued user_ids. Each user runs
+    in its own BackgroundTask, so the request handler doesn't hold the
+    worker for tens of minutes (which previously OOM'd the container).
 
-    NOT idempotent across full runs because LLM costs apply each call,
-    BUT the underlying extractor + synthesizer ARE idempotent — re-running
-    skips already-processed sessions and pages with no new evidence.
+    Each per-user task:
+      1. Opens a fresh AsyncSession.
+      2. Runs llm_extract_for_user (sessions / skills / vault).
+      3. Runs synthesize_for_user.
+      4. Logs `bootstrap user=<id> — ...` lines so the admin can tail
+         /var/log via Coolify to monitor.
 
     No admin gating today: any authenticated user can call this and
     trigger LLM work for everyone in the snapshot. Preview-only; gate
     with X-Admin-Token before enabling on prod.
     """
-    from app.core.database import async_session_factory
     from app.models.memory import Memory
     from app.models.session import Session as SessionModel
-    from app.services.wiki_llm_extraction import llm_extract_for_user
-    from app.services.wiki_synthesis import synthesize_for_user
 
     log.info("admin/bootstrap-all-users invoked by user_id=%s", auth.user_id)
 
-    # Active users = anyone with at least one session or memory row.
     user_ids_sessions = {
         u
         for u in (
@@ -2212,36 +2228,48 @@ async def bootstrap_all_users(
         if u is not None
     }
     user_ids = sorted(user_ids_sessions | user_ids_memories, key=str)
+    log.info("bootstrap: found %d active users to enqueue", len(user_ids))
 
-    log.info("bootstrap: found %d active users", len(user_ids))
-
-    summary: dict[str, dict] = {}
     for uid in user_ids:
-        per_user: dict = {}
-        # Each user runs in its own DB session — committing per-user means a
-        # CF 100s cut mid-loop preserves work for users already processed.
-        try:
-            async with async_session_factory() as user_db:
-                ext = await llm_extract_for_user(user_db, uid)
-                per_user["extraction"] = ext
-                # Generate mem-<id> source pages inline. Reuses the function
-                # body from /source-pages but only for this user. To avoid
-                # duplicating ~80 lines, just commit the user's extraction
-                # state and call synthesize directly — source-page generation
-                # is its own one-shot via /source-pages, callable separately.
-                await user_db.commit()
-                synth = await synthesize_for_user(user_db, uid)
-                per_user["synthesis"] = synth
-                per_user["status"] = "ok"
-        except Exception as e:
-            log.warning("bootstrap failed for user_id=%s: %s", uid, e)
-            per_user["status"] = "error"
-            per_user["error"] = str(e)[:300]
-        summary[str(uid)] = per_user
+        background.add_task(_bootstrap_one_user, uid)
 
     return {
-        "users_processed": len(summary),
-        "by_user": summary,
+        "users_queued": len(user_ids),
+        "user_ids": [str(u) for u in user_ids],
+        "note": (
+            "Tasks running in background. "
+            "Poll GET /api/wiki/admin/bootstrap-status to track progress."
+        ),
+    }
+
+
+@router.get("/admin/bootstrap-status")
+async def bootstrap_status(
+    auth: AuthContext = Depends(get_auth),  # noqa: ARG001 — auth required, value unused
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Per-user wiki page counts across the deployment. Drives the admin
+    progress view for `bootstrap-all-users`. Returns up to 50 users.
+    """
+    rows = (
+        await db.execute(
+            select(
+                WikiPage.user_id,
+                func.count(WikiPage.id).label("pages"),
+                func.count(WikiPage.id)
+                .filter(WikiPage.last_synthesis_at.is_not(None))
+                .label("synthd"),
+            )
+            .group_by(WikiPage.user_id)
+            .order_by(func.count(WikiPage.id).desc())
+            .limit(50)
+        )
+    ).all()
+    return {
+        "users": [
+            {"user_id": str(uid), "pages": int(p), "synthesized": int(s)}
+            for uid, p, s in rows
+        ]
     }
 
 
