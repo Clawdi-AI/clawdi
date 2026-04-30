@@ -4,7 +4,17 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -12,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
 from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.schemas.common import Paginated
@@ -434,11 +444,18 @@ async def upload_session_content(
     # Constrained to safe filename chars so it cannot escape the
     # `sessions/{user_id}/` prefix in the file-store key below.
     local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
+    background: BackgroundTasks = None,  # type: ignore[assignment]
     file: UploadFile = File(...),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SessionUploadResponse:
-    """Upload session messages JSON to FileStore."""
+    """Upload session messages JSON to FileStore.
+
+    Live-wiki webhook: after the transcript lands, schedule entity extraction
+    in BackgroundTasks. The wiki picks up new entities directly from the raw
+    transcript without waiting for the cron sweep — and without the lossy
+    memory→wiki summarization step that the previous design used.
+    """
     result = await db.execute(
         select(Session).where(
             Session.user_id == auth.user_id,
@@ -465,7 +482,27 @@ async def upload_session_content(
     session.content_uploaded_at = datetime.now(UTC)
     await db.commit()
 
+    # Live wiki: extract entities from this freshly-uploaded transcript.
+    # Background-task isolated; failures never affect the upload response.
+    if background is not None:
+        background.add_task(_live_wiki_extract_session, auth.user_id, session.id)
+
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
+
+
+async def _live_wiki_extract_session(user_id: UUID, session_id: UUID) -> None:
+    """BackgroundTask: open a fresh DB session and run extraction.
+
+    Failures are logged and swallowed: the upload must never fail because
+    the wiki extractor is misbehaving.
+    """
+    from app.services.wiki_llm_extraction import llm_extract_for_session
+
+    try:
+        async with async_session_factory() as db:
+            await llm_extract_for_session(db, user_id, session_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort enrichment
+        log.warning("Live wiki extraction for session %s failed: %s", session_id, exc)
 
 
 @router.get("/api/sessions/{session_id}/content")

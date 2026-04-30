@@ -2,12 +2,12 @@ import logging
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.database import async_session_factory, get_session
+from app.core.database import get_session
 from app.models.memory import Memory
 from app.schemas.common import Paginated
 from app.schemas.memory import (
@@ -174,27 +174,9 @@ async def get_memory(
     return MemoryResponse.model_validate(memory_to_dict(memory))
 
 
-async def _live_wiki_extract_task(user_id: UUID, memory_id: str) -> None:
-    """BackgroundTask wrapper — opens its own session so it survives request close.
-
-    Failures are logged and swallowed: the memory write must never fail
-    because the wiki extractor is misbehaving.
-    """
-    from uuid import UUID as _UUID
-
-    from app.services.wiki_llm_extraction import llm_extract_for_memory
-
-    try:
-        async with async_session_factory() as session:
-            await llm_extract_for_memory(session, user_id, _UUID(memory_id))
-    except Exception as exc:  # noqa: BLE001 — best-effort enrichment
-        log.warning("Live wiki extraction for memory %s failed: %s", memory_id, exc)
-
-
 @router.post("")
 async def create_memory(
     body: MemoryCreate,
-    background: BackgroundTasks,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> MemoryCreatedResponse:
@@ -213,24 +195,18 @@ async def create_memory(
 
     Both reject with 422 + structured error. The agent's tool-call layer
     surfaces the hint to the user.
-
-    Post-INSERT: schedule a live-wiki extraction in BackgroundTasks so the
-    wiki picks up entities from this memory without waiting for the cron
-    sweep. Failures are isolated — the API response always reflects the
-    write success/failure, never the enrichment outcome.
     """
     _enforce_memory_quality(body.content)
     provider = await get_memory_provider(str(auth.user_id), db)
-    created = await provider.add(
-        str(auth.user_id),
-        body.content,
-        category=body.category,
-        source=body.source,
-        tags=body.tags,
+    return MemoryCreatedResponse.model_validate(
+        await provider.add(
+            str(auth.user_id),
+            body.content,
+            category=body.category,
+            source=body.source,
+            tags=body.tags,
+        )
     )
-    if created and (mem_id := created.get("id")):
-        background.add_task(_live_wiki_extract_task, auth.user_id, str(mem_id))
-    return MemoryCreatedResponse.model_validate(created)
 
 
 @router.delete("/{memory_id}")

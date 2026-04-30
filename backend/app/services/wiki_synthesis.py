@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.memory import Memory
+from app.models.session import Session as SessionModel
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultItem
 from app.models.wiki import WikiLink, WikiLogEntry, WikiPage
@@ -112,18 +112,13 @@ async def _gather_sources(
         .all()
     )
 
+    # Per-session transcripts are large — render once per session id and
+    # cache so 5 links to the same session share one fetch+truncate.
+    session_text_cache: dict[str, str] = {}
+
     sources: list[str] = []
     for link in link_rows:
-        if link.source_type == "memory":
-            mem = await db.scalar(
-                select(Memory).where(
-                    Memory.user_id == user_id,
-                    Memory.id == uuid.UUID(link.source_ref),
-                )
-            )
-            if mem:
-                sources.append(f"[memory:{mem.category}] {mem.content}")
-        elif link.source_type == "skill":
+        if link.source_type == "skill":
             sk = await db.scalar(
                 select(Skill).where(
                     Skill.user_id == user_id,
@@ -134,15 +129,42 @@ async def _gather_sources(
                 desc = sk.description or "(no description)"
                 sources.append(f"[skill:{sk.skill_key}] {sk.name} — {desc}")
         elif link.source_type == "session":
-            # When session distillation lands we'll fetch summary +
-            # key_quotes here. For now we just reference the id.
-            sources.append(f"[session:{link.source_ref}] (summary not yet distilled)")
+            cached = session_text_cache.get(link.source_ref)
+            if cached is None:
+                try:
+                    s_id = uuid.UUID(link.source_ref)
+                except ValueError:
+                    continue
+                s = await db.scalar(
+                    select(SessionModel).where(
+                        SessionModel.user_id == user_id,
+                        SessionModel.id == s_id,
+                    )
+                )
+                if s is None:
+                    continue
+                # Lazy import keeps the file_store + json import off the
+                # synthesis cold path when no session links are present.
+                from app.services.wiki_llm_extraction import _load_session_transcript
+
+                transcript = await _load_session_transcript(s)
+                if not transcript:
+                    continue
+                # Trim per session — full transcripts are huge. Tail-bias:
+                # last messages carry conclusions/decisions worth synthesizing.
+                cached = transcript[-6_000:] if len(transcript) > 6_000 else transcript
+                session_text_cache[link.source_ref] = cached
+            sources.append(f"[session:{link.source_ref}] {cached}")
         elif link.source_type == "vault":
             # Scope name only. We do NOT touch VaultItem values.
             sources.append(
                 f"[vault:{link.source_ref}] (the user has credentials stored "
                 f"under this scope; values are never read by synthesis)"
             )
+        # Note: source_type == "memory" links are no longer produced by the
+        # extractor (option 2 of harness-and-wiki.md §13.5: wiki reads sessions
+        # directly). Old memory-linked rows are tolerated but ignored — they'll
+        # vanish on the next /api/wiki/wipe + extract cycle.
     return sources
 
 

@@ -1373,24 +1373,28 @@ async def generate_source_pages(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> GenerateSourcePagesResponse:
-    """Generate kind=source wiki pages for memories.
+    """Generate kind=source wiki pages for sessions.
 
-    One wiki page per memory atom, slug = "src-<memory-id-prefix>".
-    Title = first line of memory content. compiled_truth = the memory
-    text itself (rendered as markdown). This gives users a navigable
-    rendered view of every source, not just a list of UUIDs on entity
-    pages.
+    One wiki page per session, slug = "src-<session-id-prefix>".
+    Title = the session's local id or a tail-truncated label.
+    compiled_truth = the rendered transcript (tail-biased so conclusions
+    survive truncation). The page carries a `defines` link back to the
+    session atom for graph traversal.
 
-    Idempotent: skips memories that already have a kind=source page.
+    Idempotent: skips sessions that already have a kind=source page.
     """
-    from app.models.memory import Memory
+    from app.models.session import Session as SessionModel
+    from app.services.wiki_llm_extraction import _load_session_transcript
 
     rows = (
         (
             await db.execute(
-                select(Memory)
-                .where(Memory.user_id == auth.user_id)
-                .order_by(Memory.created_at.desc())
+                select(SessionModel)
+                .where(
+                    SessionModel.user_id == auth.user_id,
+                    SessionModel.file_key.is_not(None),
+                )
+                .order_by(SessionModel.updated_at.desc().nullslast())
                 .limit(limit)
             )
         )
@@ -1401,27 +1405,30 @@ async def generate_source_pages(
     created = 0
     skipped = 0
     links_added = 0
-    for mem in rows:
-        slug = f"src-{str(mem.id)[:8]}"
+    for s in rows:
+        slug = f"src-{str(s.id)[:8]}"
         existing = await db.scalar(
             select(WikiPage).where(WikiPage.user_id == auth.user_id, WikiPage.slug == slug)
         )
         if existing is None:
-            first_line = (mem.content or "").split("\n", 1)[0].strip().lstrip("# ").strip()
-            if not first_line:
-                first_line = f"Memory {str(mem.id)[:8]}"
-            title = first_line[:80]
+            transcript = await _load_session_transcript(s)
+            if not transcript:
+                continue
+            title = (s.local_session_id or f"Session {str(s.id)[:8]}")[:80]
+            # Tail-bias: keep the latest 8K chars — that's where decisions land.
+            body = transcript[-8_000:] if len(transcript) > 8_000 else transcript
             page = WikiPage(
                 user_id=auth.user_id,
                 slug=slug,
                 title=title,
                 kind="source",
-                compiled_truth=mem.content,
+                compiled_truth=body,
                 frontmatter={
-                    "source_type": "memory",
-                    "source_ref": str(mem.id),
-                    "category": mem.category,
-                    "tags": mem.tags or [],
+                    "source_type": "session",
+                    "source_ref": str(s.id),
+                    "local_session_id": s.local_session_id,
+                    "agent": getattr(s, "agent", None),
+                    "project_path": getattr(s, "project_path", None),
                 },
                 last_synthesis_at=datetime.now(),
                 source_count=1,
@@ -1433,15 +1440,13 @@ async def generate_source_pages(
             page = existing
             skipped += 1
 
-        # Ensure a WikiLink (source-page -> memory atom) exists. Without it,
-        # graph traversal and bench scoring can't tell that this page IS that
-        # memory's canonical wiki view. Idempotent.
+        # Ensure a WikiLink (source-page -> session atom) exists.
         link_exists = await db.scalar(
             select(func.count(WikiLink.id)).where(
                 WikiLink.user_id == auth.user_id,
                 WikiLink.from_page_id == page.id,
-                WikiLink.source_type == "memory",
-                WikiLink.source_ref == str(mem.id),
+                WikiLink.source_type == "session",
+                WikiLink.source_ref == str(s.id),
             )
         )
         if not link_exists:
@@ -1450,8 +1455,8 @@ async def generate_source_pages(
                     user_id=auth.user_id,
                     from_page_id=page.id,
                     to_page_id=None,
-                    source_type="memory",
-                    source_ref=str(mem.id),
+                    source_type="session",
+                    source_ref=str(s.id),
                     link_type="defines",
                     confidence=1.0,
                     created_at=datetime.now(),

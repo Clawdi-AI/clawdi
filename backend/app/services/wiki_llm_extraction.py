@@ -40,11 +40,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.memory import Memory
 from app.models.session import Session as SessionModel
 from app.models.skill import Skill
 from app.models.vault import Vault
 from app.models.wiki import WikiLink, WikiLogEntry, WikiPage
+from app.services.file_store import get_file_store
 from app.services.slug_resolver import SlugResolver
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,19 @@ log = logging.getLogger(__name__)
 # Hard cap on atom text included in the prompt — keeps cost predictable.
 # Most real atoms fit; oversized ones are truncated with a marker.
 MAX_ATOM_CHARS = 4_000
+
+# Session transcripts are large. Window them into ~8k-char chunks so each
+# extraction call sees a coherent slice without blowing the context budget.
+# A typical Claude Code session at this size is ~25 messages; a code-heavy
+# debug thread fewer. Chunks overlap by SESSION_CHUNK_OVERLAP_CHARS to keep
+# entity references that span the boundary linkable to both halves.
+SESSION_CHUNK_CHARS = 8_000
+SESSION_CHUNK_OVERLAP_CHARS = 800
+
+# Cap chunks per session to bound cost on long sessions. Tail-bias: the last
+# part of a session usually carries the conclusion (commit, fix, decision)
+# that we most want indexed; oldest chunks are cheapest to drop.
+MAX_CHUNKS_PER_SESSION = 6
 
 # Top-N existing entity slugs to surface to the LLM as deduplication hints.
 # Selected by simple keyword overlap with the atom text.
@@ -440,45 +453,79 @@ async def _process_atom_llm(
 # ---------------------------------------------------------------------------
 
 
-async def _extract_memories(db, user_id, resolver, client, model, *, limit: int) -> dict:
-    total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
-    rows = (
-        (
-            await db.execute(
-                select(Memory)
-                .where(Memory.user_id == user_id)
-                .order_by(Memory.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    existing_slugs = await _existing_slug_index(db, user_id)
-    for mem in rows:
-        if await _already_processed(db, user_id, "memory", str(mem.id)):
-            total["skipped_processed"] += 1
+def _format_session_messages(messages: list[Any]) -> str:
+    """Render a session's JSONL message list as plain transcript text.
+
+    Mirrors `memory_extraction._format_messages_for_prompt` but stripped to
+    the minimum the wiki extractor needs (no project header, no message
+    count). Tool-use blocks come through as JSON blobs — fine for the LLM.
+    """
+    import json as _json
+
+    out: list[str] = []
+    for m in messages:
+        if not isinstance(m, dict):
             continue
-        hint = _shortlist_existing_slugs(mem.content, existing_slugs, INDEX_HINT_SIZE)
-        result = await _process_atom_llm(
-            db=db,
-            user_id=user_id,
-            resolver=resolver,
-            client=client,
-            model=model,
-            source_type="memory",
-            source_ref=str(mem.id),
-            atom_label=str(mem.id)[:8],
-            atom_text=mem.content,
-            existing_slugs_hint=hint,
-        )
-        total["atoms"] += 1
-        total["links_added"] += result["links_added"]
-        total["pages_created"] += result["pages_touched"]
-        await db.commit()
-        # Refresh slug index after each atom so cross-atom dedup works.
-        existing_slugs = await _existing_slug_index(db, user_id)
-    return total
+        role = str(m.get("role", "?"))
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            try:
+                content = _json.dumps(content, ensure_ascii=False)
+            except (TypeError, ValueError):
+                content = str(content)
+        out.append(f"[{role}] {content}")
+    return "\n".join(out)
+
+
+def _chunk_session_transcript(text: str) -> list[str]:
+    """Split a transcript into overlapping fixed-char windows.
+
+    Naive char-window chunking — turn-aware splitting would be better but
+    requires re-parsing, and the LLM handles mid-message cuts fine. Returns
+    at most MAX_CHUNKS_PER_SESSION chunks, biased toward the tail.
+    """
+    if not text:
+        return []
+    if len(text) <= SESSION_CHUNK_CHARS:
+        return [text]
+
+    chunks: list[str] = []
+    step = SESSION_CHUNK_CHARS - SESSION_CHUNK_OVERLAP_CHARS
+    pos = 0
+    while pos < len(text):
+        chunks.append(text[pos : pos + SESSION_CHUNK_CHARS])
+        pos += step
+
+    # Keep tail (most-recent) chunks — that's where the conclusions live.
+    if len(chunks) > MAX_CHUNKS_PER_SESSION:
+        chunks = chunks[-MAX_CHUNKS_PER_SESSION:]
+    return chunks
+
+
+async def _load_session_transcript(session: SessionModel) -> str | None:
+    """Fetch the JSONL transcript from the file store and render as text.
+
+    Returns None if the session has no uploaded content or the file is
+    missing/malformed. Used by both extraction and synthesis paths.
+    """
+    import json as _json
+
+    if not session.file_key:
+        return None
+    try:
+        store = get_file_store()
+        data = await store.get(session.file_key)
+    except Exception as e:  # noqa: BLE001 — best-effort I/O
+        log.warning("session %s: file_store fetch failed: %s", session.id, e)
+        return None
+    try:
+        messages = _json.loads(data)
+    except _json.JSONDecodeError:
+        log.warning("session %s: content is not valid JSON", session.id)
+        return None
+    if not isinstance(messages, list):
+        return None
+    return _format_session_messages(messages)
 
 
 async def _extract_skills(db, user_id, resolver, client, model, *, limit: int) -> dict:
@@ -523,12 +570,26 @@ async def _extract_skills(db, user_id, resolver, client, model, *, limit: int) -
 
 
 async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int) -> dict:
+    """Extract entities from raw session transcripts (JSONL on the file store).
+
+    Sessions are the primary signal for the wiki: their transcripts contain
+    every concrete value the user touched (URLs, IDs, file paths, errors,
+    decisions). Memories are a lossy summarization of these — see option 2
+    in harness-and-wiki.md §13.5: wiki reads sessions directly so verbatim
+    fidelity is preserved end-to-end.
+
+    Each session gets chunked into windowed slices; each chunk becomes one
+    extraction-LLM call linked back to the session id. The session id is
+    the dedup key for `_already_processed`, so re-running this is a no-op
+    once a session is fully processed (we don't try to extract from
+    individual chunks idempotently — chunking is not stable across versions).
+    """
     total = {"atoms": 0, "links_added": 0, "pages_created": 0, "skipped_processed": 0}
     rows = (
         (
             await db.execute(
                 select(SessionModel)
-                .where(SessionModel.user_id == user_id)
+                .where(SessionModel.user_id == user_id, SessionModel.file_key.is_not(None))
                 .order_by(SessionModel.updated_at.desc().nullslast())
                 .limit(limit)
             )
@@ -538,31 +599,35 @@ async def _extract_sessions(db, user_id, resolver, client, model, *, limit: int)
     )
     existing_slugs = await _existing_slug_index(db, user_id)
     for s in rows:
-        if not s.summary:
-            continue
         if await _already_processed(db, user_id, "session", str(s.id)):
             total["skipped_processed"] += 1
             continue
+        transcript = await _load_session_transcript(s)
+        if not transcript:
+            continue
+
+        chunks = _chunk_session_transcript(transcript)
         label = s.local_session_id or str(s.id)[:8]
-        text = f"# Session: {label}\n\n{s.summary}"
-        hint = _shortlist_existing_slugs(text, existing_slugs, INDEX_HINT_SIZE)
-        result = await _process_atom_llm(
-            db=db,
-            user_id=user_id,
-            resolver=resolver,
-            client=client,
-            model=model,
-            source_type="session",
-            source_ref=str(s.id),
-            atom_label=s.local_session_id or str(s.id)[:8],
-            atom_text=text,
-            existing_slugs_hint=hint,
-        )
-        total["atoms"] += 1
-        total["links_added"] += result["links_added"]
-        total["pages_created"] += result["pages_touched"]
-        await db.commit()
-        existing_slugs = await _existing_slug_index(db, user_id)
+        for i, chunk in enumerate(chunks):
+            atom_text = f"# Session: {label} [chunk {i + 1}/{len(chunks)}]\n\n{chunk}"
+            hint = _shortlist_existing_slugs(atom_text, existing_slugs, INDEX_HINT_SIZE)
+            result = await _process_atom_llm(
+                db=db,
+                user_id=user_id,
+                resolver=resolver,
+                client=client,
+                model=model,
+                source_type="session",
+                source_ref=str(s.id),
+                atom_label=f"{label}#{i + 1}",
+                atom_text=atom_text,
+                existing_slugs_hint=hint,
+            )
+            total["atoms"] += 1
+            total["links_added"] += result["links_added"]
+            total["pages_created"] += result["pages_touched"]
+            await db.commit()
+            existing_slugs = await _existing_slug_index(db, user_id)
     return total
 
 
@@ -633,7 +698,6 @@ async def llm_extract_for_user(
 
     resolver = SlugResolver(db, user_id)
 
-    memories = await _extract_memories(db, user_id, resolver, client, model, limit=memory_limit)
     skills = await _extract_skills(db, user_id, resolver, client, model, limit=skill_limit)
     sessions = await _extract_sessions(db, user_id, resolver, client, model, limit=session_limit)
     vaults = await _extract_vault_scopes(db, user_id, resolver, client, model)
@@ -641,39 +705,44 @@ async def llm_extract_for_user(
     return {
         "extractor": "llm",
         "model": model,
-        "memories": memories,
         "skills": skills,
         "sessions": sessions,
         "vault": vaults,
     }
 
 
-async def llm_extract_for_memory(
+async def llm_extract_for_session(
     db: AsyncSession,
     user_id: uuid.UUID,
-    memory_id: uuid.UUID,
+    session_id: uuid.UUID,
 ) -> dict:
-    """Run LLM extraction on a single newly-written memory.
+    """Run LLM extraction on a single session right after content upload.
 
-    Used by the live-wiki webhook in `routes/memories.py::create_memory`:
-    after a memory is persisted, schedule this in BackgroundTasks so the
+    Used by the live-wiki webhook in `routes/sessions.py::upload_session_content`:
+    after the JSONL transcript lands, schedule this in BackgroundTasks so the
     wiki picks up new entities without waiting for the next cron sweep.
 
-    Idempotent — if a `extracted_from_memory` log entry already exists for
-    this memory id, this is a no-op. That makes it safe to retry, and safe
-    to run alongside the batch extractor.
+    Idempotent — if an `extracted_from_session` log entry already exists for
+    this session id, this is a no-op.
     """
     if not settings.llm_api_key:
         return {"status": "disabled"}
 
-    mem = await db.scalar(
-        select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+    session = await db.scalar(
+        select(SessionModel).where(
+            SessionModel.id == session_id, SessionModel.user_id == user_id
+        )
     )
-    if mem is None:
+    if session is None:
         return {"status": "not_found"}
-
-    if await _already_processed(db, user_id, "memory", str(mem.id)):
+    if not session.file_key:
+        return {"status": "no_content"}
+    if await _already_processed(db, user_id, "session", str(session.id)):
         return {"status": "already_processed"}
+
+    transcript = await _load_session_transcript(session)
+    if not transcript:
+        return {"status": "transcript_unreadable"}
 
     from openai import AsyncOpenAI
 
@@ -683,23 +752,32 @@ async def llm_extract_for_memory(
     )
     model = settings.llm_model
     resolver = SlugResolver(db, user_id)
+
+    chunks = _chunk_session_transcript(transcript)
+    label = session.local_session_id or str(session.id)[:8]
+    total = {"atoms": 0, "links_added": 0, "pages_created": 0}
     existing_slugs = await _existing_slug_index(db, user_id)
-    hint = _shortlist_existing_slugs(mem.content, existing_slugs, INDEX_HINT_SIZE)
+    for i, chunk in enumerate(chunks):
+        atom_text = f"# Session: {label} [chunk {i + 1}/{len(chunks)}]\n\n{chunk}"
+        hint = _shortlist_existing_slugs(atom_text, existing_slugs, INDEX_HINT_SIZE)
+        result = await _process_atom_llm(
+            db=db,
+            user_id=user_id,
+            resolver=resolver,
+            client=client,
+            model=model,
+            source_type="session",
+            source_ref=str(session.id),
+            atom_label=f"{label}#{i + 1}",
+            atom_text=atom_text,
+            existing_slugs_hint=hint,
+        )
+        total["atoms"] += 1
+        total["links_added"] += result["links_added"]
+        total["pages_created"] += result["pages_touched"]
+        await db.commit()
+        existing_slugs = await _existing_slug_index(db, user_id)
+    return {"status": "extracted", **total}
 
-    result = await _process_atom_llm(
-        db=db,
-        user_id=user_id,
-        resolver=resolver,
-        client=client,
-        model=model,
-        source_type="memory",
-        source_ref=str(mem.id),
-        atom_label=str(mem.id)[:8],
-        atom_text=mem.content,
-        existing_slugs_hint=hint,
-    )
-    await db.commit()
-    return {"status": "extracted", **result}
 
-
-__all__ = ["llm_extract_for_user", "llm_extract_for_memory"]
+__all__ = ["llm_extract_for_user", "llm_extract_for_session"]
