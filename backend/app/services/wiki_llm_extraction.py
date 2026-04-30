@@ -635,4 +635,58 @@ async def llm_extract_for_user(
     }
 
 
-__all__ = ["llm_extract_for_user"]
+async def llm_extract_for_memory(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    memory_id: uuid.UUID,
+) -> dict:
+    """Run LLM extraction on a single newly-written memory.
+
+    Used by the live-wiki webhook in `routes/memories.py::create_memory`:
+    after a memory is persisted, schedule this in BackgroundTasks so the
+    wiki picks up new entities without waiting for the next cron sweep.
+
+    Idempotent — if a `extracted_from_memory` log entry already exists for
+    this memory id, this is a no-op. That makes it safe to retry, and safe
+    to run alongside the batch extractor.
+    """
+    if not settings.llm_api_key:
+        return {"status": "disabled"}
+
+    mem = await db.scalar(
+        select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+    )
+    if mem is None:
+        return {"status": "not_found"}
+
+    if await _already_processed(db, user_id, "memory", str(mem.id)):
+        return {"status": "already_processed"}
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=settings.llm_base_url or None,
+        api_key=settings.llm_api_key,
+    )
+    model = settings.llm_model
+    resolver = SlugResolver(db, user_id)
+    existing_slugs = await _existing_slug_index(db, user_id)
+    hint = _shortlist_existing_slugs(mem.content, existing_slugs, INDEX_HINT_SIZE)
+
+    result = await _process_atom_llm(
+        db=db,
+        user_id=user_id,
+        resolver=resolver,
+        client=client,
+        model=model,
+        source_type="memory",
+        source_ref=str(mem.id),
+        atom_label=str(mem.id)[:8],
+        atom_text=mem.content,
+        existing_slugs_hint=hint,
+    )
+    await db.commit()
+    return {"status": "extracted", **result}
+
+
+__all__ = ["llm_extract_for_user", "llm_extract_for_memory"]

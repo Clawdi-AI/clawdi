@@ -1,255 +1,236 @@
 "use client";
 
+import "@react-sigma/core/lib/style.css";
+
 import { useAuth } from "@clerk/nextjs";
+import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import { useQuery } from "@tanstack/react-query";
+import Graph from "graphology";
+import forceAtlas2 from "graphology-layout-forceatlas2";
 import { Network } from "lucide-react";
-import { useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
-type WikiPageSummary = {
+type GraphNode = {
 	id: string;
-	slug: string;
 	title: string;
 	kind: string;
 	source_count: number;
-	stale: boolean;
-	last_synthesis_at: string | null;
-	updated_at: string;
 };
 
-type WikiLinkOut = {
-	id: string;
+type GraphEdge = {
+	source: string;
+	target: string;
 	link_type: string;
-	confidence: number | null;
-	to_page_id: string | null;
-	to_page_slug: string | null;
-	to_page_title: string | null;
-	source_type: string | null;
-	source_ref: string | null;
+	weight: number;
 };
 
-type WikiPageDetail = {
-	id: string;
-	slug: string;
-	title: string;
-	source_count: number;
-	outgoing_links: WikiLinkOut[];
-	backlinks: WikiLinkOut[];
+type GraphResponse = {
+	nodes: GraphNode[];
+	edges: GraphEdge[];
 };
 
-type PageList = {
-	items: WikiPageSummary[];
-	total: number;
+const NODE_KIND_COLORS: Record<string, string> = {
+	entity: "#6366f1", // indigo
+	synthesis: "#a855f7", // violet
+	concept: "#14b8a6", // teal
+	source: "#94a3b8", // slate
 };
 
-// SVG canvas dimensions
-const W = 900;
-const H = 720;
-const HUB_RADIUS_BASE = 25;
-const NEIGHBOR_RADIUS = 14;
+const EDGE_TYPE_COLORS: Record<string, string> = {
+	"co-occurs": "#cbd5e1",
+	mentions: "#cbd5e1",
+	references: "#94a3b8",
+	uses: "#64748b",
+	"depends-on": "#475569",
+	defines: "#475569",
+	"related-to": "#94a3b8",
+};
 
-/**
- * Layout: hub-and-spoke around the top-N entities by source_count.
- * For each hub, place direct neighbors (page-to-page co-occurs edges) on
- * a ring around it. Hubs are themselves arranged on an outer ring.
- *
- * No physics simulation — purely deterministic geometry. Good enough for
- * 8-12 hubs + their immediate neighbors. For richer layouts we'd swap in
- * d3-force or vis-network.
- */
+const BASE_NODE_SIZE = 4;
+const MAX_NODE_SIZE = 22;
+
+function GraphLoader({ data }: { data: GraphResponse }) {
+	const loadGraph = useLoadGraph();
+
+	useEffect(() => {
+		const graph = new Graph({ multi: false, type: "undirected" });
+		const maxSources = Math.max(1, ...data.nodes.map((n) => n.source_count));
+
+		// Seed each node at a small random position so ForceAtlas2 has
+		// something to spread; without a seed the layout collapses to origin.
+		data.nodes.forEach((n) => {
+			const size =
+				BASE_NODE_SIZE + (MAX_NODE_SIZE - BASE_NODE_SIZE) * Math.sqrt(n.source_count / maxSources);
+			graph.addNode(n.id, {
+				label: n.title,
+				size,
+				color: NODE_KIND_COLORS[n.kind] ?? "#9ca3af",
+				x: Math.random(),
+				y: Math.random(),
+				kind: n.kind,
+				source_count: n.source_count,
+			});
+		});
+
+		data.edges.forEach((e, idx) => {
+			if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) return;
+			if (graph.hasEdge(e.source, e.target)) return;
+			graph.addEdgeWithKey(`e${idx}`, e.source, e.target, {
+				color: EDGE_TYPE_COLORS[e.link_type] ?? "#cbd5e1",
+				size: Math.max(0.5, e.weight * 3),
+				type: "line",
+				link_type: e.link_type,
+			});
+		});
+
+		// Run ForceAtlas2 in-place. Degree-scaled gravity prevents disconnected
+		// nodes from drifting off-canvas; scaling keeps tightly-connected
+		// clusters from overlapping. 300 iters is enough for graphs up to ~200
+		// nodes; bump if we ever raise the node cap.
+		const settings = forceAtlas2.inferSettings(graph);
+		forceAtlas2.assign(graph, {
+			iterations: 300,
+			settings: {
+				...settings,
+				gravity: 1.5,
+				scalingRatio: 8,
+				adjustSizes: true,
+				barnesHutOptimize: graph.order > 100,
+			},
+		});
+
+		loadGraph(graph);
+	}, [data, loadGraph]);
+
+	return null;
+}
+
+function GraphEvents() {
+	const sigma = useSigma();
+	const registerEvents = useRegisterEvents();
+	const router = useRouter();
+
+	useEffect(() => {
+		registerEvents({
+			clickNode: (event) => {
+				router.push(`/wiki/${event.node}`);
+			},
+			enterNode: (event) => {
+				const graph = sigma.getGraph();
+				const hovered = event.node;
+				const neighbors = new Set([hovered, ...graph.neighbors(hovered)]);
+				graph.forEachNode((node, attrs) => {
+					graph.setNodeAttribute(node, "highlighted", neighbors.has(node));
+					graph.setNodeAttribute(node, "_origColor", attrs._origColor ?? attrs.color);
+					graph.setNodeAttribute(
+						node,
+						"color",
+						neighbors.has(node) ? (attrs._origColor ?? attrs.color) : "#e5e7eb",
+					);
+				});
+				graph.forEachEdge((edge, attrs, src, dst) => {
+					graph.setEdgeAttribute(edge, "_origColor", attrs._origColor ?? attrs.color);
+					const involved = src === hovered || dst === hovered;
+					graph.setEdgeAttribute(edge, "color", involved ? "#475569" : "#f1f5f9");
+				});
+				sigma.refresh();
+			},
+			leaveNode: () => {
+				const graph = sigma.getGraph();
+				graph.forEachNode((node, attrs) => {
+					if (attrs._origColor) graph.setNodeAttribute(node, "color", attrs._origColor);
+					graph.setNodeAttribute(node, "highlighted", false);
+				});
+				graph.forEachEdge((edge, attrs) => {
+					if (attrs._origColor) graph.setEdgeAttribute(edge, "color", attrs._origColor);
+				});
+				sigma.refresh();
+			},
+		});
+	}, [registerEvents, sigma, router]);
+
+	return null;
+}
+
 export default function WikiGraphPage() {
 	const { getToken } = useAuth();
 
-	const { data: pageList, isLoading: listLoading } = useQuery<PageList>({
-		queryKey: ["wiki", "graph", "top"],
+	const { data, isLoading } = useQuery<GraphResponse>({
+		queryKey: ["wiki", "graph", "full"],
 		queryFn: async () => {
 			const token = (await getToken()) ?? "";
-			return apiFetch<PageList>("/api/wiki/pages?page_size=12&sort=source_count&order=desc", token);
+			return apiFetch<GraphResponse>("/api/wiki/graph?limit=200", token);
 		},
 	});
 
-	const topSlugs = pageList?.items.map((p) => p.slug) ?? [];
-
-	const detailQueries = useQuery<WikiPageDetail[]>({
-		queryKey: ["wiki", "graph", "details", topSlugs],
-		enabled: topSlugs.length > 0,
-		queryFn: async () => {
-			const token = (await getToken()) ?? "";
-			return Promise.all(
-				topSlugs.map((s) =>
-					apiFetch<WikiPageDetail>(`/api/wiki/pages/${encodeURIComponent(s)}`, token),
-				),
-			);
-		},
-	});
-
-	const layout = useMemo(() => {
-		const details = detailQueries.data;
-		if (!details || details.length === 0) return null;
-
-		const hubs = details.slice(0, 8); // up to 8 hubs to keep it readable
-		const hubCount = hubs.length;
-		const hubRingRadius = 240;
-		const cx = W / 2;
-		const cy = H / 2;
-
-		type Node = {
-			slug: string;
-			title: string;
-			x: number;
-			y: number;
-			r: number;
-			isHub: boolean;
-			source_count: number;
-		};
-		type Edge = { from: string; to: string };
-
-		const nodes: Map<string, Node> = new Map();
-		const edges: Edge[] = [];
-
-		// Place hubs evenly on a ring
-		hubs.forEach((hub, i) => {
-			const angle = (i / hubCount) * 2 * Math.PI - Math.PI / 2;
-			const hx = cx + hubRingRadius * Math.cos(angle);
-			const hy = cy + hubRingRadius * Math.sin(angle);
-			const radius = HUB_RADIUS_BASE + Math.min(15, hub.source_count / 4);
-			nodes.set(hub.slug, {
-				slug: hub.slug,
-				title: hub.title,
-				x: hx,
-				y: hy,
-				r: radius,
-				isHub: true,
-				source_count: hub.source_count,
-			});
-		});
-
-		// For each hub, place top neighbors (page-to-page edges) on a ring around it
-		hubs.forEach((hub, i) => {
-			const hubNode = nodes.get(hub.slug);
-			if (!hubNode) return;
-			const pageEdges = hub.outgoing_links
-				.filter((l) => l.to_page_slug && l.link_type === "co-occurs")
-				.slice(0, 6); // 6 neighbors per hub max
-			pageEdges.forEach((edge, j) => {
-				const neighborSlug = edge.to_page_slug as string;
-				edges.push({ from: hub.slug, to: neighborSlug });
-
-				if (nodes.has(neighborSlug)) return;
-				const baseAngle = (i / hubCount) * 2 * Math.PI - Math.PI / 2;
-				const neighborSpread = (Math.PI / 3) * (j / Math.max(1, pageEdges.length - 1) - 0.5);
-				const angle = baseAngle + neighborSpread;
-				const distance = 110;
-				nodes.set(neighborSlug, {
-					slug: neighborSlug,
-					title: edge.to_page_title || neighborSlug,
-					x: hubNode.x + distance * Math.cos(angle),
-					y: hubNode.y + distance * Math.sin(angle),
-					r: NEIGHBOR_RADIUS,
-					isHub: false,
-					source_count: 0,
-				});
-			});
-		});
-
-		return { nodes: Array.from(nodes.values()), edges };
-	}, [detailQueries.data]);
-
-	const isLoading = listLoading || detailQueries.isLoading;
+	const nodeCount = data?.nodes.length ?? 0;
+	const edgeCount = data?.edges.length ?? 0;
+	const empty = !isLoading && nodeCount === 0;
 
 	return (
-		<div className="space-y-6">
-			<header className="space-y-2">
+		<div className="space-y-4">
+			<header className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Network className="size-6 text-muted-foreground" />
 					<h1 className="text-2xl font-semibold">Graph</h1>
 				</div>
-				<p className="text-sm text-muted-foreground max-w-prose">
-					Top-8 entities by source count, with their direct co-occurrence neighbors. Hub size scales
-					with source count. Click any node to open its page.
+				<p className="text-sm text-muted-foreground">
+					Force-directed knowledge graph — every entity page and the wikilinks between them. Node
+					size scales with source count; color encodes page kind. Hover to highlight neighbors,
+					click to open.
 				</p>
+				{!isLoading && !empty && (
+					<p className="text-xs text-muted-foreground font-mono">
+						{nodeCount} nodes · {edgeCount} edges
+					</p>
+				)}
 			</header>
 
 			{isLoading ? (
 				<Skeleton className="h-[720px] w-full rounded-xl" />
-			) : !layout || layout.nodes.length === 0 ? (
+			) : empty ? (
 				<div className="rounded-xl border border-dashed bg-card/50 p-10 text-center text-muted-foreground">
 					<Network className="size-10 mx-auto mb-4 opacity-50" />
 					<p>No graph data yet. Run extraction + recompute-graph first.</p>
 				</div>
 			) : (
-				<div className="rounded-xl border bg-card overflow-hidden">
-					<svg
-						viewBox={`0 0 ${W} ${H}`}
-						className="w-full h-auto"
-						style={{ background: "transparent" }}
+				<div className="rounded-xl border bg-card overflow-hidden h-[720px]">
+					<SigmaContainer
+						style={{ height: "100%", width: "100%", background: "transparent" }}
+						settings={{
+							renderLabels: true,
+							labelDensity: 0.7,
+							labelGridCellSize: 60,
+							labelRenderedSizeThreshold: 8,
+							defaultEdgeColor: "#cbd5e1",
+							defaultNodeColor: "#9ca3af",
+							zIndex: true,
+						}}
 					>
-						<title>Wiki knowledge graph</title>
-						{/* Edges */}
-						{layout.edges.map((e, idx) => {
-							const from = layout.nodes.find((n) => n.slug === e.from);
-							const to = layout.nodes.find((n) => n.slug === e.to);
-							if (!from || !to) return null;
-							return (
-								<line
-									key={`${e.from}-${e.to}-${idx}`}
-									x1={from.x}
-									y1={from.y}
-									x2={to.x}
-									y2={to.y}
-									stroke="currentColor"
-									strokeOpacity={0.18}
-									strokeWidth={1}
-									className="text-muted-foreground"
-								/>
-							);
-						})}
-						{/* Nodes */}
-						{layout.nodes.map((n) => (
-							<a key={n.slug} href={`/wiki/${n.slug}`}>
-								<g className="cursor-pointer">
-									<circle
-										cx={n.x}
-										cy={n.y}
-										r={n.r}
-										fill={n.isHub ? "hsl(var(--primary))" : "hsl(var(--card))"}
-										stroke="currentColor"
-										strokeOpacity={n.isHub ? 0.8 : 0.3}
-										strokeWidth={n.isHub ? 2 : 1}
-										className={cn(
-											"transition-opacity hover:opacity-80",
-											n.isHub ? "text-primary" : "text-muted-foreground",
-										)}
-									/>
-									<text
-										x={n.x}
-										y={n.y + n.r + 14}
-										textAnchor="middle"
-										className={cn(
-											"text-xs select-none pointer-events-none",
-											n.isHub ? "font-medium fill-foreground" : "fill-muted-foreground",
-										)}
-									>
-										{n.title.length > 18 ? `${n.title.slice(0, 16)}…` : n.title}
-									</text>
-									{n.isHub && (
-										<text
-											x={n.x}
-											y={n.y + 4}
-											textAnchor="middle"
-											className="text-[10px] fill-primary-foreground font-mono select-none pointer-events-none"
-										>
-											{n.source_count}
-										</text>
-									)}
-								</g>
-							</a>
-						))}
-					</svg>
+						<GraphLoader data={data as GraphResponse} />
+						<GraphEvents />
+					</SigmaContainer>
 				</div>
 			)}
+
+			<div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+				<LegendDot color={NODE_KIND_COLORS.entity} label="entity" />
+				<LegendDot color={NODE_KIND_COLORS.synthesis} label="synthesis" />
+				<LegendDot color={NODE_KIND_COLORS.concept} label="concept" />
+				<LegendDot color={NODE_KIND_COLORS.source} label="source" />
+			</div>
 		</div>
+	);
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+	return (
+		<span className="inline-flex items-center gap-1.5">
+			<span className="inline-block size-2.5 rounded-full" style={{ backgroundColor: color }} />
+			{label}
+		</span>
 	);
 }

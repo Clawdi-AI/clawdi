@@ -1538,6 +1538,123 @@ async def recompute_graph(
     return {"new_edges": inserted, "total_page_to_page_edges": total_pp or 0}
 
 
+class GraphNode(BaseModel):
+    id: str  # slug, used as the sigma node id
+    title: str
+    kind: str
+    source_count: int
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    link_type: str
+    weight: float
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
+@router.get("/graph", response_model=GraphResponse)
+async def get_graph(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+    limit: int = Query(default=200, ge=10, le=500),
+    min_sources: int = Query(default=1, ge=0),
+) -> GraphResponse:
+    """Full knowledge graph in one payload — nodes + page-to-page edges.
+
+    Returns the top `limit` pages by source_count (filtered to entity/synthesis
+    kind) and every wiki_link between them where both endpoints are in the
+    selected node set. Designed for the sigma.js / ForceAtlas2 frontend.
+
+    Edge weight is derived from link_type + confidence so the renderer can
+    size and color edges. Co-occurs edges are weaker; typed (uses, depends-on,
+    defines, references) are stronger.
+    """
+    page_rows = (
+        (
+            await db.execute(
+                select(WikiPage)
+                .where(
+                    WikiPage.user_id == auth.user_id,
+                    WikiPage.kind.in_(["entity", "synthesis"]),
+                    WikiPage.source_count >= min_sources,
+                )
+                .order_by(WikiPage.source_count.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not page_rows:
+        return GraphResponse(nodes=[], edges=[])
+
+    page_id_to_slug: dict[uuid.UUID, str] = {p.id: p.slug for p in page_rows}
+    nodes = [
+        GraphNode(
+            id=p.slug,
+            title=p.title,
+            kind=p.kind,
+            source_count=p.source_count or 0,
+        )
+        for p in page_rows
+    ]
+
+    link_rows = (
+        (
+            await db.execute(
+                select(WikiLink).where(
+                    WikiLink.user_id == auth.user_id,
+                    WikiLink.from_page_id.in_(page_id_to_slug.keys()),
+                    WikiLink.to_page_id.in_(page_id_to_slug.keys()),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    weight_by_type = {
+        "co-occurs": 0.4,
+        "mentions": 0.5,
+        "references": 0.7,
+        "uses": 0.9,
+        "depends-on": 1.0,
+        "defines": 1.0,
+        "related-to": 0.6,
+    }
+    edges: list[GraphEdge] = []
+    seen: set[tuple[str, str]] = set()
+    for link in link_rows:
+        if link.to_page_id is None or link.from_page_id is None:
+            continue
+        src = page_id_to_slug.get(link.from_page_id)
+        dst = page_id_to_slug.get(link.to_page_id)
+        if not src or not dst or src == dst:
+            continue
+        # Sigma renders both directions as one undirected line; dedupe pairs.
+        pair = (src, dst) if src < dst else (dst, src)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        base = weight_by_type.get(link.link_type, 0.5)
+        conf = link.confidence if link.confidence is not None else 0.6
+        edges.append(
+            GraphEdge(
+                source=src,
+                target=dst,
+                link_type=link.link_type,
+                weight=round(base * float(conf), 3),
+            )
+        )
+
+    return GraphResponse(nodes=nodes, edges=edges)
+
+
 @router.post("/wipe")
 async def wipe_wiki(
     auth: AuthContext = Depends(get_auth),
