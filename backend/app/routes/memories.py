@@ -2,12 +2,12 @@ import logging
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
 from app.models.memory import Memory
 from app.schemas.common import Paginated
 from app.schemas.memory import (
@@ -174,9 +174,77 @@ async def get_memory(
     return MemoryResponse.model_validate(memory_to_dict(memory))
 
 
+async def _live_wiki_create_mem_source(user_id: UUID, memory_id: str) -> None:
+    """BackgroundTask: insert a kind=source `mem-<id>` page + a defines link
+    so the new memory atom is reachable via wiki/query and the global search
+    fan-out without waiting for the next batch /source-pages run.
+
+    Cheap (no LLM call — just two DB rows). Failures swallowed: a misbehaving
+    wiki side must never affect the memory write response.
+    """
+    from datetime import datetime
+    from uuid import UUID as _UUID
+
+    from sqlalchemy import select as _select
+
+    from app.models.memory import Memory as _Memory
+    from app.models.wiki import WikiLink, WikiPage
+
+    try:
+        async with async_session_factory() as db:
+            mem = await db.scalar(
+                _select(_Memory).where(
+                    _Memory.id == _UUID(memory_id), _Memory.user_id == user_id
+                )
+            )
+            if mem is None:
+                return
+            slug = f"mem-{str(mem.id)[:8]}"
+            existing = await db.scalar(
+                _select(WikiPage).where(WikiPage.user_id == user_id, WikiPage.slug == slug)
+            )
+            if existing is None:
+                content = mem.content or ""
+                first_line = content.split("\n", 1)[0].strip().lstrip("# ").strip()
+                title = (first_line or f"Memory {str(mem.id)[:8]}")[:80]
+                page = WikiPage(
+                    user_id=user_id,
+                    slug=slug,
+                    title=title,
+                    kind="source",
+                    compiled_truth=content,
+                    frontmatter={
+                        "source_type": "memory",
+                        "source_ref": str(mem.id),
+                        "category": mem.category,
+                        "tags": mem.tags or [],
+                    },
+                    last_synthesis_at=datetime.now(),
+                    source_count=1,
+                )
+                db.add(page)
+                await db.flush()
+                db.add(
+                    WikiLink(
+                        user_id=user_id,
+                        from_page_id=page.id,
+                        to_page_id=None,
+                        source_type="memory",
+                        source_ref=str(mem.id),
+                        link_type="defines",
+                        confidence=1.0,
+                        created_at=datetime.now(),
+                    )
+                )
+                await db.commit()
+    except Exception as exc:  # noqa: BLE001 — best-effort enrichment
+        log.warning("live mem-source create for memory %s failed: %s", memory_id, exc)
+
+
 @router.post("")
 async def create_memory(
     body: MemoryCreate,
+    background: BackgroundTasks,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> MemoryCreatedResponse:
@@ -195,18 +263,24 @@ async def create_memory(
 
     Both reject with 422 + structured error. The agent's tool-call layer
     surfaces the hint to the user.
+
+    Post-INSERT: schedule a wiki-side mem-<id> source page in BackgroundTasks
+    so the new atom is reachable via /api/wiki/query and global search within
+    a beat — without waiting for the next batch source-pages sweep. The wiki
+    entity-page synthesis remains lazy (cron-driven).
     """
     _enforce_memory_quality(body.content)
     provider = await get_memory_provider(str(auth.user_id), db)
-    return MemoryCreatedResponse.model_validate(
-        await provider.add(
-            str(auth.user_id),
-            body.content,
-            category=body.category,
-            source=body.source,
-            tags=body.tags,
-        )
+    created = await provider.add(
+        str(auth.user_id),
+        body.content,
+        category=body.category,
+        source=body.source,
+        tags=body.tags,
     )
+    if created and (mem_id := created.get("id")):
+        background.add_task(_live_wiki_create_mem_source, auth.user_id, str(mem_id))
+    return MemoryCreatedResponse.model_validate(created)
 
 
 @router.delete("/{memory_id}")

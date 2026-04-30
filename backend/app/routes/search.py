@@ -23,13 +23,14 @@ from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault
+from app.models.wiki import WikiPage
 from app.services.memory_provider import get_memory_provider
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-SearchType = Literal["session", "memory", "skill", "vault"]
+SearchType = Literal["session", "memory", "skill", "vault", "wiki"]
 
 
 class SearchHit(BaseModel):
@@ -124,6 +125,40 @@ async def _search_skills(db: AsyncSession, user_id: UUID, query: str) -> list[Se
     ]
 
 
+async def _search_wiki(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
+    """Wiki entity + concept pages (kind in entity/concept/synthesis), token-FTS
+    over title/slug/compiled_truth. Source pages (kind=source) are excluded
+    here — they're per-atom dupes of memory/session content already indexed by
+    the memory and session searchers; including them would 2x noisy results.
+    """
+    needle = like_needle(query)
+    stmt = (
+        select(WikiPage)
+        .where(
+            WikiPage.user_id == user_id,
+            WikiPage.kind.in_(["entity", "concept", "synthesis", "overview", "comparison"]),
+            or_(
+                WikiPage.title.ilike(needle, escape="\\"),
+                WikiPage.slug.ilike(needle, escape="\\"),
+                WikiPage.compiled_truth.ilike(needle, escape="\\"),
+            ),
+        )
+        .order_by(WikiPage.source_count.desc().nullslast())
+        .limit(TYPE_LIMIT)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        SearchHit(
+            type="wiki",
+            id=str(p.id),
+            title=p.title,
+            subtitle=(p.compiled_truth or "")[:120] or p.kind,
+            href=f"/wiki/{p.slug}",
+        )
+        for p in rows
+    ]
+
+
 async def _search_vaults(db: AsyncSession, user_id: UUID, query: str) -> list[SearchHit]:
     needle = like_needle(query)
     stmt = (
@@ -170,12 +205,13 @@ async def global_search(
     palette UX beats strict all-or-nothing consistency here.
     """
     user_id = auth.user_id
-    labels = ("sessions", "memories", "skills", "vaults")
+    labels = ("sessions", "memories", "skills", "vaults", "wiki")
     results = await asyncio.gather(
         _search_sessions(db, user_id, q),
         _search_memories(db, user_id, q),
         _search_skills(db, user_id, q),
         _search_vaults(db, user_id, q),
+        _search_wiki(db, user_id, q),
         return_exceptions=True,
     )
     hits: list[SearchHit] = []
