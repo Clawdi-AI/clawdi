@@ -53,7 +53,7 @@ SYNTHESIS_MAX_TOKENS = 600
 # Min number of source links a page needs before we synthesize. Pages
 # with only 1 weak heuristic link tend to be noise (a name mentioned
 # in passing). Synthesis is real LLM cost; spend it on real entities.
-MIN_SOURCES_FOR_SYNTHESIS = 2
+MIN_SOURCES_FOR_SYNTHESIS = 1
 
 
 SYSTEM_PROMPT = """You are the synthesis engine for a personal knowledge wiki. \
@@ -232,6 +232,17 @@ async def synthesize_page(
     # Persist.
     page.compiled_truth = text
     page.last_synthesis_at = datetime.now(UTC)
+    # Embed compiled_truth for semantic search in /api/wiki/query. Falls back
+    # to NULL if the embedder is unavailable — the query path still works
+    # via tokenized FTS in that case.
+    try:
+        from app.services.embedding import resolve_embedder
+
+        embedder = resolve_embedder()
+        if embedder is not None:
+            page.compiled_truth_embedding = await embedder.embed(text)
+    except Exception as embed_err:  # noqa: BLE001 — best-effort, never block synthesis
+        log.warning("Synthesis embedding failed for %s: %s", page.slug, embed_err)
     page.frontmatter = {
         **(page.frontmatter or {}),
         "synthesis_model": model,

@@ -19,6 +19,7 @@ Design notes:
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -54,6 +55,11 @@ class WikiPage(Base, TimestampMixin):
     # LLM-synthesized 1–2 paragraph "what we know" snapshot. Rewritable.
     # NEVER contains vault values — sanitizer enforces this.
     compiled_truth: Mapped[str | None] = mapped_column(Text)
+    # Vector embedding of compiled_truth for semantic search in /api/wiki/query.
+    # 768-dim to match the deployment's embedder (paraphrase-multilingual-mpnet-base-v2
+    # local, or OpenAI text-embedding-3-* with dimensions=768). Recomputed at
+    # synthesis time when compiled_truth changes.
+    compiled_truth_embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     # Typed metadata: {aliases: ["Polymarket", "poly"], confidence: 0.9, ...}
     frontmatter: Mapped[dict | None] = mapped_column(JSONB)
     # Number of unique source items this page aggregates (memories + skills

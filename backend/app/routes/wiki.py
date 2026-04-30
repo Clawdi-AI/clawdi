@@ -562,6 +562,44 @@ async def query_wiki(
         .all()
     )
 
+    # ---------- Phase 1b: pgvector cosine over compiled_truth ----------
+    # Catches semantic matches that tokenized FTS misses (paraphrases,
+    # synonyms, abstract concepts). Pages with NULL embedding are skipped.
+    try:
+        from app.services.embedding import resolve_embedder
+
+        embedder = resolve_embedder()
+        if embedder is not None:
+            q_vec = await embedder.embed(body.q)
+            qvec_literal = "[" + ",".join(repr(float(v)) for v in q_vec) + "]"
+            from sqlalchemy import text as sa_text
+
+            vec_rows = (
+                await db.execute(
+                    sa_text("""
+                        SELECT id FROM wiki_pages
+                        WHERE user_id = :uid
+                          AND compiled_truth_embedding IS NOT NULL
+                          AND (compiled_truth_embedding <=> CAST(:qvec AS vector)) < 0.65
+                        ORDER BY compiled_truth_embedding <=> CAST(:qvec AS vector)
+                        LIMIT :lim
+                    """),
+                    {"uid": auth.user_id, "qvec": qvec_literal, "lim": body.top_k},
+                )
+            ).all()
+            vec_ids = {r[0] for r in vec_rows}
+            if vec_ids:
+                missing = [pid for pid in vec_ids if not any(p.id == pid for p in seed_rows)]
+                if missing:
+                    extra = (
+                        (await db.execute(select(WikiPage).where(WikiPage.id.in_(missing))))
+                        .scalars()
+                        .all()
+                    )
+                    seed_rows = list(seed_rows) + list(extra)
+    except Exception as e:
+        log.warning("vector-rank in /query failed (FTS-only fallback): %s", e)
+
     # ---------- Phase 2: graph expansion ----------
     pages_by_id: dict[uuid.UUID, WikiPage] = {p.id: p for p in seed_rows}
     if body.expand_graph and seed_rows:
@@ -1124,6 +1162,56 @@ async def resolve_review(
     )
     await db.commit()
     return {"slug": slug, "stale": False}
+
+
+@router.post("/embed-backfill")
+async def embed_backfill_wiki(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """One-shot: compute compiled_truth_embedding for every synthesized page.
+
+    Pages synthesized BEFORE the e8f5b3c9a2d1 migration have
+    compiled_truth filled but compiled_truth_embedding NULL. This endpoint
+    backfills them so the vector-rank phase of /query has data to score
+    against. Idempotent: skips pages that already have an embedding.
+    """
+    from app.services.embedding import resolve_embedder
+
+    embedder = resolve_embedder()
+    if embedder is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No embedding provider configured",
+        )
+
+    rows = (
+        (
+            await db.execute(
+                select(WikiPage).where(
+                    WikiPage.user_id == auth.user_id,
+                    WikiPage.compiled_truth.is_not(None),
+                    WikiPage.compiled_truth_embedding.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    processed = 0
+    failed = 0
+    for page in rows:
+        try:
+            page.compiled_truth_embedding = await embedder.embed(page.compiled_truth or "")
+            processed += 1
+            if processed % 25 == 0:
+                await db.commit()
+        except Exception as e:
+            failed += 1
+            log.warning("embed-backfill failed for %s: %s", page.slug, e)
+    await db.commit()
+    return {"considered": len(rows), "processed": processed, "failed": failed}
 
 
 @router.post("/recompute-graph")
