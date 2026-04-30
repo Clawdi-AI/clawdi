@@ -62,6 +62,11 @@ class WikiLinkOut(BaseModel):
     to_page_title: str | None
     source_type: str | None
     source_ref: str | None
+    # When source_type ∈ {memory, session} AND a kind=source page exists for
+    # this atom (mem-<id>/src-<id>), these surface its slug + title so the UI
+    # can render a clickable preview card instead of a bare UUID.
+    source_page_slug: str | None = None
+    source_page_title: str | None = None
 
 
 class WikiPageDetail(BaseModel):
@@ -346,6 +351,40 @@ async def get_page(
         )
     ).all()
 
+    # Resolve source-page (kind=source) refs in one batch so the detail UI
+    # can render a clickable preview per source link instead of a raw UUID.
+    # Slug convention: memory atoms -> mem-<id-prefix>, sessions -> src-<id-prefix>.
+    src_slugs: set[str] = set()
+    for link, _to_slug, _to_title in outgoing_rows:
+        if link.source_type == "memory" and link.source_ref:
+            src_slugs.add(f"mem-{link.source_ref[:8]}")
+        elif link.source_type == "session" and link.source_ref:
+            src_slugs.add(f"src-{link.source_ref[:8]}")
+
+    src_page_lookup: dict[str, tuple[str, str]] = {}
+    if src_slugs:
+        for s, t in (
+            await db.execute(
+                select(WikiPage.slug, WikiPage.title).where(
+                    WikiPage.user_id == auth.user_id,
+                    WikiPage.kind == "source",
+                    WikiPage.slug.in_(src_slugs),
+                )
+            )
+        ).all():
+            src_page_lookup[s] = (s, t)
+
+    def _src_page_for(link: WikiLink) -> tuple[str | None, str | None]:
+        if not link.source_ref:
+            return None, None
+        if link.source_type == "memory":
+            entry = src_page_lookup.get(f"mem-{link.source_ref[:8]}")
+        elif link.source_type == "session":
+            entry = src_page_lookup.get(f"src-{link.source_ref[:8]}")
+        else:
+            entry = None
+        return (entry[0], entry[1]) if entry else (None, None)
+
     outgoing = [
         WikiLinkOut(
             id=link.id,
@@ -356,6 +395,8 @@ async def get_page(
             to_page_title=to_title,
             source_type=link.source_type,
             source_ref=link.source_ref,
+            source_page_slug=_src_page_for(link)[0],
+            source_page_title=_src_page_for(link)[1],
         )
         for link, to_slug, to_title in outgoing_rows
     ]
