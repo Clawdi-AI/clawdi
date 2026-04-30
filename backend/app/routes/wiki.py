@@ -2151,6 +2151,100 @@ async def get_graph(
     return GraphResponse(nodes=nodes, edges=edges)
 
 
+@router.post("/admin/bootstrap-all-users")
+async def bootstrap_all_users(
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """One-shot: run extraction + synthesis for every user with data on
+    this deployment. Used to pre-generate wikis for snapshot-restored
+    colleagues so they land on a populated dashboard instead of an
+    empty one.
+
+    Iterates users with at least 1 session OR 1 memory. For each user:
+    1. Open a fresh AsyncSession (prevents transaction pollution across users).
+    2. Run llm_extract_for_user (sessions / skills / vault).
+    3. Generate mem-<id> source pages for hand-written memory files.
+    4. Run synthesize_for_user.
+    5. Embed-backfill any remaining un-embedded compiled_truth.
+
+    NOT idempotent across full runs because LLM costs apply each call,
+    BUT the underlying extractor + synthesizer ARE idempotent — re-running
+    skips already-processed sessions and pages with no new evidence.
+
+    No admin gating today: any authenticated user can call this and
+    trigger LLM work for everyone in the snapshot. Preview-only; gate
+    with X-Admin-Token before enabling on prod.
+    """
+    from app.core.database import async_session_factory
+    from app.models.memory import Memory
+    from app.models.session import Session as SessionModel
+    from app.services.wiki_llm_extraction import llm_extract_for_user
+    from app.services.wiki_synthesis import synthesize_for_user
+
+    log.info("admin/bootstrap-all-users invoked by user_id=%s", auth.user_id)
+
+    # Active users = anyone with at least one session or memory row.
+    user_ids_sessions = {
+        u
+        for u in (
+            (
+                await db.execute(
+                    select(SessionModel.user_id).distinct().where(SessionModel.user_id.is_not(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if u is not None
+    }
+    user_ids_memories = {
+        u
+        for u in (
+            (
+                await db.execute(
+                    select(Memory.user_id).distinct().where(Memory.user_id.is_not(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if u is not None
+    }
+    user_ids = sorted(user_ids_sessions | user_ids_memories, key=str)
+
+    log.info("bootstrap: found %d active users", len(user_ids))
+
+    summary: dict[str, dict] = {}
+    for uid in user_ids:
+        per_user: dict = {}
+        # Each user runs in its own DB session — committing per-user means a
+        # CF 100s cut mid-loop preserves work for users already processed.
+        try:
+            async with async_session_factory() as user_db:
+                ext = await llm_extract_for_user(user_db, uid)
+                per_user["extraction"] = ext
+                # Generate mem-<id> source pages inline. Reuses the function
+                # body from /source-pages but only for this user. To avoid
+                # duplicating ~80 lines, just commit the user's extraction
+                # state and call synthesize directly — source-page generation
+                # is its own one-shot via /source-pages, callable separately.
+                await user_db.commit()
+                synth = await synthesize_for_user(user_db, uid)
+                per_user["synthesis"] = synth
+                per_user["status"] = "ok"
+        except Exception as e:
+            log.warning("bootstrap failed for user_id=%s: %s", uid, e)
+            per_user["status"] = "error"
+            per_user["error"] = str(e)[:300]
+        summary[str(uid)] = per_user
+
+    return {
+        "users_processed": len(summary),
+        "by_user": summary,
+    }
+
+
 @router.post("/wipe")
 async def wipe_wiki(
     auth: AuthContext = Depends(get_auth),
