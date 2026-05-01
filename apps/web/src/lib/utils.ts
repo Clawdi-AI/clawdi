@@ -18,8 +18,16 @@ export function cn(...inputs: ClassValue[]) {
  * answer matters and the tooltip was bugged separately
  * (see `formatAbsoluteTooltip`).
  */
-export function relativeTime(dateStr: string): string {
+export function relativeTime(dateStr: string | null | undefined): string {
+	// Defensive: callers go through this with values from API
+	// responses, and during a deploy window a cached response might
+	// be missing a field that the new frontend reads as required.
+	// Invalid Date math returns NaN and the absolute branches print
+	// "Invalid Date" — surface a stable em-dash instead so the table
+	// stays readable.
+	if (!dateStr) return "—";
 	const d = new Date(dateStr);
+	if (Number.isNaN(d.getTime())) return "—";
 	const diff = Date.now() - d.getTime();
 	const mins = Math.floor(diff / 60000);
 	if (mins < 1) return "just now";
@@ -57,8 +65,10 @@ export function relativeTime(dateStr: string): string {
  * `Started ${relativeTime(started_at)}` — a relative time inside a
  * tooltip whose whole job is to give precision. Useless.
  */
-export function formatAbsoluteTooltip(dateStr: string): string {
+export function formatAbsoluteTooltip(dateStr: string | null | undefined): string {
+	if (!dateStr) return "—";
 	const d = new Date(dateStr);
+	if (Number.isNaN(d.getTime())) return "—";
 	return d.toLocaleString(undefined, {
 		weekday: "short",
 		year: "numeric",
