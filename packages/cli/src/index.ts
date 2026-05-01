@@ -260,36 +260,44 @@ serveCmd
 		"--environment-id <id>",
 		"Pin a specific environment id into the unit (single-agent only; ignored with --all)",
 	)
-	.action(async (opts) => {
+	// `optsWithGlobals` merges parent (`serveCmd`) options with this
+	// subcommand's. Without it, `--agent` defined on both the parent
+	// (`clawdi serve --agent X`) and the child (`clawdi serve install
+	// --agent X`) makes commander hand the child action ONLY the
+	// child-scoped opts, so `clawdi serve install --agent codex` lost
+	// the agent and silently installed the default. Same fix applied
+	// to uninstall + status below.
+	.action(async (_opts, cmd) => {
 		const { serveInstall } = await import("./commands/serve.js");
-		await serveInstall(opts);
+		await serveInstall(cmd.optsWithGlobals());
 	});
 
 serveCmd
 	.command("uninstall")
 	.description("Remove the per-user OS service unit and stop the daemon")
 	.option("--agent <type>", "Agent to uninstall (defaults to the only registered agent)")
-	.action(async (opts) => {
+	.option("--all", "Uninstall the daemon unit for every registered agent on this machine")
+	.action(async (_opts, cmd) => {
 		const { serveUninstall } = await import("./commands/serve.js");
-		await serveUninstall(opts);
+		await serveUninstall(cmd.optsWithGlobals());
 	});
 
 serveCmd
 	.command("status")
 	.description("Show daemon health (last heartbeat) and supervisor state")
-	.option("--agent <type>", "Agent to check (defaults to the only registered agent)")
-	.action(async (opts) => {
+	.option("--agent <type>", "Agent to check (defaults to all registered agents)")
+	.action(async (_opts, cmd) => {
 		const { serveStatus } = await import("./commands/serve.js");
-		await serveStatus(opts);
+		await serveStatus(cmd.optsWithGlobals());
 	});
 
 serveCmd
 	.command("doctor")
 	.description("Snapshot every registered agent's daemon state — for support handoff")
 	.option("--json", "Emit machine-readable JSON instead of human-readable lines")
-	.action(async (opts) => {
+	.action(async (_opts, cmd) => {
 		const { serveDoctor } = await import("./commands/serve.js");
-		await serveDoctor(opts);
+		await serveDoctor(cmd.optsWithGlobals());
 	});
 
 // ─────────────────────────────────────────────────────────────

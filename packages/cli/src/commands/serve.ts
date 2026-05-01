@@ -206,6 +206,37 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 }
 
 export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
+	if (opts.all) {
+		// Symmetric with `install --all` — one invocation, every
+		// daemon gone. Pre-fix users had to loop in the shell
+		// (`for a in claude_code codex; do clawdi serve uninstall --agent $a`),
+		// which is exactly the friction `install --all` exists to
+		// remove.
+		const registered = listRegisteredAgentTypes();
+		if (registered.length === 0) {
+			console.log("No agents registered.");
+			return;
+		}
+		let removed = 0;
+		let failed = 0;
+		for (const agentType of registered) {
+			try {
+				const result = uninstallService({ agent: agentType });
+				if (result.removed) {
+					console.log(`✓ ${agentType}: removed`);
+					removed += 1;
+				} else {
+					console.log(`(${agentType}: no daemon unit installed)`);
+				}
+			} catch (e) {
+				console.error(`✗ ${agentType}: ${toErrorMessage(e)}`);
+				failed += 1;
+			}
+		}
+		console.log(`\n${removed} removed, ${failed} failed.`);
+		if (failed > 0) process.exit(1);
+		return;
+	}
 	const { agentType } = pickAgent(opts.agent);
 	try {
 		const result = uninstallService({ agent: agentType });
@@ -221,16 +252,35 @@ export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 }
 
 export async function serveStatus(opts: ServeInstallOpts): Promise<void> {
-	const { agentType } = pickAgent(opts.agent);
+	// Without --agent, list every registered daemon — `serve install
+	// --all` is the recommended path on multi-agent machines and
+	// status should mirror that. Falling through `pickAgent` here used
+	// to silently hide all-but-one daemon's state behind a warning,
+	// which made debugging multi-agent setups (the actual common case)
+	// confusing. With --agent, scope to that one daemon.
+	const targets: AgentType[] = opts.agent
+		? [pickAgent(opts.agent).agentType]
+		: listRegisteredAgentTypes();
+	if (targets.length === 0) {
+		console.log("No agents registered yet — run `clawdi setup` first.");
+		return;
+	}
+	for (const [i, agentType] of targets.entries()) {
+		if (i > 0) console.log("");
+		printAgentStatus(agentType);
+	}
+}
+
+function printAgentStatus(agentType: AgentType): void {
 	const stateDir = getServeStateDir(agentType);
 	const health = readHealth(stateDir);
 	console.log(`agent:   ${agentType}`);
 	console.log(`state:   ${stateDir}`);
 	if (health.exists) {
-		const fresh = health.ageSeconds !== null && health.ageSeconds < 90;
 		// The 90s cutoff matches the dashboard's "online/offline"
 		// freshness window. A daemon writing `health` more recently
 		// than that AND posting heartbeats is what we call "live".
+		const fresh = health.ageSeconds !== null && health.ageSeconds < 90;
 		console.log(`health:  ${fresh ? "✓ live" : "stale"} (last write ${health.ageSeconds}s ago)`);
 	} else {
 		console.log("health:  (no health file — daemon never ran or wrote elsewhere)");
