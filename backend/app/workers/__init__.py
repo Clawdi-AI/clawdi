@@ -60,7 +60,17 @@ async def wiki_synthesize_user(ctx: dict[str, Any], user_id: str) -> dict:
 
 
 async def wiki_extract_session(ctx: dict[str, Any], user_id: str, session_id: str) -> dict:
-    """Live-wiki webhook task: extract entities from one freshly-uploaded session."""
+    """Live-wiki webhook task: extract entities from one freshly-uploaded session.
+
+    Chains into `wiki_synthesize_user` with a 20s defer so multiple session
+    uploads in quick succession (e.g. `clawdi push` with N sessions) collapse
+    into roughly one synthesis pass per user instead of N. The synth path is
+    self-debouncing — pages whose `last_synthesis_at >= newest_link_ts` are
+    skipped — so even if multiple synth jobs land, all but the first are
+    near no-ops.
+    """
+    from datetime import timedelta
+
     from app.services.wiki_llm_extraction import llm_extract_for_session
 
     uid = uuid.UUID(user_id)
@@ -70,7 +80,21 @@ async def wiki_extract_session(ctx: dict[str, Any], user_id: str, session_id: st
         result = await llm_extract_for_session(db, uid, sid)
         await db.commit()
         log.info("worker: wiki_extract_session done user_id=%s result=%s", uid, result)
-        return result
+
+    # Chain: enqueue a synth pass for this user. Use the redis pool from
+    # the arq context to avoid creating a second pool.
+    redis = ctx.get("redis")
+    if redis is not None:
+        try:
+            await redis.enqueue_job(
+                "wiki_synthesize_user",
+                user_id,
+                _defer_by=timedelta(seconds=20),
+            )
+            log.info("worker: chained wiki_synthesize_user user_id=%s (defer=20s)", uid)
+        except Exception as e:  # noqa: BLE001 — chaining is best-effort
+            log.warning("worker: chain to synth failed: %s", e)
+    return result
 
 
 async def wiki_create_mem_source(ctx: dict[str, Any], user_id: str, memory_id: str) -> dict:
