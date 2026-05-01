@@ -82,13 +82,28 @@ def upgrade() -> None:
     # c1d99ac4f9e6 since the default list query is now sorted by
     # last_activity_at. Without this, the hot path sequential-scans
     # sessions for users with thousands of rows.
-    op.create_index(
-        "ix_sessions_user_last_activity",
-        "sessions",
-        ["user_id", sa.text("last_activity_at DESC")],
-    )
+    #
+    # CONCURRENTLY: at prod scale (sessions table grows ~unbounded
+    # per user) a regular `CREATE INDEX` takes an ACCESS EXCLUSIVE
+    # lock and blocks every batch upsert + dashboard read for the
+    # duration of the build. Codex flagged this as P2 in PR-#76
+    # review. CONCURRENTLY trades a slower build for zero-downtime.
+    # Required: no transactional DDL — call out of the migration's
+    # implicit transaction.
+    with op.get_context().autocommit_block():
+        op.create_index(
+            "ix_sessions_user_last_activity",
+            "sessions",
+            ["user_id", sa.text("last_activity_at DESC")],
+            postgresql_concurrently=True,
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_sessions_user_last_activity", table_name="sessions")
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_sessions_user_last_activity",
+            table_name="sessions",
+            postgresql_concurrently=True,
+        )
     op.drop_column("sessions", "last_activity_at")

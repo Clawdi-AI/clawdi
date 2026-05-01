@@ -143,15 +143,21 @@ def _clamp_last_activity(
     """
     now = datetime.now(UTC)
     upper = now + _LAST_ACTIVITY_FUTURE_SLACK
+    # Tighten the fallback inputs themselves to [now, ...] before
+    # using them — codex flagged that a malicious payload with
+    # BOTH `last_activity_at` AND `started_at`/`ended_at` in the
+    # future would defeat the upper-bound clamp: `max(started, ended
+    # or now, now)` returns the future started/ended unchanged.
+    # Pydantic doesn't reject future started_at/ended_at, so the
+    # only defense is here.
+    safe_started = min(started_at, now)
+    safe_ended = min(ended_at, now) if ended_at is not None else None
     candidate = client_supplied or ended_at or started_at
-    # Clamp to [started_at, now + slack]. `started_at` itself is
-    # trusted (it's also in the same payload and the route doesn't
-    # let it land in the future via Pydantic — we'd have rejected
-    # the whole row earlier).
-    if candidate < started_at:
-        candidate = started_at
+    # Clamp to [safe_started, now + slack].
+    if candidate < safe_started:
+        candidate = safe_started
     if candidate > upper:
-        candidate = max(started_at, ended_at or now, now)
+        candidate = max(safe_started, safe_ended or now, now)
     return candidate
 
 
@@ -954,7 +960,15 @@ async def list_sessions(
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
-    since: datetime | None = Query(default=None),
+    # Date-range filters operate on the same column the page sorted
+    # by — `last_activity_at` for the default sort, so the filter
+    # matches the dashboard's "show me sessions active in this
+    # range" mental model. `since`/`until` are inclusive of `since`
+    # and exclusive of `until` (half-open interval is what every
+    # SQL date-range query convention uses; lets the frontend pick
+    # "today" as `[start_of_today, start_of_tomorrow)` cleanly).
+    since: datetime | None = Query(default=None, description="Filter to last_activity_at >= since"),
+    until: datetime | None = Query(default=None, description="Filter to last_activity_at < until"),
 ) -> Paginated[SessionListItemResponse]:
     # Env binding: a bound api_key (deploy key) can only see its
     # own env's sessions. Without this, a key for env A would list
@@ -976,8 +990,16 @@ async def list_sessions(
     )
     if bound_env is not None:
         base = base.where(Session.environment_id == bound_env)
+    # Date filters operate on `last_activity_at` (the column users
+    # actually mean when they say "sessions in the last 7 days").
+    # Pre-fix `since` filtered on `started_at`, which excluded
+    # long-running sessions started before the window but ACTIVE
+    # within it — confusing for the dashboard's "Today" / "Last
+    # 7 days" filter chips.
     if since:
-        base = base.where(Session.started_at >= since)
+        base = base.where(Session.last_activity_at >= since)
+    if until:
+        base = base.where(Session.last_activity_at < until)
     if agent:
         base = base.where(AgentEnvironment.agent_type == agent)
     if environment_id:
@@ -995,7 +1017,16 @@ async def list_sessions(
         )
 
     sort_col = _SESSION_SORT_COLUMNS[sort]
-    base = base.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+    # Tiebreaker on `id` for deterministic offset-pagination order.
+    # Without this, two rows with identical `last_activity_at`
+    # values (same `func.greatest()` clamp output, same
+    # `func.now()` from a backfill) can swap positions across
+    # page boundaries — a row appears on page 2, vanishes on page
+    # 3 reload, etc. UUIDs are unique so the tiebreaker is total.
+    base = base.order_by(
+        sort_col.asc() if order == "asc" else sort_col.desc(),
+        Session.id.asc(),
+    )
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 

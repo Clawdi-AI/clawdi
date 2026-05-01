@@ -1226,6 +1226,14 @@ async function uploadSessionFromQueue(
 						project_path: session.projectPath,
 						started_at: session.startedAt.toISOString(),
 						ended_at: session.endedAt?.toISOString() ?? null,
+						// Explicit `last_activity_at` mirrors `ended_at`
+						// when the adapter knows it, falling back to
+						// `started_at`. Backend re-clamps anyway, but
+						// sending the value explicitly makes the contract
+						// visible in API logs and lets server-side
+						// fallbacks degrade more gracefully when adapters
+						// (e.g. Hermes) leave `ended_at` null.
+						last_activity_at: (session.endedAt ?? session.startedAt).toISOString(),
 						duration_seconds: session.durationSeconds,
 						message_count: session.messageCount,
 						input_tokens: session.inputTokens,

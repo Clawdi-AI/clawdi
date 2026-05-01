@@ -1290,6 +1290,47 @@ async def test_last_activity_clamps_future_clock_skew(client: httpx.AsyncClient)
 
 
 @pytest.mark.asyncio
+async def test_last_activity_clamps_when_started_at_also_future(client: httpx.AsyncClient):
+    """Codex P1: a payload that lies on `last_activity_at` AND
+    `started_at` (and `ended_at`) — all set to year 3000 — pre-fix
+    would let the future timestamp through because the fallback
+    `max(started_at, ended_at or now, now)` would pick the future
+    started_at unchanged. Server tightens the fallback inputs
+    themselves to `min(x, now)` so no path lands a future value."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    way_future = datetime.now(UTC) + timedelta(days=365 * 1000)
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-future-everything",
+                    "started_at": way_future.isoformat(),
+                    "ended_at": way_future.isoformat(),
+                    "last_activity_at": way_future.isoformat(),
+                    "message_count": 1,
+                    "content_hash": "9" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(
+        s for s in listing["items"] if s["local_session_id"] == "sess-future-everything"
+    )
+    persisted = datetime.fromisoformat(item["last_activity_at"])
+    assert persisted < datetime.now(UTC) + timedelta(minutes=10), (
+        "future timestamps in EVERY field must still clamp"
+    )
+
+
+@pytest.mark.asyncio
 async def test_last_activity_clamps_to_started_at_lower_bound(
     client: httpx.AsyncClient,
 ):
@@ -1376,6 +1417,94 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-mono")
     # Should still be the FRESHER value despite the stale repush.
     assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_sessions_since_until_filter_on_last_activity(client: httpx.AsyncClient):
+    """Date filters operate on last_activity_at, not started_at —
+    matches "sessions active in this range" UX. A session started
+    a month ago but still active today should show up under
+    `since=yesterday` even though `started_at` is far older."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started_old = datetime.now(UTC) - timedelta(days=30)
+
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-old-but-active",
+                    "started_at": started_old.isoformat(),
+                    # last activity yesterday — within the filter window
+                    "last_activity_at": (datetime.now(UTC) - timedelta(hours=20)).isoformat(),
+                    "message_count": 1,
+                    "content_hash": "ab" * 32,
+                },
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-old-and-stale",
+                    "started_at": started_old.isoformat(),
+                    # last activity 10 days ago — outside the window
+                    "last_activity_at": (datetime.now(UTC) - timedelta(days=10)).isoformat(),
+                    "message_count": 1,
+                    "content_hash": "cd" * 32,
+                },
+            ]
+        },
+    )
+
+    since = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    listing = (await client.get("/api/sessions", params={"since": since})).json()
+    ids = {s["local_session_id"] for s in listing["items"]}
+    assert "sess-old-but-active" in ids
+    assert "sess-old-and-stale" not in ids
+
+
+@pytest.mark.asyncio
+async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
+    client: httpx.AsyncClient,
+):
+    """Codex P2: when two sessions share `last_activity_at` to the
+    microsecond (same client clock, same batch upsert), offset
+    pagination must still order them deterministically. Server
+    adds `Session.id ASC` as a tiebreaker."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    same_ts = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=0)
+    started = same_ts - timedelta(minutes=1)
+
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": f"sess-tie-{i:02d}",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": same_ts.isoformat(),
+                    "message_count": 1,
+                    "content_hash": str(i) * 64,
+                }
+                for i in range(5)
+            ]
+        },
+    )
+
+    # Two consecutive paginations must return non-overlapping,
+    # union-of-set rows. Without a tiebreaker, offset 1 might
+    # return a row already seen on offset 0.
+    p1 = (await client.get("/api/sessions?page=1&page_size=3")).json()
+    p2 = (await client.get("/api/sessions?page=2&page_size=3")).json()
+    p1_ids = {s["local_session_id"] for s in p1["items"]}
+    p2_ids = {s["local_session_id"] for s in p2["items"]}
+    assert len(p1_ids & p2_ids) == 0, (
+        f"pages overlap: {p1_ids & p2_ids} appears in both — "
+        "tiebreaker missing or unstable"
+    )
 
 
 @pytest.mark.asyncio

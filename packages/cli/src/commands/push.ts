@@ -437,6 +437,9 @@ async function pushOneAgent(
 								project_path: s.projectPath,
 								started_at: s.startedAt.toISOString(),
 								ended_at: s.endedAt?.toISOString() ?? null,
+								// Explicit `last_activity_at` — see same
+								// reasoning in serve/sync-engine.ts.
+								last_activity_at: (s.endedAt ?? s.startedAt).toISOString(),
 								duration_seconds: s.durationSeconds,
 								message_count: s.messageCount,
 								input_tokens: s.inputTokens,

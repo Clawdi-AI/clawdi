@@ -6,6 +6,11 @@ import { AlertCircle } from "lucide-react";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumns } from "@/components/sessions/session-columns";
+import {
+	type DateRange,
+	NO_DATE_FILTER,
+	SessionDateFilter,
+} from "@/components/sessions/session-filters";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
@@ -36,6 +41,7 @@ export default function SessionsPage() {
 	// Tanstack stores SortingState as `[{id, desc}]` for the
 	// single-column server-mode case we want.
 	const [sorting, setSorting] = useState<SortingState>([{ id: "last_activity_at", desc: true }]);
+	const [dateRange, setDateRange] = useState<DateRange>(NO_DATE_FILTER);
 
 	const sortKey = sorting[0]?.id;
 	const validSortKey = sortKey && ALLOWED_SORT_KEYS.has(sortKey) ? sortKey : "last_activity_at";
@@ -49,6 +55,8 @@ export default function SessionsPage() {
 			debouncedSearch,
 			validSortKey,
 			sortOrder,
+			dateRange.since,
+			dateRange.until,
 		],
 		queryFn: async () =>
 			unwrap(
@@ -60,6 +68,8 @@ export default function SessionsPage() {
 							q: debouncedSearch || undefined,
 							sort: validSortKey,
 							order: sortOrder,
+							since: dateRange.since ?? undefined,
+							until: dateRange.until ?? undefined,
 						},
 					},
 				}),
@@ -133,7 +143,15 @@ export default function SessionsPage() {
 								setPagination((p) => ({ ...p, pageIndex: 0 }));
 							}}
 							placeholder="Search summary, project, ID…"
-						/>
+						>
+							<SessionDateFilter
+								value={dateRange}
+								onChange={(r) => {
+									setDateRange(r);
+									setPagination((p) => ({ ...p, pageIndex: 0 }));
+								}}
+							/>
+						</DataTableToolbar>
 					}
 					footer={
 						<DataTablePagination
