@@ -916,6 +916,22 @@ function isPermanentUploadError(e: unknown): boolean {
 	return false;
 }
 
+/**
+ * Subset of permanent failures that mean "the skill is just too big
+ * to sync" (server 413 or pre-flight size guard). These aren't user
+ * misconfigurations — they're a known capacity limit. We still drop
+ * the queue item (retrying won't shrink the tar) but at `warn` level
+ * and without poisoning the heartbeat with `permanent:` — the
+ * dashboard shouldn't scream at the user about a skill they didn't
+ * ask to upload (e.g. the gstack meta-skill ships a 60 MB bundled
+ * binary that's larger than the cap).
+ */
+export function isOversizedUploadError(e: unknown): boolean {
+	if (e instanceof ApiError && e.status === 413) return true;
+	if (e instanceof Error && e.message.includes("Skill tarball exceeds")) return true;
+	return false;
+}
+
 async function drainQueueLoop(
 	opts: EngineOpts,
 	api: ApiClient,
@@ -995,12 +1011,25 @@ async function drainQueueLoop(
 			// drop decision tied to the item we actually processed.
 			const newAttempts = item.attempts + 1;
 			queue.bumpAttempts(item);
-			if (isPermanentUploadError(e)) {
-				// 4xx that won't change on retry — the skill is too
-				// big, malformed, or rejected by validation. Retrying
-				// 30 times costs the user 7.5 minutes of log spam and
-				// network for guaranteed-zero-progress; drop now and
-				// surface the reason once so the user can fix it.
+			if (isOversizedUploadError(e)) {
+				// Skill bigger than the server cap. Not a bug, not a
+				// user misconfiguration — just a capacity limit. Drop
+				// quietly (warn-level, no heartbeat poison) so the
+				// dashboard doesn't scream and the daemon's queue
+				// doesn't spin retrying a tar that will never shrink.
+				log.warn("engine.queue_drop_oversized", {
+					item: redactItem(item),
+					error: msg,
+				});
+				queue.recordPermanentDrop();
+				clearInFlight(item);
+				queue.markDoneIfVersion(item);
+			} else if (isPermanentUploadError(e)) {
+				// 4xx that won't change on retry — malformed body,
+				// schema validation, etc. Retrying 30 times costs the
+				// user 7.5 minutes of log spam and network for
+				// guaranteed-zero-progress; drop now and surface the
+				// reason once so the user can fix it.
 				log.error("engine.queue_drop_permanent", {
 					item: redactItem(item),
 					error: msg,

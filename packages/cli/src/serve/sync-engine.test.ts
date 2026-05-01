@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiError } from "../lib/api-client";
-import { isAuthFailure, resolveOwningSkillKey } from "./sync-engine";
+import { isAuthFailure, isOversizedUploadError, resolveOwningSkillKey } from "./sync-engine";
 
 describe("isAuthFailure", () => {
 	// Pull-side and push-side both rely on this classifier to decide
@@ -193,5 +193,29 @@ describe("resolveOwningSkillKey — Windows path separator", () => {
 		// Windows clients can produce mixed separators (e.g.
 		// path.join joining a path that already had `/`).
 		expect(resolveOwningSkillKey(tmp, "gstack/.agents\\skills/foo")).toBeNull();
+	});
+});
+
+describe("isOversizedUploadError", () => {
+	// The drain loop branches on this to demote oversize drops from
+	// `error` to `warn` (no heartbeat poison). Misclassifying a 400
+	// validation error as oversized would silently swallow real bugs.
+	it("treats ApiError(413) as oversized", () => {
+		expect(isOversizedUploadError(new ApiError({ status: 413, body: "", hint: "" }))).toBe(true);
+	});
+
+	it("treats pre-flight 'Skill tarball exceeds' as oversized", () => {
+		expect(isOversizedUploadError(new Error("Skill tarball exceeds 26214400 bytes"))).toBe(true);
+	});
+
+	it("does not treat other 4xx as oversized", () => {
+		for (const status of [400, 404, 422]) {
+			expect(isOversizedUploadError(new ApiError({ status, body: "", hint: "" }))).toBe(false);
+		}
+	});
+
+	it("does not treat unrelated Errors as oversized", () => {
+		expect(isOversizedUploadError(new Error("symlink(s) pointing outside"))).toBe(false);
+		expect(isOversizedUploadError(new Error("boom"))).toBe(false);
 	});
 });
