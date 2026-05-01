@@ -185,6 +185,18 @@ _SKILL_HASH_EXCLUDE = {
     ".ruff_cache",
     ".tox",
     "coverage",
+    # Cross-agent skill bundles — see tar.ts for full reasoning.
+    # gstack-shaped meta-skills ship sub-skills for other agents
+    # under these dotfile dirs; the outer skill's hash must NOT
+    # include them or it'd diverge from what the CLI tar uploads.
+    ".agents",
+    ".cursor",
+    ".factory",
+    ".openclaw",
+    ".hermes",
+    ".gbrain",
+    ".claude",
+    ".codex",
 }
 
 

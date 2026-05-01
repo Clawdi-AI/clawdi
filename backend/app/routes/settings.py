@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.schemas.settings import (
     SettingsUpdate,
     SettingsUpdateResponse,
 )
+from app.services.memory_provider import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -81,6 +82,26 @@ async def update_settings(
         for k, v in body.settings.items()
         if not (k in SECRET_FIELDS and isinstance(v, str) and v == _SECRET_MASK)
     }
+
+    # Validate memory_provider — refuse `mem0` if the deployment
+    # doesn't have the optional `[mem0]` extra installed. Pre-fix
+    # the dashboard would happily save the value, then GET
+    # /api/memories would 500 with `ModuleNotFoundError: 'mem0'`
+    # for that user every time. The factory has an ImportError
+    # fallback as defense-in-depth, but failing closed at write
+    # time gives the user an actionable error ("not available on
+    # this deployment") instead of a silent downgrade.
+    if raw_patch.get("memory_provider") == "mem0" and not mem0_available():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "memory_provider_unavailable",
+                "message": (
+                    "Mem0 memory provider isn't available on this deployment. "
+                    "The operator must install the [mem0] extra on the backend."
+                ),
+            },
+        )
 
     # Step 2: encrypt any remaining secret fields the client actually wants to set.
     encrypted_patch = _encrypt_secrets(raw_patch)
