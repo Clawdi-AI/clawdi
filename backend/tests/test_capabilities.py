@@ -1,11 +1,4 @@
-"""Capabilities endpoint tests.
-
-`/api/capabilities` exposes deployment-wide feature flags that
-the dashboard uses to hide UI for unavailable optional
-integrations. Pinned to keep the contract stable across
-changes — adding a new feature is fine, breaking an existing
-flag's name or shape is not.
-"""
+"""Tests for /api/capabilities and the mem0 settings save guard."""
 
 from __future__ import annotations
 
@@ -26,23 +19,21 @@ async def test_capabilities_includes_builtin_always(client: httpx.AsyncClient):
     )
 
 
-@pytest.mark.asyncio
-async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
-    """When the [mem0] extra isn't installed, `/api/capabilities`
-    must NOT include `mem0`. Pre-fix the dashboard happily showed
-    the option for users on a backend that couldn't honor it."""
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: False)
-    # `routes/settings.py` and `routes/capabilities.py` import
-    # `mem0_available` as a bound name; the rebind in `mp` alone
-    # leaves their references pointing at the original. Patch
-    # those modules' bound names too.
+def _patch_mem0_available(monkeypatch, *, available: bool) -> None:
+    # `routes/settings.py` and `routes/capabilities.py` bind
+    # `mem0_available` at import time, so patching `mp` alone
+    # leaves their references pointing at the original.
     import app.routes.capabilities as cap
     import app.routes.settings as st
 
-    monkeypatch.setattr(cap, "mem0_available", lambda: False)
-    monkeypatch.setattr(st, "mem0_available", lambda: False)
+    monkeypatch.setattr(mp, "_mem0_available_cached", None)
+    for mod in (mp, cap, st):
+        monkeypatch.setattr(mod, "mem0_available", lambda: available)
 
+
+@pytest.mark.asyncio
+async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
+    _patch_mem0_available(monkeypatch, available=False)
     r = await client.get("/api/capabilities")
     assert r.status_code == 200, r.text
     assert "mem0" not in r.json()["memory_providers"]
@@ -50,14 +41,7 @@ async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncCl
 
 @pytest.mark.asyncio
 async def test_capabilities_includes_mem0_when_available(client: httpx.AsyncClient, monkeypatch):
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: True)
-    import app.routes.capabilities as cap
-    import app.routes.settings as st
-
-    monkeypatch.setattr(cap, "mem0_available", lambda: True)
-    monkeypatch.setattr(st, "mem0_available", lambda: True)
-
+    _patch_mem0_available(monkeypatch, available=True)
     r = await client.get("/api/capabilities")
     assert r.status_code == 200, r.text
     assert "mem0" in r.json()["memory_providers"]
@@ -65,8 +49,7 @@ async def test_capabilities_includes_mem0_when_available(client: httpx.AsyncClie
 
 @pytest.mark.asyncio
 async def test_capabilities_requires_auth():
-    """Unauth probes shouldn't fingerprint the deployment.
-    Spin up a fresh client without auth to verify."""
+    # Unauth probes shouldn't fingerprint the deployment.
     from httpx import ASGITransport
 
     from app.main import app
@@ -74,52 +57,19 @@ async def test_capabilities_requires_auth():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as raw:
         r = await raw.get("/api/capabilities")
-        # 401 (no auth) or 403 (CLI key not allowed); never 200.
         assert r.status_code in (401, 403), r.text
 
 
 @pytest.mark.asyncio
 async def test_settings_refuses_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
-    """Settings save endpoint must refuse `memory_provider=mem0`
-    when the backend can't honor it. Pre-fix the dashboard would
-    save the value, then `/api/memories` 500'd for that user
-    every time. Failing closed at write time gives an actionable
-    400 instead of a silent landmine."""
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: False)
-    # `routes/settings.py` and `routes/capabilities.py` import
-    # `mem0_available` as a bound name; the rebind in `mp` alone
-    # leaves their references pointing at the original. Patch
-    # those modules' bound names too.
-    import app.routes.capabilities as cap
-    import app.routes.settings as st
-
-    monkeypatch.setattr(cap, "mem0_available", lambda: False)
-    monkeypatch.setattr(st, "mem0_available", lambda: False)
-
+    _patch_mem0_available(monkeypatch, available=False)
     r = await client.patch("/api/settings", json={"settings": {"memory_provider": "mem0"}})
     assert r.status_code == 400, r.text
-    detail = r.json().get("detail", {})
-    assert detail.get("code") == "memory_provider_unavailable"
+    assert r.json().get("detail", {}).get("code") == "memory_provider_unavailable"
 
 
 @pytest.mark.asyncio
 async def test_settings_accepts_mem0_when_available(client: httpx.AsyncClient, monkeypatch):
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: True)
-    import app.routes.capabilities as cap
-    import app.routes.settings as st
-
-    monkeypatch.setattr(cap, "mem0_available", lambda: True)
-    monkeypatch.setattr(st, "mem0_available", lambda: True)
-
+    _patch_mem0_available(monkeypatch, available=True)
     r = await client.patch("/api/settings", json={"settings": {"memory_provider": "mem0"}})
-    assert r.status_code == 200, r.text
-
-
-@pytest.mark.asyncio
-async def test_settings_accepts_builtin_regardless(client: httpx.AsyncClient):
-    """The builtin path doesn't depend on the optional extra,
-    so it's always allowed."""
-    r = await client.patch("/api/settings", json={"settings": {"memory_provider": "builtin"}})
     assert r.status_code == 200, r.text

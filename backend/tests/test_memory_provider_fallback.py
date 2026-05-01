@@ -1,19 +1,4 @@
-"""Memory provider fallback tests.
-
-Prod observed `GET /api/memories` 500-ing with
-`ModuleNotFoundError: 'mem0'` for users whose `user_settings`
-carries `memory_provider == "mem0"`. The Mem0Provider class
-lazy-imports `mem0` and `mem0ai` was never declared in
-`pyproject.toml`, so the path was dead-on-arrival from the day
-it shipped. This file pins the post-fix contract:
-
-  - `mem0_available()` returns True iff `mem0` imports cleanly
-    (drives capability flag + settings save validation).
-  - `get_memory_provider` falls back to BuiltinProvider on
-    ImportError instead of bubbling 500.
-  - Existing user settings of `memory_provider=mem0` keep
-    working post-deploy (silently degraded to builtin).
-"""
+"""Tests for `get_memory_provider` ImportError fallback and `mem0_available` cache."""
 
 from __future__ import annotations
 
@@ -36,10 +21,9 @@ from app.services.vault_crypto import encrypt_field
 async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
     db_session: AsyncSession, seed_user: User, monkeypatch
 ):
-    """Defense-in-depth: even if settings save validation lets a
-    mem0 setting through (e.g. operator uninstalled mem0ai
-    after a user already saved their preference), `/api/memories`
-    must NOT 500. Falls back to builtin with a warning."""
+    # Defense-in-depth: pre-existing `memory_provider=mem0` settings must
+    # not 500 if `mem0` becomes unimportable (e.g. operator uninstalled
+    # the extra after the user saved their preference).
     setting = UserSetting(
         user_id=seed_user.id,
         settings={
@@ -58,8 +42,6 @@ async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    # Bust the find_spec cache for this test — `mem0_available`
-    # caches the first answer, but we want fresh probing here.
     import app.services.memory_provider as mp
 
     monkeypatch.setattr(mp, "_mem0_available_cached", None)
@@ -74,9 +56,7 @@ async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
 async def test_get_memory_provider_uses_mem0_when_installed_and_configured(
     db_session: AsyncSession, seed_user: User, monkeypatch
 ):
-    """Happy path: Mem0Provider constructable → factory returns
-    it. Stub `__init__` so the test doesn't need mem0ai actually
-    installed."""
+    # Happy path: stub Mem0Provider.__init__ so we don't need mem0ai installed.
     setting = UserSetting(
         user_id=seed_user.id,
         settings={
@@ -116,16 +96,10 @@ async def test_get_memory_provider_handles_unknown_user_id(db_session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_mem0_available_caches_first_probe(monkeypatch):
-    """`mem0_available()` should cache its result — re-probing on
-    every request unnecessarily thrashes the import system. The
-    probe uses a real `import mem0` (not `find_spec`) because
-    find_spec returns truthy even for broken installs whose
-    transitive deps fail to import."""
     import builtins
 
     import app.services.memory_provider as mp
 
-    # Clear cache to force fresh probe.
     monkeypatch.setattr(mp, "_mem0_available_cached", None)
 
     call_count = {"n": 0}
@@ -139,14 +113,7 @@ async def test_mem0_available_caches_first_probe(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", counting)
 
-    # First call probes; subsequent calls hit cache.
-    a = mp.mem0_available()
-    b = mp.mem0_available()
-    c = mp.mem0_available()
-
-    # All three return False (simulated ImportError) and the
-    # import probe runs exactly once.
-    assert a is False
-    assert b is False
-    assert c is False
+    assert mp.mem0_available() is False
+    assert mp.mem0_available() is False
+    assert mp.mem0_available() is False
     assert call_count["n"] == 1, "mem0_available should probe once and cache"
