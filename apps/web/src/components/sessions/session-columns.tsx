@@ -187,9 +187,16 @@ export const sessionColumns: ColumnDef<SessionListItem>[] = [
 
 // Compact 3-col layout for the Overview "Recent sessions" widget.
 // Sum of widths (~700) fits the half-width dashboard column without
-// overflow.
+// overflow. Headers are plain text — the parent widget doesn't wire
+// up sort state, so a clickable sort affordance would be misleading.
+const lastActivityColumnPlain: ColumnDef<SessionListItem> = {
+	...lastActivityColumn,
+	enableSorting: false,
+	header: "Last activity",
+};
+
 export const sessionColumnsCompact: ColumnDef<SessionListItem>[] = [
 	summaryColumn,
 	agentColumn,
-	lastActivityColumn,
+	lastActivityColumnPlain,
 ];
