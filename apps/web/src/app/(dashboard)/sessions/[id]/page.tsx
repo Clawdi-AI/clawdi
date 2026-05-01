@@ -2,7 +2,17 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ArrowDown, ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowDownNarrowWide,
+	ArrowUpNarrowWide,
+	ChevronRight,
+	Clock,
+	Hash,
+	MessageSquare,
+	Terminal,
+	Zap,
+} from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -47,13 +57,47 @@ export default function SessionDetailPage() {
 		},
 	});
 
+	// Direction toggle: "desc" (newest-first, default) is the most
+	// common review case for clawdi — users open a session to see
+	// "what happened recently". For 5000-message sessions, the old
+	// asc default forced the user to "Load more" through every page
+	// just to reach today's messages. Defaulting desc + persisting
+	// the user's choice in localStorage matches Slack/Discord (they
+	// scroll-to-bottom on open) without requiring a scroll gesture
+	// to find the latest reply.
+	type Direction = "asc" | "desc";
+	const [direction, setDirection] = useState<Direction>(() => {
+		if (typeof window === "undefined") return "desc";
+		const stored = localStorage.getItem("clawdi.session.message-direction");
+		return stored === "asc" ? "asc" : "desc";
+	});
+	const persistDirection = (d: Direction) => {
+		setDirection(d);
+		try {
+			localStorage.setItem("clawdi.session.message-direction", d);
+		} catch {
+			/* private mode / quota / non-browser — direction stays in-memory */
+		}
+	};
+
 	// Paginated message fetch via the new `/messages` endpoint.
 	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
 	// whole blob in one shot and Markdown-render every turn,
 	// which froze the page for seconds. Now we load 100 at a time
 	// and the IntersectionObserver in `LoadMoreSentinel` requests
 	// the next page when the user scrolls near the bottom.
+	//
+	// Direction-aware pagination:
+	//   - asc: classic "load older first, append newer". pageParam
+	//     is the offset to fetch starting from 0.
+	//   - desc: load NEWEST page first, append progressively-older
+	//     pages as the user scrolls down. pageParam is the offset
+	//     of the slice to fetch (counted from 0 in canonical order
+	//     — the server endpoint is direction-agnostic). We compute
+	//     it from `session.message_count` so we don't need a
+	//     separate "total" round-trip.
 	const PAGE_SIZE = 100;
+	const totalForPaging = session?.message_count ?? 0;
 	const {
 		data: pagesData,
 		isLoading: isContentLoading,
@@ -62,21 +106,39 @@ export default function SessionDetailPage() {
 		hasNextPage,
 		isFetchingNextPage,
 	} = useInfiniteQuery({
-		queryKey: ["session-messages", id],
-		// Each page's `pageParam` is its `offset`; first page = 0.
-		initialPageParam: 0,
-		queryFn: async ({ pageParam }) =>
-			unwrap(
+		// Direction in queryKey so toggling refetches from the new
+		// end (rather than reordering already-loaded pages, which
+		// would only show the OLDEST 100 in newest-first mode —
+		// confusing).
+		queryKey: ["session-messages", id, direction],
+		initialPageParam: direction === "desc" ? Math.max(0, totalForPaging - PAGE_SIZE) : 0,
+		queryFn: async ({ pageParam }) => {
+			const offset = pageParam as number;
+			// In desc mode the last page may be smaller than PAGE_SIZE
+			// (the "remaining" slice at the start of the array). The
+			// server clamps `limit` against the array length anyway,
+			// but we explicitly compute the right `limit` to avoid an
+			// off-by-one if the cache key changes mid-flight.
+			const limit =
+				direction === "desc" && offset === 0 ? Math.min(PAGE_SIZE, totalForPaging) : PAGE_SIZE;
+			return unwrap(
 				await api.GET("/api/sessions/{session_id}/messages", {
 					params: {
 						path: { session_id: id },
-						query: { offset: pageParam, limit: PAGE_SIZE },
+						query: { offset, limit },
 					},
 				}),
-			),
+			);
+		},
 		getNextPageParam: (last) => {
-			const nextOffset = last.offset + last.items.length;
-			return nextOffset >= last.total ? undefined : nextOffset;
+			if (direction === "asc") {
+				const nextOffset = last.offset + last.items.length;
+				return nextOffset >= last.total ? undefined : nextOffset;
+			}
+			// desc: previous page covered [last.offset, last.offset +
+			// items.length). Next-older page ends at last.offset.
+			if (last.offset === 0) return undefined;
+			return Math.max(0, last.offset - PAGE_SIZE);
 		},
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
@@ -86,10 +148,16 @@ export default function SessionDetailPage() {
 		},
 	});
 
-	// Flatten pages → ordered message list. The backend slices the
-	// underlying JSON array, so concatenating pages preserves the
-	// canonical order regardless of how many fetches it took.
-	const messages = useMemo(() => pagesData?.pages.flatMap((p) => p.items) ?? null, [pagesData]);
+	// Flatten pages → ordered message list. In `asc` each page is
+	// in canonical order and concatenating preserves it. In `desc`
+	// the FIRST page is the newest 100 (in canonical order within),
+	// so we reverse each page individually then concat — yielding
+	// `[newest, ..., oldest-of-page-1, newest-of-page-2, ..., 0]`.
+	const messages = useMemo(() => {
+		if (!pagesData) return null;
+		if (direction === "asc") return pagesData.pages.flatMap((p) => p.items);
+		return pagesData.pages.flatMap((p) => [...p.items].reverse());
+	}, [pagesData, direction]);
 	const totalMessages = pagesData?.pages[0]?.total ?? 0;
 	const loadedCount = messages?.length ?? 0;
 
@@ -175,6 +243,40 @@ export default function SessionDetailPage() {
 			{/* Divider */}
 			<Separator />
 
+			{/* Message-list toolbar — direction toggle. Sits between
+			    the meta block and the message stream, so it's
+			    discoverable but unobtrusive. Hidden when there are no
+			    messages or content hasn't uploaded yet. */}
+			{session.has_content && (messages?.length ?? 0) > 0 ? (
+				<div className="flex items-center justify-between text-xs text-muted-foreground">
+					<span>
+						{direction === "desc" ? "Newest first" : "Oldest first"} · {loadedCount}/{totalMessages}
+					</span>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-7 gap-1.5 text-xs"
+						onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
+						aria-label={
+							direction === "desc" ? "Show oldest messages first" : "Show newest messages first"
+						}
+					>
+						{direction === "desc" ? (
+							<>
+								<ArrowUpNarrowWide className="size-3.5" />
+								Show oldest first
+							</>
+						) : (
+							<>
+								<ArrowDownNarrowWide className="size-3.5" />
+								Show newest first
+							</>
+						)}
+					</Button>
+				</div>
+			) : null}
+
 			{/* Messages */}
 			{session.has_content ? (
 				isContentLoading ? (
@@ -226,11 +328,11 @@ export default function SessionDetailPage() {
 				<EmptyState description="Conversation not uploaded yet. Refresh in a moment." />
 			)}
 
-			{/* Floating "jump to bottom" — for sessions with hundreds /
-			    thousands of messages. Only renders when the user has
-			    scrolled enough that the latest message is offscreen, so
-			    it doesn't clutter short conversations. */}
-			{messages && messages.length > 20 ? <JumpToBottomButton /> : null}
+			{/* Floating "jump to bottom" — only meaningful in asc mode
+			    where the newest message is at the bottom of a long
+			    list. In desc mode the newest is already at the top,
+			    so there's nothing to jump to. */}
+			{direction === "asc" && messages && messages.length > 20 ? <JumpToBottomButton /> : null}
 		</div>
 	);
 }
