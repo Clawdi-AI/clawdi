@@ -1,6 +1,28 @@
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
+
+from app.core.config import settings
+
+
+def _allowed_redirect_origins() -> set[str]:
+    """Parse `web_origin` (and `cors_origins`) into the set of
+    `(scheme, netloc)` pairs we'll accept for OAuth callbacks. The
+    web_origin is the canonical answer; CORS origins are added as
+    a fallback for staging / preview deploys that share the same
+    backend. We compare against (scheme, netloc) instead of the
+    full URL so the caller can pick any path under our origin."""
+    raw_origins: list[str] = []
+    if settings.web_origin:
+        raw_origins.append(settings.web_origin)
+    raw_origins.extend(settings.cors_origins)
+    out: set[str] = set()
+    for o in raw_origins:
+        parsed = urlparse(o.rstrip("/"))
+        if parsed.scheme and parsed.netloc:
+            out.add(f"{parsed.scheme}://{parsed.netloc}")
+    return out
 
 
 class ConnectRequest(BaseModel):
@@ -10,21 +32,39 @@ class ConnectRequest(BaseModel):
     back to after the OAuth flow completes. The frontend supplies
     its own connector detail page (e.g.
     `https://cloud.example.com/connectors/gmail`); when omitted,
-    Composio uses its own managed callback. Length is capped and
-    the scheme is restricted to http(s) so a hostile caller can't
-    route OAuth through `javascript:` / `data:` / arbitrary schemes
-    that Composio (or some downstream) might honor.
+    Composio uses its own managed callback. The origin must match
+    `web_origin` (or one of `cors_origins` for staging/preview),
+    otherwise an authenticated caller could turn this into an open
+    redirect: present the user a "Connect Gmail" link that lands on
+    an attacker-controlled domain after OAuth completes, where
+    cookies / tokens / phishing UIs become reachable.
     """
 
     redirect_url: str | None = Field(default=None, max_length=2048)
 
     @field_validator("redirect_url")
     @classmethod
-    def _http_scheme(cls, v: str | None) -> str | None:
+    def _origin_allowlist(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        if not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("redirect_url must start with http:// or https://")
+        try:
+            parsed = urlparse(v)
+        except ValueError as e:
+            raise ValueError("redirect_url is not a valid URL") from e
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("redirect_url must use http:// or https://")
+        if not parsed.netloc:
+            raise ValueError("redirect_url must include a host")
+        candidate = f"{parsed.scheme}://{parsed.netloc}"
+        allowed = _allowed_redirect_origins()
+        if not allowed:
+            # Misconfigured deployment (no web_origin, no
+            # cors_origins) — refuse rather than fail open.
+            raise ValueError("redirect_url not allowed for this deployment")
+        if candidate not in allowed:
+            raise ValueError(
+                f"redirect_url origin {candidate!r} is not in the configured allowlist"
+            )
         return v
 
 

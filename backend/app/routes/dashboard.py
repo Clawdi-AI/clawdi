@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, require_web_auth
 from app.core.database import get_session
 from app.models.memory import Memory
 from app.models.session import Session
@@ -14,10 +14,24 @@ from app.schemas.dashboard import ContributionDayResponse, DashboardStatsRespons
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+# These endpoints aggregate by `user_id` across every scope/env
+# the user owns. An env-bound deploy key (full-permission api_key
+# minted with `scopes=None` but pinned to `environment_id=A`)
+# would otherwise read account-wide totals — sessions, message
+# counts, token usage, contribution graph, skill/vault/memory
+# counts — for sibling envs B/C/D that the resource-level routes
+# (memories.py, vault.py, skills.py) explicitly hide from it.
+# Forcing `require_web_auth` (Clerk JWT only, no api_keys at
+# all) keeps the deploy-key isolation model intact: env-bound
+# keys can read/write within their env, but never see the
+# user-wide aggregate that would let them infer activity in
+# other envs. The dashboard is the only consumer here — no CLI
+# callsites.
+
 
 @router.get("/stats")
 async def get_stats(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
 ) -> DashboardStatsResponse:
@@ -131,7 +145,7 @@ async def get_stats(
 
 @router.get("/contribution")
 async def get_contribution_graph(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365),
 ) -> list[ContributionDayResponse]:

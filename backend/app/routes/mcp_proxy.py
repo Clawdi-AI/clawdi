@@ -46,9 +46,18 @@ async def mcp_proxy_post(request: Request):
             }
 
         return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
-    except Exception as e:
-        logger.exception(f"MCP proxy error: {e}")
-        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32000, "message": str(e)}}
+    except Exception:
+        # Log the underlying error server-side so operators can
+        # diagnose; return a generic message to the client.
+        # `str(e)` from Composio / connector internals can leak
+        # provider-side IDs, upstream URLs, and tool argument
+        # echoes — none of which the client should see.
+        logger.exception("MCP proxy error: user=%s method=%s", user_id, method)
+        return {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32000, "message": "internal error"},
+        }
 
 
 async def _handle_tools_list(user_id: str) -> dict:
@@ -90,7 +99,14 @@ async def _handle_tools_call(user_id: str, params: dict) -> dict:
                 connected_account_id = str(acc.id)
                 break
 
-        if not connected_account_id and not action_data.no_auth:
+        # Reject any action whose app the user hasn't connected,
+        # even when Composio marks it `no_auth=True`. Without this
+        # check a `no_auth` action (e.g. a public-API tool) lets
+        # any holder of an MCP proxy token execute Composio
+        # actions outside the user's connected-accounts surface.
+        # The `tools/list` response is the contract: callers only
+        # see actions for connected apps, so calls must agree.
+        if not connected_account_id:
             raise ValueError(
                 f"No connected account for {app_name}. Connect it in the dashboard first."
             )

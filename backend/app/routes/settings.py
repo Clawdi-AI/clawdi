@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, require_user_auth
 from app.core.database import get_session
 from app.models.user import UserSetting
 from app.schemas.settings import (
@@ -51,7 +51,7 @@ def _mask_secrets(data: dict) -> dict:
 
 @router.get("")
 async def get_settings(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SettingsResponse:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
@@ -66,7 +66,7 @@ async def get_settings(
 @router.patch("")
 async def update_settings(
     body: SettingsUpdate,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SettingsUpdateResponse:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))

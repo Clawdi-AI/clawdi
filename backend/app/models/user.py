@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String
+from sqlalchemy import Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +14,12 @@ class User(Base, TimestampMixin):
     clerk_id: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String(320))
     name: Mapped[str | None] = mapped_column(String(200))
+    # Monotonic counter incremented on any skill insert / update /
+    # soft-delete (`is_active=False`). Exposed as a collection-level
+    # ETag on `GET /api/skills` and embedded in SSE `skill_changed`
+    # event payloads so the daemon can detect missed events when
+    # the stream drops mid-flight.
+    skills_revision: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
 
 
 class UserSetting(Base, TimestampMixin):

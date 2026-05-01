@@ -49,7 +49,30 @@ class Settings(BaseSettings):
     # prod set to e.g. https://cloud.clawdi.example.
     web_origin: str = "http://localhost:3000"
 
+    # Trust the standard `X-Forwarded-For` / `CF-Connecting-IP`
+    # headers as the source of the real client IP. Required for
+    # any proxied deployment (Coolify, Cloudflare, k8s ingress)
+    # because uvicorn's `request.client.host` is the proxy's
+    # address, not the user's. Off by default so a misconfigured
+    # local dev / direct-uvicorn setup can't be header-spoofed.
+    # Used today by `cli_auth._real_client_ip` to bucket the
+    # device-flow rate limiter; without it, ALL CLI logins
+    # behind one proxy share a single 90/min bucket and the
+    # third concurrent login 429s.
+    trust_forwarded_for: bool = False
+
     database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi"
+
+    # SQLAlchemy connection pool. Default sqlalchemy values
+    # (pool_size=5 + max_overflow=10) start to choke at ~10k
+    # connected daemons because every SSE refresh tick takes
+    # one connection for the duration of the visibility query.
+    # Override via env in prod (e.g. DB_POOL_SIZE=20,
+    # DB_MAX_OVERFLOW=40 sized to the daemon population).
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: float = 30.0
+    db_pool_recycle: int = 1800  # recycle connections every 30 min
 
     # Observability (both optional; no-op if not set)
     sentry_dsn: str = ""

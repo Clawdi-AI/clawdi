@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 # local_session_id flows straight into a file-store key
 # (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
@@ -30,11 +30,15 @@ class SessionCreate(BaseModel):
     project_path: str | None = None
     started_at: datetime
     ended_at: datetime | None = None
-    duration_seconds: int | None = None
-    message_count: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
+    # Non-negative numeric observables. Without `ge=0` a malformed
+    # client could post negative tokens / duration and corrupt the
+    # dashboard's aggregate counters. The CLI never sends negatives
+    # for legitimate sessions; this is a boundary defense.
+    duration_seconds: int | None = Field(default=None, ge=0)
+    message_count: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
     model: str | None = None
     models_used: list[str] | None = None
     summary: str | None = None
@@ -70,6 +74,25 @@ class EnvironmentResponse(BaseModel):
     agent_version: str | None
     os: str
     last_seen_at: datetime | None
+    # `clawdi serve` daemon liveness / observability — populated by
+    # the heartbeat endpoint. NULL on environments whose daemon
+    # has never checked in (legacy laptops, freshly created
+    # envs). Dashboard renders "offline" red when last_sync_at is
+    # null or older than 90s; "syncing" green when fresh and
+    # last_sync_error is null.
+    last_sync_at: datetime | None = None
+    last_sync_error: str | None = None
+    last_revision_seen: int | None = None
+    queue_depth_high_water: int = 0
+    dropped_count: int = 0
+    sync_enabled: bool = False
+    # Schema-enforced NOT NULL on agent_environments — every env
+    # has a scope after register_environment runs (which heals
+    # legacy rows that lost their scope). Daemons rely on this
+    # being present to know which SSE events belong to them.
+    # Stringified for JSON (UUIDs serialise as strings via
+    # FastAPI default).
+    default_scope_id: str
 
 
 class SessionBatchResponse(BaseModel):
@@ -84,6 +107,17 @@ class SessionBatchResponse(BaseModel):
     # superset of `created` (new rows have no content yet); also includes
     # any updated row whose stored bytes are stale.
     needs_content: list[str]
+    # local_session_ids the upsert dropped at the conflict step
+    # (cross-env race window — see sessions.py `WHERE existing.env
+    # IS NULL OR existing.env IS NOT DISTINCT FROM excluded.env`).
+    # CLI/daemon callers MUST treat these as not-yet-synced:
+    # don't write the lock entry, don't mark them done. The next
+    # batch (after the winning writer's row is visible) will hit
+    # the pre-fetch cross-env mismatch check and 409 cleanly.
+    # Pre-round-46 the response silently omitted these ids; the
+    # client treated "id not in needs_content" as success and
+    # wrote a stale lock — the loser never retried.
+    rejected: list[str] = []
 
 
 class SessionListItemResponse(BaseModel):
@@ -145,3 +179,20 @@ class SessionMessageResponse(BaseModel):
     content: str
     model: str | None = None
     timestamp: datetime | None = None
+
+
+class SessionMessagesPage(BaseModel):
+    """Paginated slice of a session's messages. Used by the dashboard's
+    detail page; the full-content download endpoint
+    (`GET /api/sessions/{id}/content`) stays unchanged so the CLI's
+    `clawdi pull` mirror still gets a single full JSON array.
+
+    `total` is the count of messages in the underlying content file
+    (not the count returned in `items`) so the client can render a
+    "loaded N/M" hint and decide whether to fetch more pages.
+    """
+
+    items: list[SessionMessageResponse]
+    total: int
+    offset: int
+    limit: int

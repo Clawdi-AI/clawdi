@@ -11,17 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.sentry import init_sentry
+from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.auth import router as auth_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
 from app.routes.memories import router as memories_router
+from app.routes.scopes import router as scopes_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.skills import router as skills_router
+from app.routes.skills import scope_router as skills_scope_router
+from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.embedding import LocalEmbedder
 
@@ -80,9 +85,34 @@ app = FastAPI(
 # subsequent `add_middleware` call around the previous stack, so the LAST
 # call becomes the OUTERMOST handler seeing the request first. We want:
 #
-#   request → RequestID → CORS → route → CORS → RequestID → response
+#   request → RequestID → CORS → BodySizeLimit → route
+#                                                    ↓
+#   response ← RequestID ← CORS ← BodySizeLimit ← route
 #
-# so a CORS-rejected preflight still carries X-Request-ID on the way back out.
+# so a CORS-rejected preflight still carries X-Request-ID on the way back
+# out, and BodySizeLimit fires AFTER CORS preflight (preflight is OPTIONS,
+# which the limiter ignores anyway). The limiter sits inside CORS so
+# legitimate CORS responses still apply when we 413; otherwise a browser
+# upload over the cap would see an opaque network error instead of
+# "Request body too large".
+
+# Global cap on declared body size for body-bearing methods.
+# Sized ABOVE the largest legitimate route-level cap so multipart
+# framing (boundary, form-data Content-Disposition, filename header,
+# trailing CRLF) doesn't push a near-limit upload over the global
+# threshold. The session-upload route caps content at 50 MB and
+# re-checks after streaming; an honest 50 MB multipart body
+# carries ~1-4 KB of framing overhead, but we headroom by a full
+# 1 MB so a generous boundary token + long filename can't trip
+# the global rejection before the route's check fires. Without
+# this headroom, near-limit session files were 413'd by the
+# middleware even though the underlying content fit the per-route
+# cap.
+_MAX_SESSION_CONTENT_BYTES = 50 * 1024 * 1024  # mirror of sessions.py
+_MULTIPART_OVERHEAD_HEADROOM = 1 * 1024 * 1024  # 1 MB
+_MAX_REQUEST_BODY_BYTES = _MAX_SESSION_CONTENT_BYTES + _MULTIPART_OVERHEAD_HEADROOM
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=_MAX_REQUEST_BODY_BYTES)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -95,20 +125,38 @@ app.add_middleware(
         "X-Correlation-ID",
         "X-Clawdi-Environment-Id",
         "X-Clawdi-Token",
+        # `If-None-Match` carries the daemon's last seen
+        # `skills_revision` for the conditional GET /api/skills.
+        # The CLI daemon hits this without going through CORS, so
+        # this is forward-compat for any browser-side caller.
+        "If-None-Match",
     ],
-    expose_headers=["X-Request-ID"],
+    expose_headers=[
+        "X-Request-ID",
+        # `ETag` carries the user's `skills_revision` counter on
+        # /api/skills responses. Without exposing it, browser JS
+        # gets `null` from `response.headers.get("ETag")` and the
+        # dashboard can't conditional-GET. CLI daemon is unaffected
+        # but the dashboard relies on this once it stops fetching
+        # the full list every render.
+        "ETag",
+    ],
     # 10 min production, but in dev the preflight cache outlives endpoint
     # changes (new routes registered during uvicorn --reload get rejected by
     # stale cached 404 preflights). Shorten in dev for fast iteration.
     max_age=30 if settings.environment != "production" else 600,
 )
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
 app.include_router(dashboard_router)
+app.include_router(scopes_router)
 app.include_router(skills_router)
+app.include_router(skills_scope_router)
+app.include_router(sync_router)
 app.include_router(memories_router)
 app.include_router(settings_router)
 app.include_router(vault_router)

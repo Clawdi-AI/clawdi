@@ -12,6 +12,7 @@ import httpx
 from app.services.tar_utils import (
     MAX_DECOMPRESSED_BYTES,
     MAX_FILES,
+    MAX_SKILL_TAR_BYTES,
     TarValidationError,
     parse_frontmatter,
     tar_from_content,
@@ -69,6 +70,15 @@ async def fetch_skill_from_github(repo: str, path: str | None = None) -> SkillPa
     except TarValidationError as e:
         raise ValueError(f"Built archive failed validation: {e}") from e
 
+    # The streaming-download walk caps at MAX_DECOMPRESSED_BYTES
+    # (200 MB) — fine as an upper bound on the source repo, but
+    # the resulting tar.gz is what we actually store and serve.
+    # Direct upload routes apply MAX_SKILL_TAR_BYTES (25 MB) to
+    # the on-the-wire tar; mirror that here so a marketplace
+    # install can't sneak past via a different code path.
+    if len(tar_bytes) > MAX_SKILL_TAR_BYTES:
+        raise ValueError(f"Built skill archive exceeds {MAX_SKILL_TAR_BYTES // (1024 * 1024)}MB")
+
     fm = parse_frontmatter(skill_md_content or "")
     name = fm.get("name", path or repo.split("/")[-1])
     description = fm.get("description", "")
@@ -115,8 +125,20 @@ async def _list_github_dir(
     repo: str,
     dir_path: str,
     branch: str,
+    *,
+    budget: int = MAX_FILES,
 ) -> list[dict]:
-    """List files in a GitHub directory recursively via Contents API."""
+    """List files in a GitHub directory recursively via Contents API.
+
+    `budget` is the remaining file count we'll accept before
+    aborting. Without it, a malicious repo with a deeply nested
+    directory tree (or a fork-bomb-shaped layout) could force us
+    to issue thousands of GitHub API calls and accumulate
+    arbitrarily many `download_url`s before the cap in
+    `_download_and_tar` finally kicks in. We thread the running
+    count through the recursion and bail the moment we'd cross
+    `MAX_FILES`.
+    """
     if not dir_path:
         return []
 
@@ -131,6 +153,8 @@ async def _list_github_dir(
 
     files: list[dict] = []
     for item in data:
+        if len(files) >= budget:
+            raise ValueError(f"Skill repo has too many files (>{MAX_FILES})")
         if item["type"] == "file":
             files.append(
                 {
@@ -140,7 +164,10 @@ async def _list_github_dir(
                 }
             )
         elif item["type"] == "dir":
-            sub_files = await _list_github_dir(client, repo, item["path"], branch)
+            remaining = budget - len(files)
+            if remaining <= 0:
+                raise ValueError(f"Skill repo has too many files (>{MAX_FILES})")
+            sub_files = await _list_github_dir(client, repo, item["path"], branch, budget=remaining)
             files.extend(sub_files)
 
     return files

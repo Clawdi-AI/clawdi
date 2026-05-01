@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DeviceStartRequest(BaseModel):
@@ -19,7 +19,14 @@ class DeviceStartResponse(BaseModel):
 
 
 class DevicePollRequest(BaseModel):
-    device_code: str
+    # Server-issued device_code is `secrets.token_urlsafe(32)` = 43
+    # chars. Cap inbound at 128 so an unauthenticated /poll caller
+    # can't push gigabytes of unique large strings through to the
+    # process-wide rate-limit dict, where they'd get retained
+    # within the 90/min IP cap and spike resident memory. Bad
+    # codes reject at request-validation time (422) and never
+    # reach the limiter or DB.
+    device_code: str = Field(min_length=1, max_length=128)
 
 
 # `pending` keeps polling. `approved` carries the api_key (one-shot). The

@@ -308,6 +308,7 @@ class Mem0Provider:
                     "source": "mem0",
                     "tags": meta.get("tags"),
                     "created_at": r.get("created_at", ""),
+                    "source_session_id": meta.get("source_session_id"),
                 }
             )
         return out
@@ -334,6 +335,7 @@ class Mem0Provider:
                 "source": "mem0",
                 "tags": r.get("metadata", {}).get("tags"),
                 "created_at": r.get("created_at", ""),
+                "source_session_id": r.get("metadata", {}).get("source_session_id"),
             }
             for r in items[offset : offset + limit]
         ]
@@ -361,12 +363,17 @@ def memory_to_dict(m: Memory) -> dict:
         "tags": m.tags,
         "access_count": m.access_count,
         "created_at": m.created_at.isoformat(),
+        # Session linkage so the route layer can JOIN through to the
+        # source machine in one bulk query. None when the memory was
+        # added manually.
+        "source_session_id": str(m.source_session_id) if m.source_session_id else None,
     }
 
 
 def _row_to_dict(r) -> dict:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
     created_at = r["created_at"]
+    sid = r.get("source_session_id") if hasattr(r, "get") else None
     return {
         "id": str(r["id"]),
         "content": r["content"],
@@ -375,6 +382,7 @@ def _row_to_dict(r) -> dict:
         "tags": r["tags"],
         "access_count": r["access_count"],
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+        "source_session_id": str(sid) if sid else None,
     }
 
 

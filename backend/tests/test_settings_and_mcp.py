@@ -43,6 +43,33 @@ async def test_settings_patch_merges_rather_than_replaces(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_scope_migration_banner_dismiss_persists(client: httpx.AsyncClient):
+    """The post-migration banner dismiss flow uses the existing
+    /api/settings PATCH/GET — we don't add a dedicated endpoint.
+    The dashboard writes `scope_migration_banner_dismissed_at`
+    (ISO timestamp) when the user closes the banner; subsequent
+    reads return it so the banner stays hidden across sessions /
+    devices. Lock the contract here so a refactor of /api/settings
+    can't accidentally drop arbitrary-key support and silently
+    revive the banner forever."""
+    # Initial state: key absent → banner should show client-side.
+    body = (await client.get("/api/settings")).json()
+    assert "scope_migration_banner_dismissed_at" not in body
+
+    # Dashboard dismisses the banner.
+    dismissed_at = "2026-04-29T08:30:00Z"
+    r = await client.patch(
+        "/api/settings",
+        json={"settings": {"scope_migration_banner_dismissed_at": dismissed_at}},
+    )
+    assert r.status_code == 200, r.text
+
+    # Subsequent reads (any device) see the dismissed timestamp.
+    body = (await client.get("/api/settings")).json()
+    assert body["scope_migration_banner_dismissed_at"] == dismissed_at
+
+
+@pytest.mark.asyncio
 async def test_mcp_proxy_rejects_missing_and_invalid_tokens():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:

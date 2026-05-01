@@ -75,3 +75,66 @@ async def test_vault_delete_cascades_items(cli_client: httpx.AsyncClient):
     # After vault deletion, resolve must not surface that item anymore.
     resolved = (await cli_client.post("/api/vault/resolve")).json()
     assert "AWS_ACCESS_KEY" not in resolved
+
+
+@pytest.mark.asyncio
+async def test_vault_same_slug_allowed_across_scopes(client, db_session, seed_user):
+    """Slug uniqueness is per (user_id, scope_id, slug). Two vaults
+    with the same slug in different scopes is a valid configuration
+    — env A's `github` vault and env B's `github` vault are
+    independent rows. Verifies the partial unique constraint
+    matches what the route allows: insert two vaults with the same
+    slug under two different scope_ids and confirm both persist
+    without 409 at the DB layer."""
+    from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+    from app.models.vault import Vault
+
+    scope_a = Scope(user_id=seed_user.id, name="A", slug="env-a", kind=SCOPE_KIND_ENVIRONMENT)
+    scope_b = Scope(user_id=seed_user.id, name="B", slug="env-b", kind=SCOPE_KIND_ENVIRONMENT)
+    db_session.add_all([scope_a, scope_b])
+    await db_session.flush()
+
+    # Same slug in two different scopes — must coexist.
+    db_session.add(Vault(user_id=seed_user.id, scope_id=scope_a.id, slug="github", name="A's"))
+    db_session.add(Vault(user_id=seed_user.id, scope_id=scope_b.id, slug="github", name="B's"))
+    await db_session.commit()
+
+    # JWT user can read both via the listing — listing carries
+    # scope_id per row so the dashboard can disambiguate before
+    # following the slug-keyed lookup.
+    listing = (await client.get("/api/vault")).json()
+    same_slug = [v for v in listing["items"] if v["slug"] == "github"]
+    assert len(same_slug) == 2, same_slug
+    listed_scopes = {v["scope_id"] for v in same_slug}
+    assert listed_scopes == {str(scope_a.id), str(scope_b.id)}
+
+    # Slug-only lookup with a duplicate across scopes MUST 409.
+    # Previously the resolver silently picked the most-recently-
+    # updated row, which let a dashboard mutation land in the
+    # WRONG scope when a JWT user happened to hold the same slug
+    # in two scopes. Refusing forces the caller to specify
+    # `scope_id`.
+    ambiguous = await client.get("/api/vault/github/items")
+    assert ambiguous.status_code == 409, ambiguous.text
+    body = ambiguous.json()["detail"]
+    assert body["code"] == "ambiguous_vault_slug"
+    assert set(body["scope_ids"]) == listed_scopes
+
+    # With `scope_id` query param both vaults are reachable.
+    a_resp = await client.get(f"/api/vault/github/items?scope_id={scope_a.id}")
+    assert a_resp.status_code == 200, a_resp.text
+    b_resp = await client.get(f"/api/vault/github/items?scope_id={scope_b.id}")
+    assert b_resp.status_code == 200, b_resp.text
+
+
+@pytest.mark.asyncio
+async def test_vault_same_slug_blocked_within_one_scope(client):
+    """Within a single scope the slug must still 409 — we only
+    relaxed uniqueness across scopes, not within."""
+    r = await client.post("/api/vault", json={"slug": "dup", "name": "First"})
+    assert r.status_code == 200, r.text
+    r2 = await client.post("/api/vault", json={"slug": "dup", "name": "Second"})
+    assert r2.status_code == 409, r2.text
+    body = r2.json()["detail"]
+    assert body["code"] == "vault_slug_conflict"
+    assert "scope_id" in body

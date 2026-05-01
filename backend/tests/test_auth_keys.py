@@ -108,6 +108,133 @@ async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_deploy_key_minted_with_full_access_by_default(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    """A deploy key (env-bound) defaults to FULL account access — same
+    as a key the user mints for their own laptop. The hosted agent
+    pod must be able to do everything the user can.
+
+    Without this property the daemon ends up scoped to a 3-token list
+    and silently can't touch vault / memories / settings, which makes
+    the "iCloud for AI agents" promise a lie."""
+    from tests.conftest import create_env_with_scope
+
+    env = await create_env_with_scope(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="m-deploy",
+        machine_name="hosted-pod",
+    )
+
+    r = await client.post(
+        "/api/auth/keys",
+        json={"label": "hosted-pod", "environment_id": str(env.id)},
+    )
+    assert r.status_code == 200, r.text
+
+    # Verify the persisted scopes column is NULL (full access),
+    # not the legacy daemon set.
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    rows = (
+        (await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id)))
+        .scalars()
+        .all()
+    )
+    assert rows, "minting succeeded but no row found"
+    deploy_key = next(k for k in rows if k.environment_id == env.id)
+    assert deploy_key.scopes is None, (
+        f"deploy keys must default to full access (scopes=None), got {deploy_key.scopes!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_deploy_key_honours_explicit_narrow_scopes(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    """The default is full access, but a caller that explicitly passes
+    a narrower scope list still gets a narrowed key — the dashboard
+    should be able to opt into narrower keys per use-case."""
+    from tests.conftest import create_env_with_scope
+
+    env = await create_env_with_scope(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="m-narrow",
+        machine_name="narrow-pod",
+    )
+
+    r = await client.post(
+        "/api/auth/keys",
+        json={
+            "label": "narrow-pod",
+            "environment_id": str(env.id),
+            "scopes": ["sessions:write"],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    deploy_key = (
+        await db_session.execute(
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.environment_id == env.id)
+        )
+    ).scalar_one()
+    assert deploy_key.scopes == ["sessions:write"]
+
+
+@pytest.mark.asyncio
+async def test_deploy_key_rejects_cross_tenant_environment_id(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    """An attacker passing another user's env_id must get a 403, not a
+    silent rebind. `mint_api_key` raises ValueError on the user_id
+    mismatch and the route maps that to 403 (not 500)."""
+    import uuid as _uuid
+
+    from app.models.user import User
+    from tests.conftest import create_env_with_scope
+
+    other = User(clerk_id=f"other_{_uuid.uuid4().hex[:8]}", email="o@x.dev", name="O")
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    other_env = await create_env_with_scope(
+        db_session,
+        user_id=other.id,
+        machine_id="m-other",
+        machine_name="other-pod",
+    )
+
+    try:
+        r = await client.post(
+            "/api/auth/keys",
+            json={"label": "steal", "environment_id": str(other_env.id)},
+        )
+        assert r.status_code == 403, r.text
+    finally:
+        await db_session.delete(other)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_deploy_key_rejects_malformed_environment_id(client: httpx.AsyncClient):
+    """A malformed UUID should be 400, not 500 — sanity check on the
+    parse path."""
+    r = await client.post(
+        "/api/auth/keys",
+        json={"label": "bad", "environment_id": "not-a-uuid"},
+    )
+    assert r.status_code == 400, r.text
+
+
+@pytest.mark.asyncio
 async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_session, seed_user):
     """Revoking someone else's key by ID leaks 404, not 200 — no cross-tenant writes."""
     import secrets as _secrets
