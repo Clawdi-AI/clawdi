@@ -36,7 +36,7 @@ function resolveSiteUrl(): string {
 
 const SITE_URL = resolveSiteUrl();
 const DESCRIPTION =
-	"iCloud for AI agents — sync sessions, skills, memories, and secrets across every connected machine.";
+	"Cloud control plane for AI agents — manage sessions, skills, memories, and secrets across the machines you connect.";
 
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE_URL),

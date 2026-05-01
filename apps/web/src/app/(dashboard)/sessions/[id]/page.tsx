@@ -1,14 +1,14 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { AgentInline, agentTypeLabel } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
@@ -41,18 +41,37 @@ export default function SessionDetailPage() {
 		},
 	});
 
+	// Paginated message fetch via the new `/messages` endpoint.
+	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
+	// whole blob in one shot and Markdown-render every turn,
+	// which froze the page for seconds. Now we load 100 at a time
+	// and the IntersectionObserver in `LoadMoreSentinel` requests
+	// the next page when the user scrolls near the bottom.
+	const PAGE_SIZE = 100;
 	const {
-		data: messages,
+		data: pagesData,
 		isLoading: isContentLoading,
 		isError: isContentError,
-	} = useQuery({
-		queryKey: ["session-content", id],
-		queryFn: async () =>
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+	} = useInfiniteQuery({
+		queryKey: ["session-messages", id],
+		// Each page's `pageParam` is its `offset`; first page = 0.
+		initialPageParam: 0,
+		queryFn: async ({ pageParam }) =>
 			unwrap(
-				await api.GET("/api/sessions/{session_id}/content", {
-					params: { path: { session_id: id } },
+				await api.GET("/api/sessions/{session_id}/messages", {
+					params: {
+						path: { session_id: id },
+						query: { offset: pageParam, limit: PAGE_SIZE },
+					},
 				}),
 			),
+		getNextPageParam: (last) => {
+			const nextOffset = last.offset + last.items.length;
+			return nextOffset >= last.total ? undefined : nextOffset;
+		},
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
 			const status = err instanceof ApiError ? err.status : 0;
@@ -60,6 +79,13 @@ export default function SessionDetailPage() {
 			return failureCount < 2;
 		},
 	});
+
+	// Flatten pages → ordered message list. The backend slices the
+	// underlying JSON array, so concatenating pages preserves the
+	// canonical order regardless of how many fetches it took.
+	const messages = useMemo(() => pagesData?.pages.flatMap((p) => p.items) ?? null, [pagesData]);
+	const totalMessages = pagesData?.pages[0]?.total ?? 0;
+	const loadedCount = messages?.length ?? 0;
 
 	// Hooks must run on every render in the same order — this includes the
 	// breadcrumb title hook. Compute the title (nullable while loading) and
@@ -93,17 +119,7 @@ export default function SessionDetailPage() {
 			<div className="space-y-2">
 				<DetailTitle>{summaryText}</DetailTitle>
 				<DetailMeta>
-					{session.agent_type || session.machine_name ? (
-						<span className="inline-flex items-center gap-1.5">
-							<AgentIcon agent={session.agent_type} className="size-4 rounded-sm" />
-							<span className="font-medium text-foreground">
-								{session.machine_name || agentTypeLabel(session.agent_type)}
-							</span>
-							{session.machine_name && session.agent_type ? (
-								<span>· {agentTypeLabel(session.agent_type)}</span>
-							) : null}
-						</span>
-					) : null}
+					<AgentInline machineName={session.machine_name} type={session.agent_type} />
 					{session.project_path ? (
 						<>
 							<span>·</span>
@@ -149,22 +165,20 @@ export default function SessionDetailPage() {
 								agentType={session.agent_type}
 							/>
 						))}
+						{hasNextPage ? (
+							<LoadMoreSentinel
+								loadedCount={loadedCount}
+								totalCount={totalMessages}
+								isFetching={isFetchingNextPage}
+								onLoad={() => fetchNextPage()}
+							/>
+						) : null}
 					</div>
 				) : (
 					<EmptyContent />
 				)
 			) : (
-				<EmptyState
-					description={
-						<>
-							Content not synced yet. Run{" "}
-							<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-								clawdi push --modules sessions
-							</code>{" "}
-							to upload session content.
-						</>
-					}
-				/>
+				<EmptyState description="Conversation not uploaded yet. Refresh in a moment." />
 			)}
 		</div>
 	);
@@ -173,6 +187,55 @@ export default function SessionDetailPage() {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+/**
+ * Auto-loads the next page when the user scrolls within ~300px of
+ * this sentinel. The IntersectionObserver fires on enter; we
+ * de-bounce with `isFetching` so a fast scroll doesn't queue up
+ * multiple requests for the same page. The button is also clickable
+ * — gives the user manual control AND a fallback if the observer
+ * fails (older browsers, headless render contexts, etc.).
+ */
+function LoadMoreSentinel({
+	loadedCount,
+	totalCount,
+	isFetching,
+	onLoad,
+}: {
+	loadedCount: number;
+	totalCount: number;
+	isFetching: boolean;
+	onLoad: () => void;
+}) {
+	const ref = useRef<HTMLDivElement | null>(null);
+	useEffect(() => {
+		const node = ref.current;
+		if (!node) return;
+		if (typeof IntersectionObserver === "undefined") return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				const entry = entries[0];
+				if (entry?.isIntersecting && !isFetching) onLoad();
+			},
+			// Trigger 300px before the sentinel is fully in view —
+			// keeps the scroll continuous instead of pausing while
+			// the next page fetches.
+			{ rootMargin: "300px" },
+		);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [isFetching, onLoad]);
+
+	return (
+		<div ref={ref} className="flex flex-col items-center gap-2 py-4">
+			<Button variant="ghost" size="sm" onClick={onLoad} disabled={isFetching}>
+				{isFetching
+					? `Loading more… (${loadedCount}/${totalCount})`
+					: `Load more (${loadedCount}/${totalCount})`}
+			</Button>
+		</div>
+	);
+}
 
 function MessageBlock({
 	message,
@@ -190,19 +253,22 @@ function MessageBlock({
 
 	return (
 		<div className="flex gap-3">
-			{/* Avatar column — user gets their Clerk avatar; assistant gets the
-			    agent's brand logo so the conversation reads as "you ↔ Claude/Codex/…" */}
-			<div className="w-7 shrink-0 pt-0.5">
+			{/* Avatar column — user gets their Clerk avatar; assistant gets
+			    the agent's brand logo so the conversation reads as
+			    "you ↔ Claude/Codex/…". Both rendered at AgentIconSize "lg"
+			    (32px) so the user and agent avatars line up vertically and
+			    the column has a single consistent width. */}
+			<div className="w-8 shrink-0 pt-0.5">
 				{isUser ? (
 					userAvatar ? (
-						<Image src={userAvatar} alt="" width={28} height={28} className="rounded-full" />
+						<Image src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
 					) : (
-						<div className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
+						<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
 							{userName[0]}
 						</div>
 					)
 				) : (
-					<AgentIcon agent={agentType} className="size-7 rounded-full" />
+					<AgentIcon agent={agentType} size="lg" shape="circle" />
 				)}
 			</div>
 

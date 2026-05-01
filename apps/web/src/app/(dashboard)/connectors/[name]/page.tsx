@@ -125,8 +125,16 @@ function ConnectorDetail() {
 	const disconnectMutation = useDisconnect();
 	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
 	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
-	const handleDisconnect = (connectionId: string) => {
+	const handleDisconnect = (connectionId: string, accountLabel?: string) => {
 		if (inflightDisconnectsRef.current.has(connectionId)) return;
+		// Disconnecting revokes the OAuth grant — your AI immediately
+		// loses access to this account, and re-connecting requires
+		// the full sign-in flow again.
+		const ok = window.confirm(
+			`Disconnect ${accountLabel || "this account"}?\n\n` +
+				"Your AI will lose access immediately. To get it back you'll need to sign in again.",
+		);
+		if (!ok) return;
 		inflightDisconnectsRef.current.add(connectionId);
 		setDisconnectingIds((s) => new Set(s).add(connectionId));
 		disconnectMutation.mutate(
@@ -347,7 +355,7 @@ function ConnectorDetail() {
 								<Button
 									variant="ghost"
 									size="xs"
-									onClick={() => handleDisconnect(c.id)}
+									onClick={() => handleDisconnect(c.id, c.account_display ?? undefined)}
 									disabled={isDisconnecting(c.id)}
 									className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 								>

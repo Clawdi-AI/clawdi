@@ -123,7 +123,37 @@ Resolve `~` to an absolute path before passing to the CLI.
 
 Note the "X new, Y updated, Z unchanged" total from the push output — you'll cite it next.
 
-## Sync skills (optional)
+## Turn on live sync (recommended)
+
+Without this step, the user has to remember to run `clawdi push` and `clawdi pull` by hand whenever they edit a skill. Most won't. Install the sync daemon so changes flow automatically in both directions — local edits show up on the dashboard within a second, dashboard installs land on the laptop within two.
+
+```bash
+clawdi serve install --agent claude_code
+```
+
+Replace `claude_code` with whichever agent the user has installed (you saw the list during `clawdi setup`). If they have multiple, run install once per agent — each gets its own supervised daemon.
+
+The command writes a launchd unit on macOS or a systemd `--user` service on Linux, then loads it. The daemon stays alive across reboots and respawns on crash. Ongoing logs:
+
+- macOS: `tail -f ~/.clawdi/serve/logs/<agent>.stderr.log`
+- Linux: `journalctl --user -u clawdi-serve-<agent> -f`
+
+What the user gets:
+
+- Edit a SKILL.md locally → uploaded to the cloud within ~1s
+- Install a skill from the dashboard → dropped into the local agent's skills directory within ~2s
+- Two machines edit the same skill at once → the second editor's save shows a "Skill changed elsewhere" toast and the dashboard reloads the latest version; user re-applies their edit on top.
+- Daemon offline status visible in the dashboard's agent detail page
+
+Skip this step only if the user explicitly says they want manual sync. The CLI fallback (`clawdi push` / `clawdi pull`) still works alongside the daemon.
+
+If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
+
+```bash
+clawdi serve --agent claude_code
+```
+
+## Sync skills (optional one-time backup)
 
 If the user has authored custom skills under `~/.claude/skills/`, `~/.codex/skills/`, etc., back them up to the cloud:
 

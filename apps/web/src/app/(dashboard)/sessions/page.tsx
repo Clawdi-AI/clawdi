@@ -43,7 +43,6 @@ export default function SessionsPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Sessions"
-				description="Agent conversations synced from your machines."
 				actions={
 					data ? (
 						<Badge variant="secondary">
@@ -67,7 +66,7 @@ export default function SessionsPage() {
 					emptyMessage={
 						debouncedSearch
 							? "No sessions match your search."
-							: "No sessions yet. Run clawdi push on a connected agent."
+							: "No sessions yet. Once your agent has a conversation, it'll show up here."
 					}
 					getRowHref={(s) => `/sessions/${s.id}`}
 					rowAriaLabel={(s) => `Open session ${s.local_session_id}`}

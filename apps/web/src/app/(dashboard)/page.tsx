@@ -60,6 +60,11 @@ export default function DashboardPage() {
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		// Daemon-status badge classification is time-sensitive — a
+		// daemon that paused while the tab was open would otherwise
+		// stay green indefinitely. Match the agent detail page's
+		// 10s cadence so the live indicator is actually live.
+		refetchInterval: 10_000,
 	});
 
 	const { data: contribution, isLoading: contribLoading } = useQuery({
@@ -89,11 +94,12 @@ export default function DashboardPage() {
 			source: "self-managed" as const,
 			name: env.machine_name,
 			agentType: env.agent_type,
-			runtimeLabel: `${formatRuntime(env.agent_type)} · ${inferMode(env.agent_type)}`,
-			statusLabel: env.last_seen_at ? `Synced ${relativeTime(env.last_seen_at)}` : "Never seen",
+			runtimeLabel: formatRuntime(env.agent_type),
+			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 			lastSeenAt: env.last_seen_at,
 			href: `/agents/${env.id}`,
 			active: isAgentActive(env.last_seen_at),
+			env,
 		}));
 	}, [environments]);
 
@@ -109,7 +115,7 @@ export default function DashboardPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Overview" description="Your agent cloud at a glance." />
+			<PageHeader title="Overview" />
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity. `min-w-0` is load-bearing:
@@ -167,13 +173,7 @@ export default function DashboardPage() {
 							isLoading={sessionsLoading}
 							getRowHref={(s) => `/sessions/${s.id}`}
 							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-							emptyMessage={
-								<>
-									No sessions yet. Run{" "}
-									<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi push</code> on a
-									connected agent.
-								</>
-							}
+							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
 						/>
 					</section>
 				</div>
@@ -212,11 +212,4 @@ function formatRuntime(agentType: string): string {
 		default:
 			return agentType;
 	}
-}
-
-function inferMode(agentType: string): "Daemon" | "CLI" {
-	// OpenClaw and Hermes are long-running daemon processes; the rest
-	// (Claude Code, Codex) are stdio CLI tools invoked per command.
-	if (agentType === "openclaw" || agentType === "hermes") return "Daemon";
-	return "CLI";
 }

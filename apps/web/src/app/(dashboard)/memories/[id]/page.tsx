@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Brain, Trash2 } from "lucide-react";
+import { Brain, Laptop, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -43,11 +44,23 @@ export default function MemoryDetailPage() {
 				}),
 			),
 		onSuccess: () => {
-			toast.success("Memory deleted");
+			toast.success("Memory deleted — your AI won't recall this on any agent.");
 			router.push("/memories");
 		},
 		onError: (e) => toast.error("Failed to delete", { description: errorMessage(e) }),
 	});
+
+	const onDelete = () => {
+		// Memory deletion is account-wide and reflects on every
+		// machine via the daemon's live sync — the AI loses this
+		// fact everywhere at once, and there's no undo from this page.
+		const ok = window.confirm(
+			"Delete this memory?\n\n" +
+				"Your AI will stop recalling it across every agent within seconds. " +
+				"You can always tell it the same thing again later.",
+		);
+		if (ok) deleteMemory.mutate();
+	};
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -69,7 +82,7 @@ export default function MemoryDetailPage() {
 							<Button
 								variant="outline"
 								size="sm"
-								onClick={() => deleteMemory.mutate()}
+								onClick={onDelete}
 								disabled={deleteMemory.isPending}
 								className="shrink-0 text-destructive hover:text-destructive"
 							>
@@ -104,6 +117,24 @@ export default function MemoryDetailPage() {
 									#{t}
 								</Badge>
 							))}
+						</div>
+					) : null}
+
+					{memory.source_session_id ? (
+						<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+							<Laptop className="size-3" />
+							<span>
+								{memory.source_machine_name
+									? `Learned on ${memory.source_machine_name}`
+									: "Learned from a session"}
+								{" · "}
+							</span>
+							<Link
+								href={`/sessions/${memory.source_session_id}`}
+								className="underline hover:text-foreground"
+							>
+								view session
+							</Link>
 						</div>
 					) : null}
 				</>

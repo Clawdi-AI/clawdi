@@ -50,8 +50,12 @@ export default function VaultPage() {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async (slug: string) =>
-			unwrap(await api.DELETE("/api/vault/{slug}", { params: { path: { slug } } })),
+		mutationFn: async (vault: { slug: string; scope_id: string }) =>
+			unwrap(
+				await api.DELETE("/api/vault/{slug}", {
+					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+				}),
+			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
 		onError: (e) => toast.error("Failed to delete vault", { description: errorMessage(e) }),
 	});
@@ -60,7 +64,7 @@ export default function VaultPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Vaults"
-				description="Encrypted secrets your agents can access with clawdi run."
+				description="Secrets your AI can use without copy-pasting them into chats."
 				actions={
 					vaults ? (
 						<Badge variant="secondary">
@@ -115,7 +119,7 @@ export default function VaultPage() {
 						<VaultCard
 							key={v.id}
 							vault={v}
-							onDelete={() => deleteVault.mutate(v.slug)}
+							onDelete={() => deleteVault.mutate({ slug: v.slug, scope_id: v.scope_id })}
 							isDeleting={deleteVault.isPending}
 						/>
 					))}
@@ -124,12 +128,7 @@ export default function VaultPage() {
 				<EmptyState
 					icon={Key}
 					title="No vaults yet"
-					description={
-						<>
-							Create one above, or run{" "}
-							<code className="rounded bg-muted px-1.5 py-0.5 text-xs">clawdi vault set KEY</code>
-						</>
-					}
+					description="Create one above to store API keys for your AI to use."
 				/>
 			)}
 		</div>
@@ -151,17 +150,27 @@ function VaultCard({
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
 
+	// Cache key includes scope_id so a JWT user with the same slug
+	// in two scopes (Personal + env-A) doesn't share entries.
+	// Without the scope_id in the key the second card would render
+	// the first's items.
+	const itemsCacheKey = ["vault-items", vault.slug, vault.scope_id] as const;
+
 	const { data: items } = useQuery({
-		queryKey: ["vault-items", vault.slug],
+		queryKey: itemsCacheKey,
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault/{slug}/items", { params: { path: { slug: vault.slug } } })),
+			unwrap(
+				await api.GET("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+				}),
+			),
 	});
 
 	const upsertItem = useMutation({
 		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
 			unwrap(
 				await api.PUT("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug } },
+					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
 					body: { section, fields: { [key]: value } },
 				}),
 			),
@@ -169,9 +178,7 @@ function VaultCard({
 			setNewKey("");
 			setNewValue("");
 			setAdding(false);
-			queryClient.invalidateQueries({
-				queryKey: ["vault-items", vault.slug],
-			});
+			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
 		},
 		onError: (e) => toast.error("Failed to save key", { description: errorMessage(e) }),
 	});
@@ -180,14 +187,12 @@ function VaultCard({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug } },
+					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
 					body: { section, fields: [name] },
 				}),
 			),
 		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: ["vault-items", vault.slug],
-			});
+			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
 		},
 		onError: (e) => toast.error("Failed to delete key", { description: errorMessage(e) }),
 	});
@@ -224,7 +229,13 @@ function VaultCard({
 						size="icon-sm"
 						onClick={(e) => {
 							e.stopPropagation();
-							deleteItem.mutate({ section: row.original.section, name: row.original.name });
+							// Removing a secret breaks any clawdi:// reference
+							// to it the next time an AI tries to resolve.
+							const ok = window.confirm(
+								`Delete "${row.original.key}"?\n\n` +
+									"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
+							);
+							if (ok) deleteItem.mutate({ section: row.original.section, name: row.original.name });
 						}}
 						disabled={deleteItem.isPending}
 						className="text-muted-foreground hover:text-destructive"
@@ -267,7 +278,19 @@ function VaultCard({
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						onClick={onDelete}
+						onClick={() => {
+							// Vault deletion permanently destroys every key
+							// inside it — anything that resolves a clawdi://
+							// URI from this vault will start failing the next
+							// time an AI tries to use it.
+							const ok = window.confirm(
+								`Delete vault "${vault.slug}"?\n\n` +
+									`This will permanently remove ${allFields.length} ` +
+									`secret${allFields.length === 1 ? "" : "s"} stored inside. ` +
+									"Anything that uses these keys will stop working.",
+							);
+							if (ok) onDelete();
+						}}
 						disabled={isDeleting}
 						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
 						aria-label="Delete vault"
