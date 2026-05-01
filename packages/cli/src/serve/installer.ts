@@ -199,6 +199,61 @@ export function statusLines(opts: InstallOpts): string[] {
 	return [`unsupported platform: ${p}`];
 }
 
+/** Restart an already-installed daemon unit. Throws if no unit is
+ * installed (caller should install first) or if the supervisor
+ * refuses to restart (corrupt unit, permissions, etc). */
+export function restart(opts: InstallOpts): void {
+	const p = platform();
+	if (p === "darwin") {
+		restartLaunchd(opts);
+	} else if (p === "linux") {
+		restartSystemd(opts);
+	} else {
+		throw new Error(`unsupported platform for service restart: ${p}`);
+	}
+}
+
+function restartLaunchd(opts: InstallOpts): void {
+	const path = plistPath(opts.agent);
+	if (!existsSync(path)) {
+		throw new Error(
+			`no daemon unit installed for ${opts.agent} ` +
+				`(run \`clawdi serve install --agent ${opts.agent}\` first)`,
+		);
+	}
+	const label = unitName(opts.agent);
+	const target = `gui/${process.getuid?.() ?? 501}/${label}`;
+	// Two restart shapes depending on launchd's view of the unit:
+	//   - Loaded: hot restart via `kickstart -k` (kills the running
+	//     job and lets launchd respawn it; preserves the unit's
+	//     OnDemand/KeepAlive policies).
+	//   - Unloaded but plist exists (launchd auto-ejected after
+	//     enough crash-loop exits, or user manually `bootout`'d
+	//     without removing the file): cold reload via unload+load.
+	// Pre-fix `restart` always tried kickstart and gave up with a
+	// "kickstart failed" error when the unit was ejected — the user
+	// then had to manually `launchctl load -w <path>` themselves.
+	const isLoaded = tryRunCapture(["launchctl", "list", label]) !== null;
+	if (isLoaded && tryRun(["launchctl", "kickstart", "-k", target])) return;
+	tryRun(["launchctl", "unload", path]);
+	if (!tryRun(["launchctl", "load", "-w", path])) {
+		throw new Error(
+			`launchctl could not (re)load ${label}. ` + `Try manually: launchctl load -w "${path}"`,
+		);
+	}
+}
+
+function restartSystemd(opts: InstallOpts): void {
+	const unit = `clawdi-serve-${opts.agent}.service`;
+	const ok = tryRun(["systemctl", "--user", "restart", unit]);
+	if (!ok) {
+		throw new Error(
+			`systemctl --user restart ${unit} failed. ` +
+				`Check \`systemctl --user status ${unit}\` for details.`,
+		);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // macOS / launchd
 // ---------------------------------------------------------------------------
@@ -306,7 +361,34 @@ function installLaunchd(opts: InstallOpts): { unit: string; instructions: string
 function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
 	const path = plistPath(opts.agent);
 	if (!existsSync(path)) return { removed: false };
-	tryRun(["launchctl", "unload", path]);
+	const label = unitName(opts.agent);
+	// Stop the daemon BEFORE removing the plist. Pre-fix this used a
+	// bare `tryRun(["launchctl", "unload", path])` and ignored the
+	// return code, then `unlinkSync(path)` regardless — so a
+	// failed unload (corrupt plist, label mismatch, race) left the
+	// daemon process running while the unit file was gone, with the
+	// CLI confidently reporting "✓ Removed".
+	//
+	// macOS has two stop forms:
+	//   - `launchctl unload <path>`: legacy, works for plists under
+	//     ~/Library/LaunchAgents.
+	//   - `launchctl bootout gui/<uid>/<label>`: modern (10.10+),
+	//     works regardless of whether the plist file still exists.
+	// Try unload first; fall back to bootout. Only proceed to
+	// unlink the plist after we've confirmed the daemon is stopped
+	// (or was never loaded in the first place).
+	const wasLoaded = tryRunCapture(["launchctl", "list", label]) !== null;
+	if (wasLoaded) {
+		const stopped =
+			tryRun(["launchctl", "unload", path]) ||
+			tryRun(["launchctl", "bootout", `gui/${process.getuid?.() ?? 501}/${label}`]);
+		if (!stopped) {
+			throw new Error(
+				`Failed to stop running daemon ${label}. Try manually: ` +
+					`launchctl bootout gui/$(id -u)/${label} && rm "${path}"`,
+			);
+		}
+	}
 	unlinkSync(path);
 	return { removed: true };
 }
@@ -497,7 +579,14 @@ function tryRun(argv: string[]): boolean {
 
 function tryRunCapture(argv: string[]): string | null {
 	try {
-		return execFileSync(argv[0], argv.slice(1), { encoding: "utf-8" });
+		// Pipe stdout (we want it), discard stdin/stderr — pre-fix
+		// stderr leaked through, e.g. `launchctl list <label>`
+		// failing with "Could not find service ..." printed during
+		// `serve restart`'s liveness probe.
+		return execFileSync(argv[0], argv.slice(1), {
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
 	} catch {
 		return null;
 	}

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
 
@@ -219,86 +220,10 @@ Examples:
 // ─────────────────────────────────────────────────────────────
 // serve (daemon)
 // ─────────────────────────────────────────────────────────────
-const serveCmd = program
-	.command("serve")
-	.description(
-		"Run the long-lived sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE within seconds",
-	)
-	.option("--agent <type>", "Agent to service (claude_code, codex, hermes, openclaw)")
-	.option("--environment-id <id>", "Environment id (overrides ~/.clawdi/environments/*.json)")
-	.addHelpText(
-		"after",
-		`
-Environment:
-  CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
-  CLAWDI_ENVIRONMENT_ID   Same as --environment-id
-  CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
-  CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
-  CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
-
-Examples:
-  $ clawdi serve --agent claude_code
-  $ CLAWDI_SERVE_MODE=container clawdi serve --agent claude_code
-  $ clawdi serve install --agent claude_code   # set up launchd / systemd unit
-  $ clawdi serve status --agent claude_code    # health + supervisor state`,
-	)
-	.action(async (opts) => {
-		// `clawdi serve` with no subcommand runs the daemon in
-		// the foreground. Subcommands (install/uninstall/status)
-		// are handled below — Commander dispatches them before
-		// this action fires.
-		const { serve } = await import("./commands/serve.js");
-		await serve(opts);
-	});
-
-serveCmd
-	.command("install")
-	.description("Install clawdi serve as a per-user OS service (launchd on macOS, systemd on Linux)")
-	.option("--agent <type>", "Agent to service (defaults to the only registered agent)")
-	.option("--all", "Install a daemon unit for every registered agent on this machine")
-	.option(
-		"--environment-id <id>",
-		"Pin a specific environment id into the unit (single-agent only; ignored with --all)",
-	)
-	// `optsWithGlobals` merges parent (`serveCmd`) options with this
-	// subcommand's. Without it, `--agent` defined on both the parent
-	// (`clawdi serve --agent X`) and the child (`clawdi serve install
-	// --agent X`) makes commander hand the child action ONLY the
-	// child-scoped opts, so `clawdi serve install --agent codex` lost
-	// the agent and silently installed the default. Same fix applied
-	// to uninstall + status below.
-	.action(async (_opts, cmd) => {
-		const { serveInstall } = await import("./commands/serve.js");
-		await serveInstall(cmd.optsWithGlobals());
-	});
-
-serveCmd
-	.command("uninstall")
-	.description("Remove the per-user OS service unit and stop the daemon")
-	.option("--agent <type>", "Agent to uninstall (defaults to the only registered agent)")
-	.option("--all", "Uninstall the daemon unit for every registered agent on this machine")
-	.action(async (_opts, cmd) => {
-		const { serveUninstall } = await import("./commands/serve.js");
-		await serveUninstall(cmd.optsWithGlobals());
-	});
-
-serveCmd
-	.command("status")
-	.description("Show daemon health (last heartbeat) and supervisor state")
-	.option("--agent <type>", "Agent to check (defaults to all registered agents)")
-	.action(async (_opts, cmd) => {
-		const { serveStatus } = await import("./commands/serve.js");
-		await serveStatus(cmd.optsWithGlobals());
-	});
-
-serveCmd
-	.command("doctor")
-	.description("Snapshot every registered agent's daemon state — for support handoff")
-	.option("--json", "Emit machine-readable JSON instead of human-readable lines")
-	.action(async (_opts, cmd) => {
-		const { serveDoctor } = await import("./commands/serve.js");
-		await serveDoctor(cmd.optsWithGlobals());
-	});
+// `serve` command tree lives in its own module so the test can
+// import the same registration the CLI uses (instead of mocking a
+// parallel tree that drifts).
+registerServeCommand(program);
 
 // ─────────────────────────────────────────────────────────────
 // vault

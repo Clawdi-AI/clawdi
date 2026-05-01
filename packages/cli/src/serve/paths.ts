@@ -36,3 +36,14 @@ export function getServeStateDir(agentType: string): string {
 	const home = process.env.HOME || homedir();
 	return join(home, ".clawdi", "serve", agentType);
 }
+
+/** Path to a daemon's stderr/stdout log file. The daemon writes
+ * structured JSON-per-line to stderr; stdout stays empty (reserved
+ * for future MCP-style framing). Both files are created by
+ * launchd/systemd at unit-load time per the path baked into the
+ * unit definition (see `installer.ts`). */
+export function getServeLogPath(agentType: string, stream: "stderr" | "stdout"): string {
+	const homeOverride = process.env.CLAWDI_HOME;
+	const root = homeOverride ?? join(process.env.HOME || homedir(), ".clawdi");
+	return join(root, "serve", "logs", `${agentType}.${stream}.log`);
+}

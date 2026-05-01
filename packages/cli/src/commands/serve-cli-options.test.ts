@@ -1,95 +1,59 @@
 import { describe, expect, it } from "bun:test";
 import { Command } from "commander";
+import { registerServeCommand, type ServeHandlers } from "./serve-cli";
 
-describe("serve subcommand option scoping", () => {
-	// Regression test for the v0.5.2 bug: parent `serveCmd` defined
-	// `--agent` (for `clawdi serve --agent X` running the daemon
-	// foreground), and install/uninstall/status redefined the same
-	// `--agent` on each subcommand. Commander's default action binding
-	// hands the subcommand action only the child-scoped opts, so
-	// `clawdi serve install --agent codex` silently dropped the agent
-	// and installed the default.
-	//
-	// The fix uses `cmd.optsWithGlobals()` inside each subcommand's
-	// action to merge parent + child options. These tests pin the
-	// invariant: regardless of which side of the subcommand `--agent`
-	// is passed on, the action sees it.
+/**
+ * Regression tests for the `clawdi serve` command tree wiring.
+ *
+ * `index.ts` and this test both call `registerServeCommand` —
+ * earlier rounds maintained a parallel mock tree, which silently
+ * drifted from production (codex flagged in PR #73 review). The
+ * registration accepts an optional `handlers` argument so we can
+ * intercept dispatch without `mock.module` (which bleeds across
+ * test files in bun:test).
+ */
 
-	function buildServeTree(captured: { opts: Record<string, unknown> | null }): Command {
-		const program = new Command();
-		const serve = program
-			.command("serve")
-			.option("--agent <type>", "agent")
-			.option("--environment-id <id>", "env id");
+function makeHandlers(captured: { last: Record<string, unknown> | null }): ServeHandlers {
+	const recordOpts = async (opts: Record<string, unknown>) => {
+		captured.last = opts;
+	};
+	return {
+		serve: recordOpts,
+		serveInstall: recordOpts,
+		serveUninstall: recordOpts,
+		serveRestart: recordOpts,
+		serveStatus: recordOpts,
+		serveLogs: recordOpts,
+		serveDoctor: recordOpts,
+	};
+}
 
-		serve
-			.command("install")
-			.option("--agent <type>", "agent")
-			.option("--all", "install for every agent")
-			.option("--environment-id <id>", "env id")
-			.action((_opts, cmd) => {
-				captured.opts = cmd.optsWithGlobals();
-			});
+function buildTree(): { program: Command; captured: { last: Record<string, unknown> | null } } {
+	const captured = { last: null as Record<string, unknown> | null };
+	const program = new Command();
+	registerServeCommand(program, makeHandlers(captured));
+	return { program, captured };
+}
 
-		serve
-			.command("uninstall")
-			.option("--agent <type>", "agent")
-			.option("--all", "uninstall every agent")
-			.action((_opts, cmd) => {
-				captured.opts = cmd.optsWithGlobals();
-			});
-
-		serve
-			.command("status")
-			.option("--agent <type>", "agent")
-			.action((_opts, cmd) => {
-				captured.opts = cmd.optsWithGlobals();
-			});
-
-		return program;
-	}
-
-	it("install --agent codex (child-side) reaches the action", () => {
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse(["node", "clawdi", "serve", "install", "--agent", "codex"]);
-		expect(cap.opts?.agent).toBe("codex");
+describe("registerServeCommand", () => {
+	it("install --agent codex (child-side) reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "install", "--agent", "codex"]);
+		expect(captured.last?.agent).toBe("codex");
 	});
 
-	it("install with --agent on parent side also reaches the action", () => {
+	it("install with --agent on parent side also reaches the action", async () => {
 		// `clawdi serve --agent codex install` — the user passed
 		// --agent before the subcommand. Without optsWithGlobals,
 		// the action received `agent: undefined`.
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse(["node", "clawdi", "serve", "--agent", "codex", "install"]);
-		expect(cap.opts?.agent).toBe("codex");
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "--agent", "codex", "install"]);
+		expect(captured.last?.agent).toBe("codex");
 	});
 
-	it("uninstall --all is visible to action", () => {
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse(["node", "clawdi", "serve", "uninstall", "--all"]);
-		expect(cap.opts?.all).toBe(true);
-		expect(cap.opts?.agent).toBeUndefined();
-	});
-
-	it("status --agent claude_code (child-side) reaches the action", () => {
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse(["node", "clawdi", "serve", "status", "--agent", "claude_code"]);
-		expect(cap.opts?.agent).toBe("claude_code");
-	});
-
-	it("status without --agent gives undefined (caller defaults to all)", () => {
-		// `serveStatus` branches on `opts.agent` being falsy to list
-		// every registered daemon. This test pins that the parser
-		// hands the action `agent: undefined` (not e.g. an empty
-		// string), so the falsy check works.
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse(["node", "clawdi", "serve", "status"]);
-		expect(cap.opts?.agent).toBeUndefined();
-	});
-
-	it("install --environment-id flows through too", () => {
-		const cap = { opts: null as Record<string, unknown> | null };
-		buildServeTree(cap).parse([
+	it("install --agent codex --environment-id <uuid> flows through", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
 			"node",
 			"clawdi",
 			"serve",
@@ -97,9 +61,64 @@ describe("serve subcommand option scoping", () => {
 			"--agent",
 			"codex",
 			"--environment-id",
-			"env_123",
+			"00000000-0000-0000-0000-000000000001",
 		]);
-		expect(cap.opts?.agent).toBe("codex");
-		expect(cap.opts?.environmentId).toBe("env_123");
+		expect(captured.last?.agent).toBe("codex");
+		expect(captured.last?.environmentId).toBe("00000000-0000-0000-0000-000000000001");
+	});
+
+	it("uninstall --all is visible to action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "uninstall", "--all"]);
+		expect(captured.last?.all).toBe(true);
+		expect(captured.last?.agent).toBeUndefined();
+	});
+
+	it("status --agent claude_code (child-side) reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "status", "--agent", "claude_code"]);
+		expect(captured.last?.agent).toBe("claude_code");
+	});
+
+	it("status without --agent gives undefined (caller defaults to all)", async () => {
+		// `serveStatus` branches on `opts.agent` being falsy to list
+		// every registered daemon. This test pins that the parser
+		// hands the action `agent: undefined` (not e.g. an empty
+		// string), so the falsy check works.
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "status"]);
+		expect(captured.last?.agent).toBeUndefined();
+	});
+
+	it("restart --all reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "restart", "--all"]);
+		expect(captured.last?.all).toBe(true);
+	});
+
+	it("logs --follow flows through", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "logs", "--follow", "--agent", "codex"]);
+		expect(captured.last?.follow).toBe(true);
+		expect(captured.last?.agent).toBe("codex");
+	});
+
+	it("doctor --json reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--json"]);
+		expect(captured.last?.json).toBe(true);
+	});
+
+	it("doctor passes through --agent (validated/rejected by handler, not parser)", async () => {
+		// Commander accepts `--agent X` on doctor because parent
+		// defines it, even though doctor itself doesn't. The handler
+		// is the one that says "doctor doesn't accept --agent" via
+		// `rejectUnsupportedOpts`. This test pins the parser-level
+		// invariant: agent IS visible to the action so the handler
+		// can produce the right error message.
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--agent", "codex"]);
+		expect(captured.last?.agent).toBe("codex");
+		expect(captured.last?.json).toBeUndefined();
 	});
 });

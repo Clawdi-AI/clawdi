@@ -30,16 +30,48 @@ import { startAutoRestart } from "../serve/auto-restart";
 import {
 	install as installService,
 	readHealth,
+	restart as restartService,
 	statusLines as serviceStatusLines,
 	uninstall as uninstallService,
 } from "../serve/installer";
 import { log, toErrorMessage } from "../serve/log";
-import { getServeStateDir } from "../serve/paths";
+import { getServeLogPath, getServeStateDir } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
 
 interface ServeOpts {
 	agent?: string;
 	environmentId?: string;
+}
+
+/**
+ * Reject parent (`serveCmd`) global options that bled into a
+ * subcommand which doesn't use them. Pre-fix `clawdi serve doctor
+ * --agent codex` and `clawdi serve status --environment-id <id>`
+ * silently accepted those flags (because parent defines them for the
+ * foreground daemon's use) but ignored them — leaving users with no
+ * signal that their command had no effect. Codex flagged this as
+ * P2; we fail-loud now.
+ */
+export function rejectUnsupportedOpts(
+	cmdName: string,
+	opts: Record<string, unknown>,
+	allowed: ReadonlySet<string>,
+): void {
+	const offenders: string[] = [];
+	for (const key of Object.keys(opts)) {
+		if (!allowed.has(key)) offenders.push(key);
+	}
+	if (offenders.length > 0) {
+		const flags = offenders.map(camelToFlag).join(", ");
+		console.error(
+			`\`serve ${cmdName}\` does not accept ${flags}. ` + `See \`clawdi serve ${cmdName} --help\`.`,
+		);
+		process.exit(1);
+	}
+}
+
+function camelToFlag(name: string): string {
+	return `--${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
 }
 
 export async function serve(opts: ServeOpts): Promise<void> {
@@ -148,6 +180,17 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		// Failures on a single agent shouldn't abort the rest — surface
 		// per-agent results and exit non-zero only if every install
 		// failed.
+		if (opts.agent) {
+			// Mutex: --all targets every registered agent; --agent
+			// targets one. Both at once is contradictory and pre-fix
+			// --all silently won, e.g. `serve uninstall --all --agent
+			// codex` looked like "uninstall codex with extras" but
+			// actually nuked everything.
+			console.error(
+				"--all and --agent are mutually exclusive. --all targets every registered agent; --agent targets one.",
+			);
+			process.exit(1);
+		}
 		const registered = listRegisteredAgentTypes();
 		if (registered.length === 0) {
 			console.error("No agents registered. Run `clawdi setup` first.");
@@ -171,6 +214,9 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		let failed = 0;
 		for (const agentType of registered) {
 			try {
+				if (getEnvIdByAgent(agentType) === null) {
+					throw new Error(`no environment configured (run \`clawdi setup --agent ${agentType}\`)`);
+				}
 				const result = installService({ agent: agentType });
 				console.log(`✓ ${agentType}: ${result.unit}`);
 				installed += 1;
@@ -192,6 +238,21 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		console.error("No agent registered. Run `clawdi setup` first.");
 		process.exit(1);
 	}
+	// Pre-flight: when --environment-id isn't pinned at install time,
+	// the unit defers env-id resolution to daemon boot, which reads
+	// `~/.clawdi/environments/<agent>.json`. Without that file the
+	// unit boots into a no-op crash loop. Codex flagged: pre-fix the
+	// CLI happily wrote the unit, the user only saw the failure when
+	// they tailed the daemon's stderr 30 seconds later. Catch it here
+	// with an actionable error.
+	if (!opts.environmentId && getEnvIdByAgent(agentType) === null) {
+		console.error(
+			`No environment configured for ${agentType} ` +
+				`(missing ~/.clawdi/environments/${agentType}.json). ` +
+				`Run \`clawdi setup --agent ${agentType}\` first, or pass --environment-id <uuid>.`,
+		);
+		process.exit(1);
+	}
 	try {
 		const result = installService({
 			agent: agentType,
@@ -205,13 +266,24 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	}
 }
 
+const UNINSTALL_ALLOWED = new Set(["agent", "all"]);
+const STATUS_ALLOWED = new Set(["agent"]);
+const DOCTOR_ALLOWED = new Set(["json"]);
+
 export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
+	rejectUnsupportedOpts("uninstall", opts as Record<string, unknown>, UNINSTALL_ALLOWED);
 	if (opts.all) {
 		// Symmetric with `install --all` — one invocation, every
 		// daemon gone. Pre-fix users had to loop in the shell
 		// (`for a in claude_code codex; do clawdi serve uninstall --agent $a`),
 		// which is exactly the friction `install --all` exists to
 		// remove.
+		if (opts.agent) {
+			console.error(
+				"--all and --agent are mutually exclusive. --all uninstalls every daemon; --agent uninstalls one.",
+			);
+			process.exit(1);
+		}
 		const registered = listRegisteredAgentTypes();
 		if (registered.length === 0) {
 			console.log("No agents registered.");
@@ -251,7 +323,50 @@ export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 	}
 }
 
+const RESTART_ALLOWED = new Set(["agent", "all"]);
+
+export async function serveRestart(opts: ServeInstallOpts): Promise<void> {
+	rejectUnsupportedOpts("restart", opts as Record<string, unknown>, RESTART_ALLOWED);
+	if (opts.all) {
+		if (opts.agent) {
+			console.error(
+				"--all and --agent are mutually exclusive. --all restarts every daemon; --agent restarts one.",
+			);
+			process.exit(1);
+		}
+		const registered = listRegisteredAgentTypes();
+		if (registered.length === 0) {
+			console.log("No agents registered.");
+			return;
+		}
+		let restarted = 0;
+		let failed = 0;
+		for (const agentType of registered) {
+			try {
+				restartService({ agent: agentType });
+				console.log(`✓ ${agentType}: restarted`);
+				restarted += 1;
+			} catch (e) {
+				console.error(`✗ ${agentType}: ${toErrorMessage(e)}`);
+				failed += 1;
+			}
+		}
+		console.log(`\n${restarted} restarted, ${failed} failed.`);
+		if (failed > 0) process.exit(1);
+		return;
+	}
+	const { agentType } = pickAgent(opts.agent);
+	try {
+		restartService({ agent: agentType });
+		console.log(`✓ Restarted daemon for ${agentType}.`);
+	} catch (e) {
+		console.error(`Restart failed: ${toErrorMessage(e)}`);
+		process.exit(1);
+	}
+}
+
 export async function serveStatus(opts: ServeInstallOpts): Promise<void> {
+	rejectUnsupportedOpts("status", opts as Record<string, unknown>, STATUS_ALLOWED);
 	// Without --agent, list every registered daemon — `serve install
 	// --all` is the recommended path on multi-agent machines and
 	// status should mirror that. Falling through `pickAgent` here used
@@ -290,11 +405,39 @@ function printAgentStatus(agentType: AgentType): void {
 	}
 }
 
+interface ServeLogsOpts {
+	agent?: string;
+	follow?: boolean;
+}
+
+const LOGS_ALLOWED = new Set(["agent", "follow"]);
+
+export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
+	rejectUnsupportedOpts("logs", opts as Record<string, unknown>, LOGS_ALLOWED);
+	const { agentType } = pickAgent(opts.agent);
+	const path = getServeLogPath(agentType, "stderr");
+	if (!existsSync(path)) {
+		console.error(
+			`No log file at ${path} ` +
+				`(daemon for ${agentType} hasn't started yet — run \`clawdi serve install --agent ${agentType}\`).`,
+		);
+		process.exit(1);
+	}
+	// Delegate to `tail` so we don't reimplement -f buffering, log
+	// rotation handling, etc. The daemon writes JSON-per-line to
+	// stderr — `tail` is line-aware, so partial lines won't print.
+	const { spawn } = await import("node:child_process");
+	const args = opts.follow ? ["-n", "200", "-F", path] : ["-n", "200", path];
+	const proc = spawn("tail", args, { stdio: "inherit" });
+	proc.on("exit", (code) => process.exit(code ?? 0));
+}
+
 interface ServeDoctorOpts {
 	json?: boolean;
 }
 
 export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
+	rejectUnsupportedOpts("doctor", opts as Record<string, unknown>, DOCTOR_ALLOWED);
 	// `clawdi serve doctor` — single-call snapshot of every
 	// daemon's runtime state, designed for support handoff and
 	// for the dashboard's "What's wrong with my sync?" panel
@@ -383,11 +526,22 @@ function pickAgent(explicit: string | undefined): {
 		return { agentType: "claude_code", adapter: null };
 	}
 	if (registered.length > 1) {
-		log.warn("serve.multiple_agents_detected", {
-			agents: registered,
-			picked: registered[0],
-			hint: "Pass --agent <type> to select explicitly. v1 daemon services one agent per process.",
-		});
+		// Fail-fast on multi-agent without an explicit pick. Pre-fix
+		// we picked `registered[0]` and emitted a warn-level event,
+		// which let `serve install --agent` (silently using default)
+		// and `serve uninstall` (silently nuking the wrong daemon)
+		// hit production. Codex flagged: warn-and-pick is one of
+		// those things that "works on a single-agent laptop"
+		// (correct by accident) and bites multi-agent users in
+		// non-obvious ways. Single-agent setups are unaffected
+		// — registered.length === 1 takes the next line and
+		// auto-picks.
+		log.error("serve.ambiguous_agent", { agents: registered });
+		console.error(
+			`Multiple agents registered (${registered.join(", ")}). ` +
+				`Pass --agent <type> to target one, or --all where supported.`,
+		);
+		process.exit(1);
 	}
 	const picked = registered[0];
 	return { agentType: picked, adapter: adapterForType(picked) };
