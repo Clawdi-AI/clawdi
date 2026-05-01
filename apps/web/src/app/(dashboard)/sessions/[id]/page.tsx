@@ -296,15 +296,44 @@ export default function SessionDetailPage() {
 							// convention — long sessions span multiple days
 							// and the per-message HH:MM stamp alone hides
 							// "is this today's response or yesterday's?".
+							// Slack / Discord / iMessage convention: collapse
+							// consecutive same-author messages within a short
+							// window into a single "thread" — the first
+							// message renders the author + timestamp header,
+							// subsequent ones in the group render as
+							// continuation (no avatar, no header). Cuts the
+							// visual noise from agent turns that fire 6
+							// tool-uses in the same minute.
+							const GROUP_GAP_MS = 5 * 60_000;
 							const out: React.ReactNode[] = [];
 							let prevDayKey: string | null = null;
 							for (let i = 0; i < messages.length; i++) {
 								const msg = messages[i];
-								const key = dayKey(msg.timestamp);
-								if (key && key !== prevDayKey) {
-									out.push(<DateDivider key={`d-${key}`} timestamp={msg.timestamp ?? ""} />);
-									prevDayKey = key;
+								const dKey = dayKey(msg.timestamp);
+								if (dKey && dKey !== prevDayKey) {
+									out.push(<DateDivider key={`d-${dKey}`} timestamp={msg.timestamp ?? ""} />);
+									prevDayKey = dKey;
 								}
+								// `prev` is the message visually adjacent in
+								// the rendered list. In `desc` (newest first)
+								// the array is already reversed for display,
+								// so the prev element is messages[i - 1] in
+								// either direction.
+								const prev = i > 0 ? messages[i - 1] : null;
+								const sameAuthor = prev?.role === msg.role;
+								const closeInTime =
+									prev?.timestamp && msg.timestamp
+										? Math.abs(
+												new Date(msg.timestamp).getTime() - new Date(prev.timestamp).getTime(),
+											) < GROUP_GAP_MS
+										: false;
+								// Date divider also resets the group — a new
+								// day always starts fresh.
+								const dividerJustEmitted =
+									dKey != null && prevDayKey === dKey && i > 0
+										? dayKey(prev?.timestamp) !== dKey
+										: false;
+								const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
 								out.push(
 									<MessageBlock
 										key={i}
@@ -312,6 +341,7 @@ export default function SessionDetailPage() {
 										userAvatar={user?.imageUrl}
 										userName={user?.fullName || "You"}
 										agentType={session.agent_type}
+										isGroupStart={isGroupStart}
 									/>,
 								);
 							}
@@ -511,54 +541,82 @@ function MessageBlock({
 	userAvatar,
 	userName,
 	agentType,
+	isGroupStart,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
 	userName: string;
 	agentType: string | null | undefined;
+	/**
+	 * True when this message is the first in a "thread" (different
+	 * author from previous, or > 5min gap). Slack / Discord /
+	 * iMessage convention: only the group-start row renders avatar +
+	 * author + timestamp; continuation rows render just the body
+	 * (with a tiny absolute timestamp on hover so users can still
+	 * see when each message landed). Cuts the visual repetition
+	 * when one agent fires 6 tool-uses in the same minute.
+	 */
+	isGroupStart: boolean;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
 
 	return (
-		<div className="flex gap-3">
-			{/* Avatar column — user gets their Clerk avatar; assistant gets
-			    the agent's brand logo so the conversation reads as
-			    "you ↔ Claude/Codex/…". Both rendered at AgentIconSize "lg"
-			    (32px) so the user and agent avatars line up vertically and
-			    the column has a single consistent width. */}
+		<div className={cn("flex gap-3", isGroupStart ? "mt-4" : "-mt-3")}>
+			{/* Avatar column. On continuation rows, render an empty
+			    spacer of the same width so message bodies stay
+			    aligned with the group's leading avatar. Hovering
+			    reveals the per-message HH:MM in this column for
+			    continuation rows — keeps precise timing reachable
+			    without bloating the visual frame. */}
 			<div className="w-8 shrink-0 pt-0.5">
-				{isUser ? (
-					userAvatar ? (
-						<Image src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
+				{isGroupStart ? (
+					isUser ? (
+						userAvatar ? (
+							<Image src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
+						) : (
+							<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
+								{userName[0]}
+							</div>
+						)
 					) : (
-						<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
-							{userName[0]}
-						</div>
+						<AgentIcon agent={agentType} size="lg" shape="circle" />
 					)
-				) : (
-					<AgentIcon agent={agentType} size="lg" shape="circle" />
-				)}
+				) : message.timestamp ? (
+					// Continuation: show the time as a faint
+					// hover-only indicator in the avatar column.
+					// Right-aligned to sit close to the message body.
+					<div
+						className="hidden h-8 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/50 group-hover:flex"
+						title={formatAbsoluteTooltip(message.timestamp)}
+					>
+						{new Date(message.timestamp).toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
+					</div>
+				) : null}
 			</div>
 
 			{/* Content */}
-			<div className="min-w-0 flex-1">
-				{/* Author line */}
-				<div className="mb-1 flex items-center gap-2">
-					<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
-					{isUser ? null : <ModelBadge modelId={message.model} />}
-					{message.timestamp ? (
-						<span
-							className="text-xs text-muted-foreground"
-							title={formatAbsoluteTooltip(message.timestamp)}
-						>
-							{new Date(message.timestamp).toLocaleTimeString([], {
-								hour: "2-digit",
-								minute: "2-digit",
-							})}
-						</span>
-					) : null}
-				</div>
+			<div className="group min-w-0 flex-1">
+				{isGroupStart ? (
+					<div className="mb-1 flex items-center gap-2">
+						<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
+						{isUser ? null : <ModelBadge modelId={message.model} />}
+						{message.timestamp ? (
+							<span
+								className="text-xs text-muted-foreground"
+								title={formatAbsoluteTooltip(message.timestamp)}
+							>
+								{new Date(message.timestamp).toLocaleTimeString([], {
+									hour: "2-digit",
+									minute: "2-digit",
+								})}
+							</span>
+						) : null}
+					</div>
+				) : null}
 
 				{/* Message body */}
 				<div className="text-sm">

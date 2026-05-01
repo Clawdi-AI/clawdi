@@ -142,18 +142,36 @@ export function DataTable<TData, TValue>({
 							))
 						) : table.getRowModel().rows.length ? (
 							(() => {
-								// Track previous row's group key so we know when to
-								// emit a separator. Only fires when getRowGroup is
-								// supplied; ungrouped tables behave exactly as before.
+								// Track both prev key AND prev label. Pre-fix
+								// the dedup compared only `key`; if a caller's
+								// `getRowGroup` ever produced two distinct
+								// keys with the same label (e.g. due to data
+								// quirks or transient state during a refetch
+								// with `keepPreviousData`), 3 consecutive
+								// identical-looking headers would render. The
+								// label-level dedup is a belt-and-suspenders
+								// guard: even if keys disagree, identical
+								// labels collapse.
 								let prevGroupKey: string | null = null;
+								let prevGroupLabel: string | null = null;
 								const out: React.ReactNode[] = [];
+								let groupSeq = 0;
 								for (const row of table.getRowModel().rows) {
 									if (getRowGroup) {
 										const g = getRowGroup(row.original);
-										if (g.key !== prevGroupKey) {
+										if (g.key !== prevGroupKey && g.label !== prevGroupLabel) {
+											groupSeq += 1;
 											out.push(
 												<TableRow
-													key={`group-${g.key}`}
+													// Append a sequence number so
+													// React's key uniqueness holds
+													// even when distinct timestamp
+													// inputs map to the same bucket
+													// key (every previous-30d row
+													// produces the same `g.key`,
+													// but only one header is
+													// emitted per run).
+													key={`group-${g.key}-${groupSeq}`}
 													className="hover:bg-transparent"
 													aria-hidden
 												>
@@ -166,6 +184,7 @@ export function DataTable<TData, TValue>({
 												</TableRow>,
 											);
 											prevGroupKey = g.key;
+											prevGroupLabel = g.label;
 										}
 									}
 									const href = getRowHref?.(row.original);
