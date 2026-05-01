@@ -726,9 +726,7 @@ async def batch_create_sessions(
             "project_path": s.project_path,
             "started_at": s.started_at,
             "ended_at": s.ended_at,
-            "last_activity_at": _clamp_last_activity(
-                s.last_activity_at, s.started_at, s.ended_at
-            ),
+            "last_activity_at": _clamp_last_activity(s.last_activity_at, s.started_at, s.ended_at),
             "duration_seconds": s.duration_seconds,
             "message_count": s.message_count,
             "input_tokens": s.input_tokens,
