@@ -1962,14 +1962,33 @@ async function rescanLocalSkillsForChanges(
  * ancestor has SKILL.md (e.g. a brand-new category dir before
  * its first nested skill is committed).
  */
-function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): string | null {
+export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): string | null {
 	let cur = pathFromRoot;
 	// Bound the walk: 6 levels is more than the regex permits
 	// (4 components) so we'll always terminate even if the input
 	// is pathological.
 	for (let i = 0; i < 6; i++) {
 		if (!cur || cur === "." || cur === "/") return null;
-		if (existsSync(join(rootDir, cur, "SKILL.md"))) return cur;
+		if (existsSync(join(rootDir, cur, "SKILL.md"))) {
+			// Skip candidates with a dotfile-prefixed path
+			// component. Server's SKILL_KEY_PATTERN requires every
+			// component to start with `[A-Za-z0-9]`; a nested
+			// SKILL.md under a dotfile dir (e.g. gstack ships its
+			// own bundled sub-skills for other agents at
+			// `~/.codex/skills/gstack/.agents/skills/<sub>/SKILL.md`)
+			// would otherwise resolve to `gstack/.agents/skills/<sub>`
+			// and 422-spam the server. Walk up to the next
+			// candidate — typically the outermost real skill
+			// (`gstack`) which DOES have its own SKILL.md.
+			//
+			// This intentionally treats the dotfile match as
+			// "not a skill on this adapter" rather than returning
+			// null immediately, because the underlying file edit
+			// IS something we want to push — just under the
+			// correct outer skill_key, not the inner dotfile path.
+			const hasDotfileSegment = cur.split("/").some((seg) => seg.startsWith("."));
+			if (!hasDotfileSegment) return cur;
+		}
 		const parent = dirname(cur);
 		if (parent === cur) return null;
 		cur = parent;
