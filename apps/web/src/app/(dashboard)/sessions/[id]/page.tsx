@@ -138,11 +138,16 @@ export default function SessionDetailPage() {
 					</span>
 					{/* Surface "last activity" only when meaningfully
 					    different from started_at (long-running sessions).
-					    One-shot sessions where they're effectively equal
-					    would just duplicate noise. */}
+					    Threshold of 5 minutes — short sessions render
+					    near-identical relative-time strings ("3h ago" /
+					    "3h ago") which adds noise without information.
+					    Above 5 minutes the relative bucket usually
+					    diverges (e.g. "3h ago" vs "2h ago" or "yesterday"
+					    vs "today") and the second stamp earns its space. */}
 					{Math.abs(
 						new Date(session.last_activity_at).getTime() - new Date(session.started_at).getTime(),
-					) > 60_000 ? (
+					) >
+					5 * 60_000 ? (
 						<>
 							<span>·</span>
 							<span title={formatAbsoluteTooltip(session.last_activity_at)}>
@@ -264,36 +269,80 @@ function DateDivider({ timestamp }: { timestamp: string }) {
 /**
  * Floating "jump to bottom" button. Mirrors Slack / Discord / Linear
  * comment threads — when you've scrolled up in a long conversation,
- * the latest message becomes hard to find. Only renders when the
- * user has scrolled more than ~600px from the bottom of the
- * document.
+ * the latest message becomes hard to find.
+ *
+ * Scroll source: the dashboard's actual scroll container is
+ * `SidebarInset` (with `overflow-y-auto`), NOT `window`. Listening
+ * on `window` made the button invisible and `window.scrollTo`
+ * scrolled the wrong target. We walk up the DOM looking for the
+ * nearest scrollable ancestor at mount time, then bind there.
  */
 function JumpToBottomButton() {
 	const [visible, setVisible] = useState(false);
+	const scrollerRef = useRef<HTMLElement | Window | null>(null);
+	const anchorRef = useRef<HTMLDivElement | null>(null);
+
 	useEffect(() => {
+		// Find nearest scrollable ancestor. `overflow-y: auto` on
+		// SidebarInset means it's the canonical scroller; falling
+		// back to `window` if nothing matches keeps single-page
+		// layouts (no sidebar) working.
+		const findScrollableAncestor = (node: Element | null): HTMLElement | Window => {
+			let cur = node?.parentElement ?? null;
+			while (cur) {
+				const overflow = getComputedStyle(cur).overflowY;
+				if (overflow === "auto" || overflow === "scroll") return cur;
+				cur = cur.parentElement;
+			}
+			return window;
+		};
+		const scroller = findScrollableAncestor(anchorRef.current);
+		scrollerRef.current = scroller;
+
 		const onScroll = () => {
-			const doc = document.documentElement;
-			const scrollBottom = doc.scrollHeight - (window.scrollY + window.innerHeight);
+			let scrollBottom: number;
+			if (scroller instanceof Window) {
+				const doc = document.documentElement;
+				scrollBottom = doc.scrollHeight - (window.scrollY + window.innerHeight);
+			} else {
+				scrollBottom = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
+			}
 			setVisible(scrollBottom > 600);
 		};
 		onScroll();
-		window.addEventListener("scroll", onScroll, { passive: true });
-		return () => window.removeEventListener("scroll", onScroll);
+		scroller.addEventListener("scroll", onScroll, { passive: true });
+		return () => scroller.removeEventListener("scroll", onScroll);
 	}, []);
-	if (!visible) return null;
+
+	const onJump = () => {
+		const scroller = scrollerRef.current;
+		if (!scroller) return;
+		if (scroller instanceof Window) {
+			window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+		} else {
+			scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+		}
+	};
+
 	return (
-		<Button
-			type="button"
-			variant="secondary"
-			size="sm"
-			className="fixed bottom-6 right-6 z-20 shadow-md"
-			onClick={() =>
-				window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })
-			}
-		>
-			<ArrowDown className="size-4" />
-			Jump to latest
-		</Button>
+		<>
+			{/* Anchor used at mount to locate the scrollable ancestor.
+			    Hidden but stays in the DOM so the ref keeps pointing
+			    at a valid node for the lifetime of the component. */}
+			<div ref={anchorRef} aria-hidden className="hidden" />
+			{visible ? (
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					className="fixed bottom-6 right-6 z-20 shadow-md"
+					onClick={onJump}
+				>
+					<ArrowDown className="size-4" />
+					Jump to latest
+				</Button>
+			) : null}
+		</>
 	);
 }
 
