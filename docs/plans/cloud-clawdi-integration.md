@@ -827,8 +827,9 @@ agent runtime ──▶ MCP proxy URL ──▶ cloud-api /api/mcp/proxy ──�
                                                   routes by tool name
 ```
 
-`mcp_token` is provisioned in the pod's environment by the redeem
-flow alongside the `api_key`.
+`mcp_token` is provisioned in the pod's environment alongside
+`CLAWDI_AUTH_TOKEN` by clawdi-api when it writes the k8s Secret
+during deploy. (See "Hosted deploy token flow" appendix.)
 
 ### Composio cross-origin proxy (hosted only)
 
@@ -1462,8 +1463,9 @@ ambiguous window.
 **Solution: `migration_epoch` on `agent_environments`.** Every
 migration increments the epoch. Lease claims must:
 
-1. Carry an `epoch` value (from the deploy registration token or
-   from the connect token)
+1. Carry an `epoch` value — for hosted, read at boot from cloud-api
+   `/api/agents/me` using the injected api_key; for self-managed,
+   carried in the connect token claims
 2. Match the env's current `migration_epoch` to be accepted
 3. Be rejected with explicit `migration_in_progress` if epoch is
    stale
@@ -1485,8 +1487,11 @@ migration completed) get a deterministic rejection and exit
 cleanly, never racing the new owner.
 
 The epoch travels in:
-- Hosted registration tokens (Phase 4): `epoch` claim added to
-  the JWT
+- Hosted deploy keys (Phase 4): the `migration_epoch` of the
+  bound `agent_environments` row is the source of truth; daemons
+  read it from cloud-api at boot via `/api/agents/me` (uses the
+  injected api_key) and re-fetch on heartbeat. Stale daemons get
+  a `409 epoch_mismatch` and exit.
 - Self-managed connect tokens (Phase 2): `epoch` field added
 - Tunnel session tokens (Phase 2): `epoch` field added; rejected
   on handshake if stale
@@ -1515,9 +1520,9 @@ The epoch travels in:
 2. cloud-api mints a connect token bound to the new epoch + shows
    install instructions
 3. User runs `clawdi auth login --token ...` locally → connect
-   token redemption issues a fresh **self-managed-mode api_key**
-   (scopes include `skills:write` and `tunnel:proxy`; old hosted
-   api_key is marked `revoked_at = now()` in the same transaction)
+   token redemption issues a fresh api_key (full account access,
+   matching the deploy-key default; old hosted api_key is marked
+   `revoked_at = now()` in the same transaction)
 4. User runs `clawdi serve` → CLI uses the NEW api_key to mint a
    NEW tunnel session token bound to the new epoch
 5. New CLI's tunnel claim succeeds (matches current
@@ -1530,12 +1535,14 @@ The epoch travels in:
 **Self-managed → Hosted:**
 1. Dashboard intent submitted; cloud-api increments
    `agent_environments.migration_epoch`
-2. cloud-api requests clawdi-api provision pod with the env_id
-   reservation, passing the new epoch
-3. clawdi-api's pod entrypoint redeems registration token →
-   gets a fresh **hosted-mode api_key** (no `skills:write`,
-   includes `tunnel:proxy`); cloud-api revokes the user's old
-   self-managed api_key in the same transaction
+2. Dashboard mints a fresh deploy api_key via
+   `POST /api/auth/keys` with `environment_id = <existing env_id>`
+   (full account access, same default as the laptop user's key),
+   then POSTs `clawdi.ai/api/deployments` with the env_id +
+   raw_key + new epoch
+3. clawdi-api provisions the pod with `CLAWDI_AUTH_TOKEN` set to
+   the raw_key. Cloud-api revokes the user's old self-managed
+   api_key in the same transaction the new key landed.
 4. New pod's CLI mints a tunnel session token bound to the new
    epoch and claims the lease
 5. User's old daemon's tunnel claim fails on next heartbeat with
@@ -2106,25 +2113,28 @@ In clawdi clawdi.ai (private):
 In this repo:
 - `apps/web/src/hosted/deploy-agent-dialog.tsx` orchestrates: (1)
   `POST /api/environments` to register the new env, (2) `POST
-  /api/auth/keys` with `environment_id` set + the deploy scope
-  set to mint a deploy-bound api_key, (3) `POST
+  /api/auth/keys` with `environment_id` set (no `scopes` body
+  field — see scope policy below), (3) `POST
   clawdi.ai/api/deployments` with the raw api_key in the body.
-  Browser memory is the only place outside cloud-api's DB that
-  ever sees the raw key.
+  On any failure between (2) and (3) the dialog calls
+  `DELETE /api/auth/keys/{id}` to revoke the unhanded key —
+  every retry mints fresh.
 - `apps/web/src/hosted/deploy-trigger.tsx` (sidebar entry)
 - `apps/web/src/hosted/welcome-card.tsx` (the first-day card)
 - `agent_environments.deployment_id`, `api_keys.deployment_id`,
   `api_keys.scopes` migration. `deployment_id` on both tables is
   for cross-referencing only (audit/UI), not load-bearing for
   auth — auth flows entirely through `api_keys.user_id`.
-- Scope-aware authz: deploy-key scope set is explicitly
-  `[sessions:write, skills:read, memories:write, vault:resolve,
-  mcp:proxy, tunnel:proxy]`. Deploy keys do NOT get `skills:write`
-  (cloud panel is authoritative for skills on hosted; pods are
-  read-only consumers — see "State plane" sync model). Self-managed
-  keys (issued by `agent-connect-tokens`, see Phase 2) DO get
-  `skills:write` because users push from laptop. Legacy keys
-  (`scopes IS NULL`) keep wide access
+- Scope policy: deploy keys default to **full account access**,
+  matching what a user mints for their own laptop (auth.py:35-40
+  comment is canonical). The hosted agent does whatever the user
+  does — sessions push, skills writeback, memories update, vault
+  resolve, MCP proxy. The earlier draft of this plan called for a
+  narrow `[sessions:write, skills:read, ...]` set excluding
+  `skills:write`; that was rejected because the agent must be
+  able to edit skills on the user's behalf during a session.
+  Legacy keys (`scopes IS NULL`) keep wide access (same default
+  as a freshly minted deploy key).
 - Starter skill seeding: canonical starter pack lives at
   `backend/seeds/starter-skills.yaml` in this repo (colocated with
   the loader, matching Cal.com / PostHog / Twenty / Sentry / GitLab
@@ -2183,8 +2193,8 @@ After Phase 5: core hosted product is feature-complete.
 ### Phase 6 — Transport-only migration with epoch fencing  (medium, in v1)
 
 The OSS-no-lock-in promise made concrete. **Mostly orchestration
-on top of Phase 2 (tunnel + connect tokens) and Phase 4 (deploy +
-redeem) infrastructure.** What's actually new:
+on top of Phase 2 (tunnel + connect tokens) and Phase 4 (deploy
+key minting + injection) infrastructure.** What's actually new:
 
 In this repo:
 - `apps/web/src/components/agents/migrate-dialog.tsx` — single-step
@@ -2595,7 +2605,7 @@ PARTITION BY RANGE (created_at);
 ## Appendix: clawdi clawdi.ai deploy API surface
 
 ```
-POST   /api/deployments                       deploy + mint registration token (private)
+POST   /api/deployments                       deploy pod with browser-supplied api_key (private)
 GET    /api/deployments                       list user's deployments
 DELETE /api/deployments/{id}                  delete
 POST   /api/deployments/{id}/restart          restart
@@ -2669,20 +2679,53 @@ via `DELETE /api/auth/keys/{id}`. Nothing deploy-specific to bolt
 on at the cloud-api layer.
 
 **Threat surface vs. the dropped redeem flow.** The simplified
-flow exposes the raw api_key to browser memory for the duration
-of the two HTTP calls (steps 2 and 3). The redeem flow kept the
-key entirely server-side (clawdi-api ↔ cloud-api over private
-link). The realistic delta is small:
+flow trades a one-shot ed25519 token (capped at 5min, single-use
+via `jti`) for a long-lived bearer api_key handed through the
+browser. Honest delta:
 
-- Browser memory is process-local; raw key never persists to
-  storage or cookies.
-- Same browser would receive the raw key today when the user
-  manually mints a deploy key from Settings → API Keys.
-- TLS protects all three hops; no cleartext on any wire.
-- The ~5-min replay window the original `jti` flow capped is
-  not relevant here — there is no replayable token in transit;
-  the api_key IS the credential, revoked normally via the
-  api_keys table.
+- The raw_key is **itself replayable** until revoked, unlike the
+  old `jti`-bound redeem token. A leak through browser DevTools,
+  request-body logs, browser-extension content scripts, or
+  upstream proxy caches gives the holder the same authority a
+  legitimate pod has, for the lifetime of the api_key.
+- Clerk JWT takeover is not worse than today (Clerk JWT is the
+  master credential and could already mint api_keys directly),
+  but raw-key leak **without** Clerk takeover is materially worse
+  than the old single-use redeem.
+- TLS protects all three hops; same-origin browser memory is
+  process-local; raw key never persists to storage or cookies.
+
+**Compensating controls (must ship with Phase 4):**
+
+- **Strict redaction** — request-body logging disabled for both
+  `POST /api/auth/keys` and clawdi-api `POST /api/deployments`.
+  CI grep test rejects logger calls referencing `raw_key` /
+  `api_key` fields (rule already applied to api_keys minting).
+- **Revoke on abort** — if the browser flow fails between step 2
+  (raw_key returned) and step 3 (handoff to clawdi-api), the
+  dialog calls `DELETE /api/auth/keys/{id}` to revoke the
+  unused key. Same on retry — every retry mints a fresh key,
+  old one is revoked.
+- **clawdi-api introspection check** — before pushing the
+  api_key into a pod Secret, clawdi-api calls cloud-api
+  `GET /api/auth/me` (or equivalent introspection) using the
+  raw_key to confirm: (1) it is unrevoked, (2) it belongs to the
+  same Clerk user as the JWT making the deploy call, (3) it is
+  bound to the env_id in the deploy request body. This closes
+  the cross-tenant-attack gap that same-Clerk-tenant alone does
+  NOT cover. **TODO: cloud-api needs a key-introspection
+  endpoint that accepts the raw_key (or its hash) and returns
+  `{ user_id, env_id, scopes, revoked }`. /api/auth/me today is
+  Clerk-only; a CLI-auth variant is needed.**
+- **Long-lived by design** — deploy keys are NOT short-lived.
+  The agent uses the same key for ongoing operations after boot
+  (skills writeback, memories updates, vault resolves on every
+  request), so an `expires_at = now + 5min` mint would block the
+  primary use case. This is a deliberate trade: replayability for
+  the lifetime of the key is the cost of giving the agent the
+  same authority the user has on their laptop. The compensating
+  controls above (redaction, revoke-on-abort, introspection) cover
+  the failure modes that don't require expiry to mitigate.
 
 **Logging discipline (carried over).** `raw_key` MUST NEVER
 appear in logs — cloud-api, clawdi-api, browser console, k8s
