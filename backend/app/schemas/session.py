@@ -30,6 +30,14 @@ class SessionCreate(BaseModel):
     project_path: str | None = None
     started_at: datetime
     ended_at: datetime | None = None
+    # Optional: caller-supplied "user actually used the session
+    # last" timestamp (= max of message timestamps in the JSONL).
+    # Adapters that can compute it (claude_code, codex) should
+    # send it; ones that can't (or don't yet) leave it null and
+    # the server falls back to ended_at / started_at. The route
+    # applies a clock-skew guard before persisting — see
+    # `_clamp_last_activity` in routes/sessions.py.
+    last_activity_at: datetime | None = None
     # Non-negative numeric observables. Without `ge=0` a malformed
     # client could post negative tokens / duration and corrupt the
     # dashboard's aggregate counters. The CLI never sends negatives
@@ -138,10 +146,17 @@ class SessionListItemResponse(BaseModel):
     machine_name: str | None = None
     started_at: datetime
     ended_at: datetime | None
-    # Last time the row's metadata or content was touched on the server.
-    # Bumped on every batch upsert and content upload. The dashboard sorts
-    # by this so sessions with new messages bubble to the top.
+    # Server clock — when the row was last written/updated. Used by
+    # ETag/cache layers, NOT shown in the dashboard. Kept in the
+    # response so callers that DO want "row last touched" semantics
+    # (incremental fetch) can read it.
     updated_at: datetime
+    # User activity time — derived from message timestamps during
+    # ingest. The dashboard's "Last activity" column reads this.
+    # Distinct from updated_at: a session pushed at 9am whose last
+    # message was yesterday at 11pm has updated_at=9am and
+    # last_activity_at=yesterday 11pm.
+    last_activity_at: datetime
     duration_seconds: int | None
     message_count: int
     input_tokens: int

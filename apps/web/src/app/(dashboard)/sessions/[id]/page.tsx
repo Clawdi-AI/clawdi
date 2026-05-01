@@ -2,7 +2,7 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
+import { ArrowDown, ChevronRight, Clock, Hash, MessageSquare, Terminal, Zap } from "lucide-react";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +20,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { formatDuration } from "@/lib/format";
-import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import {
+	cn,
+	formatAbsoluteTooltip,
+	formatNumber,
+	formatSessionSummary,
+	relativeTime,
+} from "@/lib/utils";
 
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
@@ -127,7 +133,23 @@ export default function SessionDetailPage() {
 						</>
 					) : null}
 					<span>·</span>
-					<span>{relativeTime(session.started_at)}</span>
+					<span title={formatAbsoluteTooltip(session.started_at)}>
+						Started {relativeTime(session.started_at)}
+					</span>
+					{/* Surface "last activity" only when meaningfully
+					    different from started_at (long-running sessions).
+					    One-shot sessions where they're effectively equal
+					    would just duplicate noise. */}
+					{Math.abs(
+						new Date(session.last_activity_at).getTime() - new Date(session.started_at).getTime(),
+					) > 60_000 ? (
+						<>
+							<span>·</span>
+							<span title={formatAbsoluteTooltip(session.last_activity_at)}>
+								Last activity {relativeTime(session.last_activity_at)}
+							</span>
+						</>
+					) : null}
 				</DetailMeta>
 			</div>
 
@@ -156,15 +178,33 @@ export default function SessionDetailPage() {
 					<ContentFetchError />
 				) : messages?.length ? (
 					<div className="space-y-6">
-						{messages.map((msg, i) => (
-							<MessageBlock
-								key={i}
-								message={msg}
-								userAvatar={user?.imageUrl}
-								userName={user?.fullName || "You"}
-								agentType={session.agent_type}
-							/>
-						))}
+						{(() => {
+							// Insert date dividers when consecutive messages
+							// cross day boundaries. Slack / Discord / iMessage
+							// convention — long sessions span multiple days
+							// and the per-message HH:MM stamp alone hides
+							// "is this today's response or yesterday's?".
+							const out: React.ReactNode[] = [];
+							let prevDayKey: string | null = null;
+							for (let i = 0; i < messages.length; i++) {
+								const msg = messages[i];
+								const key = dayKey(msg.timestamp);
+								if (key && key !== prevDayKey) {
+									out.push(<DateDivider key={`d-${key}`} timestamp={msg.timestamp ?? ""} />);
+									prevDayKey = key;
+								}
+								out.push(
+									<MessageBlock
+										key={i}
+										message={msg}
+										userAvatar={user?.imageUrl}
+										userName={user?.fullName || "You"}
+										agentType={session.agent_type}
+									/>,
+								);
+							}
+							return out;
+						})()}
 						{hasNextPage ? (
 							<LoadMoreSentinel
 								loadedCount={loadedCount}
@@ -180,7 +220,80 @@ export default function SessionDetailPage() {
 			) : (
 				<EmptyState description="Conversation not uploaded yet. Refresh in a moment." />
 			)}
+
+			{/* Floating "jump to bottom" — for sessions with hundreds /
+			    thousands of messages. Only renders when the user has
+			    scrolled enough that the latest message is offscreen, so
+			    it doesn't clutter short conversations. */}
+			{messages && messages.length > 20 ? <JumpToBottomButton /> : null}
 		</div>
+	);
+}
+
+function dayKey(timestamp: string | null | undefined): string | null {
+	if (!timestamp) return null;
+	const d = new Date(timestamp);
+	if (Number.isNaN(d.getTime())) return null;
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function DateDivider({ timestamp }: { timestamp: string }) {
+	const d = new Date(timestamp);
+	const today = new Date();
+	const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+	const dayDiff = Math.floor((startOfDay(today) - startOfDay(d)) / 86_400_000);
+	let label: string;
+	if (dayDiff === 0) label = "Today";
+	else if (dayDiff === 1) label = "Yesterday";
+	else
+		label = d.toLocaleDateString(undefined, {
+			weekday: "long",
+			month: "short",
+			day: "numeric",
+			year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
+		});
+	return (
+		<div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wide text-muted-foreground">
+			<div className="h-px flex-1 bg-border" />
+			<span title={formatAbsoluteTooltip(timestamp)}>{label}</span>
+			<div className="h-px flex-1 bg-border" />
+		</div>
+	);
+}
+
+/**
+ * Floating "jump to bottom" button. Mirrors Slack / Discord / Linear
+ * comment threads — when you've scrolled up in a long conversation,
+ * the latest message becomes hard to find. Only renders when the
+ * user has scrolled more than ~600px from the bottom of the
+ * document.
+ */
+function JumpToBottomButton() {
+	const [visible, setVisible] = useState(false);
+	useEffect(() => {
+		const onScroll = () => {
+			const doc = document.documentElement;
+			const scrollBottom = doc.scrollHeight - (window.scrollY + window.innerHeight);
+			setVisible(scrollBottom > 600);
+		};
+		onScroll();
+		window.addEventListener("scroll", onScroll, { passive: true });
+		return () => window.removeEventListener("scroll", onScroll);
+	}, []);
+	if (!visible) return null;
+	return (
+		<Button
+			type="button"
+			variant="secondary"
+			size="sm"
+			className="fixed bottom-6 right-6 z-20 shadow-md"
+			onClick={() =>
+				window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })
+			}
+		>
+			<ArrowDown className="size-4" />
+			Jump to latest
+		</Button>
 	);
 }
 
@@ -279,7 +392,10 @@ function MessageBlock({
 					<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
 					{isUser ? null : <ModelBadge modelId={message.model} />}
 					{message.timestamp ? (
-						<span className="text-xs text-muted-foreground">
+						<span
+							className="text-xs text-muted-foreground"
+							title={formatAbsoluteTooltip(message.timestamp)}
+						>
 							{new Date(message.timestamp).toLocaleTimeString([], {
 								hour: "2-digit",
 								minute: "2-digit",

@@ -58,6 +58,21 @@ interface DataTableProps<TData, TValue> {
 
 	toolbar?: React.ReactNode | ((table: ReturnType<typeof useReactTable<TData>>) => React.ReactNode);
 	footer?: React.ReactNode;
+
+	/**
+	 * Optional row grouping. When provided, the table inserts a
+	 * full-width separator row above each group of consecutive rows
+	 * sharing the same `key`. Used by /sessions to surface "Today /
+	 * Yesterday / Previous 7 days / …" buckets the way ChatGPT and
+	 * Claude.ai surface their conversation lists. Pre-fix users had
+	 * to scan 25 individual relative-time strings to find the
+	 * recency they cared about.
+	 *
+	 * The caller is responsible for ensuring `data` is sorted such
+	 * that group keys form contiguous runs — this just emits a
+	 * separator on transitions.
+	 */
+	getRowGroup?: (row: TData) => { key: string; label: string };
 }
 
 export function DataTable<TData, TValue>({
@@ -75,6 +90,7 @@ export function DataTable<TData, TValue>({
 	pageCount,
 	toolbar,
 	footer,
+	getRowGroup,
 }: DataTableProps<TData, TValue>) {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 	const table = useReactTable({
@@ -125,40 +141,68 @@ export function DataTable<TData, TValue>({
 								</TableRow>
 							))
 						) : table.getRowModel().rows.length ? (
-							table.getRowModel().rows.map((row) => {
-								const href = getRowHref?.(row.original);
-								const interactive = !!href || !!onRowClick;
-								return (
-									<TableRow
-										key={row.id}
-										onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-										// `group` lets cells do group-hover tricks (e.g. a delete
-										// icon that reveals only on row hover).
-										// `relative` hosts the stretched <Link> overlay below.
-										className={cn("group", interactive && "cursor-pointer", href && "relative")}
-									>
-										{row.getVisibleCells().map((cell, idx) => (
-											<TableCell key={cell.id}>
-												{idx === 0 && href ? (
-													// Stretched-link pattern: an absolute anchor
-													// covers the whole row so middle-click opens a
-													// new tab and hover triggers Next.js prefetch.
-													// Sits behind cell content; cells are static-
-													// positioned so their text doesn't intercept the
-													// click. Interactive elements inside cells need
-													// `relative z-10` to escape the link's hit area.
-													<Link
-														href={href}
-														aria-label={rowAriaLabel?.(row.original) ?? "Open"}
-														className="absolute inset-0"
-													/>
-												) : null}
-												{flexRender(cell.column.columnDef.cell, cell.getContext())}
-											</TableCell>
-										))}
-									</TableRow>
-								);
-							})
+							(() => {
+								// Track previous row's group key so we know when to
+								// emit a separator. Only fires when getRowGroup is
+								// supplied; ungrouped tables behave exactly as before.
+								let prevGroupKey: string | null = null;
+								const out: React.ReactNode[] = [];
+								for (const row of table.getRowModel().rows) {
+									if (getRowGroup) {
+										const g = getRowGroup(row.original);
+										if (g.key !== prevGroupKey) {
+											out.push(
+												<TableRow
+													key={`group-${g.key}`}
+													className="hover:bg-transparent"
+													aria-hidden
+												>
+													<TableCell
+														colSpan={columns.length}
+														className="bg-muted/20 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+													>
+														{g.label}
+													</TableCell>
+												</TableRow>,
+											);
+											prevGroupKey = g.key;
+										}
+									}
+									const href = getRowHref?.(row.original);
+									const interactive = !!href || !!onRowClick;
+									out.push(
+										<TableRow
+											key={row.id}
+											onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+											// `group` lets cells do group-hover tricks (e.g. a delete
+											// icon that reveals only on row hover).
+											// `relative` hosts the stretched <Link> overlay below.
+											className={cn("group", interactive && "cursor-pointer", href && "relative")}
+										>
+											{row.getVisibleCells().map((cell, idx) => (
+												<TableCell key={cell.id}>
+													{idx === 0 && href ? (
+														// Stretched-link pattern: an absolute anchor
+														// covers the whole row so middle-click opens a
+														// new tab and hover triggers Next.js prefetch.
+														// Sits behind cell content; cells are static-
+														// positioned so their text doesn't intercept the
+														// click. Interactive elements inside cells need
+														// `relative z-10` to escape the link's hit area.
+														<Link
+															href={href}
+															aria-label={rowAriaLabel?.(row.original) ?? "Open"}
+															className="absolute inset-0"
+														/>
+													) : null}
+													{flexRender(cell.column.columnDef.cell, cell.getContext())}
+												</TableCell>
+											))}
+										</TableRow>,
+									);
+								}
+								return out;
+							})()
 						) : (
 							<TableRow className="hover:bg-transparent">
 								<TableCell

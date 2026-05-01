@@ -1174,3 +1174,251 @@ async def test_extract_503_when_not_configured(
     r = await client.post(f"/api/sessions/{local_id}/extract")
     assert r.status_code == 503
     assert "not configured" in r.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# last_activity_at semantics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_last_activity_uses_client_supplied_when_sane(client: httpx.AsyncClient):
+    """The dashboard's "Last activity" sort reads from
+    `last_activity_at`, which should mirror the user's actual last
+    use of the session. When the adapter sends a sane value, we
+    persist it as-is."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(hours=10)
+    last_msg = datetime.now(UTC) - timedelta(hours=2)  # last message 2h ago
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-active",
+                    "started_at": started.isoformat(),
+                    "ended_at": last_msg.isoformat(),
+                    "last_activity_at": last_msg.isoformat(),
+                    "message_count": 12,
+                    "content_hash": "c" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-active")
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == last_msg.replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_last_activity_falls_back_to_ended_at_when_missing(
+    client: httpx.AsyncClient,
+):
+    """Older daemons (and adapters that can't compute message-max
+    timestamps) leave `last_activity_at` null. Server falls back to
+    `ended_at`, then `started_at`."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(hours=5)
+    ended = datetime.now(UTC) - timedelta(hours=1)
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-no-msgts",
+                    "started_at": started.isoformat(),
+                    "ended_at": ended.isoformat(),
+                    # no last_activity_at
+                    "message_count": 5,
+                    "content_hash": "d" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-no-msgts")
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_last_activity_clamps_future_clock_skew(client: httpx.AsyncClient):
+    """A skewed client clock (laptop NTP off, container with wrong
+    timezone) shouldn't be able to land a year-in-the-future
+    timestamp that pins this session to the top of the dashboard
+    forever. Server clamps anything more than 5 minutes in the
+    future."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(hours=1)
+    way_future = datetime.now(UTC) + timedelta(days=365)
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-skewed",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": way_future.isoformat(),
+                    "message_count": 1,
+                    "content_hash": "e" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-skewed")
+    persisted = datetime.fromisoformat(item["last_activity_at"])
+    # Clamped to a value <= now; a year in the future should never land.
+    assert persisted < datetime.now(UTC) + timedelta(minutes=10)
+
+
+@pytest.mark.asyncio
+async def test_last_activity_clamps_to_started_at_lower_bound(
+    client: httpx.AsyncClient,
+):
+    """`last_activity_at` can't be earlier than `started_at` —
+    activity hasn't happened yet if the session hasn't started.
+    Server clamps a buggy adapter that sends a too-early value."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(hours=1)
+    bogus_earlier = started - timedelta(days=30)  # before the session existed
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-too-old",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": bogus_earlier.isoformat(),
+                    "message_count": 1,
+                    "content_hash": "f" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-too-old")
+    persisted = datetime.fromisoformat(item["last_activity_at"])
+    assert persisted >= started.replace(microsecond=0) - timedelta(seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient):
+    """Out-of-order pushes from multiple machines must not regress
+    the timestamp. Daemon B pushing a stale snapshot after daemon A
+    pushed a fresher one should leave the row at the FRESHER time,
+    not the latest writer's value."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(hours=10)
+    fresh = datetime.now(UTC) - timedelta(hours=1)
+    stale = datetime.now(UTC) - timedelta(hours=5)
+
+    # Push fresh first.
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-mono",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": fresh.isoformat(),
+                    "message_count": 10,
+                    "content_hash": "1" * 64,
+                }
+            ]
+        },
+    )
+
+    # Then a stale push (e.g. another machine syncing an old snapshot).
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-mono",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": stale.isoformat(),
+                    "message_count": 10,
+                    "content_hash": "1" * 64,
+                }
+            ]
+        },
+    )
+
+    listing = (await client.get("/api/sessions")).json()
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-mono")
+    # Should still be the FRESHER value despite the stale repush.
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_sessions_default_sort_uses_last_activity(client: httpx.AsyncClient):
+    """Default list sort is `last_activity_at desc`. A session with
+    older messages but a fresher push should NOT outrank one with
+    newer messages but an older push — pre-fix the default was
+    `updated_at desc` (server clock at push time), which inverted
+    this for "I synced today but actually used it yesterday"
+    scenarios."""
+    from datetime import timedelta
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC) - timedelta(days=2)
+
+    # session A: last activity 1 hour ago
+    # session B: last activity yesterday (older)
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-A-recent-activity",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+                    "message_count": 1,
+                    "content_hash": "a1" * 32,
+                },
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-B-stale-activity",
+                    "started_at": started.isoformat(),
+                    "last_activity_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+                    "message_count": 1,
+                    "content_hash": "b2" * 32,
+                },
+            ]
+        },
+    )
+
+    listing = (await client.get("/api/sessions")).json()
+    ids_in_order = [s["local_session_id"] for s in listing["items"]]
+    a_idx = ids_in_order.index("sess-A-recent-activity")
+    b_idx = ids_in_order.index("sess-B-stale-activity")
+    assert a_idx < b_idx, "session with more recent activity must rank higher"

@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import (
@@ -106,6 +106,53 @@ def _bound_env_id(auth: AuthContext) -> UUID | None:
     if auth.is_cli and auth.api_key is not None:
         return auth.api_key.environment_id
     return None
+
+
+# Clock-skew window for client-supplied `last_activity_at`. Anything
+# more than this far in the future is treated as a sign of broken
+# client clocks (laptop NTP off, container with wrong timezone) or a
+# malicious daemon trying to game the dashboard's "Last activity"
+# sort. We clamp rather than reject so the rest of the upsert still
+# lands — losing the bogus timestamp is always better than failing
+# the whole batch.
+_LAST_ACTIVITY_FUTURE_SLACK = timedelta(minutes=5)
+
+
+def _clamp_last_activity(
+    client_supplied: datetime | None,
+    started_at: datetime,
+    ended_at: datetime | None,
+) -> datetime:
+    """Resolve a session's `last_activity_at`, falling back through
+    progressively-less-trusted sources and clamping to a sane
+    range.
+
+    Priority:
+      1. `client_supplied` (= max of message timestamps from the
+         JSONL, computed by the adapter). Most accurate when sane.
+      2. `ended_at` (adapter-defined; sometimes null).
+      3. `started_at` (always present; lower bound).
+
+    Bounds:
+      - Lower: never before `started_at` — a session can't have
+        activity before it started.
+      - Upper: never more than 5 minutes in the future relative to
+        the server clock. Adapters should not be sending timestamps
+        from beyond now; if they do, the most likely cause is a
+        skewed client clock and we treat the value as unreliable.
+    """
+    now = datetime.now(UTC)
+    upper = now + _LAST_ACTIVITY_FUTURE_SLACK
+    candidate = client_supplied or ended_at or started_at
+    # Clamp to [started_at, now + slack]. `started_at` itself is
+    # trusted (it's also in the same payload and the route doesn't
+    # let it land in the future via Pydantic — we'd have rejected
+    # the whole row earlier).
+    if candidate < started_at:
+        candidate = started_at
+    if candidate > upper:
+        candidate = max(started_at, ended_at or now, now)
+    return candidate
 
 
 @router.post("/api/environments")
@@ -673,6 +720,9 @@ async def batch_create_sessions(
             "project_path": s.project_path,
             "started_at": s.started_at,
             "ended_at": s.ended_at,
+            "last_activity_at": _clamp_last_activity(
+                s.last_activity_at, s.started_at, s.ended_at
+            ),
             "duration_seconds": s.duration_seconds,
             "message_count": s.message_count,
             "input_tokens": s.input_tokens,
@@ -713,6 +763,15 @@ async def batch_create_sessions(
             "project_path": insert_stmt.excluded.project_path,
             "started_at": insert_stmt.excluded.started_at,
             "ended_at": insert_stmt.excluded.ended_at,
+            # `last_activity_at` is monotonically non-decreasing —
+            # take the GREATER of the existing value and the new
+            # one. Without `greatest()`, an out-of-order push (e.g.
+            # daemon B pushes an older snapshot after daemon A
+            # pushed a newer one) would clobber the dashboard's
+            # "Last activity" with a stale timestamp.
+            "last_activity_at": func.greatest(
+                Session.last_activity_at, insert_stmt.excluded.last_activity_at
+            ),
             "duration_seconds": insert_stmt.excluded.duration_seconds,
             "message_count": insert_stmt.excluded.message_count,
             "input_tokens": insert_stmt.excluded.input_tokens,
@@ -858,11 +917,17 @@ async def batch_create_sessions(
 # Note: `tokens` is a synthetic key — the UI shows total tokens (in + out) so
 # sort by the sum expression, not just one column.
 _SESSION_SORT_COLUMNS = {
-    # `updated_at` is the default — the upsert path bumps it whenever a
-    # session's metadata or content_hash changes, so this orders newest-
-    # activity-first across both first-push and append-message flows.
-    # Sorting by `started_at` would freeze a session in its original spot
-    # forever, even after dozens of new messages.
+    # `last_activity_at` is the default and what the dashboard's
+    # "Last activity" column reads. Derived from the JSONL's last
+    # message timestamp, so a session whose user was active last
+    # night ranks higher than one re-pushed today with no new
+    # messages. Pre-fix the default was `updated_at` (server clock
+    # at upsert), which conflated "user used it" with "daemon
+    # pushed it" — see migration d2f9e1a0c4b3.
+    "last_activity_at": Session.last_activity_at,
+    # `updated_at` (server clock) is kept exposed so cache layers /
+    # incremental-fetch consumers that explicitly want
+    # row-last-touched semantics can opt in.
     "updated_at": Session.updated_at,
     "started_at": Session.started_at,
     "message_count": Session.message_count,
@@ -883,8 +948,8 @@ async def list_sessions(
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
     sort: str = Query(
-        default="updated_at",
-        pattern=r"^(updated_at|started_at|message_count|tokens)$",
+        default="last_activity_at",
+        pattern=r"^(last_activity_at|updated_at|started_at|message_count|tokens)$",
     ),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
@@ -1296,6 +1361,7 @@ def _session_to_response(
         started_at=s.started_at,
         ended_at=s.ended_at,
         updated_at=s.updated_at,
+        last_activity_at=s.last_activity_at,
         duration_seconds=s.duration_seconds,
         message_count=s.message_count,
         input_tokens=s.input_tokens,

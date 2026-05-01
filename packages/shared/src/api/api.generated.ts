@@ -480,11 +480,19 @@ export interface paths {
         put?: never;
         /**
          * Upload Skill Legacy
-         * @description Phase-2 step 3: legacy non-scoped upload is gone. Use
-         *     `POST /api/scopes/{scope_id}/skills/upload`. The CLI's
-         *     `clawdi push`, `clawdi skill add`, and the daemon all
-         *     migrated in phase-2 step 2 — this 410 catches stale clients
-         *     so they fail loudly instead of writing to the wrong scope.
+         * @description Back-compat shim for pre-PR-66 CLI binaries. Resolves the
+         *     target scope via `resolve_default_write_scope` (every user
+         *     has a deterministic default after the scopes migration:
+         *     env-bound key → its env's scope; unbound key with envs →
+         *     most-recently-active env's scope; zero envs → Personal),
+         *     then runs the same upload pipeline as the scope-explicit
+         *     route. New CLIs and the dashboard call
+         *     `POST /api/scopes/{scope_id}/skills/upload` directly.
+         *
+         *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
+         *     a wrong-scope upload creates a stray row visible in the
+         *     dashboard listing, recoverable in 30s by re-uploading to the
+         *     correct scope. A wrong-scope DELETE is permanent data loss.
          */
         post: operations["upload_skill_legacy_api_skills_upload_post"];
         delete?: never;
@@ -534,8 +542,19 @@ export interface paths {
         post?: never;
         /**
          * Delete Skill Legacy
-         * @description Phase-1 compat delete — resolves scope from caller. Replaced
-         *     by `/api/scopes/{scope_id}/skills/{skill_key}` in phase 2.
+         * @description Legacy delete by slug-only is gone in phase 2. Resolving
+         *     via `resolve_default_write_scope` would silently delete
+         *     the wrong scope's copy when the caller's account holds the
+         *     same `skill_key` in multiple scopes (which the cross-scope
+         *     listing now exposes), or 404 with no useful hint when
+         *     their default scope doesn't have that key. The CLI and
+         *     dashboard both migrated to
+         *     `DELETE /api/scopes/{scope_id}/skills/{skill_key}` and
+         *     pass the row's own scope_id; force any stale client onto
+         *     that path with 410 instead of guessing.
+         *
+         *     Argument unused — kept so FastAPI still parses the path
+         *     param uniformly with sibling routes.
          */
         delete: operations["delete_skill_legacy_api_skills__skill_key__delete"];
         options?: never;
@@ -554,8 +573,12 @@ export interface paths {
         put?: never;
         /**
          * Install Skill Legacy
-         * @description Phase-2 step 3: legacy install gone. Use
-         *     `POST /api/scopes/{scope_id}/skills/install`.
+         * @description Back-compat shim for pre-PR-66 CLI binaries. Resolves
+         *     target scope via `resolve_default_write_scope` (same
+         *     deterministic default-scope policy as `upload_skill_legacy`).
+         *     A wrong-scope install adds a stray row to the dashboard
+         *     listing — recoverable, not destructive — so this stays
+         *     soft-deprecated rather than 410'd.
          */
         post: operations["install_skill_legacy_api_skills_install_post"];
         delete?: never;
@@ -816,6 +839,23 @@ export interface paths {
         head?: never;
         /** Update Settings */
         patch: operations["update_settings_api_settings_patch"];
+        trace?: never;
+    };
+    "/api/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Capabilities */
+        get: operations["get_capabilities_api_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/vault": {
@@ -1246,6 +1286,15 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_skill_legacy_api_skills_upload_post */
+        Body_upload_skill_legacy_api_skills_upload_post: {
+            /** Skill Key */
+            skill_key: string;
+            /** File */
+            file: string;
+            /** Content Hash */
+            content_hash?: string | null;
+        };
         /** Body_upload_skill_scoped_api_scopes__scope_id__skills_upload_post */
         Body_upload_skill_scoped_api_scopes__scope_id__skills_upload_post: {
             /** Skill Key */
@@ -1254,6 +1303,18 @@ export interface components {
             file: string;
             /** Content Hash */
             content_hash?: string | null;
+        };
+        /**
+         * CapabilitiesResponse
+         * @description Feature flags the dashboard branches on.
+         *
+         *     Add new fields here when introducing optional integrations.
+         *     Keep field names stable — the frontend treats this response
+         *     as a feature-detection contract.
+         */
+        CapabilitiesResponse: {
+            /** Memory Providers */
+            memory_providers: string[];
         };
         /**
          * ConnectRequest
@@ -1803,6 +1864,8 @@ export interface components {
             started_at: string;
             /** Ended At */
             ended_at?: string | null;
+            /** Last Activity At */
+            last_activity_at?: string | null;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /**
@@ -1865,6 +1928,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            last_activity_at: string;
             /** Duration Seconds */
             duration_seconds: number | null;
             /** Message Count */
@@ -1922,6 +1990,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            last_activity_at: string;
             /** Duration Seconds */
             duration_seconds: number | null;
             /** Message Count */
@@ -3084,7 +3157,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_skill_legacy_api_skills_upload_post"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3092,7 +3169,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3197,7 +3283,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillInstallRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3205,7 +3295,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SkillInstallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3644,6 +3743,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_capabilities_api_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesResponse"];
                 };
             };
         };
