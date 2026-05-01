@@ -4,7 +4,7 @@ import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
@@ -47,9 +47,14 @@ export default function SkillsPage() {
 function SkillsPageInner() {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const searchParams = useSearchParams();
-	const router = useRouter();
-	const pathname = usePathname();
+	// `?target=<env_id>` lives in nuqs — shareable, refresh-stable,
+	// and round-trippable from the agent detail page's "Install
+	// skills" deep link. `clearOnDefault` keeps `/skills` clean when
+	// no target is set.
+	const [targetEnvId, setTargetEnvId] = useQueryState(
+		"target",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 	const [customRepo, setCustomRepo] = useState("");
@@ -67,12 +72,6 @@ function SkillsPageInner() {
 
 	const agentCount = envs?.length ?? 0;
 
-	// `?target=<env_id>` is the source of truth for the picker —
-	// shareable, refresh-stable, and round-trippable from the
-	// agent detail page's "Install skills" deep link. Picker
-	// changes write back to the URL via `router.replace` (no
-	// history entry, so back-button still leaves /skills cleanly).
-	const targetEnvId = searchParams.get("target");
 	const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
 	useEffect(() => {
 		if (!targetEnvId || !envs) return;
@@ -85,11 +84,9 @@ function SkillsPageInner() {
 			setSelectedScopeId(scopeId);
 			const env = envs?.find((e) => e.default_scope_id === scopeId);
 			if (!env) return;
-			const params = new URLSearchParams(searchParams.toString());
-			params.set("target", env.id);
-			router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+			void setTargetEnvId(env.id);
 		},
-		[envs, searchParams, router, pathname],
+		[envs, setTargetEnvId],
 	);
 
 	// Resolve the target scope synchronously from `targetEnvId` +

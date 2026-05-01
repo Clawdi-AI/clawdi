@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { cn, formatNumber, formatSessionSummary, relativeTime } from "./utils";
+import {
+	cn,
+	formatAbsoluteTooltip,
+	formatNumber,
+	formatSessionSummary,
+	recencyBucketFor,
+	relativeTime,
+} from "./utils";
 
 describe("cn", () => {
 	test("merges class names", () => {
@@ -31,9 +38,84 @@ describe("relativeTime", () => {
 		expect(relativeTime(threeHoursAgo)).toBe("3h ago");
 	});
 
-	test("returns day-granularity under 30 days", () => {
+	test("returns day-granularity under 7 days", () => {
 		const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
 		expect(relativeTime(fiveDaysAgo)).toBe("5d ago");
+	});
+
+	test("switches to compact absolute at >=7 days (current year)", () => {
+		const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+		const result = relativeTime(tenDaysAgo);
+		// "May 1 14:30" or similar — month + day + 24h time, no year.
+		// We don't assert exact format (locale-dependent) but verify
+		// it's NOT the relative form.
+		expect(result).not.toMatch(/ago$/);
+		expect(result).not.toBe("just now");
+	});
+
+	test("returns em-dash for null/undefined/invalid", () => {
+		expect(relativeTime(null)).toBe("—");
+		expect(relativeTime(undefined)).toBe("—");
+		expect(relativeTime("")).toBe("—");
+		expect(relativeTime("not-a-date")).toBe("—");
+	});
+});
+
+describe("formatAbsoluteTooltip", () => {
+	test("returns a non-empty string for valid dates", () => {
+		const result = formatAbsoluteTooltip(new Date().toISOString());
+		expect(result.length).toBeGreaterThan(10);
+	});
+
+	test("returns em-dash for null/undefined/invalid", () => {
+		expect(formatAbsoluteTooltip(null)).toBe("—");
+		expect(formatAbsoluteTooltip(undefined)).toBe("—");
+		expect(formatAbsoluteTooltip("")).toBe("—");
+		expect(formatAbsoluteTooltip("garbage")).toBe("—");
+	});
+});
+
+describe("recencyBucketFor", () => {
+	const now = new Date("2026-05-01T12:00:00Z");
+
+	test("today", () => {
+		expect(recencyBucketFor("2026-05-01T09:00:00Z", now)).toEqual({
+			key: "today",
+			label: "Today",
+		});
+	});
+
+	test("yesterday", () => {
+		expect(recencyBucketFor("2026-04-30T15:00:00Z", now)).toEqual({
+			key: "yesterday",
+			label: "Yesterday",
+		});
+	});
+
+	test("previous 7 days", () => {
+		expect(recencyBucketFor("2026-04-28T10:00:00Z", now)).toEqual({
+			key: "previous-7d",
+			label: "Previous 7 days",
+		});
+	});
+
+	test("previous 30 days", () => {
+		expect(recencyBucketFor("2026-04-15T10:00:00Z", now)).toEqual({
+			key: "previous-30d",
+			label: "Previous 30 days",
+		});
+	});
+
+	test("older same year groups by month", () => {
+		const r = recencyBucketFor("2026-02-15T10:00:00Z", now);
+		expect(r.key).toBe("2026-02");
+		expect(r.label).toMatch(/Feb/);
+	});
+
+	test("cross-year groups by year", () => {
+		const r = recencyBucketFor("2024-06-15T10:00:00Z", now);
+		expect(r.key).toBe("2024");
+		expect(r.label).toBe("2024");
 	});
 });
 

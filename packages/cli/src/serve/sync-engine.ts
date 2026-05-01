@@ -54,6 +54,7 @@ import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter } from "../adapters/base";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
+import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
 import {
 	computeSkillFolderHash,
@@ -1226,6 +1227,7 @@ async function uploadSessionFromQueue(
 						project_path: session.projectPath,
 						started_at: session.startedAt.toISOString(),
 						ended_at: session.endedAt?.toISOString() ?? null,
+						last_activity_at: computeLastActivityIso(session),
 						duration_seconds: session.durationSeconds,
 						message_count: session.messageCount,
 						input_tokens: session.inputTokens,

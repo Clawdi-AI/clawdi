@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -110,6 +111,24 @@ class Session(Base, TimestampMixin):
     project_path: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the user actually used this session last (= max(message
+    # timestamps)). Derived from the JSONL during ingest, NOT
+    # `func.now()` like `updated_at`. The dashboard's "Last activity"
+    # column reads from here so a session pushed in the morning whose
+    # last message was yesterday at 11pm shows "yesterday at 11pm",
+    # not "this morning". Adapters supply their best timestamp; the
+    # ingest path applies clock-skew guards (see
+    # `_clamp_last_activity` in routes/sessions.py).
+    #
+    # `server_default=now()` is a safety net for direct ORM inserts
+    # (test fixtures, migration scripts) that don't go through the
+    # route. Production writes always provide an explicit value via
+    # the upsert path; the default exists so adding the NOT NULL
+    # column doesn't break code that constructs Session() in-memory
+    # without supplying every field.
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     message_count: Mapped[int] = mapped_column(Integer, server_default="0")
     input_tokens: Mapped[int] = mapped_column(BigInteger, server_default="0")

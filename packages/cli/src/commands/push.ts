@@ -15,6 +15,7 @@ import {
 	getEnvIdByAgent,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
+import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	cacheKey,
 	readSessionsLock,
@@ -437,6 +438,7 @@ async function pushOneAgent(
 								project_path: s.projectPath,
 								started_at: s.startedAt.toISOString(),
 								ended_at: s.endedAt?.toISOString() ?? null,
+								last_activity_at: computeLastActivityIso(s),
 								duration_seconds: s.durationSeconds,
 								message_count: s.messageCount,
 								input_tokens: s.inputTokens,

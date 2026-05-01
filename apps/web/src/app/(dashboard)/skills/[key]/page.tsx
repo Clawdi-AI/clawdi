@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, FileText, Laptop, Pencil, Save, Tag, Trash2, X } from "lucide-react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -41,7 +42,6 @@ export default function SkillDetailPage() {
 
 function SkillDetailPageInner() {
 	const { key } = useParams<{ key: string }>();
-	const searchParams = useSearchParams();
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -55,7 +55,7 @@ function SkillDetailPageInner() {
 	// when we have the scope_id removes that ambiguity. Falls back
 	// to the legacy endpoint for single-machine accounts (where
 	// there's only one row, so the resolver is unambiguous).
-	const scopeIdParam = searchParams.get("scope");
+	const [scopeIdParam] = useQueryState("scope", parseAsString.withDefault(""));
 
 	const {
 		data: skill,
