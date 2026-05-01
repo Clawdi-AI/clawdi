@@ -19,7 +19,7 @@ import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { errorMessage, recencyBucketFor } from "@/lib/utils";
+import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
 const ALLOWED_SORT_KEYS = new Set([
 	"last_activity_at",
@@ -114,7 +114,7 @@ function SessionsListInner() {
 		syncToUrl();
 	}, [syncToUrl]);
 
-	const { data, isLoading, error } = useQuery({
+	const { data, isLoading, isFetching, error } = useQuery({
 		queryKey: [
 			"sessions",
 			pagination.pageIndex,
@@ -210,74 +210,87 @@ function SessionsListInner() {
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
-				<DataTable
-					columns={sessionColumns}
-					data={data?.items ?? []}
-					isLoading={isLoading}
-					emptyMessage={
-						isFiltered
-							? "No sessions match your filters."
-							: "No sessions yet. Once your agent has a conversation, it'll show up here."
-					}
-					getRowHref={(s) => `/sessions/${s.id}`}
-					rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-					sorting={sorting}
-					onSortingChange={(updater) => {
-						setSorting(typeof updater === "function" ? updater(sorting) : updater);
-						setPagination((p) => ({ ...p, pageIndex: 0 }));
-					}}
-					pagination={pagination}
-					onPaginationChange={setPagination}
-					pageCount={pageCount}
-					getRowGroup={
-						groupable
-							? (s: SessionListItem) =>
-									recencyBucketFor(sortField === "started_at" ? s.started_at : s.last_activity_at)
-							: undefined
-					}
-					toolbar={
-						<DataTableToolbar
-							value={search}
-							onChange={(v) => {
-								setSearch(v);
-								setPagination((p) => ({ ...p, pageIndex: 0 }));
-							}}
-							placeholder="Search summary, project, ID…"
-						>
-							{/* No "Last activity" filter — the list is already
+				// Refetch indicator: dim the table while a follow-up
+				// fetch is in flight (filter / sort / page change).
+				// `keepPreviousData` keeps the rows on screen and
+				// `isLoading` stays false on subsequent fetches —
+				// without this opacity cue the user has no signal
+				// that new data is coming.
+				<div
+					className={cn(
+						"transition-opacity",
+						isFetching && !isLoading ? "opacity-60" : "opacity-100",
+					)}
+				>
+					<DataTable
+						columns={sessionColumns}
+						data={data?.items ?? []}
+						isLoading={isLoading}
+						emptyMessage={
+							isFiltered
+								? "No sessions match your filters."
+								: "No sessions yet. Once your agent has a conversation, it'll show up here."
+						}
+						getRowHref={(s) => `/sessions/${s.id}`}
+						rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+						sorting={sorting}
+						onSortingChange={(updater) => {
+							setSorting(typeof updater === "function" ? updater(sorting) : updater);
+							setPagination((p) => ({ ...p, pageIndex: 0 }));
+						}}
+						pagination={pagination}
+						onPaginationChange={setPagination}
+						pageCount={pageCount}
+						getRowGroup={
+							groupable
+								? (s: SessionListItem) =>
+										recencyBucketFor(sortField === "started_at" ? s.started_at : s.last_activity_at)
+								: undefined
+						}
+						toolbar={
+							<DataTableToolbar
+								value={search}
+								onChange={(v) => {
+									setSearch(v);
+									setPagination((p) => ({ ...p, pageIndex: 0 }));
+								}}
+								placeholder="Search summary, project, ID…"
+							>
+								{/* No "Last activity" filter — the list is already
 							    sorted by last_activity_at desc and the bucket
 							    headers (Today / Yesterday / Previous 7 days)
 							    do the time-grouping job. A separate filter
 							    would just hide other buckets, duplicating work
 							    for no information gain. */}
-							{agentOptions.length > 0 ? (
-								<DataTableFacetedFilter
-									title="Agent"
-									options={agentOptions}
-									selected={agent ? [agent] : []}
-									onChange={(arr) => {
-										setAgent(arr[0] ?? null);
-										setPagination((p) => ({ ...p, pageIndex: 0 }));
-									}}
-								/>
-							) : null}
-							{isFiltered ? (
-								<Button variant="ghost" size="sm" className="h-8 px-2" onClick={resetFilters}>
-									Reset
-								</Button>
-							) : null}
-						</DataTableToolbar>
-					}
-					footer={
-						<DataTablePagination
-							page={pagination.pageIndex + 1}
-							pageSize={pagination.pageSize}
-							total={total}
-							onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
-							onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
-						/>
-					}
-				/>
+								{agentOptions.length > 0 ? (
+									<DataTableFacetedFilter
+										title="Agent"
+										options={agentOptions}
+										selected={agent ? [agent] : []}
+										onChange={(arr) => {
+											setAgent(arr[0] ?? null);
+											setPagination((p) => ({ ...p, pageIndex: 0 }));
+										}}
+									/>
+								) : null}
+								{isFiltered ? (
+									<Button variant="ghost" size="sm" className="h-8 px-2" onClick={resetFilters}>
+										Reset
+									</Button>
+								) : null}
+							</DataTableToolbar>
+						}
+						footer={
+							<DataTablePagination
+								page={pagination.pageIndex + 1}
+								pageSize={pagination.pageSize}
+								total={total}
+								onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
+								onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+							/>
+						}
+					/>
+				</div>
 			)}
 		</div>
 	);

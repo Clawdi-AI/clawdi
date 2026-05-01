@@ -1,9 +1,9 @@
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 # local_session_id flows straight into a file-store key
 # (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
@@ -57,6 +57,24 @@ class SessionCreate(BaseModel):
     # Optional so old clients that don't compute hashes still get inserted;
     # legacy rows with NULL hash are always treated as "needs content".
     content_hash: str | None = None
+
+    @field_validator("started_at", "ended_at", "last_activity_at", mode="after")
+    @classmethod
+    def _coerce_to_utc(cls, v: datetime | None) -> datetime | None:
+        # Naive datetimes (no tzinfo) silently break the
+        # `_clamp_last_activity` helper in routes/sessions.py — it
+        # compares client values to `datetime.now(UTC)`, and naive vs
+        # aware comparisons raise TypeError, surfacing as a 500.
+        # JS clients always send `toISOString()` (ends in 'Z' →
+        # aware), but anything sending a Python-style ISO without
+        # offset would land naive. Coerce to UTC at the boundary —
+        # naive timestamps are interpreted as UTC, which is the only
+        # safe assumption for an unmarked value crossing a network.
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v
 
 
 class SessionBatchRequest(BaseModel):

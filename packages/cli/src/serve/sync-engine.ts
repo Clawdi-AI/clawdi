@@ -54,6 +54,7 @@ import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter } from "../adapters/base";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
+import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
 import {
 	computeSkillFolderHash,
@@ -1226,14 +1227,13 @@ async function uploadSessionFromQueue(
 						project_path: session.projectPath,
 						started_at: session.startedAt.toISOString(),
 						ended_at: session.endedAt?.toISOString() ?? null,
-						// Explicit `last_activity_at` mirrors `ended_at`
-						// when the adapter knows it, falling back to
-						// `started_at`. Backend re-clamps anyway, but
-						// sending the value explicitly makes the contract
-						// visible in API logs and lets server-side
-						// fallbacks degrade more gracefully when adapters
-						// (e.g. Hermes) leave `ended_at` null.
-						last_activity_at: (session.endedAt ?? session.startedAt).toISOString(),
+						// `last_activity_at` from max(message.timestamp).
+						// Adapters whose `endedAt` is reliable (claude_code,
+						// codex) end up with the same value; adapters where
+						// `endedAt` can be null or stale (Hermes) get the
+						// correct activity time from the messages array.
+						// Codex P1 from PR-#76 round 3 review.
+						last_activity_at: computeLastActivityIso(session),
 						duration_seconds: session.durationSeconds,
 						message_count: session.messageCount,
 						input_tokens: session.inputTokens,

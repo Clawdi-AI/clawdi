@@ -98,6 +98,17 @@ export default function SessionDetailPage() {
 	//     separate "total" round-trip.
 	const PAGE_SIZE = 100;
 	const totalForPaging = session?.message_count ?? 0;
+	// Page param is `{offset, limit}` (NOT just an offset) so the
+	// final descending page can shrink its `limit` to fill exactly
+	// the remaining items below the previous offset. Pre-fix the
+	// last desc page used limit=PAGE_SIZE unconditionally, which —
+	// when total wasn't a multiple of PAGE_SIZE — re-fetched the
+	// END of the previous page (e.g. total=250 → page 2 covers
+	// 50..149, page 3 with offset=0 limit=100 covers 0..99 →
+	// 50..99 duplicated). Codex flagged this in round 3.
+	type PageParam = { offset: number; limit: number };
+	const initialDescOffset = Math.max(0, totalForPaging - PAGE_SIZE);
+	const initialDescLimit = totalForPaging - initialDescOffset;
 	const {
 		data: pagesData,
 		isLoading: isContentLoading,
@@ -111,16 +122,12 @@ export default function SessionDetailPage() {
 		// would only show the OLDEST 100 in newest-first mode —
 		// confusing).
 		queryKey: ["session-messages", id, direction],
-		initialPageParam: direction === "desc" ? Math.max(0, totalForPaging - PAGE_SIZE) : 0,
+		initialPageParam:
+			direction === "desc"
+				? ({ offset: initialDescOffset, limit: initialDescLimit } as PageParam)
+				: ({ offset: 0, limit: PAGE_SIZE } as PageParam),
 		queryFn: async ({ pageParam }) => {
-			const offset = pageParam as number;
-			// In desc mode the last page may be smaller than PAGE_SIZE
-			// (the "remaining" slice at the start of the array). The
-			// server clamps `limit` against the array length anyway,
-			// but we explicitly compute the right `limit` to avoid an
-			// off-by-one if the cache key changes mid-flight.
-			const limit =
-				direction === "desc" && offset === 0 ? Math.min(PAGE_SIZE, totalForPaging) : PAGE_SIZE;
+			const { offset, limit } = pageParam as PageParam;
 			return unwrap(
 				await api.GET("/api/sessions/{session_id}/messages", {
 					params: {
@@ -130,15 +137,20 @@ export default function SessionDetailPage() {
 				}),
 			);
 		},
-		getNextPageParam: (last) => {
+		getNextPageParam: (last): PageParam | undefined => {
 			if (direction === "asc") {
 				const nextOffset = last.offset + last.items.length;
-				return nextOffset >= last.total ? undefined : nextOffset;
+				if (nextOffset >= last.total) return undefined;
+				return { offset: nextOffset, limit: PAGE_SIZE };
 			}
 			// desc: previous page covered [last.offset, last.offset +
-			// items.length). Next-older page ends at last.offset.
+			// items.length). Next-older page ends EXACTLY at
+			// last.offset, so limit = (last.offset - nextOffset) — no
+			// overlap, no truncation.
 			if (last.offset === 0) return undefined;
-			return Math.max(0, last.offset - PAGE_SIZE);
+			const nextOffset = Math.max(0, last.offset - PAGE_SIZE);
+			const nextLimit = last.offset - nextOffset;
+			return { offset: nextOffset, limit: nextLimit };
 		},
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
