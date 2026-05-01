@@ -81,26 +81,22 @@ def upgrade() -> None:
     # last_activity_at. Without this, the hot path sequential-scans
     # sessions for users with thousands of rows.
     #
-    # CONCURRENTLY: at prod scale (sessions table grows ~unbounded
-    # per user) a regular `CREATE INDEX` takes an ACCESS EXCLUSIVE
-    # lock and blocks every batch upsert + dashboard read for the
-    # duration of the build. CONCURRENTLY trades a slower build for
-    # zero-downtime; required to escape the migration's implicit
-    # transaction (no transactional DDL).
-    with op.get_context().autocommit_block():
-        op.create_index(
-            "ix_sessions_user_last_activity",
-            "sessions",
-            ["user_id", sa.text("last_activity_at DESC")],
-            postgresql_concurrently=True,
-        )
+    # Plain CREATE INDEX (no CONCURRENTLY) so the whole migration
+    # stays in one transaction. CONCURRENTLY would require
+    # autocommit_block(), which commits prior column adds + backfill
+    # BEFORE alembic stamps the revision; if the index step then
+    # fails (cancel, OOM, replication lag), `alembic upgrade head`
+    # retries the column add and 422s on duplicate columns. The
+    # sessions table is small enough that the ACCESS EXCLUSIVE lock
+    # holds for milliseconds — well inside the deploy restart
+    # window. Same trade-off codified in c1d99ac4f9e6 step 18.
+    op.create_index(
+        "ix_sessions_user_last_activity",
+        "sessions",
+        ["user_id", sa.text("last_activity_at DESC")],
+    )
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.drop_index(
-            "ix_sessions_user_last_activity",
-            table_name="sessions",
-            postgresql_concurrently=True,
-        )
+    op.drop_index("ix_sessions_user_last_activity", table_name="sessions")
     op.drop_column("sessions", "last_activity_at")
