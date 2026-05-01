@@ -209,6 +209,161 @@ export async function startMcpServer() {
 		}),
 	);
 
+	// --- Session tools ---
+	//
+	// Three-tier recall hierarchy. Agents should default to
+	// `memory_search` (cheap, distilled facts). When the user asks
+	// about a SPECIFIC past conversation (not just "what do I know
+	// about X" but "what happened in the deploy session last
+	// Friday"), reach for these:
+	//
+	//   session_search  → find session ids matching topic / text
+	//   session_summary → cheap metadata + summary (no message body)
+	//   session_get     → read messages from a specific session id
+	//
+	// Order of operations: search → summary → get. `get` ships the
+	// raw conversation transcript and is the most expensive — only
+	// use it after you've narrowed via search/summary.
+
+	server.tool(
+		"session_search",
+		'Search past sessions (full conversation transcripts the user has had with any agent — Claude Code, Codex, Hermes, OpenClaw — synced through clawdi). Returns matching session ids with metadata. Use this when the user references a SPECIFIC past conversation by topic, not when asking about general preferences (use memory_search for that).\n\nWHEN TO CALL:\n- "what did we discuss in the X session" / "remember when we worked on Y"\n- "show me the conversation where we fixed the auth bug"\n- "find that session about the migration"\n- The user references work from a specific past project / day / topic and memory_search came up empty\n\nWHEN NOT TO CALL:\n- General preference / habit questions ("what tools do I use") → memory_search\n- Questions about the current code state (read the code instead)\n- Generic programming questions\n\nOrder of operations: session_search → session_summary (cheap, no message body) → session_get (full transcript, expensive). Never jump straight to session_get unless you already have the session id.',
+		{
+			query: z
+				.string()
+				.describe(
+					'Free-text query. Searches summary, project_path, and local_session_id (case-insensitive partial match). Examples: "deploy", "auth bug", "session-ux-overhaul", "PR #71".',
+				),
+			limit: z.number().optional().describe("Max results (default 10, max 50)."),
+			agent: z
+				.enum(["claude_code", "codex", "openclaw", "hermes"])
+				.optional()
+				.describe("Filter to one agent type. Omit to search across all the user's agents."),
+		},
+		async ({ query, limit, agent }) => {
+			try {
+				const { items, total } = unwrap(
+					await api.GET("/api/sessions", {
+						params: {
+							query: {
+								q: query,
+								page_size: Math.min(limit ?? 10, 50),
+								agent,
+							},
+						},
+					}),
+				);
+				if (items.length === 0)
+					return { content: [{ type: "text" as const, text: "No matching sessions." }] };
+				const lines = items.map((s) => {
+					const summary = s.summary?.replace(/\s+/g, " ").slice(0, 120) ?? s.local_session_id;
+					const project = s.project_path?.split("/").pop() ?? "";
+					const agentTag = s.agent_type ? `[${s.agent_type}]` : "";
+					return `- ${s.id} ${agentTag} ${summary}${project ? ` · ${project}` : ""} · ${s.last_activity_at}`;
+				});
+				const more =
+					items.length < total
+						? `\n\n(${items.length}/${total} shown — refine query to narrow.)`
+						: "";
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Sessions matching "${query}":\n${lines.join("\n")}${more}`,
+						},
+					],
+				};
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
+				return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+			}
+		},
+	);
+
+	server.tool(
+		"session_summary",
+		"Get cheap metadata + summary for a specific session id (no message body). Use after `session_search` to confirm you've got the right session before paying for `session_get`. Returns: agent, machine, project, started/last-activity timestamps, message_count, total tokens, model, status, and the auto-generated summary line.",
+		{
+			session_id: z
+				.string()
+				.describe(
+					'UUID of the session, as returned by `session_search`. Format: "01234567-89ab-cdef-0123-456789abcdef".',
+				),
+		},
+		async ({ session_id }) => {
+			try {
+				const s = unwrap(
+					await api.GET("/api/sessions/{session_id}", {
+						params: { path: { session_id } },
+					}),
+				);
+				const tokens = s.input_tokens + s.output_tokens;
+				const lines = [
+					`session_id: ${s.id}`,
+					`agent: ${s.agent_type ?? "(unknown)"}${s.machine_name ? ` · ${s.machine_name}` : ""}`,
+					s.project_path ? `project: ${s.project_path}` : null,
+					`started: ${s.started_at}`,
+					`last_activity: ${s.last_activity_at}`,
+					`messages: ${s.message_count}`,
+					`tokens: ${tokens.toLocaleString()} (in: ${s.input_tokens}, out: ${s.output_tokens})`,
+					s.model ? `model: ${s.model}` : null,
+					`status: ${s.status}`,
+					s.summary ? `\nsummary: ${s.summary}` : null,
+				].filter((x): x is string => x !== null);
+				return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
+				return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+			}
+		},
+	);
+
+	server.tool(
+		"session_get",
+		"Read the actual messages from a specific past session. EXPENSIVE — full conversation transcripts can be 10+ MB on long sessions, and the agent then reads every word. Use sparingly: prefer `session_search` + `session_summary` for narrowing, only call `session_get` once you've decided you need the full text. Pagination: 100 messages per call. For long sessions, call repeatedly bumping `offset` until you've covered what you need.",
+		{
+			session_id: z
+				.string()
+				.describe("UUID of the session, as returned by `session_search` or `session_summary`."),
+			offset: z
+				.number()
+				.optional()
+				.describe(
+					"Index to start from (default 0 = first / oldest message). Bump by `limit` to paginate.",
+				),
+			limit: z.number().optional().describe("Max messages to return (default 100, max 500)."),
+		},
+		async ({ session_id, offset, limit }) => {
+			try {
+				const page = unwrap(
+					await api.GET("/api/sessions/{session_id}/messages", {
+						params: {
+							path: { session_id },
+							query: { offset: offset ?? 0, limit: Math.min(limit ?? 100, 500) },
+						},
+					}),
+				);
+				if (page.items.length === 0) {
+					return { content: [{ type: "text" as const, text: "(no messages)" }] };
+				}
+				const lines = page.items.map((m) => {
+					const ts = m.timestamp ? `[${m.timestamp}] ` : "";
+					return `${ts}${m.role}: ${m.content}`;
+				});
+				const cursor =
+					page.offset + page.items.length < page.total
+						? `\n\n(loaded ${page.offset + page.items.length}/${page.total} — call again with offset=${page.offset + page.items.length} for more.)`
+						: "";
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n\n") + cursor }],
+				};
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
+				return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+			}
+		},
+	);
+
 	// --- Dynamically registered connector tools (from Composio via backend) ---
 
 	if (mcpConfig && remoteTools.length > 0) {
