@@ -163,6 +163,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 
 		const sessions: RawSession[] = [];
+		const seenSessionIds = new Set<string>();
 
 		for (const agentRoot of agentDirs) {
 			const sessionsDirForAgent = join(agentRoot, "sessions");
@@ -181,6 +182,12 @@ export class OpenClawAdapter implements AgentAdapter {
 				// the index key only for legacy fixtures that use the UUID as
 				// the key directly.
 				const sessionId = entry.sessionId ?? indexKey;
+				// sessions.json can have multiple indexKeys (e.g. agent:main:cron:xxx +
+				// agent:main:main:thread:yyy) that resolve to the same underlying
+				// sessionId. The batch upload endpoint has a unique constraint on
+				// (env_id, local_session_id) and 500s on duplicates, so dedupe here.
+				if (seenSessionIds.has(sessionId)) continue;
+				seenSessionIds.add(sessionId);
 				const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 				if (!updatedAt) continue;
 
