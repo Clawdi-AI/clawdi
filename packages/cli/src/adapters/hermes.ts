@@ -239,6 +239,53 @@ export class HermesAdapter implements AgentAdapter {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
+	getSkillsRootDir(): string {
+		return skillsDir();
+	}
+
+	async listSkillKeys(): Promise<string[]> {
+		// Hermes nests skills under category dirs:
+		//   `~/.hermes/skills/category/foo/SKILL.md`
+		// Recurse — same logic `_scanSkillsDir` uses for the
+		// fully-loaded `collectSkills`, just without reading
+		// SKILL.md content. Returns relative paths so the
+		// daemon's hash + watch + push paths land at the right
+		// place under `getSkillsRootDir()`. Without this method,
+		// the generic flat-walk used to silently drop nested
+		// Hermes skills from sync.
+		if (!existsSync(skillsDir())) return [];
+		const out: string[] = [];
+		const walk = (dir: string): void => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (!entry.isDirectory()) continue;
+				if (SKIP_DIRS.has(entry.name)) continue;
+				if (dir === skillsDir() && entry.name === "clawdi") continue;
+				const fullPath = join(dir, entry.name);
+				if (existsSync(join(fullPath, "SKILL.md"))) {
+					out.push(relative(skillsDir(), fullPath));
+				} else {
+					walk(fullPath);
+				}
+			}
+		};
+		walk(skillsDir());
+		return out;
+	}
+
+	getSessionsWatchPaths(): string[] {
+		// Hermes stores sessions in a single SQLite DB
+		// (`~/.hermes/state.db`). fs.watch on the file works on
+		// every supported platform; we treat any change as a
+		// "sessions changed" signal and let `collectSessions` re-
+		// query the DB to enumerate.
+		return [stateDbPath()];
+	}
+
+	async removeLocalSkill(key: string): Promise<void> {
+		const dir = join(skillsDir(), key);
+		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+	}
+
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const targetDir = join(skillsDir(), key);
 

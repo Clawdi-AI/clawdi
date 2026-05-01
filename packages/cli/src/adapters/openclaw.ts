@@ -351,6 +351,47 @@ export class OpenClawAdapter implements AgentAdapter {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
+	getSkillsRootDir(): string {
+		return skillsDir();
+	}
+
+	async listSkillKeys(): Promise<string[]> {
+		// Restricted to the CURRENT agent's `skillsDir()` —
+		// `collectSkills` walks every agent dir for `clawdi push`
+		// (one-shot, batch view), but the daemon's hot path is
+		// strictly single-agent: it hashes/tars
+		// `join(getSkillsRootDir(), key)` where rootDir is JUST
+		// the current agent. Returning skills from sibling agent
+		// dirs would point the daemon at paths it can't resolve,
+		// silently dropping those skills. Pre-fix the cross-agent
+		// enumerator silently lost OpenClaw skills under any
+		// agent other than the active one.
+		if (!existsSync(skillsDir())) return [];
+		const out: string[] = [];
+		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
+			if (entry.name === "clawdi") continue;
+			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
+			if (!existsSync(skillMd)) continue;
+			out.push(entry.name);
+		}
+		return out;
+	}
+
+	getSessionsWatchPaths(): string[] {
+		// OpenClaw dumps per-agent sessions under
+		// `~/.openclaw/agents/<id>/sessions/`. The root dir holds the
+		// `sessions.json` index plus per-session `.jsonl` files; one
+		// recursive watcher catches both.
+		return [sessionsDir()];
+	}
+
+	async removeLocalSkill(key: string): Promise<void> {
+		const dir = join(skillsDir(), key);
+		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+	}
+
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const targetDir = join(skillsDir(), key);
 		if (existsSync(targetDir)) {

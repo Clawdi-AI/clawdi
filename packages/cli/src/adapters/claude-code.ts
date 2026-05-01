@@ -273,6 +273,42 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return join(claudeDir(), "skills", key, "SKILL.md");
 	}
 
+	getSkillsRootDir(): string {
+		return join(claudeDir(), "skills");
+	}
+
+	async listSkillKeys(): Promise<string[]> {
+		// Flat layout: top-level dirs under skills/. Mirrors the
+		// filtering of `collectSkills` so the daemon's hot-path
+		// rescan returns the same set the bulk push would consider
+		// — otherwise nested or skip-listed dirs would diverge.
+		const skillsDir = join(claudeDir(), "skills");
+		if (!existsSync(skillsDir)) return [];
+		const out: string[] = [];
+		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
+			if (entry.name === "clawdi") continue;
+			const skillMd = join(skillsDir, entry.name, "SKILL.md");
+			if (!existsSync(skillMd)) continue;
+			out.push(entry.name);
+		}
+		return out;
+	}
+
+	getSessionsWatchPaths(): string[] {
+		// Claude Code dumps each conversation as a JSONL file under
+		// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. New
+		// projects appear as new subdirs; the watcher attaches
+		// recursively from the projects root.
+		return [projectsDir()];
+	}
+
+	async removeLocalSkill(key: string): Promise<void> {
+		const dir = join(claudeDir(), "skills", key);
+		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+	}
+
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
 		const targetDir = join(skillsDir, key);

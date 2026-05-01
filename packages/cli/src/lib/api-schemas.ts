@@ -1,6 +1,6 @@
 // Ergonomic aliases over the auto-generated OpenAPI types. Source of truth
-// is `@clawdi/shared/api/generated.ts`; regenerate with `bun run generate-api`
-// from the repo root after backend schema changes.
+// is `@clawdi/shared/api/api.generated.ts`; regenerate with
+// `bun run generate-api` from the repo root after backend schema changes.
 import type { components } from "@clawdi/shared/api";
 
 type Schemas = components["schemas"];

@@ -93,8 +93,17 @@ export const jsonResponse = (data: unknown, status = 200) =>
  * fail fast on a stale local env_id. Tests that exercise the happy path need
  * the probe to return 200 — drop this handler near the top of the handler
  * list and all push tests "just work".
+ *
+ * `default_scope_id` is part of the env shape because the skill upload path
+ * reads it via `fetchScopeIdForEnv` to pin uploads to the agent's own scope.
+ * Without it, multi-agent users on an unbound CLI key would see skills land
+ * under whichever env was touched last (the `/api/scopes/default` heuristic
+ * we replaced).
  */
-export const okEnvironmentProbe = (envId = "env-test") => ({
+export const okEnvironmentProbe = (
+	envId = "env-test",
+	defaultScopeId = "00000000-0000-0000-0000-000000000099",
+) => ({
 	method: "GET",
 	path: `/api/environments/${envId}`,
 	response: () =>
@@ -106,5 +115,6 @@ export const okEnvironmentProbe = (envId = "env-test") => ({
 			os: "darwin",
 			last_seen_at: new Date().toISOString(),
 			created_at: new Date().toISOString(),
+			default_scope_id: defaultScopeId,
 		}),
 });

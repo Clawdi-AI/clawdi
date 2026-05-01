@@ -217,6 +217,82 @@ Examples:
 	});
 
 // ─────────────────────────────────────────────────────────────
+// serve (daemon)
+// ─────────────────────────────────────────────────────────────
+const serveCmd = program
+	.command("serve")
+	.description(
+		"Run the long-lived sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE within seconds",
+	)
+	.option("--agent <type>", "Agent to service (claude_code, codex, hermes, openclaw)")
+	.option("--environment-id <id>", "Environment id (overrides ~/.clawdi/environments/*.json)")
+	.addHelpText(
+		"after",
+		`
+Environment:
+  CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
+  CLAWDI_ENVIRONMENT_ID   Same as --environment-id
+  CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
+  CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
+  CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
+
+Examples:
+  $ clawdi serve --agent claude_code
+  $ CLAWDI_SERVE_MODE=container clawdi serve --agent claude_code
+  $ clawdi serve install --agent claude_code   # set up launchd / systemd unit
+  $ clawdi serve status --agent claude_code    # health + supervisor state`,
+	)
+	.action(async (opts) => {
+		// `clawdi serve` with no subcommand runs the daemon in
+		// the foreground. Subcommands (install/uninstall/status)
+		// are handled below — Commander dispatches them before
+		// this action fires.
+		const { serve } = await import("./commands/serve.js");
+		await serve(opts);
+	});
+
+serveCmd
+	.command("install")
+	.description("Install clawdi serve as a per-user OS service (launchd on macOS, systemd on Linux)")
+	.option("--agent <type>", "Agent to service (defaults to the only registered agent)")
+	.option("--all", "Install a daemon unit for every registered agent on this machine")
+	.option(
+		"--environment-id <id>",
+		"Pin a specific environment id into the unit (single-agent only; ignored with --all)",
+	)
+	.action(async (opts) => {
+		const { serveInstall } = await import("./commands/serve.js");
+		await serveInstall(opts);
+	});
+
+serveCmd
+	.command("uninstall")
+	.description("Remove the per-user OS service unit and stop the daemon")
+	.option("--agent <type>", "Agent to uninstall (defaults to the only registered agent)")
+	.action(async (opts) => {
+		const { serveUninstall } = await import("./commands/serve.js");
+		await serveUninstall(opts);
+	});
+
+serveCmd
+	.command("status")
+	.description("Show daemon health (last heartbeat) and supervisor state")
+	.option("--agent <type>", "Agent to check (defaults to the only registered agent)")
+	.action(async (opts) => {
+		const { serveStatus } = await import("./commands/serve.js");
+		await serveStatus(opts);
+	});
+
+serveCmd
+	.command("doctor")
+	.description("Snapshot every registered agent's daemon state — for support handoff")
+	.option("--json", "Emit machine-readable JSON instead of human-readable lines")
+	.action(async (opts) => {
+		const { serveDoctor } = await import("./commands/serve.js");
+		await serveDoctor(opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
 const vaultCmd = program.command("vault").description("Manage secrets");
@@ -268,10 +344,14 @@ skillCmd
 skillCmd
 	.command("add <path>")
 	.description("Upload a skill directory or single .md file")
+	.option(
+		"-a, --agent <type>",
+		"Upload to a specific agent's scope (claude_code, codex, hermes, openclaw)",
+	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill\n  $ clawdi skill add quick-note.md --yes",
+		"\nExamples:\n  $ clawdi skill add ./my-skill\n  $ clawdi skill add ./my-skill --agent codex\n  $ clawdi skill add quick-note.md --yes",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -300,9 +380,13 @@ Examples:
 skillCmd
 	.command("rm <key>")
 	.description("Remove a skill from the cloud")
-	.action(async (key) => {
+	.option(
+		"-a, --agent <type>",
+		"Remove from a specific agent's scope (claude_code, codex, hermes, openclaw)",
+	)
+	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
-		await skillRm(key);
+		await skillRm(key, opts);
 	});
 
 skillCmd

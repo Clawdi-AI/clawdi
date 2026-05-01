@@ -29,6 +29,42 @@ async function ensureVault(api: ApiClient, slug: string, name = slug) {
 	}
 }
 
+/**
+ * Resolve the slug → exact scope_id. Round 30 added a 409
+ * `ambiguous_vault_slug` whenever a JWT (or unbound) caller can
+ * see the same slug under multiple scopes (Personal + env-A, two
+ * envs with collision-named vaults, etc.). Slug-only lookups
+ * pre-this-helper would 409 in those cases. We resolve by:
+ *   1. Listing visible vaults (cheap — `/api/vault` returns
+ *      a single page with scope_id per row).
+ *   2. Picking the row whose scope_id matches the caller's
+ *      default WRITE scope (`/api/scopes/default`). For
+ *      env-bound api_keys this is unambiguous (one visible
+ *      scope); for JWT/unbound it picks the same scope a
+ *      fresh `clawdi vault set` would create the vault in,
+ *      keeping CLI behavior consistent across read+write.
+ *   3. Falling back to any unique match if no slug+default
+ *      pair exists (fresh CLI account where the vault was
+ *      created in a non-default scope by the dashboard).
+ *   4. Returning `null` when the slug genuinely doesn't
+ *      exist for this caller; downstream calls then surface
+ *      the server's 404 to the user.
+ */
+async function resolveVaultScopeId(api: ApiClient, slug: string): Promise<string | null> {
+	const list = unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } }));
+	const candidates = list.items.filter((v) => v.slug === slug);
+	if (candidates.length === 0) return null;
+	if (candidates.length === 1) return candidates[0].scope_id;
+	const def = unwrap(await api.GET("/api/scopes/default")).scope_id;
+	const inDefault = candidates.find((v) => v.scope_id === def);
+	if (inDefault) return inDefault.scope_id;
+	// Multiple matches, none in the default scope. Pick the
+	// first deterministically — caller still gets a single
+	// scope, which is better than a 409 for any sane user
+	// flow (and we surface a hint in the diagnostics path).
+	return candidates[0].scope_id;
+}
+
 export async function vaultSet(key: string) {
 	requireAuth();
 
@@ -43,9 +79,20 @@ export async function vaultSet(key: string) {
 	const api = new ApiClient();
 	await ensureVault(api, vaultSlug);
 
+	// Pass scope_id so the server's slug → vault lookup
+	// doesn't 409 on JWT / unbound callers who can see the
+	// same slug under multiple scopes (round 30 ambiguity
+	// guard). For env-bound api_keys this is a no-op — only
+	// one scope is visible. `ensureVault` above just
+	// guaranteed at least one match exists, so the resolver
+	// returns a non-null id here.
+	const scope_id = await resolveVaultScopeId(api, vaultSlug);
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
-			params: { path: { slug: vaultSlug } },
+			params: {
+				path: { slug: vaultSlug },
+				query: scope_id ? { scope_id } : {},
+			},
 			body: { section, fields: { [field]: value } },
 		}),
 	);
@@ -64,12 +111,43 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	);
 	const vaults = page.items;
 
-	const fetchItems = (slug: string) =>
-		api.GET("/api/vault/{slug}/items", { params: { path: { slug } } }).then(unwrap);
+	// Pass each vault's scope_id from the listing so the
+	// items lookup never trips the round-30 ambiguity 409.
+	// For env-bound api_keys this is a no-op (single visible
+	// scope); for JWT / unbound it disambiguates a duplicate
+	// slug across scopes deterministically.
+	const fetchItems = (slug: string, scope_id: string) =>
+		api
+			.GET("/api/vault/{slug}/items", {
+				params: { path: { slug }, query: { scope_id } },
+			})
+			.then(unwrap);
 
 	if (opts.json || !process.stdout.isTTY) {
-		const out: Record<string, Awaited<ReturnType<typeof fetchItems>>> = {};
-		for (const v of vaults) out[v.slug] = await fetchItems(v.slug);
+		// Emit an ARRAY of `{slug, scope_id, name, items}` instead
+		// of a `slug → items` map. Round 30's per-scope vault
+		// uniqueness means a JWT or unbound caller can see the
+		// same slug in two scopes (Personal + env-A); the map
+		// shape would have the second row silently overwrite the
+		// first under the shared key, dropping one scope's items
+		// entirely. The array shape preserves both rows so
+		// `jq '.[] | select(.scope_id=="…")'` etc still works,
+		// and downstream tooling can consistently key on
+		// `(scope_id, slug)` rather than guessing.
+		const out: Array<{
+			slug: string;
+			scope_id: string;
+			name: string;
+			items: Awaited<ReturnType<typeof fetchItems>>;
+		}> = [];
+		for (const v of vaults) {
+			out.push({
+				slug: v.slug,
+				scope_id: v.scope_id,
+				name: v.name,
+				items: await fetchItems(v.slug, v.scope_id),
+			});
+		}
 		console.log(JSON.stringify(out, null, 2));
 		return;
 	}
@@ -86,7 +164,7 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 
 	for (const v of vaults) {
-		const items = await fetchItems(v.slug);
+		const items = await fetchItems(v.slug, v.scope_id);
 		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
 		for (const [section, fields] of Object.entries(items)) {
 			for (const field of fields) {
@@ -137,9 +215,13 @@ export async function vaultImport(file: string) {
 		return;
 	}
 
+	const scope_id = await resolveVaultScopeId(api, "default");
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
-			params: { path: { slug: "default" } },
+			params: {
+				path: { slug: "default" },
+				query: scope_id ? { scope_id } : {},
+			},
 			body: { section: "", fields },
 		}),
 	);

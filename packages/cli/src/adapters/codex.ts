@@ -268,6 +268,39 @@ export class CodexAdapter implements AgentAdapter {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
+	async listSkillKeys(): Promise<string[]> {
+		// Flat layout. Mirrors `collectSkills` filtering so the
+		// daemon's rescan and the bulk push see the same set.
+		if (!existsSync(skillsDir())) return [];
+		const out: string[] = [];
+		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
+			if (SKIP_DIRS.has(entry.name)) continue;
+			if (entry.name === "clawdi") continue;
+			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
+			if (!existsSync(skillMd)) continue;
+			out.push(entry.name);
+		}
+		return out;
+	}
+
+	getSkillsRootDir(): string {
+		return skillsDir();
+	}
+
+	getSessionsWatchPaths(): string[] {
+		// Codex dumps every session under `~/.codex/sessions/`. We
+		// watch the root recursively and let `collectSessions`
+		// re-enumerate on change.
+		return [sessionsDir()];
+	}
+
+	async removeLocalSkill(key: string): Promise<void> {
+		const dir = join(skillsDir(), key);
+		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+	}
+
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const targetDir = join(skillsDir(), key);
 		if (existsSync(targetDir)) {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
 import { getAuth, getConfig } from "./config";
@@ -52,7 +53,11 @@ function sleep(ms: number): Promise<void> {
 // skip retry because they may have side effects.
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 
-async function retryingFetch(req: Request, timeoutMs: number): Promise<Response> {
+async function retryingFetch(
+	req: Request,
+	timeoutMs: number,
+	externalSignal: AbortSignal | undefined,
+): Promise<Response> {
 	const retry = IDEMPOTENT_METHODS.has(req.method);
 	const maxAttempts = retry ? MAX_RETRIES : 1;
 	// Snapshot the request once so the body stream survives retries — the
@@ -63,12 +68,41 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 	const base = req.clone();
 	let lastErr: ApiError | undefined;
 
+	// External-signal short-circuit — stop retrying immediately
+	// when the caller (e.g., the daemon's engine abort on SSE
+	// auth failure) cancels. Without this, an in-flight call
+	// keeps retrying on its own timeout long after the daemon
+	// has decided to exit.
+	if (externalSignal?.aborted) {
+		throw new ApiError({
+			status: 0,
+			body: "aborted",
+			hint: "Request aborted by caller.",
+			isNetwork: true,
+		});
+	}
+
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		if (attempt > 0) {
 			await sleep(RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]);
+			if (externalSignal?.aborted) {
+				throw new ApiError({
+					status: 0,
+					body: "aborted",
+					hint: "Request aborted between retries.",
+					isNetwork: true,
+				});
+			}
 		}
 
+		// Combine per-request timeout with the external (daemon)
+		// abort signal. Either firing cancels the in-flight fetch.
 		const controller = new AbortController();
+		const onExternalAbort = () => controller.abort();
+		if (externalSignal) {
+			if (externalSignal.aborted) controller.abort();
+			else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+		}
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
 
 		let res: Response;
@@ -76,6 +110,15 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 			res = await fetch(base.clone(), { signal: controller.signal });
 		} catch (e: unknown) {
 			clearTimeout(timer);
+			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+			if (externalSignal?.aborted) {
+				throw new ApiError({
+					status: 0,
+					body: "aborted",
+					hint: "Request aborted by caller.",
+					isNetwork: true,
+				});
+			}
 			const err = e as { name?: string; message?: string };
 			const isTimeout = err?.name === "AbortError";
 			lastErr = new ApiError({
@@ -89,6 +132,7 @@ async function retryingFetch(req: Request, timeoutMs: number): Promise<Response>
 			throw lastErr;
 		}
 		clearTimeout(timer);
+		if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 
 		if (res.ok) return res;
 
@@ -120,14 +164,20 @@ export class ApiClient {
 	readonly baseUrl: string;
 	readonly apiKey: string;
 	private readonly client: Client<paths>;
+	private readonly abortSignal: AbortSignal | undefined;
 
 	/**
 	 * @param opts.requireAuth — Default true. Set false for the device-flow
 	 *   login bootstrap, which has to call `/api/cli/auth/device` and
 	 *   `/api/cli/auth/poll` before any credentials exist. Unauthenticated
 	 *   instances skip the Authorization header entirely.
+	 * @param opts.abortSignal — Optional engine-wide abort. When the
+	 *   daemon's main `AbortController` fires (SSE auth failure,
+	 *   shutdown), every in-flight ApiClient request unwinds
+	 *   immediately instead of running its own retry/timeout to
+	 *   completion.
 	 */
-	constructor(opts: { requireAuth?: boolean } = {}) {
+	constructor(opts: { requireAuth?: boolean; abortSignal?: AbortSignal } = {}) {
 		const requireAuth = opts.requireAuth ?? true;
 		const config = getConfig();
 		const auth = getAuth();
@@ -140,14 +190,25 @@ export class ApiClient {
 		}
 		this.baseUrl = config.apiUrl;
 		this.apiKey = auth?.apiKey ?? "";
+		this.abortSignal = opts.abortSignal;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
-			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS),
+			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal),
 		});
 		this.client.use({
 			onRequest: ({ request }) => {
 				if (this.apiKey) {
 					request.headers.set("Authorization", `Bearer ${this.apiKey}`);
+				}
+				// Generate a per-request correlation ID. Backend's
+				// RequestIDMiddleware accepts the header and echoes
+				// it on the response + every log line, so an oncall
+				// engineer can trace a CLI failure back to the exact
+				// backend request without guessing. Pre-fix CLI
+				// only sent Authorization, leaving CLI logs and
+				// backend logs unjoinable.
+				if (!request.headers.has("X-Request-ID")) {
+					request.headers.set("X-Request-ID", randomUUID());
 				}
 				return request;
 			},
@@ -171,11 +232,15 @@ export class ApiClient {
 	}
 
 	/**
-	 * Upload a skill archive (`.tar.gz`) to `/api/skills/upload`. openapi-fetch
-	 * can't model multipart today, so this stays hand-rolled — but the
-	 * response shape is still typed from the generated schema.
+	 * Upload a skill archive (`.tar.gz`) into the named scope.
+	 * One env binds to one scope, so a daemon's writes always land
+	 * in its own env's scope. Single writer per env means no
+	 * If-Match needed; last-write-wins by definition. openapi-fetch
+	 * can't model multipart today, so this stays hand-rolled — but
+	 * the response shape is still typed from the generated schema.
 	 */
 	async uploadSkill(
+		scopeId: string,
 		skillKey: string,
 		file: Buffer,
 		filename: string,
@@ -186,7 +251,12 @@ export class ApiClient {
 		// back to computing it from the uploaded tar.
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
-		return this.multipartPost<SkillUploadResponse>("/api/skills/upload", fields, file, filename);
+		return this.multipartPost<SkillUploadResponse>(
+			`/api/scopes/${encodeURIComponent(scopeId)}/skills/upload`,
+			fields,
+			file,
+			filename,
+		);
 	}
 
 	/** Upload per-session content JSON to `/api/sessions/{id}/upload`. */
@@ -214,6 +284,7 @@ export class ApiClient {
 		fields: Record<string, string>,
 		file: Buffer,
 		filename: string,
+		extraHeaders?: Record<string, string>,
 	): Promise<T> {
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
@@ -224,10 +295,22 @@ export class ApiClient {
 
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+		// Mirror engine-wide abort onto this upload's controller so
+		// `clawdi serve` shutdown doesn't wait the full 30s timeout
+		// for an in-flight upload to give up. Pre-fix the runtime
+		// would hang on the active multipart fetch even after the
+		// engine signalled abort, delaying SIGTERM cleanup and
+		// frustrating systemd / launchd's restart cadence.
+		const onEngineAbort = () => controller.abort();
+		this.abortSignal?.addEventListener("abort", onEngineAbort, { once: true });
 		try {
+			const headers: Record<string, string> = {
+				Authorization: `Bearer ${this.apiKey}`,
+				...(extraHeaders ?? {}),
+			};
 			const res = await fetch(`${this.baseUrl}${path}`, {
 				method: "POST",
-				headers: { Authorization: `Bearer ${this.apiKey}` },
+				headers,
 				body: formData,
 				signal: controller.signal,
 			});
@@ -238,6 +321,7 @@ export class ApiClient {
 			return (await res.json()) as T;
 		} finally {
 			clearTimeout(timer);
+			this.abortSignal?.removeEventListener("abort", onEngineAbort);
 		}
 	}
 
@@ -245,7 +329,7 @@ export class ApiClient {
 		const req = new Request(`${this.baseUrl}${path}`, {
 			headers: { Authorization: `Bearer ${this.apiKey}` },
 		});
-		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS);
+		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
 		if (!res.ok) {
 			const body = await res.text();
 			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });

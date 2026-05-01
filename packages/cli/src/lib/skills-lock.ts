@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import chalk from "chalk";
@@ -20,15 +20,24 @@ import { SKILL_TAR_EXCLUDE } from "./tar";
  * skill against the server, which is safe.
  */
 export interface SkillsLock {
-	version: 1;
-	// Key is `skill_key` (skills are user-scoped, no agent partition needed —
-	// a skill with a given key is conceptually the same skill regardless of
-	// which agent's home it lives in).
+	version: 2;
+	// Key is `${agentType}:${skill_key}` — phase-2 scopes mean the same
+	// `skill_key` can live in different agents' scopes independently. A
+	// pre-fix flat-keyed cache would let multi-agent push think agent B
+	// already shipped `foo` because agent A did, and skip the upload —
+	// B's scope would silently never receive `foo`. Use `skillCacheKey()`
+	// to compose, never raw skill_key.
 	skills: Record<string, { hash: string }>;
 }
 
 const LOCK_FILE = "skills-lock.json";
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
+
+/** Compose the partitioned cache key. Mirrors `cacheKey()` in
+ * sessions-lock so the two locks stay shape-aligned. */
+export function skillCacheKey(agentType: string, skillKey: string): string {
+	return `${agentType}:${skillKey}`;
+}
 
 /**
  * SHA-256 over the file tree of a skill directory. Walks every file
@@ -88,16 +97,41 @@ async function collectFiles(
 
 /**
  * Read `~/.clawdi/skills-lock.json`. Returns an empty cache when the
- * file is missing, corrupt, or written by a future version. The next
- * push re-confirms with the server and re-warms the cache — safe.
+ * file is missing, corrupt, or written by a future version.
+ *
+ * Backwards compat: v1 lock files used flat `skill_key` keys (no
+ * agent partition). Bumping the version dropped them outright,
+ * which is fine for a pure cache but the daemon's boot conflict
+ * resolution depends on `lastShipped` to disambiguate cloud-edits-
+ * while-offline (PULL) from local-edits-while-offline (PUSH).
+ * Losing the baseline on upgrade misclassified divergence and
+ * could resurrect deleted cloud skills or clobber local edits.
+ *
+ * Migration: keep v1 entries in the returned object so callers can
+ * use them as best-effort baselines. The daemon (sync-engine.ts)
+ * checks for both `${agentType}:${skill_key}` (v2) and bare
+ * `${skill_key}` (v1 fallback) when hydrating. v1 entries persist
+ * until the daemon writes a v2 entry over them on next push/pull.
  */
 export function readSkillsLock(): SkillsLock {
 	const path = join(getClawdiDir(), LOCK_FILE);
 	if (!existsSync(path)) return emptyLock();
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf-8")) as SkillsLock;
-		if (parsed.version !== CURRENT_VERSION || !parsed.skills) return emptyLock();
-		return parsed;
+		// Use a permissive shape for parse; the on-disk file may
+		// be v1 (which the SkillsLock type intentionally no longer
+		// permits) or a future version we should refuse.
+		const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+			version?: number;
+			skills?: Record<string, { hash: string }>;
+		};
+		if (!parsed.skills || typeof parsed.skills !== "object") return emptyLock();
+		// Accept v1 (flat keys) and v2 (agentType:skill_key keys).
+		// Anything else is either future or corrupt — drop.
+		if (parsed.version !== 1 && parsed.version !== CURRENT_VERSION) return emptyLock();
+		// Normalize the returned shape to v2; the daemon's loader
+		// inspects each key's format and treats colon-bearing keys
+		// as v2 partitioned and bare keys as v1 fallback.
+		return { version: CURRENT_VERSION, skills: parsed.skills };
 	} catch {
 		console.log(chalk.yellow(`⚠ ~/.clawdi/${LOCK_FILE} is corrupted; resetting.`));
 		return emptyLock();
@@ -105,7 +139,13 @@ export function readSkillsLock(): SkillsLock {
 }
 
 export function writeSkillsLock(lock: SkillsLock): void {
-	const path = join(getClawdiDir(), LOCK_FILE);
+	const dir = getClawdiDir();
+	// Same fresh-HOME path as sessions-lock: env-only auth in a
+	// container without a prior `clawdi auth login` won't have
+	// `~/.clawdi/` yet. mkdir -p before write so the first
+	// successful skill push doesn't ENOENT into a queue retry loop.
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const path = join(dir, LOCK_FILE);
 	// Sort keys for deterministic output — keeps `git diff` readable when
 	// users commit the file alongside their dotfiles, and stabilizes test
 	// snapshots.
