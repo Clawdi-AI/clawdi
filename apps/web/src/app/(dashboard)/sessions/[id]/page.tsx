@@ -160,15 +160,29 @@ export default function SessionDetailPage() {
 		},
 	});
 
-	// Flatten pages → ordered message list. In `asc` each page is
-	// in canonical order and concatenating preserves it. In `desc`
-	// the FIRST page is the newest 100 (in canonical order within),
-	// so we reverse each page individually then concat — yielding
-	// `[newest, ..., oldest-of-page-1, newest-of-page-2, ..., 0]`.
-	const messages = useMemo(() => {
-		if (!pagesData) return null;
-		if (direction === "asc") return pagesData.pages.flatMap((p) => p.items);
-		return pagesData.pages.flatMap((p) => [...p.items].reverse());
+	// Flatten pages → ordered message list, paired with a stable
+	// React key per row. The key is the message's canonical position
+	// (`page.offset + k`) so it stays put across pagination, direction
+	// toggles, and refetches — array-index keys would break grouping
+	// memo when prepended pages shift positions.
+	const { messages, messageKeys } = useMemo(() => {
+		if (!pagesData) return { messages: null, messageKeys: null };
+		const msgs: SessionMessage[] = [];
+		const keys: string[] = [];
+		for (const page of pagesData.pages) {
+			if (direction === "asc") {
+				for (let k = 0; k < page.items.length; k++) {
+					msgs.push(page.items[k]);
+					keys.push(String(page.offset + k));
+				}
+			} else {
+				for (let k = page.items.length - 1; k >= 0; k--) {
+					msgs.push(page.items[k]);
+					keys.push(String(page.offset + k));
+				}
+			}
+		}
+		return { messages: msgs, messageKeys: keys };
 	}, [pagesData, direction]);
 	const totalMessages = pagesData?.pages[0]?.total ?? 0;
 	const loadedCount = messages?.length ?? 0;
@@ -337,16 +351,15 @@ export default function SessionDetailPage() {
 												new Date(msg.timestamp).getTime() - new Date(prev.timestamp).getTime(),
 											) < GROUP_GAP_MS
 										: false;
-								// Date divider also resets the group — a new
-								// day always starts fresh.
+								// A new day always starts a fresh group — even
+								// same-author messages right across the divider
+								// shouldn't merge.
 								const dividerJustEmitted =
-									dKey != null && prevDayKey === dKey && i > 0
-										? dayKey(prev?.timestamp) !== dKey
-										: false;
+									i > 0 && dKey != null && dayKey(prev?.timestamp) !== dKey;
 								const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
 								out.push(
 									<MessageBlock
-										key={i}
+										key={messageKeys?.[i] ?? i}
 										message={msg}
 										userAvatar={user?.imageUrl}
 										userName={user?.fullName || "You"}

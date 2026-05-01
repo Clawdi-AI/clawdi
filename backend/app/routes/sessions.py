@@ -1006,21 +1006,24 @@ async def list_sessions(
             )
         )
 
+    # Run the count BEFORE attaching ORDER BY: PG would otherwise
+    # plan a sort over the full filtered set just to discard it for
+    # COUNT(*). For 50k+ session users this saves a measurable
+    # fraction of list-page latency.
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
     sort_col = _SESSION_SORT_COLUMNS[sort]
     # Tiebreaker on `id` for deterministic offset-pagination order.
     # Without this, two rows with identical `last_activity_at`
     # values (same `func.greatest()` clamp output, same
     # `func.now()` from a backfill) can swap positions across
-    # page boundaries — a row appears on page 2, vanishes on page
-    # 3 reload, etc. UUIDs are unique so the tiebreaker is total.
-    base = base.order_by(
+    # page boundaries — UUIDs are unique so this tiebreaker is total.
+    ordered = base.order_by(
         sort_col.asc() if order == "asc" else sort_col.desc(),
         Session.id.asc(),
     )
 
-    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
-
-    rows = (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).all()
+    rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
 
     return Paginated[SessionListItemResponse](
         items=[_session_to_response(s, at, mn) for s, at, mn in rows],
