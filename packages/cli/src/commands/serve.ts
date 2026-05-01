@@ -30,6 +30,7 @@ import { getCliVersion } from "../lib/version";
 import { startAutoRestart } from "../serve/auto-restart";
 import {
 	install as installService,
+	listInstalledAgents,
 	readHealth,
 	restart as restartService,
 	statusLines as serviceStatusLines,
@@ -219,7 +220,8 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 					throw new Error(`no environment configured (run \`clawdi setup --agent ${agentType}\`)`);
 				}
 				const result = installService({ agent: agentType });
-				console.log(`✓ ${agentType}: ${result.unit}`);
+				const verb = result.replaced ? "(replaced)" : "(new)";
+				console.log(`✓ ${agentType} ${verb}: ${result.unit}`);
 				installed += 1;
 			} catch (e) {
 				console.error(`✗ ${agentType}: ${toErrorMessage(e)}`);
@@ -259,7 +261,14 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 			agent: agentType,
 			environmentId: opts.environmentId,
 		});
-		console.log(`✓ Installed daemon unit: ${result.unit}`);
+		// Surface "replaced existing unit" so users running install
+		// after a CLI upgrade understand that the new plist /
+		// systemd unit just got written and the daemon was
+		// restarted. Pre-fix the message was identical for fresh
+		// vs reinstall, leaving "did anything actually change?"
+		// ambiguous.
+		const verb = result.replaced ? "Replaced existing" : "Installed";
+		console.log(`✓ ${verb} daemon unit: ${result.unit}`);
 		console.log(result.instructions);
 	} catch (e) {
 		console.error(`Install failed: ${toErrorMessage(e)}`);
@@ -335,14 +344,21 @@ export async function serveRestart(opts: ServeInstallOpts): Promise<void> {
 			);
 			process.exit(1);
 		}
-		const registered = listRegisteredAgentTypes();
-		if (registered.length === 0) {
-			console.log("No agents registered.");
+		// Source from `listInstalledAgents` (scans the OS supervisor)
+		// rather than `listRegisteredAgentTypes` (reads the env-file
+		// registry). Pre-fix `restart --all` would silently skip a
+		// daemon whose env file got deleted but whose plist was
+		// still installed and the process still running — codex
+		// flagged this as the surface that mattered for actually
+		// touching every running daemon.
+		const installed = listInstalledAgents();
+		if (installed.length === 0) {
+			console.log("No daemon units installed.");
 			return;
 		}
 		let restarted = 0;
 		let failed = 0;
-		for (const agentType of registered) {
+		for (const agentType of installed) {
 			try {
 				restartService({ agent: agentType });
 				console.log(`✓ ${agentType}: restarted`);
@@ -432,20 +448,41 @@ const LOGS_ALLOWED = new Set(["agent", "follow"]);
 export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 	rejectUnsupportedOpts("logs", opts as Record<string, unknown>, LOGS_ALLOWED);
 	const { agentType } = pickAgent(opts.agent);
-	const path = getServeLogPath(agentType, "stderr");
-	if (!existsSync(path)) {
-		console.error(
-			`No log file at ${path} ` +
-				`(daemon for ${agentType} hasn't started yet — run \`clawdi serve install --agent ${agentType}\`).`,
-		);
+	const { spawn } = await import("node:child_process");
+	// Per-platform log access. macOS launchd routes the unit's
+	// `StandardErrorPath` to a file we own (we wrote it in the
+	// plist), so `tail` works. Linux systemd routes
+	// `StandardError=journal` to journald — there's no file to
+	// tail, so we delegate to `journalctl --user -u <unit>`.
+	// Codex flagged the original implementation: it used `tail`
+	// unconditionally and silently failed (or worse, errored) on
+	// Linux because `~/.clawdi/serve/logs/<agent>.stderr.log`
+	// never gets created.
+	const platform = process.platform;
+	let cmd: string;
+	let args: string[];
+	if (platform === "linux") {
+		const unit = `clawdi-serve-${agentType}.service`;
+		cmd = "journalctl";
+		args = opts.follow
+			? ["--user", "-u", unit, "-n", "200", "-f"]
+			: ["--user", "-u", unit, "-n", "200"];
+	} else if (platform === "darwin") {
+		const path = getServeLogPath(agentType, "stderr");
+		if (!existsSync(path)) {
+			console.error(
+				`No log file at ${path} ` +
+					`(daemon for ${agentType} hasn't started yet — run \`clawdi serve install --agent ${agentType}\`).`,
+			);
+			process.exit(1);
+		}
+		cmd = "tail";
+		args = opts.follow ? ["-n", "200", "-F", path] : ["-n", "200", path];
+	} else {
+		console.error(`unsupported platform for serve logs: ${platform}`);
 		process.exit(1);
 	}
-	// Delegate to `tail` so we don't reimplement -f buffering, log
-	// rotation handling, etc. The daemon writes JSON-per-line to
-	// stderr — `tail` is line-aware, so partial lines won't print.
-	const { spawn } = await import("node:child_process");
-	const args = opts.follow ? ["-n", "200", "-F", path] : ["-n", "200", path];
-	const proc = spawn("tail", args, { stdio: "inherit" });
+	const proc = spawn(cmd, args, { stdio: "inherit" });
 	proc.on("exit", (code) => process.exit(code ?? 0));
 }
 

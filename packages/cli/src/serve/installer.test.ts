@@ -312,15 +312,64 @@ describe("installer.readHealth", () => {
 		const result = readHealth(dir);
 		expect(result.exists).toBe(false);
 		expect(result.ageSeconds).toBeNull();
+		expect(result.version).toBeNull();
 	});
 
-	it("reports age in seconds for a recently-written health file", async () => {
+	it("parses the legacy bare-ISO timestamp shape (pre-r3 daemons)", async () => {
+		// Pre-r3 daemons wrote `<iso>\n`. After upgrading the CLI
+		// but BEFORE the daemon's auto-restart fires, status/doctor
+		// have to read the legacy file shape and not crash. Reader
+		// returns version=null so drift detection skips quietly.
 		const { readHealth } = await import("./installer");
-		const dir = mkdtempSync(join(tmp, "withh-"));
+		const dir = mkdtempSync(join(tmp, "legacy-"));
 		writeFileSync(join(dir, "health"), `${new Date().toISOString()}\n`);
 		const result = readHealth(dir);
 		expect(result.exists).toBe(true);
-		expect(result.ageSeconds).toBeLessThan(5); // freshly written
+		expect(result.ageSeconds).toBeLessThan(5);
 		expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(result.version).toBeNull();
+	});
+
+	it("parses the new JSON shape (r3+) and exposes the version", async () => {
+		const { readHealth } = await import("./installer");
+		const dir = mkdtempSync(join(tmp, "json-"));
+		writeFileSync(
+			join(dir, "health"),
+			`${JSON.stringify({ timestamp: new Date().toISOString(), version: "0.5.4" })}\n`,
+		);
+		const result = readHealth(dir);
+		expect(result.exists).toBe(true);
+		expect(result.ageSeconds).toBeLessThan(5);
+		expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(result.version).toBe("0.5.4");
+	});
+
+	it("falls back gracefully on malformed JSON (mid-write truncation)", async () => {
+		// `touchHealthFile` is non-atomic write — if the daemon
+		// crashes between open() and write() (rare but possible),
+		// readers shouldn't crash. Just treat the file as legacy
+		// and report whatever the parser pulled out.
+		const { readHealth } = await import("./installer");
+		const dir = mkdtempSync(join(tmp, "broken-"));
+		writeFileSync(join(dir, "health"), `{"timestamp":"2026-05-01T08:`); // truncated
+		const result = readHealth(dir);
+		expect(result.exists).toBe(true);
+		// Falls through to legacy parsing — `timestamp` field gets
+		// the raw string; version stays null. Importantly, no
+		// throw.
+		expect(result.version).toBeNull();
+	});
+
+	it("handles JSON with missing version field (forward-compat)", async () => {
+		const { readHealth } = await import("./installer");
+		const dir = mkdtempSync(join(tmp, "noversion-"));
+		writeFileSync(
+			join(dir, "health"),
+			`${JSON.stringify({ timestamp: new Date().toISOString() })}\n`,
+		);
+		const result = readHealth(dir);
+		expect(result.exists).toBe(true);
+		expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(result.version).toBeNull();
 	});
 });

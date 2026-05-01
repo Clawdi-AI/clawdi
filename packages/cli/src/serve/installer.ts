@@ -52,6 +52,21 @@ function home(): string {
 	return process.env.HOME || homedir();
 }
 
+/** Root of the clawdi state tree (auth, environments, locks,
+ * serve queue, serve logs). Honors `CLAWDI_HOME` so test harnesses
+ * + the `clawdi-dev` wrapper get isolated state. Pre-fix
+ * `installLaunchd`'s logDir hardcoded `$HOME/.clawdi`, so a
+ * `CLAWDI_HOME=/foo clawdi serve install` would bake
+ * `$HOME/.clawdi/serve/logs/...` into the plist while `serve logs`
+ * (which DID honor CLAWDI_HOME via `getServeLogPath`) looked at
+ * `/foo/serve/logs/...` — `serve logs` couldn't find the file.
+ * Codex flagged this as P2 in PR-#74 review. */
+function clawdiRoot(): string {
+	const homeOverride = process.env.CLAWDI_HOME;
+	if (homeOverride) return homeOverride;
+	return join(home(), ".clawdi");
+}
+
 function unitName(agent: string): string {
 	// launchd labels follow reverse-DNS; systemd unit names are
 	// freeform but conventionally use a slug. We use the same
@@ -178,7 +193,11 @@ function currentClawdiCommand(): string[] {
 	return [node, entry];
 }
 
-export function install(opts: InstallOpts): { unit: string; instructions: string } {
+export function install(opts: InstallOpts): {
+	unit: string;
+	instructions: string;
+	replaced: boolean;
+} {
 	const p = platform();
 	if (p === "darwin") return installLaunchd(opts);
 	if (p === "linux") return installSystemd(opts);
@@ -268,11 +287,15 @@ function plistPath(agent: string): string {
 	return join(launchAgentsDir(), `${unitName(agent)}.plist`);
 }
 
-function installLaunchd(opts: InstallOpts): { unit: string; instructions: string } {
+function installLaunchd(opts: InstallOpts): {
+	unit: string;
+	instructions: string;
+	replaced: boolean;
+} {
 	validateEnvironmentId(opts.environmentId);
 	const label = unitName(opts.agent);
 	const [node, entry] = currentClawdiCommand();
-	const logDir = join(home(), ".clawdi", "serve", "logs");
+	const logDir = join(clawdiRoot(), "serve", "logs");
 	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 
 	// `KeepAlive=true` so launchd respawns on crash. `RunAtLoad`
@@ -329,6 +352,10 @@ function installLaunchd(opts: InstallOpts): { unit: string; instructions: string
 `;
 
 	const path = plistPath(opts.agent);
+	// Sample BEFORE we writeFileSync — caller wants to know
+	// whether this install was a fresh write or replacing an
+	// existing unit.
+	const replaced = existsSync(path);
 	// 0600: the plist body inlines `CLAWDI_AUTH_TOKEN` and any
 	// other captured shell env vars under `<key>EnvironmentVariables</key>`.
 	// World-readable mode would let any other local user on a
@@ -355,7 +382,7 @@ function installLaunchd(opts: InstallOpts): { unit: string; instructions: string
 	const instructions = loaded
 		? `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent}.stderr.log`)}`
 		: `Wrote plist to ${path}, but launchctl load failed (try: launchctl load -w "${path}").`;
-	return { unit: path, instructions };
+	return { unit: path, instructions, replaced };
 }
 
 function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
@@ -428,10 +455,15 @@ function unitPath(agent: string): string {
 	return join(systemdUserDir(), `clawdi-serve-${agent}.service`);
 }
 
-function installSystemd(opts: InstallOpts): { unit: string; instructions: string } {
+function installSystemd(opts: InstallOpts): {
+	unit: string;
+	instructions: string;
+	replaced: boolean;
+} {
 	validateEnvironmentId(opts.environmentId);
 	const [node, entry] = currentClawdiCommand();
 	const path = unitPath(opts.agent);
+	const replaced = existsSync(path);
 
 	// systemd `Environment="KEY=VALUE"` parses backslash + double-
 	// quote inside the value. A $HOME containing `"` could close
@@ -525,7 +557,7 @@ WantedBy=default.target
 	const instructions = enabled
 		? `Enabled and started clawdi-serve-${opts.agent}.service. Tail logs with: journalctl --user -u clawdi-serve-${opts.agent} -f`
 		: `Wrote ${path} but systemctl enable failed. Try: systemctl --user enable --now clawdi-serve-${opts.agent}.service`;
-	return { unit: path, instructions };
+	return { unit: path, instructions, replaced };
 }
 
 function uninstallSystemd(opts: InstallOpts): { removed: boolean } {
@@ -625,6 +657,32 @@ function shellEscape(s: string): string {
 	// we'd ever see in practice.
 	if (!/[\s"']/.test(s)) return s;
 	return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/** Scan the OS supervisor for every clawdi daemon unit installed
+ * by `clawdi serve install`, regardless of whether its agent is
+ * still registered in `~/.clawdi/environments/`. Used by callers
+ * that need to act on the actual installed surface (e.g. `serve
+ * restart --all`, `auth logout`'s warn-about-residual-daemons
+ * check) — `listRegisteredAgentTypes()` would miss daemons whose
+ * env file was deleted out from under them, leaving the unit
+ * orphaned but still running.
+ *
+ * Cheap implementation: enumerate `~/Library/LaunchAgents/` (macOS)
+ * or `~/.config/systemd/user/` (Linux) and pattern-match against
+ * the clawdi unit name shape. Skips agents not in `AGENT_TYPES` so
+ * a malicious filename can't smuggle into the iteration.
+ */
+type KnownAgent = "claude_code" | "codex" | "openclaw" | "hermes";
+export function listInstalledAgents(): KnownAgent[] {
+	const knownAgents: KnownAgent[] = ["claude_code", "codex", "openclaw", "hermes"];
+	const installed: KnownAgent[] = [];
+	for (const agent of knownAgents) {
+		const p = platform();
+		const path = p === "darwin" ? plistPath(agent) : p === "linux" ? unitPath(agent) : null;
+		if (path && existsSync(path)) installed.push(agent);
+	}
+	return installed;
 }
 
 /** Health-file age check, used by `clawdi serve status` even

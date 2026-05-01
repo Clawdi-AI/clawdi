@@ -408,15 +408,15 @@ export async function authLogout() {
 	// running with the API key cached in their unit env. They'll
 	// keep posting heartbeats to the cloud (with a now-revoked
 	// token, getting 401s in a tight loop) until the user
-	// `serve uninstall`s. Codex flagged this as P1: silent
-	// daemon-after-logout drift is worse than the friction of one
-	// extra prompt.
-	const { listRegisteredAgentTypes } = await import("../lib/select-adapter");
-	const { statusLines } = await import("../serve/installer");
-	const installedAgents = listRegisteredAgentTypes().filter((agent) => {
-		const lines = statusLines({ agent });
-		return lines.some((l) => l.startsWith("unit:") && !l.includes("(not installed)"));
-	});
+	// `serve uninstall`s.
+	//
+	// Source from `listInstalledAgents` (scans the OS supervisor)
+	// not `listRegisteredAgentTypes` (env-file registry) — the
+	// env-file path would skip a daemon whose env file got deleted
+	// but whose plist was still installed (codex flagged this gap
+	// in PR-#74 review).
+	const { listInstalledAgents } = await import("../serve/installer");
+	const installedAgents = listInstalledAgents();
 	if (installedAgents.length > 0) {
 		p.log.warn(
 			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
