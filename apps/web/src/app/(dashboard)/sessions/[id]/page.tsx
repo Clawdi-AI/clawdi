@@ -372,6 +372,27 @@ export default function SessionDetailPage() {
 	);
 }
 
+/**
+ * Group-start header timestamp: short date + 24h time. Mirrors
+ * Discord's `M/D/YY, HH:MM` style (e.g. `4/24/26, 20:21`). Locale-
+ * aware so en-US gets `4/24/26, 8:21 PM`, zh-CN gets
+ * `2026/4/24 20:21`, etc. Combined with the date dividers between
+ * day boundaries, this gives users every signal they need without
+ * hovering.
+ */
+function formatGroupHeaderTime(timestamp: string): string {
+	const d = new Date(timestamp);
+	if (Number.isNaN(d.getTime())) return "";
+	return d.toLocaleString(undefined, {
+		year: "2-digit",
+		month: "numeric",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	});
+}
+
 function dayKey(timestamp: string | null | undefined): string | null {
 	if (!timestamp) return null;
 	const d = new Date(timestamp);
@@ -609,10 +630,17 @@ function MessageBlock({
 								className="text-xs text-muted-foreground"
 								title={formatAbsoluteTooltip(message.timestamp)}
 							>
-								{new Date(message.timestamp).toLocaleTimeString([], {
-									hour: "2-digit",
-									minute: "2-digit",
-								})}
+								{/* Discord pattern: full short date + 24h
+								    time on the group-start row (e.g.
+								    "4/24/26, 20:21"). Only the HH:MM was
+								    shown before, leaving users to guess the
+								    date when scrolling through long
+								    multi-day conversations. The DateDivider
+								    above also marks day boundaries; the
+								    per-group full timestamp pins precise
+								    landing time without forcing the user to
+								    hover. */}
+								{formatGroupHeaderTime(message.timestamp)}
 							</span>
 						) : null}
 					</div>
