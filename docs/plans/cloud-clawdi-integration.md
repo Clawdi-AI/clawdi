@@ -336,7 +336,8 @@ was an early misconception in this plan.
 
 Pod-produced. `clawdi push --modules sessions` runs after each
 session line is appended, batched up to N seconds. Push uses the
-deployment's `api_key` with `sessions:write` scope.
+deployment's `api_key` (full-access deploy key from `CLAWDI_AUTH_TOKEN`
+env, see Phase 4 scope policy).
 
 **Persistence requirement:** the pod must mount a PVC at
 `/var/lib/clawdi/sessions/` so that an OOM-killed or restarted pod
@@ -360,11 +361,14 @@ through cloud-api for dashboard display.
 ### Vault plane
 
 Two-direction:
-- **Write/list/browse:** Clerk-JWT only (web dashboard). Never
-  available to a deploy api_key.
+- **Write/list/browse:** Clerk-JWT only (web dashboard). Deploy
+  api_keys default to full account access but the resolve
+  endpoint requires `Authorization: Bearer <Clerk JWT>`, so a
+  pod-leaked api_key still cannot rewrite vault contents.
 - **Resolve at runtime:** `clawdi vault resolve clawdi://path` in
-  the pod returns plaintext via the deploy api_key's
-  `vault:resolve` scope.
+  the pod returns plaintext using `CLAWDI_AUTH_TOKEN` (the deploy
+  api_key). Allowlist below caps which paths a given pod can
+  actually resolve.
 
 **v1 scope: per-deployment allowlist (changed from earlier
 "user-wide" framing after codex round-3 review).** A compromised
@@ -672,10 +676,10 @@ covering all state-plane scopes for the user. tunnel_session_token
 is env-scoped, 24h-bound, revocable, endpoint-allowlisted — much
 narrower blast radius if compromised.
 
-New scope: `tunnel:proxy` on api_keys. Deploy keys (minted via
-`POST /api/auth/keys` with `environment_id` set, see Phase 4
-flow) get it by default; legacy CLI keys with `scopes IS NULL`
-keep wide access (backwards-compat).
+New scope: `tunnel:proxy` on api_keys. Deploy keys default to
+full account access (which includes `tunnel:proxy`). Legacy CLI
+keys with `scopes IS NULL` also keep wide access (same default —
+no semantic distinction).
 
 ### Connection lease
 
@@ -1833,8 +1837,12 @@ collaborative inline editing.
 **Auth model**
 
 ```
-Hosted pod:    CLAWDI_AUTH_TOKEN env (deploy-key, server-minted)
-                ├─ scopes: [sessions:write, skills:read, skills:write]
+Hosted pod:    CLAWDI_AUTH_TOKEN env (deploy-key, browser-minted via
+               cloud-api POST /api/auth/keys with environment_id)
+                ├─ scopes: full user auth (same default as a laptop key —
+                │          agent must do whatever the user does:
+                │          sessions push, skills writeback, memories
+                │          update, vault resolve, MCP proxy)
                 ├─ environment_id binding (key only writes for one env_id)
                 └─ rotation: redeploy pod with new key (no hot rotate v1)
 
@@ -2086,6 +2094,64 @@ chat experience already works (from self-managed users in Phase 2
 testing).
 
 ### Phase 4 — Hosted deploy + auto-registration + starter skills + vault allowlist  (large)
+
+**Round 10 split (current priority):** Phase 4 is broken into two
+sub-phases so live sync ships before the deploy UI migration.
+
+#### Phase 4a — Live sync only (HIGHEST PRIORITY)
+
+Goal: every pod deployed via the **existing** clawdi.ai deploy
+flow auto-syncs sessions / skills / memories to cloud-api. The
+deploy UI stays on clawdi.ai/dashboard for now — no new sidebar
+entry, no welcome card, no OSS-side dialog work.
+
+The minimum-viable change set (in clawdi-monorepo):
+
+1. **agent-image/entrypoint.sh**: when `CLAWDI_AUTH_TOKEN` is
+   set, export `CLAWDI_API_URL` (default `https://cloud-api.clawdi.ai`),
+   then run `clawdi pull --yes --sync &` (non-blocking starter
+   skill hydration) and `clawdi serve &` (background sync daemon).
+   Both run alongside the existing supervisord-managed processes.
+   Failure of either does NOT block agent runtime startup —
+   sync is a soft dependency for hosted v1.
+2. **routes/deployments.py**: `POST /api/deployments` accepts a
+   new optional `clawdi_auth_token` field. When present, write
+   it into the pod's k8s Secret as `CLAWDI_AUTH_TOKEN` env. No
+   change to existing fields.
+3. **clawdi-monorepo dashboard deploy dialog**: before the
+   deploy POST, call cloud-api `POST /api/auth/keys` (Clerk JWT)
+   with `environment_id` set to mint a deploy-bound api_key,
+   then include the raw_key as `clawdi_auth_token` in the
+   `/api/deployments` body.
+
+Cloud-api side (this repo):
+- **CORS**: allow `https://clawdi.ai` origin (or whatever
+  domain the SaaS dashboard runs on) for `POST /api/auth/keys`.
+  Verify current `_CORS_ALLOWED_ORIGINS` set in
+  `backend/app/main.py` covers it.
+- No other endpoint additions required for 4a.
+
+Phase 4a's "done" criterion: a real user clicks Deploy on
+clawdi.ai/dashboard, the resulting pod auto-registers, and
+sessions / skills / memories show up in the user's
+cloud.clawdi.ai/dashboard within seconds.
+
+#### Phase 4b — Deploy UI migration to cloud.clawdi.ai (LATER)
+
+Once live sync is solid, migrate the deploy entry point so users
+can deploy from the OSS dashboard directly. This is the
+originally-scoped Phase 4 work below — welcome card, deploy
+dialog, sidebar entry, starter-skill seeding endpoint.
+
+Phase 4b also adds the introspection endpoint (`POST
+/api/auth/keys/introspect`) so clawdi-api can validate the
+api_key it receives before injecting into a Secret. In Phase 4a
+this isn't strictly required because the SaaS dashboard already
+holds the user's Clerk session and the trust path is shorter.
+
+The remainder of this Phase 4 section describes 4b's full scope.
+
+#### Full Phase 4 surface (4a + 4b combined)
 
 In clawdi clawdi.ai (private):
 - CORS allowlist for `cloud.clawdi.ai` (controller already has
@@ -2641,7 +2707,8 @@ browser (cloud.clawdi.ai)                        cloud-api (this repo)
                                           ◀───── { env_id }
 
 2. POST /api/auth/keys (Clerk JWT)
-   body: { label, environment_id, scopes }
+   body: { label, environment_id }
+   (no `scopes` — null = full account access default)
                                           ─────▶  mint_api_key():
                                                   validates env.user_id
                                                   matches caller, INSERTs
@@ -2674,9 +2741,11 @@ browser (cloud.clawdi.ai)                        cloud-api (this repo)
 **What this flow inherits from the existing api-keys path** —
 all the protections that already apply to `POST /api/auth/keys`
 also apply to deploy keys: `mint_api_key` cross-tenant check on
-`environment_id`, scope narrowing via the body field, revocation
-via `DELETE /api/auth/keys/{id}`. Nothing deploy-specific to bolt
-on at the cloud-api layer.
+`environment_id`, optional scope narrowing via the body field,
+revocation via `DELETE /api/auth/keys/{id}`. The one new piece of
+cloud-api work is a key-introspection endpoint described in
+"Compensating controls" below — it lets clawdi-api validate the
+api_key it received before persisting it into the pod Secret.
 
 **Threat surface vs. the dropped redeem flow.** The simplified
 flow trades a one-shot ed25519 token (capped at 5min, single-use
