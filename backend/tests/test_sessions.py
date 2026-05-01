@@ -1291,12 +1291,10 @@ async def test_last_activity_clamps_future_clock_skew(client: httpx.AsyncClient)
 
 @pytest.mark.asyncio
 async def test_last_activity_clamps_when_started_at_also_future(client: httpx.AsyncClient):
-    """Codex P1: a payload that lies on `last_activity_at` AND
-    `started_at` (and `ended_at`) — all set to year 3000 — pre-fix
-    would let the future timestamp through because the fallback
-    `max(started_at, ended_at or now, now)` would pick the future
-    started_at unchanged. Server tightens the fallback inputs
-    themselves to `min(x, now)` so no path lands a future value."""
+    """A payload with `last_activity_at`, `started_at`, AND `ended_at`
+    all set to year 3000 must still clamp to <= now. The server
+    tightens fallback inputs themselves to `min(x, now)` so no path
+    lands a future value, even when every candidate is future."""
     from datetime import timedelta
 
     env_id = await _register_env(client)
@@ -1467,10 +1465,10 @@ async def test_sessions_since_until_filter_on_last_activity(client: httpx.AsyncC
 async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
     client: httpx.AsyncClient,
 ):
-    """Codex P2: when two sessions share `last_activity_at` to the
-    microsecond (same client clock, same batch upsert), offset
-    pagination must still order them deterministically. Server
-    adds `Session.id ASC` as a tiebreaker."""
+    """When two sessions share `last_activity_at` to the microsecond
+    (same client clock, same batch upsert), offset pagination must
+    still order them deterministically. The server adds
+    `Session.id ASC` as a tiebreaker."""
     from datetime import timedelta
 
     env_id = await _register_env(client)
@@ -1509,12 +1507,11 @@ async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
 
 @pytest.mark.asyncio
 async def test_sessions_default_sort_uses_last_activity(client: httpx.AsyncClient):
-    """Default list sort is `last_activity_at desc`. A session with
-    older messages but a fresher push should NOT outrank one with
-    newer messages but an older push — pre-fix the default was
-    `updated_at desc` (server clock at push time), which inverted
-    this for "I synced today but actually used it yesterday"
-    scenarios."""
+    """Default list sort is `last_activity_at desc` (NOT
+    `updated_at`). A session with older messages but a fresher push
+    must rank below one with newer messages but an older push —
+    "I synced today but actually used it yesterday" should keep the
+    older push at the top."""
     from datetime import timedelta
 
     env_id = await _register_env(client)

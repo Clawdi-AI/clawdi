@@ -143,13 +143,12 @@ def _clamp_last_activity(
     """
     now = datetime.now(UTC)
     upper = now + _LAST_ACTIVITY_FUTURE_SLACK
-    # Tighten the fallback inputs themselves to [now, ...] before
-    # using them — codex flagged that a malicious payload with
-    # BOTH `last_activity_at` AND `started_at`/`ended_at` in the
-    # future would defeat the upper-bound clamp: `max(started, ended
-    # or now, now)` returns the future started/ended unchanged.
-    # Pydantic doesn't reject future started_at/ended_at, so the
-    # only defense is here.
+    # Clamp the fallback inputs to [.., now] before they feed into
+    # `candidate`. A payload that pushes BOTH `last_activity_at`
+    # AND `started_at`/`ended_at` into the future would otherwise
+    # bypass the upper bound: `max(started, ended or now, now)`
+    # returns the future value unchanged. Pydantic doesn't reject
+    # future started_at/ended_at, so the only defense is here.
     safe_started = min(started_at, now)
     safe_ended = min(ended_at, now) if ended_at is not None else None
     candidate = client_supplied or ended_at or started_at
@@ -921,17 +920,13 @@ async def batch_create_sessions(
 # Note: `tokens` is a synthetic key — the UI shows total tokens (in + out) so
 # sort by the sum expression, not just one column.
 _SESSION_SORT_COLUMNS = {
-    # `last_activity_at` is the default and what the dashboard's
-    # "Last activity" column reads. Derived from the JSONL's last
-    # message timestamp, so a session whose user was active last
-    # night ranks higher than one re-pushed today with no new
-    # messages. Pre-fix the default was `updated_at` (server clock
-    # at upsert), which conflated "user used it" with "daemon
-    # pushed it" — see migration d2f9e1a0c4b3.
+    # `last_activity_at` (derived from the JSONL's last message
+    # timestamp) is the default — distinct from `updated_at`
+    # (server-clock at upsert), which conflates "user used it" with
+    # "daemon pushed it". See migration d2f9e1a0c4b3.
     "last_activity_at": Session.last_activity_at,
-    # `updated_at` (server clock) is kept exposed so cache layers /
-    # incremental-fetch consumers that explicitly want
-    # row-last-touched semantics can opt in.
+    # `updated_at` stays exposed for cache layers / incremental-fetch
+    # consumers that want row-last-touched semantics.
     "updated_at": Session.updated_at,
     "started_at": Session.started_at,
     "message_count": Session.message_count,
@@ -988,12 +983,9 @@ async def list_sessions(
     )
     if bound_env is not None:
         base = base.where(Session.environment_id == bound_env)
-    # Date filters operate on `last_activity_at` (the column users
-    # actually mean when they say "sessions in the last 7 days").
-    # Pre-fix `since` filtered on `started_at`, which excluded
-    # long-running sessions started before the window but ACTIVE
-    # within it — confusing for the dashboard's "Today" / "Last
-    # 7 days" filter chips.
+    # Filter on `last_activity_at` (not `started_at`) so a long-
+    # running session that began before the window but was active
+    # inside it still surfaces under "Today" / "Last 7 days".
     if since:
         base = base.where(Session.last_activity_at >= since)
     if until:

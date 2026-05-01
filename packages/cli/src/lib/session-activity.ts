@@ -2,25 +2,22 @@ import type { RawSession, SessionMessage } from "../adapters/base";
 
 /**
  * Compute the "user actually used the session last" timestamp for
- * upload to the backend's `last_activity_at` column. Highest-fidelity
- * source first, with fallbacks for adapters whose data shape doesn't
- * carry per-message timestamps.
+ * upload to the backend's `last_activity_at` column.
  *
  * Priority:
  *   1. `max(messages[].timestamp)` — the actual last user / agent
  *      action in the session.
- *   2. `endedAt` — adapter-defined; for adapters that already
+ *   2. `endedAt` — adapter-defined. For adapters that already
  *      compute it as max(message.timestamp) this is identical to
- *      #1, but for adapters that pull `ended_at` from a database
- *      column (Hermes) it can be stale or null.
- *   3. `startedAt` — last-resort lower bound. Always present.
+ *      #1, but for adapters that pull from a DB column (Hermes)
+ *      it can be stale or null.
+ *   3. `startedAt` — lower bound; always present.
  *
- * Pre-fix `push.ts` and `serve/sync-engine.ts` both used
- * `(endedAt ?? startedAt).toISOString()`, so a Hermes session with
- * a null `ended_at` row in its SQLite db landed `last_activity_at =
- * started_at`, sorting it alongside one-shot sessions even if the
- * user had been actively chatting. Codex flagged this in PR #76
- * round 3.
+ * Sharing this between push.ts and sync-engine.ts keeps the two
+ * upload paths from diverging — a Hermes session with null
+ * `ended_at` would otherwise land `last_activity_at = started_at`,
+ * sorting beside one-shot sessions even if the user had been
+ * actively chatting.
  */
 export function computeLastActivityIso(s: RawSession): string {
 	const msgMax = maxMessageTimestamp(s.messages);

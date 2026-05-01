@@ -1227,12 +1227,6 @@ async function uploadSessionFromQueue(
 						project_path: session.projectPath,
 						started_at: session.startedAt.toISOString(),
 						ended_at: session.endedAt?.toISOString() ?? null,
-						// `last_activity_at` from max(message.timestamp).
-						// Adapters whose `endedAt` is reliable (claude_code,
-						// codex) end up with the same value; adapters where
-						// `endedAt` can be null or stale (Hermes) get the
-						// correct activity time from the messages array.
-						// Codex P1 from PR-#76 round 3 review.
 						last_activity_at: computeLastActivityIso(session),
 						duration_seconds: session.durationSeconds,
 						message_count: session.messageCount,

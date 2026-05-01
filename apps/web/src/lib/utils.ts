@@ -12,11 +12,6 @@ export function cn(...inputs: ClassValue[]) {
  * gets a short absolute form (`Apr 28 14:30` for current year,
  * `Mar 15 2025` cross-year), so users can tell at-a-glance whether
  * a session was last week or last month without hovering.
- *
- * Pre-fix this returned `Xd ago` up to 30 days, which hid the date
- * for things like "did I work on this Wed or Tue last week" — the
- * answer matters and the tooltip was bugged separately
- * (see `formatAbsoluteTooltip`).
  */
 export function relativeTime(dateStr: string | null | undefined): string {
 	// Defensive: callers go through this with values from API
@@ -60,10 +55,6 @@ export function relativeTime(dateStr: string | null | undefined): string {
  * Full absolute timestamp for `title` tooltips. Pairs with
  * `relativeTime` cells: cell is short (`3h ago` / `Apr 28 14:30`),
  * tooltip is unambiguous (`Friday, Apr 30, 2026, 14:32:18 GMT+8`).
- *
- * Pre-fix the session list cell's tooltip was
- * `Started ${relativeTime(started_at)}` — a relative time inside a
- * tooltip whose whole job is to give precision. Useless.
  */
 export function formatAbsoluteTooltip(dateStr: string | null | undefined): string {
 	if (!dateStr) return "—";

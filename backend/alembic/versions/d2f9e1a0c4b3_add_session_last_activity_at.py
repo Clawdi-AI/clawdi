@@ -5,8 +5,7 @@ Revises: c1d99ac4f9e6
 Create Date: 2026-05-01 11:00:00.000000
 
 Adds a per-session "last activity" timestamp distinct from
-`updated_at`. The two are easy to confuse and pre-fix the dashboard
-conflated them.
+`updated_at`:
 
   - `updated_at` (TimestampMixin, server clock): when the row was
     last written to. Bumped by the upsert path on content_hash
@@ -14,26 +13,25 @@ conflated them.
     the dashboard.
   - `last_activity_at` (NEW, derived from message timestamps):
     when the user actually used the session last. The dashboard's
-    "Last activity" column reads from this; sort default is now
+    "Last activity" column reads from this; sort default is
     `last_activity_at DESC`.
 
 Why a new column instead of repurposing `updated_at`: the row-level
 "last writer wins" semantic of `updated_at` is load-bearing for
-cache invalidation and incremental fetch, even if no current code
-consumes it. Reusing it for user-activity time would conflate two
-distinct contracts and rule out a future cache layer that does.
+cache invalidation and incremental fetch. Reusing it for user-
+activity time would conflate two distinct contracts and rule out a
+future cache layer that depends on the writer-time semantic.
 
 Why not reuse `ended_at`: each adapter populates it inconsistently
 (Hermes can leave it null, OpenClaw falls back to its index's
 updated_at, Claude Code passes the parsed value). `ended_at` is
 adapter-defined; `last_activity_at` is what we own.
 
-Backfill strategy: for existing rows pre-fix, set last_activity_at
-to `COALESCE(ended_at, started_at)`. This loses precision for rows
-where the daemon's push lagged behind actual use (the bug we're
-fixing) but those are unrecoverable from server side anyway —
-authoritative source is the JSONL on the daemon's machine, which
-will re-stamp as soon as the next push lands.
+Backfill: existing rows get `COALESCE(ended_at, started_at)`. This
+loses precision for sessions whose daemon push lagged behind actual
+use, but those are unrecoverable server-side anyway — authoritative
+source is the JSONL on the daemon's machine, re-stamped as soon as
+the next push lands.
 """
 
 from typing import Sequence, Union
@@ -86,10 +84,9 @@ def upgrade() -> None:
     # CONCURRENTLY: at prod scale (sessions table grows ~unbounded
     # per user) a regular `CREATE INDEX` takes an ACCESS EXCLUSIVE
     # lock and blocks every batch upsert + dashboard read for the
-    # duration of the build. Codex flagged this as P2 in PR-#76
-    # review. CONCURRENTLY trades a slower build for zero-downtime.
-    # Required: no transactional DDL — call out of the migration's
-    # implicit transaction.
+    # duration of the build. CONCURRENTLY trades a slower build for
+    # zero-downtime; required to escape the migration's implicit
+    # transaction (no transactional DDL).
     with op.get_context().autocommit_block():
         op.create_index(
             "ix_sessions_user_last_activity",

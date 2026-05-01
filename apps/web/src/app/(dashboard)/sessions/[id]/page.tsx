@@ -98,20 +98,16 @@ export default function SessionDetailPage() {
 	//     separate "total" round-trip.
 	const PAGE_SIZE = 100;
 	const totalForPaging = session?.message_count ?? 0;
-	// Page param is `{offset, limit}` (NOT just an offset) so the
-	// final descending page can shrink its `limit` to fill exactly
-	// the remaining items below the previous offset. Pre-fix the
-	// last desc page used limit=PAGE_SIZE unconditionally, which —
-	// when total wasn't a multiple of PAGE_SIZE — re-fetched the
-	// END of the previous page (e.g. total=250 → page 2 covers
-	// 50..149, page 3 with offset=0 limit=100 covers 0..99 →
-	// 50..99 duplicated). Codex flagged this in round 3.
+	// Page param carries both offset AND limit so the final desc
+	// page can shrink limit to fill exactly the items below the
+	// previous offset. A flat limit=PAGE_SIZE on the last page would
+	// re-fetch the tail of page-2 whenever total isn't a multiple
+	// of PAGE_SIZE (e.g. total=250: p2 covers 50..149, p3 with
+	// offset=0 limit=100 would re-cover 50..99).
 	type PageParam = { offset: number; limit: number };
 	const initialDescOffset = Math.max(0, totalForPaging - PAGE_SIZE);
-	// Clamp ≥ 1 because the backend rejects `limit=0` (Query(ge=1)).
-	// Sessions where `has_content=true` but `message_count=0` (empty
-	// uploaded `[]`) would otherwise 422 on the first fetch instead
-	// of rendering an empty page. Codex flagged this in round 4.
+	// Backend rejects limit=0 (Query(ge=1)), so clamp ≥ 1 for the
+	// has_content=true + message_count=0 case (uploaded empty array).
 	const initialDescLimit = Math.max(1, totalForPaging - initialDescOffset);
 	const {
 		data: pagesData,
@@ -259,14 +255,9 @@ export default function SessionDetailPage() {
 			{/* Divider */}
 			<Separator />
 
-			{/* Message-list toolbar — direction toggle. Sits between
-			    the meta block and the message stream so it's
-			    discoverable. Visible whenever the session HAS
-			    content (regardless of pagination state) so users
-			    see the toggle even while messages are still loading
-			    — pre-fix the gate `messages.length > 0` made the
-			    toggle pop in late, and the user thought "the toggle
-			    isn't there". */}
+			{/* Direction toggle. Gated on `has_content` (not on
+			    `messages.length`) so it stays visible while pages
+			    are still loading. */}
 			{session.has_content ? (
 				<div className="flex items-center justify-between text-xs text-muted-foreground">
 					<span>
@@ -305,14 +296,9 @@ export default function SessionDetailPage() {
 				) : isContentError ? (
 					<ContentFetchError />
 				) : messages?.length ? (
-					// No vertical spacing on the container — the
-					// MessageBlock's `pt-4` on group-start rows + zero
-					// padding on continuation rows controls spacing
-					// directly. Pre-fix `space-y-6` added 24px between
-					// every pair, so Slack-style grouped continuation
-					// rows ended up with the same gap as group
-					// transitions, defeating the "thread looks tight"
-					// effect.
+					// Spacing comes from MessageBlock's `pt-4` on
+					// group-start rows; continuation rows render flush
+					// so a thread looks tight, not gapped.
 					<div>
 						{(() => {
 							// Insert date dividers when consecutive messages
@@ -607,13 +593,9 @@ function MessageBlock({
 	const agentName = agentTypeLabel(agentType);
 
 	return (
-		// Whole row is the `group` so the continuation-row hover
-		// timestamp picks up hovers anywhere on the message,
-		// avatar column or body. Pre-fix `group` was on the inner
-		// content div; hovering the avatar column did nothing.
-		// Pre-fix `mt-4`/`-mt-3` negative-margin hack also created
-		// visual artifacts; replaced with semantic spacing
-		// (`pt-4` on group-start, no padding on continuation).
+		// `group` lives on the whole row so the continuation-row
+		// hover timestamp reveals from a hover anywhere on the
+		// message — avatar column or body.
 		<div className={cn("group flex gap-3", isGroupStart ? "pt-4" : "")}>
 			{/* Avatar column. Group-start: avatar (user image / agent
 			    icon). Continuation: faint HH:MM that reveals on row

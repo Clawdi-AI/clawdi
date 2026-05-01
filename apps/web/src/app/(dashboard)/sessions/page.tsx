@@ -30,9 +30,9 @@ const SORT_KEYS = [
 ] as const;
 type SortKey = (typeof SORT_KEYS)[number];
 
-// 1-indexed, strict integer parser. Returning null falls back to the
-// nuqs default (1). Pre-fix `Number.parseInt("3junk")` would silently
-// land 3 — `Number()` rejects mixed input.
+// 1-indexed strict integer parser. `Number()` (unlike `parseInt`)
+// rejects mixed input like "3junk", so a malformed `?page=3junk`
+// falls back to the nuqs default instead of silently landing 3.
 const parseAsPositiveInt = createParser({
 	parse: (raw: string) => {
 		const n = Number(raw);

@@ -62,15 +62,10 @@ interface DataTableProps<TData, TValue> {
 	/**
 	 * Optional row grouping. When provided, the table inserts a
 	 * full-width separator row above each group of consecutive rows
-	 * sharing the same `key`. Used by /sessions to surface "Today /
-	 * Yesterday / Previous 7 days / …" buckets the way ChatGPT and
-	 * Claude.ai surface their conversation lists. Pre-fix users had
-	 * to scan 25 individual relative-time strings to find the
-	 * recency they cared about.
-	 *
-	 * The caller is responsible for ensuring `data` is sorted such
-	 * that group keys form contiguous runs — this just emits a
-	 * separator on transitions.
+	 * sharing the same `key` — used by /sessions for "Today /
+	 * Yesterday / Previous 7 days / …" buckets. The caller must
+	 * sort `data` so group keys form contiguous runs; this only
+	 * emits a separator on key transitions.
 	 */
 	getRowGroup?: (row: TData) => { key: string; label: string };
 }

@@ -438,15 +438,6 @@ async function pushOneAgent(
 								project_path: s.projectPath,
 								started_at: s.startedAt.toISOString(),
 								ended_at: s.endedAt?.toISOString() ?? null,
-								// `last_activity_at` from max(message.timestamp).
-								// Falls back to endedAt → startedAt only when
-								// no message carries a timestamp. Pre-fix
-								// the value was just `endedAt ?? startedAt`,
-								// which Hermes adapter (which can leave
-								// endedAt null when its DB column is
-								// missing) would persist as the session's
-								// START time — visibly wrong on the
-								// dashboard's "Last activity" column.
 								last_activity_at: computeLastActivityIso(s),
 								duration_seconds: s.durationSeconds,
 								message_count: s.messageCount,
