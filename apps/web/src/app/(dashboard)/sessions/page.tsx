@@ -1,20 +1,14 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumns } from "@/components/sessions/session-columns";
-import {
-	computeRange,
-	DATE_FILTER_OPTIONS,
-	type DateRange,
-	type DateRangePreset,
-	NO_DATE_FILTER,
-} from "@/components/sessions/session-filters";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,22 +29,17 @@ const ALLOWED_SORT_KEYS = new Set([
 	"updated_at",
 ]);
 
-const ALLOWED_DATE_PRESETS = new Set<DateRangePreset>(["today", "yesterday", "7d", "30d"]);
-
 function readStateFromUrl(params: URLSearchParams): {
 	search: string;
 	sort: string;
 	order: "asc" | "desc";
 	page: number;
 	pageSize: number;
-	preset: DateRangePreset | null;
 	agent: string | null;
 } {
 	const sort = params.get("sort") ?? "last_activity_at";
 	const validSort = ALLOWED_SORT_KEYS.has(sort) ? sort : "last_activity_at";
 	const order = params.get("order") === "asc" ? "asc" : "desc";
-	const presetParam = params.get("range") as DateRangePreset | null;
-	const preset = presetParam && ALLOWED_DATE_PRESETS.has(presetParam) ? presetParam : null;
 	const pageNum = Number.parseInt(params.get("page") ?? "1", 10);
 	const sizeNum = Number.parseInt(params.get("pageSize") ?? "25", 10);
 	return {
@@ -59,7 +48,6 @@ function readStateFromUrl(params: URLSearchParams): {
 		order,
 		page: Number.isFinite(pageNum) && pageNum >= 1 ? pageNum : 1,
 		pageSize: Number.isFinite(sizeNum) && sizeNum >= 1 && sizeNum <= 200 ? sizeNum : 25,
-		preset,
 		agent: params.get("agent"),
 	};
 }
@@ -94,16 +82,13 @@ function SessionsListInner() {
 	const [sorting, setSorting] = useState<SortingState>([
 		{ id: initial.sort, desc: initial.order !== "asc" },
 	]);
-	const [dateRange, setDateRange] = useState<DateRange>(
-		initial.preset ? computeRange(initial.preset) : NO_DATE_FILTER,
-	);
 	const [agent, setAgent] = useState<string | null>(initial.agent);
 
 	const sortKey = sorting[0]?.id;
 	const validSortKey = sortKey && ALLOWED_SORT_KEYS.has(sortKey) ? sortKey : "last_activity_at";
 	const sortOrder: "asc" | "desc" = sorting[0]?.desc === false ? "asc" : "desc";
 
-	const isFiltered = dateRange.preset !== null || agent !== null || debouncedSearch !== "";
+	const isFiltered = agent !== null || debouncedSearch !== "";
 
 	const syncToUrl = useCallback(() => {
 		const params = new URLSearchParams();
@@ -112,7 +97,6 @@ function SessionsListInner() {
 		if (sortOrder !== "desc") params.set("order", sortOrder);
 		if (pagination.pageIndex > 0) params.set("page", String(pagination.pageIndex + 1));
 		if (pagination.pageSize !== 25) params.set("pageSize", String(pagination.pageSize));
-		if (dateRange.preset) params.set("range", dateRange.preset);
 		if (agent) params.set("agent", agent);
 		const qs = params.toString();
 		router.replace(qs ? `/sessions?${qs}` : "/sessions", { scroll: false });
@@ -122,7 +106,6 @@ function SessionsListInner() {
 		sortOrder,
 		pagination.pageIndex,
 		pagination.pageSize,
-		dateRange.preset,
 		agent,
 		router,
 	]);
@@ -139,8 +122,6 @@ function SessionsListInner() {
 			debouncedSearch,
 			validSortKey,
 			sortOrder,
-			dateRange.since,
-			dateRange.until,
 			agent,
 		],
 		queryFn: async () =>
@@ -153,13 +134,17 @@ function SessionsListInner() {
 							q: debouncedSearch || undefined,
 							sort: validSortKey,
 							order: sortOrder,
-							since: dateRange.since ?? undefined,
-							until: dateRange.until ?? undefined,
 							agent: agent ?? undefined,
 						},
 					},
 				}),
 			),
+		// Keep showing previous results while a new request is in
+		// flight. Without this, every filter / sort / page change
+		// flashes the table to the skeleton state for a beat —
+		// jarring on a fast network because nothing in the UI
+		// signals "fetching", just an empty flash.
+		placeholderData: keepPreviousData,
 	});
 
 	const { data: envs } = useQuery({
@@ -176,7 +161,20 @@ function SessionsListInner() {
 		if (agent) set.add(agent);
 		return Array.from(set)
 			.sort()
-			.map((a) => ({ label: agentTypeLabel(a), value: a }));
+			.map((a) => ({
+				label: agentTypeLabel(a),
+				value: a,
+				// Reuse the dashboard's standard `AgentIcon` so the
+				// filter dropdown shows the same brand mark every
+				// other agent reference uses (sidebar, agent label
+				// in row cells, agent detail page). Bound per-option
+				// so each row gets its own agent's icon. The faceted
+				// filter passes a `className` to size/color the icon
+				// — we just forward it down to AgentIcon.
+				icon: ({ className }: { className?: string }) => (
+					<AgentIcon agent={a} size="xs" className={className} />
+				),
+			}));
 	}, [envs, agent]);
 
 	const total = data?.total ?? 0;
@@ -188,7 +186,6 @@ function SessionsListInner() {
 
 	const resetFilters = () => {
 		setSearch("");
-		setDateRange(NO_DATE_FILTER);
 		setAgent(null);
 		setPagination((p) => ({ ...p, pageIndex: 0 }));
 	};
@@ -247,16 +244,12 @@ function SessionsListInner() {
 							}}
 							placeholder="Search summary, project, ID…"
 						>
-							<DataTableFacetedFilter
-								title="Last activity"
-								options={DATE_FILTER_OPTIONS}
-								selected={dateRange.preset ? [dateRange.preset] : []}
-								onChange={(arr) => {
-									const next = arr[0] as DateRangePreset | undefined;
-									setDateRange(next ? computeRange(next) : NO_DATE_FILTER);
-									setPagination((p) => ({ ...p, pageIndex: 0 }));
-								}}
-							/>
+							{/* No "Last activity" filter — the list is already
+							    sorted by last_activity_at desc and the bucket
+							    headers (Today / Yesterday / Previous 7 days)
+							    do the time-grouping job. A separate filter
+							    would just hide other buckets, duplicating work
+							    for no information gain. */}
 							{agentOptions.length > 0 ? (
 								<DataTableFacetedFilter
 									title="Agent"
