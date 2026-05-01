@@ -36,6 +36,26 @@ export const SKILL_TAR_EXCLUDE = new Set([
 	".ruff_cache",
 	".tox",
 	"coverage",
+	// Cross-agent skill bundles. gstack and similar meta-skills
+	// ship sub-skills FOR OTHER AGENTS inside their own root
+	// (e.g. `gstack/.agents/skills/<sub>` is meant to be loaded
+	// by openclaw / hermes adapters, not codex/claude_code).
+	// They're not part of the outer skill's runtime contract,
+	// they balloon the tarball past the 25 MB cap, and the
+	// dotfile prefix means the resolver wouldn't even enqueue
+	// changes inside them (see resolveOwningSkillKey). Keeping
+	// them out of the outer skill's tar lets gstack-shaped
+	// folders fit under the cap. Pre-fix gstack itself failed
+	// upload with HTTP 413 because the bundled subtrees pushed
+	// it past 25 MB.
+	".agents",
+	".cursor",
+	".factory",
+	".openclaw",
+	".hermes",
+	".gbrain",
+	".claude",
+	".codex",
 ]);
 
 /**

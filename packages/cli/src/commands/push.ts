@@ -413,43 +413,56 @@ async function pushOneAgent(
 		sessionSpinner.start(
 			`Uploading metadata for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
-		let needsContent: Set<string>;
-		let rejectedIds: Set<string> = new Set();
+		const needsContent: Set<string> = new Set();
+		const rejectedIds: Set<string> = new Set();
+		// Chunk sessions into batches that fit under PostgreSQL's
+		// 32767 bound-parameters-per-query limit. The server upsert
+		// builds a single multi-VALUES INSERT with ~17 columns per
+		// row; in prod we observed
+		// `sqlalchemy.exc.InterfaceError: ... query arguments cannot
+		// exceed 32767` 500-ing this endpoint when a heavy user's
+		// initial backfill shipped 1900+ sessions in one body.
+		// Schema-side cap (max_length=500 on SessionBatchRequest)
+		// gives the same protection as defense-in-depth.
+		const SESSION_BATCH_CHUNK = 500;
 		try {
-			const result = unwrap(
-				await api.POST("/api/sessions/batch", {
-					body: {
-						sessions: sessions.map((s) => ({
-							environment_id: envId,
-							local_session_id: s.localSessionId,
-							project_path: s.projectPath,
-							started_at: s.startedAt.toISOString(),
-							ended_at: s.endedAt?.toISOString() ?? null,
-							duration_seconds: s.durationSeconds,
-							message_count: s.messageCount,
-							input_tokens: s.inputTokens,
-							output_tokens: s.outputTokens,
-							cache_read_tokens: s.cacheReadTokens,
-							model: s.model,
-							models_used: s.modelsUsed,
-							summary: s.summary,
-							status: "completed",
-							content_hash: s.contentHash ?? null,
-						})),
-					},
-				}),
-			);
-			needsContent = new Set(result.needs_content);
-			sessionsCreated = result.created;
-			sessionsUpdated = result.updated;
-			sessionsUnchanged = result.unchanged;
-			// Server flagged these ids as cross-env race casualties
-			// (see SessionBatchResponse.rejected). They are NOT
-			// synced; the caller must skip the lock-write step
-			// below so the next push retries. Pre-fix the absence
-			// from `needs_content` looked like success and we
-			// wrote a stale lock.
-			rejectedIds = new Set(result.rejected ?? []);
+			for (let offset = 0; offset < sessions.length; offset += SESSION_BATCH_CHUNK) {
+				const chunk = sessions.slice(offset, offset + SESSION_BATCH_CHUNK);
+				const result = unwrap(
+					await api.POST("/api/sessions/batch", {
+						body: {
+							sessions: chunk.map((s) => ({
+								environment_id: envId,
+								local_session_id: s.localSessionId,
+								project_path: s.projectPath,
+								started_at: s.startedAt.toISOString(),
+								ended_at: s.endedAt?.toISOString() ?? null,
+								duration_seconds: s.durationSeconds,
+								message_count: s.messageCount,
+								input_tokens: s.inputTokens,
+								output_tokens: s.outputTokens,
+								cache_read_tokens: s.cacheReadTokens,
+								model: s.model,
+								models_used: s.modelsUsed,
+								summary: s.summary,
+								status: "completed",
+								content_hash: s.contentHash ?? null,
+							})),
+						},
+					}),
+				);
+				for (const id of result.needs_content) needsContent.add(id);
+				sessionsCreated += result.created;
+				sessionsUpdated += result.updated;
+				sessionsUnchanged += result.unchanged;
+				// Server flagged these ids as cross-env race casualties
+				// (see SessionBatchResponse.rejected). They are NOT
+				// synced; the caller must skip the lock-write step
+				// below so the next push retries. Pre-fix the absence
+				// from `needs_content` looked like success and we
+				// wrote a stale lock.
+				for (const id of result.rejected ?? []) rejectedIds.add(id);
+			}
 			if (rejectedIds.size > 0) {
 				p.log.warn(
 					`${rejectedIds.size} session${rejectedIds.size === 1 ? "" : "s"} rejected by server (cross-env race) — will retry on next push`,

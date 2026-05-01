@@ -15,6 +15,7 @@ from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.auth import router as auth_router
+from app.routes.capabilities import router as capabilities_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
@@ -159,6 +160,7 @@ app.include_router(skills_scope_router)
 app.include_router(sync_router)
 app.include_router(memories_router)
 app.include_router(settings_router)
+app.include_router(capabilities_router)
 app.include_router(vault_router)
 app.include_router(connectors_router)
 app.include_router(mcp_proxy_router)

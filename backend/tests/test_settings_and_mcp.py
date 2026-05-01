@@ -15,7 +15,19 @@ from app.main import app
 
 
 @pytest.mark.asyncio
-async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncClient):
+async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncClient, monkeypatch):
+    # Settings save now refuses `memory_provider=mem0` when the
+    # `[mem0]` extra isn't installed (the prod-default since the
+    # package was never declared). Stub `mem0_available()` so this
+    # masking test can still exercise the secret-handling path.
+    import app.services.memory_provider as mp
+
+    monkeypatch.setattr(mp, "_mem0_available_cached", None)
+    monkeypatch.setattr(mp, "mem0_available", lambda: True)
+    import app.routes.settings as st
+
+    monkeypatch.setattr(st, "mem0_available", lambda: True)
+
     r = await client.patch(
         "/api/settings",
         json={"settings": {"memory_provider": "mem0", "mem0_api_key": "mem0_live_supersecret"}},

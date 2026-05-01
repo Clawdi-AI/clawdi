@@ -1962,7 +1962,28 @@ async function rescanLocalSkillsForChanges(
  * ancestor has SKILL.md (e.g. a brand-new category dir before
  * its first nested skill is committed).
  */
-function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): string | null {
+export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): string | null {
+	// Reject any change whose path passes through a dotfile-
+	// prefixed component (e.g. `gstack/.agents/skills/<sub>`).
+	// Server's SKILL_KEY_PATTERN requires every component to
+	// start with `[A-Za-z0-9]`; pre-fix this triggered 728
+	// `engine.queue_drop_permanent` 422 events in prod after
+	// the daemon fired on gstack's bundled sub-skill artifacts.
+	// An earlier draft walked UP past the dotfile component to
+	// resolve to the outer skill (`gstack`) — but the outer
+	// skill is the 1 GB folder that already trips upload's
+	// 25 MB cap (413). Returning null here trades both 422
+	// spam AND would-be 413 cascades for a silent no-op.
+	// Companion fixes:
+	//   - lib/tar.ts SKILL_TAR_EXCLUDE drops these dotfile
+	//     subtrees from the outer skill's tarball so the outer
+	//     skill itself stays under the cap.
+	//   - Adapters' `listSkillKeys` already filter dotfiles at
+	//     the top-level walk; this is the watcher-driven
+	//     analog.
+	if (pathFromRoot.split("/").some((seg) => seg.startsWith("."))) {
+		return null;
+	}
 	let cur = pathFromRoot;
 	// Bound the walk: 6 levels is more than the regex permits
 	// (4 components) so we'll always terminate even if the input

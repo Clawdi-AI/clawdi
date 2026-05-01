@@ -7,6 +7,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -190,8 +191,33 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 clerk_id,
             )
             user.clerk_id = clerk_id
-            await db.commit()
-            await db.refresh(user)
+            # Concurrent rebind race: two requests carrying the
+            # same Clerk JWT can both read the same candidate
+            # row, both write the same `clerk_id`, and the
+            # second commit hits `users_clerk_id_key` unique
+            # violation. Pre-fix this 500'd dashboard /stats /
+            # contribution / memories for affected users (14
+            # events observed in prod log post-#66 deploy).
+            # Catch the IntegrityError, rollback, and re-query
+            # by clerk_id — by the time we get here the winner
+            # has committed and the row carries the new
+            # clerk_id, so the lookup converges.
+            try:
+                await db.commit()
+                await db.refresh(user)
+            except IntegrityError:
+                await db.rollback()
+                result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+                user = result.scalar_one_or_none()
+                if user is None:
+                    # Both writers somehow lost the row — extremely
+                    # unlikely (would require a concurrent delete
+                    # of all matching rows). Fail closed with
+                    # 401 rather than 500 so the client retries.
+                    raise HTTPException(
+                        status.HTTP_401_UNAUTHORIZED,
+                        "could not load user after rebind race",
+                    ) from None
 
     if not user:
         # First login (production path, or rebind enabled with no
@@ -207,8 +233,6 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         # the `users.clerk_id` unique constraint. Catch the
         # IntegrityError, rollback, and re-query — the row is
         # there now from the winner.
-        from sqlalchemy.exc import IntegrityError
-
         from app.models.scope import SCOPE_KIND_PERSONAL
         from app.models.scope import Scope as _Scope
 

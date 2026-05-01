@@ -506,6 +506,31 @@ def _merge_hybrid(
 # ---------- provider selection ----------
 
 
+def mem0_available() -> bool:
+    """Whether the `mem0` Python module is importable in this
+    deployment. Drives the dashboard capability flag (see
+    `routes/capabilities.py`) and the settings-save validator
+    (`routes/settings.py`) — UI hides the option when not
+    available; settings refuses to persist a memory_provider=mem0
+    value the backend can't honor.
+
+    Cached because it never changes within a process — re-checking
+    on every request needlessly thrashes the import system.
+    """
+    global _mem0_available_cached
+    cached = _mem0_available_cached
+    if cached is not None:
+        return cached
+    import importlib.util
+
+    cached = importlib.util.find_spec("mem0") is not None
+    _mem0_available_cached = cached
+    return cached
+
+
+_mem0_available_cached: bool | None = None
+
+
 async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     """Resolve the memory provider for a user.
 
@@ -535,6 +560,21 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         except (ValueError, RuntimeError, TypeError) as e:
             log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
             return BuiltinProvider(db, embedder=resolve_embedder())
-        return Mem0Provider(api_key=api_key)
+        # Defense-in-depth: even with the [mem0] extra installed,
+        # a transient import failure (broken venv, partial install)
+        # shouldn't 500 every memory request — the builtin provider
+        # is always functional. Settings save validation also
+        # checks `mem0_available()` before allowing the value to
+        # land in user_settings, so this branch is the safety net,
+        # not the primary gate.
+        try:
+            return Mem0Provider(api_key=api_key)
+        except ImportError as e:
+            log.warning(
+                "memory_provider=mem0 but mem0 module is not importable in this "
+                "deployment (install the [mem0] extra); falling back to builtin: %s",
+                e,
+            )
+            return BuiltinProvider(db, embedder=resolve_embedder())
 
     return BuiltinProvider(db, embedder=resolve_embedder())

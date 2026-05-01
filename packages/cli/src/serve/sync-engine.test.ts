@@ -1,6 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ApiError } from "../lib/api-client";
-import { isAuthFailure } from "./sync-engine";
+import { isAuthFailure, resolveOwningSkillKey } from "./sync-engine";
 
 describe("isAuthFailure", () => {
 	// Pull-side and push-side both rely on this classifier to decide
@@ -93,5 +96,73 @@ describe("addInFlight / releaseInFlight refcount", () => {
 		releaseInFlight(m, "a");
 		expect(m.has("a")).toBe(false);
 		expect(m.has("b")).toBe(true);
+	});
+});
+
+describe("resolveOwningSkillKey — dotfile component rejection", () => {
+	// Prod observed 728 `engine.queue_drop_permanent` 422 events
+	// in the codex daemon log post-#66 deploy. gstack ships its
+	// own bundled sub-skills FOR OTHER AGENTS at paths like
+	// `~/.codex/skills/gstack/.agents/skills/<sub>/SKILL.md`.
+	// fs.watch fires for those, the resolver greedily returned
+	// the deepest SKILL.md match, and server's
+	// SKILL_KEY_PATTERN rejected with 422 (every component must
+	// start with [A-Za-z0-9]).
+	//
+	// The fix returns null on any path with a dotfile-prefixed
+	// component. NOT walk-up to outer skill — that would convert
+	// 422s into 413 cascades because the outer `gstack` folder
+	// is the 1 GB monster that already trips the 25 MB upload
+	// cap. The companion fix in lib/tar.ts excludes those
+	// dotfile subtrees from the OUTER skill's tarball so it
+	// stays under the cap.
+
+	let tmp: string;
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "skill-key-resolve-"));
+	});
+	afterEach(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	function makeSkillMd(...segments: string[]) {
+		const dir = join(tmp, ...segments);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "SKILL.md"), "---\nname: x\n---\n");
+	}
+
+	it("returns null when ANY path component starts with a dot (gstack shape)", () => {
+		makeSkillMd("gstack");
+		makeSkillMd("gstack", ".agents", "skills", "gstack-autoplan");
+
+		// fs.watch fires on the deep nested file; resolver MUST
+		// NOT enqueue. Pre-fix this returned
+		// `gstack/.agents/skills/gstack-autoplan` and 422'd.
+		expect(resolveOwningSkillKey(tmp, "gstack/.agents/skills/gstack-autoplan")).toBeNull();
+	});
+
+	it("returns null even when the dotfile is at the leaf (.../foo/.cache/x)", () => {
+		makeSkillMd("foo");
+		mkdirSync(join(tmp, "foo", ".cache", "x"), { recursive: true });
+		expect(resolveOwningSkillKey(tmp, "foo/.cache/x")).toBeNull();
+	});
+
+	it("returns the deepest valid skill_key for nested layouts (Hermes)", () => {
+		// `category/foo/SKILL.md` exists but no dotfile in path.
+		// Resolver returns the deepest match.
+		makeSkillMd("category", "foo");
+		expect(resolveOwningSkillKey(tmp, "category/foo")).toBe("category/foo");
+		expect(resolveOwningSkillKey(tmp, "category/foo/references")).toBe("category/foo");
+	});
+
+	it("returns the top-level dir for flat layouts (Claude Code / Codex)", () => {
+		makeSkillMd("autoplan");
+		expect(resolveOwningSkillKey(tmp, "autoplan")).toBe("autoplan");
+		expect(resolveOwningSkillKey(tmp, "autoplan/references/pattern.md")).toBe("autoplan");
+	});
+
+	it("returns null for a path with no SKILL.md ancestor", () => {
+		expect(resolveOwningSkillKey(tmp, "no-skill-here")).toBeNull();
+		expect(resolveOwningSkillKey(tmp, "deep/nested/no-skill")).toBeNull();
 	});
 });

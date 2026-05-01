@@ -52,7 +52,17 @@ class SessionCreate(BaseModel):
 
 
 class SessionBatchRequest(BaseModel):
-    sessions: list[SessionCreate]
+    # Cap at 500 sessions per request. The upsert builds a single
+    # multi-VALUES INSERT with ~17 bound parameters per row;
+    # asyncpg refuses queries with > 32767 parameters total
+    # (PostgreSQL wire protocol limit). Pre-fix `clawdi push
+    # --modules sessions --all` shipped every session in one
+    # body — observed 500-ing in prod with
+    # `sqlalchemy.exc.InterfaceError: ... query arguments cannot
+    # exceed 32767` for users with > ~1900 sessions. 500 leaves
+    # ample headroom (8500 params) and the CLI side now chunks
+    # to match (packages/cli/src/commands/push.ts).
+    sessions: list[SessionCreate] = Field(max_length=500)
 
 
 class EnvironmentCreate(BaseModel):
