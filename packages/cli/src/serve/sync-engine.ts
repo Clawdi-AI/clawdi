@@ -1022,6 +1022,16 @@ async function drainQueueLoop(
 					item: redactItem(item),
 					error: msg,
 				});
+				// Override the eager `setLastError(msg)` at the top of
+				// this catch — pre-fix the dashboard surfaced "API
+				// error 413: Skill tarball exceeds 26214400 bytes /
+				// It will keep retrying" because the raw msg leaked
+				// into the heartbeat. The dropped-events counter
+				// (incremented below) is the right signal for "we
+				// skipped some content"; the heartbeat last_error
+				// should stay clean so the user only sees alarms
+				// for things that actually need attention.
+				setLastError(null);
 				queue.recordPermanentDrop();
 				clearInFlight(item);
 				queue.markDoneIfVersion(item);
