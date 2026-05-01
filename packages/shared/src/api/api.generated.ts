@@ -2819,7 +2819,10 @@ export interface operations {
                 order?: string;
                 page?: number;
                 page_size?: number;
+                /** @description Filter to last_activity_at >= since */
                 since?: string | null;
+                /** @description Filter to last_activity_at < until */
+                until?: string | null;
             };
             header?: never;
             path?: never;

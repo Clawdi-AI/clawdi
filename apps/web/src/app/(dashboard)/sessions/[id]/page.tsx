@@ -108,7 +108,11 @@ export default function SessionDetailPage() {
 	// 50..99 duplicated). Codex flagged this in round 3.
 	type PageParam = { offset: number; limit: number };
 	const initialDescOffset = Math.max(0, totalForPaging - PAGE_SIZE);
-	const initialDescLimit = totalForPaging - initialDescOffset;
+	// Clamp ≥ 1 because the backend rejects `limit=0` (Query(ge=1)).
+	// Sessions where `has_content=true` but `message_count=0` (empty
+	// uploaded `[]`) would otherwise 422 on the first fetch instead
+	// of rendering an empty page. Codex flagged this in round 4.
+	const initialDescLimit = Math.max(1, totalForPaging - initialDescOffset);
 	const {
 		data: pagesData,
 		isLoading: isContentLoading,
