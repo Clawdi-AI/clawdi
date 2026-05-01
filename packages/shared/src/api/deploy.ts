@@ -1,14 +1,14 @@
 /**
  * Typed deploy-api types — re-exported from auto-generated
- * `deploy-generated.ts`. Regenerate with:
+ * `deploy.generated.ts`. Regenerate with:
  *
  *     bun --cwd apps/web run generate-deploy-api
  *
  * (requires clawdi.ai running on :50021).
  */
-import type { components as DeployComponents } from "./deploy-generated";
+import type { components as DeployComponents } from "./deploy.generated";
 
-export type { components as DeployComponents, paths as DeployPaths } from "./deploy-generated";
+export type { components as DeployComponents, paths as DeployPaths } from "./deploy.generated";
 
 type S = DeployComponents["schemas"];
 

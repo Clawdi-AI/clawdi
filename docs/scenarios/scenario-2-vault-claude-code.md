@@ -166,10 +166,10 @@ jobs:
       - run: |
           clawdi run --keys prod/* -- ./deploy.sh
         env:
-          CLAWDI_TOKEN: ${{ secrets.CLAWDI_API_KEY }}
+          CLAWDI_AUTH_TOKEN: ${{ secrets.CLAWDI_AUTH_TOKEN }}
 ```
 
-Only one secret (`CLAWDI_API_KEY`) in GitHub Secrets. All other keys pulled from Vault at runtime.
+Only one secret (`CLAWDI_AUTH_TOKEN`) in GitHub Secrets. All other keys pulled from Vault at runtime.
 
 ---
 

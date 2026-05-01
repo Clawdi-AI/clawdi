@@ -31,6 +31,13 @@ services:
       REPO_REF: ${REPO_REF:-main}
     command: >
       sh -c '
+        # `set -e` so a failed git fetch / reset / commit-stamp
+        # writes a non-zero exit and Compose blocks api/web
+        # from starting against the previous checkout. Without
+        # this the trailing `echo` would always succeed and
+        # the redeploy would silently serve stale code on a
+        # transient GitHub outage or bad ref.
+        set -e
         # Coolify v4 sets COOLIFY_CONTAINER_NAME=<svc>-<uuid>-pr-<N> for preview
         # deploys. Detect that to sync to the PR head ref instead of the
         # production-tracking branch.
@@ -53,6 +60,13 @@ services:
 
         git -C /repo fetch --depth 50 origin "$$REF"
         git -C /repo reset --hard FETCH_HEAD
+        # Stamp the source HEAD commit into a plain file the
+        # downstream web container reads — `oven/bun:1` (the
+        # web image) doesnt have git, so calling
+        # `git rev-parse HEAD` from there would crash the
+        # container under set -e on boot. Write it here from
+        # the alpine/git clone step instead.
+        git -C /repo rev-parse HEAD > /repo/.source-commit
         echo "source at $$(git -C /repo rev-parse --short HEAD)"
       '
     restart: "no"
@@ -178,12 +192,23 @@ services:
         cd apps/web
         # Production build (no HMR, no dev-mode WS — Cloudflare Tunnel proxies HTTP
         # cleanly but the dev WebSocket /_next/webpack-hmr fails through it).
-        # First boot: ~2 min build. Subsequent restarts: skip build if BUILD_ID
-        # exists (the canonical "this is a real production build" marker). A
-        # bare `.next/` dir from a prior `next dev` run does NOT have BUILD_ID.
-        if [ ! -f .next/BUILD_ID ]; then
+        # First boot: ~2 min build. Subsequent restarts: skip build if the
+        # cached bundle was built from THIS commit. The clone step stamps
+        # `/app/.source-commit` (alpine/git has git; oven/bun:1 does NOT —
+        # calling git here would crash the container under set -e). We
+        # mirror that stamp into `.next/.commit` and rebuild whenever it
+        # differs from the current HEAD.
+        # Pre-fix this branch only checked `.next/BUILD_ID` existence — on a
+        # redeploy that fast-forwarded the source volume to a new commit,
+        # the previous build artifacts (incl. NEXT_PUBLIC_* baked into the
+        # JS bundle) were kept and the web container served stale code
+        # against the new API URL until someone manually wiped the volume.
+        COMMIT=$$(cat /app/.source-commit 2>/dev/null || echo "unknown")
+        STAMPED=$$(cat .next/.commit 2>/dev/null || echo "")
+        if [ ! -f .next/BUILD_ID ] || [ "$$STAMPED" != "$$COMMIT" ]; then
           rm -rf .next
           bun run build
+          echo "$$COMMIT" > .next/.commit
         fi
         exec bun run start --hostname 0.0.0.0 --port 3000
       '
