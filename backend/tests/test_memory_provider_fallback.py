@@ -117,8 +117,11 @@ async def test_get_memory_provider_handles_unknown_user_id(db_session: AsyncSess
 @pytest.mark.asyncio
 async def test_mem0_available_caches_first_probe(monkeypatch):
     """`mem0_available()` should cache its result — re-probing on
-    every request unnecessarily thrashes the import system."""
-    import importlib.util as _iu
+    every request unnecessarily thrashes the import system. The
+    probe uses a real `import mem0` (not `find_spec`) because
+    find_spec returns truthy even for broken installs whose
+    transitive deps fail to import."""
+    import builtins
 
     import app.services.memory_provider as mp
 
@@ -126,19 +129,24 @@ async def test_mem0_available_caches_first_probe(monkeypatch):
     monkeypatch.setattr(mp, "_mem0_available_cached", None)
 
     call_count = {"n": 0}
-    real_find = _iu.find_spec
+    real_import = builtins.__import__
 
     def counting(name, *args, **kwargs):
         if name == "mem0":
             call_count["n"] += 1
-        return real_find(name, *args, **kwargs)
+            raise ImportError("simulated for test")
+        return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(_iu, "find_spec", counting)
+    monkeypatch.setattr(builtins, "__import__", counting)
 
     # First call probes; subsequent calls hit cache.
     a = mp.mem0_available()
     b = mp.mem0_available()
     c = mp.mem0_available()
 
-    assert a == b == c
+    # All three return False (simulated ImportError) and the
+    # import probe runs exactly once.
+    assert a is False
+    assert b is False
+    assert c is False
     assert call_count["n"] == 1, "mem0_available should probe once and cache"

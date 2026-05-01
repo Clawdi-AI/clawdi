@@ -507,23 +507,38 @@ def _merge_hybrid(
 
 
 def mem0_available() -> bool:
-    """Whether the `mem0` Python module is importable in this
-    deployment. Drives the dashboard capability flag (see
-    `routes/capabilities.py`) and the settings-save validator
-    (`routes/settings.py`) — UI hides the option when not
-    available; settings refuses to persist a memory_provider=mem0
-    value the backend can't honor.
+    """Whether the `mem0` Python module is actually importable
+    in this deployment. Drives the dashboard capability flag
+    (see `routes/capabilities.py`) and the settings-save
+    validator (`routes/settings.py`) — UI hides the option
+    when not available; settings refuses to persist a
+    memory_provider=mem0 value the backend can't honor.
 
-    Cached because it never changes within a process — re-checking
-    on every request needlessly thrashes the import system.
+    Probes by REAL import, not `find_spec`. `find_spec` returns
+    truthy even when the module's transitive dependencies fail
+    to load (broken `[mem0]` install, partially-installed venv).
+    A truthy `find_spec` followed by a failing real import would
+    let `/api/capabilities` advertise mem0, the settings page
+    accept the value, then `Mem0Provider.__init__` catch the
+    ImportError and silently degrade to builtin — leaving the
+    user with a UI saying "Currently using: mem0" and behavior
+    that's actually builtin. Real import probes the same path
+    the runtime would take.
+
+    Cached because it never changes within a process — re-
+    checking on every request needlessly thrashes the import
+    system.
     """
     global _mem0_available_cached
     cached = _mem0_available_cached
     if cached is not None:
         return cached
-    import importlib.util
+    try:
+        import mem0  # noqa: F401  -- presence check, not used here
 
-    cached = importlib.util.find_spec("mem0") is not None
+        cached = True
+    except ImportError:
+        cached = False
     _mem0_available_cached = cached
     return cached
 

@@ -166,3 +166,32 @@ describe("resolveOwningSkillKey — dotfile component rejection", () => {
 		expect(resolveOwningSkillKey(tmp, "deep/nested/no-skill")).toBeNull();
 	});
 });
+
+describe("resolveOwningSkillKey — Windows path separator", () => {
+	// Codex flagged: on Windows, watcher.ts builds pathFromRoot
+	// via path.join() → backslash-separated. A `/`-only split
+	// missed dotfile components like `gstack\.agents\...`,
+	// re-enabling the 422 spam this fix is meant to stop. The
+	// resolver now splits on both `/` and `\`.
+	let tmp: string;
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "skill-key-resolve-win-"));
+	});
+	afterEach(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	it("rejects backslash-separated paths with dotfile components", () => {
+		// Synthetic Windows-style input. Resolver doesn't actually
+		// touch the filesystem for the dotfile check, so we don't
+		// need a real backslash-named directory on macOS — the
+		// rejection happens before any fs access.
+		expect(resolveOwningSkillKey(tmp, "gstack\\.agents\\skills\\gstack-autoplan")).toBeNull();
+	});
+
+	it("rejects mixed-separator paths with dotfile components", () => {
+		// Windows clients can produce mixed separators (e.g.
+		// path.join joining a path that already had `/`).
+		expect(resolveOwningSkillKey(tmp, "gstack/.agents\\skills/foo")).toBeNull();
+	});
+});

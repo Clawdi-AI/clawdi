@@ -1981,7 +1981,12 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
 	//   - Adapters' `listSkillKeys` already filter dotfiles at
 	//     the top-level walk; this is the watcher-driven
 	//     analog.
-	if (pathFromRoot.split("/").some((seg) => seg.startsWith("."))) {
+	// Split on BOTH `/` and `\` — Windows callers (the watcher
+	// builds paths via `path.join` which yields backslashes on
+	// win32) would otherwise sneak `gstack\.agents\skills\<sub>`
+	// past a `/`-only split and re-enable the 422 spam this fix
+	// is meant to stop.
+	if (pathFromRoot.split(/[/\\]/).some((seg) => seg.startsWith("."))) {
 		return null;
 	}
 	let cur = pathFromRoot;
