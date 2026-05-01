@@ -5,19 +5,21 @@ import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import {
 	computeRange,
+	DATE_FILTER_OPTIONS,
 	type DateRange,
 	type DateRangePreset,
 	NO_DATE_FILTER,
-	SessionAgentFilter,
-	SessionDateFilter,
 } from "@/components/sessions/session-filters";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
 import { unwrap, useApi } from "@/lib/api";
@@ -25,9 +27,6 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { errorMessage, recencyBucketFor } from "@/lib/utils";
 
-// Backend's allowed sort keys (kept narrow to defend against typos
-// when the page sends a key the server's `_SESSION_SORT_COLUMNS`
-// allow-list doesn't recognize).
 const ALLOWED_SORT_KEYS = new Set([
 	"last_activity_at",
 	"started_at",
@@ -38,13 +37,6 @@ const ALLOWED_SORT_KEYS = new Set([
 
 const ALLOWED_DATE_PRESETS = new Set<DateRangePreset>(["today", "yesterday", "7d", "30d"]);
 
-/**
- * Read URL params into the page's filter/sort/pagination state.
- * Pre-fix everything was useState-only — refresh wiped the user's
- * "I was looking at last 7 days, sorted by tokens, on page 3"
- * context. URL state lets the user share a filtered view link AND
- * keeps the back-button useful.
- */
 function readStateFromUrl(params: URLSearchParams): {
 	search: string;
 	sort: string;
@@ -72,11 +64,6 @@ function readStateFromUrl(params: URLSearchParams): {
 	};
 }
 
-// `useSearchParams` requires a Suspense boundary during static
-// prerender (Next.js 13+). The inner component reads URL state;
-// the default export wraps it. Without this, `next build` fails
-// with "useSearchParams() should be wrapped in a suspense boundary
-// at page /sessions".
 export default function SessionsPage() {
 	return (
 		<Suspense
@@ -96,11 +83,6 @@ function SessionsListInner() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 
-	// Hydrate state from URL on first render. Subsequent updates flow
-	// state → URL (via the syncToUrl effect below). We don't watch
-	// the URL after mount — back/forward navigation isn't a frequent
-	// pattern on this page and adding it would race with our own
-	// pushes.
 	const initial = useMemo(() => readStateFromUrl(searchParams), []);
 
 	const [pagination, setPagination] = useState({
@@ -121,8 +103,8 @@ function SessionsListInner() {
 	const validSortKey = sortKey && ALLOWED_SORT_KEYS.has(sortKey) ? sortKey : "last_activity_at";
 	const sortOrder: "asc" | "desc" = sorting[0]?.desc === false ? "asc" : "desc";
 
-	// Sync state → URL on any change. Single replace per render so
-	// rapid filter toggles don't blow up the back-stack.
+	const isFiltered = dateRange.preset !== null || agent !== null || debouncedSearch !== "";
+
 	const syncToUrl = useCallback(() => {
 		const params = new URLSearchParams();
 		if (debouncedSearch) params.set("q", debouncedSearch);
@@ -133,9 +115,6 @@ function SessionsListInner() {
 		if (dateRange.preset) params.set("range", dateRange.preset);
 		if (agent) params.set("agent", agent);
 		const qs = params.toString();
-		// `replace` not `push` — we don't want every keystroke
-		// (debounced or not) clogging the history stack. Filter changes
-		// are exploratory, not bookmark-worthy moments.
 		router.replace(qs ? `/sessions?${qs}` : "/sessions", { scroll: false });
 	}, [
 		debouncedSearch,
@@ -183,31 +162,36 @@ function SessionsListInner() {
 			),
 	});
 
-	// Available agents for the filter chips, derived from the user's
-	// registered environments. If only one agent is registered, the
-	// chip group hides itself (the filter has no value).
 	const { data: envs } = useQuery({
 		queryKey: ["environments-for-filter"],
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
 	});
-	const availableAgents = useMemo(() => {
+	const agentOptions = useMemo(() => {
 		const set = new Set<string>();
 		for (const e of envs ?? []) {
 			if (e.agent_type) set.add(e.agent_type);
 		}
-		return Array.from(set).sort();
-	}, [envs]);
+		// Include the active agent filter even if no env matches it
+		// (env was deleted but URL still says ?agent=X).
+		if (agent) set.add(agent);
+		return Array.from(set)
+			.sort()
+			.map((a) => ({ label: agentTypeLabel(a), value: a }));
+	}, [envs, agent]);
 
 	const total = data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pagination.pageSize));
 
-	// Bucket headers (Today / Yesterday / Previous 7 days / monthly /
-	// yearly) only make sense when the user is viewing the natural
-	// "by recency" sort. Other sorts (by message count, tokens) would
-	// emit nonsensical buckets, so we suppress grouping for them.
 	const groupable = validSortKey === "last_activity_at" || validSortKey === "started_at";
 	const sortField: "last_activity_at" | "started_at" =
 		validSortKey === "started_at" ? "started_at" : "last_activity_at";
+
+	const resetFilters = () => {
+		setSearch("");
+		setDateRange(NO_DATE_FILTER);
+		setAgent(null);
+		setPagination((p) => ({ ...p, pageIndex: 0 }));
+	};
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -234,8 +218,8 @@ function SessionsListInner() {
 					data={data?.items ?? []}
 					isLoading={isLoading}
 					emptyMessage={
-						debouncedSearch
-							? "No sessions match your search."
+						isFiltered
+							? "No sessions match your filters."
 							: "No sessions yet. Once your agent has a conversation, it'll show up here."
 					}
 					getRowHref={(s) => `/sessions/${s.id}`}
@@ -243,9 +227,6 @@ function SessionsListInner() {
 					sorting={sorting}
 					onSortingChange={(updater) => {
 						setSorting(typeof updater === "function" ? updater(sorting) : updater);
-						// Sort change resets to page 1 — paginating into a
-						// stale offset of a different ordering is a classic
-						// "row skipped/duplicated" bug.
 						setPagination((p) => ({ ...p, pageIndex: 0 }));
 					}}
 					pagination={pagination}
@@ -266,21 +247,32 @@ function SessionsListInner() {
 							}}
 							placeholder="Search summary, project, ID…"
 						>
-							<SessionDateFilter
-								value={dateRange}
-								onChange={(r) => {
-									setDateRange(r);
+							<DataTableFacetedFilter
+								title="Last activity"
+								options={DATE_FILTER_OPTIONS}
+								selected={dateRange.preset ? [dateRange.preset] : []}
+								onChange={(arr) => {
+									const next = arr[0] as DateRangePreset | undefined;
+									setDateRange(next ? computeRange(next) : NO_DATE_FILTER);
 									setPagination((p) => ({ ...p, pageIndex: 0 }));
 								}}
 							/>
-							<SessionAgentFilter
-								value={agent}
-								availableAgents={availableAgents}
-								onChange={(a) => {
-									setAgent(a);
-									setPagination((p) => ({ ...p, pageIndex: 0 }));
-								}}
-							/>
+							{agentOptions.length > 0 ? (
+								<DataTableFacetedFilter
+									title="Agent"
+									options={agentOptions}
+									selected={agent ? [agent] : []}
+									onChange={(arr) => {
+										setAgent(arr[0] ?? null);
+										setPagination((p) => ({ ...p, pageIndex: 0 }));
+									}}
+								/>
+							) : null}
+							{isFiltered ? (
+								<Button variant="ghost" size="sm" className="h-8 px-2" onClick={resetFilters}>
+									Reset
+								</Button>
+							) : null}
 						</DataTableToolbar>
 					}
 					footer={

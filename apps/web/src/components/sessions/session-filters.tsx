@@ -1,21 +1,8 @@
-"use client";
-
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-
 /**
- * Quick date-range filter chips for the sessions list. Mirrors the
- * Linear / Notion pattern: a tight row of preset windows next to
- * the search box, click-to-apply, click-again to clear (single-mode
- * ToggleGroup gives "active item is highlighted, click to toggle
- * off" semantics for free).
- *
- * Range semantics mirror the backend's `since` (inclusive) /
- * `until` (exclusive) query params so the URL state and the chip
- * state stay in sync. Each preset computes both bounds at
- * click-time (relative to "now") rather than baking them into the
- * URL — that way "Last 7 days" stays accurate as the user leaves
- * the page open over midnight.
+ * Filter data + helpers for the sessions list. Pure data — the
+ * actual UI is the shadcn `DataTableFacetedFilter` shipped in
+ * `components/ui/data-table-faceted-filter.tsx`, which the page
+ * wires up in its toolbar.
  */
 
 export type DateRangePreset = "today" | "yesterday" | "7d" | "30d";
@@ -29,10 +16,9 @@ export interface DateRange {
 export const NO_DATE_FILTER: DateRange = { preset: null, since: null, until: null };
 
 export function computeRange(preset: DateRangePreset, now = new Date()): DateRange {
-	// All bounds are computed in local time so "Today" matches the
-	// user's calendar day, not UTC. Backend treats them as ISO and
-	// compares against `last_activity_at` (UTC-stored TIMESTAMPTZ),
-	// which is timezone-aware on Postgres.
+	// Local-time day boundaries so "Today" matches the user's
+	// calendar day, not UTC. Backend's TIMESTAMPTZ comparison is
+	// timezone-aware so the conversion is one-way safe.
 	const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 	const today = startOfDay(now);
 	const tomorrow = new Date(today.getTime() + 86_400_000);
@@ -58,86 +44,9 @@ export function computeRange(preset: DateRangePreset, now = new Date()): DateRan
 	}
 }
 
-const PRESETS: { id: DateRangePreset; label: string }[] = [
-	{ id: "today", label: "Today" },
-	{ id: "yesterday", label: "Yesterday" },
-	{ id: "7d", label: "Last 7 days" },
-	{ id: "30d", label: "Last 30 days" },
+export const DATE_FILTER_OPTIONS: { label: string; value: DateRangePreset }[] = [
+	{ label: "Today", value: "today" },
+	{ label: "Yesterday", value: "yesterday" },
+	{ label: "Last 7 days", value: "7d" },
+	{ label: "Last 30 days", value: "30d" },
 ];
-
-interface DateProps {
-	value: DateRange;
-	onChange: (range: DateRange) => void;
-}
-
-export function SessionDateFilter({ value, onChange }: DateProps) {
-	// `variant="default"` (NOT outline) to match the dashboard's
-	// other filter ToggleGroups (e.g. memories page provider chips).
-	// outline mode renders bordered pills that visually compete
-	// with the input/button bar around them; default mode is
-	// borderless until selected, matching the rest of the app.
-	return (
-		<ToggleGroup
-			type="single"
-			size="sm"
-			value={value.preset ?? ""}
-			onValueChange={(v) => onChange(v ? computeRange(v as DateRangePreset) : NO_DATE_FILTER)}
-			aria-label="Filter by date range"
-		>
-			{PRESETS.map((p) => (
-				<ToggleGroupItem key={p.id} value={p.id} aria-label={p.label}>
-					{p.label}
-				</ToggleGroupItem>
-			))}
-		</ToggleGroup>
-	);
-}
-
-/**
- * Agent filter chips. Renders one chip per agent the user actually
- * has registered (derived from `/api/environments`), so single-
- * agent users don't see the filter at all (no value, just clutter).
- * Click to scope the list to that agent; click the same chip again
- * to clear (single-mode ToggleGroup behavior).
- *
- * Backend's `/api/sessions?agent=<type>` already supports this; the
- * chip is just the discoverable UI for it.
- */
-interface AgentProps {
-	value: string | null;
-	onChange: (agent: string | null) => void;
-	availableAgents: string[];
-}
-
-export function SessionAgentFilter({ value, onChange, availableAgents }: AgentProps) {
-	// Hide the chip group if only one agent is registered AND no
-	// agent filter is currently active. If an active filter would
-	// otherwise be invisible (URL has `?agent=X` but only one agent
-	// registered), still show the chip so the user can clear it.
-	// Codex flagged the original "always hide" path as P2 — the
-	// agent filter could silently scope the list with no UI to back
-	// out.
-	if (availableAgents.length < 2 && !value) return null;
-	return (
-		<ToggleGroup
-			type="single"
-			size="sm"
-			value={value ?? ""}
-			onValueChange={(v) => onChange(v || null)}
-			aria-label="Filter by agent"
-		>
-			{availableAgents.map((agent) => (
-				<ToggleGroupItem key={agent} value={agent} aria-label={agentTypeLabel(agent)}>
-					{agentTypeLabel(agent)}
-				</ToggleGroupItem>
-			))}
-			{value && !availableAgents.includes(value) ? (
-				// Edge: URL declares an agent filter that no env
-				// matches anymore (env was deleted but filter URL
-				// stayed). Render a chip for the active value so the
-				// user can clear it via toggle-off.
-				<ToggleGroupItem value={value}>{agentTypeLabel(value)}</ToggleGroupItem>
-			) : null}
-		</ToggleGroup>
-	);
-}
