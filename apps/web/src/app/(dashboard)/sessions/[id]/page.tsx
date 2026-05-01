@@ -289,7 +289,15 @@ export default function SessionDetailPage() {
 				) : isContentError ? (
 					<ContentFetchError />
 				) : messages?.length ? (
-					<div className="space-y-6">
+					// No vertical spacing on the container — the
+					// MessageBlock's `pt-4` on group-start rows + zero
+					// padding on continuation rows controls spacing
+					// directly. Pre-fix `space-y-6` added 24px between
+					// every pair, so Slack-style grouped continuation
+					// rows ended up with the same gap as group
+					// transitions, defeating the "thread looks tight"
+					// effect.
+					<div>
 						{(() => {
 							// Insert date dividers when consecutive messages
 							// cross day boundaries. Slack / Discord / iMessage
@@ -583,13 +591,18 @@ function MessageBlock({
 	const agentName = agentTypeLabel(agentType);
 
 	return (
-		<div className={cn("flex gap-3", isGroupStart ? "mt-4" : "-mt-3")}>
-			{/* Avatar column. On continuation rows, render an empty
-			    spacer of the same width so message bodies stay
-			    aligned with the group's leading avatar. Hovering
-			    reveals the per-message HH:MM in this column for
-			    continuation rows — keeps precise timing reachable
-			    without bloating the visual frame. */}
+		// Whole row is the `group` so the continuation-row hover
+		// timestamp picks up hovers anywhere on the message,
+		// avatar column or body. Pre-fix `group` was on the inner
+		// content div; hovering the avatar column did nothing.
+		// Pre-fix `mt-4`/`-mt-3` negative-margin hack also created
+		// visual artifacts; replaced with semantic spacing
+		// (`pt-4` on group-start, no padding on continuation).
+		<div className={cn("group flex gap-3", isGroupStart ? "pt-4" : "")}>
+			{/* Avatar column. Group-start: avatar (user image / agent
+			    icon). Continuation: faint HH:MM that reveals on row
+			    hover — keeps precise timing reachable without
+			    bloating the visual frame. */}
 			<div className="w-8 shrink-0 pt-0.5">
 				{isGroupStart ? (
 					isUser ? (
@@ -604,11 +617,8 @@ function MessageBlock({
 						<AgentIcon agent={agentType} size="lg" shape="circle" />
 					)
 				) : message.timestamp ? (
-					// Continuation: show the time as a faint
-					// hover-only indicator in the avatar column.
-					// Right-aligned to sit close to the message body.
 					<div
-						className="hidden h-8 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/50 group-hover:flex"
+						className="hidden h-5 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/60 group-hover:flex"
 						title={formatAbsoluteTooltip(message.timestamp)}
 					>
 						{new Date(message.timestamp).toLocaleTimeString([], {
@@ -620,7 +630,7 @@ function MessageBlock({
 			</div>
 
 			{/* Content */}
-			<div className="group min-w-0 flex-1">
+			<div className="min-w-0 flex-1">
 				{isGroupStart ? (
 					<div className="mb-1 flex items-center gap-2">
 						<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
@@ -630,16 +640,11 @@ function MessageBlock({
 								className="text-xs text-muted-foreground"
 								title={formatAbsoluteTooltip(message.timestamp)}
 							>
-								{/* Discord pattern: full short date + 24h
-								    time on the group-start row (e.g.
-								    "4/24/26, 20:21"). Only the HH:MM was
-								    shown before, leaving users to guess the
-								    date when scrolling through long
-								    multi-day conversations. The DateDivider
-								    above also marks day boundaries; the
-								    per-group full timestamp pins precise
-								    landing time without forcing the user to
-								    hover. */}
+								{/* Discord-style: short date + 24h time
+								    (e.g. "4/24/26, 20:21"). DateDivider
+								    above each day still anchors the date
+								    context; this pins the precise minute
+								    on the group header itself. */}
 								{formatGroupHeaderTime(message.timestamp)}
 							</span>
 						) : null}
