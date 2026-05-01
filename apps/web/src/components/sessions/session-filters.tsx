@@ -1,13 +1,14 @@
 "use client";
 
-import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 /**
  * Quick date-range filter chips for the sessions list. Mirrors the
  * Linear / Notion pattern: a tight row of preset windows next to
- * the search box, click-to-apply, click-again or X to clear.
+ * the search box, click-to-apply, click-again to clear (single-mode
+ * ToggleGroup gives "active item is highlighted, click to toggle
+ * off" semantics for free).
  *
  * Range semantics mirror the backend's `since` (inclusive) /
  * `until` (exclusive) query params so the URL state and the chip
@@ -25,9 +26,7 @@ export interface DateRange {
 	until: string | null;
 }
 
-const EMPTY_RANGE: DateRange = { preset: null, since: null, until: null };
-
-export const NO_DATE_FILTER: DateRange = EMPTY_RANGE;
+export const NO_DATE_FILTER: DateRange = { preset: null, since: null, until: null };
 
 export function computeRange(preset: DateRangePreset, now = new Date()): DateRange {
 	// All bounds are computed in local time so "Today" matches the
@@ -66,42 +65,62 @@ const PRESETS: { id: DateRangePreset; label: string }[] = [
 	{ id: "30d", label: "Last 30 days" },
 ];
 
-interface Props {
+interface DateProps {
 	value: DateRange;
 	onChange: (range: DateRange) => void;
 }
 
-export function SessionDateFilter({ value, onChange }: Props) {
-	const active = value.preset;
+export function SessionDateFilter({ value, onChange }: DateProps) {
 	return (
-		<div className="flex items-center gap-1">
-			{PRESETS.map((p) => {
-				const isActive = active === p.id;
-				return (
-					<Button
-						key={p.id}
-						type="button"
-						variant={isActive ? "default" : "outline"}
-						size="sm"
-						className={cn("h-8 text-xs", isActive && "shadow-sm")}
-						onClick={() => onChange(isActive ? NO_DATE_FILTER : computeRange(p.id))}
-					>
-						{p.label}
-					</Button>
-				);
-			})}
-			{active ? (
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="h-8 text-xs text-muted-foreground"
-					onClick={() => onChange(NO_DATE_FILTER)}
-					aria-label="Clear date filter"
-				>
-					<X className="size-3" />
-				</Button>
-			) : null}
-		</div>
+		<ToggleGroup
+			type="single"
+			variant="outline"
+			size="sm"
+			value={value.preset ?? ""}
+			onValueChange={(v) => onChange(v ? computeRange(v as DateRangePreset) : NO_DATE_FILTER)}
+			aria-label="Filter by date range"
+		>
+			{PRESETS.map((p) => (
+				<ToggleGroupItem key={p.id} value={p.id} aria-label={p.label}>
+					{p.label}
+				</ToggleGroupItem>
+			))}
+		</ToggleGroup>
+	);
+}
+
+/**
+ * Agent filter chips. Renders one chip per agent the user actually
+ * has registered (derived from `/api/environments`), so single-
+ * agent users don't see the filter at all (no value, just clutter).
+ * Click to scope the list to that agent; click the same chip again
+ * to clear (single-mode ToggleGroup behavior).
+ *
+ * Backend's `/api/sessions?agent=<type>` already supports this; the
+ * chip is just the discoverable UI for it.
+ */
+interface AgentProps {
+	value: string | null;
+	onChange: (agent: string | null) => void;
+	availableAgents: string[];
+}
+
+export function SessionAgentFilter({ value, onChange, availableAgents }: AgentProps) {
+	if (availableAgents.length < 2) return null;
+	return (
+		<ToggleGroup
+			type="single"
+			variant="outline"
+			size="sm"
+			value={value ?? ""}
+			onValueChange={(v) => onChange(v || null)}
+			aria-label="Filter by agent"
+		>
+			{availableAgents.map((agent) => (
+				<ToggleGroupItem key={agent} value={agent} aria-label={agentTypeLabel(agent)}>
+					{agentTypeLabel(agent)}
+				</ToggleGroupItem>
+			))}
+		</ToggleGroup>
 	);
 }

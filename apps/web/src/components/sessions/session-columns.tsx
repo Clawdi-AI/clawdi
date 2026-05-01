@@ -1,56 +1,24 @@
 "use client";
 
-import type { Column, ColumnDef, HeaderContext } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import type { ColumnDef, HeaderContext } from "@tanstack/react-table";
 import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { cn, formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
+import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
-/**
- * Column header that toggles sort direction on click. Wraps the
- * label in a button styled to look like a header label, with an
- * arrow indicator that shows the active direction (or muted "both
- * arrows" placeholder when this column isn't sorted). Mirrors the
- * Linear / GitHub pattern.
- *
- * The page component wires up sorting state via the DataTable's
- * server-mode sorting prop; this header just calls
- * `column.toggleSorting(...)` which feeds back into that state.
- */
-function SortableHeader<TData>({
-	label,
-	column,
-	align = "left",
-}: {
-	label: string;
-	column: Column<TData, unknown>;
-	align?: "left" | "right";
-}) {
-	const direction = column.getIsSorted();
-	const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
-	return (
-		<button
-			type="button"
-			onClick={() => column.toggleSorting(direction === "asc")}
-			className={cn(
-				"-ml-1 flex h-7 select-none items-center gap-1 rounded px-1 text-left text-sm font-medium hover:bg-muted/60",
-				align === "right" && "ml-auto -mr-1",
-			)}
-		>
-			<span>{label}</span>
-			<Icon
-				className={cn("size-3", direction ? "text-foreground" : "text-muted-foreground/50")}
-				aria-hidden
-			/>
-		</button>
-	);
-}
-
-const sortableHeaderRenderer =
+// Sortable header → reuse the project's `DataTableColumnHeader`
+// shadcn primitive. Pre-fix this file rolled its own header (with
+// slightly different spacing + a different "unsorted" indicator),
+// drifting from the rest of the dashboard's tables. Wrapping it in
+// `right`-aligned div for numeric columns to match the cell
+// alignment of Messages/Tokens.
+const sortableHeader =
 	<TData,>(label: string, align: "left" | "right" = "left") =>
 	({ column }: HeaderContext<TData, unknown>) => (
-		<SortableHeader label={label} column={column} align={align} />
+		<div className={align === "right" ? "flex justify-end" : undefined}>
+			<DataTableColumnHeader column={column}>{label}</DataTableColumnHeader>
+		</div>
 	);
 
 // Two flavours, shared cell renderers:
@@ -116,7 +84,7 @@ const startedColumn: ColumnDef<SessionListItem> = {
 	id: "started_at",
 	accessorKey: "started_at",
 	enableSorting: true,
-	header: sortableHeaderRenderer<SessionListItem>("Started"),
+	header: sortableHeader<SessionListItem>("Started"),
 	cell: ({ row }) => (
 		<span
 			className="whitespace-nowrap text-sm text-muted-foreground"
@@ -132,7 +100,7 @@ const lastActivityColumn: ColumnDef<SessionListItem> = {
 	id: "last_activity_at",
 	accessorKey: "last_activity_at",
 	enableSorting: true,
-	header: sortableHeaderRenderer<SessionListItem>("Last activity"),
+	header: sortableHeader<SessionListItem>("Last activity"),
 	cell: ({ row }) => (
 		<span
 			className="whitespace-nowrap text-sm text-muted-foreground"
@@ -151,7 +119,7 @@ const messagesColumn: ColumnDef<SessionListItem> = {
 	id: "message_count",
 	accessorFn: (s) => s.message_count,
 	enableSorting: true,
-	header: sortableHeaderRenderer<SessionListItem>("Messages", "right"),
+	header: sortableHeader<SessionListItem>("Messages", "right"),
 	cell: ({ row }) => (
 		<span className="block text-right text-sm tabular-nums text-muted-foreground">
 			{row.original.message_count}
@@ -164,7 +132,7 @@ const tokensColumn: ColumnDef<SessionListItem> = {
 	id: "tokens",
 	accessorFn: (s) => s.input_tokens + s.output_tokens,
 	enableSorting: true,
-	header: sortableHeaderRenderer<SessionListItem>("Tokens", "right"),
+	header: sortableHeader<SessionListItem>("Tokens", "right"),
 	cell: ({ row }) => {
 		const total = row.original.input_tokens + row.original.output_tokens;
 		return (
