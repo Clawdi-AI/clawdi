@@ -244,13 +244,18 @@ export default function SessionDetailPage() {
 			<Separator />
 
 			{/* Message-list toolbar — direction toggle. Sits between
-			    the meta block and the message stream, so it's
-			    discoverable but unobtrusive. Hidden when there are no
-			    messages or content hasn't uploaded yet. */}
-			{session.has_content && (messages?.length ?? 0) > 0 ? (
+			    the meta block and the message stream so it's
+			    discoverable. Visible whenever the session HAS
+			    content (regardless of pagination state) so users
+			    see the toggle even while messages are still loading
+			    — pre-fix the gate `messages.length > 0` made the
+			    toggle pop in late, and the user thought "the toggle
+			    isn't there". */}
+			{session.has_content ? (
 				<div className="flex items-center justify-between text-xs text-muted-foreground">
 					<span>
-						{direction === "desc" ? "Newest first" : "Oldest first"} · {loadedCount}/{totalMessages}
+						{direction === "desc" ? "Newest first" : "Oldest first"}
+						{loadedCount > 0 ? ` · ${loadedCount}/${totalMessages}` : ""}
 					</span>
 					<Button
 						type="button"

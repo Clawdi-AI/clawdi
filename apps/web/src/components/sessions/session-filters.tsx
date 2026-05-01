@@ -71,10 +71,14 @@ interface DateProps {
 }
 
 export function SessionDateFilter({ value, onChange }: DateProps) {
+	// `variant="default"` (NOT outline) to match the dashboard's
+	// other filter ToggleGroups (e.g. memories page provider chips).
+	// outline mode renders bordered pills that visually compete
+	// with the input/button bar around them; default mode is
+	// borderless until selected, matching the rest of the app.
 	return (
 		<ToggleGroup
 			type="single"
-			variant="outline"
 			size="sm"
 			value={value.preset ?? ""}
 			onValueChange={(v) => onChange(v ? computeRange(v as DateRangePreset) : NO_DATE_FILTER)}
@@ -106,11 +110,17 @@ interface AgentProps {
 }
 
 export function SessionAgentFilter({ value, onChange, availableAgents }: AgentProps) {
-	if (availableAgents.length < 2) return null;
+	// Hide the chip group if only one agent is registered AND no
+	// agent filter is currently active. If an active filter would
+	// otherwise be invisible (URL has `?agent=X` but only one agent
+	// registered), still show the chip so the user can clear it.
+	// Codex flagged the original "always hide" path as P2 — the
+	// agent filter could silently scope the list with no UI to back
+	// out.
+	if (availableAgents.length < 2 && !value) return null;
 	return (
 		<ToggleGroup
 			type="single"
-			variant="outline"
 			size="sm"
 			value={value ?? ""}
 			onValueChange={(v) => onChange(v || null)}
@@ -121,6 +131,13 @@ export function SessionAgentFilter({ value, onChange, availableAgents }: AgentPr
 					{agentTypeLabel(agent)}
 				</ToggleGroupItem>
 			))}
+			{value && !availableAgents.includes(value) ? (
+				// Edge: URL declares an agent filter that no env
+				// matches anymore (env was deleted but filter URL
+				// stayed). Render a chip for the active value so the
+				// user can clear it via toggle-off.
+				<ToggleGroupItem value={value}>{agentTypeLabel(value)}</ToggleGroupItem>
+			) : null}
 		</ToggleGroup>
 	);
 }
