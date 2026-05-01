@@ -26,6 +26,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { isLoggedIn } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
+import { getCliVersion } from "../lib/version";
 import { startAutoRestart } from "../serve/auto-restart";
 import {
 	install as installService,
@@ -400,6 +401,22 @@ function printAgentStatus(agentType: AgentType): void {
 	} else {
 		console.log("health:  (no health file — daemon never ran or wrote elsewhere)");
 	}
+	if (health.version) {
+		// Surface daemon-vs-CLI version drift. After a `bun install
+		// -g clawdi@latest` the dist/index.js gets replaced;
+		// auto-restart picks it up within seconds, but until it
+		// fires the user can't tell which version is actually
+		// running. Spelling the gap out beats a silent stale state.
+		const cliVersion = getCliVersion();
+		if (health.version !== cliVersion) {
+			console.log(
+				`version: daemon=${health.version}, CLI=${cliVersion} ` +
+					"⚠ drift — run `clawdi serve restart --all` to pick up the latest",
+			);
+		} else {
+			console.log(`version: ${health.version}`);
+		}
+	}
 	for (const line of serviceStatusLines({ agent: agentType })) {
 		console.log(line);
 	}
@@ -445,6 +462,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	// state-dir path, last-heartbeat age, OS supervisor unit
 	// state, daemon entrypoint binary. JSON mode is for
 	// programmatic callers.
+	const cliVersion = getCliVersion();
 	const registered = listRegisteredAgentTypes();
 	const report = registered.map((agent) => {
 		const stateDir = getServeStateDir(agent);
@@ -455,6 +473,8 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 			agent,
 			state_dir: stateDir,
 			supervisor: serviceStatusLines({ agent }),
+			daemon_version: health.version,
+			version_drift: health.version !== null && health.version !== cliVersion,
 			heartbeat: health.exists
 				? { age_seconds: health.ageSeconds, status }
 				: { age_seconds: null, status },
@@ -463,6 +483,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	const summary = {
 		entrypoint: process.argv[1] ?? null,
 		node: process.execPath,
+		cli_version: cliVersion,
 		registered_agents: registered.length,
 		api_url: process.env.CLAWDI_API_URL ?? null,
 		agents: report,
@@ -471,14 +492,16 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 		console.log(JSON.stringify(summary, null, 2));
 		return;
 	}
-	console.log(`entrypoint: ${summary.entrypoint ?? "?"}`);
-	console.log(`node:       ${summary.node}`);
-	console.log(`agents:     ${summary.registered_agents}`);
+	console.log(`entrypoint:  ${summary.entrypoint ?? "?"}`);
+	console.log(`node:        ${summary.node}`);
+	console.log(`cli version: ${summary.cli_version}`);
+	console.log(`agents:      ${summary.registered_agents}`);
 	console.log("");
 	if (registered.length === 0) {
 		console.log("No agents registered yet — run `clawdi setup` first.");
 		return;
 	}
+	let anyDrift = false;
 	for (const r of report) {
 		console.log(`── ${r.agent} ──`);
 		console.log(`state dir: ${r.state_dir}`);
@@ -490,10 +513,24 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 		} else {
 			console.log("heartbeat: — never ran");
 		}
+		if (r.daemon_version) {
+			if (r.version_drift) {
+				console.log(`version:   ⚠ daemon=${r.daemon_version}, CLI=${cliVersion}`);
+				anyDrift = true;
+			} else {
+				console.log(`version:   ${r.daemon_version}`);
+			}
+		}
 		for (const line of r.supervisor) {
 			console.log(line);
 		}
 		console.log("");
+	}
+	if (anyDrift) {
+		console.log(
+			"⚠ One or more daemons are running an older CLI version. " +
+				"Run `clawdi serve restart --all` to pick up the latest.",
+		);
 	}
 }
 

@@ -62,6 +62,7 @@ import {
 	writeSkillsLock,
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
+import { getCliVersion } from "../lib/version";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { type QueueItem, RetryQueue } from "./queue";
@@ -2143,7 +2144,16 @@ async function heartbeatLoop(
 async function touchHealthFile(agentType: string): Promise<void> {
 	const p = join(getServeStateDir(agentType), "health");
 	try {
-		await writeFile(p, `${new Date().toISOString()}\n`);
+		// JSON shape lets `serve status` / `serve doctor` surface
+		// "your daemon is running an older CLI version, restart to
+		// pick up the latest" without having to re-derive it from
+		// the launchd plist or process tree. Pre-fix this was a
+		// single ISO timestamp; `readHealth` parses both shapes.
+		const payload = JSON.stringify({
+			timestamp: new Date().toISOString(),
+			version: getCliVersion(),
+		});
+		await writeFile(p, `${payload}\n`);
 	} catch {
 		/* state dir read-only? caller's problem, not ours */
 	}

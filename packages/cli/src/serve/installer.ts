@@ -629,22 +629,43 @@ function shellEscape(s: string): string {
 
 /** Health-file age check, used by `clawdi serve status` even
  * before the unit framework reports anything. The daemon writes
- * `<state-dir>/health` after every successful heartbeat with
- * the current ISO timestamp — file mtime within ~90s means the
- * daemon is alive and reaching the cloud. */
+ * `<state-dir>/health` after every successful heartbeat as a JSON
+ * payload (`{"timestamp", "version"}`); file mtime within ~90s
+ * means the daemon is alive and reaching the cloud. The `version`
+ * field lets `serve status` flag drift after a CLI upgrade
+ * (daemon needs a restart to pick up the new bundle). Older
+ * daemons wrote a bare ISO timestamp; the parser falls back to
+ * that shape and reports `version: null`.
+ */
 export function readHealth(stateDir: string): {
 	exists: boolean;
 	ageSeconds: number | null;
 	timestamp: string | null;
+	version: string | null;
 } {
 	const p = join(stateDir, "health");
-	if (!existsSync(p)) return { exists: false, ageSeconds: null, timestamp: null };
+	if (!existsSync(p)) return { exists: false, ageSeconds: null, timestamp: null, version: null };
 	try {
 		const stat = statSync(p);
-		const ts = readFileSync(p, "utf-8").trim();
+		const raw = readFileSync(p, "utf-8").trim();
 		const age = Math.round((Date.now() - stat.mtimeMs) / 1000);
-		return { exists: true, ageSeconds: age, timestamp: ts };
+		// New JSON shape: parse and pull out fields. Old timestamp-
+		// only shape: keep `timestamp = raw`, `version = null`.
+		if (raw.startsWith("{")) {
+			try {
+				const parsed = JSON.parse(raw) as { timestamp?: string; version?: string };
+				return {
+					exists: true,
+					ageSeconds: age,
+					timestamp: parsed.timestamp ?? null,
+					version: parsed.version ?? null,
+				};
+			} catch {
+				/* fall through to legacy interpretation */
+			}
+		}
+		return { exists: true, ageSeconds: age, timestamp: raw, version: null };
 	} catch {
-		return { exists: true, ageSeconds: null, timestamp: null };
+		return { exists: true, ageSeconds: null, timestamp: null, version: null };
 	}
 }
