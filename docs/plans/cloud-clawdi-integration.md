@@ -75,12 +75,21 @@ review. Summary:
 - Cloud-api broker endpoints (`POST /api/agents/{env_id}/chat`, etc.)
 - Tunnel session token + library_token + lease + heartbeat
 - Connect-token endpoints (`POST /api/agent-connect-tokens`)
-- redeem-deploy-token + ed25519 + jti single-use
 - Migration epoch fencing
 - Vault allowlist column + endpoint
 - Clerk webhook `/api/webhooks/clerk` with svix verification (NEW — does not exist today)
 - Gateway library extraction from existing controller (refactor)
-- Schema additions: api_keys.{scopes, deployment_id, allowed_vault_uris}; agent_environments.{deployment_id, migration_epoch}; new tables tunnel_sessions / connect_tokens / redeemed_tokens / agent_environments_history
+- Schema additions: api_keys.{scopes, deployment_id, allowed_vault_uris}; agent_environments.{deployment_id, migration_epoch}; new tables tunnel_sessions / connect_tokens / agent_environments_history
+
+**Note on deploy auth (round 9, 2026-05-01):** the original design
+called for an ed25519 + jti single-use redeem-deploy-token flow
+between clawdi-api and cloud-api. That flow is no longer needed —
+the existing `POST /api/auth/keys` already supports
+`environment_id`-bound api_key minting via Clerk JWT, and the
+browser is the conduit (mints key → posts to clawdi-api with the
+key in the body → clawdi-api stores it in the pod's k8s Secret).
+No server-to-server crypto, no `redeemed_tokens` table. See
+"Hosted deploy token flow" appendix.
 
 **TO PORT (existing UI in clawdi.ai, not rewrite):**
 - Console UI (`apps/web/src/components/console/` — files/logs/terminal/public-ports)
@@ -663,9 +672,10 @@ covering all state-plane scopes for the user. tunnel_session_token
 is env-scoped, 24h-bound, revocable, endpoint-allowlisted — much
 narrower blast radius if compromised.
 
-New scope: `tunnel:proxy` on api_keys. Deploy keys minted via
-redeem-deploy-token get it by default; legacy CLI keys with
-`scopes IS NULL` keep wide access (backwards-compat).
+New scope: `tunnel:proxy` on api_keys. Deploy keys (minted via
+`POST /api/auth/keys` with `environment_id` set, see Phase 4
+flow) get it by default; legacy CLI keys with `scopes IS NULL`
+keep wide access (backwards-compat).
 
 ### Connection lease
 
@@ -1254,8 +1264,11 @@ BEFORE the agent runtime exec so the agent sees a hydrated
 #!/bin/bash
 set -euo pipefail
 
-# 1. Authenticate (consume registration token if first boot)
-clawdi auth bootstrap
+# 1. CLAWDI_AUTH_TOKEN + CLAWDI_API_URL come from the k8s Secret
+#    populated by clawdi-api's deploy pipeline (see "Hosted deploy
+#    token flow" appendix). The CLI reads CLAWDI_AUTH_TOKEN env
+#    directly and bypasses ~/.clawdi/auth.json — no separate
+#    `clawdi auth bootstrap` step needed.
 
 # 2. Hydrate skills before agent runtime starts. Block.
 clawdi pull --yes --sync --modules skills
@@ -1488,11 +1501,13 @@ The epoch travels in:
 3. clawdi-api: SIGTERM old pod (entrypoint flushes via
    `clawdi push --flush --timeout 30s`), creates new Deployment
    row, provisions new pod with Hermes image
-4. New pod's entrypoint redeems with **same `env_id` reservation**
-   (clawdi-api passes env_id in registration_token alongside
-   deployment_id)
+4. New pod is deployed against the **same `env_id`**: the
+   dashboard mints a fresh deploy key via `POST /api/auth/keys`
+   with `environment_id = <existing env_id>` and hands it to
+   clawdi-api in the migrate request body. The new pod sees the
+   same env on cloud-api but with a fresh api_key.
 5. cloud-api updates `agent_environments.deployment_id` to new
-   value, rotates the `api_key` (old key revoked)
+   value, revokes the old `api_key`
 
 **Hosted → Self-managed:**
 1. Dashboard intent submitted; cloud-api increments
@@ -2069,8 +2084,14 @@ In clawdi clawdi.ai (private):
 - CORS allowlist for `cloud.clawdi.ai` (controller already has
   `CLAWDI_DASHBOARD_ORIGINS` env support — extend default list)
 - `/openapi.json` for type generation
-- `POST /api/deployments` mints registration token server-side
-  (and persists token bound to deployment_id + env_id)
+- `POST /api/deployments` accepts `{api_key, env_id, ...config}`
+  in the request body. The api_key was minted browser-side via
+  cloud-api `POST /api/auth/keys` with `environment_id` set —
+  clawdi-api validates ownership of `env_id` against the Clerk
+  JWT before persisting (defense-in-depth; cloud-api already did
+  the same check at mint time). api_key is stored ONLY in the
+  pod's k8s Secret as `CLAWDI_AUTH_TOKEN` env, never in
+  clawdi-api's DB.
 - Pod entrypoint runs the existing controller process unchanged
   (with the gateway library extracted in Phase 2a, so it runs the
   same routes via the shared package). Cloud-api's broker reaches
@@ -2083,12 +2104,19 @@ In clawdi clawdi.ai (private):
   state-sync flush deadline)
 
 In this repo:
-- `apps/web/src/hosted/deploy-agent-dialog.tsx`
+- `apps/web/src/hosted/deploy-agent-dialog.tsx` orchestrates: (1)
+  `POST /api/environments` to register the new env, (2) `POST
+  /api/auth/keys` with `environment_id` set + the deploy scope
+  set to mint a deploy-bound api_key, (3) `POST
+  clawdi.ai/api/deployments` with the raw api_key in the body.
+  Browser memory is the only place outside cloud-api's DB that
+  ever sees the raw key.
 - `apps/web/src/hosted/deploy-trigger.tsx` (sidebar entry)
 - `apps/web/src/hosted/welcome-card.tsx` (the first-day card)
-- `POST /api/internal/redeem-deploy-token` (receiver-side)
 - `agent_environments.deployment_id`, `api_keys.deployment_id`,
-  `api_keys.scopes` migration
+  `api_keys.scopes` migration. `deployment_id` on both tables is
+  for cross-referencing only (audit/UI), not load-bearing for
+  auth — auth flows entirely through `api_keys.user_id`.
 - Scope-aware authz: deploy-key scope set is explicitly
   `[sessions:write, skills:read, memories:write, vault:resolve,
   mcp:proxy, tunnel:proxy]`. Deploy keys do NOT get `skills:write`
@@ -2357,7 +2385,8 @@ a convenience layer — true to the architecture and aligned with
 5. **Mobile / responsive.** Dashboard is desktop-first in v1.
 6. **Self-host clawdi-cloud + Clawdi-managed pods cross-binding.**
    v1: locked, hosted pods only register to cloud.clawdi.ai. Tech
-   path open (redeem-deploy-token is OSS), but no UI work scheduled.
+   path open (the deploy-key minting endpoint `POST /api/auth/keys`
+   is OSS), but no UI work scheduled.
 
 ## Conventions and invariants (the ones that bite)
 
@@ -2387,8 +2416,8 @@ GitHub landing — not the in-product UI. Deliberate trust trade-off.
 
 - k8s / compute-orchestration driver, billing, legacy chat
   pairing flow (now obsolete with CLI tunnel — to be deleted)
-- `POST /api/deployments` (and the server-side mint of registration
-  token inside it)
+- `POST /api/deployments` (accepts the dashboard-minted api_key,
+  injects it into the pod's k8s Secret as `CLAWDI_AUTH_TOKEN`)
 - agent-image build pipeline
 
 ### What stays OSS (this repo)
@@ -2396,8 +2425,9 @@ GitHub landing — not the in-product UI. Deliberate trust trade-off.
 - All state plane (skills/sessions/memories/vault)
 - All direct-connect plane (tunnel, registry, session token)
 - All MCP proxy plane (existing)
-- `POST /api/internal/redeem-deploy-token` (receiver-side endpoint
-  cloud.clawdi.ai uses to register pods deployed by clawdi-api)
+- `POST /api/auth/keys` with `environment_id` binding — the deploy
+  key minting endpoint the dashboard calls before posting to
+  clawdi-api
 
 ### Naming
 
@@ -2526,13 +2556,11 @@ ALTER TABLE agent_environments
   ADD COLUMN deployment_id text NULL,
   ADD COLUMN migration_epoch integer NOT NULL DEFAULT 0;
 
-CREATE TABLE redeemed_tokens (
-  jti uuid PRIMARY KEY,                             -- token's jti claim
-  deployment_id text NOT NULL,
-  env_id text NOT NULL,
-  api_key_id uuid NOT NULL REFERENCES api_keys(id),
-  redeemed_at timestamptz NOT NULL DEFAULT now()
-);
+-- (No `redeemed_tokens` table. Round 9 simplified the deploy auth
+--  flow to use the existing `api_keys` minting path —
+--  `POST /api/auth/keys` with `environment_id` — which already
+--  has all the user-scoped uniqueness needed. See "Hosted deploy
+--  token flow" appendix.)
 
 -- Phase 4: starter skills
 
@@ -2585,113 +2613,93 @@ Phase 6 calls `POST /api/deployments` with `env_id` reservation (transport-only 
 plumbing doesn't replace them; the CLI tunnel is a separate state-
 plane concern, not a competitor.
 
-## Appendix: redeem flow (server-to-server)
+## Appendix: hosted deploy token flow
+
+The earlier draft of this plan called for a server-to-server
+ed25519 + jti redeem dance between clawdi-api and cloud-api. Round
+9 dropped it: cloud-api already has `POST /api/auth/keys` with
+`environment_id` binding (auth.py:18-75), and both clawdi-cloud
+and clawdi-api accept the same Clerk JWTs. Browser is the only
+conduit needed.
 
 ```
-clawdi-api                                       cloud-api (this repo)
-──────────                                       ─────────────────────
-POST /api/deployments (Clerk JWT)
-  creates Deployment row
-  signs registration_token:
-    {
-      iss: "clawdi-api",
-      aud: "cloud-api",          ← audience binding
-      sub: deployment_id,
-      user_id,
-      jti: <UUID>,                ← single-use marker
-      exp: now+5m,
-      iat: now,
-    }
-    using clawdi-api's signing key (asymmetric, ed25519)
-  POST cloud-api/api/internal/redeem-deploy-token
-    body: { registration_token }
-    (sent via private VPC link or mTLS; never via public internet)
-                                          ─────▶  verifies signature using
-                                                  cloud-api's verify key
-                                                  validates aud == "cloud-api"
-                                                  validates iss == "clawdi-api"
-                                                  validates exp not passed
+browser (cloud.clawdi.ai)                        cloud-api (this repo)
+─────────────────────────                        ─────────────────────
+1. POST /api/environments (Clerk JWT)
+                                          ─────▶  creates env row,
+                                                  bound to user_id
+                                          ◀───── { env_id }
 
-                                                  INSERT INTO
-                                                  redeemed_tokens(jti,
-                                                    deployment_id,
-                                                    env_id, api_key, ...)
-                                                  with UNIQUE on jti
+2. POST /api/auth/keys (Clerk JWT)
+   body: { label, environment_id, scopes }
+                                          ─────▶  mint_api_key():
+                                                  validates env.user_id
+                                                  matches caller, INSERTs
+                                                  api_key row
+                                          ◀───── { id, raw_key, … }
 
-                                                  if INSERT succeeds:
-                                                    mints new env + api_key
-                                                  if INSERT fails (jti seen):
-                                                    SELECT cached row by jti,
-                                                    return its env_id +
-                                                    api_key (legitimate retry)
+                                                 clawdi-api (private)
+                                                 ────────────────────
+3. POST clawdi.ai/api/deployments
+   (Clerk JWT — same Clerk tenant)
+   body: { env_id, api_key: raw_key, … }
+                                          ─────▶  defense-in-depth:
+                                                  validates env_id
+                                                  ownership against
+                                                  Clerk JWT;
+                                                  writes raw_key to
+                                                  pod's k8s Secret as
+                                                  CLAWDI_AUTH_TOKEN env;
+                                                  starts pod
+                                          ◀───── { deployment_id }
 
-                                          ◀───── { env_id, api_key, mcp_token }
-  injects into pod env (kubernetes Secret,
-    NOT in deployment manifest annotations)
-  starts pod
-                                                  pod entrypoint
-                                                  (full sequence in
-                                                  "Entrypoint sequence"
-                                                  section above):
-                                                    clawdi auth bootstrap
-                                                    clawdi serve &  (background)
-                                                    clawdi pull --yes --sync
-                                                    exec agent runtime
+                                                 pod entrypoint reads
+                                                 CLAWDI_AUTH_TOKEN env
+                                                 (CLI bypasses
+                                                 ~/.clawdi/auth.json),
+                                                 runs the entrypoint
+                                                 sequence in this doc.
 ```
 
-**Honest threat model for `jti` single-use.** Caching by `jti`
-(not by `deployment_id`) means a leaked registration_token, within
-its 5-min validity, lets an attacker retrieve the SAME `(env_id,
-api_key)` pair the legitimate caller would have gotten. The defense
-is *containment*, not *prevention of read*: the token is never
-useful for minting different credentials, never useful past 5
-minutes, and never useful to attack a different deployment. Combined
-with no-logging discipline below and private-network transit
-(VPC link or mTLS, never public internet), the realistic leak
-surface is small.
+**What this flow inherits from the existing api-keys path** —
+all the protections that already apply to `POST /api/auth/keys`
+also apply to deploy keys: `mint_api_key` cross-tenant check on
+`environment_id`, scope narrowing via the body field, revocation
+via `DELETE /api/auth/keys/{id}`. Nothing deploy-specific to bolt
+on at the cloud-api layer.
 
-**Logging discipline.** `registration_token`, `api_key`, and
-`mcp_token` MUST NEVER appear in logs (clawdi-api, cloud-api, or
-k8s events). Code paths that handle them use a `Secret` wrapper
-type with a redacted `Debug` impl. CI grep test rejects any logger
-call passing these field names.
+**Threat surface vs. the dropped redeem flow.** The simplified
+flow exposes the raw api_key to browser memory for the duration
+of the two HTTP calls (steps 2 and 3). The redeem flow kept the
+key entirely server-side (clawdi-api ↔ cloud-api over private
+link). The realistic delta is small:
 
-**Asymmetric verify-key** rationale: cloud-api holds only the
-verify key, never the sign key. A cloud-api config leak /
-verify-key disclosure does NOT grant the ability to mint new deploy
-tokens. Full runtime compromise of cloud-api is more serious —
-attacker can create env rows and mint api_keys directly — and
-asymmetric verify keys do not protect against that.
+- Browser memory is process-local; raw key never persists to
+  storage or cookies.
+- Same browser would receive the raw key today when the user
+  manually mints a deploy key from Settings → API Keys.
+- TLS protects all three hops; no cleartext on any wire.
+- The ~5-min replay window the original `jti` flow capped is
+  not relevant here — there is no replayable token in transit;
+  the api_key IS the credential, revoked normally via the
+  api_keys table.
 
-**Key distribution + rotation:** ed25519 keypair. clawdi-api's
-signing key lives only in clawdi-api's secret manager. cloud-api's
-verify key lives in cloud-api's config (loaded at startup).
+**Logging discipline (carried over).** `raw_key` MUST NEVER
+appear in logs — cloud-api, clawdi-api, browser console, k8s
+events. CI grep test rejects logger calls referencing the field.
+The existing api_key minting path already enforces this.
 
-**Two-phase rotation procedure (machine-checked, not just runbook):**
+**Operational benefits of dropping the redeem flow:**
 
-1. **Pre-flight:** deploy cloud-api with both old AND new verify
-   keys configured. Verify both keys load by hitting `/api/healthz`
-   which returns the SHA-256 fingerprint of each.
-2. **Synthetic test:** before flipping clawdi-api's signing key,
-   run a synthetic redeem against staging cloud-api using the
-   new signing key. CI gate blocks the flip if synthetic redeem
-   fails.
-3. **Flip:** clawdi-api switches to new signing key. Cloud-api
-   keeps both verify keys during the dual-verify window.
-4. **Dual-verify window: 4 hours** (was 24h — shortened on
-   codex's recommendation; long windows extend exposure to
-   mis-rotation, and 4h is enough to spot real signing failures
-   in staging traffic).
-5. **Cleanup:** cloud-api drops old verify key after window
-   passes; verified by next deploy.
+- No ed25519 keypair to provision, distribute, or rotate.
+- No `redeemed_tokens` table or jti-uniqueness invariant.
+- No private-VPC / mTLS link required between clawdi-api and
+  cloud-api — they no longer need a server-to-server channel
+  for deploy auth.
+- No two-phase key rotation procedure with dual-verify windows.
 
-If the synthetic test fails at step 2, rotation aborts; old key
-remains active. No in-flight deployment is affected.
-
-Failure of in-flight deployments during a botched rotation looks
-like: `redeem_deploy_token` returns `401 invalid_signature` →
-clawdi-api flags the new Deployment row as `failed_registration`
-→ pod startup retries every 30s for 5 minutes then gives up →
-user sees `Provision failed: registration_failed`. Rolling back
-to the old signing key recovers any new deploys (existing pods
-are unaffected — they already have their api_keys).
+If a future requirement reintroduces the threat model that
+needed server-to-server isolation (e.g. clawdi-api running in a
+different security domain from cloud-api), the redeem flow can be
+re-introduced as a wrapper around the same `mint_api_key` service
+call without changing the storage model.
