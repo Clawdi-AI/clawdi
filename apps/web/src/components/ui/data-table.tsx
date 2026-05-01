@@ -142,36 +142,21 @@ export function DataTable<TData, TValue>({
 							))
 						) : table.getRowModel().rows.length ? (
 							(() => {
-								// Track both prev key AND prev label. Pre-fix
-								// the dedup compared only `key`; if a caller's
-								// `getRowGroup` ever produced two distinct
-								// keys with the same label (e.g. due to data
-								// quirks or transient state during a refetch
-								// with `keepPreviousData`), 3 consecutive
-								// identical-looking headers would render. The
-								// label-level dedup is a belt-and-suspenders
-								// guard: even if keys disagree, identical
-								// labels collapse.
-								let prevGroupKey: string | null = null;
-								let prevGroupLabel: string | null = null;
+								// Emit a separator row when the group key
+								// transitions. Only fires when getRowGroup
+								// is supplied; ungrouped tables behave
+								// exactly as before. Caller is responsible
+								// for ensuring sorted data so keys form
+								// contiguous runs.
+								let prevKey: string | null = null;
 								const out: React.ReactNode[] = [];
-								let groupSeq = 0;
 								for (const row of table.getRowModel().rows) {
 									if (getRowGroup) {
 										const g = getRowGroup(row.original);
-										if (g.key !== prevGroupKey && g.label !== prevGroupLabel) {
-											groupSeq += 1;
+										if (g.key !== prevKey) {
 											out.push(
 												<TableRow
-													// Append a sequence number so
-													// React's key uniqueness holds
-													// even when distinct timestamp
-													// inputs map to the same bucket
-													// key (every previous-30d row
-													// produces the same `g.key`,
-													// but only one header is
-													// emitted per run).
-													key={`group-${g.key}-${groupSeq}`}
+													key={`group-${g.key}`}
 													className="hover:bg-transparent"
 													aria-hidden
 												>
@@ -183,8 +168,7 @@ export function DataTable<TData, TValue>({
 													</TableCell>
 												</TableRow>,
 											);
-											prevGroupKey = g.key;
-											prevGroupLabel = g.label;
+											prevKey = g.key;
 										}
 									}
 									const href = getRowHref?.(row.original);
