@@ -535,6 +535,26 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         except (ValueError, RuntimeError, TypeError) as e:
             log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
             return BuiltinProvider(db, embedder=resolve_embedder())
-        return Mem0Provider(api_key=api_key)
+        # Mem0 is an OPTIONAL integration — `mem0ai` is not in
+        # `pyproject.toml` because most deployments use the builtin
+        # pgvector provider and Mem0 brings a heavy dependency
+        # tree. Existing user_settings rows can carry
+        # `memory_provider=mem0` from before the package was
+        # removed (or from a deployment that had it installed).
+        # Without this guard, GET /api/memories 500s for every
+        # such user with `ModuleNotFoundError: 'mem0'` —
+        # observed in prod after #66 deployed against a venv
+        # that doesn't ship mem0ai. Fall back to builtin and
+        # warn so the user can either install the optional dep
+        # or update their setting.
+        try:
+            return Mem0Provider(api_key=api_key)
+        except ImportError as e:
+            log.warning(
+                "memory_provider=mem0 but mem0ai is not installed in this "
+                "deployment, falling back to builtin: %s",
+                e,
+            )
+            return BuiltinProvider(db, embedder=resolve_embedder())
 
     return BuiltinProvider(db, embedder=resolve_embedder())
