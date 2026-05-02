@@ -273,10 +273,9 @@ async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_sessi
 async def test_introspect_returns_metadata_for_valid_key(
     client: httpx.AsyncClient, db_session, seed_user
 ):
-    """Round-9 introspection endpoint: dashboard mints a deploy key,
-    hands it to clawdi-monorepo's deploy pipeline. Pipeline calls
-    introspect to confirm the key is bound to the env it expects
-    before injecting into a pod Secret."""
+    """A deploy pipeline can confirm a freshly-minted deploy key is
+    bound to the env it expects before injecting it into a pod
+    Secret — happy path returns valid=true with the row's metadata."""
     from tests.conftest import create_env_with_scope
 
     env = await create_env_with_scope(
