@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC
 from uuid import UUID
 
@@ -8,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_web_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyResponse, ApiKeyRevokeResponse
+from app.schemas.api_key import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyIntrospectRequest,
+    ApiKeyIntrospectResponse,
+    ApiKeyResponse,
+    ApiKeyRevokeResponse,
+)
 from app.schemas.user import CurrentUserResponse
 from app.services.api_key import mint_api_key
 
@@ -100,6 +108,74 @@ async def list_api_keys(
         )
         for k in keys
     ]
+
+
+@router.post("/keys/introspect", response_model=ApiKeyIntrospectResponse)
+async def introspect_api_key(
+    body: ApiKeyIntrospectRequest,
+    # Clerk-only: the caller is an external control plane (e.g.
+    # clawdi-monorepo's deploy pipeline) acting on behalf of a
+    # logged-in user. Sharing the user's Clerk JWT proves the
+    # caller is operating with the user's authority. A leaked api
+    # key without the matching Clerk session cannot pass this
+    # gate, so this endpoint cannot itself be used to enumerate
+    # (api_key, env_id) pairs.
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> ApiKeyIntrospectResponse:
+    """Validate a raw api_key + claimed env binding before the
+    caller persists the key into a pod Secret. Closes the
+    intra-user "wrong env" gap: a malicious browser could mint a
+    key for env_A and tell the deploy pipeline it's for env_B; the
+    pipeline calls this endpoint and gets `valid=false` if the
+    key's stored `environment_id` doesn't match the body claim.
+
+    Returns `valid=false` (not a 4xx) for any mismatch so the
+    caller can surface a uniform error without leaking whether the
+    key exists, is revoked, expired, or just bound to a different
+    env. Successful validation returns the row's stored metadata
+    so the caller can sanity-check scopes / expiry.
+    """
+    key_hash = hashlib.sha256(body.api_key.encode()).hexdigest()
+    try:
+        claimed_env_uuid = UUID(body.environment_id)
+    except (TypeError, ValueError):
+        # Caller-supplied env_id was malformed. Fail closed (valid=
+        # false) rather than 400 so the response shape is uniform
+        # across all rejection causes.
+        return ApiKeyIntrospectResponse(valid=False)
+
+    result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
+    api_key = result.scalar_one_or_none()
+    if api_key is None:
+        return ApiKeyIntrospectResponse(valid=False)
+
+    # All gating below is "fail closed → valid=false" for the same
+    # uniform-response reason. The caller doesn't need to know WHY
+    # the key isn't usable, only that it isn't.
+    if api_key.revoked_at is not None:
+        return ApiKeyIntrospectResponse(valid=False)
+    if api_key.expires_at is not None:
+        from datetime import datetime as _dt
+
+        if api_key.expires_at <= _dt.now(UTC):
+            return ApiKeyIntrospectResponse(valid=False)
+    if api_key.user_id != auth.user_id:
+        # Cross-tenant — the Clerk caller isn't the key's owner.
+        return ApiKeyIntrospectResponse(valid=False)
+    if api_key.environment_id != claimed_env_uuid:
+        # Caller claimed env_X, key is bound to env_Y (or unbound).
+        # Either way: not the key the caller thinks it is.
+        return ApiKeyIntrospectResponse(valid=False)
+
+    return ApiKeyIntrospectResponse(
+        valid=True,
+        key_id=str(api_key.id),
+        user_id=str(api_key.user_id),
+        environment_id=str(api_key.environment_id) if api_key.environment_id else None,
+        scopes=api_key.scopes,
+        expires_at=api_key.expires_at,
+    )
 
 
 @router.delete("/keys/{key_id}")

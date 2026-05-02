@@ -2105,31 +2105,53 @@ flow auto-syncs sessions / skills / memories to cloud-api. The
 deploy UI stays on clawdi.ai/dashboard for now — no new sidebar
 entry, no welcome card, no OSS-side dialog work.
 
-The minimum-viable change set (in clawdi-monorepo):
+The minimum-viable change set spans both repos.
 
-1. **agent-image/entrypoint.sh**: when `CLAWDI_AUTH_TOKEN` is
-   set, export `CLAWDI_API_URL` (default `https://cloud-api.clawdi.ai`),
-   then run `clawdi pull --yes --sync &` (non-blocking starter
-   skill hydration) and `clawdi serve &` (background sync daemon).
-   Both run alongside the existing supervisord-managed processes.
-   Failure of either does NOT block agent runtime startup —
-   sync is a soft dependency for hosted v1.
-2. **routes/deployments.py**: `POST /api/deployments` accepts a
-   new optional `clawdi_auth_token` field. When present, write
-   it into the pod's k8s Secret as `CLAWDI_AUTH_TOKEN` env. No
+**clawdi-monorepo (SaaS — heavy lifting):**
+
+1. **`agent-image/Dockerfile`**: install the `clawdi` CLI via
+   `npm install -g clawdi` in the runtime-glue stage (the image
+   doesn't ship it today).
+2. **`agent-image/entrypoint.sh`**: when `CLAWDI_AUTH_TOKEN` is
+   set, export `CLAWDI_API_URL` (default
+   `https://cloud-api.clawdi.ai`), then run
+   `clawdi pull --yes --sync &` (non-blocking starter skill
+   hydration) and `clawdi serve &` (background sync daemon).
+   Both run alongside the existing supervisord-managed
+   processes. Failure of either does NOT block agent runtime
+   startup — sync is a soft dependency for hosted v1.
+   Insertion point: just before `exec supervisord`.
+3. **`routes/deployments.py`**: `POST /api/deployments` accepts a
+   new optional `clawdi_auth_token` field on the request body.
+   `_deploy_k3s` plumbs it through `build_openclaw_infra_spec` →
+   `extra_env["CLAWDI_AUTH_TOKEN"]` → the pod's k8s Secret. No
    change to existing fields.
-3. **clawdi-monorepo dashboard deploy dialog**: before the
-   deploy POST, call cloud-api `POST /api/auth/keys` (Clerk JWT)
-   with `environment_id` set to mint a deploy-bound api_key,
-   then include the raw_key as `clawdi_auth_token` in the
-   `/api/deployments` body.
+4. **Dashboard deploy dialog** (`apps/web/src/components/onboarding/deploy-step.tsx`):
+   before the existing deploy POST, run two Clerk-JWT'd calls to
+   cloud-api: (a) `POST /api/environments` to register the env,
+   (b) `POST /api/auth/keys` with `environment_id` set to mint a
+   deploy-bound api_key. Then (c) `POST /api/auth/keys/introspect`
+   from the SaaS backend (server-side, with the same Clerk JWT
+   forwarded) to verify the key is bound to the env it claims to
+   be — closes the intra-user "wrong env" gap. Include the
+   raw_key as `clawdi_auth_token` in the deploy POST body. On any
+   failure between mint and deploy, call
+   `DELETE /api/auth/keys/{id}` to revoke the unused key.
 
-Cloud-api side (this repo):
-- **CORS**: allow `https://clawdi.ai` origin (or whatever
-  domain the SaaS dashboard runs on) for `POST /api/auth/keys`.
-  Verify current `_CORS_ALLOWED_ORIGINS` set in
-  `backend/app/main.py` covers it.
-- No other endpoint additions required for 4a.
+**Cloud-api (this repo — small):**
+
+- **`POST /api/auth/keys/introspect`** — new endpoint
+  (`backend/app/routes/auth.py`). Takes `{api_key, environment_id}`
+  + Clerk JWT, returns `{valid, key_id, user_id, environment_id,
+  scopes, expires_at}`. Fail-closed `valid=false` for any
+  mismatch (revoked / expired / cross-tenant / wrong env claim) —
+  caller can't enumerate (api_key, env_id) pairs.
+- **CORS**: allow the SaaS dashboard origin
+  (`https://www.clawdi.ai` or whatever the deployed SaaS frontend
+  serves) for `POST /api/environments`, `POST /api/auth/keys`,
+  `POST /api/auth/keys/introspect`, and
+  `DELETE /api/auth/keys/{id}` (revoke-on-abort). Production env
+  var: `CORS_ORIGINS` on the cloud-api host.
 
 Phase 4a's "done" criterion: a real user clicks Deploy on
 clawdi.ai/dashboard, the resulting pod auto-registers, and
@@ -2142,12 +2164,6 @@ Once live sync is solid, migrate the deploy entry point so users
 can deploy from the OSS dashboard directly. This is the
 originally-scoped Phase 4 work below — welcome card, deploy
 dialog, sidebar entry, starter-skill seeding endpoint.
-
-Phase 4b also adds the introspection endpoint (`POST
-/api/auth/keys/introspect`) so clawdi-api can validate the
-api_key it receives before injecting into a Secret. In Phase 4a
-this isn't strictly required because the SaaS dashboard already
-holds the user's Clerk session and the trust path is shorter.
 
 The remainder of this Phase 4 section describes 4b's full scope.
 
