@@ -207,6 +207,14 @@ async def admin_mint_api_key(
         # `mint_api_key` raises ValueError for cross-tenant
         # environment_id (env not owned by target user). Surface
         # as 403 — admin can't bypass the service-layer invariant.
+        # Log so an operator debugging "why is the mint failing?"
+        # can grep cloud-api logs directly without correlating with
+        # the SaaS side.
+        logger.warning(
+            "admin_mint_rejected reason=cross_tenant_env target_clerk_id=%s env=%s",
+            body.target_clerk_id,
+            env_uuid,
+        )
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e)) from e
 
     api_key = minted.api_key
