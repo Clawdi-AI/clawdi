@@ -90,9 +90,7 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_persists_admin_allowlist_scopes(
-    admin_client, db_session, seed_user
-):
+async def test_admin_mint_persists_admin_allowlist_scopes(admin_client, db_session, seed_user):
     """Mint via admin endpoint persists the allowlist scopes
     (not None / full access)."""
     from sqlalchemy import select
@@ -107,8 +105,10 @@ async def test_admin_mint_persists_admin_allowlist_scopes(
     assert r.status_code == 200
 
     rows = (
-        await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id))
-    ).scalars().all()
+        (await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id)))
+        .scalars()
+        .all()
+    )
     assert rows
     minted = next(k for k in rows if k.label == "narrow-test")
 
@@ -129,9 +129,7 @@ async def test_admin_mint_persists_admin_allowlist_scopes(
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_rejects_privacy_violating_scopes(
-    admin_client, seed_user
-):
+async def test_admin_mint_rejects_privacy_violating_scopes(admin_client, seed_user):
     """Caller cannot smuggle a read-side scope past the admin endpoint
     by passing it explicitly. 400 with a list of invalid scopes."""
     r = await admin_client.post(
@@ -168,23 +166,91 @@ async def test_admin_mint_allows_subset_of_allowlist(admin_client, db_session, s
 
     minted = (
         await db_session.execute(
-            select(ApiKey).where(
-                ApiKey.user_id == seed_user.id, ApiKey.label == "narrow-explicit"
-            )
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "narrow-explicit")
         )
     ).scalar_one()
     assert minted.scopes == ["sessions:write"]
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_unknown_target_user(admin_client):
-    """Target Clerk id not in DB: 404."""
+async def test_admin_mint_lazy_creates_user(admin_client, db_session):
+    """First-time deploy path: a user who's never visited cloud-api
+    directly (no row yet) clicks Deploy on clawdi.ai. SaaS calls
+    admin mint with their Clerk id. cloud-api lazy-creates the user
+    row + Personal scope, then mints normally — same identity the
+    user gets when they later sign into cloud.clawdi.ai directly.
+
+    Without this, the most common Phase 4a entry path silently
+    fails: deploy succeeds but pod has no sync env, user has to
+    redeploy after first cloud.clawdi.ai visit.
+    """
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.user import User
+
+    # Random per-run clerk_id — test DB is real Postgres and rows
+    # persist across test runs; a hardcoded id would collide.
+    import uuid
+
+    novel_clerk_id = f"user_first_deploy_{uuid.uuid4().hex[:12]}"
+
+    # Pre-flight: confirm the user really doesn't exist yet.
+    pre = (
+        await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
+    ).scalar_one_or_none()
+    assert pre is None
+
     r = await admin_client.post(
         "/api/admin/auth/keys",
         headers={"X-Admin-Key": _ADMIN_KEY},
-        json={"target_clerk_id": "user_does_not_exist", "label": "test"},
+        json={"target_clerk_id": novel_clerk_id, "label": "first-deploy"},
     )
-    assert r.status_code == 404
+    assert r.status_code == 200, r.text
+    assert r.json()["raw_key"].startswith("clawdi_")
+
+    # User row was created with the right clerk_id, no email/name
+    # (admin endpoint doesn't have those — JWT path will fill on
+    # first cloud.clawdi.ai sign-in).
+    user = (
+        await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
+    ).scalar_one()
+    assert user.email is None
+    assert user.name is None
+
+    # Personal scope was created in the same transaction. Downstream
+    # resolvers assume it exists; this matches the JWT path's
+    # invariant.
+    personal = (
+        await db_session.execute(
+            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+        )
+    ).scalar_one_or_none()
+    assert personal is not None
+    assert personal.slug == "personal"
+
+
+@pytest.mark.asyncio
+async def test_admin_mint_existing_user_reuses_row(admin_client, db_session, seed_user):
+    """Re-minting for an existing user MUST reuse the row, not
+    create a new one. Test pins the idempotency contract — if the
+    helper accidentally always inserts, every admin mint would
+    explode on the clerk_id unique constraint."""
+    from sqlalchemy import func, select
+
+    from app.models.user import User
+
+    pre_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
+
+    r = await admin_client.post(
+        "/api/admin/auth/keys",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={"target_clerk_id": seed_user.clerk_id, "label": "second-mint"},
+    )
+    assert r.status_code == 200
+
+    post_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
+    assert post_count == pre_count, "lazy-create must skip when user already exists"
 
 
 @pytest.mark.asyncio
@@ -209,16 +275,12 @@ async def test_admin_revoke_happy_path(admin_client, db_session, seed_user):
     assert r.json()["status"] == "revoked"
 
     db_session.expire_all()
-    row = (
-        await db_session.execute(select(ApiKey).where(ApiKey.id == key_id))
-    ).scalar_one()
+    row = (await db_session.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one()
     assert row.revoked_at is not None
 
 
 @pytest.mark.asyncio
-async def test_admin_revoke_idempotent_on_already_revoked(
-    admin_client, db_session, seed_user
-):
+async def test_admin_revoke_idempotent_on_already_revoked(admin_client, db_session, seed_user):
     """Revoking an already-revoked key returns 200 (idempotent), not
     an error. Useful for migration retry semantics."""
     minted_resp = await admin_client.post(
@@ -252,9 +314,7 @@ async def test_admin_revoke_unknown_key(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_creates_with_scope(
-    admin_client, db_session, seed_user
-):
+async def test_admin_register_env_creates_with_scope(admin_client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
     default scope, matching the user-facing register_environment
     contract. Migration tooling depends on default_scope_id being
@@ -310,19 +370,42 @@ async def test_admin_register_env_idempotent(admin_client, db_session, seed_user
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_unknown_user(admin_client):
-    """404 when target user doesn't exist."""
+async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
+    """Same lazy-create contract for env registration: a brand-new
+    user clicking Deploy registers their first env. Without this,
+    SaaS calls admin_register_environment, gets 404, deploy
+    proceeds without sync, and the user has no clue why their pod
+    isn't showing up on cloud.clawdi.ai."""
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.user import User
+
+    import uuid
+
+    novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
     r = await admin_client.post(
         "/api/admin/environments",
         headers={"X-Admin-Key": _ADMIN_KEY},
         json={
-            "target_clerk_id": "user_does_not_exist",
-            "machine_id": "x",
-            "machine_name": "y",
+            "target_clerk_id": novel_clerk_id,
+            "machine_id": "m-first",
+            "machine_name": "test-pod",
             "agent_type": "openclaw",
         },
     )
-    assert r.status_code == 404
+    assert r.status_code == 200, r.text
+
+    user = (
+        await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
+    ).scalar_one()
+    # Personal scope created alongside (JWT-path parity).
+    personal = (
+        await db_session.execute(
+            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+        )
+    ).scalar_one_or_none()
+    assert personal is not None
 
 
 @pytest.mark.asyncio
