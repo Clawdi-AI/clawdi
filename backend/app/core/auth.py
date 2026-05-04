@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -511,3 +511,27 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )
     return auth
+
+
+async def require_admin_api_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
+    a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
+    + ops-side scripts that don't have a per-user Clerk JWT in scope.
+
+    503 when `admin_api_key` is empty — endpoints are disabled by default
+    for OSS self-hosters who don't need ops tooling. Constant-time
+    comparison once configured (defense against timing oracle even though
+    the gate is binary).
+    """
+    import hmac
+
+    expected = settings.admin_api_key
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "admin endpoints are disabled (admin_api_key not configured)",
+        )
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")

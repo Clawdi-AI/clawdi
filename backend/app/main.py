@@ -14,6 +14,7 @@ from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.routes.admin import router as admin_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.cli_auth import router as cli_auth_router
@@ -151,6 +152,7 @@ app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
 app.include_router(dashboard_router)
