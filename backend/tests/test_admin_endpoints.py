@@ -249,3 +249,77 @@ async def test_admin_revoke_unknown_key(admin_client):
         headers={"X-Admin-Key": _ADMIN_KEY},
     )
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_creates_with_scope(
+    admin_client, db_session, seed_user
+):
+    """Admin env registration creates an AgentEnvironment AND a
+    default scope, matching the user-facing register_environment
+    contract. Migration tooling depends on default_scope_id being
+    set so the daemon can upload."""
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    r = await admin_client.post(
+        "/api/admin/environments",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "migrate-machine-1",
+            "machine_name": "migrated-pod",
+            "agent_type": "openclaw",
+        },
+    )
+    assert r.status_code == 200, r.text
+    env_id = r.json()["id"]
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one()
+    assert env.user_id == seed_user.id
+    assert env.machine_id == "migrate-machine-1"
+    assert env.default_scope_id is not None  # heal logic ran
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_idempotent(admin_client, db_session, seed_user):
+    """Re-registering same (user, machine_id, agent_type) returns
+    the same env id — migration retry safety."""
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "machine_id": "idempotent-machine",
+        "machine_name": "pod-1",
+        "agent_type": "openclaw",
+    }
+    r1 = await admin_client.post(
+        "/api/admin/environments",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json=body,
+    )
+    r2 = await admin_client.post(
+        "/api/admin/environments",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json=body,
+    )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json()["id"] == r2.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_unknown_user(admin_client):
+    """404 when target user doesn't exist."""
+    r = await admin_client.post(
+        "/api/admin/environments",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "target_clerk_id": "user_does_not_exist",
+            "machine_id": "x",
+            "machine_name": "y",
+            "agent_type": "openclaw",
+        },
+    )
+    assert r.status_code == 404

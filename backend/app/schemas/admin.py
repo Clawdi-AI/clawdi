@@ -8,6 +8,24 @@ separate file so they don't pollute user-facing schemas.
 from pydantic import BaseModel
 
 
+class AdminEnvironmentCreate(BaseModel):
+    """Body for `POST /api/admin/environments`. Mirrors the
+    user-facing EnvironmentCreate but takes target_clerk_id
+    instead of relying on auth context to resolve the user.
+
+    Idempotent — re-registering the same (user, machine_id) pair
+    updates `machine_name` / `agent_version` / `last_seen_at` and
+    returns the existing env id.
+    """
+
+    target_clerk_id: str
+    machine_id: str
+    machine_name: str
+    agent_type: str
+    agent_version: str | None = None
+    os_name: str = "linux"
+
+
 class AdminApiKeyCreate(BaseModel):
     """Body for `POST /api/admin/auth/keys` — mint an api_key on
     behalf of a user identified by Clerk id. The route resolves
