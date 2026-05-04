@@ -184,14 +184,14 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     fails: deploy succeeds but pod has no sync env, user has to
     redeploy after first cloud.clawdi.ai visit.
     """
+    # Random per-run clerk_id — test DB is real Postgres and rows
+    # persist across test runs; a hardcoded id would collide.
+    import uuid
+
     from sqlalchemy import select
 
     from app.models.scope import SCOPE_KIND_PERSONAL, Scope
     from app.models.user import User
-
-    # Random per-run clerk_id — test DB is real Postgres and rows
-    # persist across test runs; a hardcoded id would collide.
-    import uuid
 
     novel_clerk_id = f"user_first_deploy_{uuid.uuid4().hex[:12]}"
 
@@ -251,6 +251,131 @@ async def test_admin_mint_existing_user_reuses_row(admin_client, db_session, see
 
     post_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
     assert post_count == pre_count, "lazy-create must skip when user already exists"
+
+
+@pytest.mark.asyncio
+async def test_admin_mint_lazy_create_handles_race(db_session):
+    """Concurrent admin calls for the same brand-new clerk_id race
+    on the `users.clerk_id` unique constraint. The loser must
+    catch IntegrityError, rollback, and adopt the winner's row —
+    not 500 with a unique-constraint traceback.
+
+    Real-world race: a user clicks Deploy on clawdi.ai (admin mint
+    fires) AND signs into cloud.clawdi.ai (JWT lazy-create fires)
+    in the same second. Whichever reaches `db.flush` first wins;
+    the other must converge gracefully.
+
+    Test simulates this by injecting an IntegrityError on the first
+    flush attempt and verifying the rollback+re-query path returns
+    the row that the "winner" (separately seeded) wrote.
+    """
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import User
+    from app.routes.admin import _resolve_or_create_user
+
+    clerk_id = f"clerk_race_{uuid.uuid4().hex[:12]}"
+
+    # Seed the "winner's" row: this is what `_resolve_or_create_user`
+    # will find after rolling back its losing flush.
+    winner = User(clerk_id=clerk_id, email=None, name=None)
+    db_session.add(winner)
+    await db_session.commit()
+
+    # Make `db.flush()` raise IntegrityError exactly once — the
+    # path the loser takes when its INSERT trips the unique
+    # constraint. Real flush() is restored after the first call so
+    # any later flush (Personal scope insert, etc.) works normally.
+    real_flush = db_session.flush
+    flush_calls = {"count": 0}
+
+    async def mock_flush(*args, **kwargs):
+        flush_calls["count"] += 1
+        if flush_calls["count"] == 1:
+            raise IntegrityError("simulated race", None, Exception())
+        return await real_flush(*args, **kwargs)
+
+    db_session.flush = AsyncMock(side_effect=mock_flush)
+
+    try:
+        result = await _resolve_or_create_user(db_session, clerk_id)
+    finally:
+        db_session.flush = real_flush
+
+    # The loser converged onto the winner's row.
+    assert result.clerk_id == clerk_id
+    assert result.id == winner.id
+    # No duplicate row — the unique constraint did its job.
+    from sqlalchemy import func, select
+
+    count = (
+        await db_session.execute(select(func.count(User.id)).where(User.clerk_id == clerk_id))
+    ).scalar_one()
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_mint_lazy_create_500s_when_winner_disappears(db_session):
+    """Pathological case: IntegrityError fires (someone else
+    inserted), but by the time we re-query, the row is gone (would
+    require a concurrent delete — extremely unlikely). Helper must
+    surface as 500 rather than 404 so the SaaS caller sees this is
+    an operational anomaly, not a wrong-clerk_id payload.
+    """
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError
+
+    from app.routes.admin import _resolve_or_create_user
+
+    clerk_id = f"clerk_ghost_winner_{uuid.uuid4().hex[:12]}"
+
+    # No row pre-seeded — re-query after rollback will find nothing.
+    real_flush = db_session.flush
+
+    async def mock_flush(*args, **kwargs):
+        raise IntegrityError("simulated race", None, Exception())
+
+    db_session.flush = AsyncMock(side_effect=mock_flush)
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            await _resolve_or_create_user(db_session, clerk_id)
+    finally:
+        db_session.flush = real_flush
+
+    assert exc_info.value.status_code == 500
+    assert "could not create or load user" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_admin_lazy_create_creates_personal_scope(db_session):
+    """The lazy-create transaction MUST create a Personal scope
+    alongside the User row. Downstream resolvers (sessions, skills,
+    memories) all assume every user has one and 500 without it.
+    JWT path enforces the same invariant; admin path must too."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.routes.admin import _resolve_or_create_user
+
+    clerk_id = f"clerk_scope_inv_{uuid.uuid4().hex[:12]}"
+    user = await _resolve_or_create_user(db_session, clerk_id)
+
+    personal = (
+        await db_session.execute(
+            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+        )
+    ).scalar_one_or_none()
+    assert personal is not None, "Personal scope must exist after lazy-create"
+    assert personal.slug == "personal"
 
 
 @pytest.mark.asyncio
@@ -376,12 +501,12 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     SaaS calls admin_register_environment, gets 404, deploy
     proceeds without sync, and the user has no clue why their pod
     isn't showing up on cloud.clawdi.ai."""
+    import uuid
+
     from sqlalchemy import select
 
     from app.models.scope import SCOPE_KIND_PERSONAL, Scope
     from app.models.user import User
-
-    import uuid
 
     novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
     r = await admin_client.post(
