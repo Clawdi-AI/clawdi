@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.scope import SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_PERSONAL, Scope
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
@@ -72,6 +72,84 @@ ADMIN_ALLOWED_SCOPES: frozenset[str] = frozenset(
 )
 
 
+async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
+    """Resolve a user by clerk_id, lazy-creating the row if needed.
+
+    Mirrors the lazy-create semantics of `_auth_via_clerk_jwt` so a
+    user whose first interaction with cloud-api is via the SaaS
+    side (clawdi.ai dashboard → admin endpoint) lands here with
+    the same row identity they'll get when they later sign into
+    cloud.clawdi.ai directly.
+
+    Without this, the most common Phase 4a entry path silently
+    fails: a user clicks Deploy on clawdi.ai before ever visiting
+    cloud.clawdi.ai → cloud-api `users` row doesn't exist → admin
+    endpoint 404 → SaaS catches CloudApiError, deploy succeeds
+    without sync, user has to redeploy after first cloud.clawdi.ai
+    visit.
+
+    Safety model — same as the JWT path:
+    - `clerk_id` is a value the SaaS side already authenticated
+      against the user's Clerk session (we trust it because the
+      shared `X-Admin-Key` is gated to first-party server-to-server
+      callers, and those callers themselves only forward authed
+      clerk_ids).
+    - email/name are unknown here (no JWT in scope), so the row
+      starts with `email=None`. The next time the user signs into
+      cloud.clawdi.ai directly, the JWT path either updates this
+      row by clerk_id match (already correct) or — if `email` is
+      later filled in by Clerk — backfills then.
+    - A Personal scope is created in the same transaction, same
+      invariant the JWT path enforces (downstream resolvers 500
+      without it).
+
+    Race-safe: concurrent admin calls for the same brand-new
+    clerk_id can both attempt the insert; the loser hits the
+    `users.clerk_id` unique constraint, rolls back, and adopts the
+    winner's row. Mirrors the same pattern in `_auth_via_clerk_jwt`.
+    """
+    target = (await db.execute(select(User).where(User.clerk_id == clerk_id))).scalar_one_or_none()
+    if target is not None:
+        return target
+
+    new_user = User(clerk_id=clerk_id, email=None, name=None)
+    db.add(new_user)
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Another concurrent admin call won the race. Adopt its row.
+        await db.rollback()
+        target = (
+            await db.execute(select(User).where(User.clerk_id == clerk_id))
+        ).scalar_one_or_none()
+        if target is None:
+            # Both writers somehow lost the row — extremely unlikely
+            # (would require a concurrent delete). Surface as 500
+            # rather than 404 so the SaaS caller sees this is an
+            # operational anomaly, not a wrong-clerk_id payload.
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "could not create or load user",
+            ) from None
+        return target
+
+    # Personal scope: same transaction as the User insert, same
+    # invariant the JWT path enforces. Without this, downstream
+    # resolvers that assume every user has a Personal scope will
+    # 500 the first time the user touches them. The Scope insert
+    # can't race on user_id (fresh) so a single try/commit is fine.
+    personal = Scope(
+        user_id=new_user.id,
+        name="Personal",
+        slug="personal",
+        kind=SCOPE_KIND_PERSONAL,
+    )
+    db.add(personal)
+    await db.flush()
+    logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, new_user.id)
+    return new_user
+
+
 @router.post("/auth/keys", response_model=ApiKeyCreated)
 async def admin_mint_api_key(
     body: AdminApiKeyCreate,
@@ -83,12 +161,13 @@ async def admin_mint_api_key(
     Used by SaaS batch tooling for live-sync migration: each pre-
     Phase-4a deployment needs a fresh api_key bound to a fresh env,
     but the migration script has no per-user Clerk JWT.
+
+    User row is lazy-created if absent — handles the common entry
+    path of a user who deploys on clawdi.ai before ever visiting
+    cloud.clawdi.ai. See `_resolve_or_create_user` for the safety
+    model.
     """
-    target = (
-        await db.execute(select(User).where(User.clerk_id == body.target_clerk_id))
-    ).scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "target user not found")
+    target = await _resolve_or_create_user(db, body.target_clerk_id)
 
     env_uuid: UUID | None = None
     if body.environment_id:
@@ -199,12 +278,10 @@ async def admin_register_environment(
     callers race-safe via `with_for_update` on the lookup, mirror-
     ing the heal logic in `register_environment` for the
     user-facing endpoint.
+
+    User row is lazy-created if absent — see `_resolve_or_create_user`.
     """
-    target = (
-        await db.execute(select(User).where(User.clerk_id == body.target_clerk_id))
-    ).scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "target user not found")
+    target = await _resolve_or_create_user(db, body.target_clerk_id)
 
     # FOR UPDATE row-locks the env so concurrent admin-registers
     # for the same (user, machine) serialize through the heal
