@@ -323,3 +323,20 @@ async def test_admin_register_env_unknown_user(admin_client):
         },
     )
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_endpoints_excluded_from_openapi_schema(admin_client):
+    """Regression: `/api/admin/*` MUST NOT appear in the public OpenAPI
+    schema. The web/CLI typed-client codegen consumes /openapi.json,
+    and admin endpoints are server-to-server only — leaking them
+    advertises the X-Admin-Key surface to anyone who downloads the
+    frontend bundle."""
+    r = await admin_client.get("/openapi.json")
+    assert r.status_code == 200
+    schema = r.json()
+    admin_paths = [p for p in schema.get("paths", {}) if p.startswith("/api/admin")]
+    assert admin_paths == [], (
+        f"admin endpoints leaked into OpenAPI schema: {admin_paths}. "
+        "Add `include_in_schema=False` to the admin router."
+    )
