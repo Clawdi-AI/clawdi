@@ -22,19 +22,24 @@ can land in this file under the same auth dep.
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
+from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.schemas.admin import AdminApiKeyCreate
+from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
+from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
 
 logger = logging.getLogger(__name__)
@@ -166,3 +171,117 @@ async def admin_revoke_api_key(
         api_key.id,
     )
     return ApiKeyRevokeResponse(status="revoked")
+
+
+@router.post("/environments", response_model=EnvironmentCreatedResponse)
+async def admin_register_environment(
+    body: AdminEnvironmentCreate,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentCreatedResponse:
+    """Register an AgentEnvironment row on behalf of a target user.
+
+    Migration tooling needs to seed env_id for pre-Phase-4a
+    deployments where no per-user Clerk JWT is in scope. The
+    user-facing `POST /api/environments` requires a Clerk-authed
+    or env-bound api_key request; this admin variant is gated by
+    the shared `X-Admin-Key` header instead.
+
+    Idempotent: re-registering (target_clerk_id, machine_id,
+    agent_type) returns the existing env id and refreshes
+    `machine_name` / `agent_version` / `last_seen_at`. Concurrent
+    callers race-safe via `with_for_update` on the lookup, mirror-
+    ing the heal logic in `register_environment` for the
+    user-facing endpoint.
+    """
+    target = (
+        await db.execute(select(User).where(User.clerk_id == body.target_clerk_id))
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "target user not found")
+
+    # FOR UPDATE row-locks the env so concurrent admin-registers
+    # for the same (user, machine) serialize through the heal
+    # branch — without this both writers would see
+    # default_scope_id IS NULL and create competing scopes.
+    existing = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.user_id == target.id,
+                AgentEnvironment.machine_id == body.machine_id,
+                AgentEnvironment.agent_type == body.agent_type,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        existing.machine_name = body.machine_name
+        existing.agent_version = body.agent_version
+        existing.last_seen_at = datetime.now(UTC)
+        # Heal envs missing default_scope_id (older rows or
+        # interrupted creates) — same logic the user-facing route
+        # runs.
+        if existing.default_scope_id is None:
+            healing_scope = Scope(
+                user_id=target.id,
+                name=f"{body.machine_name} ({body.agent_type})",
+                slug=f"env-{uuid.uuid4().hex[:12]}",
+                kind=SCOPE_KIND_ENVIRONMENT,
+                origin_environment_id=existing.id,
+            )
+            db.add(healing_scope)
+            await db.flush()
+            existing.default_scope_id = healing_scope.id
+        await db.commit()
+        return EnvironmentCreatedResponse(id=str(existing.id))
+
+    # Create scope first (no origin_environment_id yet — env doesn't
+    # exist), then env pointing at the scope, then back-fill
+    # scope.origin_environment_id. Mirror of register_environment's
+    # mutual-FK insertion order.
+    scope = Scope(
+        user_id=target.id,
+        name=f"{body.machine_name} ({body.agent_type})",
+        slug=f"env-{uuid.uuid4().hex[:12]}",
+        kind=SCOPE_KIND_ENVIRONMENT,
+    )
+    db.add(scope)
+    try:
+        await db.flush()
+        env = AgentEnvironment(
+            user_id=target.id,
+            machine_id=body.machine_id,
+            machine_name=body.machine_name,
+            agent_type=body.agent_type,
+            agent_version=body.agent_version,
+            os=body.os_name,
+            last_seen_at=datetime.now(UTC),
+            default_scope_id=scope.id,
+        )
+        db.add(env)
+        await db.flush()
+        scope.origin_environment_id = env.id
+        await db.commit()
+        await db.refresh(env)
+    except IntegrityError:
+        # Race: another admin-register won. Re-query.
+        await db.rollback()
+        env = (
+            await db.execute(
+                select(AgentEnvironment).where(
+                    AgentEnvironment.user_id == target.id,
+                    AgentEnvironment.machine_id == body.machine_id,
+                    AgentEnvironment.agent_type == body.agent_type,
+                )
+            )
+        ).scalar_one()
+
+    logger.info(
+        "admin_environment_registered target_clerk_id=%s env_id=%s machine_id=%s",
+        body.target_clerk_id,
+        env.id,
+        body.machine_id,
+    )
+    return EnvironmentCreatedResponse(id=str(env.id))
