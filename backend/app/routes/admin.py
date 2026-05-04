@@ -54,14 +54,16 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # per-deployment vault allowlists (which would scope-down vault:resolve
 # to whitelisted URIs — until then, admin granting vault:resolve
 # would expose every secret in the user's account).
-ADMIN_ALLOWED_SCOPES: frozenset[str] = frozenset({
-    "sessions:write",
-    "skills:read",
-    "skills:write",
-    "memories:write",
-    "mcp:proxy",
-    "tunnel:proxy",
-})
+ADMIN_ALLOWED_SCOPES: frozenset[str] = frozenset(
+    {
+        "sessions:write",
+        "skills:read",
+        "skills:write",
+        "memories:write",
+        "mcp:proxy",
+        "tunnel:proxy",
+    }
+)
 
 
 @router.post("/auth/keys", response_model=ApiKeyCreated)
@@ -150,9 +152,7 @@ async def admin_revoke_api_key(
     """Revoke any user's api_key. Used by SaaS admin/account-deletion
     paths (which don't have the user's Clerk JWT) to close the
     orphan-key gap from the cross-PR audit."""
-    api_key = (
-        await db.execute(select(ApiKey).where(ApiKey.id == key_id))
-    ).scalar_one_or_none()
+    api_key = (await db.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one_or_none()
     if api_key is None:
         # 404 = idempotent success for the caller. The migration
         # script can re-run after a partial failure without
