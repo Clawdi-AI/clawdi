@@ -44,7 +44,13 @@ from app.services.api_key import mint_api_key
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+# `include_in_schema=False`: admin endpoints are server-to-server only
+# (SaaS batch tooling + ops scripts). Excluding them from /openapi.json
+# stops `bun run generate-api` (web/CLI typed-client codegen) from
+# emitting bindings for them, so a leaked frontend bundle can't even
+# tell admin endpoints exist let alone what header they expect. The
+# routes themselves stay live — gating is `require_admin_api_key`.
+router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
 
 # Scopes admin-minted keys are allowed to carry. Any scope not in
 # this set is silently incompatible with privacy goals — admin must
