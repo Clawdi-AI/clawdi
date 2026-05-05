@@ -6,15 +6,19 @@ deployments that pre-date live sync, account-deletion webhooks, fleet
 revocation). Disabled by default — `settings.admin_api_key` must be
 set to a strong secret to enable.
 
-**Privacy invariant:** admin-minted keys can ONLY carry write-side
-scopes. Read-side scopes (`sessions:read`, `memories:read`,
-`vault:resolve`, `vault:write`) are deliberately excluded from the
-allowlist. Rationale: admin-key compromise gives an attacker the
-ability to push fake data into users' accounts (recoverable data-
-integrity issue), NOT the ability to read users' existing data
-(privacy catastrophe). Per-user mint via Clerk JWT
-(`POST /api/auth/keys`) still grants full access — that path is
-gated by the user's own auth, so they grant access to themselves.
+**Trust model:** admin-minted keys carry the same authority as keys
+the user mints for themselves via `POST /api/auth/keys` — full
+account access by default. The X-Admin-Key is therefore a root
+credential: a leak grants an attacker the ability to mint full-power
+keys for any user. Protect it like a database password (rotate on
+suspicion, restrict to SaaS backend egress IPs at the infra layer,
+audit log access).
+
+The product reasoning: a user's hosted pod is the user's agent
+running on our infrastructure — it must be able to do everything
+the user can do on their own laptop. Capping admin-minted keys
+below user-mint power would make hosted strictly weaker than
+self-managed (vault reads, memory reads, etc. would silently fail).
 
 Surface kept minimal: just the operations that batch tooling
 genuinely can't accomplish via per-user Clerk JWTs. Future admin
@@ -52,25 +56,6 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
-
-# Scopes admin-minted keys are allowed to carry. Any scope not in
-# this set is silently incompatible with privacy goals — admin must
-# not be able to mint keys that read user data. Live sync only needs
-# write-side scopes plus skills:read for `clawdi pull` of starter
-# skills. Vault scopes intentionally excluded — granting vault:resolve
-# without per-deployment URI allowlists would expose every secret in
-# the user's account, so the admin path stays write-only until that
-# allowlist exists.
-ADMIN_ALLOWED_SCOPES: frozenset[str] = frozenset(
-    {
-        "sessions:write",
-        "skills:read",
-        "skills:write",
-        "memories:write",
-        "mcp:proxy",
-        "tunnel:proxy",
-    }
-)
 
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
@@ -179,29 +164,16 @@ async def admin_mint_api_key(
                 status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
             ) from e
 
-    # Privacy gate: admin endpoint can only grant write-side scopes.
-    # `scopes=None` from the caller does NOT default to full account
-    # access (that would defeat the privacy invariant) — instead it
-    # defaults to the full allowlist. Caller can narrow further by
-    # passing an explicit subset; expansion is rejected with 400.
-    if body.scopes is None:
-        scopes = sorted(ADMIN_ALLOWED_SCOPES)
-    else:
-        invalid = set(body.scopes) - ADMIN_ALLOWED_SCOPES
-        if invalid:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "admin endpoint cannot grant these scopes: "
-                f"{sorted(invalid)}. Allowed: {sorted(ADMIN_ALLOWED_SCOPES)}.",
-            )
-        scopes = body.scopes
-
+    # `scopes=None` is full account access — same default as user-self-
+    # mint via `POST /api/auth/keys`. Callers may pass a narrower list
+    # to lock the minted key down (e.g. ops tooling that only needs to
+    # push sessions); the route doesn't impose a ceiling.
     try:
         minted = await mint_api_key(
             db,
             user_id=target.id,
             label=body.label,
-            scopes=scopes,
+            scopes=body.scopes,
             environment_id=env_uuid,
         )
     except ValueError as e:

@@ -36,17 +36,11 @@ class AdminApiKeyCreate(BaseModel):
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
 
-    `scopes` is optional — semantics differ from the user-facing
-    `ApiKeyCreate`:
-      - `None` defaults to the admin write-side allowlist (NOT full
-        account access). See `ADMIN_ALLOWED_SCOPES` in routes/admin.py.
-      - Non-`None` must be a subset of the allowlist; values outside
-        return 400. Caller can narrow further but cannot expand
-        beyond the allowlist.
-
-    The asymmetry is deliberate: admin keys are operational tools
-    for batch tasks (migration, ops cleanup) and must not become a
-    privacy bypass.
+    `scopes` is optional — same semantics as the user-facing
+    `ApiKeyCreate`: `None` means full account access (the default
+    for both user-self-mint and admin-mint). Pass an explicit list
+    to narrow the minted key for ops tooling that doesn't need
+    everything.
     """
 
     target_clerk_id: str

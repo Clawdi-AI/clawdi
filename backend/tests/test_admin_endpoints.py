@@ -90,9 +90,9 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_persists_admin_allowlist_scopes(admin_client, db_session, seed_user):
-    """Mint via admin endpoint persists the allowlist scopes
-    (not None / full access)."""
+async def test_admin_mint_default_grants_full_account_access(admin_client, db_session, seed_user):
+    """Mint via admin endpoint with no `scopes` field defaults to
+    full account access — same as user-self-mint via Clerk JWT."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -100,55 +100,27 @@ async def test_admin_mint_persists_admin_allowlist_scopes(admin_client, db_sessi
     r = await admin_client.post(
         "/api/admin/auth/keys",
         headers={"X-Admin-Key": _ADMIN_KEY},
-        json={"target_clerk_id": seed_user.clerk_id, "label": "narrow-test"},
+        json={"target_clerk_id": seed_user.clerk_id, "label": "default-scopes"},
     )
     assert r.status_code == 200
 
-    rows = (
-        (await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id)))
-        .scalars()
-        .all()
-    )
-    assert rows
-    minted = next(k for k in rows if k.label == "narrow-test")
+    minted = (
+        await db_session.execute(
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "default-scopes")
+        )
+    ).scalar_one()
 
-    # Persisted scopes must be the admin allowlist, NOT None.
-    assert minted.scopes is not None, (
-        "admin-minted key must NOT have scopes=None (full access) — "
-        "that would defeat the privacy invariant"
-    )
-    assert "sessions:write" in minted.scopes
-    assert "skills:read" in minted.scopes
-    # Verify privacy-sensitive scopes are NOT in the persisted set
-    assert "sessions:read" not in minted.scopes, (
-        "PRIVACY: admin-minted keys must NOT carry sessions:read"
-    )
-    assert "memories:read" not in minted.scopes
-    assert "vault:resolve" not in minted.scopes
-    assert "vault:write" not in minted.scopes
+    # `scopes=None` is the full-account-access sentinel; matches user-
+    # self-mint behaviour. Hosted pods need full parity with self-
+    # managed installs (vault reads, memory reads) so the admin path
+    # does not impose a scope ceiling.
+    assert minted.scopes is None
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_rejects_privacy_violating_scopes(admin_client, seed_user):
-    """Caller cannot smuggle a read-side scope past the admin endpoint
-    by passing it explicitly. 400 with a list of invalid scopes."""
-    r = await admin_client.post(
-        "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
-        json={
-            "target_clerk_id": seed_user.clerk_id,
-            "label": "attacker-attempt",
-            "scopes": ["sessions:write", "vault:resolve"],  # vault:resolve = privacy violation
-        },
-    )
-    assert r.status_code == 400
-    assert "vault:resolve" in r.text
-
-
-@pytest.mark.asyncio
-async def test_admin_mint_allows_subset_of_allowlist(admin_client, db_session, seed_user):
-    """Caller can narrow further: pass a subset of the allowlist,
-    minted key gets exactly that subset."""
+async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_session, seed_user):
+    """Callers can lock the minted key down by passing an explicit
+    scope list — useful for ops tooling that doesn't need everything."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -159,7 +131,7 @@ async def test_admin_mint_allows_subset_of_allowlist(admin_client, db_session, s
         json={
             "target_clerk_id": seed_user.clerk_id,
             "label": "narrow-explicit",
-            "scopes": ["sessions:write"],  # narrower than allowlist default
+            "scopes": ["sessions:write"],
         },
     )
     assert r.status_code == 200
@@ -170,6 +142,34 @@ async def test_admin_mint_allows_subset_of_allowlist(admin_client, db_session, s
         )
     ).scalar_one()
     assert minted.scopes == ["sessions:write"]
+
+
+@pytest.mark.asyncio
+async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, seed_user):
+    """No allowlist ceiling: callers can mint keys carrying any scope
+    they want (vault:resolve, sessions:read, etc.). Trust model is
+    that X-Admin-Key holders are already first-party SaaS callers."""
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    r = await admin_client.post(
+        "/api/admin/auth/keys",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "vault-and-read",
+            "scopes": ["sessions:read", "vault:resolve"],
+        },
+    )
+    assert r.status_code == 200
+
+    minted = (
+        await db_session.execute(
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "vault-and-read")
+        )
+    ).scalar_one()
+    assert minted.scopes == ["sessions:read", "vault:resolve"]
 
 
 @pytest.mark.asyncio
