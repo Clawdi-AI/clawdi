@@ -84,19 +84,26 @@ function isKnownRuntime(s: string): s is Runtime {
 }
 
 /**
- * One deployment fans out to one tile per onboarded runtime. OpenClaw
+ * One deployment fans out to one tile per running runtime. OpenClaw
  * (:18789) and Hermes (:18793) are completely separate dashboard
- * surfaces in clawdi.ai — different web servers, capability
- * sets, management URLs — so the unified grid renders them as
- * distinct agents.
+ * surfaces in clawdi.ai — different web servers, capability sets,
+ * management URLs — so the unified grid renders them as distinct
+ * agents.
  *
- * `onboarded_agents` is the source of truth: backend writes
- * `["hermes"]` or `["openclaw"]` at deploy time
- * (backend/app/routes/deployments.py:705,1122 — they're mutually
- * exclusive at provision), and grows the array via
- * `/deployments/{id}/onboard-agent` when a user later adds a second
- * runtime. We trust the array literally — never synthesize a runtime
- * that isn't in it (the pod doesn't have that process).
+ * Runtime resolution priority (see `resolveRuntimes` below):
+ *   1. `clawdi_cloud_environments` keys — Phase 4a+ deploys.
+ *      Authoritative because every key in this map corresponds to
+ *      a daemon currently running with a live cloud-api env binding.
+ *   2. `onboarded_agents` — fallback for deployments where
+ *      `CLAWDI_CLOUD_LIVE_SYNC_ENABLED` is off, mint failed soft,
+ *      or the SaaS hasn't been redeployed since Phase 4a. Now writes
+ *      both runtimes for dual-agent deploys (was previously mutually-
+ *      exclusive — that bug hid OpenClaw on dual-agent pods).
+ *   3. `enable_hermes` flag — final fallback for very old
+ *      deployments that pre-date `onboarded_agents`.
+ *
+ * We never synthesize a runtime that isn't surfaced by one of these
+ * sources (the pod doesn't have that process running).
  */
 function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);

@@ -2112,30 +2112,40 @@ The minimum-viable change set spans both repos.
 1. **`agent-image/Dockerfile`**: install the `clawdi` CLI via
    `npm install -g clawdi@<pinned>` in the runtime-glue stage
    (the image doesn't ship it today).
-2. **`agent-image/entrypoint.sh`**: when both `CLAWDI_AUTH_TOKEN`
-   and `CLAWDI_ENVIRONMENT_ID` are set, export `CLAWDI_API_URL`
-   (default `https://cloud-api.clawdi.ai`), then run
-   `clawdi push --modules sessions,skills --all` (one-shot
-   backfill of historical content) + `clawdi pull --yes --sync`
-   (starter skill hydration) in background, then let supervisord
-   start `clawdi serve` from `clawdi-sync.conf`. All non-blocking;
-   sync is a soft dependency. Defensive: if `clawdi` binary isn't
-   on PATH (image upgrade order issue), single FATAL log + remove
-   the conf cleanly so supervisord doesn't crash-loop.
-3. **`backend/app/routes/deployments.py`**: `_deploy_k3s` calls a
-   new `_mint_cloud_sync_creds` helper that forwards the user's
-   Clerk JWT to cloud-api `POST /api/auth/keys`, captures
-   `(raw_key, env_id, key_id)`, and plumbs them through
-   `build_openclaw_infra_spec` into the pod's k8s Secret.
-   `key_id` persisted to `Deployment.config["clawdi_cloud_key_id"]`
-   so delete handler can revoke. Master-gated on
-   `settings.clawdi_cloud_live_sync_enabled` (default OFF) so the
-   code lands before the agent-image release pipeline catches up.
+2. **`agent-image/entrypoint.sh`**: dual-agent supervisor units
+   (`clawdi-sync-openclaw.conf` + `clawdi-sync-hermes.conf`)
+   shipped in the image. Per-agent suffixed env vars
+   (`CLAWDI_AUTH_TOKEN_<AGENT>` + `CLAWDI_ENVIRONMENT_ID_<AGENT>`)
+   gate each unit; entrypoint removes the matching conf when
+   tokens are missing so legacy / single-agent deploys run with
+   only the daemons that have credentials. `CLAWDI_API_URL`
+   shared across agents (default `https://cloud-api.clawdi.ai`).
+   Backfill (`clawdi push --modules sessions,skills --all`) +
+   starter skill hydration (`clawdi pull --yes --sync`) run
+   non-blocking before supervisord starts the daemons.
+3. **`backend/app/routes/deployments.py`**: both `_deploy_k3s`
+   and the Phala branch call `_mint_cloud_sync_creds` which goes
+   through cloud-api's admin endpoint (X-Admin-Key gated) and
+   mints one `(raw_key, env_id, key_id)` tuple per enabled
+   agent. The full set is plumbed into `build_openclaw_infra_spec`
+   (k3s) / `phala_client.build_env_vars` (Phala) as
+   `clawdi_sync_mints`. Per-agent `(key_id, env_id)` persisted to
+   `Deployment.config["clawdi_cloud_keys"][agent_type]` so the
+   delete handler can revoke them all on teardown. Admin-mint
+   grants full account access by default — `CLAWDI_CLOUD_ADMIN_API_KEY`
+   is a root credential. Master-gated on
+   `settings.clawdi_cloud_live_sync_enabled` (default OFF).
 4. **`backend/app/services/k3s.py`**: `update_existing=True`
-   Secret-replace path preserves `CLAWDI_AUTH_TOKEN` /
-   `CLAWDI_ENVIRONMENT_ID` / `CLAWDI_API_URL` from the existing
-   Secret. Without this, an `enable Hermes` / config-change update
-   would wipe live sync from the pod on its next restart.
+   Secret-replace path strategically merges the per-agent
+   `CLAWDI_AUTH_TOKEN_<AGENT>` / `CLAWDI_ENVIRONMENT_ID_<AGENT>`
+   / `CLAWDI_API_URL` keys with the existing Secret. An
+   `onboard-agent`-driven re-apply (e.g., adding Hermes to a
+   running OpenClaw pod) keeps the OpenClaw token in place
+   while writing the new Hermes pair. The Phala branch can't
+   merge — `commit_compose_update` replaces the encrypted env
+   wholesale — so onboarding Hermes there re-mints OpenClaw too
+   (mint-new → swap → revoke-old ordering, see
+   `_remint_dual_sync_creds_for_onboard`).
 5. **Migration tooling for existing deployments**: pre-Phase-4a
    pods don't have `CLAWDI_AUTH_TOKEN` in their Secret. The SaaS
    admin batch-upgrade flow (`backend/app/routes/admin.py:
