@@ -96,6 +96,12 @@ interface TranscriptLine {
 	message?: {
 		role?: string;
 		content?: string | Array<Record<string, unknown>>;
+		// Top-level fields on `role: "toolResult"` messages — OpenClaw emits
+		// the matching call id + tool name on the message itself, not as a
+		// content block. We rewrite these into a canonical user-role message
+		// with a `tool_result` block (Anthropic shape) on emit.
+		toolCallId?: string;
+		toolName?: string;
 	};
 	provider?: string;
 	modelId?: string;
@@ -301,8 +307,30 @@ export class OpenClawAdapter implements AgentAdapter {
 
 							if (parsed.type !== "message") continue;
 							const role = parsed.message?.role;
-							if (role !== "user" && role !== "assistant") continue;
 							const c = parsed.message?.content;
+
+							// OpenClaw uses a third role `"toolResult"` for tool
+							// outputs — it carries `toolCallId` + `toolName` on
+							// the message itself and `content[]` is the result
+							// body. Rewrite to canonical Anthropic shape: a
+							// user-role message holding one tool_result block.
+							if (role === "toolResult") {
+								const resultText = clampToolOutput(flattenToolResultContent(c));
+								if (!resultText && !parsed.message?.toolCallId) continue;
+								const block: ContentBlock = {
+									type: "tool_result",
+									tool_use_id: parsed.message?.toolCallId ?? "",
+									content: resultText,
+								};
+								messages.push({
+									role: "user",
+									content: [block],
+									timestamp: ts?.toISOString(),
+								});
+								continue;
+							}
+
+							if (role !== "user" && role !== "assistant") continue;
 							let normalized: string | ContentBlock[] | null = null;
 							if (typeof c === "string") {
 								normalized = c ? c : null;
