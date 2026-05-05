@@ -38,14 +38,30 @@ export interface AgentTile {
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
-	/** Click target. Internal route for self-managed, external for hosted. */
+	/** Primary click target. Always points at the in-app env detail
+	 * page (`/agents/{env_id}`) when an env is available — for both
+	 * self-managed and hosted-with-Phase-4a-env tiles, so the
+	 * sessions/skills/memory experience stays unified. Falls back to
+	 * the external SaaS dashboard URL only for hosted tiles whose
+	 * cloud-api env hasn't been registered yet (pre-Phase-4a legacy
+	 * pods, mint-failed deploys). `external` reflects whichever
+	 * applies. */
 	href: string;
 	external?: boolean;
+	/** Secondary click target rendered as a small "Manage on Clawdi"
+	 * button on hosted tiles only. Goes to the SaaS dashboard for
+	 * lifecycle ops (Restart / Stop / Delete) that don't live in the
+	 * OSS dashboard. Self-managed tiles leave this undefined.
+	 * Stretched-link pattern means this button needs `relative z-10`
+	 * so it captures clicks above the inset-0 primary link overlay. */
+	manageHref?: string;
 	/** Counted in the "N active now" header line; no per-tile indicator rendered. */
 	active?: boolean;
 	/** Self-managed envs carry the full EnvironmentResponse so the
-	 * tile can render a sync indicator. Hosted-on-Clawdi tiles
-	 * leave this null — they don't have a daemon (yet). */
+	 * tile can render a sync indicator. Hosted tiles join their
+	 * cloud-api env via `clawdi_cloud_environments` and end up with
+	 * the same shape; only legacy hosted pods (no env registered)
+	 * leave this null. */
 	env?: Env | null;
 }
 
@@ -169,10 +185,34 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	if (tile.env) {
 		meta.push(
 			<span className="relative z-10">
-				<DaemonStatusBadge env={tile.env} />
+				<DaemonStatusBadge env={tile.env} source={tile.source} />
 			</span>,
 		);
 	}
+
+	// Trailing-edge slot. Hosted tiles with a `manageHref` get a
+	// dedicated "Manage on Clawdi" affordance pointing at the SaaS
+	// dashboard's lifecycle UI (Restart/Stop/Delete) — clicked
+	// independently of the primary link via `relative z-10`. Hosted
+	// fallback tiles (env not yet registered → primary IS the SaaS
+	// URL via `external`) get the original ArrowUpRight glyph so the
+	// affordance still reads as "this leaves the app".
+	const trailing = tile.manageHref ? (
+		<a
+			href={tile.manageHref}
+			target="_blank"
+			rel="noopener noreferrer"
+			onClick={(e) => e.stopPropagation()}
+			title="Manage on Clawdi"
+			className="relative z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+		>
+			<Cloud className="size-3" />
+			Manage
+			<ArrowUpRight className="size-2.5" />
+		</a>
+	) : tile.external ? (
+		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+	) : null;
 
 	const card = (
 		<Card className="h-full py-0 transition-colors group-hover:bg-accent/40">
@@ -186,9 +226,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					titleAdornment={clawdiPill}
 					className="min-w-0 flex-1"
 				/>
-				{tile.external ? (
-					<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-				) : null}
+				{trailing}
 			</CardContent>
 		</Card>
 	);

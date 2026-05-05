@@ -139,8 +139,20 @@ const SHORT_LABEL: Record<Status, string> = {
 	paused: "Sync paused",
 };
 
-export function DaemonStatusBadge({ env }: { env: Env }) {
+export function DaemonStatusBadge({
+	env,
+	source = "self-managed",
+}: {
+	env: Env;
+	/** "on-clawdi" tiles change the set-up state's label + dialog
+	 * copy: hosted users don't run `clawdi serve install` — the
+	 * supervised daemon ships in the pod image and activates on
+	 * the next image rollout. Self-managed installs see the
+	 * existing CLI-install instructions. */
+	source?: "self-managed" | "on-clawdi";
+}) {
 	const status = classify(env);
+	const isHosted = source === "on-clawdi";
 	const [open, setOpen] = useState(false);
 	const inner = (
 		<span
@@ -151,7 +163,14 @@ export function DaemonStatusBadge({ env }: { env: Env }) {
 			)}
 		>
 			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", DOT_TONE[status])} />
-			<span>{SHORT_LABEL[status]}</span>
+			<span>
+				{/* Hosted "set-up" reads as "Sync pending" — the rollout
+				    is in flight, not waiting on the user. Other states
+				    use the same label as self-managed because they have
+				    the same product meaning regardless of who provisioned
+				    the pod. */}
+				{isHosted && status === "set-up" ? "Sync pending" : SHORT_LABEL[status]}
+			</span>
 		</span>
 	);
 	return (
@@ -194,7 +213,13 @@ export function DaemonStatusBadge({ env }: { env: Env }) {
 			    user closes the help modal. It's a propagation barrier,
 			    not a real interactive control. */}
 			<div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-				<SyncHelpDialog env={env} status={status} open={open} onOpenChange={setOpen} />
+				<SyncHelpDialog
+					env={env}
+					status={status}
+					source={source}
+					open={open}
+					onOpenChange={setOpen}
+				/>
 			</div>
 		</>
 	);
@@ -219,14 +244,17 @@ function TechRow({ label, value }: { label: string; value: string }) {
 function SyncHelpDialog({
 	env,
 	status,
+	source,
 	open,
 	onOpenChange,
 }: {
 	env: Env;
 	status: Status;
+	source: "self-managed" | "on-clawdi";
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const isHosted = source === "on-clawdi";
 	const dropped = env.dropped_count ?? 0;
 	const queuePeak = env.queue_depth_high_water ?? 0;
 	const lastSyncRel = env.last_sync_at ? relativeTime(env.last_sync_at) : "never";
@@ -238,7 +266,9 @@ function SyncHelpDialog({
 		status === "live"
 			? "Live sync details"
 			: status === "set-up"
-				? "Turn on live sync for this agent"
+				? isHosted
+					? "Live sync is activating"
+					: "Turn on live sync for this agent"
 				: status === "errored"
 					? "Sync hit an error"
 					: "Sync paused — daemon isn't checking in";
@@ -251,12 +281,33 @@ function SyncHelpDialog({
 				</DialogHeader>
 				<div className="space-y-4">
 					{status === "set-up" ? (
-						<>
-							<p className="text-sm text-muted-foreground">
-								A small background service that keeps this agent in sync.
-							</p>
-							<SyncSetupSnippet env={env} />
-						</>
+						isHosted ? (
+							// Hosted pods get sync wired up automatically when
+							// the agent image rolls out — there's nothing for the
+							// user to configure. Explain the flow + point at the
+							// SaaS dashboard's lifecycle UI for the rare manual
+							// kick (Restart) so this dialog is informational, not
+							// a dead-end.
+							<div className="space-y-3">
+								<p className="text-sm text-muted-foreground">
+									This agent runs on Clawdi&apos;s infrastructure. Live sync activates automatically
+									once the pod is on the latest agent image. New deploys are already on the latest
+									image; older pods activate on their next upgrade.
+								</p>
+								<p className="text-xs text-muted-foreground">
+									Nothing to install or configure on your side. The first heartbeat will flip this
+									badge to <span className="font-medium">Live sync</span> within a minute or two of
+									pod boot.
+								</p>
+							</div>
+						) : (
+							<>
+								<p className="text-sm text-muted-foreground">
+									A small background service that keeps this agent in sync.
+								</p>
+								<SyncSetupSnippet env={env} />
+							</>
+						)
 					) : (
 						<>
 							{status === "live" ? (
