@@ -1,9 +1,15 @@
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 # local_session_id flows straight into a file-store key
 # (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
@@ -209,6 +215,36 @@ class SessionExtractResponse(BaseModel):
     memories_created: int
 
 
+class SessionContentBlock(BaseModel):
+    """One block inside a structured message's `content` array.
+
+    Shape mirrors Anthropic's content blocks (canonical wire format). The
+    CLI adapters normalize their source (camelCase OpenClaw, OpenAI
+    function_call, etc.) to this shape on emit so the cloud stores a
+    uniform structure regardless of agent.
+
+    `extra="allow"` because adapters may add agent-specific fields we
+    haven't modeled (e.g. thinking signatures); we want them to round-trip
+    through the API rather than be stripped by validation.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    # text block
+    text: str | None = None
+    # tool_use block
+    id: str | None = None
+    name: str | None = None
+    input: Any = None
+    # tool_result block
+    tool_use_id: str | None = None
+    content: str | None = None
+    is_error: bool | None = None
+    # thinking block
+    thinking: str | None = None
+
+
 class SessionMessageResponse(BaseModel):
     """One agent message inside a session content file.
 
@@ -216,10 +252,15 @@ class SessionMessageResponse(BaseModel):
     in the file store is a list of these. Declared here so it lives in the
     OpenAPI schema and flows through to generated TS types; keeps the frontend
     from having to maintain a parallel interface.
+
+    `content` is `str` for legacy / Hermes uploads (entire message is one
+    text body) or `list[SessionContentBlock]` when the source has structured
+    tool_use / tool_result records. Both shapes are valid; readers must
+    handle both.
     """
 
     role: Literal["user", "assistant"]
-    content: str
+    content: str | list[SessionContentBlock]
     model: str | None = None
     timestamp: datetime | None = None
 

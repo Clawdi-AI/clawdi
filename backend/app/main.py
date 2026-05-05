@@ -29,6 +29,7 @@ from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.routes.wiki import router as wiki_router
 from app.services.embedding import LocalEmbedder
 
 logging.basicConfig(level=logging.INFO)
@@ -165,6 +166,7 @@ app.include_router(vault_router)
 app.include_router(connectors_router)
 app.include_router(mcp_proxy_router)
 app.include_router(search_router)
+app.include_router(wiki_router)
 
 
 @app.get("/health")

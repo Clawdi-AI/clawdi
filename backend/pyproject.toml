@@ -21,6 +21,7 @@ dependencies = [
     "fastembed>=0.3",
     "sentry-sdk[fastapi]>=2.23",
     "pyyaml>=6.0",
+    "arq>=0.28.0",
 ]
 
 [project.optional-dependencies]

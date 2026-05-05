@@ -10,11 +10,13 @@ from app.models import (  # noqa: F401 - register models
     api_key,
     device_authorization,
     memory,
+    memory_chunk,
     scope,
     session,
     skill,
     user,
     vault,
+    wiki,
 )
 
 config = context.config

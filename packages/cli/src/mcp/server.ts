@@ -125,7 +125,7 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_search",
-		'ALWAYS call this BEFORE answering any question that references the user\'s own context — their preferences, projects, past decisions, named entities, or work history. A missed hit costs the user\'s trust every subsequent turn; a call that returns empty costs ~100ms. Bias toward calling. Works in any language — pass the user\'s query through as-is.\n\nMUST call when the user\'s message contains ANY of these signals (in English, Chinese, or any other language):\n- First-person self-reference in a question about themselves: possessives like "my", verbs of habit like "I usually", "I prefer", "I always"\n- Preference / habit questions, even phrased abstractly: "what do I usually use for X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger even when no specific entity is named\n- Callbacks to past context: "like last time", "as I mentioned", "you know the one", "we discussed before", "what was that X"\n- Named entities specific to this user: their project / repo / service / team / tool name, or a person by name\n- Any reference to a past bug, decision, investigation, meeting, or design choice\n\nExample queries to pass (choose whichever phrasing fits; language does not matter): "user\'s name", "coding style preference", "command-line tools the user uses", "how we fixed the login bug", "Clerk auth decision reasoning", "project architecture".\n\nDo NOT call for pure textbook / generic programming questions with zero user-specific signal (e.g. "how does async/await work", "what is the time complexity of quicksort").\n\nWhen in doubt, CALL IT. Zero results is cheap; a missed memory makes you look amnesic.',
+		'Look up ATOMIC FACTS about the user: a specific value (URL, key name, config setting), a habit/preference one-liner ("I usually X"), or a single past decision. Memory is the right tool when the user wants ONE fact, not the whole picture about an entity.\n\nFOR ENTITY OVERVIEWS — "what do I have about X", "tell me about my Y", "give me the status of Z" — prefer wiki_search instead. The wiki returns a synthesized 1-paragraph summary aggregating evidence from all of memory + skills + sessions + vault for that entity. One read beats stitching together 5 memory fragments.\n\nWORK IN TIERS. Don\'t reflexively call this on every turn:\n- Tier 0: try local context first (current conversation, files in CWD, your training)\n- Tier 1: if local doesn\'t suffice, pick by question shape (this tool for atomic facts, wiki_search for entity overviews, skill_search for "how do I X")\n- Tier 2: escalate to clawdi_search when domain is unclear or Tier 1 is empty\n\nWORKS IN ANY LANGUAGE — pass the user\'s query through as-is.\n\nCALL THIS when the user\'s message asks for a SPECIFIC fact / value / preference:\n- "what\'s my X" where X is a concrete value (email, API endpoint, deploy target)\n- "I usually X" / "I prefer X" / habit lookups\n- "how did we fix the login bug" / past-decision recall with no obvious entity name\n- Free-form recall where you don\'t know which entity to wiki on\n\nDO NOT call:\n- For pure textbook / generic programming questions ("how does async/await work")\n- When the answer is already in the current conversation context\n- For broad "tell me about X" questions — use wiki_search\n\nA call that returns empty costs ~100ms; missing the user\'s context costs trust. When unsure between memory and wiki for a user-context question: bias toward calling at least one.',
 		{
 			query: z
 				.string()
@@ -207,6 +207,523 @@ export async function startMcpServer() {
 		async () => ({
 			content: [{ type: "text" as const, text: MEMORY_EXTRACT_INSTRUCTIONS }],
 		}),
+	);
+
+	// --- Cross-domain tools: skills, sessions, vault, unified search ---
+
+	server.tool(
+		"clawdi_search",
+		'CROSS-DOMAIN UMBRELLA — fan-out across wiki + memory + skills + sessions + vault in one call. Use this as a TIER 2 escalation, not a Tier 1 default.\n\nWORK IN TIERS:\n- Tier 0: try local context first (current conversation, files, your training)\n- Tier 1: pick a single domain by question shape — wiki_search for "tell me about my X" / entities, memory_search for atomic facts, skill_search for "how do I X", session_search for past work\n- Tier 2: call THIS tool when Tier 1 returns empty/weak, OR when you genuinely cannot tell which single domain owns the answer\n\nCALL THIS when:\n- A Tier 1 search returned empty and you want a broader sweep before declaring zero-result\n- The user references something where the domain is genuinely ambiguous: "the one I set up" with no other signal, vague callbacks like "like last time" without an entity\n- Cross-cutting: "what do I have for X" where the intent could legitimately span multiple domains\n\nReturns mixed-type results. Each has type (wiki/memory/skill/session/vault), id, title, and href. After getting results, READ the relevant items via the domain\'s get tool (wiki_get, skill_get, session_get, memory_search) for full content. CITE the IDs in your response — do not paraphrase results away.\n\nDO NOT call:\n- For purely textbook programming questions\n- When the user\'s intent is unambiguously a single domain — call that domain\'s tool directly (cheaper, more specific results)\n- As a first move when the question shape clearly fits one tool (e.g. "tell me about my X" is wiki_search, not clawdi_search)',
+		{
+			query: z.string().describe("Natural-language query in any language."),
+			limit: z.number().optional().describe("Max results per domain (default 5)."),
+		},
+		async ({ query, limit }) => {
+			try {
+				const data = await api.get<{
+					query: string;
+					results: Array<{
+						type: string;
+						id: string;
+						title: string;
+						subtitle: string | null;
+						href: string;
+					}>;
+				}>(`/api/search?q=${encodeURIComponent(query)}`);
+				if (!data.results.length) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "No results across memory, skills, sessions, or vault. (Empty result is real — say so to the user instead of falling back to general knowledge.)",
+							},
+						],
+					};
+				}
+				const byType: Record<string, typeof data.results> = {};
+				for (const hit of data.results) {
+					const bucket = byType[hit.type] ?? [];
+					bucket.push(hit);
+					byType[hit.type] = bucket;
+				}
+				const cap = limit ?? 5;
+				const lines: string[] = [];
+				for (const [type, hits] of Object.entries(byType)) {
+					lines.push(`## ${type} (${hits.length})`);
+					for (const h of hits.slice(0, cap)) {
+						const sub = h.subtitle ? ` — ${h.subtitle}` : "";
+						lines.push(`  [${h.id}] ${h.title}${sub}`);
+					}
+				}
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"skill_search",
+		'ALWAYS call this BEFORE writing custom code or suggesting a manual approach for any task that might already be a skill. The user has many skills (often 100+) covering deploy, QA, browser automation, voice/SMS, social posting, prediction markets, code review, and more. Skill descriptions are explicit about when to use them — let the search find the right one.\n\nMUST call when the user\'s request matches ANY of these patterns:\n- "How do I X" / "how can I X" / "show me how to X" — a skill very likely exists\n- Action verbs that map to common workflows: deploy, ship, test, QA, review, browse, post, message, send, search, find, fetch, analyze, draft, summarize\n- Named external services: Twitter, Slack, Notion, Stripe, Polymarket, GitHub, iMessage, Apple Notes/Reminders/FindMy\n- Delegation requests: "delegate this to claude-code / codex / hermes" — those are skills\n- Workflow steps: "investigate this bug", "review the plan", "do a retro"\n\nReturns ranked skills (key, name, description, version). After finding the right one, call skill_get(key) to load the full instructions before executing.\n\nDo NOT call for trivial code questions, agent self-questions, or when the user has just told you not to use a skill.\n\nFailure mode if skipped: you write a worse, ad-hoc version of something the user has already built and refined. Cite the skill key when you use one.',
+		{
+			query: z.string().describe("Natural-language query — what the user wants to do."),
+			category: z
+				.string()
+				.optional()
+				.describe(
+					'Filter by top-level category (e.g. "gstack", "mlops", "apple", "research", "github").',
+				),
+			limit: z.number().optional().describe("Max results (default 5)."),
+		},
+		async ({ query, category, limit }) => {
+			try {
+				const params = new URLSearchParams({
+					q: query,
+					page_size: String(limit ?? 5),
+				});
+				const data = await api.get<{
+					items: Array<{
+						skill_key: string;
+						name: string;
+						description: string;
+						version: number;
+					}>;
+					total: number;
+				}>(`/api/skills?${params.toString()}`);
+				let items = data.items;
+				if (category) {
+					items = items.filter((s) => s.skill_key.startsWith(`${category}/`));
+				}
+				if (!items.length) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `No skills matched "${query}"${category ? ` in category "${category}"` : ""}.`,
+							},
+						],
+					};
+				}
+				const lines = items.map(
+					(s) => `[${s.skill_key}] ${s.name} (v${s.version}) — ${s.description}`,
+				);
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"skill_get",
+		"Call after skill_search to load the full skill instructions before executing. The search returns descriptions only; the body has the actual procedure, tool calls, and constraints.\n\nMUST call before invoking any procedure that depends on a skill — never wing it from the description alone.\n\nReturns the full SKILL.md content (frontmatter + body). Read it once at the start of the task; you don't need to re-load on every step.\n\nFailure mode if skipped: you execute based on the 150-character description and miss critical details (auth setup, ordering, edge cases) that are in the body.",
+		{
+			skill_key: z
+				.string()
+				.describe('Skill key, e.g. "research/polymarket", "gstack/qa", "apple/imessage".'),
+		},
+		async ({ skill_key }) => {
+			try {
+				// Backend's /api/skills/{skill_key} currently 404s for skill_keys
+				// containing "/" — fall through the list endpoint with include_content
+				// and match by exact skill_key. Switch to the direct GET when backend
+				// fixes routing for slash-bearing keys.
+				const params = new URLSearchParams({
+					q: skill_key.split("/").pop() ?? skill_key,
+					include_content: "true",
+					page_size: "20",
+				});
+				const data = await api.get<{
+					items: Array<{
+						skill_key: string;
+						name: string;
+						description: string;
+						content?: string;
+					}>;
+				}>(`/api/skills?${params.toString()}`);
+				const match = data.items.find((s) => s.skill_key === skill_key);
+				if (!match) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Skill "${skill_key}" not found.${
+									data.items.length
+										? ` Did you mean: ${data.items
+												.slice(0, 3)
+												.map((s) => s.skill_key)
+												.join(", ")}?`
+										: ""
+								}`,
+							},
+						],
+					};
+				}
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: match.content ?? "(skill body not available — backend did not return content)",
+						},
+					],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"session_search",
+		'Call when the user references prior conversation work — "what did I figure out", "where did we leave off", "what was that thing about X". Searches summary across all your past sessions on Clawdi (across every agent: Claude Code, Codex, OpenClaw, Hermes).\n\nMUST call when:\n- "What did I/we do/figure out about X" — past-tense recall\n- "Continue from where we left off" / "pick up where we stopped"\n- "Show me that conversation about X"\n- "Last week / last month, when I was working on X"\n\nReturns sessions ranked by relevance (id, agent_type, started_at, summary). After finding the right session, call session_get(id) only if the summary isn\'t enough.\n\nDo NOT call for the current session — you can already see that.\n\nFailure mode if skipped: you re-derive a decision the user already made, or re-do investigation work that\'s already done. Wasted effort + looks amnesic.',
+		{
+			query: z.string().describe("Natural-language query."),
+			agent: z
+				.enum(["claude_code", "codex", "openclaw", "hermes"])
+				.optional()
+				.describe("Filter to one agent."),
+			since: z
+				.string()
+				.optional()
+				.describe('ISO date — limit to recent sessions, e.g. "2026-04-01".'),
+			limit: z.number().optional().describe("Max results (default 5)."),
+		},
+		async ({ query, agent, since, limit }) => {
+			try {
+				const params = new URLSearchParams({
+					q: query,
+					page_size: String(limit ?? 5),
+				});
+				if (agent) params.set("agent", agent);
+				if (since) params.set("since", since);
+				const data = await api.get<{
+					items: Array<{
+						id: string;
+						agent_type: string;
+						summary: string | null;
+						started_at: string;
+						message_count: number;
+					}>;
+					total: number;
+				}>(`/api/sessions?${params.toString()}`);
+				if (!data.items.length) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `No sessions matched "${query}". (Backend currently uses substring match — try a single keyword. Note: many session summaries are still being re-distilled; recall quality will improve.)`,
+							},
+						],
+					};
+				}
+				const lines = data.items.map((s) => {
+					const date = s.started_at.slice(0, 10);
+					const summary = (s.summary ?? "(no summary)").slice(0, 200);
+					return `[${s.id.slice(0, 8)}] ${date} ${s.agent_type} (${s.message_count} msg) — ${summary}`;
+				});
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"session_get",
+		"Call after session_search if the summary isn't enough and you need the full message-by-message transcript. Expensive — sessions can be 100+ messages. Use sparingly.\n\nMUST call only when the user explicitly asks \"show me the full session\" or when the summary genuinely doesn't contain the detail you need (e.g. you need an exact code snippet they wrote).\n\nPrefer session summary first. If that's enough, do NOT call this.\n\nFailure mode if over-called: blows context budget on transcript noise.",
+		{
+			session_id: z.string().describe("UUID from session_search."),
+		},
+		async ({ session_id }) => {
+			try {
+				const messages = await api.get<
+					Array<{
+						role: string;
+						content: string | Array<Record<string, unknown>>;
+						created_at?: string;
+					}>
+				>(`/api/sessions/${session_id}/content`);
+				if (!messages.length) {
+					return {
+						content: [{ type: "text" as const, text: "(no messages)" }],
+					};
+				}
+				// `content` may be a string (legacy / hermes) or a block list
+				// (claude_code / codex / openclaw with tool calls). Render
+				// blocks as a one-line marker per type so the MCP transcript
+				// view shows tool usage without dumping huge tool_result bodies.
+				const renderContent = (c: string | Array<Record<string, unknown>>): string => {
+					if (typeof c === "string") return c.slice(0, 1000);
+					return c
+						.map((b) => {
+							const t = b.type;
+							if (t === "text" && typeof b.text === "string") {
+								return (b.text as string).slice(0, 1000);
+							}
+							if (t === "tool_use") {
+								return `[tool_use ${b.name ?? "?"}]`;
+							}
+							if (t === "tool_result") {
+								const out = typeof b.content === "string" ? b.content : "";
+								return `[tool_result] ${out.slice(0, 200)}`;
+							}
+							if (t === "thinking") return "[thinking]";
+							return `[${t ?? "block"}]`;
+						})
+						.join(" ");
+				};
+				const lines = messages.map((m) => {
+					const ts = m.created_at?.slice(11, 19) ?? "";
+					return `[${m.role}${ts ? ` ${ts}` : ""}] ${renderContent(m.content)}`;
+				});
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"vault_list",
+		'Surface the NAMES of credentials/secrets the user has stored in their vault. Returns key names only — VALUES ARE NEVER EXPOSED through this tool. Use this to suggest "I see you have X configured, want me to use it?" instead of asking "do you have X?".\n\nMUST call when the user mentions a service that needs credentials and you don\'t already have explicit values:\n- "deploy X" — likely needs deploy keys, check the relevant scope\n- "post to Twitter / Slack / Discord" — check for those tokens\n- "use my Stripe / Notion / GitHub" — check for the keys\n- Any reference to a service the user runs (Eliza agents, OpenClaw deployments, etc.)\n\nReturns scope groupings or per-scope key names. NEVER value, never partial value, never hint at value beyond name.\n\nSECURITY RULE: if the user asks "what\'s the value of X" or "show me my secret" — refuse, surface the name only, and tell them to retrieve from the dashboard. Do not retrieve via any other tool. This is a hard line.\n\nFailure mode if skipped: you ask the user for credentials they already have stored. Annoying and looks like you can\'t see what\'s right there.',
+		{
+			scope: z
+				.string()
+				.optional()
+				.describe(
+					'Filter to one app/scope, e.g. "clawdi-backend", "openclaw-voice-agent". Omit to list all scopes.',
+				),
+			q: z.string().optional().describe("Substring filter on scope or key name."),
+		},
+		async ({ scope, q }) => {
+			try {
+				if (scope) {
+					const data = await api.get<{
+						items: Array<{ name: string }>;
+						slug?: string;
+					}>(`/api/vault/${encodeURIComponent(scope)}/items`);
+					let items = data.items ?? [];
+					if (q) {
+						items = items.filter((i) => i.name.toLowerCase().includes(q.toLowerCase()));
+					}
+					if (!items.length) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `No keys in scope "${scope}"${q ? ` matching "${q}"` : ""}.`,
+								},
+							],
+						};
+					}
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `${scope}:\n${items.map((i) => `  - ${i.name}`).join("\n")}\n\n(values not shown — fetch from dashboard if needed)`,
+							},
+						],
+					};
+				}
+				const params = new URLSearchParams({ page_size: "100" });
+				if (q) params.set("q", q);
+				const data = await api.get<{
+					items: Array<{
+						slug: string;
+						name?: string;
+						item_count?: number;
+					}>;
+					total: number;
+				}>(`/api/vault?${params.toString()}`);
+				if (!data.items.length) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `No vault scopes${q ? ` matching "${q}"` : ""}.`,
+							},
+						],
+					};
+				}
+				const lines = data.items.map(
+					(s) => `${s.slug}${s.item_count != null ? ` (${s.item_count} keys)` : ""}`,
+				);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Scopes:\n${lines.join("\n")}\n\nCall vault_list({scope: "<slug>"}) to see key names in a scope.`,
+						},
+					],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	// --- Wiki tools: synthesized entity pages aggregated across all 4 domains ---
+
+	server.tool(
+		"wiki_search",
+		'FIRST-CHOICE tool for ENTITY-SHAPED questions about the user\'s world. Search the user\'s personal wiki for synthesized pages — one per real-world thing in their life (a project, tool, service, person, concept), aggregating evidence from memory + skills + sessions + vault into a 1-paragraph compiled_truth.\n\nWORK IN TIERS. Don\'t reflexively call this on every turn:\n- Tier 0: try local context first (current conversation, files in CWD, your training)\n- Tier 1: if local doesn\'t suffice, this tool is the default for entity / overview questions\n- Tier 2: escalate to clawdi_search when domain is unclear or Tier 1 is empty\n\nCALL THIS FIRST when the user\'s message has an ENTITY/OVERVIEW shape:\n- "what do I know about X" / "what do I have about X"\n- "tell me about my/our X"\n- "give me an overview / status of X"\n- A named thing the user controls — project, tool, service, person, brand\n- Anywhere you\'d otherwise have to read 5+ memory fragments and stitch them together\n\nWiki pages are LLM-synthesized — much higher signal than raw memory fragments. ONE wiki read replaces multiple memory_search calls.\n\nReturns ranked pages: {slug, title, kind, source_count, last_synthesis_at}. Then call wiki_get(slug) to read the compiled_truth and source links.\n\nDO NOT call for atomic factual lookups ("what\'s THE API endpoint URL", "what\'s my email") — memory_search is faster for one-line facts. Wiki is for the WHOLE PICTURE on a named thing.\n\nFailure mode if skipped: you read 7 noisy memory fragments and paraphrase them, when one synthesized page would have answered cleanly.',
+		{
+			query: z.string().describe("Natural-language query — entity name or topic."),
+			limit: z.number().optional().describe("Max results (default 10)."),
+		},
+		async ({ query, limit }) => {
+			try {
+				// Server-side FTS via `q` param. The previous version fetched
+				// the first N pages without query, then filtered client-side
+				// — which silently returned empty whenever the matching pages
+				// weren't in the recency-sorted first-N slice (very likely
+				// for any specific entity name).
+				const params = new URLSearchParams({
+					q: query,
+					page_size: String(limit ?? 10),
+				});
+				const data = await api.get<{
+					items: Array<{
+						slug: string;
+						title: string;
+						kind: string;
+						source_count: number;
+						stale: boolean;
+						last_synthesis_at: string | null;
+					}>;
+					total: number;
+				}>(`/api/wiki/pages?${params.toString()}`);
+				if (!data.items?.length) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `No wiki pages matched "${query}". (The wiki may still be empty if this user just synced — pages are auto-generated by the synthesis pipeline.)`,
+							},
+						],
+					};
+				}
+				const lines = data.items.map((p) => {
+					const stale = p.stale ? " [STALE]" : "";
+					const synthesized = p.last_synthesis_at ? "" : " [no synthesis yet]";
+					return `[${p.slug}] ${p.title} (${p.kind}, ${p.source_count} sources${stale}${synthesized})`;
+				});
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
+	);
+
+	server.tool(
+		"wiki_get",
+		"Load the full content of a wiki page: compiled_truth (LLM-synthesized 'what we know about this entity'), source links grouped by domain, related pages, and backlinks. Pass the slug from wiki_search.\n\nMUST call after wiki_search to get the actual synthesized text. Without this, you only have titles.\n\nReturns: compiled_truth paragraph(s), source links (each labeled by domain: memory/skill/session/vault), related pages (graph edges), backlinks (incoming references).\n\nIf the page exists but has no compiled_truth, the synthesis pipeline hasn't run yet — fall back to reading the listed sources via memory_search / skill_get / session_search.",
+		{
+			slug: z.string().describe('Page slug, e.g. "polymarket", "twilio-voice-agent".'),
+		},
+		async ({ slug }) => {
+			try {
+				const data = await api.get<{
+					slug: string;
+					title: string;
+					kind: string;
+					compiled_truth: string | null;
+					source_count: number;
+					stale: boolean;
+					last_synthesis_at: string | null;
+					outgoing_links: Array<{
+						link_type: string;
+						to_page_id: string | null;
+						to_page_slug: string | null;
+						to_page_title: string | null;
+						source_type: string | null;
+						source_ref: string | null;
+					}>;
+					backlinks: Array<{ to_page_slug: string | null; to_page_title: string | null }>;
+				}>(`/api/wiki/pages/${encodeURIComponent(slug)}`);
+
+				const lines: string[] = [
+					`# ${data.title}`,
+					`slug: ${data.slug}  ·  kind: ${data.kind}  ·  ${data.source_count} sources` +
+						(data.stale ? "  ·  STALE" : "") +
+						(data.last_synthesis_at ? "" : "  ·  not yet synthesized"),
+					"",
+				];
+
+				if (data.compiled_truth) {
+					lines.push("## Compiled truth\n");
+					lines.push(data.compiled_truth);
+					lines.push("");
+				} else {
+					lines.push("## Compiled truth\n\n(not yet synthesized — read sources below directly)");
+				}
+
+				const sources = data.outgoing_links.filter((l) => l.source_type);
+				if (sources.length > 0) {
+					const byType: Record<string, string[]> = {};
+					for (const l of sources) {
+						if (!l.source_type) continue;
+						const t = l.source_type;
+						const bucket = byType[t] ?? [];
+						bucket.push(l.source_ref ?? "(unknown)");
+						byType[t] = bucket;
+					}
+					lines.push("## Sources");
+					for (const [type, refs] of Object.entries(byType)) {
+						lines.push(`  ${type} (${refs.length}): ${refs.join(", ")}`);
+					}
+					lines.push("");
+				}
+
+				const related = data.outgoing_links.filter((l) => l.to_page_id !== null && l.to_page_slug);
+				if (related.length > 0) {
+					lines.push("## Related pages");
+					for (const l of related) {
+						lines.push(`  → ${l.to_page_slug} (${l.link_type})`);
+					}
+					lines.push("");
+				}
+
+				if (data.backlinks.length > 0) {
+					lines.push("## Backlinks");
+					for (const b of data.backlinks) {
+						lines.push(`  ← ${b.to_page_slug} — ${b.to_page_title}`);
+					}
+				}
+
+				return {
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+				};
+			} catch (e: any) {
+				return {
+					content: [{ type: "text" as const, text: `Error: ${e.message}` }],
+				};
+			}
+		},
 	);
 
 	// --- Dynamically registered connector tools (from Composio via backend) ---

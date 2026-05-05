@@ -24,6 +24,7 @@ from app.core.scope import scope_ids_visible_to
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault
+from app.models.wiki import WikiPage
 from app.services.memory_provider import get_memory_provider
 
 
@@ -43,7 +44,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-SearchType = Literal["session", "memory", "skill", "vault"]
+SearchType = Literal["session", "memory", "skill", "vault", "wiki"]
 
 
 class SearchHit(BaseModel):
@@ -177,6 +178,40 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
     ]
 
 
+async def _search_wiki(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    """Wiki entity + concept pages (kind in entity/concept/synthesis), token-FTS
+    over title/slug/compiled_truth. Source pages (kind=source) are excluded
+    here — they're per-atom dupes of memory/session content already indexed by
+    the memory and session searchers; including them would 2x noisy results.
+    """
+    needle = like_needle(query)
+    stmt = (
+        select(WikiPage)
+        .where(
+            WikiPage.user_id == auth.user_id,
+            WikiPage.kind.in_(["entity", "concept", "synthesis", "overview", "comparison"]),
+            or_(
+                WikiPage.title.ilike(needle, escape="\\"),
+                WikiPage.slug.ilike(needle, escape="\\"),
+                WikiPage.compiled_truth.ilike(needle, escape="\\"),
+            ),
+        )
+        .order_by(WikiPage.source_count.desc().nullslast())
+        .limit(TYPE_LIMIT)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        SearchHit(
+            type="wiki",
+            id=str(p.id),
+            title=p.title,
+            subtitle=(p.compiled_truth or "")[:120] or p.kind,
+            href=f"/wiki/{p.slug}",
+        )
+        for p in rows
+    ]
+
+
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
     visible_scope_ids = await scope_ids_visible_to(db, auth)
@@ -236,7 +271,10 @@ async def global_search(
     # Vault is the most sensitive: items can hold credentials, so
     # we limit it to user JWT and wide-access personal CLI keys
     # (mirrors `require_user_auth` semantics on the direct vault
-    # routes).
+    # routes). Wiki is a synthesis layer over memory + skill +
+    # session + vault evidence — gate it on `memories:read` since
+    # that's the closest existing scope and wiki content surfaces
+    # the same shape of personal data.
     coros: list = []
     labels: list[str] = []
     if _has_scope(auth, "skills:read"):
@@ -253,6 +291,9 @@ async def global_search(
         idx = 1 if "sessions" in labels else 0
         coros.insert(idx, _search_memories(db, auth, q))
         labels.insert(idx, "memories")
+        # Wiki rides alongside memories — same scope, same blast radius.
+        coros.append(_search_wiki(db, auth, q))
+        labels.append("wiki")
     results = await asyncio.gather(*coros, return_exceptions=True)
     hits: list[SearchHit] = []
     for source, r in zip(labels, results):

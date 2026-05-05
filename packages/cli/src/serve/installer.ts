@@ -154,6 +154,35 @@ function currentClawdiCommand(): string[] {
 	// JS file inside the npm install — exactly what we want.
 	const rawNode = process.execPath;
 	const rawEntry = process.argv[1] ?? "";
+
+	// `bun --compile` produces a single-file self-contained executable.
+	// argv[0] / execPath is the binary on disk; argv[1] is bun's internal
+	// embedded-FS path (`/$bunfs/root/<name>`) which does NOT exist on
+	// disk and would break `realpathSync`. For these binaries the unit
+	// only needs ONE arg — the binary itself — and the OS supervisor
+	// runs it directly without a separate node interpreter.
+	const isBunCompiled =
+		typeof (process.versions as { bun?: string }).bun === "string" &&
+		rawEntry.startsWith("/$bunfs/");
+	if (isBunCompiled) {
+		let exe: string;
+		try {
+			exe = realpathSync.native(rawNode);
+		} catch (e) {
+			throw new Error(
+				`could not resolve absolute path for daemon binary: ${(e as Error).message}. ` +
+					"Reinstall the CLI (npm i -g clawdi) and try again.",
+			);
+		}
+		if (!isAbsolute(exe)) {
+			throw new Error(
+				`refusing to install a daemon unit with a relative path ` +
+					`(exe=${exe}). Reinstall the CLI from a clean shell.`,
+			);
+		}
+		return [exe];
+	}
+
 	if (!rawEntry) {
 		throw new Error("could not resolve clawdi entry point from process.argv[1]");
 	}
@@ -294,7 +323,9 @@ function installLaunchd(opts: InstallOpts): {
 } {
 	validateEnvironmentId(opts.environmentId);
 	const label = unitName(opts.agent);
-	const [node, entry] = currentClawdiCommand();
+	// 1 element for bun --compile single-file binaries, 2 for the
+	// classic node + entry-script pair from npm-installed builds.
+	const cmdHead = currentClawdiCommand();
 	const logDir = join(clawdiRoot(), "serve", "logs");
 	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 
@@ -313,6 +344,7 @@ function installLaunchd(opts: InstallOpts): {
 	const envIdArgs = opts.environmentId
 		? `\n    <string>--environment-id</string>\n    <string>${escapeXml(opts.environmentId)}</string>`
 		: "";
+	const headArgs = cmdHead.map((arg) => `    <string>${escapeXml(arg)}</string>`).join("\n");
 	const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -321,8 +353,7 @@ function installLaunchd(opts: InstallOpts): {
   <string>${escapeXml(label)}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(node)}</string>
-    <string>${escapeXml(entry)}</string>
+${headArgs}
     <string>serve</string>
     <string>--agent</string>
     <string>${escapeXml(opts.agent)}</string>${envIdArgs}
@@ -461,7 +492,9 @@ function installSystemd(opts: InstallOpts): {
 	replaced: boolean;
 } {
 	validateEnvironmentId(opts.environmentId);
-	const [node, entry] = currentClawdiCommand();
+	// 1 element for bun --compile single-file binaries, 2 for the
+	// classic node + entry-script pair from npm-installed builds.
+	const cmdHead = currentClawdiCommand();
 	const path = unitPath(opts.agent);
 	const replaced = existsSync(path);
 
@@ -520,7 +553,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${shellEscape(node)} ${shellEscape(entry)} serve --agent ${shellEscape(opts.agent)}${
+ExecStart=${cmdHead.map(shellEscape).join(" ")} serve --agent ${shellEscape(opts.agent)}${
 		opts.environmentId ? ` --environment-id ${shellEscape(opts.environmentId)}` : ""
 	}
 Restart=always

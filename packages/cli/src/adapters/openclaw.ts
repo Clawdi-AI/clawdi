@@ -4,10 +4,12 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	ContentBlock,
 	RawSession,
 	RawSkill,
 	SessionMessage,
 } from "./base";
+import { clampToolOutput, collapseTextOnly } from "./base";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
 
 function openclawDir() {
@@ -93,26 +95,82 @@ interface TranscriptLine {
 	timestamp?: string | number;
 	message?: {
 		role?: string;
-		content?: string | Array<{ type: string; text?: string }>;
+		content?: string | Array<Record<string, unknown>>;
+		// Top-level fields on `role: "toolResult"` messages — OpenClaw emits
+		// the matching call id + tool name on the message itself, not as a
+		// content block. We rewrite these into a canonical user-role message
+		// with a `tool_result` block (Anthropic shape) on emit.
+		toolCallId?: string;
+		toolName?: string;
 	};
 	provider?: string;
 	modelId?: string;
 }
 
-function extractText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.filter(
-				(b): b is { type: string; text: string } =>
-					typeof b === "object" &&
-					b !== null &&
-					"type" in b &&
-					b.type === "text" &&
-					typeof (b as { text?: unknown }).text === "string",
-			)
-			.map((b) => b.text)
-			.join("\n");
+/** OpenClaw v3 transcripts use camelCase blocks (`toolCall`, `toolResult`) but
+ * the export/load path also accepts snake_case (`tool_use`, `tool_result`)
+ * from older sessions. Normalize both to canonical Anthropic shape so the
+ * wire format is uniform across adapters.
+ *
+ * For tool_result, OpenClaw stores `content` as either a string or an array
+ * of `{type:"text", text}` blocks — flatten to a single string and clamp to
+ * MAX_TOOL_OUTPUT_CHARS so heavy file dumps don't bloat uploads. */
+function normalizeOpenClawBlocks(content: unknown): ContentBlock[] {
+	if (!Array.isArray(content)) return [];
+	const out: ContentBlock[] = [];
+	for (const b of content) {
+		if (typeof b !== "object" || b === null) continue;
+		const r = b as Record<string, unknown>;
+		const t = r.type;
+		if (t === "text" && typeof r.text === "string" && r.text) {
+			out.push({ type: "text", text: r.text });
+		} else if (t === "toolCall" || t === "tool_use") {
+			// camelCase: name, arguments. snake_case: name, input.
+			out.push({
+				type: "tool_use",
+				id: typeof r.id === "string" ? r.id : "",
+				name: typeof r.name === "string" ? r.name : "?",
+				input: r.input ?? r.arguments ?? {},
+			});
+		} else if (t === "toolResult" || t === "tool_result") {
+			// camelCase: toolCallId. snake_case: tool_use_id.
+			const refId =
+				typeof r.toolCallId === "string"
+					? r.toolCallId
+					: typeof r.tool_use_id === "string"
+						? r.tool_use_id
+						: "";
+			out.push({
+				type: "tool_result",
+				tool_use_id: refId,
+				content: clampToolOutput(flattenToolResultContent(r.content)),
+				is_error: r.is_error === true || r.isError === true ? true : undefined,
+			});
+		} else if (t === "thinking" && typeof r.thinking === "string" && r.thinking) {
+			out.push({ type: "thinking", thinking: r.thinking });
+		}
+	}
+	return out;
+}
+
+function flattenToolResultContent(c: unknown): string {
+	if (typeof c === "string") return c;
+	if (!Array.isArray(c)) return "";
+	return c
+		.map((b) => {
+			if (typeof b !== "object" || b === null) return "";
+			const r = b as Record<string, unknown>;
+			if (r.type === "text" && typeof r.text === "string") return r.text;
+			return `[${r.type ?? "block"}]`;
+		})
+		.join("\n");
+}
+
+/** Render a SessionMessage's content as a snippet for summary fields. */
+function snippetOf(content: string | ContentBlock[], n: number): string {
+	if (typeof content === "string") return content.slice(0, n);
+	for (const b of content) {
+		if (b.type === "text") return b.text.slice(0, n);
 	}
 	return "";
 }
@@ -163,6 +221,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 
 		const sessions: RawSession[] = [];
+		const seenSessionIds = new Set<string>();
 
 		for (const agentRoot of agentDirs) {
 			const sessionsDirForAgent = join(agentRoot, "sessions");
@@ -181,6 +240,12 @@ export class OpenClawAdapter implements AgentAdapter {
 				// the index key only for legacy fixtures that use the UUID as
 				// the key directly.
 				const sessionId = entry.sessionId ?? indexKey;
+				// sessions.json can have multiple indexKeys (e.g. agent:main:cron:xxx +
+				// agent:main:main:thread:yyy) that resolve to the same underlying
+				// sessionId. The batch upload endpoint has a unique constraint on
+				// (env_id, local_session_id) and 500s on duplicates, so dedupe here.
+				if (seenSessionIds.has(sessionId)) continue;
+				seenSessionIds.add(sessionId);
 				const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 				if (!updatedAt) continue;
 
@@ -242,12 +307,45 @@ export class OpenClawAdapter implements AgentAdapter {
 
 							if (parsed.type !== "message") continue;
 							const role = parsed.message?.role;
+							const c = parsed.message?.content;
+
+							// OpenClaw uses a third role `"toolResult"` for tool
+							// outputs — it carries `toolCallId` + `toolName` on
+							// the message itself and `content[]` is the result
+							// body. Rewrite to canonical Anthropic shape: a
+							// user-role message holding one tool_result block.
+							if (role === "toolResult") {
+								const resultText = clampToolOutput(flattenToolResultContent(c));
+								if (!resultText && !parsed.message?.toolCallId) continue;
+								const block: ContentBlock = {
+									type: "tool_result",
+									tool_use_id: parsed.message?.toolCallId ?? "",
+									content: resultText,
+								};
+								messages.push({
+									role: "user",
+									content: [block],
+									timestamp: ts?.toISOString(),
+								});
+								continue;
+							}
+
 							if (role !== "user" && role !== "assistant") continue;
-							const text = extractText(parsed.message?.content);
-							if (!text) continue;
+							let normalized: string | ContentBlock[] | null = null;
+							if (typeof c === "string") {
+								normalized = c ? c : null;
+							} else if (Array.isArray(c)) {
+								// Preserve toolCall + toolResult blocks (canonical Anthropic
+								// shape) so the cloud can count tool usage and search by tool.
+								// Plain-text-only messages collapse to a string (legacy wire
+								// format); empty messages are dropped (OpenClaw emits some
+								// bookkeeping entries with no usable content).
+								normalized = collapseTextOnly(normalizeOpenClawBlocks(c));
+							}
+							if (!normalized) continue;
 							messages.push({
 								role,
-								content: text,
+								content: normalized,
 								model: role === "assistant" ? (currentModel ?? undefined) : undefined,
 								timestamp: ts?.toISOString(),
 							});
@@ -267,12 +365,12 @@ export class OpenClawAdapter implements AgentAdapter {
 
 				const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
 
+				const firstUser = messages.find((m) => m.role === "user");
 				const summary =
 					entry.displayName ??
 					entry.subject ??
 					entry.label ??
-					messages.find((m) => m.role === "user")?.content.slice(0, 200) ??
-					null;
+					(firstUser ? snippetOf(firstUser.content, 200) || null : null);
 
 				sessions.push({
 					localSessionId: sessionId,

@@ -133,5 +133,13 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
 
+    # arq worker queue. When set, LLM-heavy endpoints (`/api/wiki/refresh`,
+    # `/api/wiki/admin/bootstrap-all-users`, the live-wiki webhooks on session
+    # upload + memory_add) enqueue jobs to this Redis instead of running them
+    # inline in the FastAPI worker. Empty = legacy inline path (BackgroundTasks
+    # + per-request locks; works for single-tenant preview, OOMs under
+    # multi-user load). Set to `redis://redis:6379` in the preview compose.
+    redis_url: str = ""
+
 
 settings = Settings()

@@ -218,6 +218,32 @@ export class ApiClient {
 	get GET(): Client<paths>["GET"] {
 		return this.client.GET.bind(this.client);
 	}
+
+	/**
+	 * Untyped GET shim for callers that need a path not in the OpenAPI schema
+	 * (e.g. MCP tool implementations whose endpoints predate Paco's openapi
+	 * refactor). Prefer `.GET("/path", ...)` for new code — that gives full
+	 * request + response typing. This shim is escape-hatch only; do not
+	 * propagate it.
+	 */
+	async get<T>(path: string): Promise<T> {
+		const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
+		const headers: HeadersInit = {};
+		if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
+		const res = await retryingFetch(
+			new Request(url, { headers }),
+			DEFAULT_TIMEOUT_MS,
+			this.abortSignal,
+		);
+		if (!res.ok) {
+			throw new ApiError({
+				status: res.status,
+				body: await res.text(),
+				hint: `GET ${path}`,
+			});
+		}
+		return (await res.json()) as T;
+	}
 	get POST(): Client<paths>["POST"] {
 		return this.client.POST.bind(this.client);
 	}
