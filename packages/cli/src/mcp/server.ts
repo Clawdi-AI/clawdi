@@ -451,16 +451,44 @@ export async function startMcpServer() {
 		async ({ session_id }) => {
 			try {
 				const messages = await api.get<
-					Array<{ role: string; content: string; created_at?: string }>
+					Array<{
+						role: string;
+						content: string | Array<Record<string, unknown>>;
+						created_at?: string;
+					}>
 				>(`/api/sessions/${session_id}/content`);
 				if (!messages.length) {
 					return {
 						content: [{ type: "text" as const, text: "(no messages)" }],
 					};
 				}
+				// `content` may be a string (legacy / hermes) or a block list
+				// (claude_code / codex / openclaw with tool calls). Render
+				// blocks as a one-line marker per type so the MCP transcript
+				// view shows tool usage without dumping huge tool_result bodies.
+				const renderContent = (c: string | Array<Record<string, unknown>>): string => {
+					if (typeof c === "string") return c.slice(0, 1000);
+					return c
+						.map((b) => {
+							const t = b.type;
+							if (t === "text" && typeof b.text === "string") {
+								return (b.text as string).slice(0, 1000);
+							}
+							if (t === "tool_use") {
+								return `[tool_use ${b.name ?? "?"}]`;
+							}
+							if (t === "tool_result") {
+								const out = typeof b.content === "string" ? b.content : "";
+								return `[tool_result] ${out.slice(0, 200)}`;
+							}
+							if (t === "thinking") return "[thinking]";
+							return `[${t ?? "block"}]`;
+						})
+						.join(" ");
+				};
 				const lines = messages.map((m) => {
 					const ts = m.created_at?.slice(11, 19) ?? "";
-					return `[${m.role}${ts ? ` ${ts}` : ""}] ${m.content.slice(0, 1000)}`;
+					return `[${m.role}${ts ? ` ${ts}` : ""}] ${renderContent(m.content)}`;
 				});
 				return {
 					content: [{ type: "text" as const, text: lines.join("\n\n") }],

@@ -153,11 +153,17 @@ export class HermesAdapter implements AgentAdapter {
 					timestamp: new Date(m.timestamp * 1000).toISOString(),
 				}));
 
-				// Summary: use title or first user message
+				// Summary: use title or first user message. Hermes content is
+				// always a plain string (SQLite text column), but the
+				// SessionMessage type allows blocks too — narrow before slice.
 				let summary = row.title;
 				if (!summary || summary === "New Chat" || summary.startsWith("New Chat #")) {
 					const firstUser = messages.find((m) => m.role === "user");
-					summary = firstUser?.content.slice(0, 200) ?? null;
+					if (firstUser && typeof firstUser.content === "string") {
+						summary = firstUser.content.slice(0, 200);
+					} else {
+						summary = null;
+					}
 				}
 
 				if (messages.length === 0) continue;

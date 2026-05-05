@@ -4,10 +4,12 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	ContentBlock,
 	RawSession,
 	RawSkill,
 	SessionMessage,
 } from "./base";
+import { clampToolOutput } from "./base";
 import { getCodexHome, SKIP_DIRS } from "./paths";
 
 function codexDir() {
@@ -29,8 +31,14 @@ interface SessionLine {
 		timestamp?: string;
 		cwd?: string;
 		role?: string;
-		content?: Array<{ type: string; text?: string }> | string;
+		content?: Array<Record<string, unknown>> | string;
 		model?: string;
+		// function_call payload fields
+		call_id?: string;
+		name?: string;
+		arguments?: string;
+		// function_call_output payload fields
+		output?: string;
 		info?: {
 			total_token_usage?: {
 				input_tokens?: number;
@@ -45,13 +53,31 @@ function extractMessageText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
-		.filter(
-			(b): b is { type: string; text: string } =>
-				typeof b === "object" && b !== null && "type" in b && typeof b.text === "string",
-		)
-		.filter((b) => b.type === "input_text" || b.type === "output_text" || b.type === "text")
-		.map((b) => b.text)
+		.map((b) => {
+			if (typeof b !== "object" || b === null) return "";
+			const r = b as Record<string, unknown>;
+			if (
+				typeof r.text === "string" &&
+				(r.type === "input_text" || r.type === "output_text" || r.type === "text")
+			) {
+				return r.text;
+			}
+			return "";
+		})
+		.filter(Boolean)
 		.join("\n");
+}
+
+/** Codex emits `function_call` payloads with `arguments` as a JSON string.
+ * Parse it into an object so the cloud can index by tool input fields; fall
+ * back to keeping the raw string when the JSON is malformed. */
+function parseCodexArgs(s: string | undefined): unknown {
+	if (typeof s !== "string" || !s) return {};
+	try {
+		return JSON.parse(s);
+	} catch {
+		return s;
+	}
 }
 
 function collectJsonlFiles(root: string): string[] {
@@ -194,6 +220,44 @@ export class CodexAdapter implements AgentAdapter {
 						model: role === "assistant" ? (lastModel ?? undefined) : undefined,
 						timestamp: ts?.toISOString(),
 					});
+				} else if (parsed.type === "response_item" && parsed.payload?.type === "function_call") {
+					// Codex stores tool calls as peer `response_item` entries
+					// (not embedded in a message). Emit them as their own
+					// assistant SessionMessage with a tool_use block so the wire
+					// format matches Claude/OpenClaw.
+					const blocks: ContentBlock[] = [
+						{
+							type: "tool_use",
+							id: parsed.payload.call_id ?? "",
+							name: parsed.payload.name ?? "?",
+							input: parseCodexArgs(parsed.payload.arguments),
+						},
+					];
+					messages.push({
+						role: "assistant",
+						content: blocks,
+						model: lastModel ?? undefined,
+						timestamp: ts?.toISOString(),
+					});
+				} else if (
+					parsed.type === "response_item" &&
+					parsed.payload?.type === "function_call_output"
+				) {
+					// Tool result — also a peer entry. Emit as a user message
+					// (matches Anthropic's convention of tool_result on user
+					// turns) with a tool_result block.
+					const blocks: ContentBlock[] = [
+						{
+							type: "tool_result",
+							tool_use_id: parsed.payload.call_id ?? "",
+							content: clampToolOutput(parsed.payload.output ?? ""),
+						},
+					];
+					messages.push({
+						role: "user",
+						content: blocks,
+						timestamp: ts?.toISOString(),
+					});
 				}
 			}
 
@@ -207,10 +271,21 @@ export class CodexAdapter implements AgentAdapter {
 			if (!endedAt) endedAt = startedAt;
 			const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
 
+			// Summary uses the first non-environment user message. Now that
+			// `content` can be a block list (function_call_output is emitted as
+			// a user role with a tool_result block), only consider plain-string
+			// user messages — those are the actual user prompts. Tool-result
+			// "user" messages don't carry the kind of free-text summary we want.
 			const firstRealUser = messages.find(
-				(m) => m.role === "user" && !m.content.startsWith("<environment_context>"),
+				(m) =>
+					m.role === "user" &&
+					typeof m.content === "string" &&
+					!m.content.startsWith("<environment_context>"),
 			);
-			const summary = firstRealUser?.content.slice(0, 200) ?? null;
+			const summary =
+				firstRealUser && typeof firstRealUser.content === "string"
+					? firstRealUser.content.slice(0, 200)
+					: null;
 
 			sessions.push({
 				localSessionId: sessionId,

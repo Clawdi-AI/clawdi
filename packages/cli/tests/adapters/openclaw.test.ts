@@ -213,6 +213,97 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect(s.summary).toBe("Telegram chat");
 	});
 
+	it("preserves toolCall + toolResult blocks (camelCase) on assistant messages", async () => {
+		// Real OpenClaw sessions interleave toolCall / toolResult blocks
+		// inside `message.content[]`. Verify the adapter passes them through
+		// to the cloud (instead of the old behavior of stripping to text).
+		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		const uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+		const transcriptAbs = join(sessionsDir, `${uuid}.jsonl`);
+		writeFileSync(
+			join(sessionsDir, "sessions.json"),
+			JSON.stringify({
+				"agent:main:main": {
+					sessionId: uuid,
+					updatedAt: 1776247205000,
+					sessionFile: transcriptAbs,
+					model: "claude-opus-4-7",
+					inputTokens: 4,
+					outputTokens: 2,
+					cacheRead: 1,
+					displayName: "tool-use session",
+					acp: { cwd: "/Users/fixture/project", lastActivityAt: 1776247205000 },
+				},
+			}),
+		);
+		writeFileSync(
+			transcriptAbs,
+			[
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247200000,
+					message: { role: "user", content: "list files" },
+				}),
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247205000,
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "text", text: "Listing now." },
+							{
+								type: "toolCall",
+								id: "call-1",
+								name: "exec",
+								arguments: { cmd: "ls" },
+							},
+						],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247206000,
+					message: {
+						role: "user",
+						content: [
+							{
+								type: "toolResult",
+								toolCallId: "call-1",
+								content: [{ type: "text", text: "a.txt\nb.txt\n" }],
+							},
+						],
+					},
+				}),
+			].join("\n"),
+		);
+
+		const a = new OpenClawAdapter();
+		const sessions = await a.collectSessions();
+		expect(sessions).toHaveLength(1);
+		const msgs = sessions[0]!.messages;
+		expect(msgs).toHaveLength(3);
+
+		// First message: plain text, collapsed to string.
+		expect(msgs[0]!).toMatchObject({ role: "user", content: "list files" });
+
+		// Second: text + toolCall → block list with both, normalized to
+		// canonical Anthropic shape (tool_use snake_case, input field).
+		expect(msgs[1]!.role).toBe("assistant");
+		expect(Array.isArray(msgs[1]!.content)).toBe(true);
+		const aBlocks = msgs[1]!.content as Array<Record<string, unknown>>;
+		expect(aBlocks).toEqual([
+			{ type: "text", text: "Listing now." },
+			{ type: "tool_use", id: "call-1", name: "exec", input: { cmd: "ls" } },
+		]);
+
+		// Third: tool_result block, content array flattened to string.
+		expect(msgs[2]!.role).toBe("user");
+		const rBlocks = msgs[2]!.content as Array<Record<string, unknown>>;
+		expect(rBlocks).toEqual([
+			{ type: "tool_result", tool_use_id: "call-1", content: "a.txt\nb.txt\n" },
+		]);
+	});
+
 	it("OPENCLAW_AGENT_ID still narrows to a single agent", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		process.env.OPENCLAW_AGENT_ID = "financial";

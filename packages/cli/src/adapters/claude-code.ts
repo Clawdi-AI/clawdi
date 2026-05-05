@@ -4,10 +4,12 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	ContentBlock,
 	RawSession,
 	RawSkill,
 	SessionMessage,
 } from "./base";
+import { clampToolOutput, collapseTextOnly } from "./base";
 import { getClaudeHome, SKIP_DIRS } from "./paths";
 
 function claudeDir() {
@@ -22,7 +24,7 @@ interface SessionJsonlEntry {
 	message?: {
 		role?: string;
 		model?: string;
-		content?: string | Array<{ type: string; text?: string }>;
+		content?: string | Array<Record<string, unknown>>;
 		usage?: {
 			input_tokens?: number;
 			output_tokens?: number;
@@ -33,6 +35,56 @@ interface SessionJsonlEntry {
 	sessionId?: string;
 	cwd?: string;
 	version?: string;
+}
+
+/** Anthropic's tool_result.content is `string | Array<{type, text}>` — flatten
+ * to a single string for our canonical block. */
+function flattenToolResult(c: unknown): string {
+	if (typeof c === "string") return c;
+	if (!Array.isArray(c)) return "";
+	return c
+		.map((b) => {
+			if (typeof b !== "object" || b === null) return "";
+			const r = b as Record<string, unknown>;
+			if (r.type === "text" && typeof r.text === "string") return r.text;
+			// non-text result blocks (e.g. images): keep a marker so we don't
+			// silently drop signal that a tool returned something
+			return `[${r.type ?? "block"}]`;
+		})
+		.join("\n");
+}
+
+/** Convert one Anthropic message content array into our canonical block list.
+ * Drops blocks we can't make sense of; preserves tool_use + tool_result + text
+ * + thinking. Returns empty list when nothing usable remains. */
+function normalizeAnthropicBlocks(content: unknown): ContentBlock[] {
+	if (!Array.isArray(content)) return [];
+	const out: ContentBlock[] = [];
+	for (const b of content) {
+		if (typeof b !== "object" || b === null) continue;
+		const r = b as Record<string, unknown>;
+		const t = r.type;
+		if (t === "text" && typeof r.text === "string" && r.text) {
+			out.push({ type: "text", text: r.text });
+		} else if (t === "tool_use") {
+			out.push({
+				type: "tool_use",
+				id: typeof r.id === "string" ? r.id : "",
+				name: typeof r.name === "string" ? r.name : "?",
+				input: r.input ?? {},
+			});
+		} else if (t === "tool_result") {
+			out.push({
+				type: "tool_result",
+				tool_use_id: typeof r.tool_use_id === "string" ? r.tool_use_id : "",
+				content: clampToolOutput(flattenToolResult(r.content)),
+				is_error: r.is_error === true ? true : undefined,
+			});
+		} else if (t === "thinking" && typeof r.thinking === "string" && r.thinking) {
+			out.push({ type: "thinking", thinking: r.thinking });
+		}
+	}
+	return out;
 }
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -163,21 +215,23 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				}
 
 				if (role === "user" || role === "assistant") {
-					// Extract text content for messages
+					// Preserve all content blocks (text + tool_use + tool_result +
+					// thinking) so analytics + search can see what tools the agent
+					// invoked. Plain-text-only messages collapse to a string
+					// (legacy wire format); messages with tool calls keep the
+					// block list. Empty messages are dropped — agents emit them
+					// as session bookkeeping noise.
 					const c = msg?.content;
-					let text = "";
+					let normalized: string | ContentBlock[] | null = null;
 					if (typeof c === "string") {
-						text = c;
+						normalized = c ? c : null;
 					} else if (Array.isArray(c)) {
-						text = c
-							.filter((b): b is { type: "text"; text: string } => b.type === "text" && !!b.text)
-							.map((b) => b.text)
-							.join("\n");
+						normalized = collapseTextOnly(normalizeAnthropicBlocks(c));
 					}
-					if (text) {
+					if (normalized) {
 						messages.push({
 							role: role as "user" | "assistant",
-							content: text,
+							content: normalized,
 							model: role === "assistant" ? msg?.model : undefined,
 							timestamp: entry.timestamp,
 						});
@@ -189,8 +243,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 					if (typeof c === "string") {
 						firstUserMessage = c.slice(0, 200);
 					} else if (Array.isArray(c)) {
-						const textBlock = c.find((b) => b.type === "text" && b.text);
-						if (textBlock?.text) {
+						const textBlock = c.find(
+							(b): b is Record<string, unknown> =>
+								typeof b === "object" &&
+								b !== null &&
+								(b as Record<string, unknown>).type === "text" &&
+								typeof (b as Record<string, unknown>).text === "string",
+						);
+						if (textBlock && typeof textBlock.text === "string") {
 							firstUserMessage = textBlock.text.slice(0, 200);
 						}
 					}
