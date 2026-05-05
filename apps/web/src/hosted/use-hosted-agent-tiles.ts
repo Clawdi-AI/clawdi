@@ -147,17 +147,28 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 }
 
 function resolveRuntimes(d: Deployment): Runtime[] {
-	// Trust `onboarded_agents` — it reflects the actual processes the
-	// backend provisioned. A Hermes-only pod has no OpenClaw daemon
-	// listening on :18789, so showing an OpenClaw tile would dead-link.
+	// `clawdi_cloud_environments` is the most authoritative source
+	// post-Phase-4a: every agent that has a live-sync env on cloud-api
+	// is by definition a daemon running in the pod. If it's there, it's
+	// real. This catches the historical bug where dual-agent deploys
+	// only wrote `["hermes"]` into onboarded_agents (legacy mutual-
+	// exclusion convention), making OpenClaw vanish from the tile grid
+	// even though its daemon was running.
 	const set = new Set<Runtime>();
+	for (const r of Object.keys(d.config_info?.clawdi_cloud_environments ?? {})) {
+		if (isKnownRuntime(r)) set.add(r);
+	}
+	if (set.size > 0) return Array.from(set);
+	// Fall back to `onboarded_agents` for deployments without a sync
+	// mint yet (legacy pre-Phase-4a, mint failed soft, sync disabled
+	// per CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false).
 	for (const r of d.config_info?.onboarded_agents ?? []) {
 		if (isKnownRuntime(r)) set.add(r);
 	}
 	if (set.size > 0) return Array.from(set);
-	// Older deployments may have populated only `enable_hermes` without
-	// the `onboarded_agents` array. Fall back to the same mutual
-	// exclusion the backend uses (deployments.py:705).
+	// Final fallback: pre-Phase-4a deployments only had `enable_hermes`,
+	// without `onboarded_agents`. Mirror the backend's old mutual-
+	// exclusion convention so the tile points at the right agent.
 	return [d.config_info?.enable_hermes ? "hermes" : "openclaw"];
 }
 
