@@ -1,17 +1,36 @@
 "use client";
 
-import type { Deployment } from "@clawdi/shared/api";
+import type { components, Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 import { env } from "@/lib/env";
+
+type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
  * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
+ *
+ * `cloudEnvs` is the cloud-api environments list the parent already
+ * fetches for the self-managed grid; passing it through lets each
+ * hosted tile attach its matching `EnvironmentResponse` (joined via
+ * `deployment.config_info.clawdi_cloud_environments[agent_type] ===
+ * env.id`). With the join, the same `DaemonStatusBadge` that powers
+ * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
+ * — Phase 4a registers each hosted pod as a cloud-api env with its
+ * own daemon, so the data is the same shape; only the "Clawdi" pill
+ * + external management URL distinguish hosted in the UI.
  */
-export function useHostedAgentTiles({ enabled }: { enabled: boolean }) {
+export function useHostedAgentTiles({
+	enabled,
+	cloudEnvs,
+}: {
+	enabled: boolean;
+	cloudEnvs: Env[];
+}) {
 	const api = useClawdiApi();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
@@ -27,7 +46,15 @@ export function useHostedAgentTiles({ enabled }: { enabled: boolean }) {
 		},
 	});
 
-	const tiles: AgentTile[] = (query.data ?? []).flatMap(deploymentToTiles);
+	// Memoize the env-by-id index so the tile join is O(N+M) instead
+	// of O(N×M) on every render of the hosted-agent grid.
+	const envById = useMemo(() => {
+		const m = new Map<string, Env>();
+		for (const e of cloudEnvs) m.set(e.id, e);
+		return m;
+	}, [cloudEnvs]);
+
+	const tiles: AgentTile[] = (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById));
 	return {
 		tiles,
 		isLoading: query.isLoading,
@@ -57,30 +84,44 @@ function isKnownRuntime(s: string): s is Runtime {
  * runtime. We trust the array literally — never synthesize a runtime
  * that isn't in it (the pod doesn't have that process).
  */
-function deploymentToTiles(d: Deployment): AgentTile[] {
+function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);
 	const slug = deploymentSlug(d);
 	const statusLabel = displayStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	const active = d.status === "running" || d.status === "ready";
-	return runtimes.map((runtime) => ({
-		id: `${d.id}:${runtime}`,
-		source: "on-clawdi" as const,
-		// Runtime is the primary identifier on hosted tiles since the
-		// AgentIcon already brands it and one deployment fans out to
-		// multiple tiles — using `d.name` here would print
-		// "openclaw-b5451f9c" on a Hermes tile.
-		name: runtimeDisplayName(runtime),
-		agentType: runtime,
-		// Deployment slug as the secondary line lets users disambiguate
-		// when they have more than one pod. Mode info ("Daemon") is
-		// implied by the "Clawdi" badge — every hosted runtime is daemon.
-		runtimeLabel: slug,
-		statusLabel,
-		href: deploymentManageUrl(d, runtime),
-		external: true,
-		active,
-	}));
+	const cloudEnvIds = d.config_info?.clawdi_cloud_environments ?? {};
+	return runtimes.map((runtime) => {
+		// Phase 4a join: each hosted pod registers a cloud-api env per
+		// agent_type via the admin endpoint. Match by agent_type →
+		// environment_id so the tile picks up daemon sync state
+		// (last_sync_at, queue depth, status badge) from cloud-api.
+		// Missing match (legacy pre-Phase-4a deployment, mint failed,
+		// or sync disabled) leaves env null — tile still renders, just
+		// without a sync indicator.
+		const envId = cloudEnvIds[runtime];
+		const matchedEnv = envId ? envById.get(envId) : undefined;
+		return {
+			id: `${d.id}:${runtime}`,
+			source: "on-clawdi" as const,
+			// Runtime is the primary identifier on hosted tiles since the
+			// AgentIcon already brands it and one deployment fans out to
+			// multiple tiles — using `d.name` here would print
+			// "openclaw-b5451f9c" on a Hermes tile.
+			name: runtimeDisplayName(runtime),
+			agentType: runtime,
+			// Deployment slug as the secondary line lets users disambiguate
+			// when they have more than one pod. Mode info ("Daemon") is
+			// implied by the "Clawdi" badge — every hosted runtime is daemon.
+			runtimeLabel: slug,
+			statusLabel,
+			lastSeenAt: matchedEnv?.last_seen_at ?? null,
+			href: deploymentManageUrl(d, runtime),
+			external: true,
+			active,
+			env: matchedEnv ?? null,
+		};
+	});
 }
 
 function resolveRuntimes(d: Deployment): Runtime[] {
