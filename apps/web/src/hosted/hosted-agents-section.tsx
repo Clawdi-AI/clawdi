@@ -50,7 +50,13 @@ export function HostedAgentsSection({
 	cloudEnvs: Env[];
 }) {
 	const hosted = useHostedAgentTiles({ enabled: true, cloudEnvs });
-	const agentTiles: AgentTile[] = [...hosted.tiles, ...selfManagedTiles];
+	// Drop self-managed tiles whose env is already represented by a
+	// hosted tile. Without this, a hosted pod's cloud-api env (created
+	// by the admin endpoint) would render twice — once with the
+	// "Clawdi" pill and external manage URL, once as a generic
+	// self-managed tile.
+	const dedupedSelfManaged = selfManagedTiles.filter((t) => !hosted.claimedEnvIds.has(t.id));
+	const agentTiles: AgentTile[] = [...hosted.tiles, ...dedupedSelfManaged];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the

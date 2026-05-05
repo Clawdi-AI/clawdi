@@ -55,8 +55,22 @@ export function useHostedAgentTiles({
 	}, [cloudEnvs]);
 
 	const tiles: AgentTile[] = (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById));
+
+	// Env ids that are owned by a hosted deployment. The dashboard
+	// excludes these from its self-managed grid so a hosted pod's env
+	// — which cloud-api also returns from /api/environments because
+	// the admin endpoint registered it — doesn't double-count as both
+	// a hosted tile and a self-managed tile.
+	const claimedEnvIds = new Set<string>();
+	for (const d of query.data ?? []) {
+		for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
+			if (envId) claimedEnvIds.add(envId);
+		}
+	}
+
 	return {
 		tiles,
+		claimedEnvIds,
 		isLoading: query.isLoading,
 		error: query.error,
 	};
@@ -95,12 +109,19 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 		// Phase 4a join: each hosted pod registers a cloud-api env per
 		// agent_type via the admin endpoint. Match by agent_type →
 		// environment_id so the tile picks up daemon sync state
-		// (last_sync_at, queue depth, status badge) from cloud-api.
+		// (last_sync_at, queue depth, status badge) from cloud-api,
+		// AND the primary click target points at the in-app env detail
+		// page — same UX as a self-managed agent. Lifecycle ops
+		// (Restart/Stop/Delete) live on the SaaS dashboard, surfaced
+		// via the secondary `manageHref` button on the tile.
+		//
 		// Missing match (legacy pre-Phase-4a deployment, mint failed,
-		// or sync disabled) leaves env null — tile still renders, just
-		// without a sync indicator.
+		// or `CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false`) → fall back to the
+		// SaaS dashboard URL as the primary, so the tile still has a
+		// useful place to click.
 		const envId = cloudEnvIds[runtime];
 		const matchedEnv = envId ? envById.get(envId) : undefined;
+		const manageUrl = deploymentManageUrl(d, runtime);
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
@@ -116,8 +137,9 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 			runtimeLabel: slug,
 			statusLabel,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
-			href: deploymentManageUrl(d, runtime),
-			external: true,
+			href: matchedEnv ? `/agents/${matchedEnv.id}` : manageUrl,
+			external: !matchedEnv,
+			manageHref: manageUrl,
 			active,
 			env: matchedEnv ?? null,
 		};
