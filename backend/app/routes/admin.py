@@ -1,9 +1,10 @@
 """Admin endpoints — gated by `X-Admin-Key` shared secret.
 
-Used by SaaS batch tooling (e.g. live-sync migration of pre-Phase-4a
-deployments) + ops-side scripts that don't have a per-user Clerk JWT
-in scope. Disabled by default — `settings.admin_api_key` must be set
-to a strong secret to enable.
+Used by upstream-SaaS batch tooling and ops-side scripts that don't
+have a per-user Clerk JWT in scope (e.g. catching up legacy
+deployments that pre-date live sync, account-deletion webhooks, fleet
+revocation). Disabled by default — `settings.admin_api_key` must be
+set to a strong secret to enable.
 
 **Privacy invariant:** admin-minted keys can ONLY carry write-side
 scopes. Read-side scopes (`sessions:read`, `memories:read`,
@@ -56,10 +57,10 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
 # this set is silently incompatible with privacy goals — admin must
 # not be able to mint keys that read user data. Live sync only needs
 # write-side scopes plus skills:read for `clawdi pull` of starter
-# skills. Vault scopes intentionally excluded until Phase 4b ships
-# per-deployment vault allowlists (which would scope-down vault:resolve
-# to whitelisted URIs — until then, admin granting vault:resolve
-# would expose every secret in the user's account).
+# skills. Vault scopes intentionally excluded — granting vault:resolve
+# without per-deployment URI allowlists would expose every secret in
+# the user's account, so the admin path stays write-only until that
+# allowlist exists.
 ADMIN_ALLOWED_SCOPES: frozenset[str] = frozenset(
     {
         "sessions:write",
@@ -81,12 +82,12 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     the same row identity they'll get when they later sign into
     cloud.clawdi.ai directly.
 
-    Without this, the most common Phase 4a entry path silently
-    fails: a user clicks Deploy on clawdi.ai before ever visiting
-    cloud.clawdi.ai → cloud-api `users` row doesn't exist → admin
-    endpoint 404 → SaaS catches CloudApiError, deploy succeeds
-    without sync, user has to redeploy after first cloud.clawdi.ai
-    visit.
+    Without this, the most common SaaS-deploy entry path silently
+    fails: a user clicks Deploy on the upstream SaaS dashboard
+    before ever visiting cloud-api directly → `users` row doesn't
+    exist → admin endpoint 404 → SaaS catches the error, deploy
+    succeeds without sync, and the user has to redeploy after their
+    first direct visit.
 
     Safety model — same as the JWT path:
     - `clerk_id` is a value the SaaS side already authenticated
@@ -158,14 +159,14 @@ async def admin_mint_api_key(
 ) -> ApiKeyCreated:
     """Mint an api_key on behalf of a user identified by Clerk id.
 
-    Used by SaaS batch tooling for live-sync migration: each pre-
-    Phase-4a deployment needs a fresh api_key bound to a fresh env,
-    but the migration script has no per-user Clerk JWT.
+    Used by upstream-SaaS batch tooling: each legacy deployment that
+    didn't have live sync wired up needs a fresh api_key bound to a
+    fresh env, but the migration script has no per-user Clerk JWT.
 
     User row is lazy-created if absent — handles the common entry
-    path of a user who deploys on clawdi.ai before ever visiting
-    cloud.clawdi.ai. See `_resolve_or_create_user` for the safety
-    model.
+    path of a user whose first interaction with cloud-api is via
+    SaaS-side admin calls. See `_resolve_or_create_user` for the
+    safety model.
     """
     target = await _resolve_or_create_user(db, body.target_clerk_id)
 
@@ -274,11 +275,11 @@ async def admin_register_environment(
 ) -> EnvironmentCreatedResponse:
     """Register an AgentEnvironment row on behalf of a target user.
 
-    Migration tooling needs to seed env_id for pre-Phase-4a
-    deployments where no per-user Clerk JWT is in scope. The
-    user-facing `POST /api/environments` requires a Clerk-authed
-    or env-bound api_key request; this admin variant is gated by
-    the shared `X-Admin-Key` header instead.
+    Migration tooling needs to seed env_id for legacy deployments
+    where no per-user Clerk JWT is in scope. The user-facing
+    `POST /api/environments` requires a Clerk-authed or env-bound
+    api_key request; this admin variant is gated by the shared
+    `X-Admin-Key` header instead.
 
     Idempotent: re-registering (target_clerk_id, machine_id,
     agent_type) returns the existing env id and refreshes

@@ -175,14 +175,14 @@ async def test_admin_mint_allows_subset_of_allowlist(admin_client, db_session, s
 @pytest.mark.asyncio
 async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """First-time deploy path: a user who's never visited cloud-api
-    directly (no row yet) clicks Deploy on clawdi.ai. SaaS calls
-    admin mint with their Clerk id. cloud-api lazy-creates the user
-    row + Personal scope, then mints normally — same identity the
-    user gets when they later sign into cloud.clawdi.ai directly.
+    directly (no row yet) clicks Deploy on the upstream SaaS
+    dashboard. SaaS calls admin mint with their Clerk id. cloud-api
+    lazy-creates the user row + Personal scope, then mints normally —
+    same identity the user gets when they later sign in directly.
 
-    Without this, the most common Phase 4a entry path silently
+    Without this, the most common SaaS-side entry path silently
     fails: deploy succeeds but pod has no sync env, user has to
-    redeploy after first cloud.clawdi.ai visit.
+    redeploy after their first direct cloud-api visit.
     """
     # Random per-run clerk_id — test DB is real Postgres and rows
     # persist across test runs; a hardcoded id would collide.
