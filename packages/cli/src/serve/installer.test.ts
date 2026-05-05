@@ -90,6 +90,50 @@ describe("installer.install (macOS plist)", () => {
 		}
 	});
 
+	it("handles bun --compile single-file binary (argv[1] = /$bunfs/...)", async () => {
+		// `bun --compile` produces a self-contained executable whose
+		// internal entry path is `/$bunfs/root/<name>` — a virtual
+		// embedded-FS path that does NOT exist on disk. realpath()
+		// would throw and the install used to fail with
+		// "could not resolve absolute path for daemon binary". The
+		// fix detects this case and emits a single-arg unit (just
+		// the binary), no separate node interpreter.
+		const os = await import("node:os");
+		if (os.platform() !== "darwin") return;
+
+		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+		const { mkdirSync, chmodSync } = await import("node:fs");
+		mkdirSync(stubBin, { recursive: true });
+		const stubLaunchctl = join(stubBin, "launchctl");
+		writeFileSync(stubLaunchctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		chmodSync(stubLaunchctl, 0o755);
+		const oldPath = process.env.PATH;
+		process.env.PATH = `${stubBin}:${oldPath}`;
+
+		// Simulate the bun-compiled state: argv[1] points at a
+		// non-existent /$bunfs/ path, and process.versions.bun is set
+		// (which it already is on a bun:test runner). execPath stays
+		// as the real bun binary.
+		const savedArgv1 = process.argv[1];
+		process.argv[1] = "/$bunfs/root/clawdi-preview-darwin-arm64-fakehash";
+
+		try {
+			const { install } = await import("./installer");
+			const result = install({ agent: "claude_code" });
+			expect(existsSync(result.unit)).toBe(true);
+			const content = readFileSync(result.unit, "utf-8");
+			// ProgramArguments should include the actual on-disk
+			// execPath (realpath'd) — NOT the virtual /$bunfs/ path.
+			expect(content).not.toContain("/$bunfs/");
+			expect(content).toContain("<string>serve</string>");
+			expect(content).toContain("<string>--agent</string>");
+			expect(content).toContain("<string>claude_code</string>");
+		} finally {
+			process.argv[1] = savedArgv1 ?? "";
+			process.env.PATH = oldPath;
+		}
+	});
+
 	it("includes EnvironmentVariables with HOME so the daemon can find ~/.clawdi", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;
