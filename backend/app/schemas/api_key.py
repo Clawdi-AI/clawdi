@@ -43,30 +43,3 @@ class ApiKeyCreated(ApiKeyResponse):
 
 class ApiKeyRevokeResponse(BaseModel):
     status: Literal["revoked"]
-
-
-class ApiKeyIntrospectRequest(BaseModel):
-    """Used by external control planes (e.g. clawdi-monorepo's deploy
-    pipeline) to validate a raw_key the dashboard handed them is
-    actually bound to the env they think it is, before injecting it
-    into a pod Secret. Closes the intra-user "wrong env binding" gap
-    that same-Clerk-tenant alone does not catch."""
-
-    api_key: str
-    # Caller's claim about which env this key is for. Server compares
-    # against the row's stored binding; mismatch returns valid=False
-    # without leaking which env the key actually points at.
-    environment_id: str
-
-
-class ApiKeyIntrospectResponse(BaseModel):
-    valid: bool
-    # Populated only when valid=True — caller already proved Clerk
-    # ownership and matched the env binding, so the metadata is safe
-    # to return. valid=False intentionally returns nothing else so a
-    # malicious caller can't enumerate (api_key, env_id) pairs.
-    key_id: str | None = None
-    user_id: str | None = None
-    environment_id: str | None = None
-    scopes: list[str] | None = None
-    expires_at: datetime | None = None
