@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, require_user_auth
 from app.core.database import get_session
 from app.models.user import UserSetting
 from app.schemas.settings import (
@@ -11,6 +11,7 @@ from app.schemas.settings import (
     SettingsUpdate,
     SettingsUpdateResponse,
 )
+from app.services.memory_provider import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -51,7 +52,7 @@ def _mask_secrets(data: dict) -> dict:
 
 @router.get("")
 async def get_settings(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SettingsResponse:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
@@ -66,7 +67,7 @@ async def get_settings(
 @router.patch("")
 async def update_settings(
     body: SettingsUpdate,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SettingsUpdateResponse:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
@@ -81,6 +82,26 @@ async def update_settings(
         for k, v in body.settings.items()
         if not (k in SECRET_FIELDS and isinstance(v, str) and v == _SECRET_MASK)
     }
+
+    # Validate memory_provider — refuse `mem0` if the deployment
+    # doesn't have the optional `[mem0]` extra installed. Pre-fix
+    # the dashboard would happily save the value, then GET
+    # /api/memories would 500 with `ModuleNotFoundError: 'mem0'`
+    # for that user every time. The factory has an ImportError
+    # fallback as defense-in-depth, but failing closed at write
+    # time gives the user an actionable error ("not available on
+    # this deployment") instead of a silent downgrade.
+    if raw_patch.get("memory_provider") == "mem0" and not mem0_available():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "memory_provider_unavailable",
+                "message": (
+                    "Mem0 memory provider isn't available on this deployment. "
+                    "The operator must install the [mem0] extra on the backend."
+                ),
+            },
+        )
 
     # Step 2: encrypt any remaining secret fields the client actually wants to set.
     encrypted_patch = _encrypt_secrets(raw_patch)

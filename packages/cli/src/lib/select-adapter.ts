@@ -19,6 +19,58 @@ export function getEnvIdByAgent(agentType: string): string | null {
 	return JSON.parse(readFileSync(envPath, "utf-8")).id;
 }
 
+/** Ask the cloud which scope this caller's next write would land
+ * in. Wraps the server-side `resolve_default_write_scope` logic
+ * exposed by `GET /api/scopes/default` — for an api_key bound to
+ * an env, that's the env's `default_scope_id`; for a Clerk JWT
+ * (rare in CLI use) it's the most-recently-active env's scope or
+ * Personal as a fallback.
+ *
+ * Phase-2 scope-explicit URLs (e.g. `/api/scopes/{scope_id}/skills/upload`)
+ * need a scope_id in the path. Calling this once at command start
+ * lets the CLI not have to track env_id locally.
+ *
+ * NOTE: when the caller already knows which env's scope it wants
+ * (e.g. multi-agent push: each agent has its own envId), prefer
+ * `fetchScopeIdForEnv()` below. The default-scope endpoint picks
+ * "most recently active" on unbound keys, which can route a
+ * `claude_code` push under the user's `codex` env if codex was
+ * touched last — sessions write to envId, skills write to "the
+ * other env's scope", and the `claude_code` daemon never sees
+ * the skills it just pushed.
+ */
+export async function fetchDefaultScopeId(api: import("./api-client").ApiClient): Promise<string> {
+	const { unwrap } = await import("./api-client");
+	const res = unwrap(await api.GET("/api/scopes/default"));
+	return res.scope_id;
+}
+
+/** Resolve the default_scope_id of a specific env. The caller
+ * already knows which env it wants to write to (via
+ * `getEnvIdByAgent(agentType)`); this just round-trips the
+ * env detail to read its `default_scope_id`.
+ *
+ * Use this anywhere the CLI is operating on a known agent: the
+ * agent's `envId` is the source of truth, not the auth key's
+ * "most recently active" heuristic. Multi-agent users on a
+ * normal unbound CLI key would otherwise see skills land under
+ * the wrong scope while sessions write correctly to their own
+ * envId — the daemon serving that env never reconciles those
+ * skills back to disk because the listing is scoped elsewhere.
+ */
+export async function fetchScopeIdForEnv(
+	api: import("./api-client").ApiClient,
+	envId: string,
+): Promise<string> {
+	const { unwrap } = await import("./api-client");
+	const env = unwrap(
+		await api.GET("/api/environments/{environment_id}", {
+			params: { path: { environment_id: envId } },
+		}),
+	);
+	return env.default_scope_id;
+}
+
 export function adapterForType(agentType: AgentType): AgentAdapter | null {
 	const entry = getAdapterEntry(agentType);
 	return entry ? entry.create() : null;

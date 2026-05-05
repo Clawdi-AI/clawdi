@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { pull } from "../../src/commands/pull";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+import { jsonResponse, mockFetch, okEnvironmentProbe, seedAuthAndEnv } from "./helpers";
+
+const TEST_SCOPE_ID = "00000000-0000-0000-0000-000000000099";
 
 type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
 const AGENT_TYPE: Record<AgentKey, string> = {
@@ -58,9 +60,10 @@ content
 		);
 
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: "/api/skills/demo/download",
+				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -80,15 +83,22 @@ content
 		expect(existsSync(skillMd)).toBe(true);
 		expect(readFileSync(skillMd, "utf-8")).toContain("description: pulled from cloud");
 
-		// Both list + download should have been called
+		// Both list + scoped download should have been called
 		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
-		expect(captured.some((c) => c.path === "/api/skills/demo/download")).toBe(true);
+		expect(
+			captured.some((c) => c.path === `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`),
+		).toBe(true);
 	});
 
 	it("--dry-run fetches listing but does not download", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: "/api/skills/demo/download", response: () => jsonResponse({}) },
+			okEnvironmentProbe(),
+			{
+				method: "GET",
+				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
+				response: () => jsonResponse({}),
+			},
 			{
 				method: "GET",
 				path: "/api/skills",
@@ -114,6 +124,7 @@ content
 	it("cloud returns empty list → short-circuit", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
 			{ method: "GET", path: "/api/skills", response: () => jsonResponse({ items: [] }) },
 		]);
 		try {
@@ -150,9 +161,10 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
+			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: "/api/skills/fresh/download",
+				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -182,9 +194,10 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
+			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: "/api/skills/fresh/download",
+				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -214,9 +227,10 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
+			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: "/api/skills/fresh/download",
+				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{

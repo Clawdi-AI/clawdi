@@ -38,3 +38,4 @@ data/
 # Local dev seed scripts — they embed user-specific paths and personal
 # memory content; keep them out of the repo.
 backend/scripts/seed_demo.py
+backend/pdm.lock

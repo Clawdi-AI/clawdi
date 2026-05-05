@@ -9,8 +9,8 @@
 		"typecheck": "next typegen && tsc --noEmit --incremental false",
 		"lint": "biome ci --linter-enabled=true --formatter-enabled=false src",
 		"test": "bun test",
-		"generate-api": "bun x openapi-typescript http://localhost:8000/openapi.json -o ../../packages/shared/src/api/generated.ts",
-		"generate-deploy-api": "bun x openapi-typescript http://localhost:50021/openapi.json -o ../../packages/shared/src/api/deploy-generated.ts"
+		"generate-api": "bun x openapi-typescript http://localhost:8000/openapi.json -o ../../packages/shared/src/api/api.generated.ts",
+		"generate-deploy-api": "bun x openapi-typescript http://localhost:50021/openapi.json -o ../../packages/shared/src/api/deploy.generated.ts"
 	},
 	"dependencies": {
 		"@clawdi/shared": "workspace:*",

@@ -18,6 +18,14 @@ class MemoryResponse(BaseModel):
     tags: list[str] | None = None
     access_count: int | None = None
     created_at: str | None = None
+    # Provenance: which session this memory was extracted from, plus
+    # the machine that ran that session. Lets the dashboard render
+    # "learned from session on my-mac" so multi-machine users can
+    # tell which device an agent picked something up on. Null when
+    # the memory was added manually or its session has been deleted.
+    source_session_id: str | None = None
+    source_environment_id: str | None = None
+    source_machine_name: str | None = None
 
 
 class MemoryCreatedResponse(BaseModel):

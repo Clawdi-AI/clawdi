@@ -143,7 +143,7 @@ function ConnectorsList() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Connectors"
-				description="Connect apps so your agents can use external tools."
+				description="Sign in once; your AI can read and act in Gmail, GitHub, Notion, Drive, Calendar."
 				actions={
 					<>
 						{total > 0 ? (

@@ -65,6 +65,15 @@ jobs:
         run: uv run ruff format --check app
       - name: Byte-compile sanity check
         run: uv run python -m compileall -q app
+      # Catch "import declared in code but not in deps" drift.
+      # The same class of bug that let `from mem0 import …` ship
+      # for months without `mem0ai` ever being declared, surfacing
+      # only as 500s in prod after PR #66 merged. `deptry`
+      # cross-references every top-level import in `app/` against
+      # `[project] dependencies` + `[project.optional-dependencies]`
+      # and flags drift. Config in `pyproject.toml [tool.deptry]`.
+      - name: Dependency drift check
+        run: uv run deptry app
 
   test:
     needs: changes

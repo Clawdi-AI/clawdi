@@ -1,7 +1,7 @@
 # Plan: clawdi-cloud as a unified agent dashboard
 
-**Status:** v0.24 (round-9: connector flow unified through cloud-api; dropped IS_HOSTED proxy)
-**Updated:** 2026-04-28
+**Status:** v0.25 (round-10: Phase 2c narrowed to sync-only, container-aware `clawdi serve`)
+**Updated:** 2026-04-29
 
 > **v0.24 addendum.** Earlier drafts split the connector flow: OSS
 > mode hit cloud-api at `/api/connectors/*`, hosted mode hit
@@ -10,12 +10,26 @@
 > running its own cloud-api deployment. It's gone now. Both modes
 > talk to cloud-api; cloud-api uses the user's Clerk id (not the
 > local PG UUID) as the Composio `entity_id`, so a cloud.clawdi.ai
-> deployment configured with clawdi.ai's existing Composio API key
-> reads the same connection namespace clawdi.ai's old backend wrote.
-> The frontend hosted/ directory now contains only what's genuinely
-> hosted-exclusive: the agent-deploy listing and the sidebar Deploy
-> CTA. See commits `26492f4` (backend entity_id switch) and
+> deployment configured with the same Composio API key as the prior
+> backend reads the same connection namespace.
+> See commits `26492f4` (backend entity_id switch) and
 > `ff6ea65` (frontend single-source refactor).
+
+> **v0.25 addendum.** Phase 2c originally bundled `clawdi serve`
+> with gateway-library embedding so dashboard chat/logs/files would
+> work cross-deploy. The operator's actual priority is hosted-pod
+> auto-sync, not direct-connect parity, so v1 cuts to **sync-only**:
+> sessions push, skills bidirectional with conflict UI, memories
+> deferred to v2. One CLI command runs in three deploy contexts
+> (laptop / VPS / hosted pod) — hosted-pod auto-sync falls out for
+> free because the pod entrypoint just runs `clawdi serve`
+> alongside the agent. **No customizations to the closed-source
+> agent-image.** Tunnel + gateway library moves to v1.5 alongside
+> Phase 2a/2b. Skill conflict resolution is shared-doc style
+> (`If-Match` optimistic lock + dashboard resolution UI), not
+> last-write-wins. Container-aware: PID 1 signals, poll-fallback
+> when overlay-fs inotify fails, stdout logs, no systemd
+> assumption. Full plan in the Phase 2c section below.
 
 ## TL;DR
 
@@ -258,10 +272,15 @@ Skills changed in cloud-api land on every connected agent within
 - Failure: `Stalled · last synced 8m ago` badge with an inline
   retry button.
 
-Mechanism: each connected CLI runs `clawdi pull --yes --sync` on a
-60-second cron. The `--sync` flag puts pull in **sweep mode** — it
-deletes local skills not present in cloud (cloud is authority for
-the skills directory, pod is cache).
+Mechanism (revised in v0.25 — see Phase 2c addendum below):
+each connected daemon (`clawdi serve`) opens a long-lived **SSE
+stream** to `/api/sync/events`; cloud pushes `skill_changed`
+events on any change and the daemon pulls the affected skill
+immediately. A **60s poll** runs in parallel as a safety net that
+also performs sweep mode — deletes local skills not present in
+cloud (cloud is authority for the skills directory, pod is
+cache). Earlier drafts framed cron-only as the primary mechanism;
+that's now the fallback.
 
 **Race / concurrency rules:**
 
@@ -418,10 +437,17 @@ behavior. They keep working the same way for both `On Clawdi` and
 ### State plane API surface (this repo)
 
 ```
-GET  /api/skills                      list (paginated)
-POST /api/skills                      upload tar
+GET  /api/skills                      list (paginated, supports If-None-Match: <skills_revision>)
+POST /api/skills                      upload tar (supports If-Match: <last_synced_content_hash>)
 GET  /api/skills/{key}/download       download tar
 DELETE /api/skills/{key}              delete
+
+GET  /api/skill-conflicts             list unresolved (Clerk + dashboard)
+POST /api/skill-conflicts/{id}/resolve  body: { action: "use_mine"|"use_cloud"|"manual", merged_content? }
+
+GET  /api/sync/events                 SSE stream (deploy-key Bearer; pushes
+                                       {type:"skill_changed", skill_key, skills_revision})
+POST /api/agents/{env_id}/sync-heartbeat  pod posts liveness when no data changed
 
 GET  /api/sessions                    list (paginated)
 POST /api/sessions                    append line(s)
@@ -1670,17 +1696,341 @@ new package `packages/agent-gateway/`):
   - For self-managed: route through tunnel WS to library running
     in `clawdi serve`
 
-**Phase 2c: State plane sync UX** (this repo):
-- `clawdi serve` daemon command (embeds gateway library when
-  agent runtime is daemon-mode; runs sync-only for CLI-mode)
-- 60s cron pull with etag-safe sweep mode
-- Per-agent sync indicators, `[Sync now]` button, save toast,
-  delete confirmation
-- SIGTERM flush of session push queue
+**Phase 2c: `clawdi serve` — universal sync daemon** (this repo).
+v0.25 narrows this from the original "embeds gateway library" plan
+into a **sync-only, container-aware** v1 because the operator's
+priority is hosted-pod auto-sync; tunnel + gateway library moves to
+v1.5 alongside Phase 2a/2b. Core principle: one CLI codebase, three
+deploy contexts (laptop / VPS / hosted pod), no customizations to
+the closed-source agent-image.
 
-After Phase 2, self-managed users get full direct-connect UX
-identical to what hosted users have today. The dashboard's chat
-and logs (built in Phase 3) work for both.
+**v1 scope (this PR):**
+
+| Direction | Resource | v1? |
+|---|---|---|
+| Pod → Cloud | sessions | ✓ (write-on-detect, file-stable debounce) |
+| Pod → Cloud | skills (when locally edited) | ✓ |
+| Cloud → Pod | skills | ✓ (SSE primary + 60s poll fallback) |
+| Cloud → Pod | memories | ✗ (v2; dashboard shows "not synced yet" hint) |
+| both | vault | ✗ (lazy `clawdi://` resolve, never synced) |
+
+Skill change propagation uses **outbound Server-Sent Events** so
+pod doesn't open an inbound port (no attack-surface expansion):
+pod establishes a long-lived `GET /api/sync/events` connection
+authed with the deploy-key Bearer token; server pushes
+`{"type":"skill_changed","skill_key":"…","skills_revision":N}`
+events when any of the user's skills change; pod immediately pulls
+the affected skill. The 60s poll is the safety net — kicks in only
+when SSE drops (network blip, server restart) — keeps eventual
+consistency without depending solely on a fragile streaming
+connection.
+
+**SSE protocol details (must be specified, not left to implementer):**
+
+| Concern | Behavior |
+|---|---|
+| Heartbeat | Server emits `: ping` comment line every 25s; pod times out connection if no message for 60s and reconnects |
+| Reconnect | Exponential backoff: 1s → 2s → 4s → … cap 60s, with ±20% jitter to avoid sync-storm when cloud-api restarts |
+| Auth refresh | Connection uses Bearer at handshake. On 401 mid-stream (deploy-key revoked) pod logs error, falls back to 60s poll, exits with non-zero code so tini/systemd respawn — gives operator a chance to redeploy with a fresh key |
+| Connection cap | Server limits N concurrent SSE connections per user (default 10). Excess gets 429 → pod backs off and retries |
+| Single-replica v1 | In-process per-user fan-out (asyncio queue per connection, broadcast on skill upsert). Multi-worker / multi-replica needs Redis pubsub — explicitly **v1.5**, document the constraint in the route handler |
+| Event payload | Always carries `skills_revision` so pod can detect missed events: if pod's last-seen revision skips (e.g. 4 → 7), pod fetches all skills changed since rev 4 instead of relying on the single event |
+| `skills_revision` event source | Fire fan-out **after** the upsert transaction commits, as a non-blocking task. Failure to fan out only logs; the 60s poll picks up the change anyway. Never block the upload route on SSE delivery |
+
+**Conflict resolve + SSE interaction.**
+When a user resolves a `skill_conflicts` row in the dashboard, the
+resolved content goes through the same `_upsert_skill` path,
+bumping `skills_revision` and firing the fan-out. The pod that
+originally produced the rejected content receives the
+`skill_changed` event and pulls the resolved version. The pod
+**must** update its `last_synced_content_hash` to the resolved
+version before next watcher cycle — otherwise the local file is
+still fresh-er than the new baseline and the watcher would
+re-push the same content, getting 409 again. Implementation:
+on every successful pull (whether triggered by SSE or 60s poll),
+the pod replaces the local file atomically (`.tmp` + rename) and
+records the new content_hash in `skills-lock.json`.
+
+**Architecture: single implementation, three runners**
+
+```
+packages/cli/src/commands/serve.ts          ← v1's center of gravity
+                  │
+   ┌──────────────┼──────────────┐
+   ▼              ▼              ▼
+laptop:       VPS:           hosted pod:
+brew install  docker run     phala entrypoint
++ serve       clawdi/cli +   spawns clawdi serve
+install       clawdi serve   alongside agent
+```
+
+The CLI already has `push.ts` and `pull.ts` with the right
+algorithms — per-entity hash diff, atomic writes, sidecar metadata,
+adapter pattern. `serve` reuses these in daemon shape: no
+`@clack/prompts`, no interactive confirmations, persistent watchers,
+on-disk retry queue.
+
+**Conflict model — skills (shared-doc style)**
+
+"Cloud-wins" silently drops user edits — rejected. Instead:
+1. Pod tracks `last_synced_content_hash` per skill (matches CLI's
+   existing `skills-lock.json` shape).
+2. On push, pod sends `If-Match: <last_synced_content_hash>`.
+3. Server's `_upsert_skill` already only bumps version when
+   `content_hash` differs — augment to: if `If-Match` is present
+   and doesn't match current `content_hash`, refuse with 409 and
+   store the rejected content as a `skill_conflicts` row.
+4. Dashboard surfaces conflicts: "1 unresolved conflict on skill X"
+   → side-by-side diff → `[Use mine]` / `[Use cloud]` /
+   `[Open editor]`.
+5. Pod on 409: continues pulling latest from cloud (so runtime
+   sees consistent state), logs the conflict id. The rejected
+   content is **not** backed up to disk on the pod — pods are
+   ephemeral and the dashboard already has the conflict blob
+   stored in `skill_conflicts.content_blob`. Local backup would
+   add cleanup logic for no real benefit.
+
+This is "shared docs with conflict UI" — neither last-write-wins
+nor full real-time CRDT. Skills are whole-document edits, not
+collaborative inline editing.
+
+**Container-runtime considerations** (lives in `serve.ts`)
+
+| Concern | Handling |
+|---|---|
+| PID 1 signals | Catch SIGTERM/SIGINT, flush queue, exit 0 within 30s |
+| Multi-process supervision | Pod entrypoint uses tini; serve doesn't supervise |
+| Overlay fs / no inotify | Watcher abstraction falls back to poll-only |
+| Logs | stdout/stderr by default; `~/.clawdi/serve.log` only on TTY |
+| Healthcheck | `--healthcheck` exit 0/1 for k8s liveness probe |
+| Auth precedence | `CLAWDI_AUTH_TOKEN` env > `~/.clawdi/auth.json`. `getAuth()` in `packages/cli/src/lib/config.ts:104` currently returns directly from `authFile()` with no env branch; refactor surface is wider than just one read site because every CLI command path through `ApiClient` calls it. |
+| Path overrides | Reuse each adapter's existing env vars (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENCLAW_HOME`, `HERMES_HOME`); don't introduce a generic `CLAWDI_PATHS` that the adapters wouldn't read |
+| Mode switch | Explicit `CLAWDI_SERVE_MODE=container` env var (don't sniff `/.dockerenv` — unreliable on non-root, read-only HOME, varying mount setups) |
+| Queue location | `$CLAWDI_STATE_DIR/serve-queue/` (default `~/.clawdi/serve-queue/`). `CLAWDI_STATE_DIR` overrides **only the queue path**, not the whole `~/.clawdi/` directory — auth (`auth.json`) and config still live at their fixed locations because mounting them on a PVC would break the secret-vs-state boundary. In container mode, auth comes from `CLAWDI_AUTH_TOKEN` env, not a file. |
+
+**Auth model**
+
+```
+Hosted pod:    CLAWDI_AUTH_TOKEN env (deploy-key, server-minted)
+                ├─ scopes: [sessions:write, skills:read, skills:write]
+                ├─ environment_id binding (key only writes for one env_id)
+                └─ rotation: redeploy pod with new key (no hot rotate v1)
+
+Laptop / VPS: ~/.clawdi/auth.json (existing CLI flow)
+                ├─ scopes: full user auth (admin)
+                └─ created by `clawdi auth login`
+```
+
+Two columns get added: `ApiKey.scopes` (list[str]) and
+`ApiKey.environment_id` (UUID, nullable — null = full account).
+Resource-level scope alone wasn't enough — a leaked deploy-key
+shouldn't be able to write into another deploy's sessions on the
+same account. Sessions/skills routes assert `auth.api_key
+.environment_id == request_env_id` when set.
+
+Auth middleware (`backend/app/core/auth.py:38`) currently only
+checks hash/revoked/expires. v1 adds scope + env_id gates; routes
+add explicit `Depends(require_scope("sessions:write"))` etc.
+
+**Daemon startup sequence**
+
+The daemon's first cycle on a fresh pod / first run after install
+matters more than steady-state. Spec:
+
+```
+1. Read CLAWDI_AUTH_TOKEN env (else ~/.clawdi/auth.json)
+   - Fail-fast with explicit error if neither present
+2. Read locally-persisted last_synced_revision from
+   $CLAWDI_STATE_DIR/skills-lock.json (default 0 if file missing)
+3. Initial skill sync (blocking, before agent process gets to use any skill):
+   GET /api/skills with If-None-Match: <last_synced_revision>
+   - 304 → keep what's on disk
+   - 200 → download all skills, atomic-write each, update lock
+   - On error → log warning, continue with whatever's on disk
+4. Initial session sweep (background, doesn't block startup):
+   scan local session dirs, batch POST to /api/sessions/batch
+   with content_hash for each — server diffs and only pulls bytes
+   for new/changed
+5. Open SSE connection to /api/sync/events
+6. Start watcher (or fall back to poll if file events unavailable)
+7. Heartbeat to /api/agents/{env_id}/sync-heartbeat every 30s
+   even when nothing changed (so dashboard's "Last synced" stays
+   fresh)
+```
+
+Existing pods upgraded from pre-v1 builds skip step 2 (no lock
+file) and treat current local skill content_hashes as the
+baseline — first push of any one of them sends `If-Match: <local>`
+and either succeeds (server happens to have same content) or 409s
+(genuine drift, surfaces as conflict). No special migration code.
+
+
+
+| Failure | Pod behavior | Dashboard reflects |
+|---|---|---|
+| Network blip | Queue retries with backoff | "Last synced: 30s ago" stays current |
+| Cloud-api down 10 min | Queue accumulates | Status: "Daemon offline" red badge |
+| Queue near 80% cap | `last_sync_error` set | Warning: "Sync queue near capacity" |
+| Queue overflow | Drop-oldest, count metric | Warning: "N sessions dropped" |
+| Skill push 409 | `.conflicts/` backup, continue pull | "1 unresolved conflict" badge |
+| Pod restart | Queue replayed from disk | Brief stale, then green |
+| Watcher fails (overlay fs) | Falls back to 60s poll | Invisible — sync still works |
+
+**Scope per layer**
+
+CLI (`packages/cli/`):
+- `src/commands/serve.ts` — daemon entry, signals, supervised cycle
+- `src/serve/watcher.ts` — fsevents/inotify with poll fallback
+- `src/serve/queue.ts` — bounded persistent queue (10k entries OR
+  64MiB), drop-oldest with telemetry
+- `src/serve/sync-engine.ts` — push/pull ops extracted from
+  push.ts/pull.ts, daemon-friendly
+- `src/commands/serve-install.ts` — launchd plist (macOS) + systemd
+  user unit (Linux); skip Windows v1
+- `src/commands/serve-status.ts` — local status (queue depth,
+  last sync, current errors)
+
+Backend (`backend/app/`):
+- `models/api_key.py` + Alembic: `scopes: list[str]` column
+- `models/skill_conflict.py` (new table): `(user_id, skill_key,
+  base_hash, conflict_hash, content_blob, created_at,
+  agent_environment_id, resolved_at)`
+- `models/agent_environment.py`: `last_sync_at`, `last_sync_error`
+- `models/user.py`: `skills_revision: int` counter, increments on
+  any skill insert/update/delete (collection ETag, replaces broken
+  `max_version` plan that didn't account for soft-deletes)
+- `routes/skills.py`:
+  - `GET /api/skills` reads `If-None-Match: <skills_revision>` →
+    304 when unchanged
+  - `POST /api/skills/upload` accepts `If-Match: <content_hash>`
+    → 409 + skill_conflicts row on mismatch
+  - `GET /api/skill-conflicts` + `POST .../{id}/resolve`
+- `services/api_key.py` (new): extracted mint logic. Deploy-keys
+  for monorepo's provision flow are minted via the same
+  `POST /api/auth/keys` the dashboard uses, with `environment_id`
+  in the body — gated by the user's Clerk JWT, no internal
+  backend-to-backend secret needed
+- `routes/agents.py`: `POST /api/agents/{env_id}/sync-heartbeat`
+
+Frontend (`apps/web/`):
+- Per-agent sync indicator on agent detail page (green / yellow /
+  red based on `last_sync_at` and `last_sync_error`)
+- Skill conflict UI on `/skills/<key>`: banner + side-by-side diff
+  + 3-button resolution. apps/web has no diff library today; v1
+  uses a minimal in-house renderer over `react-markdown` (good
+  enough for skill markdown blobs — they're prose, not source
+  code where unified-diff hunks matter). If a real diff lib turns
+  out necessary, `react-diff-viewer-continued` is the modern
+  fork; defer that swap to v1.1 once we know what blobs look like
+  in practice.
+- Memories tab: explicit hint **"Memories stay private to this
+  agent — they are not synced to your cloud account."** Avoids
+  the failure mode where users assume their on-pod memories are
+  backed up.
+
+Hosted pod integration (monorepo) — minimal, no custom sync code:
+- Dockerfile: `RUN bun add -g @clawdi/cli` (or equivalent)
+- Entrypoint: tini spawns agent + `clawdi serve` in parallel
+- Provision flow calls cloud-api's mint endpoint, injects
+  deploy-key as `CLAWDI_AUTH_TOKEN` env
+
+**Work breakdown**
+
+| Component | Repo |
+|---|---|
+| `clawdi serve` daemon (cycle, signals, container mode) | clawdi-cloud |
+| `serve/watcher.ts` (fs events + poll fallback + file-stable debounce) | clawdi-cloud |
+| `serve/queue.ts` (bounded persistent, drop-oldest with telemetry) | clawdi-cloud |
+| `serve/sse-client.ts` (outbound stream consumer, auto-reconnect) | clawdi-cloud |
+| `serve/sync-engine.ts` — real refactor extracting push/pull (today they're @clack-coupled, single-shot, interactive; daemon needs reusable, metrics-returning, idempotent) | clawdi-cloud |
+| `serve install/uninstall` (launchd + systemd; cross-platform tested) | clawdi-cloud |
+| `serve status` + heartbeat endpoint | clawdi-cloud |
+| Backend: scopes + env_id columns on ApiKey + Alembic | clawdi-cloud |
+| Backend: skill_conflicts table + If-Match + 409 + resolve endpoint | clawdi-cloud |
+| Backend: skills_revision counter on User + ETag header | clawdi-cloud |
+| Backend: SSE event channel + per-user fan-out hook on skill writes | clawdi-cloud |
+| Backend: last_sync_at + last_sync_error + observability fields on AgentEnvironment | clawdi-cloud |
+| Backend: api_key service extraction + internal mint endpoint | clawdi-cloud |
+| Frontend: liveness indicator + conflict UI + memories hint | clawdi-cloud |
+| Phala pod entrypoint integration (Dockerfile + tini + env) | monorepo |
+| End-to-end integration testing (3 contexts) | both |
+
+~95% in clawdi-cloud. monorepo only adds the entrypoint glue.
+
+**Open decisions (locked v1):**
+- `skills_revision` ETag scope: **user-level**. Per-env scoping
+  needs a `skill_installations(environment_id, skill_key)` table —
+  v1.1 once we have evidence pods get noisy notifications.
+- `skill_conflicts` retention: **30-90d TTL on unresolved**;
+  resolved keep metadata only (blob pruned). v1 settles on 30d.
+- Install verb: **`clawdi serve install`** (separate from `auth
+  login`). Login is a credential flow, install mutates OS state —
+  different blast radius, don't combine.
+- Skill push debounce: **file-stable detection (mtime+size stable
+  for 2-5s)** rather than fixed timer window. Claude Code adapter
+  reads JSONL line-by-line and tolerates partial lines, but
+  hashing a half-written file produces flapping hashes that thrash
+  the queue.
+
+**Rollout & operations:**
+- Existing pods: not migrated automatically. New deploys after
+  this PR ships use the new image with bundled CLI; existing pods
+  get the new behavior on next redeploy. Document in migration
+  notes; no auto-migration of historic sessions.
+- Canary: `agent_environment.sync_enabled` boolean defaults true
+  for new envs, false for existing. Operator can flip per-env to
+  enable rollout in waves; flip-all flag for cutover.
+- Deploy-key revocation: existing `revoked_at` / `expires_at` on
+  ApiKey already work. Pod's `clawdi serve` hits 401 on next push
+  → exits 1 → tini restarts → new key from re-rotated env or
+  pod terminates. Document the rotation runbook in PR.
+- Privacy / per-agent opt-out: `user_settings.sync_disabled`
+  (list[agent_type]) lets users disable sync for specific runtimes
+  without uninstalling daemon. Daemon reads at start and on
+  `clawdi serve reload`. Out of scope unless real complaints —
+  document as v1.1 follow-up.
+- Healthcheck semantics: daemon writes `~/.clawdi/serve-state.json`
+  atomically (write `.tmp` + fsync + rename) at the end of every
+  cycle. `--healthcheck` reads the file and checks **mtime ≤ 90s
+  ago in local time** — using mtime (not server-reported
+  `last_sync_at`) avoids clock-skew between pod and cloud-api.
+  K8s liveness probe: `initialDelaySeconds: 10, periodSeconds: 10,
+  failureThreshold: 3` (kill after ~30s of repeated failures, not
+  on first slow cycle).
+
+**Observability fields on `agent_environments`:**
+- `last_sync_at`, `last_sync_error` (text) — server-recorded
+- `last_revision_seen` (int — last `skills_revision` pulled)
+- `queue_depth_high_water_since_start` (peak queue depth since
+  daemon last started; resets when `clawdi serve` boots)
+- `dropped_count_since_start` (queue overflow telemetry, same
+  reset semantics as above)
+
+Time-windowed metrics (24h rolling, etc.) need real time-series
+storage (Prometheus / equivalent) — explicitly **out of scope for
+v1**. The "since-start" semantics are clear and operationally
+useful (operator sees: "this pod has been running for 3 days
+with peak queue 47 and zero drops").
+
+**Out-of-scope for v1, deferred:**
+- Tunnel WebSocket / gateway library extraction (Phase 2a/2b)
+- Dashboard chat / logs / files (Phase 3)
+- Memories sync (v2)
+- Windows installer (v1.5)
+- CRDT / OT real-time editing
+- Cross-pod conflict resolution
+- Hot deploy-key rotation
+- Inbound webhook from cloud-api → pod for instant skill pull
+  (v1.1 if 60s lag becomes a real problem)
+- Per-environment ETag scope (v1.1)
+- Per-agent sync opt-out UI (v1.1)
+
+After Phase 2c v1: hosted pods auto-sync state with cloud-api.
+Self-hosters (laptop/VPS) get the same daemon for free since
+`clawdi serve` is a single CLI command. Phase 2a/2b (tunnel +
+gateway library) ships in v1.5 alongside Phase 3's dashboard
+chat/logs UI; both layer on top of v1's `serve` daemon without
+breaking it.
 
 ### Phase 3 — Dashboard chat / logs / native UI  (medium)
 

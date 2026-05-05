@@ -402,6 +402,29 @@ export async function authLogout() {
 		return;
 	}
 
+	// Warn about running daemons before clearing creds. `clearAuth`
+	// deletes auth.json + ~/.clawdi/environments/*, but launchd /
+	// systemd units installed by `clawdi serve install` keep
+	// running with the API key cached in their unit env. They'll
+	// keep posting heartbeats to the cloud (with a now-revoked
+	// token, getting 401s in a tight loop) until the user
+	// `serve uninstall`s.
+	//
+	// Source from `listInstalledAgents` (scans the OS supervisor)
+	// not `listRegisteredAgentTypes` (env-file registry) — the
+	// env-file path would skip a daemon whose env file got deleted
+	// but whose plist was still installed (codex flagged this gap
+	// in PR-#74 review).
+	const { listInstalledAgents } = await import("../serve/installer");
+	const installedAgents = listInstalledAgents();
+	if (installedAgents.length > 0) {
+		p.log.warn(
+			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
+				`These keep running after logout and will fail with 401 against the cloud. ` +
+				`Run \`clawdi serve uninstall --all\` first, or accept the noise.`,
+		);
+	}
+
 	clearAuth();
 	p.log.success("Logged out. Credentials and cached environments removed.");
 }

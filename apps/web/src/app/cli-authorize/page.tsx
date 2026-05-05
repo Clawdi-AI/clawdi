@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -37,8 +37,12 @@ export default function CliAuthorizePage() {
 }
 
 function CliAuthorizeContent() {
-	const params = useSearchParams();
-	const code = params.get("code")?.toUpperCase().trim() ?? "";
+	// Read-only URL param via nuqs. Read-only because the device-flow
+	// link is a one-shot (`?code=ABCD-1234`); the page never mutates
+	// the param. nuqs gives us a stable typed value without a manual
+	// `searchParams.get(...)` + null-coalesce.
+	const [rawCode] = useQueryState("code", parseAsString.withDefault(""));
+	const code = rawCode.toUpperCase().trim();
 	const api = useApi();
 	const [terminalState, setTerminalState] = useState<"approved" | "denied" | null>(null);
 

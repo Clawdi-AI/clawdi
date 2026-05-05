@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
 
@@ -217,6 +218,14 @@ Examples:
 	});
 
 // ─────────────────────────────────────────────────────────────
+// serve (daemon)
+// ─────────────────────────────────────────────────────────────
+// `serve` command tree lives in its own module so the test can
+// import the same registration the CLI uses (instead of mocking a
+// parallel tree that drifts).
+registerServeCommand(program);
+
+// ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
 const vaultCmd = program.command("vault").description("Manage secrets");
@@ -268,10 +277,14 @@ skillCmd
 skillCmd
 	.command("add <path>")
 	.description("Upload a skill directory or single .md file")
+	.option(
+		"-a, --agent <type>",
+		"Upload to a specific agent's scope (claude_code, codex, hermes, openclaw)",
+	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill\n  $ clawdi skill add quick-note.md --yes",
+		"\nExamples:\n  $ clawdi skill add ./my-skill\n  $ clawdi skill add ./my-skill --agent codex\n  $ clawdi skill add quick-note.md --yes",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -300,9 +313,13 @@ Examples:
 skillCmd
 	.command("rm <key>")
 	.description("Remove a skill from the cloud")
-	.action(async (key) => {
+	.option(
+		"-a, --agent <type>",
+		"Remove from a specific agent's scope (claude_code, codex, hermes, openclaw)",
+	)
+	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
-		await skillRm(key);
+		await skillRm(key, opts);
 	});
 
 skillCmd

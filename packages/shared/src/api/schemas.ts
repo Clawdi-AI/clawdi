@@ -1,7 +1,7 @@
 /**
  * Ergonomic re-exports of the auto-generated OpenAPI types.
  *
- * The raw generated file (`api-types.generated.ts`) models every endpoint as
+ * The raw generated file (`api.generated.ts`) models every endpoint as
  * `paths["/api/..."]["get"]["responses"]["200"]["content"]["application/json"]`
  * which is unreadable at call sites. This module hoists the common response
  * and request shapes to top-level aliases that pages actually want.
@@ -9,7 +9,7 @@
  * Regenerate after backend changes with: `bun run generate-api`.
  */
 
-import type { components } from "./generated";
+import type { components } from "./api.generated";
 
 type Schemas = components["schemas"];
 

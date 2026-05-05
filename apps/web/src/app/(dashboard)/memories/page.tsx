@@ -103,13 +103,23 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
 	});
 
-	const columns = useMemo(() => makeMemoryColumns((id) => deleteMemory.mutate(id)), [deleteMemory]);
+	const columns = useMemo(
+		() =>
+			makeMemoryColumns((id) => {
+				// Memory deletion is account-wide and reflects on every machine via
+				// the daemon's live sync — gone in seconds, no undo from this UI.
+				const ok = window.confirm(
+					"Delete this memory?\n\nYour AI will stop recalling it on every agent within seconds.",
+				);
+				if (ok) deleteMemory.mutate(id);
+			}),
+		[deleteMemory],
+	);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Memories"
-				description="Searchable knowledge available to every connected agent via MCP."
 				actions={
 					<>
 						{data ? (
@@ -163,7 +173,7 @@ export default function MemoriesPage() {
 					emptyMessage={
 						debouncedSearch || apiCategory
 							? "No matches — try a different search or category."
-							: 'No memories yet. Add one above or run clawdi memory add "..."'
+							: "No memories yet. Add one above, or your agents will create them automatically as they work."
 					}
 					pagination={pagination}
 					onPaginationChange={setPagination}

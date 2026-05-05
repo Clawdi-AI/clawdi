@@ -3,19 +3,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
+import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatSessionSummary, relativeTime } from "@/lib/utils";
-
-// Two flavours, shared cell renderers:
-//   - `sessionColumns`: full table for /sessions, ~1070 px wide
-//   - `sessionColumnsCompact`: 3-col cut for the Overview's "Recent
-//     sessions" widget, ~700 px — fits the half-width dashboard column
-//     without horizontal scroll. Drops Project/Messages/Tokens; keeps
-//     Summary, Agent, Started (the three that answer "what / where / when").
-//
-// The "Agent" column pairs agent type with machine name (e.g.
-// "Claude Code · kingsley-mbp") — an agent without its host is useless
-// context for a multi-machine user.
+import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 const summaryColumn: ColumnDef<SessionListItem> = {
 	id: "summary",
@@ -24,15 +14,26 @@ const summaryColumn: ColumnDef<SessionListItem> = {
 	cell: ({ row }) => {
 		const s = row.original;
 		const title = formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8);
+		const projectFolder = s.project_path?.split("/").pop();
 		return (
-			<div className="truncate" title={title}>
-				<Link
-					href={`/sessions/${s.id}`}
-					onClick={(e) => e.stopPropagation()}
-					className="font-medium hover:underline"
-				>
-					{title}
-				</Link>
+			<div className="min-w-0">
+				<div className="truncate" title={title}>
+					<Link
+						href={`/sessions/${s.id}`}
+						onClick={(e) => e.stopPropagation()}
+						className="font-medium hover:underline"
+					>
+						{title}
+					</Link>
+				</div>
+				{projectFolder ? (
+					<div
+						className="truncate text-xs text-muted-foreground"
+						title={s.project_path ?? undefined}
+					>
+						{projectFolder}
+					</div>
+				) : null}
 			</div>
 		);
 	},
@@ -49,40 +50,49 @@ const agentColumn: ColumnDef<SessionListItem> = {
 	size: 180,
 };
 
-const lastActivityColumn: ColumnDef<SessionListItem> = {
-	id: "updated_at",
-	accessorKey: "updated_at",
-	header: "Last activity",
+const startedColumn: ColumnDef<SessionListItem> = {
+	id: "started_at",
+	accessorKey: "started_at",
+	enableSorting: true,
+	header: ({ column }) => <DataTableColumnHeader column={column}>Started</DataTableColumnHeader>,
 	cell: ({ row }) => (
 		<span
 			className="whitespace-nowrap text-sm text-muted-foreground"
-			title={`Started ${relativeTime(row.original.started_at)}`}
+			title={formatAbsoluteTooltip(row.original.started_at)}
 		>
-			{relativeTime(row.original.updated_at)}
+			{relativeTime(row.original.started_at)}
 		</span>
 	),
-	size: 120,
+	size: 110,
 };
 
-const projectColumn: ColumnDef<SessionListItem> = {
-	id: "project",
-	accessorFn: (s) => s.project_path ?? "",
-	header: "Project",
-	cell: ({ row }) => (
-		<div
-			className="truncate text-sm text-muted-foreground"
-			title={row.original.project_path ?? undefined}
-		>
-			{row.original.project_path?.split("/").pop() ?? "—"}
-		</div>
+const lastActivityColumn: ColumnDef<SessionListItem> = {
+	id: "last_activity_at",
+	accessorKey: "last_activity_at",
+	enableSorting: true,
+	header: ({ column }) => (
+		<DataTableColumnHeader column={column}>Last activity</DataTableColumnHeader>
 	),
-	size: 160,
+	cell: ({ row }) => (
+		<span
+			className="whitespace-nowrap text-sm text-muted-foreground"
+			title={formatAbsoluteTooltip(row.original.last_activity_at)}
+		>
+			{relativeTime(row.original.last_activity_at)}
+		</span>
+	),
+	size: 110,
 };
 
 const messagesColumn: ColumnDef<SessionListItem> = {
-	id: "messages",
+	id: "message_count",
 	accessorFn: (s) => s.message_count,
-	header: () => <span className="block text-right">Messages</span>,
+	enableSorting: true,
+	header: ({ column }) => (
+		<div className="flex justify-end">
+			<DataTableColumnHeader column={column}>Messages</DataTableColumnHeader>
+		</div>
+	),
 	cell: ({ row }) => (
 		<span className="block text-right text-sm tabular-nums text-muted-foreground">
 			{row.original.message_count}
@@ -94,7 +104,12 @@ const messagesColumn: ColumnDef<SessionListItem> = {
 const tokensColumn: ColumnDef<SessionListItem> = {
 	id: "tokens",
 	accessorFn: (s) => s.input_tokens + s.output_tokens,
-	header: () => <span className="block text-right">Tokens</span>,
+	enableSorting: true,
+	header: ({ column }) => (
+		<div className="flex justify-end">
+			<DataTableColumnHeader column={column}>Tokens</DataTableColumnHeader>
+		</div>
+	),
 	cell: ({ row }) => {
 		const total = row.original.input_tokens + row.original.output_tokens;
 		return (
@@ -108,17 +123,21 @@ const tokensColumn: ColumnDef<SessionListItem> = {
 
 export const sessionColumns: ColumnDef<SessionListItem>[] = [
 	summaryColumn,
-	{ ...agentColumn, size: 200 },
-	projectColumn,
+	agentColumn,
 	messagesColumn,
 	tokensColumn,
+	startedColumn,
 	lastActivityColumn,
 ];
 
-// Compact 3-col layout for the Overview "Recent sessions" widget. Sum of
-// widths (~710) fits the half-width dashboard column without overflow.
+const lastActivityColumnPlain: ColumnDef<SessionListItem> = {
+	...lastActivityColumn,
+	enableSorting: false,
+	header: "Last activity",
+};
+
 export const sessionColumnsCompact: ColumnDef<SessionListItem>[] = [
 	summaryColumn,
 	agentColumn,
-	lastActivityColumn,
+	lastActivityColumnPlain,
 ];

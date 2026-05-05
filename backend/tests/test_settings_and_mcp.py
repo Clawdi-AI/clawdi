@@ -15,7 +15,19 @@ from app.main import app
 
 
 @pytest.mark.asyncio
-async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncClient):
+async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncClient, monkeypatch):
+    # Settings save now refuses `memory_provider=mem0` when the
+    # `[mem0]` extra isn't installed (the prod-default since the
+    # package was never declared). Stub `mem0_available()` so this
+    # masking test can still exercise the secret-handling path.
+    import app.services.memory_provider as mp
+
+    monkeypatch.setattr(mp, "_mem0_available_cached", None)
+    monkeypatch.setattr(mp, "mem0_available", lambda: True)
+    import app.routes.settings as st
+
+    monkeypatch.setattr(st, "mem0_available", lambda: True)
+
     r = await client.patch(
         "/api/settings",
         json={"settings": {"memory_provider": "mem0", "mem0_api_key": "mem0_live_supersecret"}},
@@ -40,6 +52,33 @@ async def test_settings_patch_merges_rather_than_replaces(client: httpx.AsyncCli
     # "a" must survive the second patch — PATCH semantics are merge, not replace.
     assert body["a"] == 1
     assert body["b"] == 99
+
+
+@pytest.mark.asyncio
+async def test_scope_migration_banner_dismiss_persists(client: httpx.AsyncClient):
+    """The post-migration banner dismiss flow uses the existing
+    /api/settings PATCH/GET — we don't add a dedicated endpoint.
+    The dashboard writes `scope_migration_banner_dismissed_at`
+    (ISO timestamp) when the user closes the banner; subsequent
+    reads return it so the banner stays hidden across sessions /
+    devices. Lock the contract here so a refactor of /api/settings
+    can't accidentally drop arbitrary-key support and silently
+    revive the banner forever."""
+    # Initial state: key absent → banner should show client-side.
+    body = (await client.get("/api/settings")).json()
+    assert "scope_migration_banner_dismissed_at" not in body
+
+    # Dashboard dismisses the banner.
+    dismissed_at = "2026-04-29T08:30:00Z"
+    r = await client.patch(
+        "/api/settings",
+        json={"settings": {"scope_migration_banner_dismissed_at": dismissed_at}},
+    )
+    assert r.status_code == 200, r.text
+
+    # Subsequent reads (any device) see the dismissed timestamp.
+    body = (await client.get("/api/settings")).json()
+    assert body["scope_migration_banner_dismissed_at"] == dismissed_at
 
 
 @pytest.mark.asyncio

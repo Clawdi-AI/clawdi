@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { Laptop, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Memory } from "@/lib/api-schemas";
@@ -17,9 +17,31 @@ export function makeMemoryColumns(onDelete: (id: string) => void): ColumnDef<Mem
 			accessorKey: "content",
 			enableSorting: false,
 			header: () => <span className="text-sm font-medium">Memory</span>,
-			cell: ({ row }) => (
-				<p className="whitespace-normal text-sm leading-relaxed">{row.original.content}</p>
-			),
+			cell: ({ row }) => {
+				// Surface the source agent inline below the memory text
+				// so users with multiple agents can tell which one
+				// learned a fact without clicking through. Falls back
+				// to a quiet "from a session" tag when the env that
+				// owned the source session has been disconnected.
+				const agentLabel = row.original.source_machine_name;
+				const sessionId = row.original.source_session_id;
+				return (
+					<div className="space-y-1">
+						<p className="whitespace-normal text-sm leading-relaxed">{row.original.content}</p>
+						{agentLabel ? (
+							<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+								<Laptop className="size-3" />
+								Learned on {agentLabel}
+							</span>
+						) : sessionId ? (
+							<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+								<Laptop className="size-3" />
+								Learned from a session
+							</span>
+						) : null}
+					</div>
+				);
+			},
 			size: 560,
 		},
 		{

@@ -21,10 +21,21 @@ class LocalFileStore:
     """
 
     def __init__(self, base_path: str):
-        self.base_path = Path(base_path)
+        self.base_path = Path(base_path).resolve()
 
     def _path(self, key: str) -> Path:
-        return self.base_path / key
+        # Defense-in-depth path-traversal guard. The route layer
+        # already validates skill_key / local_session_id against
+        # safe-character patterns, but a future caller forgetting
+        # that check, or a derived key passed unsanitised, would
+        # otherwise escape the configured base via ".." segments.
+        # `resolve()` collapses all relative components, then we
+        # confirm the result still lives under base. Belt-and-
+        # braces, cheap, no behavior change for legitimate keys.
+        candidate = (self.base_path / key).resolve()
+        if not candidate.is_relative_to(self.base_path):
+            raise ValueError(f"file-store key escapes base path: {key!r}")
+        return candidate
 
     async def put(self, key: str, data: bytes) -> None:
         def _write() -> None:

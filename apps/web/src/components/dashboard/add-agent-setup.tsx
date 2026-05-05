@@ -22,24 +22,31 @@ function useAgentPrompt() {
 
 const CLI_STEPS = [
 	{
-		title: "Install CLI",
+		title: "Install the CLI",
 		code: "bun add -g clawdi",
 		description: "Or use npm: npm install -g clawdi",
 	},
 	{
 		title: "Log in",
 		code: "clawdi auth login",
-		description: "Enter your API key from Settings → API Keys",
+		description: "Opens your browser to authorize this machine.",
 	},
 	{
-		title: "Set up agent",
+		title: "Connect this agent",
 		code: "clawdi setup",
-		description: "Detects Claude Code, registers MCP server and installs skill",
+		description:
+			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account.",
 	},
 	{
-		title: "Push sessions",
-		code: "clawdi push --modules sessions",
-		description: "Upload your conversation history to the cloud",
+		title: "Turn on live sync",
+		code: "clawdi serve install --all",
+		description:
+			"Installs a tiny background service per registered agent — Claude Code, Codex, OpenClaw, Hermes — so anything you change here lands on the machine in seconds, and vice versa. To install for one agent, replace `--all` with `--agent <name>`.",
+	},
+	{
+		title: "One-time history backup (optional)",
+		code: "clawdi push --modules sessions --all-agents --all",
+		description: "Uploads conversation history that existed before sync was on.",
 	},
 ];
 
@@ -117,7 +124,7 @@ function AgentTab() {
 	return (
 		<div className="space-y-4">
 			<p className="text-sm text-muted-foreground">
-				Copy this prompt and send it to your AI agent (Claude Code, Cursor, etc.):
+				Copy this prompt and send it to your AI agent (Claude Code, Codex, OpenClaw, or Hermes):
 			</p>
 
 			<div className="rounded-lg border bg-muted/30">

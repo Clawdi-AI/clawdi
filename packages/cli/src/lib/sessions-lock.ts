@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { AgentType } from "../adapters/registry";
@@ -54,7 +54,16 @@ export function readSessionsLock(): SessionsLock {
 }
 
 export function writeSessionsLock(lock: SessionsLock): void {
-	const path = join(getClawdiDir(), LOCK_FILE);
+	const dir = getClawdiDir();
+	// Daemon under env-only auth (CLAWDI_AUTH_TOKEN, no prior
+	// `clawdi auth login`) on a fresh HOME — typical hosted /
+	// container path — may not have `~/.clawdi/` yet. Without this
+	// mkdir the first successful upload's lock write throws ENOENT,
+	// the queue records the already-uploaded item as failed, and
+	// it gets retried (or eventually evicted). 0o700 to match the
+	// auth.json mode used elsewhere in this dir.
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const path = join(dir, LOCK_FILE);
 	// Sort keys for deterministic output — keeps `git diff` readable when
 	// the file is committed (some users do this for VCS-backed clawdi
 	// state) and stabilizes any future test snapshots.
@@ -64,7 +73,24 @@ export function writeSessionsLock(lock: SessionsLock): void {
 		if (entry) sortedSessions[key] = entry;
 	}
 	const sorted: SessionsLock = { version: lock.version, sessions: sortedSessions };
-	writeFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, { mode: 0o600 });
+	// Atomic write: temp file + rename. `--all` mode runs N daemons
+	// (one per agent) on the same machine, all sharing this single
+	// lock file. Without atomic rename the read-modify-write would
+	// truncate-and-overwrite, allowing two daemons writing within
+	// the same OS-scheduled tick to lose each other's keys (or
+	// produce a half-written file the next reader rejects). The
+	// rename is atomic on POSIX so the worst case is "one daemon's
+	// hash didn't land, next push catches it" — never corruption.
+	const tmp = `${path}.tmp.${process.pid}`;
+	writeFileSync(tmp, `${JSON.stringify(sorted, null, 2)}\n`, { mode: 0o600 });
+	renameSync(tmp, path);
+	// Re-apply mode in case a previous holder left it loose. The
+	// mode option only fires at create time.
+	try {
+		chmodSync(path, 0o600);
+	} catch {
+		/* best effort */
+	}
 }
 
 function emptyLock(): SessionsLock {

@@ -462,6 +462,7 @@ class Mem0Provider:
                     "source": "mem0",
                     "tags": meta.get("tags"),
                     "created_at": r.get("created_at", ""),
+                    "source_session_id": meta.get("source_session_id"),
                 }
             )
         return out
@@ -488,6 +489,7 @@ class Mem0Provider:
                 "source": "mem0",
                 "tags": r.get("metadata", {}).get("tags"),
                 "created_at": r.get("created_at", ""),
+                "source_session_id": r.get("metadata", {}).get("source_session_id"),
             }
             for r in items[offset : offset + limit]
         ]
@@ -515,12 +517,17 @@ def memory_to_dict(m: Memory) -> dict:
         "tags": m.tags,
         "access_count": m.access_count,
         "created_at": m.created_at.isoformat(),
+        # Session linkage so the route layer can JOIN through to the
+        # source machine in one bulk query. None when the memory was
+        # added manually.
+        "source_session_id": str(m.source_session_id) if m.source_session_id else None,
     }
 
 
 def _row_to_dict(r) -> dict:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
     created_at = r["created_at"]
+    sid = r.get("source_session_id") if hasattr(r, "get") else None
     return {
         "id": str(r["id"]),
         "content": r["content"],
@@ -529,6 +536,7 @@ def _row_to_dict(r) -> dict:
         "tags": r["tags"],
         "access_count": r["access_count"],
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+        "source_session_id": str(sid) if sid else None,
     }
 
 
@@ -652,6 +660,46 @@ def _merge_hybrid(
 # ---------- provider selection ----------
 
 
+def mem0_available() -> bool:
+    """Whether the `mem0` Python module is actually importable
+    in this deployment. Drives the dashboard capability flag
+    (see `routes/capabilities.py`) and the settings-save
+    validator (`routes/settings.py`) — UI hides the option
+    when not available; settings refuses to persist a
+    memory_provider=mem0 value the backend can't honor.
+
+    Probes by REAL import, not `find_spec`. `find_spec` returns
+    truthy even when the module's transitive dependencies fail
+    to load (broken `[mem0]` install, partially-installed venv).
+    A truthy `find_spec` followed by a failing real import would
+    let `/api/capabilities` advertise mem0, the settings page
+    accept the value, then `Mem0Provider.__init__` catch the
+    ImportError and silently degrade to builtin — leaving the
+    user with a UI saying "Currently using: mem0" and behavior
+    that's actually builtin. Real import probes the same path
+    the runtime would take.
+
+    Cached because it never changes within a process — re-
+    checking on every request needlessly thrashes the import
+    system.
+    """
+    global _mem0_available_cached
+    cached = _mem0_available_cached
+    if cached is not None:
+        return cached
+    try:
+        import mem0  # noqa: F401  -- presence check, not used here
+
+        cached = True
+    except ImportError:
+        cached = False
+    _mem0_available_cached = cached
+    return cached
+
+
+_mem0_available_cached: bool | None = None
+
+
 async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     """Resolve the memory provider for a user.
 
@@ -681,6 +729,21 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         except (ValueError, RuntimeError, TypeError) as e:
             log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
             return BuiltinProvider(db, embedder=resolve_embedder())
-        return Mem0Provider(api_key=api_key)
+        # Defense-in-depth: even with the [mem0] extra installed,
+        # a transient import failure (broken venv, partial install)
+        # shouldn't 500 every memory request — the builtin provider
+        # is always functional. Settings save validation also
+        # checks `mem0_available()` before allowing the value to
+        # land in user_settings, so this branch is the safety net,
+        # not the primary gate.
+        try:
+            return Mem0Provider(api_key=api_key)
+        except ImportError as e:
+            log.warning(
+                "memory_provider=mem0 but mem0 module is not importable in this "
+                "deployment (install the [mem0] extra); falling back to builtin: %s",
+                e,
+            )
+            return BuiltinProvider(db, embedder=resolve_embedder())
 
     return BuiltinProvider(db, embedder=resolve_embedder())

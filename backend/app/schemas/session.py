@@ -1,9 +1,15 @@
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 # local_session_id flows straight into a file-store key
 # (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
@@ -30,11 +36,23 @@ class SessionCreate(BaseModel):
     project_path: str | None = None
     started_at: datetime
     ended_at: datetime | None = None
-    duration_seconds: int | None = None
-    message_count: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
+    # Optional: caller-supplied "user actually used the session
+    # last" timestamp (= max of message timestamps in the JSONL).
+    # Adapters that can compute it (claude_code, codex) should
+    # send it; ones that can't (or don't yet) leave it null and
+    # the server falls back to ended_at / started_at. The route
+    # applies a clock-skew guard before persisting — see
+    # `_clamp_last_activity` in routes/sessions.py.
+    last_activity_at: datetime | None = None
+    # Non-negative numeric observables. Without `ge=0` a malformed
+    # client could post negative tokens / duration and corrupt the
+    # dashboard's aggregate counters. The CLI never sends negatives
+    # for legitimate sessions; this is a boundary defense.
+    duration_seconds: int | None = Field(default=None, ge=0)
+    message_count: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
     model: str | None = None
     models_used: list[str] | None = None
     summary: str | None = None
@@ -46,9 +64,37 @@ class SessionCreate(BaseModel):
     # legacy rows with NULL hash are always treated as "needs content".
     content_hash: str | None = None
 
+    @field_validator("started_at", "ended_at", "last_activity_at", mode="after")
+    @classmethod
+    def _coerce_to_utc(cls, v: datetime | None) -> datetime | None:
+        # Naive datetimes (no tzinfo) silently break the
+        # `_clamp_last_activity` helper in routes/sessions.py — it
+        # compares client values to `datetime.now(UTC)`, and naive vs
+        # aware comparisons raise TypeError, surfacing as a 500.
+        # JS clients always send `toISOString()` (ends in 'Z' →
+        # aware), but anything sending a Python-style ISO without
+        # offset would land naive. Coerce to UTC at the boundary —
+        # naive timestamps are interpreted as UTC, which is the only
+        # safe assumption for an unmarked value crossing a network.
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v
+
 
 class SessionBatchRequest(BaseModel):
-    sessions: list[SessionCreate]
+    # Cap at 500 sessions per request. The upsert builds a single
+    # multi-VALUES INSERT with ~17 bound parameters per row;
+    # asyncpg refuses queries with > 32767 parameters total
+    # (PostgreSQL wire protocol limit). Pre-fix `clawdi push
+    # --modules sessions --all` shipped every session in one
+    # body — observed 500-ing in prod with
+    # `sqlalchemy.exc.InterfaceError: ... query arguments cannot
+    # exceed 32767` for users with > ~1900 sessions. 500 leaves
+    # ample headroom (8500 params) and the CLI side now chunks
+    # to match (packages/cli/src/commands/push.ts).
+    sessions: list[SessionCreate] = Field(max_length=500)
 
 
 class EnvironmentCreate(BaseModel):
@@ -70,6 +116,25 @@ class EnvironmentResponse(BaseModel):
     agent_version: str | None
     os: str
     last_seen_at: datetime | None
+    # `clawdi serve` daemon liveness / observability — populated by
+    # the heartbeat endpoint. NULL on environments whose daemon
+    # has never checked in (legacy laptops, freshly created
+    # envs). Dashboard renders "offline" red when last_sync_at is
+    # null or older than 90s; "syncing" green when fresh and
+    # last_sync_error is null.
+    last_sync_at: datetime | None = None
+    last_sync_error: str | None = None
+    last_revision_seen: int | None = None
+    queue_depth_high_water: int = 0
+    dropped_count: int = 0
+    sync_enabled: bool = False
+    # Schema-enforced NOT NULL on agent_environments — every env
+    # has a scope after register_environment runs (which heals
+    # legacy rows that lost their scope). Daemons rely on this
+    # being present to know which SSE events belong to them.
+    # Stringified for JSON (UUIDs serialise as strings via
+    # FastAPI default).
+    default_scope_id: str
 
 
 class SessionBatchResponse(BaseModel):
@@ -84,6 +149,17 @@ class SessionBatchResponse(BaseModel):
     # superset of `created` (new rows have no content yet); also includes
     # any updated row whose stored bytes are stale.
     needs_content: list[str]
+    # local_session_ids the upsert dropped at the conflict step
+    # (cross-env race window — see sessions.py `WHERE existing.env
+    # IS NULL OR existing.env IS NOT DISTINCT FROM excluded.env`).
+    # CLI/daemon callers MUST treat these as not-yet-synced:
+    # don't write the lock entry, don't mark them done. The next
+    # batch (after the winning writer's row is visible) will hit
+    # the pre-fetch cross-env mismatch check and 409 cleanly.
+    # Pre-round-46 the response silently omitted these ids; the
+    # client treated "id not in needs_content" as success and
+    # wrote a stale lock — the loser never retried.
+    rejected: list[str] = []
 
 
 class SessionListItemResponse(BaseModel):
@@ -94,10 +170,17 @@ class SessionListItemResponse(BaseModel):
     machine_name: str | None = None
     started_at: datetime
     ended_at: datetime | None
-    # Last time the row's metadata or content was touched on the server.
-    # Bumped on every batch upsert and content upload. The dashboard sorts
-    # by this so sessions with new messages bubble to the top.
+    # Server clock — when the row was last written/updated. Used by
+    # ETag/cache layers, NOT shown in the dashboard. Kept in the
+    # response so callers that DO want "row last touched" semantics
+    # (incremental fetch) can read it.
     updated_at: datetime
+    # User activity time — derived from message timestamps during
+    # ingest. The dashboard's "Last activity" column reads this.
+    # Distinct from updated_at: a session pushed at 9am whose last
+    # message was yesterday at 11pm has updated_at=9am and
+    # last_activity_at=yesterday 11pm.
+    last_activity_at: datetime
     duration_seconds: int | None
     message_count: int
     input_tokens: int
@@ -180,3 +263,20 @@ class SessionMessageResponse(BaseModel):
     content: str | list[SessionContentBlock]
     model: str | None = None
     timestamp: datetime | None = None
+
+
+class SessionMessagesPage(BaseModel):
+    """Paginated slice of a session's messages. Used by the dashboard's
+    detail page; the full-content download endpoint
+    (`GET /api/sessions/{id}/content`) stays unchanged so the CLI's
+    `clawdi pull` mirror still gets a single full JSON array.
+
+    `total` is the count of messages in the underlying content file
+    (not the count returned in `items`) so the client can render a
+    "loaded N/M" hint and decide whether to fetch more pages.
+    """
+
+    items: list[SessionMessageResponse]
+    total: int
+    offset: int
+    limit: int

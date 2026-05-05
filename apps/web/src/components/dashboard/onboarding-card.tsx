@@ -15,10 +15,10 @@ export function OnboardingCard() {
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
 					<Rocket className="size-5 text-primary" />
-					Add an agent
+					Connect your AI to Clawdi
 				</CardTitle>
 				<CardDescription>
-					Connect another machine or agent type — works for Claude Code, Codex, Hermes and OpenClaw.
+					Long-term memory and live sync for Claude Code, Codex, OpenClaw, and Hermes.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>

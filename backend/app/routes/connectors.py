@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, require_user_auth
 from app.core.config import settings
 from app.schemas.common import Paginated
 from app.schemas.connector import (
@@ -84,7 +84,7 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
 
 @router.get("")
 async def list_connections(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> list[ConnectorConnectionResponse]:
     """List user's connected services."""
     if not settings.composio_api_key:
@@ -95,7 +95,7 @@ async def list_connections(
 
 @router.get("/available")
 async def list_available_apps(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
     search: str | None = Query(default=None, max_length=100),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
@@ -121,7 +121,7 @@ async def list_available_apps(
 @router.get("/available/{app_name}")
 async def get_available_app(
     app_name: str,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorAvailableAppResponse:
     """Single-app metadata lookup — used by the detail page so it doesn't
     have to page through the whole catalog to find one app's display name.
@@ -138,7 +138,7 @@ async def get_available_app(
 async def connect_app(
     app_name: str,
     body: ConnectRequest | None = None,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorConnectResponse:
     """Generate OAuth connect link for an app.
 
@@ -162,7 +162,7 @@ async def connect_app(
 @router.get("/{app_name}/auth-fields")
 async def auth_fields(
     app_name: str,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorAuthFieldsResponse:
     """Return the auth scheme + credential fields for non-OAuth apps.
 
@@ -203,7 +203,7 @@ def _scrub_credentials(message: str, credentials: dict[str, str]) -> str:
 async def connect_credentials(
     app_name: str,
     body: ConnectorCredentialsConnectRequest,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorCredentialsConnectResponse:
     """Create a connection from user-supplied API-key credentials.
 
@@ -243,7 +243,7 @@ async def connect_credentials(
 @router.delete("/{connection_id}")
 async def disconnect(
     connection_id: str,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorDisconnectResponse:
     """Disconnect a connected account.
 
@@ -266,7 +266,7 @@ async def disconnect(
 
 @router.get("/mcp-config")
 async def get_mcp_config(
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorMcpConfigResponse:
     """Get MCP proxy config for the current user."""
     if not settings.composio_api_key:
@@ -284,7 +284,7 @@ async def get_mcp_config(
 @router.get("/{app_name}/tools")
 async def list_app_tools(
     app_name: str,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(require_user_auth),
 ) -> list[ConnectorToolResponse]:
     """List available tools/actions for a specific app."""
     if not settings.composio_api_key:

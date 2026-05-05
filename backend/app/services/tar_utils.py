@@ -8,8 +8,25 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 MAX_FILES = 5000
+# Hard cap on TOTAL members (files + dirs + everything else). Without
+# this, an archive can stay under MAX_FILES while carrying millions
+# of empty directory entries — every member still costs CPU + memory
+# during the validation walk and the eventual extract.
+MAX_MEMBERS = 20_000
 MAX_DECOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MB
+# Cap that mirrors the per-route skill upload limit in
+# routes/skills.py:_MAX_SKILL_TAR_BYTES. The marketplace
+# install path needs the same ceiling so that it can't sneak in
+# a larger tar than a direct-upload caller would.
+MAX_SKILL_TAR_BYTES = 25 * 1024 * 1024  # 25 MB
 GZIP_MAGIC = b"\x1f\x8b"
+
+# Schema column widths the frontmatter values are eventually
+# stored under. Keeping the bound here means we truncate at the
+# parse boundary so a malformed SKILL.md never makes it down to
+# the route's INSERT and turns into a database error.
+_FM_NAME_MAX = 200
+_FM_DESCRIPTION_MAX = 2000
 
 
 class TarValidationError(ValueError):
@@ -27,12 +44,28 @@ def validate_tar(data: bytes) -> int:
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
             file_count = 0
+            member_count = 0
             total_size = 0
 
             for member in tf:
-                # Reject symlinks
+                member_count += 1
+                if member_count > MAX_MEMBERS:
+                    raise TarValidationError(f"Too many archive members: exceeds {MAX_MEMBERS}")
+
+                # Reject symlinks + hard links
                 if member.issym() or member.islnk():
                     raise TarValidationError(f"Symlinks not allowed: {member.name}")
+
+                # Reject anything that isn't a regular file or
+                # directory: device nodes, FIFOs, character/block
+                # specials. None of these belong in a skill archive
+                # and most extractors will refuse them anyway, but
+                # we'd rather reject at validate time than have an
+                # extract-side surprise.
+                if not (member.isfile() or member.isdir()):
+                    raise TarValidationError(
+                        f"Unsupported entry type ({member.type!r}): {member.name}"
+                    )
 
                 # Reject absolute paths
                 if member.name.startswith("/"):
@@ -118,25 +151,46 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     if not match:
         return {}
 
+    # Hard cap on the YAML block BEFORE handing it to the parser.
+    # `safe_load` is reasonably hardened against billion-laughs
+    # and similar bombs, but the safest tactic is "don't even
+    # parse pathological input". 64 KiB fits any plausible
+    # frontmatter (real-world skills are <1 KiB) and bounds
+    # parser CPU/memory worst case.
+    raw = match.group(1)
+    _FRONTMATTER_BYTES_MAX = 64 * 1024
+    if len(raw.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
+        return {}
+
     try:
-        loaded = yaml.safe_load(match.group(1))
+        loaded = yaml.safe_load(raw)
     except yaml.YAMLError:
         return {}
 
     if not isinstance(loaded, dict):
         return {}
 
+    # Per-key truncation caps. Anything not listed here gets a
+    # generic 8 KB fallback — well above any reasonable metadata
+    # and well below "this is going to blow up Postgres".
+    _per_key_caps: dict[str, int] = {
+        "name": _FM_NAME_MAX,
+        "description": _FM_DESCRIPTION_MAX,
+    }
+    _default_cap = 8 * 1024
+
     fm: dict[str, str] = {}
     for key, value in loaded.items():
         if not isinstance(key, str):
             continue
+        cap = _per_key_caps.get(key, _default_cap)
         if isinstance(value, str):
-            fm[key] = value.strip()
+            fm[key] = value.strip()[:cap]
         elif isinstance(value, bool):
             # Match YAML wire form ("true"/"false") not Python's "True"/"False".
             # Callers comparing against literal "true" wouldn't expect Python
             # capitalization to leak through.
             fm[key] = "true" if value else "false"
         elif isinstance(value, (int, float)):
-            fm[key] = str(value)
+            fm[key] = str(value)[:cap]
     return fm

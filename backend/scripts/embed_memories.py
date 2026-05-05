@@ -34,9 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("embed-memories")
 
 
-async def embed_for_user(
-    user_id: uuid.UUID, force: bool, batch_size: int, embedder
-) -> None:
+async def embed_for_user(user_id: uuid.UUID, force: bool, batch_size: int, embedder) -> None:
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     async with SessionLocal() as db:
         # Snapshot target IDs up-front; see routes/memories.py
@@ -50,10 +48,10 @@ async def embed_for_user(
         processed = 0
         failed = 0
         for i in range(0, len(target_ids), batch_size):
-            chunk_ids = target_ids[i:i + batch_size]
+            chunk_ids = target_ids[i : i + batch_size]
             chunk = (
-                await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))
-            ).scalars().all()
+                (await db.execute(select(Memory).where(Memory.id.in_(chunk_ids)))).scalars().all()
+            )
             for mem in chunk:
                 try:
                     vec = await embedder.embed(mem.content)
@@ -71,9 +69,7 @@ async def embed_all(force: bool, batch_size: int, embedder) -> None:
     async with SessionLocal() as db:
         # Iterate every distinct user who has memories. (Users without
         # a UserSetting row but with memories would otherwise be skipped.)
-        user_ids = (
-            await db.execute(select(Memory.user_id).distinct())
-        ).scalars().all()
+        user_ids = (await db.execute(select(Memory.user_id).distinct())).scalars().all()
     for uid in user_ids:
         await embed_for_user(uid, force=force, batch_size=batch_size, embedder=embedder)
 
@@ -83,15 +79,15 @@ def main() -> None:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--user-id", type=str, help="Backfill a single user by UUID.")
     g.add_argument("--all", action="store_true", help="Backfill every user that has memories.")
-    ap.add_argument("--force", action="store_true", help="Re-embed rows that already have embeddings.")
+    ap.add_argument(
+        "--force", action="store_true", help="Re-embed rows that already have embeddings."
+    )
     ap.add_argument("--batch-size", type=int, default=32)
     args = ap.parse_args()
 
     embedder = resolve_embedder()
     if embedder is None:
-        log.error(
-            "No embedder available. Check MEMORY_EMBEDDING_MODE and related env vars."
-        )
+        log.error("No embedder available. Check MEMORY_EMBEDDING_MODE and related env vars.")
         sys.exit(1)
 
     if args.all:
@@ -100,7 +96,9 @@ def main() -> None:
         asyncio.run(
             embed_for_user(
                 uuid.UUID(args.user_id),
-                force=args.force, batch_size=args.batch_size, embedder=embedder,
+                force=args.force,
+                batch_size=args.batch_size,
+                embedder=embedder,
             )
         )
 

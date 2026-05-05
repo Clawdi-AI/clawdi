@@ -77,15 +77,81 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def create_env_with_scope(
+    db_session,
+    *,
+    user_id,
+    machine_id: str,
+    machine_name: str,
+    agent_type: str = "claude_code",
+    os: str = "darwin",
+):
+    """Test helper: insert an AgentEnvironment together with its
+    env-local scope and wire `default_scope_id`. Mirrors the
+    `register_environment` route flow so tests don't have to
+    duplicate the inline-scope creation pattern. Returns the
+    env (with default_scope_id populated).
+    """
+    from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+    from app.models.session import AgentEnvironment
+
+    # Mutual FK: env.default_scope_id (NOT NULL) → scope.id;
+    # scope.origin_environment_id (NULLABLE) → env.id. Insert
+    # scope without origin first, then env pointing at scope,
+    # then back-fill scope.origin_environment_id.
+    pending_slug = f"env-{uuid.uuid4().hex[:12]}"
+    scope = Scope(
+        user_id=user_id,
+        name=f"{machine_name} ({agent_type})",
+        slug=pending_slug,
+        kind=SCOPE_KIND_ENVIRONMENT,
+    )
+    db_session.add(scope)
+    await db_session.flush()
+
+    env = AgentEnvironment(
+        user_id=user_id,
+        machine_id=machine_id,
+        machine_name=machine_name,
+        agent_type=agent_type,
+        os=os,
+        default_scope_id=scope.id,
+    )
+    db_session.add(env)
+    await db_session.flush()
+
+    scope.origin_environment_id = env.id
+    await db_session.commit()
+    await db_session.refresh(env)
+    return env
+
+
 @pytest_asyncio.fixture
 async def seed_user(db_session: AsyncSession) -> User:
-    """A throwaway user row scoped to one test, cleaned up in teardown."""
+    """A throwaway user row scoped to one test, cleaned up in teardown.
+
+    Mirrors the auto-create flow in `_auth_via_clerk_jwt`: every user
+    must have a Personal scope so the default-scope resolver has a
+    fallback target. Without this, write paths that resolve scope
+    server-side would 500 on a fresh test user.
+    """
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+
     user = User(
         clerk_id=f"test_{uuid.uuid4().hex[:12]}",
         email=f"test_{uuid.uuid4().hex[:8]}@clawdi.local",
         name="Test User",
     )
     db_session.add(user)
+    await db_session.flush()
+
+    personal = Scope(
+        user_id=user.id,
+        name="Personal",
+        slug="personal",
+        kind=SCOPE_KIND_PERSONAL,
+    )
+    db_session.add(personal)
     await db_session.commit()
     await db_session.refresh(user)
     try:
@@ -95,6 +161,22 @@ async def seed_user(db_session: AsyncSession) -> User:
         # FKs handle related rows; the user row itself is the root.
         await db_session.delete(user)
         await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def scope_id(db_session: AsyncSession, seed_user: User) -> str:
+    """Personal scope id for the seed user. Most upload / read tests
+    target this — phase-2 routes are scope-explicit, so the URL needs
+    a scope_id and the seed user's Personal scope is the natural
+    default for tests that don't care about multi-env isolation."""
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+
+    result = await db_session.execute(
+        select(Scope.id).where(Scope.user_id == seed_user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+    )
+    return str(result.scalar_one())
 
 
 @pytest_asyncio.fixture

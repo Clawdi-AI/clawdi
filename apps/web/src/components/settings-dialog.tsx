@@ -266,7 +266,17 @@ function ApiKeysPanel() {
 							type="button"
 							variant="ghost"
 							size="icon-sm"
-							onClick={() => revokeKey.mutate(row.original.id)}
+							onClick={() => {
+								// Revoking a key in-use stops sync on whichever
+								// machine holds it. Cannot be un-revoked, so
+								// confirm with explicit blast radius.
+								const ok = window.confirm(
+									`Revoke "${row.original.label}"?\n\n` +
+										"If a machine is still using this key, sync will stop on it within a minute. " +
+										"You'd need to log in again from that machine to resume.",
+								);
+								if (ok) revokeKey.mutate(row.original.id);
+							}}
 							disabled={revokeKey.isPending}
 							aria-label="Revoke key"
 							className="text-muted-foreground hover:text-destructive"
@@ -286,11 +296,19 @@ function ApiKeysPanel() {
 				title="API Keys"
 				description={
 					<>
-						Create bearer keys for the CLI. Run{" "}
+						On a laptop,{" "}
 						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
 							clawdi auth login
 						</code>{" "}
-						and paste the key when prompted.
+						handles auth automatically — you don&apos;t need to touch this. Create a key here when
+						you&apos;re setting up a server or container that can&apos;t open a browser, then paste
+						it into{" "}
+						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+							CLAWDI_AUTH_TOKEN
+						</code>{" "}
+						(this is the env var the CLI and{" "}
+						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi serve</code>{" "}
+						actually read).
 					</>
 				}
 			/>

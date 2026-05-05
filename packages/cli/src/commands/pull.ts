@@ -9,8 +9,18 @@ import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
-import { adapterForType, resolveTargetAgentTypes } from "../lib/select-adapter";
-import { readSkillsLock, type SkillsLock, writeSkillsLock } from "../lib/skills-lock";
+import {
+	adapterForType,
+	fetchScopeIdForEnv,
+	getEnvIdByAgent,
+	resolveTargetAgentTypes,
+} from "../lib/select-adapter";
+import {
+	readSkillsLock,
+	type SkillsLock,
+	skillCacheKey,
+	writeSkillsLock,
+} from "../lib/skills-lock";
 
 const DOWN_MODULES = [
 	{ value: "skills", label: "Skills", hint: "pull skill archives to agent directories" },
@@ -133,9 +143,29 @@ async function pullSkills(
 	const adapter = adapterForType(agentType);
 	if (!adapter) return { pulled: 0, alreadyInSync: 0 };
 
+	// Resolve the target agent's scope upfront. Without this, the
+	// listing below returns every scope's skills and the loop
+	// installs sibling-agent skills into this adapter's directory
+	// — `pull --all-agents` on a multi-agent unbound key would
+	// duplicate every codex skill into claude_code's home and
+	// vice versa. The download URL ALSO needs the scope_id so
+	// duplicate-key skills resolve to the right bytes.
+	const envId = getEnvIdByAgent(agentType);
+	if (!envId) {
+		p.log.warn(
+			`No environment registered for ${adapterRegistry[agentType].displayName}; skip. Run \`clawdi setup\` first.`,
+		);
+		return { pulled: 0, alreadyInSync: 0 };
+	}
+	const scopeId = await fetchScopeIdForEnv(api, envId);
+
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching skills...");
-	const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+	const page = unwrap(
+		await api.GET("/api/skills", {
+			params: { query: { page_size: 200, scope_id: scopeId } },
+		}),
+	);
 	const cloudSkills: SkillSummary[] = page.items;
 	fetchSpinner.stop(
 		`Found ${cloudSkills.length} skill${cloudSkills.length === 1 ? "" : "s"} in cloud`,
@@ -150,7 +180,10 @@ async function pullSkills(
 	const toDownload: SkillSummary[] = [];
 	let alreadyInSync = 0;
 	for (const skill of cloudSkills) {
-		const cached = skillsLock.skills[skill.skill_key]?.hash;
+		// Cache key partitioned by `(agentType, skill_key)` so a multi-
+		// agent pull doesn't share state across agents — each agent's
+		// scope is independent.
+		const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
 		const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
 		if (cached && cached === skill.content_hash && localExists) {
 			alreadyInSync++;
@@ -185,9 +218,17 @@ async function pullSkills(
 		}
 
 		try {
-			const tarBytes = await api.getBytes(`/api/skills/${skill.skill_key}/download`);
+			// Scope-explicit download so a multi-agent account where
+			// the same skill_key exists in two scopes resolves to the
+			// right bytes for THIS agent, not whichever was most-
+			// recently-updated across visible scopes.
+			const tarBytes = await api.getBytes(
+				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+			);
 			await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-			skillsLock.skills[skill.skill_key] = { hash: skill.content_hash };
+			skillsLock.skills[skillCacheKey(agentType, skill.skill_key)] = {
+				hash: skill.content_hash,
+			};
 			const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
 			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 			pulled++;

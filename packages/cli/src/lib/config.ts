@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -6,7 +14,15 @@ import { join } from "node:path";
 // and module caching doesn't freeze the path at first import.
 // We honor $HOME directly because os.homedir() is cached by the runtime
 // and doesn't update when $HOME is reassigned mid-process.
+//
+// `CLAWDI_HOME` lets a sibling `clawdi-dev` wrapper (or a test harness,
+// or a multi-tenant service account) point the CLI at an isolated state
+// tree without trampling the user's real `~/.clawdi/`. When set, takes
+// precedence over $HOME-derived path; falls back to the historical
+// `$HOME/.clawdi` shape so existing installs are unaffected.
 function clawdiDir() {
+	const override = process.env.CLAWDI_HOME;
+	if (override) return override;
 	return join(process.env.HOME || homedir(), ".clawdi");
 }
 function configFile() {
@@ -66,6 +82,15 @@ function readJson<T>(path: string): T | null {
 function writeJson(path: string, data: unknown) {
 	ensureDir();
 	writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+	// `mode` only fires when the file is CREATED. If a previous
+	// holder left auth.json group/world-readable, the option does
+	// nothing on overwrite. Re-apply explicitly so credentials
+	// never linger with loose perms across user-error cycles.
+	try {
+		chmodSync(path, 0o600);
+	} catch {
+		/* best effort — Windows / read-only FS */
+	}
 }
 
 // Replaced by `bun build --define 'process.env.CLAWDI_DEFAULT_API_URL=...'`
@@ -102,6 +127,15 @@ export function unsetConfigKey(key: ConfigKey) {
 }
 
 export function getAuth(): ClawdiAuth | null {
+	// Precedence: CLAWDI_AUTH_TOKEN env var > ~/.clawdi/auth.json.
+	// Hosted pods get the token via env (the monorepo writes it
+	// into the container's startup config); they have no
+	// auth.json on disk and never round-trip through device-flow
+	// login. Laptops continue to use the file.
+	const envToken = process.env.CLAWDI_AUTH_TOKEN;
+	if (envToken) {
+		return { apiKey: envToken };
+	}
 	return readJson<ClawdiAuth>(authFile());
 }
 

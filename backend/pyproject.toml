@@ -24,13 +24,58 @@ dependencies = [
     "arq>=0.28.0",
 ]
 
+[project.optional-dependencies]
+# Mem0 SaaS-backed memory provider. Optional because most
+# self-hosters use the builtin pgvector provider and mem0ai
+# pulls a heavy transitive dep tree. Enable per deployment
+# with `uv pip install -e ".[mem0]"`. The `Mem0Provider`
+# class lazy-imports `mem0`, and `get_memory_provider` falls
+# back to the builtin provider with a warning when the import
+# fails — so this extra controls whether mem0 is *available*,
+# not whether memories work at all.
+mem0 = ["mem0ai>=0.1"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
     "ruff>=0.9",
+    # Catch "import declared in code but not in deps" drift —
+    # the same class of bug that let mem0/mem0ai stay
+    # undeclared for months without CI noticing.
+    "deptry>=0.20",
 ]
+
+[tool.deptry]
+known_first_party = ["app"]
+extend_exclude = ["alembic/"]
+
+# `pydantic` and `starlette` are pulled in transitively via
+# fastapi / pydantic-settings; we import them directly in many
+# places without declaring them. Whitelist for now — promote to
+# direct deps if the transitive chain ever changes upstream.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["pydantic", "starlette"]
+# DEP002 = "declared but not imported." These are runtime
+# infrastructure — used via SQLAlchemy/FastAPI/CLI, not
+# imported by name in app/. Removing them would actually
+# break the runtime, so silence the noise.
+DEP002 = [
+    "uvicorn",            # ASGI server runtime; invoked as a binary.
+    "asyncpg",            # SQLAlchemy postgresql+asyncpg driver.
+    "alembic",            # Migration CLI.
+    "python-multipart",   # FastAPI multipart parser; loaded via Form().
+    "aiofiles",           # FastAPI's UploadFile uses async file I/O internally.
+    "psycopg2-binary",    # Sync PG driver kept for alembic offline-mode SQL.
+]
+
+# `app/services/memory_provider.py` imports `mem0` only inside
+# `Mem0Provider.__init__`, gated on the `[mem0]` extra. Without
+# this mapping deptry DEP001 fires on any install that omits the
+# extra (the default).
+[tool.deptry.package_module_name_map]
+mem0ai = "mem0"
 
 [tool.pdm.scripts]
 dev = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"

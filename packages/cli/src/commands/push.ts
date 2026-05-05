@@ -9,7 +9,13 @@ import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { sha256Hex } from "../lib/hash";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
-import { adapterForType, getEnvIdByAgent, resolveTargetAgentTypes } from "../lib/select-adapter";
+import {
+	adapterForType,
+	fetchScopeIdForEnv,
+	getEnvIdByAgent,
+	resolveTargetAgentTypes,
+} from "../lib/select-adapter";
+import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	cacheKey,
 	readSessionsLock,
@@ -20,6 +26,7 @@ import {
 	computeSkillFolderHash,
 	readSkillsLock,
 	type SkillsLock,
+	skillCacheKey,
 	writeSkillsLock,
 } from "../lib/skills-lock";
 import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
@@ -407,35 +414,62 @@ async function pushOneAgent(
 		sessionSpinner.start(
 			`Uploading metadata for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
-		let needsContent: Set<string>;
+		const needsContent: Set<string> = new Set();
+		const rejectedIds: Set<string> = new Set();
+		// Chunk sessions into batches that fit under PostgreSQL's
+		// 32767 bound-parameters-per-query limit. The server upsert
+		// builds a single multi-VALUES INSERT with ~17 columns per
+		// row; in prod we observed
+		// `sqlalchemy.exc.InterfaceError: ... query arguments cannot
+		// exceed 32767` 500-ing this endpoint when a heavy user's
+		// initial backfill shipped 1900+ sessions in one body.
+		// Schema-side cap (max_length=500 on SessionBatchRequest)
+		// gives the same protection as defense-in-depth.
+		const SESSION_BATCH_CHUNK = 500;
 		try {
-			const result = unwrap(
-				await api.POST("/api/sessions/batch", {
-					body: {
-						sessions: sessions.map((s) => ({
-							environment_id: envId,
-							local_session_id: s.localSessionId,
-							project_path: s.projectPath,
-							started_at: s.startedAt.toISOString(),
-							ended_at: s.endedAt?.toISOString() ?? null,
-							duration_seconds: s.durationSeconds,
-							message_count: s.messageCount,
-							input_tokens: s.inputTokens,
-							output_tokens: s.outputTokens,
-							cache_read_tokens: s.cacheReadTokens,
-							model: s.model,
-							models_used: s.modelsUsed,
-							summary: s.summary,
-							status: "completed",
-							content_hash: s.contentHash ?? null,
-						})),
-					},
-				}),
-			);
-			needsContent = new Set(result.needs_content);
-			sessionsCreated = result.created;
-			sessionsUpdated = result.updated;
-			sessionsUnchanged = result.unchanged;
+			for (let offset = 0; offset < sessions.length; offset += SESSION_BATCH_CHUNK) {
+				const chunk = sessions.slice(offset, offset + SESSION_BATCH_CHUNK);
+				const result = unwrap(
+					await api.POST("/api/sessions/batch", {
+						body: {
+							sessions: chunk.map((s) => ({
+								environment_id: envId,
+								local_session_id: s.localSessionId,
+								project_path: s.projectPath,
+								started_at: s.startedAt.toISOString(),
+								ended_at: s.endedAt?.toISOString() ?? null,
+								last_activity_at: computeLastActivityIso(s),
+								duration_seconds: s.durationSeconds,
+								message_count: s.messageCount,
+								input_tokens: s.inputTokens,
+								output_tokens: s.outputTokens,
+								cache_read_tokens: s.cacheReadTokens,
+								model: s.model,
+								models_used: s.modelsUsed,
+								summary: s.summary,
+								status: "completed",
+								content_hash: s.contentHash ?? null,
+							})),
+						},
+					}),
+				);
+				for (const id of result.needs_content) needsContent.add(id);
+				sessionsCreated += result.created;
+				sessionsUpdated += result.updated;
+				sessionsUnchanged += result.unchanged;
+				// Server flagged these ids as cross-env race casualties
+				// (see SessionBatchResponse.rejected). They are NOT
+				// synced; the caller must skip the lock-write step
+				// below so the next push retries. Pre-fix the absence
+				// from `needs_content` looked like success and we
+				// wrote a stale lock.
+				for (const id of result.rejected ?? []) rejectedIds.add(id);
+			}
+			if (rejectedIds.size > 0) {
+				p.log.warn(
+					`${rejectedIds.size} session${rejectedIds.size === 1 ? "" : "s"} rejected by server (cross-env race) — will retry on next push`,
+				);
+			}
 			sessionSpinner.stop(
 				`Metadata: ${sessionsCreated} new, ${sessionsUpdated} updated, ${sessionsUnchanged} unchanged`,
 			);
@@ -488,10 +522,12 @@ async function pushOneAgent(
 		// sync with the server now: either the server already had matching
 		// content (not in `needs_content`), or we just delivered the bytes
 		// (id in `uploadedIds`). Sessions whose upload failed stay un-cached
-		// so the next push retries.
+		// so the next push retries. Server-rejected ids ALSO stay un-cached
+		// so the cross-env race loser retries on the next push.
 		for (const s of sessions) {
 			if (!s.contentHash) continue;
 			const id = s.localSessionId;
+			if (rejectedIds.has(id)) continue;
 			if (needsContent.has(id) && !uploadedIds.has(id)) continue;
 			sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
 		}
@@ -500,6 +536,22 @@ async function pushOneAgent(
 
 	let skillsCacheSkipped = 0;
 	if (skills.length > 0) {
+		// Phase-2: skill upload uses scope-explicit URLs. Resolve
+		// THIS agent's env's default_scope_id directly — not the
+		// auth key's "most recently active env" heuristic. With a
+		// multi-agent setup on an unbound CLI key, the latter would
+		// route a `claude_code` push under whichever env was
+		// touched last (often `codex` from the previous push),
+		// while sessions still wrote correctly to `envId`. The
+		// `claude_code` daemon would never see these skills because
+		// its reconcile listing is scoped to its own env.
+		if (!envId) {
+			throw new Error(
+				`internal error: skill push without envId for ${agentType}; the early-return guard above should have caught this`,
+			);
+		}
+		const skillScopeId = await fetchScopeIdForEnv(api, envId);
+
 		const skillSpinner = p.spinner();
 		skillSpinner.start(`Hashing ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
@@ -508,19 +560,35 @@ async function pushOneAgent(
 			for (const skill of skills) {
 				// Compute the file-tree hash first. Cheap (no tar build) — if
 				// it matches the cache, we skip the whole upload path.
+				// Cache key is partitioned by `(agentType, skillKey)`: in
+				// multi-agent push, agent A and agent B can have the same
+				// `foo` content under different scopes; a flat skill_key
+				// cache would say "B already in sync" the moment A pushed,
+				// leaving B's scope missing the skill.
 				const computedHash = await computeSkillFolderHash(skill.directoryPath);
-				if (skillsLock.skills[skill.skillKey]?.hash === computedHash) {
+				const cacheK = skillCacheKey(agentType, skill.skillKey);
+				if (skillsLock.skills[cacheK]?.hash === computedHash) {
 					skillsCacheSkipped++;
 					skillSpinner.message(
 						`Hashing skills (${pushed + skipped.length + skillsCacheSkipped}/${skills.length})...`,
 					);
 					continue;
 				}
-				const tarBytes = await tarSkillDir(skill.directoryPath);
+				// Pass skill_key so nested Hermes layouts archive
+				// entries under `category/foo/...` (matching the
+				// cloud key), not just `foo/...` which would
+				// extract to the wrong path on pull.
+				const tarBytes = await tarSkillDir(skill.directoryPath, undefined, skill.skillKey);
 				try {
-					await api.uploadSkill(skill.skillKey, tarBytes, `${skill.skillKey}.tar.gz`, computedHash);
+					await api.uploadSkill(
+						skillScopeId,
+						skill.skillKey,
+						tarBytes,
+						`${skill.skillKey}.tar.gz`,
+						computedHash,
+					);
 					pushed++;
-					skillsLock.skills[skill.skillKey] = { hash: computedHash };
+					skillsLock.skills[cacheK] = { hash: computedHash };
 				} catch (e) {
 					// 413 = upstream (Cloudflare / nginx) refused the body. Almost
 					// always a single oversized skill; skip it and keep going so

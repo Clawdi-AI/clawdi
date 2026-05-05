@@ -23,6 +23,12 @@ class VaultResponse(BaseModel):
     id: str
     slug: str
     name: str
+    # Scope this vault lives in. Required by the dashboard so a JWT
+    # user with the same slug in two scopes (e.g. Personal + env-A)
+    # can disambiguate when issuing slug-keyed sub-requests
+    # (`/api/vault/{slug}/items?scope_id=...`). Without this, a
+    # dashboard mutation could land in the wrong scope's vault.
+    scope_id: str
     created_at: datetime
 
 
