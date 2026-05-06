@@ -1,8 +1,11 @@
 "use client";
 
+import type { components } from "@clawdi/shared/api";
 import { AgentsCard, type AgentTile } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
+
+type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
@@ -31,13 +34,29 @@ export function HostedAgentsSection({
 	selfManagedTiles,
 	envsLoading,
 	selfManagedCount,
+	cloudEnvs,
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
 	selfManagedCount: number;
+	/**
+	 * Cloud-api environments the parent already fetched for the
+	 * self-managed grid. Passed through so hosted tiles can join
+	 * to their daemon-sync row (`config_info.clawdi_cloud_environments`
+	 * → `EnvironmentResponse.id`) and render the same status badge
+	 * as self-managed tiles. Empty/missing envs is harmless — the
+	 * matched-env lookup falls back to null and the tile still renders.
+	 */
+	cloudEnvs: Env[];
 }) {
-	const hosted = useHostedAgentTiles({ enabled: true });
-	const agentTiles: AgentTile[] = [...hosted.tiles, ...selfManagedTiles];
+	const hosted = useHostedAgentTiles({ enabled: true, cloudEnvs });
+	// Drop self-managed tiles whose env is already represented by a
+	// hosted tile. Without this, a hosted pod's cloud-api env (created
+	// by the admin endpoint) would render twice — once with the
+	// "Clawdi" pill and external manage URL, once as a generic
+	// self-managed tile.
+	const dedupedSelfManaged = selfManagedTiles.filter((t) => !hosted.claimedEnvIds.has(t.id));
+	const agentTiles: AgentTile[] = [...hosted.tiles, ...dedupedSelfManaged];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -75,11 +94,16 @@ export function HostedAgentsSection({
 export function HostedSecondaryCTA({
 	selfManagedCount,
 	envsLoading,
+	cloudEnvs,
 }: {
 	selfManagedCount: number;
 	envsLoading: boolean;
+	cloudEnvs: Env[];
 }) {
-	const hosted = useHostedAgentTiles({ enabled: true });
+	// Reuses the same TanStack Query cache (`["hosted-deployments"]`)
+	// as `HostedAgentsSection` so passing cloudEnvs here is just
+	// re-running the join, not re-fetching.
+	const hosted = useHostedAgentTiles({ enabled: true, cloudEnvs });
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.
 	if (envsLoading || hosted.isLoading) return null;

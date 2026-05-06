@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     vault_encryption_key: str = ""
     encryption_key: str = ""  # For JWT signing (MCP proxy tokens)
 
+    # Admin endpoints (POST/DELETE /api/admin/auth/keys) auth.
+    # Empty string disables them entirely (returns 503). Set in
+    # production to a strong secret (e.g. `openssl rand -hex 32`)
+    # to enable batch operations: SaaS migration tooling for live
+    # sync, ops-side revocation, etc. Compared with constant-time
+    # comparison.
+    admin_api_key: str = ""
+
     composio_api_key: str = ""
 
     # File store selection. `local` is the only implementation today; S3/R2

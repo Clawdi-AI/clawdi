@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -147,6 +147,35 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     user = result.scalar_one_or_none()
 
     email = payload.get("email") or payload.get("email_address")
+    name = payload.get("name")
+
+    # Backfill email/name on rows that were lazy-created via the
+    # admin path (`_resolve_or_create_user` in routes/admin.py) — that
+    # path doesn't have a Clerk JWT in scope so the row starts with
+    # email=None / name=None. The first time the user signs into
+    # cloud.clawdi.ai directly, this branch fills them in.
+    #
+    # Idempotent: once filled, subsequent JWTs hit the same row,
+    # see non-null values, and skip the update. Backfill only — we
+    # NEVER overwrite an existing email/name because that would let
+    # a Clerk-side display-name change silently rewrite our row
+    # (Clerk is the source of truth for identity, not display).
+    if user is not None and ((user.email is None and email) or (user.name is None and name)):
+        if user.email is None and email:
+            user.email = email
+        if user.name is None and name:
+            user.name = name
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            # Concurrent backfill — another request won. Re-read the
+            # row (which now carries the winner's values) instead of
+            # 500-ing the user out of their session.
+            await db.rollback()
+            result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+            user = result.scalar_one()
+        logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
 
     # Sub miss + snapshot-rebind opted in: try to attach to an existing
     # snapshot row by verified email. We deliberately fail closed if any
@@ -511,3 +540,27 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )
     return auth
+
+
+async def require_admin_api_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
+    a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
+    + ops-side scripts that don't have a per-user Clerk JWT in scope.
+
+    503 when `admin_api_key` is empty — endpoints are disabled by default
+    for OSS self-hosters who don't need ops tooling. Constant-time
+    comparison once configured (defense against timing oracle even though
+    the gate is binary).
+    """
+    import hmac
+
+    expected = settings.admin_api_key
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "admin endpoints are disabled (admin_api_key not configured)",
+        )
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")
