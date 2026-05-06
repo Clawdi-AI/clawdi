@@ -29,9 +29,10 @@ Safety:
   (orphan blob is cheaper to GC later than a row that lies about its content).
 
 Usage:
-    pdm run python -m scripts.dedupe_resume_chains                    # dry-run, all users
-    pdm run python -m scripts.dedupe_resume_chains --user-id <uuid>   # dry-run, one user
-    pdm run python -m scripts.dedupe_resume_chains --apply            # actually delete
+    # From backend/ — either form works:
+    uv run python scripts/dedupe_resume_chains.py                    # dry-run, all users
+    uv run python -m scripts.dedupe_resume_chains --user-id <uuid>   # dry-run, one user
+    uv run python scripts/dedupe_resume_chains.py --apply            # actually delete
 """
 
 from __future__ import annotations
@@ -44,14 +45,23 @@ import logging
 import sys
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+# Make `app.*` importable when invoked directly as `python scripts/X.py` —
+# in that mode sys.path[0] is the scripts/ dir, which doesn't see the
+# sibling app/ package. The `python -m scripts.X` form doesn't need this
+# (sys.path[0] is the parent), but keeping both forms working is friendlier.
+_REPO_BACKEND = Path(__file__).resolve().parent.parent
+if str(_REPO_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_REPO_BACKEND))
 
-from app.core.database import engine
-from app.models.session import AgentEnvironment, Session
-from app.services.file_store import get_file_store
+from sqlalchemy import delete, select  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: E402
+
+from app.core.database import engine  # noqa: E402
+from app.models.session import AgentEnvironment, Session  # noqa: E402
+from app.services.file_store import get_file_store  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dedupe-resume-chains")
