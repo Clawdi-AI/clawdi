@@ -4,6 +4,7 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
@@ -33,7 +34,17 @@ interface SessionJsonlEntry {
 	sessionId?: string;
 	cwd?: string;
 	version?: string;
+	uuid?: string;
 }
+
+/**
+ * Internal-only intermediate shape produced by `parseSessionJsonl`. The
+ * `uuidSet` lives in a sibling `Map<RawSession, Set<string>>` for the dedupe
+ * pass and never leaves this module — it does NOT become part of `RawSession`.
+ */
+type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath"> & {
+	uuidSet: Set<string>;
+};
 
 export class ClaudeCodeAdapter implements AgentAdapter {
 	readonly agentType = "claude_code" as const;
@@ -74,12 +85,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return absPath.replace(/\//g, "-");
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
-		if (!existsSync(projectsDir())) return [];
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
+		if (!existsSync(projectsDir())) return { sessions: [], dedupedCount: 0 };
 
 		const { projectFilter } = opts;
 
 		const sessions: RawSession[] = [];
+		const uuidsBySession = new Map<RawSession, Set<string>>();
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
 			d.isDirectory(),
 		);
@@ -117,20 +129,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 						if (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)) continue;
 					}
 
-					sessions.push({ ...parsed, localSessionId: sessionId, rawFilePath: filePath });
+					const { uuidSet, ...sessionFields } = parsed;
+					const session: RawSession = {
+						...sessionFields,
+						localSessionId: sessionId,
+						rawFilePath: filePath,
+					};
+					sessions.push(session);
+					uuidsBySession.set(session, uuidSet);
 				} catch {
 					// Skip unparseable sessions
 				}
 			}
 		}
 
-		return sessions;
+		// Dedupe resume chains. The Map is module-scoped only — it goes out of
+		// scope when this function returns and is GC'd, so uuid data never
+		// leaks into RawSession or anywhere downstream.
+		return dedupeResumeChains(sessions, uuidsBySession);
 	}
 
-	private parseSessionJsonl(
-		filePath: string,
-		_projectDirName: string,
-	): Omit<RawSession, "localSessionId" | "rawFilePath"> | null {
+	private parseSessionJsonl(filePath: string, _projectDirName: string): ParsedSession | null {
 		const content = readFileSync(filePath, "utf-8");
 		const lines = content.split("\n").filter(Boolean);
 		if (lines.length < 3) return null;
@@ -145,12 +164,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		let projectPath: string | null = null;
 		let firstUserMessage: string | null = null;
 		const messages: SessionMessage[] = [];
+		const uuidSet = new Set<string>();
 
 		for (const line of lines) {
 			try {
 				const entry: SessionJsonlEntry = JSON.parse(line);
 				const msg = entry.message;
 				const role = msg?.role;
+
+				if (entry.uuid) uuidSet.add(entry.uuid);
 
 				if (entry.timestamp) {
 					const ts = new Date(entry.timestamp);
@@ -230,6 +252,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			summary: firstUserMessage,
 			messages,
 			durationSeconds,
+			uuidSet,
 		};
 	}
 
@@ -324,4 +347,70 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
 		return ["claude", ...args];
 	}
+}
+
+/**
+ * Dedupe resume chains: when `claude --resume` produces a new sessionId file
+ * whose message-uuid set strictly contains an older file's, the older one is
+ * a redundant predecessor (its content is fully embedded in the newer file
+ * via Claude Code's file-history-snapshot replay). We drop the predecessor
+ * from the upload set and keep the longest leaf.
+ *
+ * Multi-link chains (A ⊂ B ⊂ C) collapse in a single pass by always linking
+ * each predecessor to the LARGEST proper superset in its project group.
+ *
+ * Sessions with fewer than 10 uuids are excluded from the predecessor side
+ * of the comparison — too short to reliably tell "real subset" from
+ * "happens to share a few system uuids".
+ */
+function dedupeResumeChains(
+	sessions: RawSession[],
+	uuids: Map<RawSession, Set<string>>,
+): CollectSessionsResult {
+	// Group by projectPath — resume chains are always within a single cwd.
+	const byProject = new Map<string, RawSession[]>();
+	for (const s of sessions) {
+		const key = s.projectPath ?? "<no-project>";
+		const arr = byProject.get(key);
+		if (arr) arr.push(s);
+		else byProject.set(key, [s]);
+	}
+
+	const dedupedIds = new Set<string>();
+
+	for (const group of byProject.values()) {
+		if (group.length < 2) continue;
+		// Sort by uuid count ascending so we scan smaller candidates first.
+		const candidates = group
+			.filter((s) => (uuids.get(s)?.size ?? 0) >= 10)
+			.sort((a, b) => (uuids.get(a)?.size ?? 0) - (uuids.get(b)?.size ?? 0));
+
+		for (let i = 0; i < candidates.length; i++) {
+			const a = candidates[i];
+			const aSet = uuids.get(a);
+			if (!aSet) continue;
+			// Find the LARGEST b that strictly contains a — handles A⊂B⊂C
+			// by deduping both A and B into C in a single pass.
+			let bestJ = -1;
+			for (let j = i + 1; j < candidates.length; j++) {
+				const b = candidates[j];
+				const bSet = uuids.get(b);
+				if (!bSet || bSet.size <= aSet.size) continue;
+				let isSubset = true;
+				for (const u of aSet) {
+					if (!bSet.has(u)) {
+						isSubset = false;
+						break;
+					}
+				}
+				if (isSubset) bestJ = j;
+			}
+			if (bestJ >= 0) dedupedIds.add(a.localSessionId);
+		}
+	}
+
+	return {
+		sessions: sessions.filter((s) => !dedupedIds.has(s.localSessionId)),
+		dedupedCount: dedupedIds.size,
+	};
 }

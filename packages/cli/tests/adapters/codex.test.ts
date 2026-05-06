@@ -42,7 +42,7 @@ describe("CodexAdapter.detect", () => {
 describe("CodexAdapter.collectSessions", () => {
 	it("parses the fixture session with session_meta + turn_context + messages + token_count", async () => {
 		const a = new CodexAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		expect(sessions).toHaveLength(1);
 		const s = sessions[0]!;
 		expect(s).toMatchObject({
@@ -66,19 +66,23 @@ describe("CodexAdapter.collectSessions", () => {
 
 	it("filters by projectFilter", async () => {
 		const a = new CodexAdapter();
-		expect(await a.collectSessions({ projectFilter: "/Users/fixture/project" })).toHaveLength(1);
-		expect(await a.collectSessions({ projectFilter: "/Users/other/project" })).toHaveLength(0);
+		expect(
+			(await a.collectSessions({ projectFilter: "/Users/fixture/project" })).sessions,
+		).toHaveLength(1);
+		expect(
+			(await a.collectSessions({ projectFilter: "/Users/other/project" })).sessions,
+		).toHaveLength(0);
 	});
 
 	it("returns empty when sessions dir is missing", async () => {
 		rmSync(join(tmpHome, ".codex", "sessions"), { recursive: true, force: true });
 		const a = new CodexAdapter();
-		expect(await a.collectSessions()).toEqual([]);
+		expect((await a.collectSessions()).sessions).toEqual([]);
 	});
 
 	it("summary skips <environment_context> prefix user messages", async () => {
 		const a = new CodexAdapter();
-		const s = (await a.collectSessions())[0]!;
+		const s = (await a.collectSessions()).sessions[0]!;
 		// First non-environment_context user message is "hello"
 		expect(s.summary).toBe("hello");
 	});

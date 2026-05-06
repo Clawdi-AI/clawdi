@@ -56,7 +56,11 @@ export async function sessionList(opts: SessionListOpts) {
 		if (!adapter) continue;
 		let sessions: RawSession[];
 		try {
-			sessions = await adapter.collectSessions({ projectFilter });
+			// `list` command silently benefits from dedupe — no user-facing
+			// counter needed since the listing scope itself is dedupe's
+			// purpose (don't show users two near-identical rows).
+			const result = await adapter.collectSessions({ projectFilter });
+			sessions = result.sessions;
 		} catch {
 			continue;
 		}

@@ -106,8 +106,9 @@ describe("OpenClawAdapter.detect", () => {
 describe("OpenClawAdapter.collectSessions", () => {
 	it("parses the fixture session with index metadata + transcript messages", async () => {
 		const a = new OpenClawAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions, dedupedCount } = await a.collectSessions();
 		expect(sessions).toHaveLength(1);
+		expect(dedupedCount).toBe(0);
 		const s = sessions[0]!;
 		expect(s).toMatchObject({
 			localSessionId: "oc-session-001",
@@ -129,14 +130,18 @@ describe("OpenClawAdapter.collectSessions", () => {
 
 	it("uses displayName as summary", async () => {
 		const a = new OpenClawAdapter();
-		const s = (await a.collectSessions())[0]!;
+		const s = (await a.collectSessions()).sessions[0]!;
 		expect(s.summary).toBe("Fixture session");
 	});
 
 	it("filters by projectFilter matching acp.cwd", async () => {
 		const a = new OpenClawAdapter();
-		expect(await a.collectSessions({ projectFilter: "/Users/fixture/project" })).toHaveLength(1);
-		expect(await a.collectSessions({ projectFilter: "/Users/other/project" })).toHaveLength(0);
+		expect(
+			(await a.collectSessions({ projectFilter: "/Users/fixture/project" })).sessions,
+		).toHaveLength(1);
+		expect(
+			(await a.collectSessions({ projectFilter: "/Users/other/project" })).sessions,
+		).toHaveLength(0);
 	});
 
 	it("returns empty when sessions.json is missing", async () => {
@@ -148,7 +153,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		// accident.)
 		rmSync(join(tmpHome, ".openclaw", "agents", "main"), { recursive: true, force: true });
 		const a = new OpenClawAdapter();
-		expect(await a.collectSessions()).toEqual([]);
+		expect((await a.collectSessions()).sessions).toEqual([]);
 	});
 
 	it("scans every agents/<id>/ subdir (issue #28)", async () => {
@@ -156,7 +161,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		// are picked up without setting OPENCLAW_AGENT_ID.
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		const a = new OpenClawAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		const ids = sessions.map((s) => s.localSessionId).sort();
 		expect(ids).toEqual(["oc-financial-001", "oc-session-001"]);
 	});
@@ -204,7 +209,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		);
 
 		const a = new OpenClawAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		expect(sessions).toHaveLength(1);
 		const s = sessions[0]!;
 		// localSessionId must be the UUID, not the composite index key.
@@ -217,7 +222,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		process.env.OPENCLAW_AGENT_ID = "financial";
 		const a = new OpenClawAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["oc-financial-001"]);
 	});
 });

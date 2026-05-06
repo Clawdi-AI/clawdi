@@ -4,6 +4,7 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
@@ -151,9 +152,9 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
 		const agentDirs = listAgentDirs();
-		if (agentDirs.length === 0) return [];
+		if (agentDirs.length === 0) return { sessions: [], dedupedCount: 0 };
 
 		const { projectFilter } = opts;
 		let absFilter: string | null = null;
@@ -293,7 +294,9 @@ export class OpenClawAdapter implements AgentAdapter {
 			}
 		}
 
-		return sessions;
+		// OpenClaw stores one session per ACP transcript with stable sessionIds
+		// — no resume-chain duplication to dedupe.
+		return { sessions, dedupedCount: 0 };
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
