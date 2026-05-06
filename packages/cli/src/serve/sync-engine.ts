@@ -658,7 +658,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// + persisted lock.
 	const onSessionsStable = async () => {
 		try {
-			const sessions = await opts.adapter.collectSessions();
+			const { sessions } = await opts.adapter.collectSessions();
 			let enqueued = 0;
 			for (const s of sessions) {
 				const hash = createHash("sha256").update(JSON.stringify(s.messages)).digest("hex");
@@ -1202,7 +1202,7 @@ async function uploadSessionFromQueue(
 	// content. Filter to the single local_session_id we were asked
 	// to push; if the user deleted the session between enqueue and
 	// drain, we just no-op.
-	const sessions = await opts.adapter.collectSessions();
+	const { sessions } = await opts.adapter.collectSessions();
 	const session = sessions.find((s) => s.localSessionId === item.local_session_id);
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });

@@ -36,7 +36,7 @@ describe("HermesAdapter.detect", () => {
 describe("HermesAdapter.collectSessions", () => {
 	it("returns the plain-string-model session with correct token counters", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		const plain = sessions.find((s) => s.localSessionId === "s-plain");
 		expect(plain).toBeDefined();
 		expect(plain).toMatchObject({
@@ -57,7 +57,7 @@ describe("HermesAdapter.collectSessions", () => {
 
 	it("parses a JSON-blob model field via parseModelField", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json).toBeDefined();
 		expect(json?.model).toBe("gpt-5.3-codex");
@@ -66,26 +66,26 @@ describe("HermesAdapter.collectSessions", () => {
 
 	it("skips sessions with no extractable messages", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		expect(sessions.find((s) => s.localSessionId === "s-empty")).toBeUndefined();
 	});
 
 	it("orders sessions by started_at DESC", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		// s-json started later than s-plain; s-empty is filtered out
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["s-json", "s-plain"]);
 	});
 
 	it("projectPath is null for every Hermes session (by design)", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		for (const s of sessions) expect(s.projectPath).toBeNull();
 	});
 
 	it("rawFilePath includes the session id anchor", async () => {
 		const a = new HermesAdapter();
-		const sessions = await a.collectSessions();
+		const { sessions } = await a.collectSessions();
 		expect(sessions[0]?.rawFilePath).toContain("state.db#");
 	});
 });

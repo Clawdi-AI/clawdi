@@ -4,6 +4,7 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
@@ -92,12 +93,12 @@ export class HermesAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(_opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
+	async collectSessions(_opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
 		// Hermes' SQLite is a single file with no per-row stat info, so we
 		// always scan the whole `sessions` table. Cost is negligible
 		// (dozens to hundreds of rows). `projectFilter` has no analogue
 		// in Hermes' data model and is silently ignored.
-		if (!existsSync(stateDbPath())) return [];
+		if (!existsSync(stateDbPath())) return { sessions: [], dedupedCount: 0 };
 
 		const db = await openHermesDb(stateDbPath());
 		try {
@@ -185,7 +186,9 @@ export class HermesAdapter implements AgentAdapter {
 				});
 			}
 
-			return sessions;
+			// Hermes stores one row per session with a stable id — no resume-
+			// chain duplication to dedupe.
+			return { sessions, dedupedCount: 0 };
 		} finally {
 			db.close();
 		}

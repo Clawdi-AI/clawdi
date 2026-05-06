@@ -4,6 +4,7 @@ import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
+	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
@@ -105,8 +106,8 @@ export class CodexAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<RawSession[]> {
-		if (!existsSync(sessionsDir())) return [];
+	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
+		if (!existsSync(sessionsDir())) return { sessions: [], dedupedCount: 0 };
 
 		const { projectFilter } = opts;
 
@@ -230,7 +231,10 @@ export class CodexAdapter implements AgentAdapter {
 			});
 		}
 
-		return sessions;
+		// Codex stores long-conversation history via in-file `compacted`
+		// entries rather than spawning new sessionId files, so it cannot
+		// produce the resume-chain duplication that ClaudeCodeAdapter dedupes.
+		return { sessions, dedupedCount: 0 };
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {

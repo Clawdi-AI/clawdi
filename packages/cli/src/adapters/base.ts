@@ -42,6 +42,21 @@ export interface CollectSessionsOptions {
 	projectFilter?: string;
 }
 
+/**
+ * Return shape of `AgentAdapter.collectSessions`.
+ *
+ * `dedupedCount` is non-zero only for `ClaudeCodeAdapter`, which dedupes
+ * resume chains: when a newer session's message-uuid set strictly contains
+ * an older one's, the older one is recognized as a resume predecessor and
+ * dropped from the result. Other adapters return `dedupedCount: 0` because
+ * their storage formats don't produce cross-file duplication (e.g. Codex
+ * keeps long-conversation history in-file via `compacted` entries).
+ */
+export interface CollectSessionsResult {
+	sessions: RawSession[];
+	dedupedCount: number;
+}
+
 export interface RawSkill {
 	skillKey: string;
 	name: string;
@@ -57,7 +72,7 @@ export interface AgentAdapter {
 	detect(): Promise<boolean>;
 	getVersion(): Promise<string | null>;
 
-	collectSessions(opts?: CollectSessionsOptions): Promise<RawSession[]>;
+	collectSessions(opts?: CollectSessionsOptions): Promise<CollectSessionsResult>;
 	collectSkills(): Promise<RawSkill[]>;
 	/** Enumerate skill_keys present on disk WITHOUT reading SKILL.md
 	 * content. Used by the daemon's hot-path rescan / boot listing

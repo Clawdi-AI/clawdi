@@ -261,17 +261,24 @@ async function pushOneAgent(
 
 	let sessions: RawSession[] = [];
 	let skills: RawSkill[] = [];
+	let dedupedCount = 0;
 
 	const scanSpinner = p.spinner();
 	scanSpinner.start("Scanning local data...");
 	if (modules.includes("sessions")) {
-		sessions = await adapter.collectSessions({ projectFilter });
+		const result = await adapter.collectSessions({ projectFilter });
+		sessions = result.sessions;
+		dedupedCount = result.dedupedCount;
 	}
 	if (modules.includes("skills")) {
 		skills = await adapter.collectSkills();
 	}
+	const dedupeNote =
+		dedupedCount > 0
+			? ` (deduped ${dedupedCount} resume chain${dedupedCount === 1 ? "" : "s"})`
+			: "";
 	scanSpinner.stop(
-		`Scanned ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${skills.length} skill${skills.length === 1 ? "" : "s"}`,
+		`Scanned ${sessions.length} session${sessions.length === 1 ? "" : "s"}${dedupeNote}, ${skills.length} skill${skills.length === 1 ? "" : "s"}`,
 	);
 
 	// Fingerprint each session's content. The server's batch endpoint
