@@ -7,17 +7,15 @@ chains client-side and never uploads the predecessor — but rows uploaded
 before that fix landed in production are still around. This script cleans
 them up.
 
-Algorithm differs slightly from the CLI:
-    The CLI compares jsonl-line `uuid` sets across files. The R2 blob the
-    server stores is the CLI-processed `messages` array, which has no uuid
-    field. So this script compares the **ordered messages content** instead:
-    A is a resume predecessor of B iff
-        len(A.messages) < len(B.messages)
-        AND A.messages[i].(role, content) == B.messages[i].(role, content)
-            for every i in [0, len(A.messages))
-    i.e. A's messages are a strict prefix of B's. This is stricter than the
-    CLI's set-subset check, which is fine for one-time cleanup — false
-    positives are even less likely than at the CLI layer.
+Algorithm mirrors the CLI:
+    The CLI compares jsonl-line `uuid` sets across files (set subset, no
+    ordering required). The R2 blob the server stores is the CLI-processed
+    `messages` array with no uuid field, so we substitute a per-message
+    fingerprint over (role, content, model). A is a resume predecessor of B
+    iff fingerprint(A.messages) is a strict set-subset of fingerprint(B).
+    Order is not required — Claude Code's file-history-snapshot may reorder
+    or skip the occasional line, but the union of message fingerprints in
+    the predecessor must still appear in the leaf.
 
 Safety:
 - Dry-run by default; `--apply` is required to actually delete rows + R2 objects.
@@ -101,14 +99,15 @@ def fingerprint_messages(messages: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def is_strict_prefix(short: list[str], long: list[str]) -> bool:
-    """True iff `short` is a strict prefix (shorter) of `long`."""
-    if len(short) >= len(long):
-        return False
-    for i, fp in enumerate(short):
-        if fp != long[i]:
-            return False
-    return True
+def is_strict_subset(small: set[str], large: set[str]) -> bool:
+    """True iff `small` is a strict subset of `large` (set semantics, no order).
+
+    Mirrors the CLI's `dedupeResumeChains` logic. Resume snapshots may
+    reorder or selectively replay lines on resume — what stays invariant
+    is the union of distinct message fingerprints, which appears in every
+    descendant.
+    """
+    return len(small) < len(large) and small.issubset(large)
 
 
 async def find_predecessors_in_group(
@@ -124,7 +123,9 @@ async def find_predecessors_in_group(
         return []
 
     # Pull each session's messages from the file store. Skip rows we can't read.
-    fps_by_id: dict[uuid.UUID, list[str]] = {}
+    # Store as fingerprint *sets* — set semantics mirror the CLI's uuid-set
+    # subset check (`for u of aSet if !bSet.has(u)`).
+    fp_sets_by_id: dict[uuid.UUID, set[str]] = {}
     for row in rows:
         if not row.file_key:
             continue
@@ -140,29 +141,33 @@ async def find_predecessors_in_group(
             continue
         if not isinstance(messages, list):
             continue
-        fps_by_id[row.id] = fingerprint_messages(messages)
+        fp_sets_by_id[row.id] = set(fingerprint_messages(messages))
 
-    # Sort candidates ascending by length so smaller checks come first.
+    # Sort candidates ascending by set size so smaller checks come first.
     candidates = sorted(
-        (r for r in rows if r.id in fps_by_id and len(fps_by_id[r.id]) >= MIN_PREDECESSOR_MESSAGES),
-        key=lambda r: len(fps_by_id[r.id]),
+        (
+            r
+            for r in rows
+            if r.id in fp_sets_by_id and len(fp_sets_by_id[r.id]) >= MIN_PREDECESSOR_MESSAGES
+        ),
+        key=lambda r: len(fp_sets_by_id[r.id]),
     )
 
     pairs: list[tuple[Session, Session]] = []
     for i, a in enumerate(candidates):
-        a_fps = fps_by_id[a.id]
-        # Find the LARGEST b that strictly prefix-contains a — handles
-        # A⊂B⊂C by linking both A and B to C in a single pass.
+        a_set = fp_sets_by_id[a.id]
+        # Find the LARGEST b that strictly contains a — handles A⊂B⊂C by
+        # linking both A and B to C in a single pass.
         best_leaf: Session | None = None
-        best_len = 0
+        best_size = 0
         for j in range(i + 1, len(candidates)):
             b = candidates[j]
-            b_fps = fps_by_id[b.id]
-            if len(b_fps) <= len(a_fps):
+            b_set = fp_sets_by_id[b.id]
+            if len(b_set) <= len(a_set):
                 continue
-            if is_strict_prefix(a_fps, b_fps) and len(b_fps) > best_len:
+            if is_strict_subset(a_set, b_set) and len(b_set) > best_size:
                 best_leaf = b
-                best_len = len(b_fps)
+                best_size = len(b_set)
         if best_leaf is not None:
             pairs.append((a, best_leaf))
 
