@@ -36,10 +36,10 @@
 		"prepare": "lefthook install"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.12",
+		"@biomejs/biome": "^2.4.14",
 		"lefthook": "^2.1.6",
 		"openapi-typescript": "^7.13.0",
-		"turbo": "^2.9.6",
+		"turbo": "^2.9.9",
 		"typescript": "catalog:"
 	},
 	"engines": {
