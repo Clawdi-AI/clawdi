@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teardown } from "../../src/commands/teardown";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
@@ -20,6 +20,8 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origPath: string | undefined;
+let origPathSet = false;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 let origIsTTY: boolean | undefined;
 
@@ -31,6 +33,7 @@ function setup(agent: AgentKey): {
 	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
+	process.env.HERMES_HOME = join(tmpHome, ".hermes");
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
 
 	const envPath = join(tmpHome, ".clawdi", "environments", `${AGENT_TYPE[agent]}.json`);
@@ -53,6 +56,12 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	if (origPathSet) {
+		if (origPath !== undefined) process.env.PATH = origPath;
+		else delete process.env.PATH;
+		origPath = undefined;
+		origPathSet = false;
+	}
 	restoreAgentHomeOverrides(origHomeOverrides);
 	origHomeOverrides = {};
 	process.exitCode = 0;
@@ -71,6 +80,27 @@ function makeNonInteractive() {
 	const desc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 	origIsTTY = desc?.value;
 	Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+}
+
+function installOpenClawStub(): string {
+	if (!origPathSet) {
+		origPath = process.env.PATH;
+		origPathSet = true;
+	}
+	const stubDir = join(tmpHome, "bin");
+	const argsPath = join(tmpHome, "openclaw-mcp-args");
+	mkdirSync(stubDir, { recursive: true });
+	const openclawPath = join(stubDir, "openclaw");
+	writeFileSync(
+		openclawPath,
+		'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
+		{
+			mode: 0o755,
+		},
+	);
+	chmodSync(openclawPath, 0o755);
+	process.env.PATH = `${stubDir}:${origPath ?? ""}`;
+	return argsPath;
 }
 
 describe("teardown — basic round-trip per agent", () => {
@@ -99,12 +129,13 @@ describe("teardown — basic round-trip per agent", () => {
 		expect(existsSync(skillPath)).toBe(false);
 	});
 
-	it("OpenClaw: removes env file + bundled skill", async () => {
+	it("OpenClaw: removes env file + bundled skill + MCP registration", async () => {
 		const { envPath, skillPath } = setup("openclaw");
-		// OpenClaw has no native MCP, so keepMcp is moot — should still pass cleanly.
+		const argsPath = installOpenClawStub();
 		await teardown({ agent: "openclaw", yes: true });
 		expect(existsSync(envPath)).toBe(false);
 		expect(existsSync(skillPath)).toBe(false);
+		expect(readFileSync(argsPath, "utf-8").trim().split("\n")).toEqual(["mcp", "unset", "clawdi"]);
 	});
 });
 
@@ -223,5 +254,31 @@ describe("teardown — Hermes config.yaml MCP removal", () => {
 		const after = readFileSync(configPath, "utf-8");
 		// Untouched.
 		expect(after).toContain("  other:");
+	});
+
+	it("removes stale clawdi-mcp HTTP entries too", async () => {
+		setup("hermes");
+		const configPath = join(tmpHome, ".hermes", "config.yaml");
+		writeFileSync(
+			configPath,
+			[
+				"mcp_servers:",
+				"  clawdi-mcp:",
+				"    url: https://backend.example.test/composio/mcp",
+				"    headers:",
+				"      Authorization: placeholder",
+				"  other:",
+				'    command: "other"',
+				"",
+			].join("\n"),
+		);
+
+		await teardown({ agent: "hermes", yes: true });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(after).not.toContain("clawdi-mcp:");
+		expect(after).not.toContain("https://backend.example.test/composio/mcp");
+		expect(after).toContain("  other:");
+		expect(after).toContain('    command: "other"');
 	});
 });

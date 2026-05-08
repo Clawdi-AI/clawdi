@@ -66,6 +66,10 @@ beforeEach(() => {
 	const stubDir = join(home, "bin");
 	mkdirSync(stubDir, { recursive: true });
 	writeExecutable(join(stubDir, "codex"), "#!/bin/sh\nexit 0\n");
+	writeExecutable(
+		join(stubDir, "openclaw"),
+		'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
+	);
 	writeExecutable(join(stubDir, "systemctl"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(join(stubDir, "launchctl"), "#!/bin/sh\nexit 0\n");
 	process.env.PATH = `${stubDir}:${envSnapshot.PATH ?? ""}`;
@@ -138,6 +142,117 @@ describe("setup daemon install", () => {
 	});
 });
 
+describe("setup Hermes MCP registration", () => {
+	it("replaces cloud HTTP clawdi-mcp with canonical stdio clawdi", async () => {
+		const configPath = prepareHermesConfig(
+			[
+				"model:",
+				"  provider: custom",
+				"mcp_servers:",
+				"  clawdi-mcp:",
+				"    url: https://backend.example.test/composio/mcp",
+				"    headers:",
+				"      Authorization: placeholder",
+				"",
+			].join("\n"),
+		);
+		installEnvironmentMock("env-hermes-test");
+
+		await setup({ agent: "hermes", yes: true, daemon: false });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(after).not.toContain("  clawdi-mcp:");
+		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
+		expect(after).not.toContain("      Authorization: placeholder");
+		expect(after).toContain("  clawdi:");
+		expect(after).toContain('    command: "clawdi"');
+		expect(after).toContain('    args: ["mcp"]');
+	});
+
+	it("normalizes a mixed clawdi block back to stdio-only", async () => {
+		const configPath = prepareHermesConfig(
+			[
+				"mcp_servers:",
+				"  clawdi:",
+				'    command: "clawdi"',
+				'    args: ["mcp"]',
+				"    url: https://backend.example.test/composio/mcp",
+				"    headers:",
+				"      Authorization: placeholder",
+				"  other:",
+				'    command: "other"',
+				"",
+			].join("\n"),
+		);
+		installEnvironmentMock("env-hermes-test");
+
+		await setup({ agent: "hermes", yes: true, daemon: false });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(after).toContain("  clawdi:");
+		expect(after).toContain('    command: "clawdi"');
+		expect(after).toContain('    args: ["mcp"]');
+		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
+		expect(after).not.toContain("    headers:");
+		expect(after).toContain("  other:");
+		expect(after).toContain('    command: "other"');
+	});
+
+	it("removes duplicate HTTP sibling when stdio clawdi is already present", async () => {
+		const configPath = prepareHermesConfig(
+			[
+				"mcp_servers:",
+				"  clawdi-mcp:",
+				"    url: https://backend.example.test/composio/mcp",
+				"    headers:",
+				"      Authorization: placeholder",
+				"  clawdi:",
+				'    command: "clawdi"',
+				'    args: ["mcp"]',
+				"  other:",
+				'    command: "other"',
+				"",
+			].join("\n"),
+		);
+		installEnvironmentMock("env-hermes-test");
+
+		await setup({ agent: "hermes", yes: true, daemon: false });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(after).not.toContain("  clawdi-mcp:");
+		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
+		expect(after.match(/^ {2}clawdi:/gm)?.length).toBe(1);
+		expect(after).toContain('    command: "clawdi"');
+		expect(after).toContain('    args: ["mcp"]');
+		expect(after).toContain("  other:");
+		expect(after).toContain('    command: "other"');
+	});
+
+	it("keeps installing legacy stdio for local Hermes configs without HTTP MCP", async () => {
+		const configPath = prepareHermesConfig(["model:", "  provider: custom", ""].join("\n"));
+		installEnvironmentMock("env-hermes-test");
+
+		await setup({ agent: "hermes", yes: true, daemon: false });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(after).toContain("mcp_servers:");
+		expect(after).toContain("  clawdi:");
+		expect(after).toContain('    command: "clawdi"');
+		expect(after).toContain('    args: ["mcp"]');
+	});
+});
+
+describe("setup OpenClaw MCP registration", () => {
+	it("registers canonical stdio clawdi through OpenClaw MCP config", async () => {
+		installEnvironmentMock("env-openclaw-test");
+
+		await setup({ agent: "openclaw", yes: true, daemon: false });
+
+		const args = readFileSync(join(home, "openclaw-mcp-args"), "utf-8").trim().split("\n");
+		expect(args).toEqual(["mcp", "set", "clawdi", '{"command":"clawdi","args":["mcp"]}']);
+	});
+});
+
 function installEnvironmentMock(envId: string) {
 	const mock = mockFetch([
 		{
@@ -160,6 +275,15 @@ function installFailingEnvironmentMock() {
 	]);
 	restoreFetch = mock.restore;
 	return mock;
+}
+
+function prepareHermesConfig(configYaml: string): string {
+	const hermesHome = join(home, ".hermes");
+	process.env.HERMES_HOME = hermesHome;
+	const configPath = join(hermesHome, "config.yaml");
+	mkdirSync(hermesHome, { recursive: true });
+	writeFileSync(configPath, configYaml);
+	return configPath;
 }
 
 function seedAuth(): void {

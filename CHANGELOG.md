@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.3
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.3
+
+Package: `clawdi@0.8.3`
+
+### Fixed
+
+- Agent MCP setup now converges on the local `clawdi mcp` stdio server for
+  Hermes and OpenClaw. Hermes setup removes stale `clawdi-mcp` HTTP entries and
+  mixed HTTP/stdio blocks that could create duplicate or confusing Clawdi tool
+  namespaces; OpenClaw setup now writes the matching `clawdi` MCP server through
+  `openclaw mcp set`.
+
 ## Clawdi CLI v0.8.2
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.2
