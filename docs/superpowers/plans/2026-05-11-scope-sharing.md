@@ -954,9 +954,11 @@ Create `backend/tests/test_owner_handle.py`:
 ```python
 """Owner-handle resolution — see spec § 11.2.
 
-Definition: handle = kebab(users.display_name) + "-" + user.id.hex[:4].
-Always suffixed for guaranteed global uniqueness. Requires display_name
-to be set (callers gate on this before invoking).
+Definition: handle = kebab(users.name) + "-" + user.id.hex[:4].
+Always suffixed for guaranteed global uniqueness. Requires
+`users.name` (the user-visible display name column) to be non-NULL
+and to kebab to a non-empty string — callers must gate on this
+before invoking (share-link create returns 409 `display_name_required`).
 """
 
 import uuid
@@ -981,7 +983,7 @@ def test_handle_combines_name_kebab_with_user_id_hex_suffix():
     assert resolve_owner_handle(u) == "alice-chen-a3b4"
 
 
-def test_handle_strips_non_alnum_from_display_name():
+def test_handle_strips_non_alnum_from_name():
     u = _user(name="Bob (Robert) Smith!", user_id_hex="0102030400000000000000000000beef")
     assert resolve_owner_handle(u) == "bob-robert-smith-0102"
 
@@ -1001,17 +1003,17 @@ def test_handle_lowercases_and_kebabs_unicode_friendly():
     assert resolve_owner_handle(u) == "alice-chen-cafe"
 
 
-def test_handle_raises_when_display_name_empty():
+def test_handle_raises_when_user_name_empty():
     """Callers (share-link create + invitation accept) are responsible
-    for gating on display_name presence (409 display_name_required).
+    for gating on `users.name` presence (409 display_name_required).
     The helper assumes it's been called only on users who pass that gate."""
     u = _user(name=None, user_id_hex="0102030400000000000000000000beef")
     with pytest.raises(ValueError):
         resolve_owner_handle(u)
 
 
-def test_handle_raises_when_display_name_only_punctuation():
-    """A display_name like `???` kebabs to empty string. Reject so we
+def test_handle_raises_when_user_name_only_punctuation():
+    """A name like `???` kebabs to empty string. Reject so we
     don't fall through to a handle that's just `-0102` (no name part)."""
     u = _user(name="!!!", user_id_hex="0102030400000000000000000000beef")
     with pytest.raises(ValueError):
@@ -1069,12 +1071,13 @@ def resolve_owner_handle(user: User) -> str:
     """Compute the stable owner handle for `user`.
 
     Definition (spec § 11.2):
-        handle = kebab(user.display_name) + "-" + user.id.hex[:4]
+        handle = kebab(user.name) + "-" + user.id.hex[:4]
 
-    `display_name` must be non-empty AND kebab to non-empty. Callers
+    `user.name` (the user-visible display name; the codebase column is
+    just `name`) must be non-empty AND kebab to non-empty. Callers
     must gate on that BEFORE calling — share-link create returns 409
     `display_name_required`; invitation accept refuses (the inviter
-    couldn't have invited a user without a display_name in the
+    couldn't have invited a user without a name in the
     realistic flow). The helper raises ValueError if invariant is
     violated to fail loudly rather than silently producing a
     handle like `-a3b4`.
@@ -1086,14 +1089,14 @@ def resolve_owner_handle(user: User) -> str:
     """
     if not user.name:
         raise ValueError(
-            f"user {user.id} has no display_name; "
-            "share-link create must gate on this before calling"
+            f"user {user.id} has no users.name set; "
+            "callers must gate on display name presence before calling"
         )
     name_part = _kebab(user.name)
     if not name_part:
         raise ValueError(
-            f"user {user.id} display_name kebabs to empty string; "
-            "user must set a display_name with at least one alphanumeric character"
+            f"user {user.id} users.name kebabs to empty string; "
+            "user must set a display name with at least one alphanumeric character"
         )
     suffix = user.id.hex[:_USER_ID_SUFFIX_LEN]
     return f"{name_part}-{suffix}"
@@ -1751,7 +1754,7 @@ async def create_share_link(
     """Generate a new share link for a scope.
 
     - Raw token returned ONCE; server stores only the hash.
-    - Gate on owner having `display_name` set (spec § 4.5 + § 11.2).
+    - Gate on owner having `users.name` set (spec § 4.5 + § 11.2).
       The handle is necessarily revealed to recipients; we don't fall
       back to email local-part because that leaks PII.
     - Resolves + freezes `resolved_owner_handle` on the link row at
@@ -2135,11 +2138,13 @@ async def test_invite_existing_pending_409(
 Append to `sharing.py`:
 
 ```python
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
 from app.models.user import User
 from app.schemas.sharing import InvitationCreate, InvitationResponse
-from sqlalchemy.exc import IntegrityError
 
 
 @router.post("/{scope_id}/invitations", response_model=InvitationResponse)
@@ -2162,18 +2167,15 @@ async def create_invitation(
             {"error": "already_owner", "message": "You're already the owner."},
         )
 
-    # Look up registered user.
-    invitee_result = await db.execute(
-        select(User).where(User.email == target_email)
-    )
-    invitee = invitee_result.scalar_one_or_none()
-    if invitee is None:
-        # Case-insensitive fallback (emails stored as-typed).
-        invitee_result = await db.execute(
-            select(User).where(User.email.ilike(target_email))
+    # Look up registered user(s). `users.email` is NOT unique in the
+    # schema (production permits duplicates via snapshot import) so
+    # we must handle 0 / 1 / N matches explicitly. See spec § 7.1.
+    invitee_rows = (
+        await db.execute(
+            select(User).where(func.lower(User.email) == target_email)
         )
-        invitee = invitee_result.scalar_one_or_none()
-    if invitee is None:
+    ).scalars().all()
+    if len(invitee_rows) == 0:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             {
@@ -2184,6 +2186,21 @@ async def create_invitation(
                 ),
             },
         )
+    if len(invitee_rows) > 1:
+        # Privacy-safe failure: silently picking one of N would invite
+        # the wrong account. Force the owner to use a share link
+        # (which carries explicit identity at redeem time).
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "ambiguous_email",
+                "message": (
+                    "Multiple accounts match that email — we can't tell which "
+                    "to invite. Send them a share link instead."
+                ),
+            },
+        )
+    invitee = invitee_rows[0]
 
     # Already a member?
     existing = await db.execute(
@@ -4551,26 +4568,92 @@ async def test_vault_list_includes_shared_scope_vaults(
 Run: `cd backend && uv run pytest tests/test_sharing_read_paths.py -v`
 Expected: 2 PASS if read paths already use `scope_ids_visible_to`; FAIL if they filter by `user_id`. Read the failure to know which path needs patching.
 
-- [ ] **Step 3: Patch any failing read path**
+- [ ] **Step 3: Patch the read paths — drop `user_id` filter, keep `scope_id IN visible`**
 
-For each failing route, locate the `WHERE` clause that uses `user_id` and convert to scope-based filtering. Concrete pattern using `app/routes/skills.py` as the example:
+This is the critical blocker fix flagged in spec § 5.3. The current
+implementation has BOTH `Skill.user_id == auth.user_id` AND
+`Skill.scope_id IN visible_scope_ids` in the same WHERE. For an
+owned scope this is redundant-but-harmless; for a SHARED scope the
+sharee's `auth.user_id` does not match the OWNER's
+`Skill.user_id`, so the AND filter silently drops every shared row.
+
+Drop the `user_id` clause on READ-ONLY paths (`scope_id IN visible`
+is now the tenancy filter). Keep `user_id == auth.user_id` on
+WRITE paths (skill push, vault create / put / delete) — viewer
+membership doesn't grant write.
+
+Concrete sites to patch (verified against `backend/app/routes/`
+as of this writing — verify by grepping before editing):
+
+```
+backend/app/routes/skills.py
+  L342  GET /api/skills (list)                  — drop user_id, keep scope_id IN
+  L477  GET /api/skills (etag variant)          — same
+  L866  GET /api/skills/{key} (detail)          — same
+  L920  POST /api/skills (push)                 — KEEP user_id (write)
+  L977  GET .../skills/{key}/tarball (scope-path) — drop user_id
+  L1024 ... read-side                          — drop user_id
+  L1131 ... read-side                          — drop user_id
+  L1243 ... write-side                         — KEEP user_id
+
+backend/app/routes/vault.py
+  L48   GET /api/vault (list)                   — drop user_id
+  L99   GET /api/vault/{slug}                   — drop user_id
+  L116  POST /api/vault (create)                — KEEP user_id (write)
+  L248  GET resolve                              — drop user_id
+  L296  ... read-side                          — drop user_id
+```
+
+Pattern for a read path:
 
 ```python
-# Before — filtering by user_id directly:
-result = await db.execute(
-    select(Skill).where(Skill.user_id == auth.user_id, Skill.is_active == True)
-)
-
-# After — filter by visible scope set:
-from app.core.scope import scope_ids_visible_to
-
+# Before — filtering by user_id directly (or user_id AND scope_id):
 visible = await scope_ids_visible_to(db, auth)
 result = await db.execute(
-    select(Skill).where(Skill.scope_id.in_(visible), Skill.is_active == True)
+    select(Skill).where(
+        Skill.user_id == auth.user_id,
+        Skill.scope_id.in_(visible),
+        Skill.is_active == True,  # noqa: E712
+    )
+)
+
+# After — scope_id IN visible IS the tenancy filter:
+visible = await scope_ids_visible_to(db, auth)
+result = await db.execute(
+    select(Skill).where(
+        Skill.scope_id.in_(visible),
+        Skill.is_active == True,  # noqa: E712
+    )
 )
 ```
 
-Apply the same pattern to vault list and any other read path that surfaces in test failures. Each patch is one route at most.
+Pattern for a write path (no change beyond confirming it stays
+owner-only):
+
+```python
+# Keep user_id == auth.user_id; viewer membership doesn't grant write.
+result = await db.execute(
+    select(Skill).where(
+        Skill.user_id == auth.user_id,
+        Skill.scope_id == scope_id,
+        ...
+    )
+)
+```
+
+Also split `validate_scope_for_caller` (in `backend/app/core/scope.py`,
+called from skills/vault routes) into TWO variants:
+
+- `validate_scope_for_caller_read(db, auth, scope_id)` — passes if
+  `scope_id` is in `scope_ids_visible_to(db, auth)`. Used by read
+  routes that need a path-scope check.
+- `validate_scope_for_caller_write(db, auth, scope_id)` — keeps the
+  current owner-only behavior. Used by write routes.
+
+The existing `validate_scope_for_caller` keeps its name and remains
+the owner-only check (write semantics); the new function is added
+as the read variant. Each read route is updated to call the read
+variant; write routes stay on the existing name.
 
 - [ ] **Step 4: SSE verification**
 

@@ -57,9 +57,16 @@ owner's content.
 - Local skill layout that doesn't break existing agents (Claude Code,
   Codex, OpenClaw, Hermes glob `<root>/*/SKILL.md`) and never overwrites
   the sharee's own skills.
-- Server-side `scope_ids_visible_to` extended so the existing
-  `WHERE scope_id IN (...)` filters across the skill / vault / memory
-  read paths automatically include shared scopes.
+- Server-side `scope_ids_visible_to` extended so shared scopes
+  flow into the **skill** and **vault** read paths. (Memory is out
+  of scope for v1 — see Non-Goals — and the memory read paths
+  don't currently use `scope_ids_visible_to` anyway. Touching
+  memory sharing is a separate milestone.)
+- Skill and vault read paths converted from "filter by
+  `user_id == auth.user_id` AND `scope_id IN visible`" to "filter
+  by `scope_id IN visible` only". The double-AND defeated shared
+  scope visibility because the sharee's `auth.user_id` doesn't
+  match the owner's `Skill.user_id`. See § 5.3.
 - Foreign keys + cascades modelled so deleting an owner deletes their
   shares cleanly, and revoking a member surgically removes one row.
 - Zero impact on OSS self-hosters and self-managed users who never use
@@ -175,7 +182,7 @@ The CLI uses the same flag in its rendered tables (`clawdi scope list`).
 | Owner removes a member, member redeems an OLD anonymous token | Token is still valid (token != membership). To **fully** block the person, the owner must remove the member AND revoke any share-link they may have redeemed (then rotate to a new link for other intended recipients). The "Remove member" UI surfaces this hint explicitly. |
 | Anonymous sharee on device A signs in on device B | Device A keeps using its share-tokens until device A also signs in; device B's memberships are independent of device A's tokens |
 | Pending invitation, owner removes the invite, invitee tries to accept | 410 Gone; invite no longer exists |
-| **Owner has no `display_name`, tries to share** | Server returns 409 `display_name_required`. Identity is necessarily revealed to anyone with the link; without a real display name we'd fall back to the local part of the owner's email — which would leak the email address. Forcing a display name pre-share is the cheapest fix. |
+| **Owner has no `name` (display name), tries to share** | Server returns 409 `display_name_required`. The `users.name` column is the user-visible display name; if it's NULL the handle would fall back to the email local-part, leaking the email address to recipients. Forcing the owner to set `name` first is the cheapest mitigation. |
 
 ## 5. Architecture
 
@@ -230,6 +237,36 @@ result_scope_ids = (
     ∪ scopes where (scope_id, auth.user_id) ∈ scope_memberships
 )
 ```
+
+**Critical caveat — read paths must drop the `user_id` filter.**
+The current implementation of `/api/skills`, `/api/skills/{key}`,
+`/api/vault`, `/api/vault/resolve`, and several others combines
+`scope_id IN visible_scope_ids` with `Skill.user_id == auth.user_id`
+(or the Vault equivalent). For owned scopes this is harmless and
+in fact a useful index hint, but for a shared scope the
+**owner's** `Skill.user_id` does not match the **sharee's**
+`auth.user_id`. The AND filter silently drops every shared row,
+defeating the whole feature.
+
+The fix is mechanical: every read path that intersects scope
+visibility with user_id must drop the user_id clause. After the
+change, `scope_id IN scope_ids_visible_to(auth)` is the SOLE
+tenancy filter on read paths. Two implications:
+
+1. The visible_scope_ids set IS the access boundary. Audit it
+   carefully — anything in that set means the caller may read
+   every row under it.
+2. **Write paths still filter by `user_id == auth.user_id`.**
+   Viewer membership grants read access, not write — only the
+   owner can mutate. Today's write routes (skill push, vault
+   create / delete / put) keep their existing user_id
+   ownership filter; only read routes change.
+
+A separate validator, `validate_scope_for_caller_read` (split
+from the existing `validate_scope_for_caller` which conflates
+read + write), reflects this in the route layer. Routes that
+mutate keep calling the owner-only validator; routes that just
+read use the new variant which accepts any membership.
 
 Anonymous share-token callers do **not** go through `scope_ids_visible_to`
 — they go through a new `/api/share/...` router that validates token,
@@ -382,9 +419,9 @@ POST   /api/scopes/{scope_id}/share-links
          - Server resolves and FREEZES `resolved_owner_handle` on
            the row at create time (see § 11). Returned in the
            response so the owner can preview what sharees will see.
-         - Caller MUST have `users.display_name` set. If not:
-           409 `display_name_required` with hint to update profile.
-           Rationale in § 4.5 edge cases.
+         - Caller MUST have `users.name` (display name) set. If
+           NULL, 409 `display_name_required` with a hint to update
+           the profile first. Rationale in § 4.5 edge cases.
 
 GET    /api/scopes/{scope_id}/share-links
        Returns: ShareLinkResponse[]  (prefix, label, counts, no raw)
@@ -399,19 +436,30 @@ POST   /api/scopes/{scope_id}/invitations
        Returns: InvitationResponse
        Auth: require_user_auth, caller must own scope.
        Behavior:
-         - Lookup `users` by lower(email). Required to find a registered
-           user — if none, 404 (see error list).
-         - Store BOTH `invitee_user_id` (FK to users.id) and
-           `invitee_email` (as typed). User-id is the durable
-           identity; email is preserved for display/historical context.
+         - Lookup `users` by lower(email). `users.email` is NOT unique
+           in the schema (production may carry duplicates from snapshot
+           imports — see `_auth_via_clerk_jwt` ambiguity handling).
+           Count matching rows:
+             * 0 rows → 404 `user_not_found` (invitee not registered;
+                        UI suggests sending a share link instead)
+             * 1 row  → invite that user (the common case)
+             * ≥2 rows → 409 `ambiguous_email`. We deliberately refuse
+                         to pick one — silently inviting the wrong
+                         account would be a privacy break. The owner
+                         is told to send a share link to the intended
+                         recipient and have them join via redeem
+                         (which carries explicit user identity).
+         - On the 1-row path, store BOTH `invitee_user_id` (FK to
+           users.id) and `invitee_email` (as typed). User-id is the
+           durable identity; email is historical context only.
          - Uniqueness is `(scope_id, invitee_user_id)` — re-inviting
            the same person by a different email alias still 409s.
        Errors:
-         400 already_owner — email maps to scope owner
-         404 user_not_found — email has no clawdi account
-                              (CLI / web suggests sending share link instead)
-         409 already_member — invitee already a member
-         409 already_invited — pending invite exists
+         400 already_owner    — email maps to scope owner
+         404 user_not_found   — no registered user
+         409 ambiguous_email  — multiple users with that email
+         409 already_member   — invitee already a member
+         409 already_invited  — pending invite exists
 
 GET    /api/scopes/{scope_id}/invitations
        Auth: require_user_auth, caller must own scope.
@@ -499,9 +547,14 @@ GET    /api/share/{token}/skills/{skill_key}/tarball
        Auth: require_share_token only.
 
 POST   /api/share/{token}/upgrade
-       Body: empty (Clerk JWT in Authorization header)
+       Body: empty (caller credential in Authorization header)
        Returns: MembershipResponse
-       Auth: require_user_auth (Clerk JWT) + require_share_token.
+       Auth: require_user_auth + require_share_token.
+       The user credential MAY be either a Clerk JWT (web "Add to
+       my dashboard") OR an unbound CLI api_key (CLI auto-upgrade
+       after `clawdi auth login`). Both shapes pass through
+       `require_user_auth`. Narrowly-scoped api_keys (env-bound
+       deploy keys, etc.) are rejected by the existing dep.
        Transaction:
          1. Create scope_memberships row with joined_via='link' and
             resolved_owner_handle COPIED from the share-link's frozen
@@ -589,8 +642,20 @@ in your dashboard? [Y/n]
 ```
 
 If Y: batch-invoke `POST /api/share/{token}/upgrade` for each token
-with the new Clerk JWT, then delete the file (or selectively delete
-upgraded entries on failures).
+with the now-stored CLI api_key (the same credential `clawdi auth
+login` saved). Per token:
+
+- **200** → mark the entry locally with `upgraded_at = now()`.
+  Keep the token in `share-tokens.json` — another device of the
+  same user may still be using it, and revoking it client-side
+  would re-prompt the user to redeem from scratch on next sync.
+  Future runs of the auto-upgrade flow on this device check
+  `upgraded_at` and skip already-upgraded entries to avoid
+  re-prompting.
+- **410** → the link was revoked between redeem and login.
+  Delete the entry locally; the membership doesn't exist.
+- Other status / network failure → leave the entry untouched
+  and surface the error. Next login retry will re-attempt.
 
 ### 8.4 Sync engine behavior
 
@@ -783,8 +848,13 @@ and stored on the originating row so the value never drifts.
 **Definition:**
 
 ```
-owner_handle = kebab(users.display_name) + "-" + users.id.hex[:4]
+owner_handle = kebab(users.name) + "-" + users.id.hex[:4]
 ```
+
+(`users.name` is the user-visible display name column on the existing
+`users` table — the codebase does NOT have a separate
+`display_name` field. The spec uses "display name" as the
+human-readable concept; the SQL column is `name`.)
 
 Examples:
 - `Alice Chen` (id `a3b4c5d6-...`) → `alice-chen-a3b4`
@@ -803,15 +873,15 @@ The 4-hex-char user_id suffix is **always appended**. Rationale:
 - 16^4 = 65 536 distinct suffixes per first-component. Collision
   inside a sharee's "I follow two `alice-a3b4`s" namespace is
   vanishingly rare (would require two users with matching
-  display_name AND matching first-4-hex of their UUID — order of
+  `users.name` AND matching first-4-hex of their UUID — order of
   one in 65 536 even after the name match).
 - The suffix is human-readable enough not to look like a UUID
   vomit. Sharees reading their own folder list see `alice-a3b4`
   and recognize "this is from someone named Alice."
 
-**display_name required.** As noted in § 4.5, the create-share-link
-endpoint rejects callers with empty `users.display_name`
-(409 `display_name_required`). Without a display_name we'd be
+**Display name required.** As noted in § 4.5, the create-share-link
+endpoint rejects callers with empty `users.name`
+(409 `display_name_required`). Without a name we'd be
 left with email-local-part (which leaks PII) or a pure UUID
 fragment (unfriendly), so we just push owners to set their name
 first. This is a small one-time friction for what's currently
