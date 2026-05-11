@@ -299,8 +299,8 @@ def test_scope_invitation_model_importable():
 
     assert ScopeInvitation.__tablename__ == "scope_invitations"
     cols = {c.name for c in ScopeInvitation.__table__.columns}
-    assert {"id", "scope_id", "invitee_email", "invited_by",
-            "created_at"} <= cols
+    assert {"id", "scope_id", "invitee_user_id", "invitee_email",
+            "invited_by", "created_at"} <= cols
 ```
 
 - [ ] **Step 2: Verify fail**
@@ -317,13 +317,14 @@ Create `backend/app/models/scope_invitation.py`:
 
 Row exists from `POST /api/scopes/{id}/invitations` until invitee
 accepts (→ row deleted, `ScopeMembership` created), declines (row
-deleted), or owner cancels (row deleted). No "accepted_at" terminal
-state — we don't keep declined / accepted rows around; the membership
-row IS the post-accept record.
+deleted), or owner cancels (row deleted). No terminal "accepted_at"
+state — the membership row IS the post-accept record.
 
-Email is stored verbatim (case-insensitive uniqueness enforced via
-lower(invitee_email) match in the lookup query, not by index — keeps
-the original capitalization visible to the owner).
+Uniqueness is `(scope_id, invitee_user_id)` (NOT email): invitees
+are looked up to a `users.id` at invitation time, and email changes
+on the Clerk side don't lose the invite. `invitee_email` is kept
+as historical context for the owner's UI but is no longer the
+identity key. See spec § 4.5 / § 6.1.
 """
 
 import uuid
@@ -350,7 +351,13 @@ class ScopeInvitation(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    invitee_email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    invitee_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    invitee_email: Mapped[str] = mapped_column(String(320), nullable=False)
     invited_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -361,11 +368,11 @@ class ScopeInvitation(Base, TimestampMixin):
     )
 
     __table_args__ = (
-        # One pending invite per (scope, email). Re-inviting same
-        # address before accept = 409. After accept the row is gone
-        # so re-invite (e.g. to a re-added member) works.
+        # One pending invite per (scope, invitee). Reinvites by
+        # alternate email aliases of the same user still collide.
         UniqueConstraint(
-            "scope_id", "invitee_email", name="uq_scope_invitations_scope_email"
+            "scope_id", "invitee_user_id",
+            name="uq_scope_invitations_scope_user",
         ),
     )
 ```
@@ -401,7 +408,8 @@ def test_scope_share_link_model_importable():
     assert ScopeShareLink.__tablename__ == "scope_share_links"
     cols = {c.name for c in ScopeShareLink.__table__.columns}
     assert {"id", "scope_id", "token_hash", "token_prefix", "label",
-            "created_by", "created_at", "expires_at", "revoked_at",
+            "created_by", "resolved_owner_handle",
+            "created_at", "expires_at", "revoked_at",
             "redeem_count", "last_redeemed_at"} <= cols
 ```
 
@@ -463,6 +471,10 @@ class ScopeShareLink(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # Owner handle frozen at link creation; every downstream consumer
+    # (anonymous redeem response, membership row at upgrade time)
+    # reads this same value. See spec § 11.2 / § 11.6.
+    resolved_owner_handle: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -609,6 +621,12 @@ def upgrade() -> None:
             sa.ForeignKey("scopes.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "invitee_user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("invitee_email", sa.String(320), nullable=False),
         sa.Column(
             "invited_by",
@@ -629,16 +647,17 @@ def upgrade() -> None:
             server_default=sa.text("NOW()"),
         ),
         sa.UniqueConstraint(
-            "scope_id", "invitee_email", name="uq_scope_invitations_scope_email"
+            "scope_id", "invitee_user_id",
+            name="uq_scope_invitations_scope_user",
         ),
     )
     op.create_index(
         "ix_scope_invitations_scope_id", "scope_invitations", ["scope_id"]
     )
     op.create_index(
-        "ix_scope_invitations_invitee_email",
+        "ix_scope_invitations_invitee_user_id",
         "scope_invitations",
-        ["invitee_email"],
+        ["invitee_user_id"],
     )
 
     op.create_table(
@@ -664,6 +683,7 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column("resolved_owner_handle", sa.String(64), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -691,7 +711,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_scope_share_links_scope_id", "scope_share_links")
     op.drop_table("scope_share_links")
-    op.drop_index("ix_scope_invitations_invitee_email", "scope_invitations")
+    op.drop_index("ix_scope_invitations_invitee_user_id", "scope_invitations")
     op.drop_index("ix_scope_invitations_scope_id", "scope_invitations")
     op.drop_table("scope_invitations")
     op.drop_index("ix_scope_memberships_user_id", "scope_memberships")
@@ -808,12 +828,16 @@ class ShareLinkCreate(BaseModel):
 
 class ShareLinkCreated(BaseModel):
     """Returned ONCE on link creation — includes the raw token.
-    Subsequent GETs only return `prefix` (raw token is unrecoverable)."""
+    Subsequent GETs only return `prefix` (raw token is unrecoverable).
+    `owner_handle` is the frozen value stored on the link row that
+    every sharee will see; the owner sees their own resolved handle
+    in case they want to verify or change their display name first."""
 
     id: str
     raw_token: str
     url: str
     prefix: str
+    owner_handle: str
     label: str | None
     created_at: datetime
     expires_at: datetime | None
@@ -930,10 +954,9 @@ Create `backend/tests/test_owner_handle.py`:
 ```python
 """Owner-handle resolution — see spec § 11.2.
 
-Order of choice:
-  1. kebab(users.display_name)
-  2. email local-part
-  3. (1) or (2) + 4-char short hash of user.id (collision tiebreak)
+Definition: handle = kebab(users.display_name) + "-" + user.id.hex[:4].
+Always suffixed for guaranteed global uniqueness. Requires display_name
+to be set (callers gate on this before invoking).
 """
 
 import uuid
@@ -944,47 +967,55 @@ from app.models.user import User
 from app.services.sharing import resolve_owner_handle
 
 
-def _user(*, name: str | None = None, email: str | None = None) -> User:
+def _user(*, name: str | None = None, user_id_hex: str | None = None) -> User:
     return User(
-        id=uuid.uuid4(),
+        id=uuid.UUID(user_id_hex) if user_id_hex else uuid.uuid4(),
         clerk_id=f"clerk_{uuid.uuid4().hex[:8]}",
-        email=email,
+        email=None,
         name=name,
     )
 
 
-def test_handle_prefers_display_name_kebab():
-    u = _user(name="Alice Chen", email="alice@example.com")
-    assert resolve_owner_handle(u, existing_handles=set()) == "alice-chen"
-
-
-def test_handle_falls_back_to_email_local_part():
-    u = _user(name=None, email="alice@example.com")
-    assert resolve_owner_handle(u, existing_handles=set()) == "alice"
-
-
-def test_handle_lowercases_email_local_part():
-    u = _user(name=None, email="Alice.Bob@Example.com")
-    assert resolve_owner_handle(u, existing_handles=set()) == "alice.bob"
-
-
-def test_handle_disambiguates_with_user_id_hash():
-    u = _user(name="Alice", email="alice@example.com")
-    existing = {"alice"}
-    out = resolve_owner_handle(u, existing_handles=existing)
-    assert out.startswith("alice-")
-    assert len(out) == len("alice-") + 4  # 4-char short hash
+def test_handle_combines_name_kebab_with_user_id_hex_suffix():
+    u = _user(name="Alice Chen", user_id_hex="a3b4c5d600000000000000000000c0de")
+    assert resolve_owner_handle(u) == "alice-chen-a3b4"
 
 
 def test_handle_strips_non_alnum_from_display_name():
-    u = _user(name="Bob (Robert) Smith!", email="bob@example.com")
-    assert resolve_owner_handle(u, existing_handles=set()) == "bob-robert-smith"
+    u = _user(name="Bob (Robert) Smith!", user_id_hex="0102030400000000000000000000beef")
+    assert resolve_owner_handle(u) == "bob-robert-smith-0102"
 
 
-def test_handle_raises_when_user_has_neither_name_nor_email():
-    u = _user(name=None, email=None)
+def test_handle_two_alices_get_different_suffixes():
+    u1 = _user(name="Alice", user_id_hex="a3b4c5d600000000000000000000beef")
+    u2 = _user(name="Alice", user_id_hex="f1e2d3c400000000000000000000c0de")
+    h1 = resolve_owner_handle(u1)
+    h2 = resolve_owner_handle(u2)
+    assert h1 != h2
+    assert h1.startswith("alice-")
+    assert h2.startswith("alice-")
+
+
+def test_handle_lowercases_and_kebabs_unicode_friendly():
+    u = _user(name="ALICE Chen", user_id_hex="cafef00d00000000000000000000beef")
+    assert resolve_owner_handle(u) == "alice-chen-cafe"
+
+
+def test_handle_raises_when_display_name_empty():
+    """Callers (share-link create + invitation accept) are responsible
+    for gating on display_name presence (409 display_name_required).
+    The helper assumes it's been called only on users who pass that gate."""
+    u = _user(name=None, user_id_hex="0102030400000000000000000000beef")
     with pytest.raises(ValueError):
-        resolve_owner_handle(u, existing_handles=set())
+        resolve_owner_handle(u)
+
+
+def test_handle_raises_when_display_name_only_punctuation():
+    """A display_name like `???` kebabs to empty string. Reject so we
+    don't fall through to a handle that's just `-0102` (no name part)."""
+    u = _user(name="!!!", user_id_hex="0102030400000000000000000000beef")
+    with pytest.raises(ValueError):
+        resolve_owner_handle(u)
 ```
 
 - [ ] **Step 2: Verify fail**
@@ -1031,50 +1062,41 @@ def _kebab(text: str) -> str:
     return _TRIM_DASHES.sub("", dashed)
 
 
-def resolve_owner_handle(
-    user: User,
-    *,
-    existing_handles: Iterable[str],
-) -> str:
-    """Compute a sharee-local handle for `user`.
+_USER_ID_SUFFIX_LEN = 4
 
-    Order of choice (spec § 11.2):
-      1. kebab(user.display_name) if non-empty
-      2. email local-part (lowercased), if email present
-      3. fallback option + '-' + 4-char short hash of user.id if (1)/(2)
-         collides with an existing handle in the sharee's namespace
 
-    `existing_handles` is the set of handles already in use by other
-    owners the sharee follows. Pass an empty set for the first
-    membership; populate with prior memberships before resolving on
-    later joins.
+def resolve_owner_handle(user: User) -> str:
+    """Compute the stable owner handle for `user`.
+
+    Definition (spec § 11.2):
+        handle = kebab(user.display_name) + "-" + user.id.hex[:4]
+
+    `display_name` must be non-empty AND kebab to non-empty. Callers
+    must gate on that BEFORE calling — share-link create returns 409
+    `display_name_required`; invitation accept refuses (the inviter
+    couldn't have invited a user without a display_name in the
+    realistic flow). The helper raises ValueError if invariant is
+    violated to fail loudly rather than silently producing a
+    handle like `-a3b4`.
+
+    The 4-hex-char suffix makes handles globally unique per owner.
+    No `existing_handles` parameter — we don't disambiguate per-
+    sharee because the handle is frozen on `scope_share_links`
+    AT CREATE TIME (when we don't know the sharee yet).
     """
-    candidates: list[str] = []
-    if user.name:
-        kebab = _kebab(user.name)
-        if kebab:
-            candidates.append(kebab)
-    if user.email:
-        local_part = user.email.split("@", 1)[0].lower()
-        if local_part:
-            candidates.append(local_part)
-    if not candidates:
+    if not user.name:
         raise ValueError(
-            f"user {user.id} has neither display_name nor email; "
-            "cannot resolve owner handle"
+            f"user {user.id} has no display_name; "
+            "share-link create must gate on this before calling"
         )
-
-    existing_set = set(existing_handles)
-
-    for candidate in candidates:
-        if candidate not in existing_set:
-            return candidate
-
-    # Both name-kebab and email-local-part collide. Disambiguate the
-    # FIRST candidate (preferred form) with 4 hex chars of user.id.
-    short = user.id.hex[:4]
-    disambiguated = f"{candidates[0]}-{short}"
-    return disambiguated
+    name_part = _kebab(user.name)
+    if not name_part:
+        raise ValueError(
+            f"user {user.id} display_name kebabs to empty string; "
+            "user must set a display_name with at least one alphanumeric character"
+        )
+    suffix = user.id.hex[:_USER_ID_SUFFIX_LEN]
+    return f"{name_part}-{suffix}"
 ```
 
 - [ ] **Step 4: Verify tests pass**
@@ -1716,6 +1738,9 @@ def _share_url(raw_token: str) -> str:
     return f"{base}/share/{raw_token}"
 
 
+from app.services.sharing import resolve_owner_handle
+
+
 @router.post("/{scope_id}/share-links", response_model=ShareLinkCreated)
 async def create_share_link(
     scope_id: UUID,
@@ -1725,11 +1750,40 @@ async def create_share_link(
 ) -> ShareLinkCreated:
     """Generate a new share link for a scope.
 
-    Raw token returned ONCE in this response. Server stores only the
-    hash, so a forgotten / lost link forces the owner to make a new
-    one — by design.
+    - Raw token returned ONCE; server stores only the hash.
+    - Gate on owner having `display_name` set (spec § 4.5 + § 11.2).
+      The handle is necessarily revealed to recipients; we don't fall
+      back to email local-part because that leaks PII.
+    - Resolves + freezes `resolved_owner_handle` on the link row at
+      create time so every downstream consumer reads the same value.
     """
     await _assert_scope_owner(db, auth, scope_id)
+
+    if not auth.user.name:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "display_name_required",
+                "message": (
+                    "Set a display name on your profile before sharing a "
+                    "scope. The name is shown to anyone you share with."
+                ),
+            },
+        )
+    try:
+        owner_handle = resolve_owner_handle(auth.user)
+    except ValueError:
+        # Display name kebabs to empty (e.g. only punctuation).
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "display_name_required",
+                "message": (
+                    "Your display name must contain at least one alphanumeric "
+                    "character."
+                ),
+            },
+        ) from None
 
     raw = generate_share_token()
     link = ScopeShareLink(
@@ -1738,6 +1792,7 @@ async def create_share_link(
         token_prefix=token_prefix(raw),
         label=body.label,
         created_by=auth.user_id,
+        resolved_owner_handle=owner_handle,
         created_at=datetime.now(UTC),
         expires_at=body.expires_at,
     )
@@ -1746,16 +1801,18 @@ async def create_share_link(
     await db.refresh(link)
 
     logger.info(
-        "share_link_created scope_id=%s link_id=%s by=%s",
+        "share_link_created scope_id=%s link_id=%s by=%s handle=%s",
         scope_id,
         link.id,
         auth.user_id,
+        owner_handle,
     )
     return ShareLinkCreated(
         id=str(link.id),
         raw_token=raw,
         url=_share_url(raw),
         prefix=link.token_prefix,
+        owner_handle=owner_handle,
         label=link.label,
         created_at=link.created_at,
         expires_at=link.expires_at,
@@ -2143,6 +2200,7 @@ async def create_invitation(
 
     invitation = ScopeInvitation(
         scope_id=scope_id,
+        invitee_user_id=invitee.id,
         invitee_email=target_email,
         invited_by=auth.user_id,
         created_at=datetime.now(UTC),
@@ -2151,7 +2209,7 @@ async def create_invitation(
     try:
         await db.commit()
     except IntegrityError:
-        # uq_scope_invitations_scope_email — pending invite exists.
+        # uq_scope_invitations_scope_user — pending invite exists.
         await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -2801,27 +2859,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/share", tags=["share-redeem"])
 
 
-async def _owner_display_and_handle(
-    db: AsyncSession, scope_id: UUID, sharee_existing_handles: set[str]
+async def _owner_display_for_link(
+    db: AsyncSession, link: ScopeShareLink
 ) -> tuple[str, str, User]:
-    """Resolve owner display + handle for a scope. Returns (display,
-    handle, owner_user) so callers can plumb it through responses
-    without a second query.
+    """Resolve owner display + handle for a share-link redemption.
 
-    `sharee_existing_handles` lets disambiguation skip handles already
-    in use by the sharee. For anonymous redeem we pass an empty set
-    (no sharee identity to track previous handles for) — local CLI is
-    responsible for its own collision handling.
+    The handle is NOT recomputed — it was frozen on the link row at
+    create time (`scope_share_links.resolved_owner_handle`). The
+    display string IS recomputed each call since it's purely
+    presentation (no path stability concerns).
     """
-    scope_result = await db.execute(select(Scope).where(Scope.id == scope_id))
+    scope_result = await db.execute(select(Scope).where(Scope.id == link.scope_id))
     scope = scope_result.scalar_one()
     owner_result = await db.execute(select(User).where(User.id == scope.user_id))
     owner = owner_result.scalar_one()
     display = owner.name or owner.email or f"user-{str(owner.id)[:8]}"
-    handle = resolve_owner_handle(
-        owner, existing_handles=sharee_existing_handles
-    )
-    return display, handle, owner
+    return display, link.resolved_owner_handle, owner
 
 
 @router.post("/{token}/redeem", response_model=ShareRedeemResponse)
@@ -2844,11 +2897,13 @@ async def redeem(
         )
     )
 
+    link_result = await db.execute(
+        select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
+    )
+    link = link_result.scalar_one()
     scope_result = await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
     scope = scope_result.scalar_one()
-    display, handle, owner = await _owner_display_and_handle(
-        db, ctx.scope_id, sharee_existing_handles=set()
-    )
+    display, handle, _ = await _owner_display_for_link(db, link)
 
     skill_count = (
         await db.execute(
@@ -3017,11 +3072,13 @@ async def scope_index(
     ctx: ShareTokenContext = Depends(require_share_token),
     db: AsyncSession = Depends(get_session),
 ) -> _ScopeIndexResponse:
+    link_result = await db.execute(
+        select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
+    )
+    link = link_result.scalar_one()
     scope_result = await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
     scope = scope_result.scalar_one()
-    display, handle, _ = await _owner_display_and_handle(
-        db, ctx.scope_id, sharee_existing_handles=set()
-    )
+    display, handle, _ = await _owner_display_for_link(db, link)
 
     skills = (
         await db.execute(
@@ -3395,20 +3452,14 @@ async def upgrade(
     if existing is not None:
         return _membership_response(existing)
 
-    # Resolve owner_handle. The sharee's existing handles come from
-    # their other memberships.
-    other_handles = set(
-        (
-            await db.execute(
-                select(ScopeMembership.resolved_owner_handle).where(
-                    ScopeMembership.user_id == auth.user_id
-                )
-            )
-        ).scalars().all()
-    )
-    _, handle, _ = await _owner_display_and_handle(
-        db, ctx.scope_id, sharee_existing_handles=other_handles
-    )
+    # Copy the frozen handle off the share-link row. This is what
+    # keeps anonymous + post-upgrade paths in agreement on the
+    # local skill folder name.
+    link = (
+        await db.execute(
+            select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
+        )
+    ).scalar_one()
 
     membership = ScopeMembership(
         scope_id=ctx.scope_id,
@@ -3416,9 +3467,17 @@ async def upgrade(
         role="viewer",
         joined_via="link",
         joined_at=datetime.now(UTC),
-        resolved_owner_handle=handle,
+        resolved_owner_handle=link.resolved_owner_handle,
     )
     db.add(membership)
+    # Auto-cleanup: if this user has a pending email invitation to
+    # the same scope, blow it away — they joined via the link first.
+    await db.execute(
+        sql_delete(ScopeInvitation).where(
+            ScopeInvitation.scope_id == ctx.scope_id,
+            ScopeInvitation.invitee_user_id == auth.user_id,
+        )
+    )
     try:
         await db.commit()
         await db.refresh(membership)
@@ -3511,16 +3570,25 @@ async def test_me_invitations_lists_only_my_email(
     db_session.add(
         ScopeInvitation(
             scope_id=scope.id,
+            invitee_user_id=seed_user.id,
             invitee_email=seed_user.email.lower(),
             invited_by=owner.id,
             created_at=datetime.now(UTC),
         )
     )
-    # A different email's invite — must NOT appear.
+    # An invitation to a DIFFERENT user — must NOT appear in seed_user's inbox.
+    other_invitee = User(
+        clerk_id=f"other_{uuid.uuid4().hex[:8]}",
+        email="someone-else@test.dev",
+        name="Someone Else",
+    )
+    db_session.add(other_invitee)
+    await db_session.commit()
     db_session.add(
         ScopeInvitation(
             scope_id=scope.id,
-            invitee_email="someone-else@test.dev",
+            invitee_user_id=other_invitee.id,
+            invitee_email=other_invitee.email,
             invited_by=owner.id,
             created_at=datetime.now(UTC),
         )
@@ -3560,6 +3628,7 @@ async def test_accept_invitation_creates_membership(
     await db_session.commit()
     inv = ScopeInvitation(
         scope_id=scope.id,
+        invitee_user_id=seed_user.id,
         invitee_email=seed_user.email.lower(),
         invited_by=owner.id,
         created_at=datetime.now(UTC),
@@ -3611,6 +3680,7 @@ async def test_decline_invitation_deletes_row(client, db_session, seed_user):
     await db_session.commit()
     inv = ScopeInvitation(
         scope_id=scope.id,
+        invitee_user_id=seed_user.id,
         invitee_email=seed_user.email.lower(),
         invited_by=owner.id,
         created_at=datetime.now(UTC),
@@ -3768,14 +3838,11 @@ async def list_my_invitations(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
-    if not auth.user.email:
-        return []
-    target = auth.user.email.lower()
     rows = (
         await db.execute(
             select(ScopeInvitation, User)
             .outerjoin(User, User.id == ScopeInvitation.invited_by)
-            .where(ScopeInvitation.invitee_email == target)
+            .where(ScopeInvitation.invitee_user_id == auth.user_id)
             .order_by(ScopeInvitation.created_at.desc())
         )
     ).all()
@@ -3803,11 +3870,9 @@ async def accept_invitation(
             select(ScopeInvitation).where(ScopeInvitation.id == invitation_id)
         )
     ).scalar_one_or_none()
-    if (
-        inv is None
-        or not auth.user.email
-        or inv.invitee_email != auth.user.email.lower()
-    ):
+    # Identity check on invitee_user_id (stable across email rotations)
+    # — not on invitee_email which is purely historical context.
+    if inv is None or inv.invitee_user_id != auth.user_id:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
     scope = (
@@ -3817,16 +3882,24 @@ async def accept_invitation(
         await db.execute(select(User).where(User.id == scope.user_id))
     ).scalar_one()
 
-    other_handles = set(
-        (
-            await db.execute(
-                select(ScopeMembership.resolved_owner_handle).where(
-                    ScopeMembership.user_id == auth.user_id
-                )
-            )
-        ).scalars().all()
-    )
-    handle = resolve_owner_handle(owner, existing_handles=other_handles)
+    # Compute the frozen handle from the owner's current identity.
+    # Helper raises ValueError if owner has no display_name — that
+    # would be unusual at this stage (the share-link path 409s on
+    # this, but the invite path doesn't pre-check). Surface as 409
+    # so the owner knows to set their profile.
+    try:
+        handle = resolve_owner_handle(owner)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "owner_display_name_required",
+                "message": (
+                    "The scope owner has no display name set on their profile. "
+                    "Ask them to set one before you can join."
+                ),
+            },
+        ) from None
 
     membership = ScopeMembership(
         scope_id=inv.scope_id,
@@ -3838,6 +3911,17 @@ async def accept_invitation(
     )
     db.add(membership)
     await db.delete(inv)
+    # Defense in depth: if the same user happens to have any OTHER
+    # pending invitation row for the same scope (e.g. owner accidentally
+    # invited an alias email that maps to the same user_id, though
+    # the unique constraint on (scope_id, invitee_user_id) makes
+    # this near-impossible in practice), clear them too.
+    await db.execute(
+        sql_delete(ScopeInvitation).where(
+            ScopeInvitation.scope_id == inv.scope_id,
+            ScopeInvitation.invitee_user_id == auth.user_id,
+        )
+    )
     await db.commit()
     await db.refresh(membership)
     logger.info(
@@ -3867,11 +3951,7 @@ async def decline_invitation(
             select(ScopeInvitation).where(ScopeInvitation.id == invitation_id)
         )
     ).scalar_one_or_none()
-    if (
-        inv is None
-        or not auth.user.email
-        or inv.invitee_email != auth.user.email.lower()
-    ):
+    if inv is None or inv.invitee_user_id != auth.user_id:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
     await db.delete(inv)
     await db.commit()
@@ -5378,11 +5458,13 @@ Create `packages/cli/src/commands/scope-share.ts`:
  * the caller owns. Prints the URL and a copy-paste redeem hint.
  */
 
+import { createInterface } from "node:readline/promises";
+
 import { getApiBaseUrl, getCliApiKey } from "../lib/config";
 
 export async function scopeShareCommand(
 	scopeIdOrSlug: string,
-	options: { label?: string } = {},
+	options: { label?: string; yes?: boolean } = {},
 ): Promise<void> {
 	const apiBase = getApiBaseUrl();
 	const apiKey = getCliApiKey();
@@ -5392,6 +5474,18 @@ export async function scopeShareCommand(
 		return;
 	}
 	const scopeId = await resolveScopeId(apiBase, apiKey, scopeIdOrSlug);
+
+	// Fetch scope summary so we can count skills and surface the
+	// secret-disclosure warning before generating a link. See spec § 10.4.
+	const meta = await fetchScopeMeta(apiBase, apiKey, scopeId);
+	if (!options.yes) {
+		const ok = await promptShareConfirmation(meta.name, meta.skill_count);
+		if (!ok) {
+			console.log("Cancelled.");
+			return;
+		}
+	}
+
 	const r = await fetch(
 		`${apiBase}/api/scopes/${scopeId}/share-links`,
 		{
@@ -5408,14 +5502,33 @@ export async function scopeShareCommand(
 		process.exitCode = 1;
 		return;
 	}
+	if (r.status === 409) {
+		const body = await r.json();
+		const err = body?.detail?.error;
+		if (err === "display_name_required") {
+			console.error(
+				"Set a display name on your profile before sharing a scope " +
+					"(it's shown to anyone you share with). Visit your dashboard " +
+					"settings or update via the web UI.",
+			);
+			process.exitCode = 1;
+			return;
+		}
+	}
 	if (!r.ok) {
 		console.error(`Create link failed: HTTP ${r.status}`);
 		process.exitCode = 1;
 		return;
 	}
-	const body = (await r.json()) as { url: string; raw_token: string };
+	const body = (await r.json()) as {
+		url: string;
+		raw_token: string;
+		owner_handle: string;
+	};
 	console.log("Share link (copy + send to someone):");
 	console.log(`  ${body.url}`);
+	console.log();
+	console.log(`Recipients will see you as: @${body.owner_handle}`);
 	console.log();
 	console.log("Recipient runs:");
 	console.log(`  clawdi share accept ${body.url}`);
@@ -5423,6 +5536,62 @@ export async function scopeShareCommand(
 	console.log(
 		"This token is shown ONCE. Lost links can be regenerated via `clawdi scope share-links`.",
 	);
+}
+
+async function fetchScopeMeta(
+	apiBase: string,
+	apiKey: string,
+	scopeId: string,
+): Promise<{ name: string; skill_count: number }> {
+	// Reuses the existing /api/scopes/{id} endpoint (extended in
+	// Phase B/D to return skill_count). If your codebase doesn't yet
+	// expose skill_count on that route, plumb it through there or
+	// inline a quick /api/skills?scope_id= count.
+	const r = await fetch(`${apiBase}/api/scopes/${scopeId}`, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+	});
+	if (!r.ok) {
+		throw new Error(`Scope lookup failed: HTTP ${r.status}`);
+	}
+	return r.json();
+}
+
+async function promptShareConfirmation(
+	scopeName: string,
+	skillCount: number,
+): Promise<boolean> {
+	// Skill content disclosure warning — spec § 10.4. Anyone with the
+	// share link can download every skill file verbatim, including
+	// any secrets hardcoded inside them.
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		console.log();
+		console.log(
+			`This will create a share link giving ANYONE who has it full read access`,
+		);
+		console.log(
+			`to ${skillCount} skill${skillCount === 1 ? "" : "s"} in scope "${scopeName}".`,
+		);
+		console.log();
+		console.log(
+			`Skills are NOT encrypted. If any of your skill files contain API keys,`,
+		);
+		console.log(
+			`tokens, passwords, or other secrets, they WILL be visible to recipients.`,
+		);
+		console.log(
+			`(Use vault references like \`clawdi://vault/...\` inside skills instead.)`,
+		);
+		console.log();
+		console.log(
+			`Vault items in this scope stay locked — recipients must sign in to resolve.`,
+		);
+		console.log();
+		const answer = await rl.question("Continue? [y/N] ");
+		return answer.trim().toLowerCase() === "y";
+	} finally {
+		rl.close();
+	}
 }
 
 async function resolveScopeId(
@@ -5878,12 +6047,22 @@ export function LinksSection({ scopeId }: { scopeId: string }) {
 	const revoke = useRevokeShareLink(scopeId);
 	const [label, setLabel] = useState("");
 	const [freshLink, setFreshLink] = useState<string | null>(null);
+	// Confirmation modal — spec § 10.4. Owners need to acknowledge
+	// skill content disclosure before generating a link.
+	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	const handleCreate = async () => {
 		const result = await create.mutateAsync({ label: label || undefined });
 		setFreshLink(result.url);
 		setLabel("");
+		setConfirmOpen(false);
 	};
+
+	// Handle 409 display_name_required with a clear inline message
+	// rather than a generic toast.
+	const isDisplayNameError =
+		create.error &&
+		(create.error as any)?.message?.includes("display_name_required");
 
 	return (
 		<section className="space-y-3">
@@ -5894,10 +6073,24 @@ export function LinksSection({ scopeId }: { scopeId: string }) {
 					onChange={(e) => setLabel(e.target.value)}
 					placeholder="Optional label (e.g. 'team')"
 				/>
-				<Button onClick={handleCreate} disabled={create.isPending}>
+				<Button
+					onClick={() => setConfirmOpen(true)}
+					disabled={create.isPending}
+				>
 					{create.isPending ? "Creating..." : "Generate link"}
 				</Button>
 			</div>
+			{isDisplayNameError ? (
+				<p className="text-sm text-destructive">
+					Set a display name on your profile before sharing — it&apos;s
+					shown to anyone you share with.
+				</p>
+			) : null}
+			<ShareConfirmDialog
+				open={confirmOpen}
+				onClose={() => setConfirmOpen(false)}
+				onConfirm={handleCreate}
+			/>
 			{freshLink ? (
 				<div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
 					<p className="font-medium">Copy this link — it&apos;s shown only once:</p>
@@ -5958,19 +6151,70 @@ export function LinksSection({ scopeId }: { scopeId: string }) {
 }
 ```
 
-- [ ] **Step 3: Invitations + Members sections**
+- [ ] **Step 3: ShareConfirmDialog component**
 
-Mirror the same shape:
+In the same `links-section.tsx` file (or extract to a sibling
+component file `share-confirm-dialog.tsx`):
+
+```tsx
+function ShareConfirmDialog({
+	open,
+	onClose,
+	onConfirm,
+}: {
+	open: boolean;
+	onClose: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+			<DialogContent className="max-w-md">
+				<DialogHeader>
+					<DialogTitle>Generate share link?</DialogTitle>
+				</DialogHeader>
+				<div className="space-y-3 text-sm">
+					<p>
+						Anyone with this link can download the full content of every
+						skill in this scope, including any text or files they contain.
+					</p>
+					<p className="text-muted-foreground">
+						Make sure none of your skills contain API keys, passwords, or
+						other secrets. Use vault references (
+						<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
+							clawdi://vault/...
+						</code>
+						) inside skills instead — vault items stay locked.
+					</p>
+				</div>
+				<div className="flex justify-end gap-2 pt-2">
+					<Button variant="outline" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button onClick={onConfirm}>I understand, generate link</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
+	);
+}
+```
+
+- [ ] **Step 4: Invitations + Members sections**
+
+Mirror the LinksSection shape:
 - `invitations-section.tsx` — email input + "Invite" button, list pending with cancel; show 400/404/409 error toasts based on the structured response body.
-- `members-section.tsx` — table of members (display, email, joined_via, joined_at), "Remove" button on each row, and an "Unshare entirely" CTA at the bottom with confirm dialog.
+- `members-section.tsx` — table of members (display, email, joined_via, joined_at), with the **two-lever remove flow** from spec § 12.5:
+  - "Remove" button on each row opens a dialog with two distinct buttons:
+    > **Just remove** — Deletes the membership only. Active share links still work; the user can re-enter via any token they kept.
+    > **Remove + revoke all share-links** — Same plus revokes every non-revoked link on this scope (you'll need to re-share links to your other members).
+  - An "Unshare entirely" CTA at the bottom calls `POST /unshare` and confirms with a single dialog (no two-lever needed there — it's already comprehensive).
 
 (The skeleton from links-section.tsx adapts trivially; each is ~80 lines.)
 
-- [ ] **Step 4: Smoke test**
+- [ ] **Step 5: Smoke test**
 
-`bun dev`, navigate to `/scopes/<own-scope-id>/sharing`, exercise create/list/revoke flows.
+`bun dev`, navigate to `/scopes/<own-scope-id>/sharing`, exercise create/list/revoke flows. Verify the confirm dialog appears before each link generation; verify the two-button "Remove member" dialog renders correctly.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/web/src/app/\(dashboard\)/scopes/\[id\]/sharing/

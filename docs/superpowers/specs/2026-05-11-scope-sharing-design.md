@@ -170,9 +170,12 @@ The CLI uses the same flag in its rendered tables (`clawdi scope list`).
 | Sharee already a member redeems same link again | No-op; server returns existing membership |
 | Anonymous sharee redeems the same link twice | Local CLI prints `already accepted` (token uniqueness check) |
 | Two different links to the same scope | Both valid until individually revoked; both produce membership rows with `joined_via='link'` after the sharee signs in |
-| Owner removes a member, member redeems an OLD anonymous token | Token is still valid (token != membership). Owner must also revoke the link if the intent is "block this person entirely" |
+| **Pending invitation collides with token redemption** | Bob has a pending invitation AND clicks Alice's share link, then signs in to upgrade. Result: membership created, pending invitation **auto-deleted** in the same transaction (avoids ghost state where Alice sees Bob as both a member and a pending invitee). Symmetric: accepting an invitation also deletes any other pending invitation for the same (scope_id, invitee_user_id). |
+| **Invitee changes email after invitation** | Invitation row stores `invitee_user_id` (FK to users) at creation, not just the email string. The invitee's `/api/me/invitations` lookup matches by `invitee_user_id == auth.user_id`, so a Clerk-side email change does not lose the invite. The original `invitee_email` is preserved as historical context only. |
+| Owner removes a member, member redeems an OLD anonymous token | Token is still valid (token != membership). To **fully** block the person, the owner must remove the member AND revoke any share-link they may have redeemed (then rotate to a new link for other intended recipients). The "Remove member" UI surfaces this hint explicitly. |
 | Anonymous sharee on device A signs in on device B | Device A keeps using its share-tokens until device A also signs in; device B's memberships are independent of device A's tokens |
 | Pending invitation, owner removes the invite, invitee tries to accept | 410 Gone; invite no longer exists |
+| **Owner has no `display_name`, tries to share** | Server returns 409 `display_name_required`. Identity is necessarily revealed to anyone with the link; without a real display name we'd fall back to the local part of the owner's email — which would leak the email address. Forcing a display name pre-share is the cheapest fix. |
 
 ## 5. Architecture
 
@@ -271,20 +274,30 @@ CREATE INDEX scope_memberships_user_id_idx ON scope_memberships(user_id);
 CREATE INDEX scope_memberships_scope_id_idx ON scope_memberships(scope_id);
 
 -- Outstanding invitations (email-based). Becomes a membership row
--- on accept; row is deleted on accept / decline / cancel.
+-- on accept; row is deleted on accept / decline / cancel / any
+-- membership-create path for the same (scope_id, invitee_user_id).
 CREATE TABLE scope_invitations (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    scope_id      UUID NOT NULL
-                  REFERENCES scopes(id) ON DELETE CASCADE,
-    invitee_email VARCHAR(320) NOT NULL,
-    invited_by    UUID NOT NULL
-                  REFERENCES users(id) ON DELETE CASCADE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope_id         UUID NOT NULL
+                     REFERENCES scopes(id) ON DELETE CASCADE,
+    -- Invitee MUST be a registered user at invitation time
+    -- (unregistered emails redirect to "send a share link instead").
+    -- Storing the user FK + the as-typed email lets us:
+    --   1. follow Clerk-side email changes without losing the invite
+    --      (lookup by user_id, not by email),
+    --   2. preserve the original recipient string for owner UI.
+    invitee_user_id  UUID NOT NULL
+                     REFERENCES users(id) ON DELETE CASCADE,
+    invitee_email    VARCHAR(320) NOT NULL,  -- as typed, historical
+    invited_by       UUID NOT NULL
+                     REFERENCES users(id) ON DELETE CASCADE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (scope_id, invitee_email)
+    UNIQUE (scope_id, invitee_user_id)
 );
 
-CREATE INDEX scope_invitations_email_idx ON scope_invitations(invitee_email);
+CREATE INDEX scope_invitations_invitee_user_id_idx
+    ON scope_invitations(invitee_user_id);
 
 -- One link per row. Owners can create multiple links per scope
 -- (e.g. one to share with a team, one to share with a community).
@@ -299,6 +312,13 @@ CREATE TABLE scope_share_links (
     label          VARCHAR(200),         -- optional owner-visible label
     created_by     UUID NOT NULL
                    REFERENCES users(id) ON DELETE CASCADE,
+    -- Owner handle (kebab display name) frozen at link creation time.
+    -- Returned to anonymous redeemers AND copied to scope_memberships
+    -- on upgrade, so the sharee's local skill path
+    -- (`<key>__<handle>/`) stays consistent across the
+    -- anonymous → membership transition even if the owner renames
+    -- between create + redeem + upgrade. See § 11.
+    resolved_owner_handle VARCHAR(64) NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at     TIMESTAMPTZ,          -- nullable = never expires
     revoked_at     TIMESTAMPTZ,
@@ -354,9 +374,17 @@ narrowly-scoped api keys).
 ```
 POST   /api/scopes/{scope_id}/share-links
        Body: { label?: string, expires_at?: ISO8601 }
-       Returns: { id, raw_token, url, prefix, created_at, expires_at }
+       Returns: { id, raw_token, url, prefix, owner_handle,
+                  created_at, expires_at }
        Auth: require_user_auth, caller must own scope.
-       Note: raw_token returned ONCE, server stores hash only.
+       Notes:
+         - raw_token returned ONCE, server stores hash only.
+         - Server resolves and FREEZES `resolved_owner_handle` on
+           the row at create time (see § 11). Returned in the
+           response so the owner can preview what sharees will see.
+         - Caller MUST have `users.display_name` set. If not:
+           409 `display_name_required` with hint to update profile.
+           Rationale in § 4.5 edge cases.
 
 GET    /api/scopes/{scope_id}/share-links
        Returns: ShareLinkResponse[]  (prefix, label, counts, no raw)
@@ -370,11 +398,19 @@ POST   /api/scopes/{scope_id}/invitations
        Body: { email: string }
        Returns: InvitationResponse
        Auth: require_user_auth, caller must own scope.
+       Behavior:
+         - Lookup `users` by lower(email). Required to find a registered
+           user — if none, 404 (see error list).
+         - Store BOTH `invitee_user_id` (FK to users.id) and
+           `invitee_email` (as typed). User-id is the durable
+           identity; email is preserved for display/historical context.
+         - Uniqueness is `(scope_id, invitee_user_id)` — re-inviting
+           the same person by a different email alias still 409s.
        Errors:
          400 already_owner — email maps to scope owner
          404 user_not_found — email has no clawdi account
                               (CLI / web suggests sending share link instead)
-         409 already_member — email already a member
+         409 already_member — invitee already a member
          409 already_invited — pending invite exists
 
 GET    /api/scopes/{scope_id}/invitations
@@ -407,6 +443,14 @@ GET    /api/me/invitations
 POST   /api/me/invitations/{invitation_id}/accept
        Returns: MembershipResponse
        Auth: require_user_auth.
+       Transaction:
+         1. Lookup invitation, verify `invitee_user_id == auth.user_id`.
+            (Email-string match is NOT used — see edge case in § 4.5.)
+         2. Create scope_memberships row, joined_via='invite'.
+         3. Delete this invitation row.
+         4. Delete any OTHER pending scope_invitations for the same
+            (scope_id, invitee_user_id) — defense against operator
+            error duplicating invites by alternate email.
 
 POST   /api/me/invitations/{invitation_id}/decline
        Returns: { status: "declined" }
@@ -433,10 +477,13 @@ No `AuthContext` involvement.
 ```
 POST   /api/share/{token}/redeem
        Returns: ShareRedeemResponse {
-           scope: { id, name, slug, owner_display, owner_handle },
+           scope_id: string,
+           scope_name: string,
+           owner_display: string,
+           owner_handle: string,         -- copied from share-link's frozen handle
            skill_count: number,
-           vault_locked_count: number,    -- vault items visible-but-locked
-           redeem_id: UUID                -- internal cursor
+           vault_count: number,          -- total vault items in scope
+           vault_locked: bool            -- always true for token-only access in v1
        }
        Auth: require_share_token only.
        Side-effects: increments redeem_count, sets last_redeemed_at.
@@ -455,10 +502,17 @@ POST   /api/share/{token}/upgrade
        Body: empty (Clerk JWT in Authorization header)
        Returns: MembershipResponse
        Auth: require_user_auth (Clerk JWT) + require_share_token.
-       Side-effects: creates scope_memberships row,
-                     joined_via='link',
-                     does NOT delete the token (multiple CLI devices
-                     may still be using it).
+       Transaction:
+         1. Create scope_memberships row with joined_via='link' and
+            resolved_owner_handle COPIED from the share-link's frozen
+            handle (so anonymous + post-upgrade paths agree).
+            Idempotent on (scope_id, user_id) — return existing.
+         2. Delete any pending scope_invitations for the same
+            (scope_id, invitee_user_id == auth.user_id). Covers the
+            "Bob got an email invite AND clicked the link" path
+            described in § 4.5.
+         3. Do NOT delete the share-token row; multiple CLI devices
+            may still be using it on the user's other machines.
 ```
 
 ### 7.4 Vault resolution — gate update
@@ -547,6 +601,18 @@ session sync). When **Clerk-bound** (after login), it also covers
 shared scope skills via the membership path. The existing SSE
 subscription extends from "scopes I own" to "scopes I see"
 (via `scope_ids_visible_to`).
+
+**Polling cadence for share-token scopes**:
+- Default: every **5 minutes**. The daemon hits
+  `GET /api/share/{token}/scope` once per share-token per cycle to
+  pick up content-hash deltas, then pulls changed tarballs.
+- Overridable via env var `CLAWDI_SHARED_POLL_SECONDS` (integer
+  seconds; minimum 60 to avoid pathological loads).
+- The 5-minute default matches user expectations for share-link
+  flows ("I just got the link, I want it usable now, but real-time
+  updates from someone else's scope can wait a few minutes").
+- Clerk-bound mode uses the existing SSE channel and gets near-
+  real-time updates for shared scopes too (see § 13).
 
 ## 9. Web Dashboard Surface
 
@@ -643,6 +709,53 @@ memberships, the dashboard UX doesn't change, the CLI receives
 slightly different decryption metadata at resolve time. The
 deferral is purely about cryptographic hardening, not about UX.
 
+### 10.4 Skill content disclosure — the OTHER channel
+
+Vault is the headline secret channel — and the only one with an
+explicit gate. **Skills are not encrypted, not gated by membership,
+and a share-token caller downloads them in full**. Files inside a
+skill tar (`SKILL.md`, scripts, attached binaries, configs) are
+returned verbatim through `GET /api/share/{token}/skills/{key}/tarball`.
+
+This matters because in practice users frequently embed secrets
+directly inside skill files: `OPENAI_API_KEY=sk-...` in a shell
+script, a webhook URL with an embedded token in a config snippet, a
+`.env` file copied into the skill folder. The vault gate does
+**not** protect these — anyone with the share link can read them.
+
+v1 surfaces the risk twice along the owner path:
+
+1. **Web Sharing tab** — generating a share link opens a confirmation
+   modal:
+
+   > "Anyone with this link can download the full content of every
+   > skill in this scope, including any text or files they contain.
+   > Make sure none of your skills contain API keys, passwords, or
+   > other secrets — use vault references (`clawdi://vault/...`)
+   > inside skills instead.
+   >
+   > [Cancel] [I understand, generate link]"
+
+2. **CLI** — `clawdi scope share` prompts before generating:
+
+   > "This will create a share link giving anyone full read access to
+   > the {N} skill(s) in scope '{name}'. Continue? [y/N] "
+
+Owners who DO want to share skills that reference secrets should
+move the secrets into vault (one-time refactor) and use
+`clawdi://vault/...` placeholders inside the skill content — the
+vault gate then protects the actual values while the skill structure
+remains shareable.
+
+v2 (deferred): an opt-in **best-effort secret scanner** at
+`clawdi push` time (and again at share-link create time) that
+matches high-confidence patterns (`AKIA[0-9A-Z]{16}` for AWS,
+`sk-[a-zA-Z0-9]{20,}` for OpenAI-style, hex blobs over a threshold,
+etc.) and blocks the operation with the actual matched line. We
+defer to v2 because false positives in an automated check have to
+land in the owner UX as overridable warnings — that's its own
+small design problem worth its own milestone.
+
 ## 11. Skill Local Layout
 
 The cloud-side uniqueness `(user_id, scope_id, skill_key)` is unchanged.
@@ -662,18 +775,58 @@ paths so the agent's flat `<root>/*/SKILL.md` glob continues to work.
 
 ### 11.2 `owner-handle` resolution
 
-Computed server-side once at membership creation (or first share-token
-redeem) and stored on the row (`scope_memberships.resolved_owner_handle`
-or, for tokens, returned in the redeem response and cached locally).
-This means the local path never changes when the owner renames.
+`owner-handle` is a **stable global identifier** for an owner,
+derived deterministically from their identity. It is computed
+server-side at share-link creation (or invitation accept time)
+and stored on the originating row so the value never drifts.
 
-Order of choice:
+**Definition:**
 
-1. `kebab(users.display_name)` — e.g., "Alice Chen" → `alice-chen`.
-2. Local part of `users.email` — e.g., `alice@x.com` → `alice`.
-3. Append a 4-char short hash of `user.id` if (1) and (2) collide
-   with another sharee's owner-handle in the same sharee's
-   namespace — e.g., `alice-xy23`.
+```
+owner_handle = kebab(users.display_name) + "-" + users.id.hex[:4]
+```
+
+Examples:
+- `Alice Chen` (id `a3b4c5d6-...`) → `alice-chen-a3b4`
+- `Alice Chen` (id `f1e2d3c4-...`) → `alice-chen-f1e2`
+- `Bob` (id `01020304-...`) → `bob-0102`
+
+The 4-hex-char user_id suffix is **always appended**. Rationale:
+
+- The suffix guarantees handles are globally unique per owner. A
+  sharee who follows two different "Alice"s sees `alice-a3b4` and
+  `alice-f1e2` side-by-side without any local collision logic.
+- Frozen at server side, no per-sharee context needed at the
+  freeze point. The share-link create endpoint doesn't know who
+  will redeem, so a global-unique handle is the only thing it can
+  freeze that survives.
+- 16^4 = 65 536 distinct suffixes per first-component. Collision
+  inside a sharee's "I follow two `alice-a3b4`s" namespace is
+  vanishingly rare (would require two users with matching
+  display_name AND matching first-4-hex of their UUID — order of
+  one in 65 536 even after the name match).
+- The suffix is human-readable enough not to look like a UUID
+  vomit. Sharees reading their own folder list see `alice-a3b4`
+  and recognize "this is from someone named Alice."
+
+**display_name required.** As noted in § 4.5, the create-share-link
+endpoint rejects callers with empty `users.display_name`
+(409 `display_name_required`). Without a display_name we'd be
+left with email-local-part (which leaks PII) or a pure UUID
+fragment (unfriendly), so we just push owners to set their name
+first. This is a small one-time friction for what's currently
+the v1 sharing entry path.
+
+**Where it's stored** (frozen at the moment listed):
+
+- **Share-link path**: at `POST /api/scopes/{id}/share-links` →
+  `scope_share_links.resolved_owner_handle`. Anonymous redeems
+  return this value. Upgrade to membership COPIES this value to
+  `scope_memberships.resolved_owner_handle`.
+- **Email-invite path**: at `POST /api/me/invitations/{id}/accept` →
+  `scope_memberships.resolved_owner_handle`. Computed at accept
+  time from the (now current) owner state. There's no anonymous
+  transit in this path.
 
 ### 11.3 Examples
 
@@ -709,28 +862,37 @@ default scope.
 |---|---|---|
 | Own `git-tools` | alice's `git-tools` | `git-tools/` + `git-tools__alice/` — coexist |
 | alice's `git-tools` | another alice's `git-tools` | First keeps `git-tools__alice/`, second gets `git-tools__alice-xy23/` |
-| alice's `git-tools` | alice's renamed `git-tools` | Same path (owner-handle frozen at first redeem; see § 11.6) |
+| alice's `git-tools` | alice's renamed `git-tools` | Same path (owner-handle frozen at share-link creation; § 11.6) |
 
-### 11.6 Anonymous → membership handle drift
+### 11.6 Why the anonymous and post-upgrade paths agree
 
-The owner-handle is computed server-side at two points:
+A previous draft of this spec computed `owner-handle` separately at
+the anonymous-redeem and at the membership-upgrade moments. That
+created a drift risk: if the owner renamed between the two events,
+the sharee's local skill folder (named from the anonymous handle)
+and the dashboard / `clawdi scope list` rendering (from the
+membership handle) would disagree.
 
-- **Anonymous redeem** — returned in `ShareRedeemResponse`, cached
-  in `share-tokens.json` locally.
-- **Membership creation** — computed at the moment the membership
-  row is inserted (invite-accept, web-redeem, or token-upgrade) and
-  frozen on `scope_memberships.resolved_owner_handle`.
+This design freezes the handle ONCE, at share-link creation, on
+`scope_share_links.resolved_owner_handle`. Every downstream
+consumer reads it from there:
 
-If an owner renames between the anonymous redeem and the CLI sign-in
-that upgrades it, the local path used during the anonymous period
-and the membership row's handle can differ. We accept this:
-- The local skill files keep their original anonymous-time path
-  (the daemon doesn't aggressively rename folders mid-life).
-- The dashboard and `clawdi scope list` show the membership row's
-  handle (current at upgrade time).
-- A `clawdi scope refresh-handles <scope-id>` opt-in command can
-  resync local paths if a user cares. Out of scope for v1 to make
-  this automatic — the cosmetic difference is rare and benign.
+- Anonymous `POST /api/share/{token}/redeem` returns the frozen
+  handle in `ShareRedeemResponse.owner_handle`.
+- Anonymous `GET /api/share/{token}/scope` returns the same value.
+- `POST /api/share/{token}/upgrade` COPIES it to
+  `scope_memberships.resolved_owner_handle`.
+- The Web dashboard's "Shared with me" list reads it from the
+  membership row, which contains the same value.
+
+So a sharee's local `git-tools__alice/` folder, their CLI's `clawdi
+scope list` output, and the Web sidebar's entry all stay in sync —
+even if alice renames between accept and upgrade.
+
+The email-invite path doesn't go through a share-link, so it freezes
+the handle on `scope_memberships.resolved_owner_handle` at accept
+time. That single freeze point is sufficient — there's no
+anonymous transit in this path to drift away from.
 
 ## 12. Auth and Token Lifecycle
 
@@ -788,36 +950,81 @@ are user-bound, so both devices end up with the same membership
 post-upgrade. This is the right behavior for the user's "I have
 two machines" case.
 
-### 12.5 Revocation propagation
+### 12.5 Revocation — two independent levers
 
-When an owner revokes a share-link:
-- Server sets `revoked_at = NOW()`.
-- Next CLI sync round (or next REST call) on devices still using
-  the raw token returns 410.
-- CLI prints `Owner revoked this share. Removing local copy.` and
-  deletes the entry from share-tokens.json + the local skill files.
-- Memberships created via `joined_via='link'` are **not** affected —
-  revoking a link only invalidates anonymous CLI access, not
-  upgrades that already became memberships. To "block this person
-  entirely" the owner must also `DELETE
-  /api/scopes/{id}/members/{user_id}`.
+Access via share-link and access via membership are **independent**.
+This is by design (a token has no user identity, a membership has
+no token), but it surfaces a subtle UX point: neither revoke
+action on its own fully cuts off a determined recipient.
+
+**Revoking a share-link** (`DELETE /api/scopes/{id}/share-links/{link_id}`):
+- Server sets `revoked_at = NOW()` on the link.
+- Anonymous CLI holders using the token: next sync returns 410;
+  CLI prints `Owner revoked this share` and deletes the entry from
+  `share-tokens.json` plus local skill files.
+- Members who already upgraded via this link: **unaffected**. Their
+  `scope_memberships` row stays; their dashboard and CLI keep
+  working.
+
+**Removing a member** (`DELETE /api/scopes/{id}/members/{user_id}`):
+- Server deletes the row.
+- That user's Clerk-authenticated read paths (via
+  `scope_ids_visible_to`) lose visibility immediately.
+- BUT if the same person still has a valid share-link's raw token
+  on disk, they can keep doing anonymous reads through the
+  `/api/share/{token}/...` surface — the token never knew their
+  identity in the first place.
+
+**Fully blocking one specific person** therefore requires two acts:
+- Remove the membership row.
+- Revoke EVERY share-link they may have redeemed (and rotate new
+  links for the recipients you still trust).
+
+The Web "Remove member" confirmation surfaces this asymmetry:
+
+> "Removing {member} stops their dashboard access immediately. If
+> they used a share link to join, they can still pull skills using
+> that link until you revoke it. Revoke active share links too?
+> [Just remove] [Remove + revoke all links]"
+
+The "Remove + revoke all links" path revokes every non-revoked
+share-link on the scope in the same transaction and creates a
+fresh link the owner can re-share with the people they kept.
+
+The CLI's `clawdi scope members --remove <id>` accepts a
+`--revoke-links` flag with the same semantics.
 
 ## 13. SSE / Real-time Sync
 
-The `/api/sync/events` SSE channel already broadcasts
-`skill_changed` / `skill_deleted` / `revision_bump` per scope. The
-filter today is "scopes the caller's user_id owns." It widens
-naturally once `scope_ids_visible_to` returns shared scopes too —
-no SSE protocol change required.
+The `/api/sync/events` SSE channel today broadcasts
+`skill_changed` / `skill_deleted` / `revision_bump` per scope to
+authenticated callers. The implementation filters by the caller's
+visible scope set; making it work for shared scopes is the same
+one-line extension as the read paths (use
+`scope_ids_visible_to`).
 
-Anonymous share-token sync is **poll-based** (the daemon does a
-periodic pull, not SSE). This is because:
-- The SSE channel multiplexes scopes server-side via auth context;
+**What SSE covers for shared scopes in v1:**
+- Skill events (`skill_changed`, `skill_deleted`, `revision_bump`)
+  — yes. A viewer member's CLI gets notified the same way the
+  owner does, and pulls the updated skill immediately.
+- Vault events — **no**. Vault changes are NOT pushed over SSE in
+  v1 (this is true today even for owners — vault doesn't currently
+  use the SSE protocol). Vault metadata visible to members refreshes
+  on the next periodic poll. If vault freshness needs SSE, that's a
+  follow-up extending the protocol; sharing is not the right place
+  to introduce it.
+
+**Anonymous share-token holders DON'T use SSE.** The SSE channel
+requires `AuthContext`; token callers don't have one. They poll
+`GET /api/share/{token}/scope` periodically (see § 8.4) and pull
+deltas. Rationale:
+
+- SSE multiplexes scopes server-side via auth context;
   share-tokens are per-scope and don't have an AuthContext.
-- The expected sharee experience is "skills update once a day or
-  less"; polling every 5 minutes is fine.
-- Adding SSE multiplexing for tokens would require a new
-  per-token long-lived connection model. Defer until UX demands it.
+- The typical sharee profile is "agent picks up latest on next
+  invocation," not "see edits in real time."
+- A per-token long-lived SSE connection model would be a meaningful
+  protocol change. Defer until UX demands it.
 
 ## 14. Phasing
 
@@ -849,15 +1056,20 @@ shipping mid-cycle — sharing as an end-to-end feature.
 
 | Risk | Likelihood | Severity | Mitigation |
 |---|---|---|---|
+| **Skill content carries hardcoded secrets** | Medium | **High** | Owner flow now has explicit confirmation gates in both CLI (`clawdi scope share` prompt) and Web (Sharing-tab modal). Docs and the gate copy push the vault-reference pattern (`clawdi://vault/...`) as the right way to share skills that touch secrets. § 10.4 spells out the failure mode + workarounds. v2 best-effort secret scanner deferred. |
+| **Member-removal asymmetry — old share-token still works** | Medium | Medium | § 12.5 documents the two-lever model. "Remove member" UI offers "+ revoke all share-links" combined action (single transaction); CLI offers `--revoke-links` flag on `clawdi scope members --remove`. The wording on the confirm dialog explicitly tells the operator that link-based access survives a member-only removal. |
+| **Pending invite + token-upgrade ghost state** | Medium | Low-Medium | Both the invite-accept and the token-upgrade transactions delete any other pending `scope_invitations` for the same `(scope_id, invitee_user_id)`. Owner dashboard never simultaneously shows "Bob is a member" and "Bob has a pending invitation." |
+| **Invitee changes email after invitation** | Medium | Low | Invitations store `invitee_user_id` (FK to users) not just the email string. Lookup by user_id is stable across Clerk-side email rotations. The historical email is kept for owner-side display only. |
+| **Owner-handle drift between anonymous and post-upgrade paths** | — | — | Eliminated by design. Handle is frozen once at `scope_share_links` creation; all downstream consumers (anonymous redeem response, membership row, dashboard render) read the same value. § 11.6. |
 | Share-link brute-force discovery | Low | Medium | Tokens are 32 random bytes → 2^256 keyspace. Server logs failed redeems for anomaly detection but no rate limit in v1. |
 | Token leaked publicly (e.g. into a blog post) | Medium | Medium | Owner-controlled revoke is the canonical fix. Future v1.1: link-level rate limit + redeem count alerts. |
 | Sharee's anonymous CLI accumulates stale tokens | Medium | Low | `clawdi share list` exposes them; `clawdi share remove` cleans. CLI auto-removes on 410. |
-| Owner-handle collision producing unintuitive `alice-xy23` paths | Low | Low | Document. Provide `clawdi scope list --verbose` showing handle origin (display name / email / fallback). |
+| Owner-handle collision producing unintuitive `alice-xy23` paths | Low | Low | Document. `clawdi scope list --verbose` shows handle origin (display name / email / fallback). |
 | Migration deadlock with concurrent share operations | Very Low | Low | v1 has zero existing data; migration is DDL-only and runs in < 100ms. |
-| Privacy: email-invite reveals whether an address is registered | Medium | Low-Medium | Invitation endpoint returns generic 200 regardless of registration state (the actual invite row is created only if user exists; the lookup itself is internal). Wording: "If they have a clawdi account, they'll see this in their dashboard. Otherwise, share the link instead." |
-| Vault metadata leak to anonymous holder (item names) | Low | Low | Acceptable — item names are not secret. If a deployment treats item names as sensitive, owner shouldn't share that scope. Document. |
-| Membership row drift (`resolved_owner_handle` outdated if user renames) | Low | Low | Acceptable by design — local path stability outweighs handle freshness. Add `clawdi scope list --refresh` to recompute if a user wants. |
+| Privacy: email-invite reveals whether an address is registered | Medium | Low-Medium | Invitation endpoint surfaces a 404 `user_not_found` with copy that pushes "share link instead" — this does leak existence to the OWNER but not to the world. Worth the UX clarity over a generic 200; the owner is already trusted with the invitation surface. |
+| Vault metadata leak to anonymous holder (item names) | Low | Low | Acceptable — item names are not secret. If a deployment treats item names as sensitive, owner shouldn't share that scope. § 10.4 covers the analogous skill-content concern. |
 | Web "Add to my dashboard" race (user A clicks while owner revokes) | Low | Low | Server transaction: SELECT link FOR UPDATE → check revoked → INSERT membership → commit. Either A becomes member or sees "link revoked." |
+| Bandwidth abuse via leaked share-link (anonymous holder repeatedly pulls 100MB skill tar) | Low | Low | v1: no rate limit (consistent with no-rate-limit posture overall). Mitigated by owner revoke. v1.1 can add per-link per-IP throttle if it shows up in metrics. |
 
 ## 16. Testing Strategy
 
