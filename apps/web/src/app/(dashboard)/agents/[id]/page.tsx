@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Unplug } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -27,6 +27,13 @@ export default function AgentDetailPage() {
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
+	// Hosted tiles navigate here with `?source=on-clawdi` so the sync
+	// badge can render hosted-aware remediation copy (no CLI snippets,
+	// pointer to the Clawdi dashboard for lifecycle ops). Self-managed
+	// callers omit the param and the badge falls back to its default
+	// "self-managed" behavior — same shape as the overview-grid badge.
+	const searchParams = useSearchParams();
+	const badgeSource = searchParams.get("source") === "on-clawdi" ? "on-clawdi" : "self-managed";
 
 	const {
 		data: agent,
@@ -221,7 +228,7 @@ export default function AgentDetailPage() {
 								agent.agent_version ? `v${agent.agent_version}` : null,
 								agent.os,
 								agent.last_seen_at ? `last seen ${relativeTime(agent.last_seen_at)}` : null,
-								<DaemonStatusBadge env={agent} />,
+								<DaemonStatusBadge env={agent} source={badgeSource} />,
 							]}
 							className="min-w-0 flex-1"
 						/>

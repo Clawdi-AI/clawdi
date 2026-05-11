@@ -159,7 +159,13 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 			runtimeLabel: slug,
 			statusLabel,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
-			href: matchedEnv ? `/agents/${matchedEnv.id}` : manageUrl,
+			// `?source=on-clawdi` is the breadcrumb the agent detail page
+			// reads so its sync badge can mirror the hosted-aware copy
+			// we render here. A user who bookmarks/shares this URL keeps
+			// that intent; a self-managed user who happens to navigate
+			// to the same env without the param defaults to the standard
+			// self-managed badge.
+			href: matchedEnv ? `/agents/${matchedEnv.id}?source=on-clawdi` : manageUrl,
 			external: !matchedEnv,
 			// Only surface a separate "Manage" affordance when the
 			// primary link goes IN-APP (matchedEnv present). On the

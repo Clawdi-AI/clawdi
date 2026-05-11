@@ -146,3 +146,49 @@ async def test_backfill_no_op_when_all_fields_set(db_session, signing_key):
     assert ctx is not None
     assert ctx.user.email == "set@example.com"
     assert ctx.user.name == "Set"
+
+
+@pytest.mark.asyncio
+async def test_first_login_creates_user_and_personal_scope(db_session, signing_key):
+    """Brand-new Clerk sub signs in directly to cloud.clawdi.ai —
+    no admin lazy-create has happened yet, no `users` row exists.
+    `_auth_via_clerk_jwt` should pass through the
+    `lazy_create_user_with_personal_scope` helper, returning a row
+    with the JWT's email/name populated AND a Personal scope
+    invariant downstream resolvers depend on.
+
+    Pins the JWT-side of the helper contract (admin-side coverage
+    lives in `test_admin_endpoints.py::test_admin_lazy_create_*`).
+    Without this test, refactoring the helper signature could
+    silently regress the JWT first-login path — the existing
+    backfill tests all pre-seed a user row and never hit the
+    first-login branch.
+    """
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+
+    clerk_id = f"clerk_first_login_{uuid.uuid4().hex[:12]}"
+
+    # Pre-flight: no row exists yet.
+    pre = (
+        await db_session.execute(select(User).where(User.clerk_id == clerk_id))
+    ).scalar_one_or_none()
+    assert pre is None
+
+    token = _sign(signing_key, clerk_id, email="new@example.com", name="New User")
+    ctx = await _auth_via_clerk_jwt(token, db_session)
+
+    assert ctx is not None
+    assert ctx.user.clerk_id == clerk_id
+    assert ctx.user.email == "new@example.com"
+    assert ctx.user.name == "New User"
+
+    # Helper invariant: Personal scope must exist in the same txn.
+    personal = (
+        await db_session.execute(
+            select(Scope).where(Scope.user_id == ctx.user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+        )
+    ).scalar_one_or_none()
+    assert personal is not None
+    assert personal.slug == "personal"
