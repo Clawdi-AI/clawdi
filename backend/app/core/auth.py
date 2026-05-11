@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.user import User
+from app.services.user_provisioning import lazy_create_user_with_personal_scope
 
 bearer_scheme = HTTPBearer()
 logger = logging.getLogger(__name__)
@@ -257,73 +258,27 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     if not user:
         # First login (production path, or rebind enabled with no
-        # match): create a fresh user row bound to this Clerk sub.
-        # The Personal scope is created in the same transaction so
-        # every user always has a default-write target — phase 1's
-        # resolver assumes it exists and 500s if not. Migration
-        # backfilled it for pre-existing users; this covers new
-        # signups.
+        # match): create a fresh user row + Personal scope bound to
+        # this Clerk sub. Downstream resolvers assume every user has
+        # a Personal scope; the helper enforces that invariant in a
+        # single transaction.
         #
-        # Concurrent first-login requests race here: both find
-        # user=None, both try to insert. The second commit hits
-        # the `users.clerk_id` unique constraint. Catch the
-        # IntegrityError, rollback, and re-query — the row is
-        # there now from the winner.
-        from app.models.scope import SCOPE_KIND_PERSONAL
-        from app.models.scope import Scope as _Scope
-
-        new_user = User(
+        # Race-loser status is 401: this is a user-auth flow, so a
+        # vanishing winner row is fail-closed-and-let-the-client-
+        # retry territory, not the operational 500 the admin path
+        # uses.
+        user = await lazy_create_user_with_personal_scope(
+            db,
             clerk_id=clerk_id,
             email=email,
             name=payload.get("name"),
+            race_loser_status=status.HTTP_401_UNAUTHORIZED,
         )
-        db.add(new_user)
-
-        # Narrow IntegrityError handling: ONLY the User flush is
-        # racy (clerk_id unique). The Scope insert can't race
-        # because new_user.id is freshly generated. Wrapping both
-        # in one try would silently swallow a Scope-side error
-        # and leave the user without a Personal scope.
-        try:
-            await db.flush()  # may raise on clerk_id conflict
-        except IntegrityError:
-            await db.rollback()
-            # Winner committed first; adopt its row.
-            result = await db.execute(select(User).where(User.clerk_id == clerk_id))
-            user = result.scalar_one_or_none()
-            if user is None:
-                raise HTTPException(
-                    status.HTTP_401_UNAUTHORIZED,
-                    "could not create or load user",
-                ) from None
-        else:
-            # Scope insert can't race on user_id (fresh) but the
-            # commit() below could still raise on bizarre states
-            # (the partial unique index on kind=personal, a
-            # connection drop mid-commit). Catch and log instead
-            # of letting the SQLAlchemy traceback leak as a 500.
-            personal = _Scope(
-                user_id=new_user.id,
-                name="Personal",
-                slug="personal",
-                kind=SCOPE_KIND_PERSONAL,
-            )
-            db.add(personal)
-            try:
-                await db.commit()
-            except Exception:
-                logger.exception(
-                    "personal_scope_create_failed user=%s clerk_id=%s",
-                    new_user.id,
-                    clerk_id,
-                )
-                await db.rollback()
-                raise HTTPException(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                ) from None
-            await db.refresh(new_user)
-            user = new_user
+        # Helper leaves rows flushed-not-committed so admin callers
+        # can bundle their own writes. The JWT path has nothing else
+        # to write, so commit + refresh here.
+        await db.commit()
+        await db.refresh(user)
 
     return AuthContext(user=user)
 

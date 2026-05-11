@@ -39,13 +39,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_PERSONAL, Scope
+from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
+from app.services.user_provisioning import lazy_create_user_with_personal_scope
 
 logger = logging.getLogger(__name__)
 
@@ -59,97 +60,40 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
 
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
-    """Resolve a user by clerk_id, lazy-creating the row if needed.
+    """Resolve a user by clerk_id, lazy-creating the row + Personal
+    scope if needed.
 
-    Mirrors the lazy-create semantics of `_auth_via_clerk_jwt` so a
-    user whose first interaction with cloud-api is via the SaaS
-    side (clawdi.ai dashboard → admin endpoint) lands here with
-    the same row identity they'll get when they later sign into
-    cloud.clawdi.ai directly.
-
-    Without this, the most common SaaS-deploy entry path silently
-    fails: a user clicks Deploy on the upstream SaaS dashboard
-    before ever visiting cloud-api directly → `users` row doesn't
-    exist → admin endpoint 404 → SaaS catches the error, deploy
-    succeeds without sync, and the user has to redeploy after their
+    The lazy-create exists for the common SaaS-deploy entry path
+    where a user clicks Deploy on clawdi.ai before ever signing
+    into cloud.clawdi.ai directly. Without it the admin endpoint
+    would 404, the SaaS would catch the error, the pod would deploy
+    without sync, and the user would have to redeploy after their
     first direct visit.
 
-    Safety model — same as the JWT path:
-    - `clerk_id` is a value the SaaS side already authenticated
-      against the user's Clerk session (we trust it because the
-      shared `X-Admin-Key` is gated to first-party server-to-server
-      callers, and those callers themselves only forward authed
-      clerk_ids).
-    - email/name are unknown here (no JWT in scope), so the row
-      starts with `email=None`. The next time the user signs into
-      cloud.clawdi.ai directly, the JWT path either updates this
-      row by clerk_id match (already correct) or — if `email` is
-      later filled in by Clerk — backfills then.
-    - A Personal scope is created in the same transaction, same
-      invariant the JWT path enforces (downstream resolvers 500
-      without it).
+    Trust model: `clerk_id` here is value the SaaS already
+    authenticated against the user's Clerk session — the shared
+    `X-Admin-Key` gate trusts first-party server-to-server callers.
+    Email/name are unknown (no JWT in scope); the row starts with
+    `email=None` and the JWT path backfills on first direct sign-in.
 
-    Race-safe: concurrent admin calls for the same brand-new
-    clerk_id can both attempt the insert; the loser hits the
-    `users.clerk_id` unique constraint, rolls back, and adopts the
-    winner's row. Mirrors the same pattern in `_auth_via_clerk_jwt`.
+    Race-loser status is 500 (not 401): admin callers are
+    first-party SaaS code, so a vanishing-winner-row situation is
+    an operational anomaly worth a loud failure rather than a
+    user-flow retry.
     """
     target = (await db.execute(select(User).where(User.clerk_id == clerk_id))).scalar_one_or_none()
     if target is not None:
         return target
 
-    new_user = User(clerk_id=clerk_id, email=None, name=None)
-    db.add(new_user)
-    try:
-        await db.flush()
-    except IntegrityError:
-        # Another concurrent admin call won the race. Adopt its row.
-        await db.rollback()
-        target = (
-            await db.execute(select(User).where(User.clerk_id == clerk_id))
-        ).scalar_one_or_none()
-        if target is None:
-            # Both writers somehow lost the row — extremely unlikely
-            # (would require a concurrent delete). Surface as 500
-            # rather than 404 so the SaaS caller sees this is an
-            # operational anomaly, not a wrong-clerk_id payload.
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "could not create or load user",
-            ) from None
-        return target
-
-    # Personal scope: same transaction as the User insert, same
-    # invariant the JWT path enforces. Without this, downstream
-    # resolvers that assume every user has a Personal scope will
-    # 500 the first time the user touches them. The Scope insert
-    # can't race on user_id (fresh), but we still wrap the flush
-    # in try/except — bizarre states (partial unique index on
-    # kind=personal, mid-flush connection drop) would otherwise
-    # leak as a raw SQLAlchemy 500 with traceback. Mirrors the
-    # defensive model in `_auth_via_clerk_jwt`.
-    personal = Scope(
-        user_id=new_user.id,
-        name="Personal",
-        slug="personal",
-        kind=SCOPE_KIND_PERSONAL,
+    user = await lazy_create_user_with_personal_scope(
+        db,
+        clerk_id=clerk_id,
+        email=None,
+        name=None,
+        race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
-    db.add(personal)
-    try:
-        await db.flush()
-    except Exception:
-        logger.exception(
-            "admin_personal_scope_create_failed clerk_id=%s user_id=%s",
-            clerk_id,
-            new_user.id,
-        )
-        await db.rollback()
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "internal server error",
-        ) from None
-    logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, new_user.id)
-    return new_user
+    logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, user.id)
+    return user
 
 
 @router.post("/auth/keys", response_model=ApiKeyCreated)
