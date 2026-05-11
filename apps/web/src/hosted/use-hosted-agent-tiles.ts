@@ -161,7 +161,16 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: matchedEnv ? `/agents/${matchedEnv.id}` : manageUrl,
 			external: !matchedEnv,
-			manageHref: manageUrl,
+			// Only surface a separate "Manage" affordance when the
+			// primary link goes IN-APP (matchedEnv present). On the
+			// fallback path (no cloud-api env join — typically a SaaS
+			// deployment that pre-dates the admin-mint integration)
+			// the primary link already goes to the SaaS dashboard, so
+			// a trailing "Manage" button pointing at the same URL is
+			// pure visual noise. Leaving manageHref undefined falls
+			// the tile back to the plain ArrowUpRight glyph, which is
+			// exactly the pre-Phase-4a UX.
+			manageHref: matchedEnv ? manageUrl : undefined,
 			active,
 			env: matchedEnv ?? null,
 		};
