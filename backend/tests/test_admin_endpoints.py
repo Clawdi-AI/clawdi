@@ -534,12 +534,67 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_endpoints_excluded_from_openapi_schema(admin_client):
+async def test_admin_mint_rejects_cross_tenant_environment_id(
+    admin_client, db_session, seed_user
+):
+    """Admin caller passing user A's `target_clerk_id` together with an
+    `environment_id` owned by user B must get 403 (not silently mint a
+    cross-tenant key, not 500 on the ValueError traceback).
+
+    Defense in depth: `mint_api_key` raises ValueError on the
+    user_id/env_id ownership mismatch and the admin route maps that
+    to 403. The user-self-mint path has the same test
+    (`test_deploy_key_rejects_cross_tenant_environment_id`); without
+    the admin counterpart, a future refactor that inlines the
+    ownership check (or removes the service-layer check) would
+    silently regress the admin path with no safety net.
+    """
+    import uuid as _uuid
+
+    from app.models.user import User
+    from tests.conftest import create_env_with_scope
+
+    other = User(clerk_id=f"other_admin_{_uuid.uuid4().hex[:8]}", email="o@x.dev", name="O")
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    other_env = await create_env_with_scope(
+        db_session,
+        user_id=other.id,
+        machine_id="m-other-admin",
+        machine_name="other-pod",
+    )
+
+    try:
+        r = await admin_client.post(
+            "/api/admin/auth/keys",
+            headers={"X-Admin-Key": _ADMIN_KEY},
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "label": "cross-tenant-attempt",
+                "environment_id": str(other_env.id),
+            },
+        )
+        assert r.status_code == 403, r.text
+    finally:
+        await db_session.delete(other)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_user):
     """Regression: `/api/admin/*` MUST NOT appear in the public OpenAPI
     schema. The web/CLI typed-client codegen consumes /openapi.json,
     and admin endpoints are server-to-server only — leaking them
     advertises the X-Admin-Key surface to anyone who downloads the
-    frontend bundle."""
+    frontend bundle.
+
+    Also verifies the endpoints are still REACHABLE — a regression
+    where someone disables the admin router entirely (or comments
+    out `include_router(admin_router)`) would pass the
+    "absent from schema" check trivially. Catching both means the
+    test holds the actual invariant: hidden from schema AND live.
+    """
     r = await admin_client.get("/openapi.json")
     assert r.status_code == 200
     schema = r.json()
@@ -547,4 +602,18 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client):
     assert admin_paths == [], (
         f"admin endpoints leaked into OpenAPI schema: {admin_paths}. "
         "Add `include_in_schema=False` to the admin router."
+    )
+
+    # Reachability check: the actual endpoint must respond (200), not
+    # 404 — confirms the router is still wired up under the schema-
+    # excluded prefix.
+    mint = await admin_client.post(
+        "/api/admin/auth/keys",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={"target_clerk_id": seed_user.clerk_id, "label": "reachability-check"},
+    )
+    assert mint.status_code == 200, (
+        f"admin mint endpoint is not reachable (status={mint.status_code}): {mint.text}. "
+        "include_in_schema=False must hide the route from /openapi.json without "
+        "actually disabling it."
     )

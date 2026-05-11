@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -168,6 +169,13 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         try:
             await db.commit()
             await db.refresh(user)
+            # Log only on the success path. If the commit raises and
+            # we fall into the rollback branch below, this request is
+            # the race LOSER — the winner already wrote the values
+            # and is the one whose log line should claim the backfill.
+            # Logging here both ways would lie about who wrote what
+            # and corrupt audit / debugging trails.
+            logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
         except IntegrityError:
             # Concurrent backfill — another request won. Re-read the
             # row (which now carries the winner's values) instead of
@@ -175,7 +183,6 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             await db.rollback()
             result = await db.execute(select(User).where(User.clerk_id == clerk_id))
             user = result.scalar_one()
-        logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
 
     # Sub miss + snapshot-rebind opted in: try to attach to an existing
     # snapshot row by verified email. We deliberately fail closed if any
@@ -554,8 +561,6 @@ async def require_admin_api_key(
     comparison once configured (defense against timing oracle even though
     the gate is binary).
     """
-    import hmac
-
     expected = settings.admin_api_key
     if not expected:
         raise HTTPException(

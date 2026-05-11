@@ -123,7 +123,11 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     # invariant the JWT path enforces. Without this, downstream
     # resolvers that assume every user has a Personal scope will
     # 500 the first time the user touches them. The Scope insert
-    # can't race on user_id (fresh) so a single try/commit is fine.
+    # can't race on user_id (fresh), but we still wrap the flush
+    # in try/except — bizarre states (partial unique index on
+    # kind=personal, mid-flush connection drop) would otherwise
+    # leak as a raw SQLAlchemy 500 with traceback. Mirrors the
+    # defensive model in `_auth_via_clerk_jwt`.
     personal = Scope(
         user_id=new_user.id,
         name="Personal",
@@ -131,7 +135,19 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
         kind=SCOPE_KIND_PERSONAL,
     )
     db.add(personal)
-    await db.flush()
+    try:
+        await db.flush()
+    except Exception:
+        logger.exception(
+            "admin_personal_scope_create_failed clerk_id=%s user_id=%s",
+            clerk_id,
+            new_user.id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "internal server error",
+        ) from None
     logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, new_user.id)
     return new_user
 
