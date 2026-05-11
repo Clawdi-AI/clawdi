@@ -42,6 +42,13 @@ ADMIN_KEY="local-dev-admin-secret"
 API="http://localhost:8000"
 NOVEL_CLERK_ID="user_local_e2e_$(date +%s)"
 
+# Extract a top-level field from JSON on stdin. Used to parse curl
+# responses without taking a hard dep on jq (not everyone has it
+# installed, and python3 ships with macOS by default).
+json_field() {
+  python3 -c "import json,sys; print(json.load(sys.stdin)['$1'])"
+}
+
 echo "=== Step 1: confirm cloud-api admin endpoint is live ==="
 HEALTH=$(curl -fsS "$API/health")
 echo "$HEALTH"
@@ -57,7 +64,7 @@ ENV_RES=$(curl -fsSX POST "$API/api/admin/environments" \
     \"machine_name\":\"local-dev\",
     \"agent_type\":\"claude_code\"
   }")
-ENV_ID=$(echo "$ENV_RES" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+ENV_ID=$(echo "$ENV_RES" | json_field id)
 echo "  env_id=$ENV_ID"
 echo "  clerk_id=$NOVEL_CLERK_ID  (newly lazy-created — check cloud-api logs for 'admin_lazy_create_user')"
 echo
@@ -71,8 +78,8 @@ KEY_RES=$(curl -fsSX POST "$API/api/admin/auth/keys" \
     \"label\":\"local-e2e\",
     \"environment_id\":\"$ENV_ID\"
   }")
-RAW_KEY=$(echo "$KEY_RES" | python3 -c "import json,sys; print(json.load(sys.stdin)['raw_key'])")
-KEY_ID=$(echo "$KEY_RES" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+RAW_KEY=$(echo "$KEY_RES" | json_field raw_key)
+KEY_ID=$(echo "$KEY_RES" | json_field id)
 echo "  key_id=$KEY_ID"
 echo "  raw_key=${RAW_KEY:0:25}... (full key in env vars below)"
 echo
