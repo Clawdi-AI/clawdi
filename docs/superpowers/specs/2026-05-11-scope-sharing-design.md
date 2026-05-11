@@ -568,6 +568,14 @@ the `ShareLink` row, checks `revoked_at IS NULL AND
 No `AuthContext` involvement.
 
 ```
+GET    /api/share/{token}/preview
+       Returns: ShareRedeemResponse (same shape as /redeem below)
+       Auth: require_share_token only.
+       Side-effects: NONE. Pure read for the public landing page,
+       link-unfurlers, and other "what is this?" callers. The
+       redeem-count statistic stays accurate; SSR + crawlers can
+       hit this freely.
+
 POST   /api/share/{token}/redeem
        Returns: ShareRedeemResponse {
            scope_id: string,
@@ -580,6 +588,13 @@ POST   /api/share/{token}/redeem
        }
        Auth: require_share_token only.
        Side-effects: increments redeem_count, sets last_redeemed_at.
+       This endpoint is **side-effecting** — call ONLY when the
+       sharee actually accepts the share (CLI `share accept` or
+       web "Add to my dashboard" click). Anything that just wants
+       to preview the scope (landing page, link-unfurler, refresh
+       of an already-redeemed landing page) MUST use `/preview`
+       above instead, so we don't double-count refresh / crawler
+       traffic in `redeem_count`.
 
 GET    /api/share/{token}/scope
        Returns: full scope metadata + skill index (key, version, hash) +
@@ -594,12 +609,13 @@ GET    /api/share/{token}/skills/{skill_key}/tarball
 POST   /api/share/{token}/upgrade
        Body: empty (caller credential in Authorization header)
        Returns: MembershipResponse
-       Auth: require_user_auth + require_share_token.
+       Auth: require_user_auth_unbound + require_share_token.
        The user credential MAY be either a Clerk JWT (web "Add to
        my dashboard") OR an unbound CLI api_key (CLI auto-upgrade
-       after `clawdi auth login`). Both shapes pass through
-       `require_user_auth`. Narrowly-scoped api_keys (env-bound
-       deploy keys, etc.) are rejected by the existing dep.
+       after `clawdi auth login`). Env-bound deploy keys are
+       rejected (hosted pod must not mint memberships on the
+       user's behalf — see § 7 intro for the `_unbound` dep
+       rationale).
        Transaction:
          1. Create scope_memberships row with joined_via='link' and
             resolved_owner_handle COPIED from the share-link's frozen
@@ -900,6 +916,30 @@ etc.) and blocks the operation with the actual matched line. We
 defer to v2 because false positives in an automated check have to
 land in the owner UX as overridable warnings — that's its own
 small design problem worth its own milestone.
+
+**Snapshot semantics + TOCTOU caveat.** Share links **do not
+snapshot** skill content at the link's creation time — they grant
+access to whichever skill bytes are CURRENTLY in the file store at
+the moment the sharee fetches the tarball. Concretely, when a
+sharee calls `GET /api/share/{token}/skills/{key}/tarball`, the
+server looks up the live `Skill.file_key` for that skill and
+streams that exact tar back. This means:
+
+- An owner who hardcodes a secret, pushes the skill, generates a
+  share link, then later edits the skill to remove the secret has
+  **not retroactively hidden the secret** — the share link still
+  serves the live row, but a fast adversary who downloaded the
+  old version before the owner's re-push completed would already
+  have the secret. There is no "rewind" guarantee.
+- The right mental model is "this link gives access to live
+  content for as long as I don't revoke." Owners worried about
+  past secret exposure should: (a) revoke the link, (b) push the
+  cleaned skill, (c) re-rotate the underlying credential
+  out-of-band (because anyone who already downloaded the old tar
+  still has it locally), and (d) generate a fresh link after the
+  push lands.
+- v2 best-effort scanner would catch this **before** the bad
+  push lands, which is the only durable fix.
 
 ## 11. Skill Local Layout
 
@@ -1228,6 +1268,16 @@ shipping mid-cycle — sharing as an end-to-end feature.
 - Link expiry presets in the UI (1 day / 1 week / never).
 - Optional `--password <p>` on share-link create (rate-limit
   brute force; not in v1 because UX wasn't a stated need).
+- **Per-link vault-metadata toggle.** Today every share-link
+  exposes vault names + item names + last_modified to anonymous
+  redeemers (§ 7.3 `GET /api/share/{token}/scope` returns vault
+  metadata always). v1 owner-facing copy on the Sharing tab
+  explicitly tells the owner this — but doesn't give them a knob
+  to suppress it. v1.1 can add a `include_vault_metadata: bool`
+  field on share-link create (default true for backwards-compat
+  with v1 links); when false, the redeem + scope-index responses
+  omit the vaults array entirely and the sharee CLI shows "vaults
+  hidden by owner."
 
 ### v2 (separate milestones)
 

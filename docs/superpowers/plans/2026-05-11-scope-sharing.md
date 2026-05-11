@@ -866,10 +866,22 @@ class InvitationCreate(BaseModel):
 
 class InvitationResponse(BaseModel):
     """Returned by GET /api/scopes/{scope_id}/invitations and
-    by GET /api/me/invitations (with scope details joined in)."""
+    by GET /api/me/invitations (with scope details joined in).
+
+    Scope fields (`scope_name`, `scope_kind`, `owner_display`,
+    `owner_handle`) are populated unconditionally — the owner-facing
+    listing uses them to render alongside the invitee email, and
+    the sharee-facing inbox uses them as the primary "what is this
+    invitation about?" copy. Per codex round-3 finding #10, the
+    inbox can't render generic copy without these.
+    """
 
     id: str
     scope_id: str
+    scope_name: str
+    scope_kind: str
+    owner_display: str
+    owner_handle: str
     invitee_email: str
     invited_by_user_id: str
     invited_by_display: str | None
@@ -2382,6 +2394,10 @@ async def create_invitation(
     return InvitationResponse(
         id=str(invitation.id),
         scope_id=str(scope_id),
+        scope_name=scope.name,
+        scope_kind=scope.kind,
+        owner_display=auth.user.name or auth.user.email or f"user-{str(auth.user_id)[:8]}",
+        owner_handle=resolve_owner_handle(auth.user),
         invitee_email=target_email,
         invited_by_user_id=str(auth.user_id),
         invited_by_display=auth.user.name or auth.user.email,
@@ -2482,7 +2498,9 @@ async def list_invitations(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
-    await _assert_scope_owner(db, auth, scope_id)
+    scope = await _assert_scope_owner(db, auth, scope_id)
+    owner_handle = resolve_owner_handle(auth.user)
+    owner_display = auth.user.name or auth.user.email or f"user-{str(auth.user_id)[:8]}"
     rows = (
         await db.execute(
             select(ScopeInvitation, User)
@@ -2495,6 +2513,10 @@ async def list_invitations(
         InvitationResponse(
             id=str(inv.id),
             scope_id=str(inv.scope_id),
+            scope_name=scope.name,
+            scope_kind=scope.kind,
+            owner_display=owner_display,
+            owner_handle=owner_handle,
             invitee_email=inv.invitee_email,
             invited_by_user_id=str(inv.invited_by),
             invited_by_display=(by.name or by.email) if by else None,
@@ -3033,42 +3055,30 @@ async def _owner_display_for_link(
     return display, link.resolved_owner_handle, owner
 
 
-@router.post("/{token}/redeem", response_model=ShareRedeemResponse)
-async def redeem(
-    ctx: ShareTokenContext = Depends(require_share_token),
-    db: AsyncSession = Depends(get_session),
+async def _build_redeem_payload(
+    ctx: ShareTokenContext, db: AsyncSession
 ) -> ShareRedeemResponse:
-    """First-time redemption: returns scope metadata + counts.
-
-    Side effect: bumps redeem_count and stamps last_redeemed_at. The
-    operation is idempotent for the client (returns the same payload
-    on repeated calls) but accumulates stats for the owner."""
-    # Bump counter atomically.
-    await db.execute(
-        update(ScopeShareLink)
-        .where(ScopeShareLink.id == ctx.link_id)
-        .values(
-            redeem_count=ScopeShareLink.redeem_count + 1,
-            last_redeemed_at=datetime.now(UTC),
+    """Compose the ShareRedeemResponse shape. Pure read; no
+    side-effects. Shared between /preview (GET) and /redeem (POST)
+    so refresh / unfurl / actual-accept all return identical shape."""
+    link = (
+        await db.execute(
+            select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
         )
-    )
-
-    link_result = await db.execute(
-        select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
-    )
-    link = link_result.scalar_one()
-    scope_result = await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
-    scope = scope_result.scalar_one()
+    ).scalar_one()
+    scope = (
+        await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
+    ).scalar_one()
     display, handle, _ = await _owner_display_for_link(db, link)
 
     skill_count = (
         await db.execute(
             select(func.count(Skill.id)).where(
-                Skill.scope_id == ctx.scope_id, Skill.is_active == True  # noqa: E712
+                Skill.scope_id == ctx.scope_id,
+                Skill.is_active == True,  # noqa: E712
             )
         )
     ).scalar_one() or 0
-
     vault_count = (
         await db.execute(
             select(func.count(VaultItem.id))
@@ -3076,8 +3086,6 @@ async def redeem(
             .where(Vault.scope_id == ctx.scope_id)
         )
     ).scalar_one() or 0
-
-    await db.commit()
 
     return ShareRedeemResponse(
         scope_id=str(scope.id),
@@ -3088,6 +3096,46 @@ async def redeem(
         vault_count=vault_count,
         vault_locked=True,
     )
+
+
+@router.get("/{token}/preview", response_model=ShareRedeemResponse)
+async def preview(
+    ctx: ShareTokenContext = Depends(require_share_token),
+    db: AsyncSession = Depends(get_session),
+) -> ShareRedeemResponse:
+    """Side-effect-free read of scope metadata for a valid token.
+
+    Public landing page calls this on every SSR pass + every
+    crawler unfurl. Does NOT increment `redeem_count` so the stat
+    accurately measures "people who clicked Accept / Add to
+    dashboard," not "people who saw the link."
+    """
+    return await _build_redeem_payload(ctx, db)
+
+
+@router.post("/{token}/redeem", response_model=ShareRedeemResponse)
+async def redeem(
+    ctx: ShareTokenContext = Depends(require_share_token),
+    db: AsyncSession = Depends(get_session),
+) -> ShareRedeemResponse:
+    """Actual acceptance: bumps redeem_count + stamps last_redeemed_at.
+
+    Call this on explicit user action only — CLI `share accept` or
+    web "Add to my dashboard" click. For mere previews use the GET
+    /preview endpoint above.
+    """
+    # Bump counter atomically.
+    await db.execute(
+        update(ScopeShareLink)
+        .where(ScopeShareLink.id == ctx.link_id)
+        .values(
+            redeem_count=ScopeShareLink.redeem_count + 1,
+            last_redeemed_at=datetime.now(UTC),
+        )
+    )
+    payload = await _build_redeem_payload(ctx, db)
+    await db.commit()
+    return payload
 ```
 
 - [ ] **Step 4: Register router**
@@ -3656,7 +3704,7 @@ async def upgrade(
         "membership_via_link scope_id=%s user_id=%s handle=%s",
         ctx.scope_id,
         auth.user_id,
-        handle,
+        link.resolved_owner_handle,
     )
     return _membership_response(membership)
 
@@ -3994,24 +4042,46 @@ async def list_my_invitations(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
+    # Join in Scope + the OWNER user so the sharee dashboard can
+    # render "Alice (@alice-a3b4) invited you to scope 'Team Toolkit'"
+    # without N+1 follow-up requests. Codex round-3 finding #10.
     rows = (
         await db.execute(
-            select(ScopeInvitation, User)
+            select(ScopeInvitation, User, Scope, User.label("owner_user"))
             .outerjoin(User, User.id == ScopeInvitation.invited_by)
+            .join(Scope, Scope.id == ScopeInvitation.scope_id)
+            .join(
+                User.alias("owner_user"),
+                User.id == Scope.user_id,
+            )
             .where(ScopeInvitation.invitee_user_id == auth.user_id)
             .order_by(ScopeInvitation.created_at.desc())
         )
     ).all()
+    # NOTE: the .label/.alias join above is sketch-only — the
+    # implementer should write this with a clean SQLAlchemy
+    # `aliased(User)` since `User` appears twice. Pseudocode:
+    #   from sqlalchemy.orm import aliased
+    #   Inviter = aliased(User)
+    #   Owner = aliased(User)
+    #   select(ScopeInvitation, Inviter, Scope, Owner)
+    #       .outerjoin(Inviter, Inviter.id == ScopeInvitation.invited_by)
+    #       .join(Scope, Scope.id == ScopeInvitation.scope_id)
+    #       .join(Owner, Owner.id == Scope.user_id)
     return [
         InvitationResponse(
             id=str(inv.id),
             scope_id=str(inv.scope_id),
+            scope_name=scope.name,
+            scope_kind=scope.kind,
+            owner_display=owner.name or owner.email or f"user-{str(owner.id)[:8]}",
+            owner_handle=resolve_owner_handle(owner),
             invitee_email=inv.invitee_email,
             invited_by_user_id=str(inv.invited_by),
             invited_by_display=(by.name or by.email) if by else None,
             created_at=inv.created_at,
         )
-        for inv, by in rows
+        for inv, by, scope, owner in rows
     ]
 
 
@@ -5213,7 +5283,7 @@ Create `packages/cli/src/share/redeem.ts`:
  * path.
  */
 
-import { addToken, type ShareToken } from "./tokens";
+import { addToken, findToken, listTokens, type ShareToken } from "./tokens";
 
 export function extractTokenFromUrl(input: string): string {
 	const trimmed = input.trim();
@@ -5238,13 +5308,71 @@ export function extractTokenFromUrl(input: string): string {
 export interface AcceptDeps {
 	apiBaseUrl: string; // e.g. https://cloud-api.clawdi.ai
 	fetchImpl: typeof fetch;
+	cliApiKey?: string | null; // when present, skip token route and
+	                            // create membership directly
 }
+
+export type AcceptResult =
+	| { kind: "token"; record: ShareToken }
+	| { kind: "membership"; scope_id: string; owner_handle: string };
 
 export async function acceptShare(
 	urlOrToken: string,
 	deps: AcceptDeps,
-): Promise<ShareToken> {
+): Promise<AcceptResult> {
 	const token = extractTokenFromUrl(urlOrToken);
+
+	// Idempotency: if this token is already stored locally, do not
+	// hit /redeem (which would bump the counter for nothing). Just
+	// re-print "already accepted." Spec § 4.5.
+	const existing = findToken(extractScopeIdFromTokenIfKnown(token));
+	if (existing) {
+		// We don't actually have scope_id from a bare token, so fall
+		// through to /redeem and let server-side idempotency handle.
+		// The check above is a best-effort early-out for re-runs
+		// where the user pasted the same URL twice.
+	}
+
+	// Logged-in fast path: CLI already has an unbound api_key from
+	// `clawdi auth login`. Skip the anonymous-then-upgrade dance
+	// and create the membership directly via the upgrade endpoint.
+	// Server response shape is MembershipResponse; we convert to
+	// AcceptResult.kind === "membership".
+	if (deps.cliApiKey) {
+		const upgradeResp = await deps.fetchImpl(
+			`${deps.apiBaseUrl}/api/share/${token}/upgrade`,
+			{
+				method: "POST",
+				headers: { Authorization: `Bearer ${deps.cliApiKey}` },
+			},
+		);
+		if (upgradeResp.status === 404) {
+			throw new Error("Share link not found. Ask the owner for a fresh one.");
+		}
+		if (upgradeResp.status === 410) {
+			throw new Error(
+				"Share link has been revoked or expired. Ask the owner for a fresh one.",
+			);
+		}
+		if (upgradeResp.status === 409) {
+			// Already-owner or already-member: server returns existing
+			// membership row. Treat as success.
+		} else if (!upgradeResp.ok) {
+			throw new Error(`Direct upgrade failed: HTTP ${upgradeResp.status}`);
+		}
+		const m = (await upgradeResp.json()) as {
+			scope_id: string;
+			resolved_owner_handle: string;
+		};
+		return {
+			kind: "membership",
+			scope_id: m.scope_id,
+			owner_handle: m.resolved_owner_handle,
+		};
+	}
+
+	// Anonymous path: persist token locally so the daemon can sync.
+	// Server bumps redeem_count once.
 	const redeem = await deps.fetchImpl(
 		`${deps.apiBaseUrl}/api/share/${token}/redeem`,
 		{ method: "POST" },
@@ -5278,7 +5406,14 @@ export async function acceptShare(
 		redeemed_at: new Date().toISOString(),
 	};
 	addToken(record);
-	return record;
+	return { kind: "token", record };
+}
+
+// Helper for the early-out idempotency check above. Returns "" if
+// the token isn't found in any stored record (no false positives).
+function extractScopeIdFromTokenIfKnown(token: string): string {
+	const all = listTokens();
+	return all.find((t) => t.token === token)?.scope_id ?? "";
 }
 ```
 
@@ -5288,20 +5423,37 @@ Create `packages/cli/src/commands/share-accept.ts`:
 
 ```ts
 import { acceptShare } from "../share/redeem";
-import { getApiBaseUrl } from "../lib/config";  // existing helper
+import { getApiBaseUrl, getCliApiKey } from "../lib/config";  // existing helpers
 
 export async function shareAcceptCommand(urlOrToken: string): Promise<void> {
 	const apiBaseUrl = getApiBaseUrl();
-	const record = await acceptShare(urlOrToken, {
+	// If the CLI is already logged in (api_key present), skip the
+	// anonymous token-storage path and create a membership row
+	// directly. This matches spec § 4.3 "Registered Sharee CLI"
+	// row — no two-step "redeem then later upgrade" dance for
+	// already-authed callers.
+	const cliApiKey = getCliApiKey();
+	const result = await acceptShare(urlOrToken, {
 		apiBaseUrl,
 		fetchImpl: fetch,
+		cliApiKey,
 	});
-	console.log(`Accepted share for scope "${record.scope_name}".`);
-	console.log(`  Owner: ${record.owner_display} (@${record.owner_handle})`);
-	console.log(`  Token stored in ~/.clawdi/share-tokens.json`);
-	console.log(`Next: run \`clawdi share list\` to see what landed locally.`);
-	// Skill pull happens via the daemon (clawdi serve) on next cycle,
-	// or run \`clawdi pull --shared\` to fetch immediately. See E.5.
+	if (result.kind === "membership") {
+		console.log(`Accepted share — joined as a permanent member.`);
+		console.log(`  Owner handle: @${result.owner_handle}`);
+		console.log(`  scope_id: ${result.scope_id}`);
+		console.log(
+			`Next: \`clawdi scope list\` shows this under "Shared with me".`,
+		);
+	} else {
+		console.log(`Accepted share for scope "${result.record.scope_name}".`);
+		console.log(`  Owner: ${result.record.owner_display} (@${result.record.owner_handle})`);
+		console.log(`  Token stored in ~/.clawdi/share-tokens.json`);
+		console.log(`  Sign in any time with \`clawdi auth login\` to upgrade`);
+		console.log(`  to a permanent membership.`);
+		console.log(`Next: run \`clawdi share list\` to see what landed locally.`);
+	}
+	// Skill pull happens via the daemon (clawdi serve) on next cycle.
 }
 ```
 
@@ -5375,11 +5527,24 @@ export function shareListCommand(): void {
 Create `packages/cli/src/commands/share-remove.ts`:
 
 ```ts
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { getAdapter } from "../adapters";  // existing factory
+import {
+	type AgentType,
+	getAdapter,
+} from "../adapters";  // existing factory
 import { findToken, removeToken } from "../share/tokens";
+
+// Iterate every adapter so we clean folders across all of the
+// user's agents — sharee may have multiple agent types on this
+// machine. Add new agent types here as they ship.
+const ALL_AGENT_TYPES: AgentType[] = [
+	"claude_code",
+	"codex",
+	"openclaw",
+	"hermes",
+];
 
 export function shareRemoveCommand(scopeId: string): void {
 	const token = findToken(scopeId);
@@ -5388,18 +5553,41 @@ export function shareRemoveCommand(scopeId: string): void {
 		process.exitCode = 1;
 		return;
 	}
-	// Clean up local skill files for this shared scope. Adapter-aware:
-	// per-skill share path lives under the adapter's root using
-	// getSharedSkillPath(). Without an authoritative server query
-	// here we don't know the exact skill keys; the daemon's
-	// reconcile loop on next start would catch up. Simpler approach
-	// for the v1 remove command: just delete the token and let the
-	// daemon's existing rescan logic clean stale folders.
+	// Adapter-aware folder cleanup. We don't know which skills were
+	// in the scope (the server is authoritative but token may be
+	// revoked already), so walk each adapter's skills root and
+	// remove every direct-child folder whose name ends in
+	// `__<owner-handle>` — that's our convention for shared scope
+	// folders (spec § 11). Best-effort; permission errors silently
+	// skip.
+	const suffix = `__${token.owner_handle}`;
+	let removed = 0;
+	for (const agentType of ALL_AGENT_TYPES) {
+		const adapter = getAdapter(agentType);
+		const root = adapter.getSkillsRootDir();
+		let entries: string[];
+		try {
+			entries = readdirSync(root);
+		} catch {
+			continue; // root doesn't exist on this machine; skip.
+		}
+		for (const name of entries) {
+			if (name.endsWith(suffix)) {
+				try {
+					rmSync(join(root, name), { recursive: true, force: true });
+					removed++;
+				} catch {
+					// Permission / busy file — skip; daemon-side cleanup
+					// will catch up on next sweep.
+				}
+			}
+		}
+	}
 	removeToken(scopeId);
 	console.log(`Removed share for scope ${scopeId} (${token.scope_name}).`);
-	console.log(
-		"Local skill folders under shared paths will be cleaned by the next \`clawdi serve\` sweep.",
-	);
+	if (removed > 0) {
+		console.log(`Deleted ${removed} local skill folder${removed === 1 ? "" : "s"} under "${suffix}".`);
+	}
 }
 ```
 
@@ -5476,10 +5664,24 @@ export interface SharedSyncDeps {
 	fetchImpl: typeof fetch;
 	adapter: AgentAdapter;
 	log: { info: (msg: string, meta?: unknown) => void; warn: (msg: string, meta?: unknown) => void };
+	// True when the daemon is also running with a Clerk-bound /
+	// unbound CLI api_key (i.e. the user's logged in). In that mode
+	// we skip share-tokens that have already been upgraded —
+	// membership path handles them via the normal owner-side sync
+	// flow, and double-fetching would waste bandwidth + risk
+	// duplicate folders. See spec § 8.4 "Mixed mode."
+	isClerkBound: boolean;
 }
 
 export async function syncAllSharedScopes(deps: SharedSyncDeps): Promise<void> {
 	for (const token of listTokens()) {
+		// Mixed-mode skip: when authed, ignore tokens that have
+		// already been converted to memberships. Authed daemon's
+		// owner-side sync covers the same scope via
+		// `scope_ids_visible_to`.
+		if (deps.isClerkBound && token.upgraded_at) {
+			continue;
+		}
 		try {
 			await syncOneSharedScope(token, deps);
 		} catch (e) {
@@ -5499,11 +5701,7 @@ async function syncOneSharedScope(
 		`${deps.apiBaseUrl}/api/share/${token.token}/scope`,
 	);
 	if (indexResp.status === 410 || indexResp.status === 404) {
-		deps.log.warn("shared_sync_token_invalid_cleaning_up", {
-			scope_id: token.scope_id,
-			status: indexResp.status,
-		});
-		removeToken(token.scope_id);
+		await abortAndCleanupSharedScope(token, indexResp.status, deps);
 		return;
 	}
 	if (!indexResp.ok) {
@@ -5522,9 +5720,19 @@ async function syncOneSharedScope(
 		const tarResp = await deps.fetchImpl(
 			`${deps.apiBaseUrl}/api/share/${token.token}/skills/${encodeURIComponent(skill.skill_key)}/tarball`,
 		);
+		// Terminal 404/410 on the tar endpoint indicates the share or
+		// the scope is gone — same handling as the index endpoint.
+		// (Codex round-3 finding #8: previously logged + deferred,
+		// which left the local copy stale and the CLI silently
+		// out-of-date.)
+		if (tarResp.status === 404 || tarResp.status === 410) {
+			await abortAndCleanupSharedScope(token, tarResp.status, deps);
+			return;
+		}
 		if (!tarResp.ok || !tarResp.body) {
 			deps.log.warn("shared_sync_skill_tar_missing", {
 				skill_key: skill.skill_key,
+				status: tarResp.status,
 			});
 			continue;
 		}
@@ -5540,6 +5748,52 @@ async function syncOneSharedScope(
 		//   unlinkSync(tarPath);
 	}
 }
+
+/** Terminal cleanup when a share is no longer accessible (404 =
+ * scope deleted, 410 = link revoked/expired). Single-step CLI
+ * response: remove the local token + delete the cached folders
+ * for every skill that landed under this owner-handle. Spec § 12.5
+ * differentiates the user-visible copy for the two status codes. */
+async function abortAndCleanupSharedScope(
+	token: ShareToken,
+	status: number,
+	deps: SharedSyncDeps,
+): Promise<void> {
+	const adapter = deps.adapter;
+	// Best-effort: walk the adapter's skills root and delete any
+	// folder ending in `__<owner-handle>`. Daemon doesn't track an
+	// authoritative list of "which keys this token's scope had"; the
+	// suffix is the only marker.
+	try {
+		const root = adapter.getSkillsRootDir();
+		const { readdirSync, rmSync, statSync } = await import("node:fs");
+		const { join } = await import("node:path");
+		const suffix = `__${token.owner_handle}`;
+		for (const entry of readdirSync(root)) {
+			if (entry.endsWith(suffix)) {
+				const full = join(root, entry);
+				try {
+					rmSync(full, { recursive: true, force: true });
+				} catch {
+					// Best-effort; skip on permission errors.
+				}
+			}
+		}
+	} catch {
+		// Adapter root unreadable — fall through; daemon-restart
+		// rescan will catch up.
+	}
+	removeToken(token.scope_id);
+	const message =
+		status === 410
+			? "Owner revoked this share; removed local copy."
+			: "Share is no longer available (the scope may have been deleted); removed local copy.";
+	deps.log.warn("shared_sync_terminal_cleanup", {
+		scope_id: token.scope_id,
+		status,
+		message,
+	});
+}
 ```
 
 - [ ] **Step 2: Wire into sync-engine**
@@ -5549,13 +5803,18 @@ In `packages/cli/src/serve/sync-engine.ts`, in the main reconcile loop (look for
 ```ts
 import { syncAllSharedScopes } from "../share/sync";
 
-// Inside the reconcile-loop body, after the owner-side skill pull:
+// Inside the reconcile-loop body, after the owner-side skill pull.
+// Whether the daemon is Clerk-bound is derivable from the api_key
+// it was launched with: `opts.api` carries the auth context. The
+// existing `isAuthBound` / `opts.apiKey != null` pattern in
+// sync-engine indicates Clerk-bound mode.
 try {
 	await syncAllSharedScopes({
 		apiBaseUrl: api.baseUrl,
 		fetchImpl: fetch,
 		adapter: opts.adapter,
 		log,
+		isClerkBound: Boolean(opts.apiKey),
 	});
 } catch (e) {
 	log.warn("shared_sync_top_level_failed", { error: String(e) });
@@ -6065,9 +6324,13 @@ interface ScopePreview {
 }
 
 async function fetchPreview(token: string): Promise<ScopePreview | null> {
+	// Side-effect-free preview — DOES NOT bump redeem_count.
+	// Page refreshes, link-unfurlers, and crawlers all hit this
+	// freely. The actual redeem (counter bump) happens on explicit
+	// CLI accept or web "Add to my dashboard" click only.
 	const r = await fetch(
-		`${env.NEXT_PUBLIC_API_URL}/api/share/${token}/redeem`,
-		{ method: "POST", cache: "no-store" },
+		`${env.NEXT_PUBLIC_API_URL}/api/share/${token}/preview`,
+		{ method: "GET", cache: "no-store" },
 	);
 	if (r.status === 404 || r.status === 410) return null;
 	if (!r.ok) throw new Error(`Preview failed: HTTP ${r.status}`);
@@ -6198,9 +6461,34 @@ export function RedeemForm({
 }
 ```
 
-- [ ] **Step 3: Verify `/share/[token]` is NOT behind Clerk middleware**
+- [ ] **Step 3: Add `/share/[token]` to the public route allowlist**
 
-Check `apps/web/src/middleware.ts` or wherever Clerk routes are configured. The `/share/(.*)`pattern should be in the public-routes list. If a current middleware blocks it, add the exception.
+The active Clerk middleware in this codebase lives in
+**`apps/web/src/proxy.ts`** (NOT `middleware.ts`). Its public
+allowlist currently covers only `/sign-in(.*)`, `/sign-up(.*)`,
+and `/skill.md`. Anything else goes through `auth.protect()`, so
+the landing page would 401 for anonymous sharees.
+
+Update the matcher:
+
+```ts
+// In apps/web/src/proxy.ts:
+const isPublicRoute = createRouteMatcher([
+	"/sign-in(.*)",
+	"/sign-up(.*)",
+	"/skill.md",
+	"/share/(.*)",  // public landing page for share-link recipients
+]);
+```
+
+The actual `POST /api/share/{token}/upgrade` call (made from
+inside the landing page via fetch when the visitor clicks "Add to
+my dashboard") still goes through Clerk auth — the landing page
+itself just renders unauthenticated. CSRF: the upgrade endpoint
+requires the Clerk session AND the token in the URL path; an
+attacker would need both the victim's Clerk cookie AND the exact
+share-link URL, which isn't a meaningful escalation over normal
+authenticated Clerk endpoints.
 
 - [ ] **Step 4: Smoke test**
 
@@ -6270,6 +6558,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
 	useCreateShareLink,
@@ -6729,28 +7023,38 @@ async def test_share_link_flow_end_to_end(
     await db_session.commit()
     await db_session.refresh(sharee)
 
-    # Upgrade via Clerk JWT as the sharee (build a client fixture for
-    # this — pattern: similar to `client` but with seed_user replaced
-    # by the new `sharee`). For brevity, assume a helper
-    # `client_for(user)` exists in conftest.
-    from tests.conftest import client_for
+    try:
+        # Upgrade via Clerk JWT as the sharee (build a client fixture for
+        # this — pattern: similar to `client` but with seed_user replaced
+        # by the new `sharee`). For brevity, assume a helper
+        # `client_for(user)` exists in conftest.
+        from tests.conftest import client_for
 
-    async with client_for(sharee) as sharee_client:
-        upgrade_r = await sharee_client.post(f"/api/share/{raw_token}/upgrade")
-        assert upgrade_r.status_code == 200, upgrade_r.text
-        m = upgrade_r.json()
-        assert m["scope_id"] == str(seed_scope.id)
+        async with client_for(sharee) as sharee_client:
+            upgrade_r = await sharee_client.post(f"/api/share/{raw_token}/upgrade")
+            assert upgrade_r.status_code == 200, upgrade_r.text
+            m = upgrade_r.json()
+            assert m["scope_id"] == str(seed_scope.id)
 
-    # Owner sees sharee in members.
-    members_r = await client.get(f"/api/scopes/{seed_scope.id}/members")
-    assert members_r.status_code == 200
-    emails = {m["user_email"] for m in members_r.json()}
-    assert sharee.email in emails
+        # Owner sees sharee in members.
+        members_r = await client.get(f"/api/scopes/{seed_scope.id}/members")
+        assert members_r.status_code == 200
+        emails = {m["user_email"] for m in members_r.json()}
+        assert sharee.email in emails
 
-    # Cleanup: sharee leaves.
-    async with client_for(sharee) as sharee_client:
-        leave_r = await sharee_client.post(f"/api/scopes/{seed_scope.id}/leave")
-        assert leave_r.status_code == 200
+        # Sharee leaves voluntarily before teardown so we exercise
+        # that path too.
+        async with client_for(sharee) as sharee_client:
+            leave_r = await sharee_client.post(f"/api/scopes/{seed_scope.id}/leave")
+            assert leave_r.status_code == 200
+    finally:
+        # Always remove the sharee user even on test failure — without
+        # this the test DB carries an orphan user that may collide with
+        # subsequent runs and that other tests' COUNT(*) assertions
+        # would tally. The api_keys / scope_memberships FK cascades
+        # (see PR #77) clean up any rows owned by `sharee`.
+        await db_session.delete(sharee)
+        await db_session.commit()
 
 
 @pytest.mark.asyncio
