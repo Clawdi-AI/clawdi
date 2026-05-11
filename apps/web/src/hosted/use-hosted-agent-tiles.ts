@@ -48,9 +48,19 @@ export function useHostedAgentTiles({
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead
 	// of O(N×M) on every render of the hosted-agent grid.
+	//
+	// Both index keys and lookup keys are forced lowercase. PostgreSQL
+	// stores UUIDs case-insensitively by convention but emits them
+	// lowercase via asyncpg; the SaaS side that writes
+	// `clawdi_cloud_environments` could in principle hand us mixed
+	// case at the rim (a custom client uppercasing for display, JSON
+	// round-tripping through a model that normalizes differently,
+	// etc.). Comparing as-stored would silently miss a real match,
+	// leaving both a hosted tile AND a self-managed tile for the
+	// same env. Normalize at the boundary, not the comparison site.
 	const envById = useMemo(() => {
 		const m = new Map<string, Env>();
-		for (const e of cloudEnvs) m.set(e.id, e);
+		for (const e of cloudEnvs) m.set(e.id.toLowerCase(), e);
 		return m;
 	}, [cloudEnvs]);
 
@@ -60,11 +70,12 @@ export function useHostedAgentTiles({
 	// excludes these from its self-managed grid so a hosted pod's env
 	// — which cloud-api also returns from /api/environments because
 	// the admin endpoint registered it — doesn't double-count as both
-	// a hosted tile and a self-managed tile.
+	// a hosted tile and a self-managed tile. Lower-cased for the same
+	// case-sensitivity defense as `envById`.
 	const claimedEnvIds = new Set<string>();
 	for (const d of query.data ?? []) {
 		for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
-			if (envId) claimedEnvIds.add(envId);
+			if (envId) claimedEnvIds.add(envId.toLowerCase());
 		}
 	}
 
@@ -127,7 +138,7 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 		// SaaS dashboard URL as the primary, so the tile still has a
 		// useful place to click.
 		const envId = cloudEnvIds[runtime];
-		const matchedEnv = envId ? envById.get(envId) : undefined;
+		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 		const manageUrl = deploymentManageUrl(d, runtime);
 		return {
 			id: `${d.id}:${runtime}`,
@@ -169,13 +180,27 @@ function resolveRuntimes(d: Deployment): Runtime[] {
 	// Fall back to `onboarded_agents` for deployments without a sync
 	// mint yet (legacy pre-Phase-4a, mint failed soft, sync disabled
 	// per CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false).
-	for (const r of d.config_info?.onboarded_agents ?? []) {
-		if (isKnownRuntime(r)) set.add(r);
+	const onboarded = d.config_info?.onboarded_agents;
+	if (onboarded !== undefined && onboarded !== null) {
+		for (const r of onboarded) {
+			if (isKnownRuntime(r)) set.add(r);
+		}
+		// Onboarded list exists but yielded nothing recognizable:
+		// either it's an empty array (mint succeeded structurally but
+		// wrote nothing — partial failure) or it's filled with unknown
+		// runtimes. Either way, falling through to the `enable_hermes`
+		// fallback below would silently invent a runtime the pod
+		// doesn't have. Render zero tiles instead and let the empty-
+		// state / status copy expose the failure.
+		return Array.from(set);
 	}
-	if (set.size > 0) return Array.from(set);
-	// Final fallback: pre-Phase-4a deployments only had `enable_hermes`,
-	// without `onboarded_agents`. Mirror the backend's old mutual-
-	// exclusion convention so the tile points at the right agent.
+	// Final fallback: very-pre-Phase-4a deployments only had
+	// `enable_hermes`, without `onboarded_agents`. Mirror the backend's
+	// old mutual-exclusion convention so the tile points at the right
+	// agent. Reached only when `onboarded_agents` is wholly missing
+	// from `config_info` — once the key exists, even an empty array
+	// means "this deployment knows what it's running," and we trust
+	// it over the legacy flag.
 	return [d.config_info?.enable_hermes ? "hermes" : "openclaw"];
 }
 

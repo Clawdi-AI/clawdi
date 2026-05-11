@@ -55,7 +55,12 @@ export function HostedAgentsSection({
 	// by the admin endpoint) would render twice — once with the
 	// "Clawdi" pill and external manage URL, once as a generic
 	// self-managed tile.
-	const dedupedSelfManaged = selfManagedTiles.filter((t) => !hosted.claimedEnvIds.has(t.id));
+	// `claimedEnvIds` is lower-cased at insertion in `useHostedAgentTiles`
+	// (see comment there); compare on the lower-cased tile id so an
+	// uppercase / mixed-case env_id on either side still matches.
+	const dedupedSelfManaged = selfManagedTiles.filter(
+		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
+	);
 	const agentTiles: AgentTile[] = [...hosted.tiles, ...dedupedSelfManaged];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in

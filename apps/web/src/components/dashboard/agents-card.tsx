@@ -185,7 +185,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	if (tile.env) {
 		meta.push(
 			<span className="relative z-10">
-				<DaemonStatusBadge env={tile.env} source={tile.source} />
+				<DaemonStatusBadge env={tile.env} source={tile.source} manageHref={tile.manageHref} />
 			</span>,
 		);
 	}
@@ -235,7 +235,20 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 	return (
-		<div className="group relative h-full">
+		// `z-0` is load-bearing: without an explicit z-index on this
+		// `relative` wrapper the browser doesn't create a new stacking
+		// context, so the `relative z-10` children inside `card`
+		// (DaemonStatusBadge button + the "Manage" trailing link) and
+		// the absolute `linkClassName` overlay all compete in the
+		// PARENT stacking context. Paint order then depends on DOM
+		// sibling order: the overlay link is rendered AFTER the card,
+		// so in the parent context it paints on top of the card's
+		// interactive children — clicks on the badge / Manage button
+		// silently go to the primary link instead. Adding `z-0`
+		// promotes this wrapper to its own stacking context, isolating
+		// the link overlay (z-auto inside this context) below the
+		// `z-10` children. Standard stretched-link defense.
+		<div className="group relative z-0 h-full">
 			{card}
 			{tile.external ? (
 				<a href={tile.href} target="_blank" rel="noopener noreferrer" className={linkClassName}>
