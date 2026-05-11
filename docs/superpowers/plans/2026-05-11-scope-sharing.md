@@ -1488,7 +1488,9 @@ Watch: `gh pr checks <PR-URL>` until all SUCCESS.
 
 Goal: ship every owner-facing HTTP endpoint (share-links, invitations, members, unshare) with tests covering happy path + auth + cross-tenant + idempotency.
 
-All routes go in a single new `sharing.py` router mounted at `/api/scopes/{scope_id}/...`. Each route protected by `require_user_auth` + an inline owner-check helper `_assert_scope_owner(db, auth, scope_id)` that 404s if scope doesn't exist or belongs to someone else.
+All routes go in a single new `sharing.py` router mounted at `/api/scopes/{scope_id}/...`. Each route protected by **`require_user_auth_unbound`** (the new dep — see Step 1 below) + an inline owner-check helper `_assert_scope_owner(db, auth, scope_id)` that 404s if scope doesn't exist or belongs to someone else.
+
+The unbound variant is critical: a leaked env-bound deploy key on a hosted pod must NOT be able to mint share-links into its env-scope. `require_user_auth` (existing) lets env-bound keys through; the new `_unbound` wrapper rejects them. See spec § 7 for the rationale.
 
 ### Task B.1: Router skeleton + `_assert_scope_owner` helper + main.py wiring
 
@@ -1552,6 +1554,143 @@ async def client_unauth(db_session) -> AsyncIterator[httpx.AsyncClient]:
 Run: `cd backend && uv run pytest tests/test_sharing_owner.py -v`
 Expected: 404 on second test, but **first test may pass coincidentally** (404 from "no route" vs 401 from auth). Either way, we want both green only after the route exists.
 
+- [ ] **Step 3a: Dependency-choice rule for all sharing routes**
+
+When writing every sharing route in Phases B and C, use
+`require_user_auth_unbound` (defined in Step 3b below) for the
+`auth: AuthContext = Depends(...)` parameter — NOT
+`require_user_auth`. This applies to:
+
+| Phase | Endpoint | Dep |
+|---|---|---|
+| B.2 | `POST /api/scopes/{id}/share-links` | unbound |
+| B.3 | `GET /api/scopes/{id}/share-links` | unbound |
+| B.4 | `DELETE /api/scopes/{id}/share-links/{link_id}` | unbound |
+| B.5 | `POST /api/scopes/{id}/invitations` | unbound |
+| B.6 | `GET /api/scopes/{id}/invitations` | unbound |
+| B.6 | `DELETE /api/scopes/{id}/invitations/{id}` | unbound |
+| B.7 | `GET /api/scopes/{id}/members` | unbound |
+| B.7 | `DELETE /api/scopes/{id}/members/{user_id}` | unbound |
+| B.8 | `POST /api/scopes/{id}/unshare` | unbound |
+| C.4 | `POST /api/share/{token}/upgrade` | unbound (+ share_token) |
+| C.5 | `POST /api/me/invitations/{id}/accept` | unbound |
+| C.5 | `POST /api/me/invitations/{id}/decline` | unbound |
+| C.5 | `POST /api/scopes/{id}/leave` | unbound |
+| C.5 | **`GET /api/me/scopes`** | **`require_user_auth` (keep — read-only, env-bound pod listing visible scopes is fine)** |
+| C.5 | **`GET /api/me/invitations`** | **`require_user_auth` (keep — read-only, env-bound returns empty harmlessly)** |
+
+The example code blocks in B.2 and later tasks show
+`Depends(require_user_auth)` — interpret that as a stand-in for
+the per-route entry in the table above. When literally typing the
+endpoint code, write `Depends(require_user_auth_unbound)` (or
+`require_user_auth` for the two exceptions) verbatim.
+
+- [ ] **Step 3b: Add `require_user_auth_unbound` dependency**
+
+In `backend/app/core/auth.py`, append after `require_user_auth`:
+
+```python
+async def require_user_auth_unbound(
+    auth: AuthContext = Depends(require_user_auth),
+) -> AuthContext:
+    """Require Clerk JWT OR fully-unbound CLI api_key — reject
+    env-bound deploy keys.
+
+    `require_user_auth` already rejects narrowly-scoped api_keys
+    (those with explicit `scopes` list). This wrapper adds the
+    additional rejection: api_keys bound to a specific environment
+    (the hosted-pod deploy-key pattern) cannot invoke sharing
+    operations.
+
+    Why: sharing is account-management surface. A leaked hosted-pod
+    credential should NOT be able to mint share-links into the
+    user's scopes, manage members, or upgrade shares to memberships.
+    The blast-radius boundary PR #77 established (env-bound key →
+    single scope visibility) is preserved here by rejecting them
+    entirely from the sharing endpoints.
+    """
+    if (
+        auth.is_cli
+        and auth.api_key is not None
+        and auth.api_key.environment_id is not None
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "sharing operations require user-level auth "
+            "(env-bound deploy keys cannot manage sharing)",
+        )
+    return auth
+```
+
+Add a smoke test in `backend/tests/test_require_user_auth_unbound.py`:
+
+```python
+"""require_user_auth_unbound rejects env-bound deploy keys while
+accepting Clerk JWT and unbound CLI api_keys."""
+
+import pytest
+from fastapi import HTTPException
+
+from app.core.auth import AuthContext, require_user_auth_unbound
+
+
+@pytest.mark.asyncio
+async def test_clerk_jwt_passes(seed_user):
+    # Clerk JWT path: AuthContext with api_key=None.
+    auth = AuthContext(user=seed_user, api_key=None)
+    out = await require_user_auth_unbound(auth=auth)
+    assert out is auth
+
+
+@pytest.mark.asyncio
+async def test_unbound_api_key_passes(seed_user, db_session):
+    from app.models.api_key import ApiKey
+
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="h" * 64,
+        key_prefix="clawdi_a",
+        label="unbound",
+        environment_id=None,
+        scopes=None,  # unbound full-access key
+    )
+    db_session.add(key)
+    await db_session.commit()
+    auth = AuthContext(user=seed_user, api_key=key)
+    out = await require_user_auth_unbound(auth=auth)
+    assert out is auth
+
+
+@pytest.mark.asyncio
+async def test_env_bound_api_key_rejected(seed_user, db_session):
+    from app.models.api_key import ApiKey
+    from tests.conftest import create_env_with_scope
+
+    env = await create_env_with_scope(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="env-bound-test",
+        machine_name="m",
+    )
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="h" * 64,
+        key_prefix="clawdi_e",
+        label="env-bound",
+        environment_id=env.id,
+        scopes=None,
+    )
+    db_session.add(key)
+    await db_session.commit()
+    auth = AuthContext(user=seed_user, api_key=key)
+    with pytest.raises(HTTPException) as exc:
+        await require_user_auth_unbound(auth=auth)
+    assert exc.value.status_code == 403
+    assert "env-bound" in str(exc.value.detail)
+```
+
+Run and verify pass.
+
 - [ ] **Step 4: Implement skeleton**
 
 Create `backend/app/routes/sharing.py`:
@@ -1580,7 +1719,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_user_auth
+from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.models.scope import Scope
 
@@ -1748,7 +1887,7 @@ from app.services.sharing import resolve_owner_handle
 async def create_share_link(
     scope_id: UUID,
     body: ShareLinkCreate,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ShareLinkCreated:
     """Generate a new share link for a scope.
@@ -4286,6 +4425,13 @@ for sid in shared_ids:
     if sid not in seen:
         result_ids.append(sid)
         seen.add(sid)
+# Note: an empty result_ids is unusual in practice (every user
+# auto-gets a Personal scope on signup) but legal. Downstream
+# callers pass it to `Column.in_([])`, which SQLAlchemy renders as
+# `1 != 1` rather than literal `IN ()` — safe across all
+# supported drivers (asyncpg, psycopg2). No additional guard needed
+# but worth knowing if you ever swap to a driver that handles
+# `IN ()` differently.
 return result_ids
 ```
 
@@ -4602,6 +4748,13 @@ backend/app/routes/vault.py
   L116  POST /api/vault (create)                — KEEP user_id (write)
   L248  GET resolve                              — drop user_id
   L296  ... read-side                          — drop user_id
+
+backend/app/routes/search.py
+  L141  global skill search                     — drop user_id
+  L186  global vault search                     — drop user_id
+  Note: L103, L112 hit memory provider keyed by user_id —
+  memory is OUT OF SCOPE for v1 cross-user sharing (spec § 2);
+  leave memory search owner-only.
 ```
 
 Pattern for a read path:

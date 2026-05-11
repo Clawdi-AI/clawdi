@@ -138,7 +138,7 @@ their own links).
 | Skill references vault | — | CLI errors with hint to run `clawdi auth login` and the share-token will auto-upgrade |
 | Remove a share locally | — | `clawdi share remove <scope-id>` → deletes local token + cached skills |
 | Owner revoked the link | — | Next sync round returns 410/403 → CLI prints `Owner revoked this share; cleaning up` and auto-removes |
-| Sign up later | Sign up at `clawdi.ai` (Clerk hosted UI) | After web sign-up, `clawdi auth login` → CLI detects local share-tokens → interactive prompt `Convert N pending shares to memberships? [Y/n]` → server creates memberships → tokens deleted |
+| Sign up later | Sign up at `clawdi.ai` (Clerk hosted UI) | After web sign-up, `clawdi auth login` → CLI detects local share-tokens → interactive prompt `Convert N pending shares to memberships? [Y/n]` → server creates memberships → CLI marks each token with `upgraded_at` (kept in file so other devices keep working); only revoked tokens are physically deleted. See § 8.3. |
 
 ### 4.3 Registered Sharee (has Clerk account)
 
@@ -403,8 +403,53 @@ import Scope` so the FK string references resolve at import time.
 ## 7. API Surface
 
 All new endpoints. Auth dependencies are explicit in the path; default
-is `require_user_auth` unless noted (Clerk JWT or unbound CLI key, no
-narrowly-scoped api keys).
+is **`require_user_auth_unbound`** — a new dependency that wraps
+`require_user_auth` and additionally rejects env-bound api_keys.
+
+Why a new dep: the existing `require_user_auth` only rejects
+NARROWLY-scoped api_keys; it lets env-bound full-scope deploy keys
+through (those are used by hosted pods and are expected to "act like
+the user's laptop"). But sharing operations are
+**account-management surface**: a leaked hosted-pod credential
+should NOT be able to mint share-links into the user's scopes
+behind the user's back, manage members, or upgrade shares to
+memberships under a different identity. The blast-radius boundary
+that PR #77 established for hosted pods (env-bound key → single
+scope visibility) is explicit; sharing endpoints respect the same
+spirit by rejecting env-bound calls entirely.
+
+Definition (added to `app/core/auth.py`):
+
+```python
+async def require_user_auth_unbound(
+    auth: AuthContext = Depends(require_user_auth),
+) -> AuthContext:
+    """Require Clerk JWT OR fully-unbound CLI api_key.
+    Rejects env-bound deploy keys (api_key.environment_id is not None)
+    in addition to the narrowly-scoped rejection require_user_auth
+    already does."""
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "sharing operations require user-level auth (env-bound deploy "
+            "keys cannot manage sharing)",
+        )
+    return auth
+```
+
+Every sharing endpoint in § 7.1–§ 7.3 below uses
+`require_user_auth_unbound` unless explicitly noted otherwise.
+Read-only `/api/me/scopes` is the exception — it returns the
+union of owned + shared scopes; an env-bound caller seeing only
+its env's scope (per the existing `scope_ids_visible_to` filter)
+is correct behavior, and adding `_unbound` there would surprise
+hosted-pod callers that just want to know their visible scopes.
+
+The vault resolve endpoint (`POST /api/vault/resolve`) keeps its
+existing `require_user_cli` gate. That dep already explicitly
+allows env-bound keys for the "hosted pod = user's laptop"
+contract — vault resolve in a shared scope flows through the
+existing logic without further restriction.
 
 ### 7.1 Scope sharing — owner-facing
 
@@ -643,7 +688,7 @@ in your dashboard? [Y/n]
 
 If Y: batch-invoke `POST /api/share/{token}/upgrade` for each token
 with the now-stored CLI api_key (the same credential `clawdi auth
-login` saved). Per token:
+login` saved — there is no Clerk JWT in CLI scope). Per token:
 
 - **200** → mark the entry locally with `upgraded_at = now()`.
   Keep the token in `share-tokens.json` — another device of the
@@ -678,6 +723,41 @@ subscription extends from "scopes I own" to "scopes I see"
   updates from someone else's scope can wait a few minutes").
 - Clerk-bound mode uses the existing SSE channel and gets near-
   real-time updates for shared scopes too (see § 13).
+
+**Mixed mode** — sharee has both `share-tokens.json` AND a CLI
+api_key in place (the common transition: anonymous redeem → sign
+in → memberships exist but old tokens still on disk). The daemon
+must avoid double-syncing the same scope, which would cause:
+
+- two pulls of the same skill tar per cycle (wasted bandwidth),
+- writing to two different paths if owner-handle resolved
+  differently between anon and upgrade (rare per § 11.6 but
+  possible if implementation drifts),
+- log noise that obscures real errors.
+
+Behavior:
+
+1. After CLI sign-in completes and `share-tokens.json` is
+   processed via the auto-upgrade flow (§ 8.3), each successful
+   upgrade is marked with `upgraded_at` locally.
+2. The sync engine, when reading `share-tokens.json`, **skips any
+   entry with `upgraded_at` set if** the daemon is also running in
+   Clerk-bound mode (its primary auth is an api_key). Effectively:
+   "you upgraded this scope to a real membership; the membership
+   path is now authoritative for it."
+3. The membership-side sync path (`scope_ids_visible_to` returns
+   the shared scope) handles the pull instead, using the **same**
+   adapter path resolution (`getSharedSkillPath(key,
+   resolved_owner_handle)`). Because § 11.2 freezes handles
+   identically across both flows, the on-disk folder is the same
+   → no duplicate folders, no orphan files.
+4. If the daemon later loses its Clerk-bound auth (e.g. api_key
+   revoked, file removed), the auto-skip relaxes — `share-tokens.json`
+   becomes authoritative again on next cycle. Skill content keeps
+   syncing from whichever source still validates.
+
+Tests in plan Phase E.5 / E.6 cover the no-duplicate-folder
+invariant explicitly.
 
 ## 9. Web Dashboard Surface
 
@@ -863,18 +943,28 @@ Examples:
 
 The 4-hex-char user_id suffix is **always appended**. Rationale:
 
-- The suffix guarantees handles are globally unique per owner. A
-  sharee who follows two different "Alice"s sees `alice-a3b4` and
-  `alice-f1e2` side-by-side without any local collision logic.
+- The suffix makes handles **practically unique** per owner for
+  typical use. A sharee who follows two different "Alice"s
+  almost always sees `alice-a3b4` and `alice-f1e2` side-by-side
+  without any local collision logic.
 - Frozen at server side, no per-sharee context needed at the
   freeze point. The share-link create endpoint doesn't know who
-  will redeem, so a global-unique handle is the only thing it can
-  freeze that survives.
-- 16^4 = 65 536 distinct suffixes per first-component. Collision
-  inside a sharee's "I follow two `alice-a3b4`s" namespace is
-  vanishingly rare (would require two users with matching
-  `users.name` AND matching first-4-hex of their UUID — order of
-  one in 65 536 even after the name match).
+  will redeem, so a fixed-shape handle is the only thing it can
+  freeze that survives across the anonymous → membership transition.
+- 16^4 = 65 536 distinct suffixes per first-component, so two
+  owners with the same `users.name` collide on handle with
+  probability ~1/65k. v1 **accepts the cosmetic clash** when it
+  happens: the sharee's local `git-tools__alice-a3b4/` folder
+  silently overwrites between the two owners' content on next
+  sync — both legitimately appear as `alice-a3b4` on the server.
+  This is a known limitation; v2 can move to a longer suffix
+  (e.g. hex[:8]) or add a uniqueness probe at link create.
+- **No DB-level uniqueness constraint** on
+  `scope_share_links.resolved_owner_handle` /
+  `scope_memberships.resolved_owner_handle` — we explicitly want
+  multiple links of the same owner to share a handle (they DO
+  belong to the same person). Cross-owner clashes are accepted
+  per the above.
 - The suffix is human-readable enough not to look like a UUID
   vomit. Sharees reading their own folder list see `alice-a3b4`
   and recognize "this is from someone named Alice."
@@ -991,15 +1081,17 @@ CLI on first sign-in:
   read ~/.clawdi/share-tokens.json
   for each token:
       POST /api/share/{token}/upgrade
-        Authorization: Bearer <clerk_jwt>
+        Authorization: Bearer <cli_api_key>   # the one just persisted
+                                              # by `clawdi auth login`
   on 200: keep token in file (other devices still use it) but
           mark `upgraded_at` locally so future runs don't re-prompt.
-  on 410 (link revoked): delete the entry locally.
+  on 410 (link revoked or expired, or scope deleted): delete the
+          entry locally.
 ```
 
 Server-side:
 ```
-require_user_auth (Clerk JWT) → bound user
+require_user_auth → bound user (Clerk JWT OR unbound CLI api_key)
 require_share_token (path) → scope_id
 
 INSERT scope_memberships (scope_id, user_id, role='viewer',
@@ -1035,6 +1127,21 @@ action on its own fully cuts off a determined recipient.
 - Members who already upgraded via this link: **unaffected**. Their
   `scope_memberships` row stays; their dashboard and CLI keep
   working.
+
+**Owner deletes the scope** (different from revoke):
+- The scope row goes; `scope_share_links`, `scope_memberships`,
+  `scope_invitations` rows all cascade-delete via the existing FK
+  chains.
+- Anonymous CLI's next request to `/api/share/{token}/...` hits
+  `require_share_token` which now finds no row → returns **404**
+  (not 410). CLI surfaces a distinct message
+  (`Share is no longer available (the scope may have been deleted).
+  Cleaning up local copy.`) and deletes the local entry. The
+  404-vs-410 distinction lets the sharee tell the difference
+  between "narrowly revoked" and "scope-wide gone."
+- Members who upgraded via this scope: their memberships are also
+  cascaded away. Dashboard "Shared with me" no longer lists the
+  scope; CLI's next `clawdi scope list` reflects the change.
 
 **Removing a member** (`DELETE /api/scopes/{id}/members/{user_id}`):
 - Server deletes the row.
@@ -1072,6 +1179,16 @@ authenticated callers. The implementation filters by the caller's
 visible scope set; making it work for shared scopes is the same
 one-line extension as the read paths (use
 `scope_ids_visible_to`).
+
+**Mid-connection membership changes**: the SSE handler re-fetches
+its visible scope set on a refresh interval (~30 s in
+`routes/sync.py`). When a fresh membership row is created during
+an active SSE connection (sharee accepts an invite while connected),
+events for the newly-shared scope start flowing **at most 30 s
+later**, or immediately on the next SSE reconnect (whichever
+fires first). This delay is acceptable for v1; if real-time
+membership effect is needed, server-push the membership change to
+the SSE channel as a `scope_membership_changed` event in v1.1.
 
 **What SSE covers for shared scopes in v1:**
 - Skill events (`skill_changed`, `skill_deleted`, `revision_bump`)
