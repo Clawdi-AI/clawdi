@@ -49,7 +49,7 @@ export function HostedAgentsSection({
 	 */
 	cloudEnvs: Env[];
 }) {
-	const hosted = useHostedAgentTiles({ enabled: true, cloudEnvs });
+	const hosted = useHostedAgentTiles({ cloudEnvs });
 	// Drop self-managed tiles whose env is already represented by a
 	// hosted tile. Without this, a hosted pod's cloud-api env (created
 	// by the admin endpoint) would render twice — once with the
@@ -108,7 +108,7 @@ export function HostedSecondaryCTA({
 	// Reuses the same TanStack Query cache (`["hosted-deployments"]`)
 	// as `HostedAgentsSection` so passing cloudEnvs here is just
 	// re-running the join, not re-fetching.
-	const hosted = useHostedAgentTiles({ enabled: true, cloudEnvs });
+	const hosted = useHostedAgentTiles({ cloudEnvs });
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.
 	if (envsLoading || hosted.isLoading) return null;

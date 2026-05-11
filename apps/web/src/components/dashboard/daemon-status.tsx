@@ -365,13 +365,7 @@ function SyncHelpDialog({
 													Daemon stopped after this error. Inspect:
 												</p>
 												<CommandLine command="clawdi serve status" />
-												<p className="text-xs text-muted-foreground">
-													Token revoked? Log in again with{" "}
-													<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-														clawdi auth login
-													</code>
-													.
-												</p>
+												<AuthLoginHint />
 											</>
 										)
 									) : isPermanentError(env.last_sync_error) ? (
@@ -418,13 +412,7 @@ function SyncHelpDialog({
 												It will keep retrying. If this persists:
 											</p>
 											<CommandLine command="clawdi serve status" />
-											<p className="text-xs text-muted-foreground">
-												Token revoked? Log in again with{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-													clawdi auth login
-												</code>
-												.
-											</p>
+											<AuthLoginHint />
 										</>
 									)}
 								</div>
@@ -585,6 +573,18 @@ function PromptBlock({ text }: { text: string }) {
 			</div>
 			<pre className="whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{text}</pre>
 		</div>
+	);
+}
+
+/** Two of the self-managed errored-state branches ("daemon stopped"
+ * and the generic "keep retrying" fallback) end with the same nudge
+ * to `clawdi auth login`. Inline both was 8 lines of identical JSX. */
+function AuthLoginHint() {
+	return (
+		<p className="text-xs text-muted-foreground">
+			Token revoked? Log in again with{" "}
+			<code className="rounded bg-muted px-1 py-0.5 text-[11px]">clawdi auth login</code>.
+		</p>
 	);
 }
 

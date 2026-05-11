@@ -24,18 +24,11 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * own daemon, so the data is the same shape; only the "Clawdi" pill
  * + external management URL distinguish hosted in the UI.
  */
-export function useHostedAgentTiles({
-	enabled,
-	cloudEnvs,
-}: {
-	enabled: boolean;
-	cloudEnvs: Env[];
-}) {
+export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const api = useClawdiApi();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
 		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
-		enabled,
 		// Status changes (Provisioning → Ready) — refetch periodically
 		// while a deployment is still spinning up. 10s is the balance
 		// between snappy feedback and not hammering clawdi.ai.
