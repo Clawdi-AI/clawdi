@@ -979,7 +979,6 @@ async function drainQueueLoop(
 			setLastError(null);
 		} catch (e) {
 			const msg = toErrorMessage(e);
-			setLastError(msg);
 			// Auth dead → daemon abort, not queue drop. Every
 			// upload from this point will fail the same way
 			// because the api key is revoked. Dropping the queue
@@ -988,6 +987,13 @@ async function drainQueueLoop(
 			// attention to it (status badge flips to "errored",
 			// dialog shows "log in again with `clawdi auth login`").
 			if (isAuthFailure(e)) {
+				// Surface the raw failure on the heartbeat so the
+				// next dashboard pull (before triggerAuthFailureAbort
+				// overwrites with "auth_revoked: ...") still carries
+				// signal. The unified path takes over on the next
+				// poll, but this prevents the heartbeat from looking
+				// healthy in the gap.
+				setLastError(msg);
 				log.error("engine.queue_auth_failure", {
 					item: redactItem(item),
 					error: msg,
@@ -1023,16 +1029,18 @@ async function drainQueueLoop(
 					item: redactItem(item),
 					error: msg,
 				});
-				// Override the eager `setLastError(msg)` at the top of
-				// this catch — pre-fix the dashboard surfaced "API
-				// error 413: Skill tarball exceeds 26214400 bytes /
-				// It will keep retrying" because the raw msg leaked
-				// into the heartbeat. The dropped-events counter
-				// (incremented below) is the right signal for "we
-				// skipped some content"; the heartbeat last_error
-				// should stay clean so the user only sees alarms
-				// for things that actually need attention.
-				setLastError(null);
+				// Intentionally do NOT touch `lastSyncError` here.
+				// An earlier `setLastError(null)` was wrong on two
+				// fronts: (a) if a PRIOR item had stamped a real
+				// `permanent:` / `retry_exhausted:` error, clearing
+				// it here would silently dismiss the dashboard alarm
+				// for a problem the daemon hasn't actually resolved;
+				// (b) eagerly stamping the raw 413 first then
+				// clearing also briefly poisoned the heartbeat. The
+				// dropped-events counter (incremented below) is the
+				// right signal for "we skipped some content"; the
+				// heartbeat carries forward whatever real condition
+				// was previously surfaced.
 				queue.recordPermanentDrop();
 				clearInFlight(item);
 				queue.markDoneIfVersion(item);
@@ -1092,6 +1100,12 @@ async function drainQueueLoop(
 					error: msg,
 					attempts: newAttempts,
 				});
+				// Surface the transient error on the heartbeat so
+				// the dashboard reflects "something is going wrong
+				// right now" while the daemon keeps retrying.
+				// Cleared on the next successful drain (top of this
+				// try block).
+				setLastError(msg);
 				await sleep(QUEUE_RETRY_INTERVAL_MS, opts.abort);
 			}
 		}
