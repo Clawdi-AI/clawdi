@@ -130,6 +130,7 @@ export default function DashboardPage() {
 							selfManagedTiles={selfManagedTiles}
 							envsLoading={envsLoading}
 							selfManagedCount={selfManagedCount}
+							cloudEnvs={environments ?? []}
 						/>
 					) : ossIsEmptyState ? (
 						<OnboardingCard />
@@ -186,7 +187,11 @@ export default function DashboardPage() {
 				    the count. */}
 				<div className="min-w-0 space-y-4">
 					{HostedSecondaryCTA ? (
-						<HostedSecondaryCTA selfManagedCount={selfManagedCount} envsLoading={envsLoading} />
+						<HostedSecondaryCTA
+							selfManagedCount={selfManagedCount}
+							envsLoading={envsLoading}
+							cloudEnvs={environments ?? []}
+						/>
 					) : hasAgents ? (
 						<OnboardingCard />
 					) : null}

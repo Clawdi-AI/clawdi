@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_web_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyResponse, ApiKeyRevokeResponse
+from app.schemas.api_key import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyResponse,
+    ApiKeyRevokeResponse,
+)
 from app.schemas.user import CurrentUserResponse
 from app.services.api_key import mint_api_key
 

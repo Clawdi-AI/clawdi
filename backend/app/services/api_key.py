@@ -54,10 +54,14 @@ async def mint_api_key(
 ) -> MintedKey:
     """Create a new ApiKey row.
 
-    `scopes=None` means full account access — interactive keys
-    minted via `clawdi auth login`. `scopes=[...]` narrows the
-    key to specific operations; v1 deploy-keys use
-    `["sessions:write", "skills:read", "skills:write"]`.
+    `scopes=None` means full account access — the default for both
+    interactive keys (`clawdi auth login`) and deploy keys minted
+    by the dashboard with `environment_id` set. `scopes=[...]`
+    narrows the key on purpose if a caller wants a tighter blast
+    radius; the route layer doesn't impose narrowing for deploy
+    keys because the agent must do whatever the user does
+    (sessions push, skills writeback, memories update, vault
+    resolve, MCP proxy).
 
     `environment_id` binds the key to a single AgentEnvironment.
     A leaked deploy-key from pod A then can't write into pod B's
