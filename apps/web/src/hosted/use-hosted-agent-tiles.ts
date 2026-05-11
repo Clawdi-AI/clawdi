@@ -64,7 +64,15 @@ export function useHostedAgentTiles({
 		return m;
 	}, [cloudEnvs]);
 
-	const tiles: AgentTile[] = (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById));
+	// Both `tiles` and `claimedEnvIds` derive from `query.data`. Memoize
+	// them so refetchInterval (10s for transient deployments) doesn't
+	// rebuild N×M JSX trees on every poll when nothing actually changed.
+	// TanStack Query gives the same `data` reference back on no-op
+	// refetches, so the memo deps stay stable.
+	const tiles = useMemo<AgentTile[]>(
+		() => (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById)),
+		[query.data, envById],
+	);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted pod's env
@@ -72,12 +80,15 @@ export function useHostedAgentTiles({
 	// the admin endpoint registered it — doesn't double-count as both
 	// a hosted tile and a self-managed tile. Lower-cased for the same
 	// case-sensitivity defense as `envById`.
-	const claimedEnvIds = new Set<string>();
-	for (const d of query.data ?? []) {
-		for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
-			if (envId) claimedEnvIds.add(envId.toLowerCase());
+	const claimedEnvIds = useMemo(() => {
+		const s = new Set<string>();
+		for (const d of query.data ?? []) {
+			for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
+				if (envId) s.add(envId.toLowerCase());
+			}
 		}
-	}
+		return s;
+	}, [query.data]);
 
 	return {
 		tiles,
@@ -176,31 +187,23 @@ function resolveRuntimes(d: Deployment): Runtime[] {
 	for (const r of Object.keys(d.config_info?.clawdi_cloud_environments ?? {})) {
 		if (isKnownRuntime(r)) set.add(r);
 	}
-	if (set.size > 0) return Array.from(set);
-	// Fall back to `onboarded_agents` for deployments without a sync
-	// mint yet (legacy pre-Phase-4a, mint failed soft, sync disabled
-	// per CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false).
-	const onboarded = d.config_info?.onboarded_agents;
-	if (onboarded !== undefined && onboarded !== null) {
-		for (const r of onboarded) {
-			if (isKnownRuntime(r)) set.add(r);
-		}
-		// Onboarded list exists but yielded nothing recognizable:
-		// either it's an empty array (mint succeeded structurally but
-		// wrote nothing — partial failure) or it's filled with unknown
-		// runtimes. Either way, falling through to the `enable_hermes`
-		// fallback below would silently invent a runtime the pod
-		// doesn't have. Render zero tiles instead and let the empty-
-		// state / status copy expose the failure.
-		return Array.from(set);
+	// `onboarded_agents` is the next source: trust it ONLY when it
+	// names recognizable runtimes. Empty arrays and arrays full of
+	// unknown strings both fall through to the `enable_hermes` legacy
+	// flag below — they almost always mean "mint hadn't yet populated
+	// this field" rather than "this deployment has zero running
+	// agents," and yielding zero tiles would silently make the
+	// deployment vanish from the dashboard even though the pod is
+	// still up.
+	for (const r of d.config_info?.onboarded_agents ?? []) {
+		if (isKnownRuntime(r)) set.add(r);
 	}
+	if (set.size > 0) return Array.from(set);
 	// Final fallback: very-pre-Phase-4a deployments only had
 	// `enable_hermes`, without `onboarded_agents`. Mirror the backend's
 	// old mutual-exclusion convention so the tile points at the right
-	// agent. Reached only when `onboarded_agents` is wholly missing
-	// from `config_info` — once the key exists, even an empty array
-	// means "this deployment knows what it's running," and we trust
-	// it over the legacy flag.
+	// agent — and keep the deployment visible even when both newer
+	// sources came up empty.
 	return [d.config_info?.enable_hermes ? "hermes" : "openclaw"];
 }
 

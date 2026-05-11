@@ -267,4 +267,3 @@ async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_sessi
         await db_session.delete(key)
         await db_session.delete(victim)
         await db_session.commit()
-

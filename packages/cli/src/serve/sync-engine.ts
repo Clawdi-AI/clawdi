@@ -959,6 +959,19 @@ async function drainQueueLoop(
 			}
 		}
 	};
+
+	// Common terminal-drop bookkeeping shared by oversized / permanent /
+	// retry-exhausted branches. `lastSyncError` is intentionally NOT
+	// touched here — each branch encodes its own UX contract (oversized
+	// preserves prior state, permanent stamps `permanent:`, retry-
+	// exhausted stamps `retry_exhausted:`), so folding setLastError in
+	// would re-introduce the C1 bug where oversized clobbered prior
+	// errors.
+	const dropItem = (item: QueueItem) => {
+		queue.recordPermanentDrop();
+		clearInFlight(item);
+		queue.markDoneIfVersion(item);
+	};
 	while (!opts.abort.aborted) {
 		const item = queue.peek();
 		if (!item) {
@@ -1037,13 +1050,11 @@ async function drainQueueLoop(
 				// for a problem the daemon hasn't actually resolved;
 				// (b) eagerly stamping the raw 413 first then
 				// clearing also briefly poisoned the heartbeat. The
-				// dropped-events counter (incremented below) is the
+				// dropped-events counter (`dropItem` below) is the
 				// right signal for "we skipped some content"; the
 				// heartbeat carries forward whatever real condition
 				// was previously surfaced.
-				queue.recordPermanentDrop();
-				clearInFlight(item);
-				queue.markDoneIfVersion(item);
+				dropItem(item);
 			} else if (isPermanentUploadError(e)) {
 				// 4xx that won't change on retry — malformed body,
 				// schema validation, etc. Retrying 30 times costs the
@@ -1065,13 +1076,12 @@ async function drainQueueLoop(
 				// the existing `auth_revoked:` / `sse_disconnect:`
 				// prefix convention.
 				setLastError(`permanent: ${msg}`);
-				// Bump the dropped counter so the dashboard's
-				// "dropped" pill shows non-evict drops too. Pre-fix
-				// only FIFO eviction ticked the counter and a 4xx-
-				// rejected session vanished without any UI signal.
-				queue.recordPermanentDrop();
-				clearInFlight(item);
-				queue.markDoneIfVersion(item);
+				// `dropItem` bumps the dropped counter so the
+				// dashboard's "dropped" pill shows non-evict drops
+				// too. Pre-fix only FIFO eviction ticked the counter
+				// and a 4xx-rejected session vanished without any UI
+				// signal.
+				dropItem(item);
 			} else if (newAttempts >= MAX_QUEUE_ATTEMPTS) {
 				log.error("engine.queue_drop_max_attempts", {
 					item: redactItem(item),
@@ -1091,9 +1101,7 @@ async function drainQueueLoop(
 				// will pick this up automatically once connectivity
 				// is back."
 				setLastError(`retry_exhausted: ${msg}`);
-				queue.recordPermanentDrop();
-				clearInFlight(item);
-				queue.markDoneIfVersion(item);
+				dropItem(item);
 			} else {
 				log.warn("engine.queue_retry", {
 					item: redactItem(item),

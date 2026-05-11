@@ -17,21 +17,32 @@ from app.core.database import get_session
 from app.main import app
 
 _ADMIN_KEY = "test-admin-secret-do-not-use-in-prod"
+# Shared header dict for the bulk of tests that exercise the happy-path
+# `X-Admin-Key` gate. Tests that deliberately omit or mutate the header
+# (auth-gate regression tests) build their own dict inline so the
+# tampering stays visible at the call site.
+_AUTH = {"X-Admin-Key": _ADMIN_KEY}
 
 
 @pytest_asyncio.fixture
 async def admin_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncClient]:
     """Client that does NOT inject auth — admin endpoints test the
     `X-Admin-Key` header gate directly. Sets settings.admin_api_key
-    to a known value for the test scope."""
+    to a known value for the test scope and restores it in teardown
+    even if the transport / context-manager raises before yield."""
 
     async def _override_get_session():
         yield db_session
 
     original_admin_key = settings.admin_api_key
     settings.admin_api_key = _ADMIN_KEY
-
     app.dependency_overrides[get_session] = _override_get_session
+
+    # Outer try/finally guards `settings.admin_api_key` restoration
+    # against a raise from `ASGITransport(app=app)` or the
+    # AsyncClient context manager itself — without it a setup
+    # failure here would silently contaminate every subsequent
+    # test in the same process with the test-scope admin secret.
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -99,7 +110,7 @@ async def test_admin_mint_default_grants_full_account_access(admin_client, db_se
 
     r = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "default-scopes"},
     )
     assert r.status_code == 200
@@ -127,7 +138,7 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
 
     r = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
             "label": "narrow-explicit",
@@ -155,7 +166,7 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
 
     r = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
             "label": "vault-and-read",
@@ -203,7 +214,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
 
     r = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": novel_clerk_id, "label": "first-deploy"},
     )
     assert r.status_code == 200, r.text
@@ -244,7 +255,7 @@ async def test_admin_mint_existing_user_reuses_row(admin_client, db_session, see
 
     r = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "second-mint"},
     )
     assert r.status_code == 200
@@ -387,14 +398,14 @@ async def test_admin_revoke_happy_path(admin_client, db_session, seed_user):
 
     minted_resp = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "to-revoke"},
     )
     key_id = minted_resp.json()["id"]
 
     r = await admin_client.delete(
         f"/api/admin/auth/keys/{key_id}",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
     )
     assert r.status_code == 200
     assert r.json()["status"] == "revoked"
@@ -410,18 +421,18 @@ async def test_admin_revoke_idempotent_on_already_revoked(admin_client, db_sessi
     an error. Useful for migration retry semantics."""
     minted_resp = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "double-revoke"},
     )
     key_id = minted_resp.json()["id"]
 
     await admin_client.delete(
         f"/api/admin/auth/keys/{key_id}",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
     )
     r = await admin_client.delete(
         f"/api/admin/auth/keys/{key_id}",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
     )
     assert r.status_code == 200
 
@@ -433,7 +444,7 @@ async def test_admin_revoke_unknown_key(admin_client):
 
     r = await admin_client.delete(
         f"/api/admin/auth/keys/{uuid.uuid4()}",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
     )
     assert r.status_code == 404
 
@@ -450,7 +461,7 @@ async def test_admin_register_env_creates_with_scope(admin_client, db_session, s
 
     r = await admin_client.post(
         "/api/admin/environments",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
             "machine_id": "migrate-machine-1",
@@ -481,12 +492,12 @@ async def test_admin_register_env_idempotent(admin_client, db_session, seed_user
     }
     r1 = await admin_client.post(
         "/api/admin/environments",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json=body,
     )
     r2 = await admin_client.post(
         "/api/admin/environments",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json=body,
     )
     assert r1.status_code == 200
@@ -511,7 +522,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
     r = await admin_client.post(
         "/api/admin/environments",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={
             "target_clerk_id": novel_clerk_id,
             "machine_id": "m-first",
@@ -534,9 +545,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_rejects_cross_tenant_environment_id(
-    admin_client, db_session, seed_user
-):
+async def test_admin_mint_rejects_cross_tenant_environment_id(admin_client, db_session, seed_user):
     """Admin caller passing user A's `target_clerk_id` together with an
     `environment_id` owned by user B must get 403 (not silently mint a
     cross-tenant key, not 500 on the ValueError traceback).
@@ -568,7 +577,7 @@ async def test_admin_mint_rejects_cross_tenant_environment_id(
     try:
         r = await admin_client.post(
             "/api/admin/auth/keys",
-            headers={"X-Admin-Key": _ADMIN_KEY},
+            headers=_AUTH,
             json={
                 "target_clerk_id": seed_user.clerk_id,
                 "label": "cross-tenant-attempt",
@@ -609,7 +618,7 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_u
     # excluded prefix.
     mint = await admin_client.post(
         "/api/admin/auth/keys",
-        headers={"X-Admin-Key": _ADMIN_KEY},
+        headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "reachability-check"},
     )
     assert mint.status_code == 200, (
