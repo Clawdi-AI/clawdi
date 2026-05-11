@@ -3046,11 +3046,33 @@ async def _owner_display_for_link(
     create time (`scope_share_links.resolved_owner_handle`). The
     display string IS recomputed each call since it's purely
     presentation (no path stability concerns).
+
+    Race-safe: use `scalar_one_or_none()` rather than `scalar_one()`
+    on both Scope and User. Between `require_share_token` validating
+    the link and this helper running, the owner could have deleted
+    the scope (cascade-delete propagation removes the link row,
+    but the in-memory `link` object the caller already held points
+    at the now-gone scope). Returning 410 Gone is the right
+    semantic — caller surfaces the same "share no longer available"
+    copy the link-revocation path uses.
     """
     scope_result = await db.execute(select(Scope).where(Scope.id == link.scope_id))
-    scope = scope_result.scalar_one()
+    scope = scope_result.scalar_one_or_none()
+    if scope is None:
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            "share no longer available (scope removed)",
+        )
     owner_result = await db.execute(select(User).where(User.id == scope.user_id))
-    owner = owner_result.scalar_one()
+    owner = owner_result.scalar_one_or_none()
+    if owner is None:
+        # User cascade-delete already cleaned up scopes too, so this
+        # would only fire on a partial-delete state. Still 410 — the
+        # share is unusable.
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            "share no longer available (owner account removed)",
+        )
     display = owner.name or owner.email or f"user-{str(owner.id)[:8]}"
     return display, link.resolved_owner_handle, owner
 
@@ -3427,7 +3449,11 @@ async def skill_tarball(
     """Stream the active skill tar for the token's scope.
 
     Mirrors the authenticated `/api/skills/{key}/tarball` route but
-    gated by token. Inactive / missing skills → 404."""
+    gated by token. Per spec § 17.2, distinguish "this single skill
+    has no tar" (non-terminal — CLI moves on) from
+    "scope-wide failures" (terminal — CLI cleans up the whole
+    shared scope) via the `X-Share-Reason` response header.
+    """
     result = await db.execute(
         select(Skill).where(
             Skill.scope_id == ctx.scope_id,
@@ -3437,13 +3463,23 @@ async def skill_tarball(
     )
     skill = result.scalar_one_or_none()
     if skill is None or skill.file_key is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "skill not found")
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "skill not found",
+            headers={"X-Share-Reason": "skill_no_file"},
+        )
 
     store = get_file_store()
     try:
         stream = await store.open_stream(skill.file_key)
     except FileNotFoundError as e:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "tar missing") from e
+        # `file_key` was set but the underlying blob is gone — same
+        # category as "skill has no tar" for CLI purposes.
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "tar missing",
+            headers={"X-Share-Reason": "skill_no_file"},
+        ) from e
     return StreamingResponse(stream, media_type="application/x-tar")
 ```
 
@@ -3629,16 +3665,42 @@ from app.core.auth import require_user_auth, AuthContext
 @router.post("/{token}/upgrade")
 async def upgrade(
     ctx: ShareTokenContext = Depends(require_share_token),
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
     """Convert a share-token access into a permanent ScopeMembership
     for the now-signed-in caller. Idempotent: re-calling for the same
     (scope, user) returns the existing row.
+
+    Concurrency: `require_share_token` validated the link before
+    this body ran. The owner could revoke between the two phases;
+    we re-check `revoked_at` UNDER A ROW LOCK below to avoid
+    creating a dangling membership for a freshly-revoked link.
     """
+    # Lock the link row + re-check revoked_at within the upgrade
+    # transaction. Without FOR UPDATE here, owner-revoke racing
+    # with sharee-upgrade can produce a membership that points at
+    # a now-revoked link. Read-then-validate-then-insert in one
+    # transaction with the lock closes the window.
+    link = (
+        await db.execute(
+            select(ScopeShareLink)
+            .where(ScopeShareLink.id == ctx.link_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if link is None or link.revoked_at is not None or (
+        link.expires_at is not None and link.expires_at < datetime.now(UTC)
+    ):
+        raise HTTPException(
+            status.HTTP_410_GONE, "share link no longer available"
+        )
+
     scope = (
         await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
-    ).scalar_one()
+    ).scalar_one_or_none()
+    if scope is None:
+        raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
     if scope.user_id == auth.user_id:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -3655,15 +3717,6 @@ async def upgrade(
     ).scalar_one_or_none()
     if existing is not None:
         return _membership_response(existing)
-
-    # Copy the frozen handle off the share-link row. This is what
-    # keeps anonymous + post-upgrade paths in agreement on the
-    # local skill folder name.
-    link = (
-        await db.execute(
-            select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id)
-        )
-    ).scalar_one()
 
     membership = ScopeMembership(
         scope_id=ctx.scope_id,
@@ -5010,6 +5063,45 @@ describe("share-tokens.json", () => {
 		require("node:fs").writeFileSync(path, "not-json", "utf-8");
 		expect(listTokens()).toEqual([]);
 	});
+
+	it("round-trips upgraded_at + last_seen_skill_keys fields", () => {
+		// Pins the file shape — both fields are added post-anonymous
+		// flow (upgrade marks one, daemon sync writes the other).
+		// Without this test a future field rename / drop wouldn't
+		// surface until production users hit it.
+		addToken({
+			...sample,
+			upgraded_at: "2026-05-12T10:00:00Z",
+			last_seen_skill_keys: ["git-tools", "k8s-helpers"],
+		});
+		const [restored] = listTokens();
+		expect(restored.upgraded_at).toBe("2026-05-12T10:00:00Z");
+		expect(restored.last_seen_skill_keys).toEqual([
+			"git-tools",
+			"k8s-helpers",
+		]);
+	});
+
+	it("preserves unknown future fields on read+write", () => {
+		// Forward-compat: a future CLI version writes a new field;
+		// older daemon reads + writes back same file. The unknown
+		// field must survive the round trip rather than vanish.
+		const path = join(tempHome, ".clawdi", "share-tokens.json");
+		require("node:fs").writeFileSync(
+			path,
+			JSON.stringify({
+				version: 1,
+				tokens: [{ ...sample, future_field: "x" }],
+			}),
+			"utf-8",
+		);
+		const [t] = listTokens();
+		// listTokens() returns the parsed struct as-is; the helper
+		// must not strip unknown keys when re-saving.
+		addToken({ ...t, redeemed_at: "2026-05-12T10:00:00Z" });
+		const raw = require("node:fs").readFileSync(path, "utf-8");
+		expect(raw).toContain('"future_field":"x"');
+	});
 });
 ```
 
@@ -5047,6 +5139,13 @@ export interface ShareToken {
 	token: string;
 	redeemed_at: string; // ISO8601
 	upgraded_at?: string; // set after clawdi auth login + upgrade
+	// Last set of skill_keys this token's scope reported on the
+	// most recent /api/share/{token}/scope index call. Used at
+	// cleanup time to avoid erasing folders that belong to OTHER
+	// shared scopes from the same owner (which share the
+	// `__<owner-handle>` suffix). See spec § 11.1 for the
+	// per-scope-vs-per-owner cleanup distinction.
+	last_seen_skill_keys?: string[];
 }
 
 interface ShareTokensFile {
@@ -5322,15 +5421,15 @@ export async function acceptShare(
 ): Promise<AcceptResult> {
 	const token = extractTokenFromUrl(urlOrToken);
 
-	// Idempotency: if this token is already stored locally, do not
-	// hit /redeem (which would bump the counter for nothing). Just
-	// re-print "already accepted." Spec § 4.5.
-	const existing = findToken(extractScopeIdFromTokenIfKnown(token));
-	if (existing) {
-		// We don't actually have scope_id from a bare token, so fall
-		// through to /redeem and let server-side idempotency handle.
-		// The check above is a best-effort early-out for re-runs
-		// where the user pasted the same URL twice.
+	// Idempotency: if this token is already stored locally AND we're
+	// in anonymous mode (no CLI auth → no membership upgrade attempt),
+	// return early without hitting /redeem. Bumping the counter on a
+	// re-paste of the same URL is misleading. If the user IS logged
+	// in we still need to call /upgrade to convert into a membership,
+	// so don't short-circuit in that case.
+	const existingTokenRecord = listTokens().find((t) => t.token === token);
+	if (existingTokenRecord && !deps.cliApiKey) {
+		return { kind: "token", record: existingTokenRecord };
 	}
 
 	// Logged-in fast path: CLI already has an unbound api_key from
@@ -5409,12 +5508,8 @@ export async function acceptShare(
 	return { kind: "token", record };
 }
 
-// Helper for the early-out idempotency check above. Returns "" if
-// the token isn't found in any stored record (no false positives).
-function extractScopeIdFromTokenIfKnown(token: string): string {
-	const all = listTokens();
-	return all.find((t) => t.token === token)?.scope_id ?? "";
-}
+// (helper removed — the listTokens().find lookup happens inline now
+// in the idempotency check above)
 ```
 
 - [ ] **Step 4: Command wrapper**
@@ -5553,40 +5648,34 @@ export function shareRemoveCommand(scopeId: string): void {
 		process.exitCode = 1;
 		return;
 	}
-	// Adapter-aware folder cleanup. We don't know which skills were
-	// in the scope (the server is authoritative but token may be
-	// revoked already), so walk each adapter's skills root and
-	// remove every direct-child folder whose name ends in
-	// `__<owner-handle>` — that's our convention for shared scope
-	// folders (spec § 11). Best-effort; permission errors silently
-	// skip.
-	const suffix = `__${token.owner_handle}`;
+	// Adapter-aware, scope-precise folder cleanup. Use the
+	// `last_seen_skill_keys` recorded by the daemon — this is the
+	// authoritative list of skills the user got from THIS scope
+	// (vs other shared scopes from the same owner that share the
+	// `__<owner-handle>` suffix; per spec § 11.1).
+	const skillKeys = token.last_seen_skill_keys ?? [];
 	let removed = 0;
 	for (const agentType of ALL_AGENT_TYPES) {
 		const adapter = getAdapter(agentType);
-		const root = adapter.getSkillsRootDir();
-		let entries: string[];
-		try {
-			entries = readdirSync(root);
-		} catch {
-			continue; // root doesn't exist on this machine; skip.
-		}
-		for (const name of entries) {
-			if (name.endsWith(suffix)) {
-				try {
-					rmSync(join(root, name), { recursive: true, force: true });
-					removed++;
-				} catch {
-					// Permission / busy file — skip; daemon-side cleanup
-					// will catch up on next sweep.
-				}
+		for (const key of skillKeys) {
+			const path = adapter.getSharedSkillPath(key, token.owner_handle);
+			try {
+				rmSync(path, { recursive: true, force: true });
+				removed++;
+			} catch {
+				// Permission / busy / doesn't-exist — skip; daemon
+				// would also no-op on the next sweep.
 			}
 		}
 	}
 	removeToken(scopeId);
 	console.log(`Removed share for scope ${scopeId} (${token.scope_name}).`);
 	if (removed > 0) {
-		console.log(`Deleted ${removed} local skill folder${removed === 1 ? "" : "s"} under "${suffix}".`);
+		console.log(`Deleted ${removed} local skill folder${removed === 1 ? "" : "s"}.`);
+	} else if (skillKeys.length === 0) {
+		console.log(
+			`(No skill list cached locally — folders may remain; daemon will clean them on next sweep.)`,
+		);
 	}
 }
 ```
@@ -5659,27 +5748,44 @@ interface SharedScopeIndex {
 	skills: { skill_key: string; content_hash: string; version: number }[];
 }
 
+/** Three distinct daemon auth modes. The sync engine treats them
+ * separately to handle hosted-pod / interactive-CLI / anonymous
+ * setups correctly. */
+export type DaemonAuthMode =
+	| "anonymous"        // No CLAWDI_AUTH_TOKEN, share-tokens.json only
+	| "user-interactive" // Unbound CLI api_key from `clawdi auth login`
+	| "env-bound";       // Hosted-pod deploy key (env-bound api_key)
+
 export interface SharedSyncDeps {
 	apiBaseUrl: string;
 	fetchImpl: typeof fetch;
 	adapter: AgentAdapter;
 	log: { info: (msg: string, meta?: unknown) => void; warn: (msg: string, meta?: unknown) => void };
-	// True when the daemon is also running with a Clerk-bound /
-	// unbound CLI api_key (i.e. the user's logged in). In that mode
-	// we skip share-tokens that have already been upgraded —
-	// membership path handles them via the normal owner-side sync
-	// flow, and double-fetching would waste bandwidth + risk
-	// duplicate folders. See spec § 8.4 "Mixed mode."
-	isClerkBound: boolean;
+	mode: DaemonAuthMode;
 }
 
 export async function syncAllSharedScopes(deps: SharedSyncDeps): Promise<void> {
+	// Hosted pods never process share-tokens.json. The deploy key is
+	// env-bound (no user-account scope) and a hosted pod is not the
+	// surface where personal share-link redemptions should happen.
+	// If a misconfigured pod somehow has share-tokens.json on disk
+	// (e.g. leaked from the user's laptop image), we simply ignore
+	// it rather than expand the pod's blast radius into someone
+	// else's shared scope. The user can't legitimately get content
+	// from a hosted pod's CLI anyway — they'd consume it from their
+	// laptop/dashboard.
+	if (deps.mode === "env-bound") {
+		return;
+	}
+
 	for (const token of listTokens()) {
-		// Mixed-mode skip: when authed, ignore tokens that have
-		// already been converted to memberships. Authed daemon's
-		// owner-side sync covers the same scope via
-		// `scope_ids_visible_to`.
-		if (deps.isClerkBound && token.upgraded_at) {
+		// Interactive-mode skip: tokens that have already been
+		// converted to memberships are now reached via the
+		// owner-side sync flow (membership → scope_ids_visible_to).
+		// Double-fetching from /api/share/{token}/* would waste
+		// bandwidth and risk concurrent writes to the same
+		// `<key>__<owner-handle>` folder.
+		if (deps.mode === "user-interactive" && token.upgraded_at) {
 			continue;
 		}
 		try {
@@ -5709,6 +5815,15 @@ async function syncOneSharedScope(
 	}
 	const idx = (await indexResp.json()) as SharedScopeIndex;
 
+	// Remember the current skill key set on the token so cleanup
+	// (revoke / scope-delete) only nukes folders belonging to this
+	// specific shared scope, not co-owner scopes that share the
+	// `__<owner-handle>` suffix.
+	addToken({
+		...token,
+		last_seen_skill_keys: idx.skills.map((s) => s.skill_key),
+	});
+
 	for (const skill of idx.skills) {
 		const localPath = deps.adapter.getSharedSkillPath(
 			skill.skill_key,
@@ -5720,12 +5835,20 @@ async function syncOneSharedScope(
 		const tarResp = await deps.fetchImpl(
 			`${deps.apiBaseUrl}/api/share/${token.token}/skills/${encodeURIComponent(skill.skill_key)}/tarball`,
 		);
-		// Terminal 404/410 on the tar endpoint indicates the share or
-		// the scope is gone — same handling as the index endpoint.
-		// (Codex round-3 finding #8: previously logged + deferred,
-		// which left the local copy stale and the CLI silently
-		// out-of-date.)
+		// 404/410 disambiguation via `X-Share-Reason` header (spec
+		// § 17.2). `skill_no_file` is non-terminal: the SCOPE is
+		// fine, just THIS skill has no tar yet (owner created via
+		// dashboard, never pushed files). All other reasons
+		// (token_invalid / scope_gone / missing header) are
+		// terminal — clean up the whole shared scope.
 		if (tarResp.status === 404 || tarResp.status === 410) {
+			const reason = tarResp.headers.get("X-Share-Reason");
+			if (reason === "skill_no_file") {
+				deps.log.info("shared_sync_skill_no_file", {
+					skill_key: skill.skill_key,
+				});
+				continue;  // skip this skill, keep syncing the scope
+			}
 			await abortAndCleanupSharedScope(token, tarResp.status, deps);
 			return;
 		}
@@ -5751,37 +5874,31 @@ async function syncOneSharedScope(
 
 /** Terminal cleanup when a share is no longer accessible (404 =
  * scope deleted, 410 = link revoked/expired). Single-step CLI
- * response: remove the local token + delete the cached folders
- * for every skill that landed under this owner-handle. Spec § 12.5
- * differentiates the user-visible copy for the two status codes. */
+ * response: remove the local token + delete ONLY the cached folders
+ * for the skill keys this specific token last reported. (Suffix-
+ * only deletion would erase folders from OTHER shared scopes from
+ * the same owner — same `__<owner-handle>` suffix.) Spec § 11.1
+ * for the rationale; § 12.5 differentiates the user-visible copy
+ * for the two status codes. */
 async function abortAndCleanupSharedScope(
 	token: ShareToken,
 	status: number,
 	deps: SharedSyncDeps,
 ): Promise<void> {
 	const adapter = deps.adapter;
-	// Best-effort: walk the adapter's skills root and delete any
-	// folder ending in `__<owner-handle>`. Daemon doesn't track an
-	// authoritative list of "which keys this token's scope had"; the
-	// suffix is the only marker.
-	try {
-		const root = adapter.getSkillsRootDir();
-		const { readdirSync, rmSync, statSync } = await import("node:fs");
-		const { join } = await import("node:path");
-		const suffix = `__${token.owner_handle}`;
-		for (const entry of readdirSync(root)) {
-			if (entry.endsWith(suffix)) {
-				const full = join(root, entry);
-				try {
-					rmSync(full, { recursive: true, force: true });
-				} catch {
-					// Best-effort; skip on permission errors.
-				}
-			}
+	const { rmSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const knownKeys = token.last_seen_skill_keys ?? [];
+	for (const key of knownKeys) {
+		// getSharedSkillPath gives the per-skill path; this is
+		// scope-precise — folders from other shared scopes
+		// (different skill keys, same owner) are untouched.
+		const path = adapter.getSharedSkillPath(key, token.owner_handle);
+		try {
+			rmSync(path, { recursive: true, force: true });
+		} catch {
+			// Best-effort; permission / busy errors fall through.
 		}
-	} catch {
-		// Adapter root unreadable — fall through; daemon-restart
-		// rescan will catch up.
 	}
 	removeToken(token.scope_id);
 	const message =
@@ -5791,6 +5908,7 @@ async function abortAndCleanupSharedScope(
 	deps.log.warn("shared_sync_terminal_cleanup", {
 		scope_id: token.scope_id,
 		status,
+		cleaned_skill_count: knownKeys.length,
 		message,
 	});
 }
@@ -5804,17 +5922,24 @@ In `packages/cli/src/serve/sync-engine.ts`, in the main reconcile loop (look for
 import { syncAllSharedScopes } from "../share/sync";
 
 // Inside the reconcile-loop body, after the owner-side skill pull.
-// Whether the daemon is Clerk-bound is derivable from the api_key
-// it was launched with: `opts.api` carries the auth context. The
-// existing `isAuthBound` / `opts.apiKey != null` pattern in
-// sync-engine indicates Clerk-bound mode.
+// Derive mode from the api_key the daemon was launched with:
+//   - No api_key → anonymous (share-tokens.json is the only auth).
+//   - api_key.environment_id is set → env-bound (hosted pod).
+//   - api_key.environment_id is null → user-interactive
+//     (laptop / dev box after `clawdi auth login`).
+const mode: DaemonAuthMode = !opts.apiKey
+	? "anonymous"
+	: opts.envBoundKey  // surfaced when the daemon validates its key at boot
+		? "env-bound"
+		: "user-interactive";
+
 try {
 	await syncAllSharedScopes({
 		apiBaseUrl: api.baseUrl,
 		fetchImpl: fetch,
 		adapter: opts.adapter,
 		log,
-		isClerkBound: Boolean(opts.apiKey),
+		mode,
 	});
 } catch (e) {
 	log.warn("shared_sync_top_level_failed", { error: String(e) });
@@ -5869,11 +5994,33 @@ export async function maybeUpgradeShares(deps: UpgradeDeps): Promise<void> {
 	const tokens = listTokens().filter((t) => !t.upgraded_at);
 	if (tokens.length === 0) return;
 
-	const answer = await deps.prompt(
-		`You have ${tokens.length} pending shared scope(s) on this device. ` +
-			`Convert to permanent memberships in your account? [Y/n] `,
+	// Show WHICH shares will be upgraded so the user can spot a
+	// shared-machine scenario. If A's friend logs in on A's box and
+	// the prompt shows "alice's team-toolkit" (A's accepted share),
+	// the friend can decline rather than silently claiming A's
+	// content into their own account.
+	console.log();
+	console.log(
+		`You have ${tokens.length} pending shared scope(s) on this device:`,
 	);
-	if (answer.trim().toLowerCase() === "n") return;
+	for (const t of tokens) {
+		console.log(`  - "${t.scope_name}" from @${t.owner_handle} (${t.owner_display})`);
+	}
+	console.log();
+	console.log(
+		`Convert these to permanent memberships in YOUR account? Anyone with a`,
+	);
+	console.log(
+		`legitimate claim on these shares should answer Y; if you don't recognize`,
+	);
+	console.log(`them, answer n.`);
+	const answer = await deps.prompt(`Convert? [Y/n] `);
+	if (answer.trim().toLowerCase() === "n") {
+		console.log(
+			`Skipped. Tokens left in place; run \`clawdi share list\` to see them.`,
+		);
+		return;
+	}
 
 	for (const t of tokens) {
 		try {

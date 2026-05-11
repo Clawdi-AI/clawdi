@@ -740,40 +740,30 @@ subscription extends from "scopes I own" to "scopes I see"
 - Clerk-bound mode uses the existing SSE channel and gets near-
   real-time updates for shared scopes too (see § 13).
 
-**Mixed mode** — sharee has both `share-tokens.json` AND a CLI
-api_key in place (the common transition: anonymous redeem → sign
-in → memberships exist but old tokens still on disk). The daemon
-must avoid double-syncing the same scope, which would cause:
+**Daemon auth modes (three distinct cases):**
 
-- two pulls of the same skill tar per cycle (wasted bandwidth),
-- writing to two different paths if owner-handle resolved
-  differently between anon and upgrade (rare per § 11.6 but
-  possible if implementation drifts),
-- log noise that obscures real errors.
+| Mode | Trigger | share-tokens.json handling |
+|---|---|---|
+| `anonymous` | No `CLAWDI_AUTH_TOKEN` | Authoritative — every token in the file is synced each cycle. |
+| `user-interactive` | `CLAWDI_AUTH_TOKEN` set, api_key has `environment_id IS NULL` (the "laptop after `clawdi auth login`" case) | Tokens with `upgraded_at` set are SKIPPED — membership path now owns those scopes via `scope_ids_visible_to`. Non-upgraded tokens are still processed (auto-upgrade prompt may not have completed yet, or user declined). |
+| `env-bound` | `CLAWDI_AUTH_TOKEN` set, api_key has `environment_id` (hosted-pod deploy key) | The daemon **ignores `share-tokens.json` entirely**. Hosted pods are not the surface where users redeem personal share-links — the pod's blast radius is scope-restricted by design (PR #77 contract), and forcing it to process share-tokens would expand that radius into other users' shared scopes. If a misconfigured pod somehow has the file, the daemon silently treats it as not-present. |
 
-Behavior:
+**Mixed mode** — most commonly the `user-interactive` transition
+right after sign-in: laptop daemon has `share-tokens.json` AND a
+freshly-issued api_key. Without the upgraded-token skip, the
+daemon would double-sync each upgraded scope (one path per
+flow), writing to the same `<key>__<owner-handle>` folder twice
+per cycle. The skip flag (`token.upgraded_at`) is set by the
+post-login auto-upgrade flow (§ 8.3) once the server returns 200
+on `POST /api/share/{token}/upgrade`.
 
-1. After CLI sign-in completes and `share-tokens.json` is
-   processed via the auto-upgrade flow (§ 8.3), each successful
-   upgrade is marked with `upgraded_at` locally.
-2. The sync engine, when reading `share-tokens.json`, **skips any
-   entry with `upgraded_at` set if** the daemon is also running in
-   Clerk-bound mode (its primary auth is an api_key). Effectively:
-   "you upgraded this scope to a real membership; the membership
-   path is now authoritative for it."
-3. The membership-side sync path (`scope_ids_visible_to` returns
-   the shared scope) handles the pull instead, using the **same**
-   adapter path resolution (`getSharedSkillPath(key,
-   resolved_owner_handle)`). Because § 11.2 freezes handles
-   identically across both flows, the on-disk folder is the same
-   → no duplicate folders, no orphan files.
-4. If the daemon later loses its Clerk-bound auth (e.g. api_key
-   revoked, file removed), the auto-skip relaxes — `share-tokens.json`
-   becomes authoritative again on next cycle. Skill content keeps
-   syncing from whichever source still validates.
+If the user-interactive daemon later loses its CLI api_key (file
+removed, revoked, expired), the next cycle drops to `anonymous`
+and tokens flip back to authoritative — the user's content keeps
+syncing from whichever auth still works.
 
 Tests in plan Phase E.5 / E.6 cover the no-duplicate-folder
-invariant explicitly.
+invariant explicitly for the user-interactive transition.
 
 ## 9. Web Dashboard Surface
 
@@ -956,7 +946,23 @@ paths so the agent's flat `<root>/*/SKILL.md` glob continues to work.
   `default_scope_id`.
 - **Shared scope skills**: `<adapter-skills-root>/<key>__<owner-handle>/`
   — note the **double underscore** separator and `<owner-handle>`
-  suffix.
+  suffix. (The owner-handle is `<kebab-name>-<user-id-prefix>`,
+  see § 11.2; two shared scopes from the same owner DO share the
+  same suffix.)
+
+The per-scope path conflict — same owner, two shared scopes —
+deserves a closer look. If alice shares scopes A and B with bob,
+both scopes' skills land in folders named `<key>__alice-a3b4/`
+(differentiated only by `<key>`). This works for distinct skill
+keys (A's `git-tools` vs B's `monitoring`). But what about
+**cleanup**: when bob revokes one of those scopes locally, naive
+suffix-match cleanup would erase folders from both scopes since
+they share the suffix. v1 mitigates by **only deleting folders
+whose skill key was in the revoked scope** (server returns the
+last-known skill list as part of the token's payload; CLI
+remembers it locally for cleanup purposes). The implementation
+tracks `last_seen_skill_keys` per token in `share-tokens.json`.
+See plan E.5 task for the data model.
 
 ### 11.2 `owner-handle` resolution
 
@@ -1342,12 +1348,87 @@ shipping mid-cycle — sharing as an end-to-end feature.
 - Owner email-invites registered user → user accepts in dashboard → member.
 - Owner revokes → anonymous CLI gets cleaned up gracefully → upgraded member unaffected.
 
-## 17. Open Questions
+## 17. Resolved design decisions surfaced during review
+
+Several borderline cases came up across multiple review rounds.
+They aren't open in the "needs more work" sense, but documenting
+the chosen behavior here so implementation doesn't relitigate.
+
+### 17.1 Invitee-account deletion cascades silently
+
+`scope_invitations.invitee_user_id` has `ON DELETE CASCADE` (the
+schema is in § 6.1). When a Clerk webhook deletes a user, every
+pending invitation TO that user disappears from the owner's
+dashboard without a notification. Acceptable for v1 — the
+underlying problem ("you can't invite a non-existent account") is
+self-evident from context, and a notification surface would be
+its own design. v1.1 may add a `status='invitee_deleted'` row
+that lingers for owner visibility.
+
+### 17.2 Tarball 404 disambiguation — single skill vs whole scope
+
+`GET /api/share/{token}/skills/{key}/tarball` can return 404 for
+two reasons:
+- the entire share is gone (link revoked / scope deleted /
+  token-hash mismatch) — caller should clean up everything
+- this **single** skill has no `file_key` (owner created it via
+  dashboard without ever pushing files) — caller should keep
+  going and try the next skill
+
+The server distinguishes these with a header:
+
+```
+X-Share-Reason: token_invalid   → terminal; clean up entire scope
+X-Share-Reason: scope_gone      → terminal; clean up entire scope
+X-Share-Reason: skill_no_file   → single-skill skip; continue with next
+```
+
+CLI parses `X-Share-Reason` on every 404/410 response and routes
+accordingly. Missing header is treated conservatively as
+terminal cleanup (default to safe).
+
+### 17.3 CSRF posture for sharing endpoints
+
+All sharing endpoints accept `Authorization: Bearer <token>` only;
+none accepts a cookie session. CSRF (which is a cookie-session
+attack class) does not apply. The endpoints also do not need
+`Sec-Fetch-Site` checks — there is no ambient credential a
+third-party page could exploit. The web dashboard's fetch calls
+include the Clerk JWT explicitly in the Authorization header.
+
+This is documented here so a future security audit doesn't
+re-raise the question.
+
+### 17.4 CLI vs Web display consistency
+
+Both surfaces use the same string format for the "shared with me"
+list entries:
+
+```
+{owner_display} (@{owner_handle})
+```
+
+e.g. `Alice Chen (@alice-chen-a3b4)`. CLI table column header is
+"Owner"; Web sidebar uses the same string. `clawdi scope list`
+SHOULD NOT abbreviate to just `@handle` — that loses the
+human-readable name.
+
+### 17.5 `/api/me/scopes` response shape (owned vs shared)
+
+Returned as `{owned: ScopeResponse[], shared: SharedScopeResponse[]}`.
+Owned entries inherit the existing `/api/scopes` row shape
+(no owner_* fields needed — that's the caller). Shared entries
+add `owner_display`, `owner_handle`, `role`, `joined_at`. The
+web type union is `OwnedScope | SharedScope` discriminated by
+`is_owner: boolean`. Generated client types regenerate to
+match before any frontend code lands.
+
+## 18. Open Questions
 
 None at spec time. Any discovered during implementation should be
 appended here with date + resolution.
 
-## 18. References
+## 19. References
 
 - `docs/plans/env-scoped-skills.md` — original scope design;
   reserves `scope_memberships` and notes "Vault encryption rework
