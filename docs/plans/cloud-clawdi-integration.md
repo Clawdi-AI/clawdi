@@ -2107,7 +2107,10 @@ entry, no welcome card, no OSS-side dialog work.
 
 The minimum-viable change set spans both repos.
 
-**clawdi-monorepo (SaaS — heavy lifting):**
+**clawdi-monorepo (SaaS — heavy lifting):** *separate repository — symbols
+referenced below live in `clawdi-monorepo#429`, NOT in this repo. Don't
+grep this tree looking for `_mint_cloud_sync_creds` / k3s.py /
+`build_openclaw_infra_spec` — they sit on the SaaS side.*
 
 1. **`agent-image/Dockerfile`**: install the `clawdi` CLI via
    `npm install -g clawdi@<pinned>` in the runtime-glue stage

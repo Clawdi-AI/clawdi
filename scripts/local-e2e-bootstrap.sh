@@ -21,6 +21,21 @@
 #   - clawdi CLI 0.5.6+ installed globally (`which clawdi`)
 #
 # Usage: bash scripts/local-e2e-bootstrap.sh
+#
+# NOT IDEMPOTENT: each run picks a fresh `NOVEL_CLERK_ID` from
+# `date +%s` so every invocation inserts a new test user + scope
+# + env + api_key row pair. Cleanup commands are echoed at the
+# bottom and saved to /tmp/clawdi-local-e2e.env — copy them off
+# before re-running, or scrub previous test users periodically:
+#
+#   PGPASSWORD=clawdi_dev psql -h localhost -p 5433 -U clawdi -d clawdi_cloud \
+#     -c "DELETE FROM users WHERE clerk_id LIKE 'user_local_e2e_%';"
+#
+# The raw_key the script mints is also printed verbatim (twice —
+# once in the export block, once in the curl example). That's
+# intentional for a local-dev script (the admin secret itself is
+# `local-dev-admin-secret` — there's nothing to protect locally),
+# but don't paste this script's output into a shared chat / log.
 set -euo pipefail
 
 ADMIN_KEY="local-dev-admin-secret"
