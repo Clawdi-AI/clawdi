@@ -271,7 +271,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             db,
             clerk_id=clerk_id,
             email=email,
-            name=payload.get("name"),
+            name=name,
             race_loser_status=status.HTTP_401_UNAUTHORIZED,
         )
         # Helper leaves rows flushed-not-committed so admin callers

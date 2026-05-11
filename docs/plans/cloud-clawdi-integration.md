@@ -2159,12 +2159,8 @@ grep this tree looking for `_mint_cloud_sync_creds` / k3s.py /
    `needs_redeploy` path. See "Hosted deploy token flow" appendix
    for the full operator workflow.
 
-**Cloud-api (this repo — three small additions):**
+**Cloud-api (this repo — two small additions):**
 
-- **`POST /api/auth/keys/introspect`** — already shipped (PR
-  #77). Used by SaaS server-side to verify a freshly-minted
-  api_key is bound to the env it claims to be, before injection
-  into a pod Secret.
 - **`POST /api/admin/auth/keys`** + **`DELETE /api/admin/auth/keys/{id}`**
   — admin endpoints for cross-user mint + revoke. Auth: shared
   `X-Admin-Key` header matching `settings.admin_api_key`.
@@ -2762,12 +2758,6 @@ POST /api/deployments
                                                                  validates env.user_id
                                                                  matches caller
                                                           ◀───── { id, raw_key, … }
-
-                                     [optional defense-in-depth]
-                                     POST /api/auth/keys/introspect
-                                     body: { api_key, environment_id }
-                                                          ─────▶ confirms binding
-                                                          ◀───── { valid: true, … }
 
                                      plumbs raw_key + env_id into
                                      build_openclaw_infra_spec →
