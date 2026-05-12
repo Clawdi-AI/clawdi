@@ -87,15 +87,26 @@ async def list_vaults(
 @router.post("")
 async def create_vault(
     body: VaultCreate,
+    scope_id: UUID | None = Query(default=None),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCreatedResponse:
     # Phase-1 scope shim: vault writes inherit the caller's resolved
-    # default scope. Vault items inherit through the parent vault
-    # (no separate scope_id on items) so this single resolution
-    # covers both rows and prevents the "item says A, vault says B"
-    # invalid state.
-    scope_id = await resolve_default_write_scope(db, auth)
+    # default scope when no explicit `?scope_id=` is passed. Vault
+    # items inherit through the parent vault (no separate scope_id
+    # on items) so this single resolution covers both rows and
+    # prevents the "item says A, vault says B" invalid state.
+    #
+    # When `scope_id` IS passed, validate it belongs to the caller
+    # (write access — the unwidened owner-only validator), so a
+    # sharee viewer can't sneak vault items into someone else's
+    # scope via the explicit path.
+    if scope_id is not None:
+        from app.core.scope import validate_scope_for_caller
+
+        await validate_scope_for_caller(db, auth, scope_id)
+    else:
+        scope_id = await resolve_default_write_scope(db, auth)
 
     # Slug uniqueness is per (user_id, scope_id, slug) — different
     # scopes can hold the same slug. Pre-flight check is per scope

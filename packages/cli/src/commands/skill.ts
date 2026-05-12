@@ -85,7 +85,10 @@ export async function skillList(opts: { json?: boolean } = {}) {
 	console.log(chalk.gray(`\n  ${summary}`));
 }
 
-export async function skillAdd(path: string, opts: { yes?: boolean; agent?: string } = {}) {
+export async function skillAdd(
+	path: string,
+	opts: { yes?: boolean; agent?: string; scope?: string } = {},
+) {
 	requireAuth();
 	const resolved = resolve(path);
 	const stat = statSync(resolved);
@@ -197,7 +200,23 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 	//                user doesn't ship a local skill into a
 	//                sibling machine's cloud inventory)
 	let scopeId: string;
-	if (opts.agent) {
+	if (opts.scope && opts.agent) {
+		console.log(chalk.red("Pass either --scope or --agent, not both. They target the same thing."));
+		process.exit(1);
+	}
+	if (opts.scope) {
+		// Explicit scope by UUID, slug, or name. The shared scope-
+		// resolver handles disambiguation + default fallback.
+		const { resolveScopeId } = await import("../lib/scope-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		scopeId = await resolveScopeId(cfg.apiUrl, auth.apiKey, opts.scope);
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];

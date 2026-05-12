@@ -233,13 +233,14 @@ const vaultCmd = program.command("vault").description("Manage secrets");
 vaultCmd
 	.command("set <key>")
 	.description("Store a secret (prompted for value)")
+	.option("-s, --scope <id-or-slug>", "Target a specific scope (default: your default-write scope)")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set prod/database/PG_DSN",
+		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set DEPLOY_KEY --scope engineering",
 	)
-	.action(async (key) => {
+	.action(async (key, opts) => {
 		const { vaultSet } = await import("./commands/vault.js");
-		await vaultSet(key);
+		await vaultSet(key, opts);
 	});
 
 vaultCmd
@@ -255,7 +256,11 @@ vaultCmd
 	.command("import <file>")
 	.description("Import from .env file")
 	.option("-y, --yes", "Skip the confirmation prompt (for CI / scripted imports)")
-	.addHelpText("after", "\nExample:\n  $ clawdi vault import .env.production")
+	.option("-s, --scope <id-or-slug>", "Target a specific scope (default: your default-write scope)")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi vault import .env.production\n  $ clawdi vault import .env.staging --scope engineering --yes",
+	)
 	.action(async (file, opts) => {
 		const { vaultImport } = await import("./commands/vault.js");
 		await vaultImport(file, opts);
@@ -282,10 +287,14 @@ skillCmd
 		"-a, --agent <type>",
 		"Upload to a specific agent's scope (claude_code, codex, hermes, openclaw)",
 	)
+	.option(
+		"-s, --scope <id-or-slug>",
+		"Upload to an explicit scope (UUID, slug, or name). Mutex with --agent.",
+	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill\n  $ clawdi skill add ./my-skill --agent codex\n  $ clawdi skill add quick-note.md --yes",
+		"\nExamples:\n  $ clawdi skill add ./my-skill                       # default-write scope\n  $ clawdi skill add ./my-skill --scope engineering    # explicit scope\n  $ clawdi skill add ./my-skill --agent codex          # an agent's env-scope",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");

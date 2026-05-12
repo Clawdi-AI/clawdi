@@ -843,6 +843,14 @@ export interface paths {
          * Download Skill Scoped
          * @description Phase-2 scope-explicit download — exact (scope_id, skill_key)
          *     lookup, no disambiguation.
+         *
+         *     Reads are permitted to viewer members (sharees) — the validator
+         *     accepts any scope in `scope_ids_visible_to(auth)`, which now
+         *     includes ScopeMembership rows. The Skill row lookup no longer
+         *     filters by `user_id` since membership-granted reads pull from
+         *     the owner's skills, not the caller's. Write paths (upload,
+         *     delete) still gate on `validate_scope_for_caller`, which stays
+         *     owner-only.
          */
         get: operations["download_skill_scoped_api_scopes__scope_id__skills__skill_key__download_get"];
         put?: never;
@@ -1371,6 +1379,296 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/share/{token}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview
+         * @description Side-effect-free read of scope metadata for a valid token.
+         *
+         *     The public landing page calls this on every SSR pass + every
+         *     crawler unfurl. Does NOT increment redeem_count so the stat
+         *     accurately measures "people who clicked Accept," not "people
+         *     who saw the link."
+         */
+        get: operations["preview_api_share__token__preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/{token}/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redeem
+         * @description Anonymous accept - bumps redeem_count + stamps last_redeemed_at.
+         *
+         *     Call on explicit user action only (CLI `share accept` from a
+         *     logged-out terminal). The web landing page uses /preview for
+         *     page render and /upgrade for the logged-in accept path; only
+         *     the CLI's anonymous flow hits /redeem.
+         */
+        post: operations["redeem_api_share__token__redeem_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/{token}/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upgrade
+         * @description Convert a valid share-token + authed user into a permanent
+         *     ScopeMembership. Idempotent: re-running for the same (user, scope)
+         *     pair returns the existing row instead of erroring.
+         *
+         *     409 if the requester is the scope owner (can't accept your own
+         *     scope - the dashboard already lists it).
+         *
+         *     Hosted-pod env-bound api_keys are REJECTED here (the unbound
+         *     dep enforces this) - share-link membership is a personal-account
+         *     concept; expanding a hosted pod's blast radius into another
+         *     user's scope is exactly the wrong direction.
+         */
+        post: operations["upgrade_api_share__token__upgrade_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/share-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Share Links
+         * @description List active + revoked share-links for a scope.
+         *
+         *     Returns prefix-only data — the raw token was shown ONCE at create
+         *     time and is unrecoverable. Owners refresh the dialog to see
+         *     redeem counts, last-redeemed timestamps, and revoke individual
+         *     links.
+         *
+         *     Sorted created_at DESC so the freshest link surfaces first.
+         *     Revoked links remain in the listing (with revoked_at populated)
+         *     so the owner can see a history; the client renders them muted.
+         */
+        get: operations["list_share_links_api_scopes__scope_id__share_links_get"];
+        put?: never;
+        /**
+         * Create Share Link
+         * @description Generate a new share link for a scope.
+         *
+         *     Contract:
+         *     - Raw token is returned ONCE in the create response; server
+         *       stores only the SHA-256 hash + prefix.
+         *     - Gate on owner having `users.name` set (spec § 4.5). Falling
+         *       back to email local-part would leak PII to recipients.
+         *     - Resolves + freezes `resolved_owner_handle` on the link row so
+         *       every downstream consumer (preview, redeem, upgrade) reads
+         *       the same value — even if the owner later renames themselves.
+         */
+        post: operations["create_share_link_api_scopes__scope_id__share_links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/share-links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Share Link
+         * @description Soft-revoke a share-link by stamping revoked_at.
+         *
+         *     Idempotent: revoking an already-revoked link returns 200 with
+         *     the same response, doesn't double-stamp.
+         *
+         *     Once revoked, /preview, /redeem, /upgrade all return 410 Gone
+         *     via require_share_token's expiry check. Anonymous tokens already
+         *     accepted on a device stop syncing — the daemon's next reconcile
+         *     sees 410 and prunes the local share-tokens.json entry.
+         *
+         *     Pre-existing ScopeMembership rows (created via /upgrade BEFORE
+         *     revoke) are NOT removed — revoking the LINK doesn't remove
+         *     members who already joined via it. Owner must explicitly call
+         *     DELETE /api/scopes/{id}/members/{user_id} (B.7) for that.
+         */
+        delete: operations["revoke_share_link_api_scopes__scope_id__share_links__link_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Invitations
+         * @description List all pending invitations on this scope, newest first.
+         *
+         *     Accepted/declined invitations roll up into ScopeMembership rows
+         *     on accept and get deleted on decline; this listing therefore
+         *     contains only PENDING invitations from the owner's perspective.
+         */
+        get: operations["list_invitations_api_scopes__scope_id__invitations_get"];
+        put?: never;
+        /**
+         * Create Invitation
+         * @description Send a pending invitation to a registered clawdi user.
+         *
+         *     Email lookup is case-insensitive. The invitee MUST already have
+         *     an account — for non-users the response instructs the owner to
+         *     send a share-link instead (which works for any email and creates
+         *     a Clerk account via the sign-in handoff).
+         *
+         *     Cases:
+         *       - target == self → 400 already_owner
+         *       - target email not found → 404 user_not_found
+         *       - multiple accounts with that email → 409 ambiguous_email
+         *         (privacy: silently picking one would invite the wrong account)
+         *       - target already a member → 409 already_member
+         *       - target already invited (FK uniqueness) → 409 already_invited
+         */
+        post: operations["create_invitation_api_scopes__scope_id__invitations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel Invitation
+         * @description Hard-delete a pending invitation. The invitee loses the
+         *     pending entry on their dashboard next refresh.
+         */
+        delete: operations["cancel_invitation_api_scopes__scope_id__invitations__invitation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Invitations
+         * @description Return every pending invitation addressed to the current user.
+         *
+         *     Joins the Scope + scope-owner + inviter (often the same user as
+         *     the owner, but not necessarily — a future co-owner might invite
+         *     on the primary's behalf) so the dashboard can render the full
+         *     "X (@x-handle) invited you to 'Scope Y'" string from one query.
+         */
+        get: operations["list_my_invitations_api_me_invitations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/invitations/{invitation_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invitation
+         * @description Turn a pending invitation into a permanent ScopeMembership.
+         *
+         *     Lock the SCOPE row across the transaction to serialize against
+         *     concurrent unshare / membership-creating endpoints — without
+         *     this, an unshare landing mid-accept would orphan-insert a
+         *     membership against a scope whose other rows just got cleared.
+         *     Re-fetch the invitation after the lock: if unshare deleted it
+         *     in the meantime, 410 cleanly.
+         */
+        post: operations["accept_invitation_api_me_invitations__invitation_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/invitations/{invitation_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline Invitation
+         * @description Hard-delete the pending invitation. 410 if it's already gone
+         *     or wasn't addressed to this user — same shape as accept.
+         */
+        post: operations["decline_invitation_api_me_invitations__invitation_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1854,6 +2152,49 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * InvitationCreate
+         * @description Body for POST /api/scopes/{scope_id}/invitations.
+         */
+        InvitationCreate: {
+            /** Email */
+            email: string;
+        };
+        /**
+         * InvitationResponse
+         * @description Returned by owner and sharee invitation listings.
+         *
+         *     Scope fields (`scope_name`, `scope_kind`, `owner_display`,
+         *     `owner_handle`) are populated unconditionally - the owner-facing
+         *     listing uses them to render alongside the invitee email, and
+         *     the sharee-facing inbox uses them as the primary "what is this
+         *     invitation about?" copy.
+         */
+        InvitationResponse: {
+            /** Id */
+            id: string;
+            /** Scope Id */
+            scope_id: string;
+            /** Scope Name */
+            scope_name: string;
+            /** Scope Kind */
+            scope_kind: string;
+            /** Owner Display */
+            owner_display: string;
+            /** Owner Handle */
+            owner_handle: string;
+            /** Invitee Email */
+            invitee_email: string;
+            /** Invited By User Id */
+            invited_by_user_id: string;
+            /** Invited By Display */
+            invited_by_display: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** MemoryCreate */
         MemoryCreate: {
             /** Content */
@@ -1981,6 +2322,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Is Owner
+             * @default true
+             */
+            is_owner: boolean;
         };
         /** SearchHit */
         SearchHit: {
@@ -2359,6 +2705,91 @@ export interface components {
              * @constant
              */
             status: "updated";
+        };
+        /**
+         * ShareLinkCreate
+         * @description Body for POST /api/scopes/{scope_id}/share-links.
+         */
+        ShareLinkCreate: {
+            /** Label */
+            label?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /**
+         * ShareLinkCreated
+         * @description Returned ONCE on link creation - includes the raw token.
+         *
+         *     Subsequent GETs only return `prefix` (raw token is unrecoverable).
+         *     `owner_handle` is the frozen value stored on the link row that
+         *     every sharee will see; the owner sees their own resolved handle
+         *     in case they want to verify or change their display name first.
+         */
+        ShareLinkCreated: {
+            /** Id */
+            id: string;
+            /** Raw Token */
+            raw_token: string;
+            /** Url */
+            url: string;
+            /** Prefix */
+            prefix: string;
+            /** Owner Handle */
+            owner_handle: string;
+            /** Label */
+            label: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+        };
+        /**
+         * ShareLinkResponse
+         * @description Returned by GET /api/scopes/{scope_id}/share-links.
+         */
+        ShareLinkResponse: {
+            /** Id */
+            id: string;
+            /** Prefix */
+            prefix: string;
+            /** Label */
+            label: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+            /** Redeem Count */
+            redeem_count: number;
+            /** Last Redeemed At */
+            last_redeemed_at: string | null;
+        };
+        /**
+         * ShareRedeemResponse
+         * @description Returned by POST /api/share/{token}/redeem - anonymous endpoint.
+         */
+        ShareRedeemResponse: {
+            /** Scope Id */
+            scope_id: string;
+            /** Scope Name */
+            scope_name: string;
+            /** Owner Display */
+            owner_display: string;
+            /** Owner Handle */
+            owner_handle: string;
+            /** Skill Count */
+            skill_count: number;
+            /** Vault Count */
+            vault_count: number;
+            /** Vault Locked */
+            vault_locked: boolean;
         };
         /** SkillContentUpdateRequest */
         SkillContentUpdateRequest: {
@@ -4345,7 +4776,9 @@ export interface operations {
     };
     create_vault_api_vault_post: {
         parameters: {
-            query?: never;
+            query?: {
+                scope_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4841,6 +5274,387 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_api_share__token__preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareRedeemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redeem_api_share__token__redeem_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareRedeemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upgrade_api_share__token__upgrade_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_share_links_api_scopes__scope_id__share_links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareLinkResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_share_link_api_scopes__scope_id__share_links_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareLinkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareLinkCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_share_link_api_scopes__scope_id__share_links__link_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_invitations_api_scopes__scope_id__invitations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_invitation_api_scopes__scope_id__invitations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_invitation_api_scopes__scope_id__invitations__invitation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_my_invitations_api_me_invitations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationResponse"][];
+                };
+            };
+        };
+    };
+    accept_invitation_api_me_invitations__invitation_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_invitation_api_me_invitations__invitation_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */

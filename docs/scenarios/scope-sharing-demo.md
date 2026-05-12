@@ -71,6 +71,32 @@ stays gated on Clerk auth.
 
 ---
 
+## How content gets into a scope (read this first)
+
+A `scope` is the container that holds skills + vault secrets + sessions for
+sharing. **You don't create scopes ad-hoc** — they come from one of two
+places:
+
+| Scope | How it's created | Quantity |
+|-------|------------------|----------|
+| **Personal** | Auto-created at signup | Exactly 1 per user |
+| **Environment** | Auto-created when you register an agent with `clawdi setup --agent <type>` | One per registered agent |
+
+**Adding content** to a scope:
+
+| Command | Default target | Explicit target |
+|---------|----------------|-----------------|
+| `clawdi skill add <folder>` | Default-write scope | `--scope <id-or-slug>` or `--agent <type>` |
+| `clawdi vault set <key>` | Default-write scope | `--scope <id-or-slug>` |
+| `clawdi vault import <.env>` | Default-write scope | `--scope <id-or-slug>` |
+
+> **What's "default-write scope"?** If you've registered any agents,
+> it's the most-recently-active agent's environment scope. Otherwise,
+> Personal. Use `clawdi scope list` to see all your scopes and
+> `--scope` to target one explicitly.
+
+---
+
 ## PART I · Setting up content (Alice the owner)
 
 ### 1.1 — Inventory: what scopes do I have?
@@ -80,35 +106,42 @@ alice@laptop $ clawdi scope list
 ```
 
 ```
-My scopes (1):
-  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+My scopes (2):
+  engineering-5df715       b045725e-e4d6-4514-87f6-6dce74e7dcc6  (environment)
+    Engineering
+  personal-5df715-alice    4a921f8b-6a94-4f15-9d2b-8b7f4774dbb1  (personal)
     Personal
 ```
 
-> Every user has a `Personal` scope auto-created at signup. Additional
-> "Environment" scopes appear when an agent is registered with
-> `clawdi setup` (one env-scope per registered agent). For this demo
-> Alice shares her Personal scope.
+> Alice has two scopes: her auto-created Personal scope and an `Engineering`
+> environment-scope (created when she registered an agent earlier via
+> `clawdi setup --agent claude_code`). For this demo she'll add content
+> into `Engineering` specifically and share THAT scope.
 
-### 1.2 — Upload a skill
+### 1.2 — Add a skill explicitly into the Engineering scope
 
 ```bash
 alice@laptop $ ls /tmp/demo-skill-git-helper/
 SKILL.md
 
-alice@laptop $ clawdi skill add /tmp/demo-skill-git-helper --yes
+alice@laptop $ clawdi skill add /tmp/demo-skill-git-helper \
+                                --scope engineering-5df715 --yes
 ✓ Uploaded demo-skill-git-helper (v1, 1 files)
 
 alice@laptop $ clawdi skill list --json | jq -r '.[] | "  - \(.skill_key) (\(.scope_name))"'
-  - demo-skill-git-helper  (scope: Personal)
+  - demo-skill-git-helper  (scope: Engineering)
 ```
 
-> `skill add` tars the folder, uploads to Alice's default-write scope
-> (Personal here), and stamps a SHA-256 of the content for cache
-> validation. Pass `--agent codex` to land the skill in a specific
-> agent's env-scope instead.
+> The `--scope engineering-5df715` flag pins the upload to a specific scope.
+> Drop the flag → goes to default-write. Pass `--agent codex` instead → goes
+> to the codex env-scope. The CLI resolves scope by UUID, slug, OR human
+> name (case-insensitive), so any of these work:
+>
+>   `--scope engineering-5df715`  (slug)
+>   `--scope b045725e-e4d6-4514-87f6-6dce74e7dcc6`  (UUID)
+>   `--scope Engineering`  (name)
 
-### 1.3 — Bulk-import vault secrets from a `.env` file
+### 1.3 — Bulk-import vault secrets into the Engineering scope
 
 ```bash
 alice@laptop $ cat /tmp/demo-team.env
@@ -116,7 +149,8 @@ GITHUB_TEAM_TOKEN=ghp_team_shared_token_abc123
 SENTRY_DSN=https://demo@sentry.io/0
 SLACK_WEBHOOK=https://hooks.slack.com/services/T0/B0/abc
 
-alice@laptop $ clawdi vault import /tmp/demo-team.env --yes
+alice@laptop $ clawdi vault import /tmp/demo-team.env \
+                                   --scope engineering-5df715 --yes
 ```
 
 ```
@@ -138,7 +172,7 @@ alice@laptop $ clawdi vault list
 [
   {
     "slug": "default",
-    "scope_id": "362082d4-8295-4daf-8d02-ce7ec44a7521",
+    "scope_id": "b045725e-e4d6-4514-87f6-6dce74e7dcc6",
     "name": "Default",
     "items": {
       "(default)": [
@@ -167,19 +201,19 @@ alice@laptop $ clawdi vault list
 ### 2.1 — Generate a share link
 
 ```bash
-alice@laptop $ clawdi scope share personal-abc66e-alice --label "weekend hack"
+alice@laptop $ clawdi scope share engineering-5df715 --label "weekend hack"
 ```
 
 ```
 ✓ Share link ready
 
-  http://localhost:3000/share/55FTFvRqG9ohLpBRGMOEoBbYrZj9slVxdCNW72WP0Fo
+  http://localhost:3000/share/qInf5TPgrnISEsCQ9xM6kW_jnahQmfmQul2S83oVV2c
 
-Save this URL now — only the prefix 55FTFvRq remains visible later.
-Owner handle: @alice-5e81
+Save this URL now — only the prefix qInf5TPg remains visible later.
+Owner handle: @alice-b4b6
 Label: weekend hack
 
-Recipient runs: clawdi share accept http://localhost:3000/share/55FTFvRq…
+Recipient runs: clawdi share accept http://localhost:3000/share/qInf5TPg…
 ```
 
 **Design call-outs**
@@ -192,14 +226,14 @@ Recipient runs: clawdi share accept http://localhost:3000/share/55FTFvRq…
 ### 2.2 — List active links
 
 ```bash
-alice@laptop $ clawdi scope share-links personal-abc66e-alice
+alice@laptop $ clawdi scope share-links engineering-5df715
 ```
 
 ```
 Share links (1):
-  55FTFvRq… [weekend hack]  active  5/11/2026  0 redeems
+  qInf5TPg… [weekend hack]  active  5/11/2026  0 redeems
 
-Revoke: clawdi scope share-links personal-abc66e-alice --revoke <prefix>
+Revoke: clawdi scope share-links engineering-5df715 --revoke <prefix>
 ```
 
 > Listings show **prefix-only**; the raw URL is not recoverable.
@@ -213,11 +247,11 @@ Revoke: clawdi scope share-links personal-abc66e-alice --revoke <prefix>
 
 ```bash
 # Bob hasn't logged in yet — straight from URL to usable skills.
-bob@laptop $ clawdi share accept http://localhost:3000/share/55FTFvRq…
+bob@laptop $ clawdi share accept http://localhost:3000/share/qInf5TPg…
 ```
 
 ```
-✓ Accepted "Personal" from Alice (@alice-5e81)
+✓ Accepted "Engineering" from Alice (@alice-b4b6)
   1 skill · 3 vault secrets (sign in to use)
   Token saved to ~/.clawdi/share-tokens.json (0600).
 
@@ -236,9 +270,9 @@ bob@laptop $ clawdi share list
 ```
 Shared scopes on this device (1):
 
-  Personal  — from Alice (@alice-5e81)
-    scope_id: 362082d4-8295-4daf-8d02-ce7ec44a7521
-    accepted: 2026-05-12T03:56:04.774Z
+  Engineering  — from Alice (@alice-b4b6)
+    scope_id: b045725e-e4d6-4514-87f6-6dce74e7dcc6
+    accepted: 2026-05-12T04:08:09.461Z
 
 1 share not yet upgraded to permanent membership — sign in with
 clawdi auth login to convert them.
@@ -252,12 +286,12 @@ clawdi auth login to convert them.
 ### 3.2 — Alice sees Bob's redemption tick the counter
 
 ```bash
-alice@laptop $ clawdi scope share-links personal-abc66e-alice
+alice@laptop $ clawdi scope share-links engineering-5df715
 ```
 
 ```
 Share links (1):
-  55FTFvRq… [weekend hack]  active  5/11/2026  1 redeem · last used 5/11/2026
+  qInf5TPg… [weekend hack]  active  5/11/2026  1 redeem · last used 5/11/2026
 ```
 
 ### 3.3 — Bob signs in → auto-upgrade + eager skill pull
@@ -267,13 +301,13 @@ Share links (1):
 # Re-running `share accept` on the SAME URL takes the /upgrade fast path
 # AND eagerly pulls the scope's skills into every registered adapter.
 
-bob@laptop $ clawdi share accept http://localhost:3000/share/55FTFvRq…
+bob@laptop $ clawdi share accept http://localhost:3000/share/qInf5TPg…
 ```
 
 ```
 ✓ Joined as viewer — your dashboard now lists this scope.
-  Owner handle: @alice-5e81
-  Scope ID: 362082d4-8295-4daf-8d02-ce7ec44a7521
+  Owner handle: @alice-b4b6
+  Scope ID: b045725e-e4d6-4514-87f6-6dce74e7dcc6
 
   Pulled 1 skill from this scope into your local agents.
 
@@ -284,9 +318,9 @@ Run `clawdi scope list` to see it alongside your own scopes.
 
 ```bash
 bob@laptop $ ls $CLAUDE_CONFIG_DIR/skills/
-demo-skill-git-helper__alice-5e81
+demo-skill-git-helper__alice-b4b6
 
-bob@laptop $ cat $CLAUDE_CONFIG_DIR/skills/demo-skill-git-helper__alice-5e81/SKILL.md
+bob@laptop $ cat $CLAUDE_CONFIG_DIR/skills/demo-skill-git-helper__alice-b4b6/SKILL.md
 ```
 
 ```markdown
@@ -327,11 +361,11 @@ bob@laptop $ clawdi scope list
 
 ```
 My scopes (1):
-  personal-abc66e-bob      c7b15e9a-f68b-4aaa-b57a-ca807cdc1a3b  (personal)
+  personal-5df715-bob      d35b213c-4713-4111-b457-1f89d14281ff  (personal)
     Personal
 
 Shared with me (1):
-  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+  engineering-5df715       b045725e-e4d6-4514-87f6-6dce74e7dcc6  (environment)
     Personal
 ```
 
@@ -345,7 +379,7 @@ bob@laptop $ clawdi vault list
 [
   {
     "slug": "default",
-    "scope_id": "362082d4-8295-4daf-8d02-ce7ec44a7521",
+    "scope_id": "b045725e-e4d6-4514-87f6-6dce74e7dcc6",
     "name": "Default",
     "items": {
       "(default)": [
@@ -369,23 +403,23 @@ bob@laptop $ clawdi vault list
 ### 4.1 — Alice invites Carol by email
 
 ```bash
-alice@laptop $ clawdi scope invite personal-abc66e-alice --email carol-abc66e@example.com
+alice@laptop $ clawdi scope invite engineering-5df715 --email carol-5df715@example.com
 ```
 
 ```
-✓ Invitation sent to carol-abc66e@example.com
+✓ Invitation sent to carol-5df715@example.com
   They'll see it in their /skills banner + `clawdi scope invites` inbox.
 ```
 
 ```bash
-alice@laptop $ clawdi scope invites personal-abc66e-alice   # owner-side
+alice@laptop $ clawdi scope invites engineering-5df715   # owner-side
 ```
 
 ```
 Invitations on this scope (1):
-  carol-abc66e@example.com  (b77b6b0c…) · sent 5/11/2026
+  carol-5df715@example.com  (bb34abb7…) · sent 5/11/2026
 
-Cancel: clawdi scope invites personal-abc66e-alice --cancel <id>
+Cancel: clawdi scope invites engineering-5df715 --cancel <id>
 ```
 
 > Invitations target a **registered** Clawdi account by email. For unregistered
@@ -401,38 +435,38 @@ carol@laptop $ clawdi scope invites
 
 ```
 Pending invitations (1):
-  Personal  (b77b6b0c…)
-    from Alice @alice-5e81 · 5/11/2026
+  Engineering  (bb34abb7…)
+    from Alice @alice-b4b6 · 5/11/2026
 
 Accept: clawdi scope invites --accept <id>
 Decline: clawdi scope invites --decline <id>
 ```
 
 ```bash
-carol@laptop $ clawdi scope invites --accept b77b6b0c-fce6-4e91-9208-ef9ff64f9a53
+carol@laptop $ clawdi scope invites --accept bb34abb7-fc8a-46f2-89da-528c50fd95c9
 ```
 
 ```
 ✓ Accepted invitation, joined as viewer.
-  Scope ID: 362082d4-8295-4daf-8d02-ce7ec44a7521
-  Owner handle: @alice-5e81
+  Scope ID: b045725e-e4d6-4514-87f6-6dce74e7dcc6
+  Owner handle: @alice-b4b6
   Pulled 1 skill into your local agents.
 ```
 
 ```bash
 carol@laptop $ ls $CLAUDE_CONFIG_DIR/skills/
-demo-skill-git-helper__alice-5e81
+demo-skill-git-helper__alice-b4b6
 
 carol@laptop $ clawdi scope list
 ```
 
 ```
 My scopes (1):
-  personal-abc66e-carol    beeda16d-f72b-421b-969c-745c371720b9  (personal)
+  personal-5df715-carol    8a2c2ca0-0634-46a2-8598-68903214edfb  (personal)
     Personal
 
 Shared with me (1):
-  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+  engineering-5df715       b045725e-e4d6-4514-87f6-6dce74e7dcc6  (environment)
     Personal
 ```
 
@@ -447,17 +481,17 @@ Shared with me (1):
 ### 5.1 — Owner revoke
 
 ```bash
-alice@laptop $ clawdi scope share-links personal-abc66e-alice --revoke 55FTFvRq
+alice@laptop $ clawdi scope share-links engineering-5df715 --revoke qInf5TPg
 ✓ Link revoked.
 
-alice@laptop $ clawdi scope share-links personal-abc66e-alice
+alice@laptop $ clawdi scope share-links engineering-5df715
 ```
 
 ```
 Share links (1):
-  55FTFvRq… [weekend hack]  revoked  5/11/2026  1 redeem · last used 5/11/2026
+  qInf5TPg… [weekend hack]  revoked  5/11/2026  1 redeem · last used 5/11/2026
 
-Revoke: clawdi scope share-links personal-abc66e-alice --revoke <prefix>
+Revoke: clawdi scope share-links engineering-5df715 --revoke <prefix>
 ```
 
 ### 5.2 — Carol's membership survives
@@ -472,11 +506,11 @@ carol@laptop $ clawdi scope list
 
 ```
 My scopes (1):
-  personal-abc66e-carol    beeda16d-f72b-421b-969c-745c371720b9  (personal)
+  personal-5df715-carol    8a2c2ca0-0634-46a2-8598-68903214edfb  (personal)
     Personal
 
 Shared with me (1):
-  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+  engineering-5df715       b045725e-e4d6-4514-87f6-6dce74e7dcc6  (environment)
     Personal
 ```
 
@@ -502,9 +536,12 @@ bad UX when one user accidentally shares a link they shouldn't.
 |---------|---------|
 | `clawdi scope list` | Owned + shared-with-me scopes |
 | `clawdi skill add <folder>` | Upload a skill to default-write scope |
-| `clawdi skill add <folder> --agent codex` | Upload to a specific agent's scope |
+| `clawdi skill add <folder> --scope <slug>` | Upload to an explicit scope (UUID/slug/name) |
+| `clawdi skill add <folder> --agent codex` | Upload to a specific agent's env-scope |
 | `clawdi vault set <key>` | Add a single secret (interactive prompt) |
+| `clawdi vault set <key> --scope <slug>` | Add a secret to an explicit scope |
 | `clawdi vault import <.env> --yes` | Bulk-import secrets from a `.env` file |
+| `clawdi vault import <.env> --scope <slug> --yes` | Bulk-import into an explicit scope |
 | `clawdi scope share <scope> [--label TEXT]` | Generate a share link |
 | `clawdi scope share-links <scope>` | Inspect links on that scope |
 | `clawdi scope share-links <scope> --revoke <prefix>` | Revoke one link |
@@ -528,7 +565,7 @@ bad UX when one user accidentally shares a link they shouldn't.
 ### `<scope>` accepts
 
 - The full UUID (e.g. `5f60763f-3541-4484-a396-71adfeab9f78`)
-- The slug (e.g. `personal-abc66e-alice` or `team-toolkit`)
+- The slug (e.g. `engineering-5df715` or `team-toolkit`)
 - The human name (case-insensitive match against `Scope.name`)
 - `default` → uses `resolve_default_write_scope`
 
@@ -542,23 +579,23 @@ After `clawdi share accept` on the signed-in path:
 ~/.claude/skills/
 ├── my-own-skill/                              ← Bob's own skills
 │   └── SKILL.md
-└── demo-skill-git-helper__alice-5e81/         ← shared from Alice
+└── demo-skill-git-helper__alice-b4b6/         ← shared from Alice
     └── SKILL.md
 ```
 
 ```
 ~/.codex/skills/
-└── demo-skill-git-helper__alice-5e81/
+└── demo-skill-git-helper__alice-b4b6/
 ```
 
 ```
 ~/.openclaw/agents/main/skills/
-└── demo-skill-git-helper__alice-5e81/
+└── demo-skill-git-helper__alice-b4b6/
 ```
 
 ```
 ~/.hermes/skills/shared/
-└── demo-skill-git-helper__alice-5e81/
+└── demo-skill-git-helper__alice-b4b6/
 ```
 
 **Why a path suffix?** Without `__<owner-handle>`, if Alice and Bob's friend

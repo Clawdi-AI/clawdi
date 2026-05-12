@@ -18,8 +18,11 @@ function requireAuth() {
  * pre-existing vault; everything else propagates as a normal ApiError so
  * users see auth/network failures instead of a silent skip.
  */
-async function ensureVault(api: ApiClient, slug: string, name = slug) {
-	const created = await api.POST("/api/vault", { body: { slug, name } });
+async function ensureVault(api: ApiClient, slug: string, name = slug, scopeId?: string) {
+	const created = await api.POST("/api/vault", {
+		body: { slug, name },
+		params: scopeId ? { query: { scope_id: scopeId } } : { query: {} },
+	});
 	// `response` is only populated when the server actually replied — on a
 	// network-level failure `response` is undefined, so optional-chain it
 	// before inspecting the status, then let `unwrap` raise the right
@@ -65,7 +68,7 @@ async function resolveVaultScopeId(api: ApiClient, slug: string): Promise<string
 	return candidates[0].scope_id;
 }
 
-export async function vaultSet(key: string) {
+export async function vaultSet(key: string, opts: { scope?: string } = {}) {
 	requireAuth();
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
@@ -77,16 +80,30 @@ export async function vaultSet(key: string) {
 	}
 
 	const api = new ApiClient();
-	await ensureVault(api, vaultSlug);
+
+	// Resolve --scope to a concrete UUID up front so both
+	// ensureVault (create) AND the items PUT land in the same scope.
+	let pinnedScopeId: string | undefined;
+	if (opts.scope) {
+		const { resolveScopeId } = await import("../lib/scope-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		pinnedScopeId = await resolveScopeId(cfg.apiUrl, auth.apiKey, opts.scope);
+	}
+
+	await ensureVault(api, vaultSlug, vaultSlug, pinnedScopeId);
 
 	// Pass scope_id so the server's slug → vault lookup
 	// doesn't 409 on JWT / unbound callers who can see the
-	// same slug under multiple scopes (round 30 ambiguity
-	// guard). For env-bound api_keys this is a no-op — only
-	// one scope is visible. `ensureVault` above just
-	// guaranteed at least one match exists, so the resolver
-	// returns a non-null id here.
-	const scope_id = await resolveVaultScopeId(api, vaultSlug);
+	// same slug under multiple scopes. For env-bound api_keys
+	// this is a no-op — only one scope is visible. `ensureVault`
+	// above just guaranteed at least one match exists.
+	const scope_id = pinnedScopeId ?? (await resolveVaultScopeId(api, vaultSlug));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
@@ -178,14 +195,27 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 }
 
-export async function vaultImport(file: string, opts: { yes?: boolean } = {}) {
+export async function vaultImport(file: string, opts: { yes?: boolean; scope?: string } = {}) {
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	await ensureVault(api, "default", "Default");
+	let pinnedScopeId: string | undefined;
+	if (opts.scope) {
+		const { resolveScopeId } = await import("../lib/scope-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		pinnedScopeId = await resolveScopeId(cfg.apiUrl, auth.apiKey, opts.scope);
+	}
+
+	await ensureVault(api, "default", "Default", pinnedScopeId);
 
 	const fields: Record<string, string> = {};
 	for (const line of lines) {
@@ -220,7 +250,7 @@ export async function vaultImport(file: string, opts: { yes?: boolean } = {}) {
 		}
 	}
 
-	const scope_id = await resolveVaultScopeId(api, "default");
+	const scope_id = pinnedScopeId ?? (await resolveVaultScopeId(api, "default"));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
