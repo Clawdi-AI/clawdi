@@ -528,13 +528,14 @@ scopeCmd
 	});
 
 scopeCmd
-	.command("invites [scope]")
-	.description(
-		"Without [scope]: list your pending invitations. With [scope]: list invitations on that scope.",
+	.command("invites <scope>")
+	.description("List pending invitations on a scope you own.")
+	.option("--cancel <id>", "Cancel one of the pending invitations on this scope")
+	.addHelpText(
+		"after",
+		"\n  Sharee side (listing / accepting / declining invitations addressed to you)\n" +
+			"  lives under `clawdi inbox`.",
 	)
-	.option("--accept <id>", "Accept an invitation in your inbox")
-	.option("--decline <id>", "Decline an invitation in your inbox")
-	.option("--cancel <id>", "Owner: cancel a pending invitation on a scope")
 	.action(async (scope, opts) => {
 		const { scopeInvitesCommand } = await import("./commands/scope-invites.js");
 		await scopeInvitesCommand(scope, opts);
