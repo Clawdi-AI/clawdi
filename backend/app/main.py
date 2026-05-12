@@ -28,6 +28,7 @@ from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
+from app.routes.sharing import router as sharing_router
 from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
@@ -175,6 +176,7 @@ app.include_router(connectors_router)
 app.include_router(mcp_proxy_router)
 app.include_router(search_router)
 app.include_router(share_redeem_router)
+app.include_router(sharing_router)
 
 
 @app.get("/health")
