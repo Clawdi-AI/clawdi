@@ -489,7 +489,7 @@ program
 
 const scopeCmd = program
 	.command("scope")
-	.description("Manage your scopes — share links, invitations, members");
+	.description("Manage your scopes — list, share, invite, mount");
 
 scopeCmd
 	.command("list")
@@ -501,8 +501,8 @@ scopeCmd
 	});
 
 scopeCmd
-	.command("share <scope>")
-	.description("Generate a share link for a scope (id, slug, or name)")
+	.command("share [scope]")
+	.description("Generate a share link. Defaults to your write scope when [scope] is omitted.")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
 	.action(async (scope, opts) => {
 		const { scopeShareCommand } = await import("./commands/scope-share.js");
@@ -543,8 +543,9 @@ scopeCmd
 
 scopeCmd
 	.command("mounts <parent>")
-	.description("List ScopeMount edges composed into a parent scope")
+	.description("List scopes mounted into <parent>")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi scope mounts personal")
 	.action(async (parent, opts) => {
 		const { scopeMountsCommand } = await import("./commands/scope-mount.js");
 		await scopeMountsCommand(parent, opts);
@@ -552,15 +553,19 @@ scopeCmd
 
 scopeCmd
 	.command("mount <source>")
-	.description(
-		"Mount a scope you have membership in into a parent scope you own. " +
-			"For share URLs use `inbox accept` instead — that joins AND mounts in one step.",
-	)
+	.description("Mount a scope you have access to into a scope you own")
 	.requiredOption("-i, --into <parent>", "Parent scope (UUID, slug, or name)")
 	.option("-a, --alias <name>", "Override the mount alias (default: @<owner>/<source-slug>)")
 	.option(
 		"--allow-vault-conflicts",
 		"Override 409 vault_conflicts_blocked — source values win for clawdi:// lookups",
+	)
+	.addHelpText(
+		"after",
+		"\nExample:\n" +
+			"  $ clawdi scope mount engineering --into personal\n\n" +
+			"For share URLs use `clawdi inbox accept <url>` instead — that joins AND\n" +
+			"mounts in one step.",
 	)
 	.action(async (source, opts) => {
 		const { scopeMountCommand } = await import("./commands/scope-mount.js");
@@ -570,6 +575,7 @@ scopeCmd
 scopeCmd
 	.command("unmount <parent> <alias-or-id>")
 	.description("Drop a mount edge. Membership in the source scope is preserved.")
+	.addHelpText("after", "\nExample:\n  $ clawdi scope unmount personal @alice-cdbf/engineering")
 	.action(async (parent, aliasOrId) => {
 		const { scopeUnmountCommand } = await import("./commands/scope-mount.js");
 		await scopeUnmountCommand(parent, aliasOrId);

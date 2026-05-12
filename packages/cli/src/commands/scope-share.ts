@@ -32,7 +32,10 @@ interface ShareLinkCreated {
 	expires_at: string | null;
 }
 
-export async function scopeShareCommand(scopeArg: string, opts: { label?: string }): Promise<void> {
+export async function scopeShareCommand(
+	scopeArg: string | undefined,
+	opts: { label?: string },
+): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
@@ -41,6 +44,9 @@ export async function scopeShareCommand(scopeArg: string, opts: { label?: string
 		return;
 	}
 
+	// resolveScopeId(undefined) → user's default write scope, the
+	// common "share my current scope" case. Pass-through scope name /
+	// slug / UUID still works when explicitly given.
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
 	const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/share-links`, {
 		method: "POST",
