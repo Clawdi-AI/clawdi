@@ -11,6 +11,7 @@ import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashb
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
 import { sessionColumns } from "@/components/sessions/session-columns";
+import { ScopeMountsPanel } from "@/components/sharing/scope-mounts-panel";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
@@ -315,6 +316,8 @@ export default function AgentDetailPage() {
 							/>
 						</TabsContent>
 					</Tabs>
+
+					{agentScopeId ? <ScopeMountsPanel scopeId={agentScopeId} /> : null}
 				</>
 			) : null}
 		</div>
