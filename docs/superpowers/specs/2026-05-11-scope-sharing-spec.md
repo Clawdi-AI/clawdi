@@ -439,7 +439,7 @@ def normalize_accept_arg(raw: str) -> str:
 After normalization:
 - UUID-shaped → pending invitation accept
 - Anything starting with `http://` or `https://` → URL redemption
-- 32-char URL-safe base64 → raw token (passed without the host part)
+- 43-char URL-safe base64 → raw token (passed without the host part)
 - Anything else → 1-line error citing both example shapes
 
 `--invite <id>` / `--url <link>` are explicit escape hatches that
@@ -465,13 +465,72 @@ an old anonymous-redemption laptop.
 
 ### Default mount behavior on `inbox accept`
 
-- Logged in → membership row + mount row created in the user's
-  default-write scope (alias `@<owner-handle>/<source-slug>`, suffix-
-  bumped only on collision; see § Hard questions #7)
-- Logged out (URL case) → token stored locally; no mount yet
-- `--no-mount` → capability only (membership row), no mount edge
-  — for the rare user who wants to inspect content before composing
-- `--into <parent> --alias <name>` → override default mount target
+Membership ALWAYS lands. Mount creation depends on what owned scopes
+the caller has — see § "Auto-mount target resolution" for the
+authoritative rule. Summary:
+
+- Logged in, exactly 1 owned scope → membership + mount in the same
+  transaction. Alias is the natural form `@<owner-handle>/<source-slug>`
+  (suffix-bumped only on collision; see Hard questions #7).
+- Logged in, 2+ owned scopes, no `--into` → membership commits; mount
+  is deferred with `409 mount_target_ambiguous`. Caller picks (CLI
+  picker if TTY, or re-runs with `--into <parent>`).
+- Logged in, `--into <parent>` explicit → membership + mount, target
+  pinned. Skips the picker.
+- Logged out (URL case) → share-token stored locally; no membership,
+  no mount yet. Both land on the next `clawdi auth login` via the
+  auto-upgrade hook.
+- `--no-mount` flag → membership only, no mount edge — for the rare
+  caller who wants to inspect content before composing (or scripts
+  that compose explicitly later).
+
+### Agent-facing contract
+
+This feature is consumed by humans typing commands AND by AI agents
+(Claude Code, Codex, etc.) generating commands programmatically.
+The agent contract is narrower than the human surface and is
+honored across all commands below:
+
+**`--json` support on agent-critical read commands:**
+- `clawdi scope list --json`
+- `clawdi share <scope> --list --json`
+- `clawdi scope mounts <scope> --json`
+- `clawdi inbox --json`
+- `clawdi vault resolve <key> --debug --json` (precedence chain as array)
+
+Each `--json` output is documented as a stable schema in the help text
+of the relevant command. Tree-style rendering is the human path; the
+JSON path is the parseable contract.
+
+**Agent-blessed accept path (avoid polymorphism):**
+
+For non-interactive callers, prefer the explicit shape:
+
+```bash
+clawdi inbox accept --url <link> --into <parent>
+clawdi inbox accept --invite <id> --into <parent>
+```
+
+The polymorphic `clawdi inbox accept <id-or-url>` form stays for
+human ergonomics. `--help` text recommends `--url` / `--invite` for
+scripts and agents.
+
+**Standardized error codes for scope-sharing failures:**
+
+| HTTP | Code | When |
+|------|------|------|
+| 403 | `source_not_visible` | Mount source not in caller's `scope_ids_visible_to` |
+| 409 | `mount_target_ambiguous` | 2+ owned scopes, no `--into`. Context: `owned_scopes: [...]` |
+| 409 | `alias_collision_exhausted` | Suffix retries exhausted (>9). Context: `attempted_aliases: [...]` |
+| 409 | `vault_conflicts_blocked` | Vault key conflicts detected; non-interactive blocked. Context: `vault_conflicts: [...]` |
+| 410 | `share_link_gone` | Link revoked / expired |
+| 410 | `invitation_gone` | Invitation cancelled / consumed |
+
+All new scope-sharing endpoints return
+`{detail: {error: <code>, message: <str>, ...context}}` so the
+existing FastAPI envelope shape (`{detail: ...}`) is preserved.
+Other clawdi endpoints keep their current shapes; this is a scoped
+standardization, not a universal migration.
 
 ### Future commands not yet implemented
 
@@ -585,15 +644,22 @@ before relying on an automated agent run.
 See `docs/superpowers/plans/2026-05-12-scope-sharing.md` for full task
 breakdown.
 
+**MVP1 (shippable stake — semantics validated end-to-end):**
+
 | Phase | What lands | Risk gate |
 |-------|------------|-----------|
 | MA — Models + migration | `ScopeMount` table, no behavior change | Membership read-path tests still green |
 | MB — Mount endpoints | CRUD on mounts, owner-only | Cross-tenant 404 isolation |
 | MC — Auto-mount on accept | `/upgrade` + invite-accept also mount; 409 mount_target_ambiguous when 2+ owned scopes | Idempotent on retry (natural-alias-first; suffix only on collision) |
 | MD — Read resolution + vault precedence + conflict warning | Skill/vault reads walk mounts; mount-create surfaces `vault_conflicts` | Parent-scoped queries return composed content; viewer-source capability re-check holds |
-| **ME1 — Minimal CLI demo surface** | `share`, `inbox accept`, `scope list`, `vault resolve --debug` — just enough for end-to-end three-persona walkthrough | Polymorphic `inbox accept` handles `<https://…>` / quoted / trailing-punct shapes |
-| **ME2 — Mid-pipeline demo capture** | Three-persona live demo run, output saved | Validates product semantics BEFORE web reorg builds on top |
-| ME3 — Full three-noun CLI reorg | `scope mount/unmount/mounts`, `share <scope> --list/--revoke/--to`, `inbox forget` | Old v1-shape commands deleted (no aliases) |
+| ME1 — Minimal CLI surface | `inbox accept` (+`--url`/`--invite` explicit forms), `share <scope>`, `scope list --json`, `scope show`, `vault resolve --debug --json`, `auth login` auto-upgrade-pending-tokens | URL shape parsing covers `<https://…>`, quoted, trailing-punct; agent-blessed explicit path documented in `--help` |
+| ME2 — Mid-pipeline demo capture | Three-persona live demo (anonymous accept → login → upgrade → vault conflict block + acknowledge) | Demo proves the semantics; gaps surface here, not after web work |
+
+**MVP2 (post-demo polish — same data model, just presentation):**
+
+| Phase | What lands | Risk gate |
+|-------|------------|-----------|
+| ME3 — Full CLI reorg + cleanup | `scope mount/unmount/mounts`, `share <scope> --list/--revoke/--to`, `inbox forget` | Old internal command paths deleted (this branch never shipped them publicly) |
 | MF — Web: `Inbox` banner + per-scope mounts panel + share `--list` UI | User-visible surface on dashboard | Web build + manual smoke |
 | MG — Final test sweep + demo doc finalization | Test counts recorded; demo doc reflects final command shapes | 225+ backend + 280+ CLI tests still green |
 

@@ -7,7 +7,11 @@
 **Goal:** Ship the two-layer scope-sharing model. `ScopeMembership` is
 the capability primitive (the access ACL); `ScopeMount` is the
 composition primitive (where shared content appears in the viewer's
-workspace). `inbox accept` writes both rows atomically.
+workspace). `inbox accept` writes the membership row always; the
+mount row lands in the same transaction WHEN a target scope can be
+resolved (1 owned scope, or `--into <parent>` explicit). With 2+
+owned scopes and no `--into`, membership commits but mount is
+deferred (`409 mount_target_ambiguous`).
 
 **Architecture:** Two-table model. Mount edges are config on the parent
 scope; resolution always re-checks viewer membership in the source
@@ -952,14 +956,22 @@ async def test_vault_precedence_oldest_mount_wins(...):
 
 ---
 
-## Phase ME1 — Minimal CLI demo surface
+## ═══ MVP1 (shippable stake) ═══
+
+Phases MA–MD plus ME1.{1,2,3,4,5,6} land the smallest end-to-end
+slice that delivers the core composition primitive + a working
+three-persona demo. **No web reorg, no `share --list`, no revoke
+commands** in MVP1 — those wait for MVP2 once the semantics are
+proven in the live demo (ME2).
+
+## Phase ME1 — Minimal CLI surface for the demo
 
 The smallest CLI delta needed to run the three-persona walkthrough
 end-to-end. Validates product semantics (mount target selection,
 alias readability, vault conflict warning, URL parsing) BEFORE we
 build the web on top.
 
-### Task ME1.1 — `clawdi inbox accept <id-or-url>` (the unified accept)
+### Task ME1.1 — `clawdi inbox accept` (the unified accept)
 
 **Files:**
 - Create: `packages/cli/src/commands/inbox.ts`
@@ -967,18 +979,38 @@ build the web on top.
 - Modify: `packages/cli/src/commands/share-accept.ts` (logic moves;
   the file gets deleted in ME3 once nothing imports it)
 
+Two call shapes — both supported, both documented:
+
+```bash
+# Human-friendly polymorphic form
+clawdi inbox accept <id-or-url>
+
+# Agent-friendly explicit form (recommended in --help text)
+clawdi inbox accept --url <link> [--into <parent>]
+clawdi inbox accept --invite <id> [--into <parent>]
+```
+
 URL normalization (matches spec § "inbox accept polymorphism"):
 strip wrapping `<...>`, surrounding quotes, trailing `,.!;:`. Match
 against:
 - 36-char UUID → invitation accept (`/api/me/invitations/{id}/accept`)
 - `http(s)://.../share/<43-char-token>` → URL redeem (`/api/share/{token}/upgrade`)
-- 43-char URL-safe base64 → raw-token redeem (same endpoint, just no host)
-- Else: exit 1 with usage hint.
+- 43-char URL-safe base64 → raw-token redeem (same endpoint, no host)
+- Else: exit 1 with usage hint citing both example shapes.
 
 Flags: `--into <parent>`, `--alias <name>`, `--no-mount`, `--invite`,
-`--url`, `--allow-vault-conflicts`. The server's `409
-mount_target_ambiguous` surfaces as an interactive picker (TTY) or a
-non-zero exit + suggestion (CI).
+`--url`, `--allow-vault-conflicts`.
+
+`409 mount_target_ambiguous` handling:
+- TTY → interactive picker over the `owned_scopes` array in the
+  response.
+- Non-TTY → exit code 4, stderr message lists the owned scope slugs
+  and tells the caller to re-run with `--into <slug>`. Membership
+  is already committed server-side; the retry only adds the mount.
+
+`409 vault_conflicts_blocked` handling: stderr renders the conflict
+table from `vault_conflicts: [...]`. CLI exits 5. Caller passes
+`--allow-vault-conflicts` after inspection to acknowledge.
 
 ### Task ME1.2 — `clawdi share <scope>` (the unified publish)
 
@@ -1000,7 +1032,7 @@ Render owned scopes with nested mount children (alias + content
 counts). No "Shared with me" section. Output a static tree (no
 interactive folding) so it's both terminal-friendly and pipe-safe.
 
-### Task ME1.4 — `clawdi vault resolve <key> [--debug]`
+### Task ME1.4 — `clawdi vault resolve <key> [--debug] [--json]`
 
 **Files:**
 - Create: `packages/cli/src/commands/vault-resolve.ts`
@@ -1009,7 +1041,51 @@ interactive folding) so it's both terminal-friendly and pipe-safe.
 
 Backend's `precedence` array is the walk order it tried, each entry
 `{scope_id, alias, hit: bool, reason: "match"|"not-found"|"skipped"}`.
-CLI renders the chain only under `--debug`.
+CLI renders the chain only under `--debug`. `--json` emits the full
+response object verbatim.
+
+### Task ME1.5 — `clawdi auth login` auto-upgrades pending tokens
+
+**Files:**
+- Modify: `packages/cli/src/commands/auth.ts` (post-login hook)
+
+After a successful `auth login`, scan `~/.clawdi/share-tokens.json`
+for entries without `upgraded_at`. For each:
+- POST `/api/share/{token}/upgrade` with the new bearer
+- On success → set `upgraded_at`, increment success counter
+- On `409 mount_target_ambiguous` → leave entry, print "Pending mount
+  (run `clawdi inbox accept --url <url> --into <parent>`)"
+- On 410 → drop entry, print "Revoked by owner"
+
+**Synchronous + reported.** Upgrade runs inline before
+`auth login` returns. Final line:
+
+```
+✓ Auto-upgraded 2 pending shares.
+  → @alice/engineering (1 skill, 3 vault) into personal-bob
+  → @carol/deploy needs --into (you have 2+ owned scopes)
+```
+
+Agents calling `clawdi auth login && clawdi scope list` get
+deterministic state — no race window.
+
+### Task ME1.6 — `clawdi scope show <scope>` + agent-critical `--json`
+
+**Files:**
+- Create: `packages/cli/src/commands/scope-show.ts`
+- Modify: `packages/cli/src/commands/scope-list.ts` (add `--json`)
+- Modify: `packages/cli/src/commands/inbox.ts` (add `--json` on the
+  bare `inbox` list path; `inbox accept` itself doesn't need `--json`
+  since success returns to stdout naturally)
+
+`scope show <scope>` outputs:
+- Scope metadata (id, slug, name, kind, is_owner)
+- Skill count + vault key names (parent-own only, not mounts)
+- Mount tree (alias, source scope, source owner)
+- Membership info if shared (owner_handle, joined_at, joined_via)
+
+With `--json`, returns a documented schema. Drives the agent's
+"discover what I have" workflow.
 
 ---
 
@@ -1017,7 +1093,8 @@ CLI renders the chain only under `--debug`.
 
 Validates product feel BEFORE the web work piles on. If anything in
 ME1 feels off in real use, change it now while only the CLI is
-affected.
+affected. **ME1.5 ships before this phase** so the demo can show the
+smooth login → auto-upgrade path without a caveat.
 
 ### Task ME2.1 — Three-persona demo script
 
@@ -1035,31 +1112,33 @@ Must demonstrate:
   (links + pending invites + members + redemption count)
 - Bob (anonymous laptop): `inbox accept <pasted-URL-with-trailing-period>`
   — URL parsing strips the period, accepts, stores token
-- Bob `auth login` → ideally pending tokens auto-upgrade (per ME1.5
-  below); otherwise re-run `inbox accept`
+- Bob `auth login` → pending tokens auto-upgrade synchronously
+  (via ME1.5), no manual re-run needed
 - `scope list` on Bob — nested mount tree shows `@alice/<slug>`
-- Vault conflict scenario: pre-set OPENAI_KEY on Bob's Personal, then
-  accept → warning fires
+- Vault conflict scenario: pre-set OPENAI_KEY on Bob's Personal,
+  then accept → `vault_conflicts_blocked` exits 5; Bob re-runs
+  with `--allow-vault-conflicts` after inspecting
 - Carol: email-invitation flow, same accept story
+- `clawdi scope show personal-bob --json` returns the schema agent
+  consumers will rely on
 
 If something's awkward, log it as a "discovered gap" in this task
 and either patch ME1 or open a follow-up before continuing to ME3.
 
-### Task ME1.5 — `clawdi auth login` auto-upgrades pending tokens
+### MVP1 acceptance gate
 
-**Files:**
-- Modify: `packages/cli/src/commands/auth.ts` (post-login hook)
-
-After a successful `auth login`, scan `~/.clawdi/share-tokens.json`
-for entries without `upgraded_at`. For each, POST `/upgrade` with
-the user's new bearer. On success, set `upgraded_at` and print
-"Auto-upgraded N pending shares → N mounts." On failure (410
-revoked, etc.), keep the entry and surface the reason.
-
-(Counted as part of ME1 so the demo in ME2 includes the smooth
-"login → it just works" path.)
+After ME2 completes successfully, MVP1 is the **shippable stake** —
+all of MA, MB, MC, MD, ME1, ME2. Code merges to `feat/scope-sharing`
+and the demo doc proves the semantics work end-to-end. Web reorg and
+CLI cleanup are deferred to MVP2.
 
 ---
+
+## ═══ MVP2 (post-demo polish) ═══
+
+Builds on validated MVP1 semantics. Web parity + CLI cleanup + final
+test sweep. Nothing here changes the data model or the API contract —
+purely a presentation + consolidation pass.
 
 ## Phase ME3 — Full CLI reorg + cleanup
 
