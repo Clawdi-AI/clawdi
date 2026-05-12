@@ -477,6 +477,58 @@ program
 		await run(args);
 	});
 
+const scopeCmd = program
+	.command("scope")
+	.description("Manage your scopes — share links, invitations, members");
+
+scopeCmd
+	.command("list")
+	.description("List every scope you own or are a viewer of")
+	.action(async () => {
+		const { scopeListCommand } = await import("./commands/scope-list.js");
+		await scopeListCommand();
+	});
+
+scopeCmd
+	.command("share <scope>")
+	.description("Generate a share link for a scope (id, slug, or name)")
+	.option("-l, --label <text>", "Optional label shown in the share-links list")
+	.action(async (scope, opts) => {
+		const { scopeShareCommand } = await import("./commands/scope-share.js");
+		await scopeShareCommand(scope, opts);
+	});
+
+scopeCmd
+	.command("share-links <scope>")
+	.description("List or revoke share links on a scope")
+	.option("--revoke <id-or-prefix>", "Revoke a specific link")
+	.action(async (scope, opts) => {
+		const { scopeShareLinksCommand } = await import("./commands/scope-share-links.js");
+		await scopeShareLinksCommand(scope, opts);
+	});
+
+scopeCmd
+	.command("invite <scope>")
+	.description("Send an email invitation to a registered clawdi user")
+	.requiredOption("-e, --email <addr>", "Email address to invite")
+	.action(async (scope, opts) => {
+		const { scopeInviteCommand } = await import("./commands/scope-invite.js");
+		await scopeInviteCommand(scope, opts);
+	});
+
+scopeCmd
+	.command("invites [scope]")
+	.description(
+		"Without [scope]: list your pending invitations. With [scope]: list invitations on that scope.",
+	)
+	.option("--accept <id>", "Accept an invitation in your inbox")
+	.option("--decline <id>", "Decline an invitation in your inbox")
+	.option("--cancel <id>", "Owner: cancel a pending invitation on a scope")
+	.action(async (scope, opts) => {
+		const { scopeInvitesCommand } = await import("./commands/scope-invites.js");
+		await scopeInvitesCommand(scope, opts);
+	});
+
 const shareCmd = program.command("share").description("Manage shared scopes");
 
 shareCmd

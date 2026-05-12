@@ -37,6 +37,11 @@ class ScopeResponse(BaseModel):
     origin_environment_id: str | None
     archived_at: datetime | None
     created_at: datetime
+    # Derived per-caller: True if the caller owns this scope, False
+    # if it's visible via a ScopeMembership (shared with them). Lets
+    # the dashboard render "My scopes" vs "Shared with me" sections
+    # and the CLI render a shared_with_me column.
+    is_owner: bool = True
 
 
 class DefaultScopeResponse(BaseModel):
@@ -88,6 +93,7 @@ async def list_scopes(
             ),
             archived_at=s.archived_at,
             created_at=s.created_at,
+            is_owner=s.user_id == auth.user_id,
         )
         for s in rows
     ]
