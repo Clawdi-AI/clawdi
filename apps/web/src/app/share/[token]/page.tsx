@@ -31,7 +31,7 @@ import { env } from "@/lib/env";
  *   2. Two CTAs:
  *      - "Sign in to join" → upgrades to a permanent ScopeMembership
  *        (the dashboard then lists this scope alongside the user's own).
- *      - "Copy CLI command" → `clawdi share accept <url>`, for users who
+ *      - "Copy CLI command" → `clawdi inbox accept <url>`, for users who
  *        prefer the anonymous-then-upgrade path on the CLI.
  *   3. Already signed in → POST /api/share/{token}/upgrade and redirect
  *      to /skills (or /vault if vault-only).
@@ -195,7 +195,10 @@ export default function SharePage() {
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>You're in.</AlertTitle>
-							<AlertDescription>Redirecting to your dashboard…</AlertDescription>
+							<AlertDescription>
+								Added to your workspace as a read-only scope — you'll see {data.owner_display}'s
+								skills alongside your own. Redirecting…
+							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
@@ -252,7 +255,7 @@ export default function SharePage() {
 									Run this in your terminal — skills sync immediately; sign in later to unlock vault
 									secrets and add it permanently.
 								</p>
-								<CopyableCommand command={`clawdi share accept ${buildLandingUrl(token)}`} />
+								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
 							</div>
 						</div>
 					)}
