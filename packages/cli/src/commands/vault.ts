@@ -178,7 +178,7 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 }
 
-export async function vaultImport(file: string) {
+export async function vaultImport(file: string, opts: { yes?: boolean } = {}) {
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
@@ -207,12 +207,17 @@ export async function vaultImport(file: string) {
 		return;
 	}
 
+	// Skip the confirmation prompt under `--yes` so CI / scripted
+	// imports (demos, .env bootstrap) don't hang on stdin. The
+	// preview banner still renders so the operator can see what
+	// just landed.
 	p.note(Object.keys(fields).join("\n"), `${Object.keys(fields).length} keys from ${file}`);
-
-	const ok = await p.confirm({ message: "Import these keys?" });
-	if (p.isCancel(ok) || !ok) {
-		p.cancel("Cancelled.");
-		return;
+	if (!opts.yes) {
+		const ok = await p.confirm({ message: "Import these keys?" });
+		if (p.isCancel(ok) || !ok) {
+			p.cancel("Cancelled.");
+			return;
+		}
 	}
 
 	const scope_id = await resolveVaultScopeId(api, "default");

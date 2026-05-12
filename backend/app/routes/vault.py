@@ -39,13 +39,19 @@ async def list_vaults(
     page_size: int = Query(default=25, ge=1, le=200),
 ) -> Paginated[VaultResponse]:
     # Scope-filter: api_key bound to env A must not see vaults in
-    # env B's scope or in Personal. JWT auth sees every scope it
-    # owns (dashboard inventory unchanged).
+    # env B's scope or in Personal. JWT + unbound CLI see every scope
+    # they own AND every shared-scope membership they hold.
+    #
+    # Dropped the `Vault.user_id == auth.user_id` filter that was
+    # here pre-sharing — it would have blocked viewer members from
+    # seeing shared-scope vault slugs (and the key names inside).
+    # Plaintext resolution (`/api/vault/resolve`) keeps the
+    # Clerk-auth-only gate so a leaked anonymous share-token can't
+    # exfiltrate secrets.
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     base = (
         select(Vault)
         .where(
-            Vault.user_id == auth.user_id,
             Vault.scope_id.in_(visible_scope_ids),
         )
         .order_by(Vault.slug)
@@ -291,9 +297,13 @@ async def _get_vault(
     user happened to hold the same slug in two scopes — items
     listing could read or mutate items in the older scope.
     """
+    # No `Vault.user_id == auth.user_id` filter — visibility comes
+    # from scope_ids_visible_to which already accounts for owned +
+    # shared-membership scopes. Sharee viewers need to read vault
+    # metadata for scopes they joined; plaintext resolution is a
+    # separate endpoint with its own auth contract.
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     base_q = select(Vault).where(
-        Vault.user_id == auth.user_id,
         Vault.scope_id.in_(visible_scope_ids),
         Vault.slug == slug,
     )

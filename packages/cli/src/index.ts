@@ -254,10 +254,11 @@ vaultCmd
 vaultCmd
 	.command("import <file>")
 	.description("Import from .env file")
+	.option("-y, --yes", "Skip the confirmation prompt (for CI / scripted imports)")
 	.addHelpText("after", "\nExample:\n  $ clawdi vault import .env.production")
-	.action(async (file) => {
+	.action(async (file, opts) => {
 		const { vaultImport } = await import("./commands/vault.js");
-		await vaultImport(file);
+		await vaultImport(file, opts);
 	});
 
 // ─────────────────────────────────────────────────────────────

@@ -340,10 +340,14 @@ async def list_skills(
     if if_none_match is not None and if_none_match.strip() == etag:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
 
+    # Drop the `Skill.user_id == auth.user_id` filter that was here
+    # pre-sharing: that would have blocked viewer members from seeing
+    # skills in scopes they joined as a sharee. Scope-id-in-visible
+    # already gates access correctly; the membership row earned the
+    # scope its slot in `visible_scope_ids`.
     base = (
         select(Skill)
         .where(
-            Skill.user_id == auth.user_id,
             Skill.is_active,
             Skill.scope_id.in_(visible_scope_ids),
         )

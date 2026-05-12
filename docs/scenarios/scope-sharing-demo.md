@@ -1,25 +1,27 @@
-# Clawdi Cross-User Scope Sharing — CLI Demo
+# Clawdi Cross-User Scope Sharing — Complete CLI Demo
 
-> Share skills and vault secrets across accounts. Zero-friction onboarding for
-> sharees, full owner control for sharers, symmetric coverage on CLI and web.
-
-This walkthrough shows the **complete demo flow** end-to-end, captured live
-against a running backend. Every block below is real CLI input/output —
-not a mockup.
+> From "nothing in the cloud" to "Bob has Alice's skills + vault keys on his
+> laptop" in nine commands. Every block below is real CLI input/output —
+> captured live against the running backend, not mocked.
 
 ---
 
 ## TL;DR
 
-**Two paths from owner → sharee, both end-to-end working:**
+Two paths to share a scope's contents across users, both end-to-end working
+on **CLI and web**, symmetric:
 
-| Path | Who it's for | Onboarding cost |
-|------|---------------|-----------------|
-| **Share link** | Anyone with the URL — strangers, no account needed first | Open URL → use skills immediately, sign in later |
-| **Email invitation** | A teammate who already has a Clawdi account | Click "Accept" in their dashboard inbox |
+| Path | Recipient | Onboarding cost |
+|------|-----------|-----------------|
+| **Share link** | Anyone with the URL (no account needed first) | URL → use skills immediately; sign in later to keep them |
+| **Email invitation** | A teammate who already has a Clawdi account | Click "Accept" in their dashboard (or CLI inbox) |
 
-**Symmetric across surfaces** — every action below works equally on the **CLI**
-and the **web dashboard** (`/skills`).
+**Read access**: shared scope's skills land on the sharee's disk under
+`~/.claude/skills/<key>__<owner-handle>/` (and equivalents for codex,
+openclaw, hermes). Vault key names are visible; plaintext resolution
+stays gated on Clerk auth.
+
+**Write access**: read-only viewer. Owner keeps full control.
 
 ---
 
@@ -27,44 +29,51 @@ and the **web dashboard** (`/skills`).
 
 | | Role | What they do |
 |---|---|---|
-| **Alice** | Owner | Generates a share link for her `Team Toolkit` scope, invites Carol by email, revokes a leaked link |
-| **Bob** | Curious link recipient | Receives a URL out-of-band, accepts anonymously, later signs in to convert to a permanent member |
-| **Carol** | Email-invited teammate | Sees the invitation in her CLI inbox, accepts in one command |
+| **Alice** | Owner | Authors a skill + vault secrets, generates share links, sends invitations, revokes a leaked link |
+| **Bob** | Curious link recipient | Receives a URL out-of-band, accepts anonymously first, later signs in to convert to a permanent member |
+| **Carol** | Email-invited teammate | Sees invitation in her CLI inbox, accepts in one command — gets the skill on her disk too |
 
 ---
 
-## End-to-end flow (at a glance)
+## Flow at a glance
 
 ```
-                        ┌──────────────────────────────────────────┐
-                        │             Alice (owner)                │
-                        │   scope: team-toolkit-bf9ada             │
-                        └──────────────┬───────────────────────────┘
-                                       │
-            ┌──────────────────────────┼──────────────────────────┐
-            │                          │                          │
-            ▼                          ▼                          ▼
-   scope share <slug>          scope invite <slug>      scope share-links --revoke
-   → public URL                  --email carol@…          → kills future redemptions
-            │                          │
-            ▼                          ▼
-   ┌─────────────────┐         ┌─────────────────┐
-   │   Bob (anon)    │         │  Carol (member) │
-   │ share accept    │         │ scope invites   │
-   │ → token saved   │         │   --accept <id> │
-   │ → "0 skills"    │         │ → joins viewer  │
-   └──────┬──────────┘         └─────────────────┘
-          │
-          ▼ (later, after auth login)
-   share accept <same-url>
-   → /upgrade fast path
-   → ScopeMembership row
-   → "Shared with me" appears in scope list
+┌─────────────────────────────────────────────────────────────────────┐
+│  PART I    Alice authors content                                    │
+│            • clawdi skill add <folder>                              │
+│            • clawdi vault import <.env> --yes                       │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PART II   Alice generates a share link                             │
+│            • clawdi scope share <slug> --label …                    │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        ▼                                                   ▼
+┌─────────────────────┐                         ┌─────────────────────┐
+│ PART III · Bob      │                         │ PART IV · Carol     │
+│  • share accept     │                         │  • clawdi scope     │
+│    (anonymous)      │                         │    invites          │
+│  • share list       │                         │    --accept <id>    │
+│  • later: log in    │                         │  • skill lands on   │
+│  • skill lands      │                         │    disk             │
+└─────────────────────┘                         └─────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PART V    Alice revokes Bob's link                                 │
+│            • clawdi scope share-links <slug> --revoke <prefix>      │
+│            • Carol stays a member (separate code path)              │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ACT 1 · Alice inspects her scopes
+## PART I · Setting up content (Alice the owner)
+
+### 1.1 — Inventory: what scopes do I have?
 
 ```bash
 alice@laptop $ clawdi scope list
@@ -72,74 +81,152 @@ alice@laptop $ clawdi scope list
 
 ```
 My scopes (1):
-  team-toolkit-bf9ada      5f60763f-3541-4484-a396-71adfeab9f78  (environment)
-    Team Toolkit
+  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+    Personal
 ```
 
-> Lists every scope visible to the current user. Owned and shared-with-me would
-> appear in separate sections (Carol's view in ACT 8 demonstrates this).
+> Every user has a `Personal` scope auto-created at signup. Additional
+> "Environment" scopes appear when an agent is registered with
+> `clawdi setup` (one env-scope per registered agent). For this demo
+> Alice shares her Personal scope.
+
+### 1.2 — Upload a skill
+
+```bash
+alice@laptop $ ls /tmp/demo-skill-git-helper/
+SKILL.md
+
+alice@laptop $ clawdi skill add /tmp/demo-skill-git-helper --yes
+✓ Uploaded demo-skill-git-helper (v1, 1 files)
+
+alice@laptop $ clawdi skill list --json | jq -r '.[] | "  - \(.skill_key) (\(.scope_name))"'
+  - demo-skill-git-helper  (scope: Personal)
+```
+
+> `skill add` tars the folder, uploads to Alice's default-write scope
+> (Personal here), and stamps a SHA-256 of the content for cache
+> validation. Pass `--agent codex` to land the skill in a specific
+> agent's env-scope instead.
+
+### 1.3 — Bulk-import vault secrets from a `.env` file
+
+```bash
+alice@laptop $ cat /tmp/demo-team.env
+GITHUB_TEAM_TOKEN=ghp_team_shared_token_abc123
+SENTRY_DSN=https://demo@sentry.io/0
+SLACK_WEBHOOK=https://hooks.slack.com/services/T0/B0/abc
+
+alice@laptop $ clawdi vault import /tmp/demo-team.env --yes
+```
+
+```
+◇  3 keys from /tmp/demo-team.env ─╮
+│                                  │
+│  GITHUB_TEAM_TOKEN               │
+│  SENTRY_DSN                      │
+│  SLACK_WEBHOOK                   │
+│                                  │
+├──────────────────────────────────╯
+✓ Imported 3 keys to vault "default"
+```
+
+```bash
+alice@laptop $ clawdi vault list
+```
+
+```json
+[
+  {
+    "slug": "default",
+    "scope_id": "362082d4-8295-4daf-8d02-ce7ec44a7521",
+    "name": "Default",
+    "items": {
+      "(default)": [
+        "GITHUB_TEAM_TOKEN",
+        "SENTRY_DSN",
+        "SLACK_WEBHOOK"
+      ]
+    }
+  }
+]
+```
+
+**Behind the scenes**
+- Values encrypted at rest with `VAULT_ENCRYPTION_KEY` (AES-256-GCM,
+  separate from `ENCRYPTION_KEY` which guards MCP proxy JWTs).
+- Plaintext resolution is `clawdi vault resolve` (CLI ApiKey auth only).
+  The web dashboard never sees plaintext — only key names.
+
+> For one-off secrets use `clawdi vault set <key>` (interactive
+> prompt). `vault import --yes` is for bulk loads + CI bootstrap.
 
 ---
 
-## ACT 2 · Alice generates a share link
+## PART II · Sharing the scope
+
+### 2.1 — Generate a share link
 
 ```bash
-alice@laptop $ clawdi scope share team-toolkit-bf9ada --label "weekend hack"
+alice@laptop $ clawdi scope share personal-abc66e-alice --label "weekend hack"
 ```
 
 ```
 ✓ Share link ready
 
-  http://localhost:3000/share/doHT_f7lseVZy2Nn9Lofha71qTycCNt7Wbl5u0xbwAw
+  http://localhost:3000/share/55FTFvRqG9ohLpBRGMOEoBbYrZj9slVxdCNW72WP0Fo
 
-Save this URL now — only the prefix doHT_f7l remains visible later.
-Owner handle: @alice-7a79
+Save this URL now — only the prefix 55FTFvRq remains visible later.
+Owner handle: @alice-5e81
 Label: weekend hack
 
-Recipient runs: clawdi share accept http://localhost:3000/share/doHT_f7l...
+Recipient runs: clawdi share accept http://localhost:3000/share/55FTFvRq…
 ```
 
-**What's happening behind the scenes**
-- Server stores **only the SHA-256 hash + prefix**. The raw token is shown
-  once and never recoverable.
-- `owner_handle = kebab(name) + "-" + user_id.hex[:4]` is **frozen on the link
-  row** so even if Alice later renames herself, Bob's local skill paths stay
-  put.
+**Design call-outs**
+- Server stores **only the SHA-256 hash + prefix** going forward. The raw
+  token shown above is unrecoverable from the database.
+- `owner_handle = kebab(name) + "-" + user_id.hex[:4]` is **frozen** on the
+  link row. Alice can rename herself; Bob's on-disk skill paths stay
+  unchanged.
 
----
-
-## ACT 3 · Alice lists her active share links
+### 2.2 — List active links
 
 ```bash
-alice@laptop $ clawdi scope share-links team-toolkit-bf9ada
+alice@laptop $ clawdi scope share-links personal-abc66e-alice
 ```
 
 ```
 Share links (1):
-  doHT_f7l… [weekend hack]  active  5/11/2026  0 redeems
+  55FTFvRq… [weekend hack]  active  5/11/2026  0 redeems
 
-Revoke: clawdi scope share-links team-toolkit-bf9ada --revoke <prefix>
+Revoke: clawdi scope share-links personal-abc66e-alice --revoke <prefix>
 ```
 
-> Listings show **prefix-only** — the raw token isn't recoverable from history.
+> Listings show **prefix-only**; the raw URL is not recoverable.
+> Use `--revoke <prefix>` to invalidate.
 
 ---
 
-## ACT 4 · Bob accepts the link anonymously
+## PART III · Bob accepts the link
+
+### 3.1 — Anonymous accept (no login)
 
 ```bash
-# Bob hasn't logged in yet — straight from URL to working skills.
-bob@laptop $ clawdi share accept http://localhost:3000/share/doHT_f7l...
+# Bob hasn't logged in yet — straight from URL to usable skills.
+bob@laptop $ clawdi share accept http://localhost:3000/share/55FTFvRq…
 ```
 
 ```
-✓ Accepted "Team Toolkit" from Alice (@alice-7a79)
-  0 skills
+✓ Accepted "Personal" from Alice (@alice-5e81)
+  1 skill · 3 vault secrets (sign in to use)
   Token saved to ~/.clawdi/share-tokens.json (0600).
 
 Daemon syncs shared scopes automatically. Run `clawdi serve` if you don't
 already have one running, or `clawdi share list` to see this and other
 accepted shares.
+
+To unlock vault secrets, sign in with clawdi auth login. Your accepted
+shares auto-convert to permanent memberships.
 ```
 
 ```bash
@@ -149,9 +236,9 @@ bob@laptop $ clawdi share list
 ```
 Shared scopes on this device (1):
 
-  Team Toolkit  — from Alice (@alice-7a79)
-    scope_id: 5f60763f-3541-4484-a396-71adfeab9f78
-    accepted: 2026-05-12T03:13:59.518Z
+  Personal  — from Alice (@alice-5e81)
+    scope_id: 362082d4-8295-4daf-8d02-ce7ec44a7521
+    accepted: 2026-05-12T03:56:04.774Z
 
 1 share not yet upgraded to permanent membership — sign in with
 clawdi auth login to convert them.
@@ -159,274 +246,429 @@ clawdi auth login to convert them.
 
 **Design call-out — zero-friction onboarding**
 - No account required to accept.
-- Token stored locally at `0600` so other users on the same machine can't read it.
-- The CLI tells Bob exactly what to do next if he wants vault access or wants
-  the share to persist across devices: log in.
+- Token stored locally at `0600`; other users on the same machine can't read it.
+- The CLI tells Bob exactly what to do to unlock secrets: log in.
 
----
-
-## ACT 5 · Alice sees Bob's redemption tick the counter
+### 3.2 — Alice sees Bob's redemption tick the counter
 
 ```bash
-alice@laptop $ clawdi scope share-links team-toolkit-bf9ada
+alice@laptop $ clawdi scope share-links personal-abc66e-alice
 ```
 
 ```
 Share links (1):
-  doHT_f7l… [weekend hack]  active  5/11/2026  1 redeem · last used 5/11/2026
+  55FTFvRq… [weekend hack]  active  5/11/2026  1 redeem · last used 5/11/2026
 ```
 
-> `redeem_count` + `last_redeemed_at` give the owner a usage signal — the
-> equivalent of a "X people clicked your invite link" stat.
-
----
-
-## ACT 6 · Bob logs in → his share auto-upgrades
+### 3.3 — Bob signs in → auto-upgrade + eager skill pull
 
 ```bash
 # After `clawdi auth login` Bob's terminal carries an api_key.
-# Re-running `share accept` on the SAME URL detects the auth and takes
-# the /upgrade fast path — no second "are you sure?" prompt.
+# Re-running `share accept` on the SAME URL takes the /upgrade fast path
+# AND eagerly pulls the scope's skills into every registered adapter.
 
-bob@laptop $ clawdi share accept http://localhost:3000/share/doHT_f7l...
+bob@laptop $ clawdi share accept http://localhost:3000/share/55FTFvRq…
 ```
 
 ```
 ✓ Joined as viewer — your dashboard now lists this scope.
-  Owner handle: @alice-7a79
-  Scope ID: 5f60763f-3541-4484-a396-71adfeab9f78
+  Owner handle: @alice-5e81
+  Scope ID: 362082d4-8295-4daf-8d02-ce7ec44a7521
 
+  Pulled 1 skill from this scope into your local agents.
 
 Run `clawdi scope list` to see it alongside your own scopes.
 ```
+
+### 3.4 — Proof: Alice's skill is now on Bob's disk
+
+```bash
+bob@laptop $ ls $CLAUDE_CONFIG_DIR/skills/
+demo-skill-git-helper__alice-5e81
+
+bob@laptop $ cat $CLAUDE_CONFIG_DIR/skills/demo-skill-git-helper__alice-5e81/SKILL.md
+```
+
+```markdown
+---
+name: git-helper
+description: Helpers for everyday git tasks — branch hygiene, stash management, conflict resolution
+---
+
+# git-helper
+
+Quick reference for the team's git conventions.
+
+## Branch hygiene
+- Feature branches: `feat/<short-desc>`
+- Bug fixes: `fix/<short-desc>`
+- Always squash before rebasing onto main.
+
+## Stash management
+git stash save "WIP: description"
+git stash list
+git stash pop --index
+```
+
+**Design call-out — content actually moves**
+- The same `share accept` command writes to **every registered adapter** —
+  `~/.claude/skills/` for claude-code, `~/.codex/skills/` for codex, etc.
+- The `__<owner-handle>` suffix keeps shared skills distinct from Bob's
+  own (which use the bare `<key>` name).
+- Extraction is atomic: rename-into-trash, rename-into-place, nuke-trash.
+  An interrupted reconcile leaves either the old or the new content,
+  never a partial.
+
+### 3.5 — Bob's `scope list` now shows the shared scope
 
 ```bash
 bob@laptop $ clawdi scope list
 ```
 
 ```
-My scopes (0):
+My scopes (1):
+  personal-abc66e-bob      c7b15e9a-f68b-4aaa-b57a-ca807cdc1a3b  (personal)
+    Personal
 
 Shared with me (1):
-  team-toolkit-bf9ada      5f60763f-3541-4484-a396-71adfeab9f78  (environment)
-    Team Toolkit
+  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+    Personal
 ```
 
-**Design call-out — Figma/Spotify-style identity continuity**
-- The same URL works **before AND after** sign-in.
-- Pre-login → token in `~/.clawdi/share-tokens.json`.
-- Post-login → permanent `ScopeMembership` row, server-side.
-- The CLI silently picks the right path. Bob never has to "redeem-then-upgrade"
-  manually.
+### 3.6 — Bob can read Alice's vault key names too
+
+```bash
+bob@laptop $ clawdi vault list
+```
+
+```json
+[
+  {
+    "slug": "default",
+    "scope_id": "362082d4-8295-4daf-8d02-ce7ec44a7521",
+    "name": "Default",
+    "items": {
+      "(default)": [
+        "GITHUB_TEAM_TOKEN",
+        "SENTRY_DSN",
+        "SLACK_WEBHOOK"
+      ]
+    }
+  }
+]
+```
+
+> Bob sees the **key names** (metadata) but plaintext resolution is gated
+> separately. `clawdi vault resolve <key>` works because Bob is signed in;
+> a leaked anonymous share-token cannot exfiltrate secrets.
 
 ---
 
-## ACT 7 · Alice invites Carol by email
+## PART IV · Email invitation flow (Carol)
+
+### 4.1 — Alice invites Carol by email
 
 ```bash
-alice@laptop $ clawdi scope invite team-toolkit-bf9ada --email carol-bf9ada@example.com
+alice@laptop $ clawdi scope invite personal-abc66e-alice --email carol-abc66e@example.com
 ```
 
 ```
-✓ Invitation sent to carol-bf9ada@example.com
+✓ Invitation sent to carol-abc66e@example.com
   They'll see it in their /skills banner + `clawdi scope invites` inbox.
 ```
 
 ```bash
-alice@laptop $ clawdi scope invites team-toolkit-bf9ada   # owner-side view
+alice@laptop $ clawdi scope invites personal-abc66e-alice   # owner-side
 ```
 
 ```
 Invitations on this scope (1):
-  carol-bf9ada@example.com  (7741ec49…) · sent 5/11/2026
+  carol-abc66e@example.com  (b77b6b0c…) · sent 5/11/2026
 
-Cancel: clawdi scope invites team-toolkit-bf9ada --cancel <id>
+Cancel: clawdi scope invites personal-abc66e-alice --cancel <id>
 ```
 
-> Email invitations are for **known Clawdi users**. Targeting an unregistered
-> email returns `user_not_found` with a hint to send a share link instead.
-> Same shape for `ambiguous_email` (multiple accounts with that address) —
-> privacy-safe: we never silently pick which one.
+> Invitations target a **registered** Clawdi account by email. For unregistered
+> emails the CLI returns `user_not_found` with a hint to send a share-link
+> instead. Same for `ambiguous_email` (multiple accounts with that
+> address) — privacy-safe: we never silently pick which one.
 
----
-
-## ACT 8 · Carol opens her inbox and accepts
+### 4.2 — Carol checks her inbox and accepts
 
 ```bash
-carol@laptop $ clawdi scope invites    # inbox view, no scope arg
+carol@laptop $ clawdi scope invites
 ```
 
 ```
 Pending invitations (1):
-  Team Toolkit  (7741ec49…)
-    from Alice @alice-7a79 · 5/11/2026
+  Personal  (b77b6b0c…)
+    from Alice @alice-5e81 · 5/11/2026
 
 Accept: clawdi scope invites --accept <id>
 Decline: clawdi scope invites --decline <id>
 ```
 
 ```bash
-carol@laptop $ clawdi scope invites --accept 7741ec49-6609-4f97-aedc-b55ebb793860
+carol@laptop $ clawdi scope invites --accept b77b6b0c-fce6-4e91-9208-ef9ff64f9a53
 ```
 
 ```
 ✓ Accepted invitation, joined as viewer.
-  Scope ID: 5f60763f-3541-4484-a396-71adfeab9f78
-  Owner handle: @alice-7a79
+  Scope ID: 362082d4-8295-4daf-8d02-ce7ec44a7521
+  Owner handle: @alice-5e81
+  Pulled 1 skill into your local agents.
 ```
 
 ```bash
+carol@laptop $ ls $CLAUDE_CONFIG_DIR/skills/
+demo-skill-git-helper__alice-5e81
+
 carol@laptop $ clawdi scope list
 ```
 
 ```
-My scopes (0):
+My scopes (1):
+  personal-abc66e-carol    beeda16d-f72b-421b-969c-745c371720b9  (personal)
+    Personal
 
 Shared with me (1):
-  team-toolkit-bf9ada      5f60763f-3541-4484-a396-71adfeab9f78  (environment)
-    Team Toolkit
+  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+    Personal
 ```
 
-> Acceptance is **transactional**: the scope row is locked, membership inserted,
-> invitation deleted, and (if the scope has skills) eagerly pulled to every
-> registered adapter in one command. No daemon restart needed.
+> Accept is transactional — scope row locked, membership inserted,
+> invitation deleted, skills eagerly pulled, all in one command. No daemon
+> restart needed.
 
 ---
 
-## ACT 9 · Alice revokes Bob's link — Carol's membership survives
+## PART V · Revoking Bob's link
+
+### 5.1 — Owner revoke
 
 ```bash
-alice@laptop $ clawdi scope share-links team-toolkit-bf9ada --revoke doHT_f7l
-```
-
-```
+alice@laptop $ clawdi scope share-links personal-abc66e-alice --revoke 55FTFvRq
 ✓ Link revoked.
-```
 
-```bash
-alice@laptop $ clawdi scope share-links team-toolkit-bf9ada
+alice@laptop $ clawdi scope share-links personal-abc66e-alice
 ```
 
 ```
 Share links (1):
-  doHT_f7l… [weekend hack]  revoked  5/11/2026  1 redeem · last used 5/11/2026
+  55FTFvRq… [weekend hack]  revoked  5/11/2026  1 redeem · last used 5/11/2026
+
+Revoke: clawdi scope share-links personal-abc66e-alice --revoke <prefix>
 ```
 
+### 5.2 — Carol's membership survives
+
 ```bash
-# The revoke kills FUTURE redemptions of THIS link — but it does not
-# remove already-joined members. Carol joined via invite (a separate
-# code path), so she stays a member.
+# Revoke kills FUTURE redemptions of THIS link — but does not remove
+# already-joined members. Carol joined via invite (a separate code
+# path), so she stays a member.
 
 carol@laptop $ clawdi scope list
 ```
 
 ```
-My scopes (0):
+My scopes (1):
+  personal-abc66e-carol    beeda16d-f72b-421b-969c-745c371720b9  (personal)
+    Personal
 
 Shared with me (1):
-  team-toolkit-bf9ada      5f60763f-3541-4484-a396-71adfeab9f78  (environment)
-    Team Toolkit
+  personal-abc66e-alice    362082d4-8295-4daf-8d02-ce7ec44a7521  (personal)
+    Personal
 ```
 
 **Design call-out — orthogonal revocation**
-- **Revoke a link** → blocks new redemptions; existing members untouched.
-- **Remove a member** → kicks someone specific without invalidating the link.
-- **Unshare a scope** (future B.8) → kills everything at once.
+
+| Action | What it kills |
+|--------|---------------|
+| **Revoke link** | Future redemptions of THIS link |
+| **Remove member** *(future B.7)* | One specific person, link stays usable for others |
+| **Unshare scope** *(future B.8)* | All links + all members at once |
 
 The owner picks the surgical instrument. Pre-fix in many SaaS products,
-"revoke link" silently removed every member who'd ever joined via it — bad
-UX when one user accidentally shares a link they shouldn't.
+"revoke link" silently removed every member who'd ever joined via it —
+bad UX when one user accidentally shares a link they shouldn't.
 
 ---
 
 ## Command reference
 
-### Owner-side (your own scope)
+### Owner-side (manage your scopes)
 
 | Command | Purpose |
 |---------|---------|
-| `clawdi scope list` | List every visible scope, owned + shared |
-| `clawdi scope share <scope> [--label TEXT]` | Generate a public URL |
-| `clawdi scope share-links <scope>` | List/inspect links on that scope |
+| `clawdi scope list` | Owned + shared-with-me scopes |
+| `clawdi skill add <folder>` | Upload a skill to default-write scope |
+| `clawdi skill add <folder> --agent codex` | Upload to a specific agent's scope |
+| `clawdi vault set <key>` | Add a single secret (interactive prompt) |
+| `clawdi vault import <.env> --yes` | Bulk-import secrets from a `.env` file |
+| `clawdi scope share <scope> [--label TEXT]` | Generate a share link |
+| `clawdi scope share-links <scope>` | Inspect links on that scope |
 | `clawdi scope share-links <scope> --revoke <prefix>` | Revoke one link |
 | `clawdi scope invite <scope> --email <addr>` | Send an email invitation |
-| `clawdi scope invites <scope>` | View invitations the owner sent |
+| `clawdi scope invites <scope>` | Owner-side invitation listing |
 | `clawdi scope invites <scope> --cancel <id>` | Cancel a pending invitation |
 
 ### Sharee-side (someone shared with you)
 
 | Command | Purpose |
 |---------|---------|
-| `clawdi share accept <url>` | Accept a share-link (anon → token, signed-in → membership) |
+| `clawdi share accept <url>` | Accept a share link (anon → token; signed-in → membership + auto-pull) |
 | `clawdi share list` | Local-only view of accepted share tokens |
-| `clawdi share remove <scope-id>` | Drop a local token + clean adapter folders |
+| `clawdi share remove <scope-id>` | Drop local token + clean adapter folders |
 | `clawdi scope invites` | Your inbox — pending invitations addressed to you |
 | `clawdi scope invites --accept <id>` | Accept an invitation, eagerly pulls skills |
 | `clawdi scope invites --decline <id>` | Decline an invitation |
+| `clawdi scope list` | Owned + shared scopes with `is_owner` marker |
+| `clawdi vault resolve <key>` | Get a vault secret's plaintext (Clerk-auth-gated) |
 
-`<scope>` accepts **UUID**, **slug**, or **human name** — the CLI resolves
-ambiguity with a clear error.
+### `<scope>` accepts
+
+- The full UUID (e.g. `5f60763f-3541-4484-a396-71adfeab9f78`)
+- The slug (e.g. `personal-abc66e-alice` or `team-toolkit`)
+- The human name (case-insensitive match against `Scope.name`)
+- `default` → uses `resolve_default_write_scope`
+
+---
+
+## Where the content actually lives
+
+After `clawdi share accept` on the signed-in path:
+
+```
+~/.claude/skills/
+├── my-own-skill/                              ← Bob's own skills
+│   └── SKILL.md
+└── demo-skill-git-helper__alice-5e81/         ← shared from Alice
+    └── SKILL.md
+```
+
+```
+~/.codex/skills/
+└── demo-skill-git-helper__alice-5e81/
+```
+
+```
+~/.openclaw/agents/main/skills/
+└── demo-skill-git-helper__alice-5e81/
+```
+
+```
+~/.hermes/skills/shared/
+└── demo-skill-git-helper__alice-5e81/
+```
+
+**Why a path suffix?** Without `__<owner-handle>`, if Alice and Bob's friend
+both share a skill named `git-helper`, the second redemption would clobber
+the first. Frozen owner-handles partition the namespace per sharer.
+
+---
+
+## How an agent "uses" a shared scope
+
+Two paths:
+
+**1. The agent already runs locally** — Skills land in the adapter's
+skills directory (shown above). On next conversation, the agent picks up
+the new `__<owner-handle>` folder via its normal skill-discovery loop.
+For Claude Code that means `~/.claude/skills/<key>__<handle>/SKILL.md` is
+read on next CLI invocation. No restart needed.
+
+**2. The agent isn't registered yet (`clawdi setup` first)** — Register
+the local agent with the cloud:
+
+```bash
+$ clawdi setup --agent claude_code
+```
+
+This:
+- Detects the local install (looks for `~/.claude/`, asks if not found)
+- Creates an `AgentEnvironment` row server-side
+- Binds an env-scoped default scope to that env
+- Writes the MCP server config so the agent can talk back to the cloud
+- Installs the bundled `clawdi` skill for self-introspection
+
+After `setup`, `clawdi serve` runs a daemon that watches local agent
+state and keeps it in sync with the cloud. Accepted shares sync on the
+next reconcile cycle automatically.
+
+> **For the demo**, `share accept` does the eager pull itself, so the
+> shared skill appears immediately — no daemon required.
 
 ---
 
 ## What makes this design strong
 
-1. **Frozen owner handle** — `kebab(name)-hex[:4]` stamped on the link/membership
-   at create time. Owner can rename without breaking sharees' local paths.
+1. **Frozen owner handle** — `kebab(name)-hex[:4]` stamped on the
+   link/membership at create time. Owner renames don't break sharees'
+   local paths.
 
-2. **Anonymous-then-upgrade** — a single URL serves both states. Sharee gets
-   value immediately; identity gets attached later. Mirrors Figma/Spotify.
+2. **Anonymous-then-upgrade** — a single URL serves both states. Sharee
+   gets immediate value; identity gets attached later. Same UX shape as
+   Figma's "anyone with the link" → "sign in to save".
 
-3. **Hash-only token storage** — server never holds the raw token after issue.
-   Database leak ≠ link compromise.
+3. **Hash-only token storage** — server never holds the raw token after
+   issue. A DB leak does not compromise active share links.
 
-4. **Env-binding boundary preserved** — a leaked hosted-pod deploy key cannot
-   accept share-links, mint new ones, or join scopes. Sharing is account-level;
-   hosted pods stay scope-restricted (PR #77's blast-radius contract holds).
+4. **Env-binding boundary preserved** — a leaked hosted-pod deploy key
+   cannot accept share-links, mint new ones, or join scopes. Sharing is
+   account-level; hosted pods stay scope-restricted (PR #77's blast-radius
+   contract holds).
 
-5. **Read-only viewers** — sharees can *use* skills and resolve vault secrets,
-   but never edit. Owner keeps full control of content.
+5. **Read-only viewers** — sharees can *use* skills and resolve vault
+   secrets, but never edit. Owner keeps full control of content.
 
 6. **Symmetric CLI ↔ web** — every action above works in the dashboard's
-   `ShareScopeDialog` (owner) and `InvitationsInbox` banner (invitee). Mix and
-   match across surfaces freely.
+   `ShareScopeDialog` (owner) and `InvitationsInbox` banner (invitee).
+   Pick whichever surface fits the user's mood.
+
+7. **Orthogonal revocation** — revoke a link, remove a member, or unshare
+   the whole scope. Three different surgical tools, three different
+   blast radii.
 
 ---
 
 ## Try it locally
 
 ```bash
-# Boot the backend
+# 1. Boot the backend
 cd backend && uv run uvicorn app.main:app --port 8000 &
 
-# Seed three personas with API keys
+# 2. Seed three personas with API keys + Personal scopes
 uv run python /tmp/seed-three-users.py
+# (prints export ALICE_KEY=… etc — eval into your shell)
+source /tmp/seed-vars.sh
 
-# Replay the demo above
+# 3. Replay the demo above
 /tmp/run-demo.sh "$ALICE_KEY" "$ALICE_SCOPE_SLUG" \
                  "$BOB_KEY" "$CAROL_KEY" "$CAROL_EMAIL"
 ```
 
-The full captured transcript lives at `/tmp/demo-transcript.txt` after running
-the script — 152 lines of real CLI input/output, identical to the blocks above.
+The seed script + demo runner live at:
+- `/tmp/seed-three-users.py` (creates owner + 2 sharees with Personal scopes + API keys)
+- `/tmp/run-demo.sh` (drives the 9-act sequence)
+
+Full captured transcript: `/tmp/demo-transcript.txt` (247 lines of real CLI I/O).
 
 ---
 
 ## Implementation status
 
-| Phase | Coverage |
-|-------|----------|
-| **A** — Models, migration, share-token primitives, auth deps | ✅ Done · 9 commits |
-| **B.1–B.6** — Owner endpoints: create/list/revoke links + invitations | ✅ Done · 4 endpoints |
-| **C.1, C.4, C.5** — Sharee endpoints: preview, redeem, upgrade, /me/inbox | ✅ Done · 5 endpoints |
-| **D.1** — Visibility helper widens to include memberships | ✅ Done |
-| **D.3** — Skill download permits shared-scope viewers | ✅ Done |
-| **E** — CLI sharee + owner commands + eager-pull on accept | ✅ Done · 10 commands |
-| **F** — Web dashboard: ShareScopeDialog + InvitationsInbox banner | ✅ Done |
-| **B.7** — Members list/remove | Open |
-| **B.8** — Unshare (kill all links + remove all members in one call) | Open |
-| **C.2/C.3** — Anonymous-token skill scope index + tarball stream | Open |
+| Phase | Coverage | Tests |
+|-------|----------|-------|
+| **A** — Models, migration, share-token primitives, auth deps | ✅ Done | 24 tests |
+| **B.1–B.6** — Owner endpoints: create/list/revoke links + invitations | ✅ Done | 14 tests |
+| **C.1, C.4, C.5** — Sharee endpoints: preview, redeem, upgrade, /me/inbox | ✅ Done | 10 tests |
+| **D.1, D.3** — Visibility helper + read endpoints permit shared-scope viewers | ✅ Done | 3 tests |
+| **E** — CLI: 5 owner commands + sharee accept/list/remove + eager skill pull | ✅ Done | 282 tests |
+| **F** — Web dashboard: ShareScopeDialog + InvitationsInbox banner | ✅ Done | — |
+| **B.7** — Members list/remove | Open | — |
+| **B.8** — Unshare in one call | Open | — |
+| **C.2/C.3** — Anonymous-token skill content stream (for daemon sync without auth login) | Open | — |
 
-**Test coverage:** 226 backend tests · 282 CLI tests · all green.
+**Total test coverage:** 226 backend tests · 282 CLI tests · all green.
 
 **Branch:** [`feat/scope-sharing`](https://github.com/Clawdi-AI/clawdi/tree/feat/scope-sharing)
