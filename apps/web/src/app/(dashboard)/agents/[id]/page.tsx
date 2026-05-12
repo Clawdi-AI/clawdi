@@ -112,11 +112,14 @@ export default function AgentDetailPage() {
 		enabled: !!agentScopeId,
 	});
 	const skillsForThisEnv = useMemo(() => {
-		// `scope_id=...` filtered server-side, but defense-in-depth:
-		// drop anything the server didn't filter (would be a backend
-		// bug). Same shape downstream code expects.
+		// `?scope_id=<agentScopeId>` triggers backend mount-walking
+		// (resolve_for_parent): the returned set is the parent's own
+		// skills UNION every mounted-source scope's skills. We surface
+		// the composed set as-is so other people's skills mounted into
+		// this agent's scope render alongside the owned rows — read-
+		// only treatment lives in skill-columns via `ownedScopeId`.
 		if (!skillsData?.items || !agentScopeId) return undefined;
-		return skillsData.items.filter((s) => s.scope_id === agentScopeId);
+		return skillsData.items;
 	}, [skillsData, agentScopeId]);
 
 	const uninstallSkill = useMutation({
@@ -140,8 +143,9 @@ export default function AgentDetailPage() {
 			makeSkillColumns(
 				(skillKey, scopeId) => uninstallSkill.mutate({ skillKey, scopeId }),
 				uninstallSkill.isPending,
+				agentScopeId,
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending],
+		[uninstallSkill.mutate, uninstallSkill.isPending, agentScopeId],
 	);
 
 	const sessionTotal = sessionsPage?.total ?? 0;

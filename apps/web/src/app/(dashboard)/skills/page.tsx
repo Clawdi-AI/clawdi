@@ -290,8 +290,9 @@ function SkillsPageInner() {
 			makeSkillColumns(
 				(skillKey, scopeId) => uninstallSkill.mutate({ skillKey, scopeId }),
 				uninstallSkill.isPending,
+				targetScopeId,
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending],
+		[uninstallSkill.mutate, uninstallSkill.isPending, targetScopeId],
 	);
 
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
