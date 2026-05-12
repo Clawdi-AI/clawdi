@@ -248,15 +248,52 @@ async def scope_ids_visible_to(
     # check this first, before the kill-switch fallback. The kill
     # switch turns off scope-aware routing, but it must NEVER
     # disable the env-binding boundary on a deploy key.
+    #
+    # Env-bound api_keys ALSO never see shared scopes via membership:
+    # the env binding is the blast-radius boundary (PR #77). A leaked
+    # hosted-pod key must not gain visibility into scopes the user
+    # later joined as a sharee.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         env_scope = await resolve_default_write_scope(db, auth)
         return [env_scope]
 
     if not scope_routing_enabled():
-        # Kill-switch path: all of the user's scopes.
+        # Kill-switch path: owned scopes only. Memberships are off
+        # this code path because the kill-switch is meant to
+        # neutralize scope-aware routing — sharing piggybacks on
+        # that routing, so it's correctly disabled too.
         result = await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))
         return list(result.scalars().all())
 
-    # Clerk JWT and unbound CLI key: full inventory.
-    result = await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))
-    return list(result.scalars().all())
+    # Clerk JWT and unbound CLI key: owned scopes UNION scopes the
+    # user joined as a viewer member. Two separate queries (one
+    # owned, one shared) keeps the SQL readable; both hit indexed
+    # columns and run sub-millisecond.
+    from app.models.scope_membership import ScopeMembership
+
+    owned_ids = list(
+        (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id)))
+        .scalars()
+        .all()
+    )
+    shared_ids = list(
+        (
+            await db.execute(
+                select(ScopeMembership.scope_id).where(
+                    ScopeMembership.user_id == auth.user_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Owned ordering preserved; shared appended deterministically.
+    # Membership rows could in theory dupe an owned scope (e.g. if
+    # a stale row survived an ownership transfer); de-dup defensively.
+    seen = set(owned_ids)
+    result_ids = list(owned_ids)
+    for sid in shared_ids:
+        if sid not in seen:
+            result_ids.append(sid)
+            seen.add(sid)
+    return result_ids
