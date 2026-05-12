@@ -1,6 +1,17 @@
-# Cross-User Scope Sharing — Design Spec
+# Cross-User Scope Sharing — Design Spec (v1)
 
-**Status**: Draft, awaiting implementation plan.
+> **Historical / superseded.** This spec describes the v1 membership-based
+> sharing surface that shipped earlier on `feat/scope-sharing`. The v2
+> evolution layers `ScopeMount` (composition) on top of v1's
+> `ScopeMembership` (capability). See
+> [`2026-05-11-scope-mount-spec.md`](2026-05-11-scope-mount-spec.md)
+> for the current shipping spec.
+>
+> The data model, share-link / invitation flows, and read-path
+> safety properties from this v1 spec all remain accurate — v2 keeps
+> them and adds a new layer on top.
+
+**Status**: Shipped as v1; layered into v2 mount model on follow-up.
 **Date**: 2026-05-11.
 **Branch**: `feat/scope-sharing`.
 **Companion repos**: none (cloud-api + dashboard + CLI all in this monorepo).

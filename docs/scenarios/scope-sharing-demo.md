@@ -1,4 +1,17 @@
-# Clawdi Cross-User Scope Sharing — Complete CLI Demo
+# Clawdi Cross-User Scope Sharing — Complete CLI Demo (v1, historical)
+
+> **Historical demo.** This walkthrough captures the v1 membership-based
+> sharing surface (currently on `feat/scope-sharing`). A v2 implementation
+> is in progress that adds **scope mount** (composition) on top of v1's
+> capability layer — see
+> [`docs/superpowers/specs/2026-05-11-scope-mount-spec.md`](../superpowers/specs/2026-05-11-scope-mount-spec.md)
+> and
+> [`docs/superpowers/plans/2026-05-12-scope-mount.md`](../superpowers/plans/2026-05-12-scope-mount.md).
+> Once v2 lands, this doc will be archived to `archive/` and replaced
+> with a fresh capture of the mount-based flow.
+>
+> Read this if you want to understand the underlying primitive
+> (membership) — every v2 read still walks through it for safety.
 
 > From "nothing in the cloud" to "Bob has Alice's skills + vault keys on his
 > laptop" in nine commands. Every block below is real CLI input/output —
@@ -712,11 +725,13 @@ Full captured transcript: `/tmp/demo-transcript.txt` (247 lines of real CLI I/O)
 
 ---
 
-## What we deliberately did NOT build (v2 territory)
+## What v2 adds on top (already speccd, mid-implementation)
 
 What you see above is the **permission layer**: `accept` makes Alice's
-scope *visible* to Bob. It is **not** a composition primitive — Bob can't
-mount Alice's scope INTO one of his own scopes.
+scope *visible* to Bob. v2 is in flight that adds the **composition
+layer** on top — `accept` will mount Alice's scope INTO one of Bob's
+own scopes, and the "Shared with me" UX section disappears in favor
+of nested mount rendering.
 
 Use cases this v1 doesn't directly serve:
 
@@ -728,12 +743,12 @@ Use cases this v1 doesn't directly serve:
 | Vault key precedence (`OPENAI_KEY` in Personal vs team-workspace) | Both rows surface in `vault list` with no resolution rule | Mount precedence: parent-own > mount-listed-first > mount-listed-last |
 | Non-transitive sharing — Dave doesn't backdoor through Bob to Alice | Membership IS transitive through shared parent scopes | Mount edge is config on parent, NOT a grant on source — viewer needs own membership |
 
-**Why we shipped v1 first:** the permission layer is the foundation. Mount
+**Why v1 shipped first:** the permission layer is the foundation. Mount
 is a composition primitive that depends on the membership graph for
 safety (a mount only resolves content the viewer can independently see).
 Building composition without the underlying capability would have been
 the wrong order.
 
-See [`docs/superpowers/specs/2026-05-11-scope-composition-rfc.md`](../superpowers/specs/2026-05-11-scope-composition-rfc.md)
-for the v2 architectural sketch (membership + `ScopeMount` two-layer
-model, codex-reviewed).
+**v2 docs (in implementation):**
+- Shipping spec: [`docs/superpowers/specs/2026-05-11-scope-mount-spec.md`](../superpowers/specs/2026-05-11-scope-mount-spec.md)
+- Implementation plan: [`docs/superpowers/plans/2026-05-12-scope-mount.md`](../superpowers/plans/2026-05-12-scope-mount.md)
