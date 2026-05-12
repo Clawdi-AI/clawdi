@@ -27,6 +27,17 @@ function userHome(): string {
 	return process.env.HOME ?? homedir();
 }
 
+// Mirror lib/config.ts's `clawdiDir()` precedence so a dev wrapper
+// (`clawdi-dev`) or multi-user demo harness pointing at an isolated
+// state tree via CLAWDI_HOME also gets isolated share-tokens.json.
+// Without this, three personas in one demo would all share the
+// host's real `~/.clawdi/share-tokens.json` and pollute each other.
+function clawdiHome(): string {
+	const override = process.env.CLAWDI_HOME;
+	if (override) return override;
+	return join(userHome(), ".clawdi");
+}
+
 export interface ShareToken {
 	scope_id: string;
 	scope_name: string;
@@ -49,7 +60,7 @@ interface ShareTokensFile {
 }
 
 function filePath(): string {
-	return join(userHome(), ".clawdi", "share-tokens.json");
+	return join(clawdiHome(), "share-tokens.json");
 }
 
 function loadRaw(): ShareTokensFile {
