@@ -35,3 +35,24 @@ def test_scope_invitation_model_importable():
         "invited_by",
         "created_at",
     } <= cols
+
+
+def test_scope_share_link_model_importable():
+    from app.models.scope_share_link import ScopeShareLink
+
+    assert ScopeShareLink.__tablename__ == "scope_share_links"
+    cols = {c.name for c in ScopeShareLink.__table__.columns}
+    assert {
+        "id",
+        "scope_id",
+        "token_hash",
+        "token_prefix",
+        "label",
+        "created_by",
+        "resolved_owner_handle",
+        "created_at",
+        "expires_at",
+        "revoked_at",
+        "redeem_count",
+        "last_redeemed_at",
+    } <= cols
