@@ -34,6 +34,37 @@ def _kebab(text: str) -> str:
 _USER_ID_SUFFIX_LEN = 4
 
 
+OWNER_HANDLE_MISSING_SENTINEL = "owner-display-name-missing"
+
+
+def safe_owner_handle(user: User) -> str:
+    """resolve_owner_handle with a stable fallback for read paths.
+
+    Write paths (create-share-link, accept-invitation) must raise a
+    409 \`display_name_required\` so the user fixes their profile
+    before durable state is created with a meaningless handle. Read
+    paths (listings, displays of mounts the user has already accepted
+    months ago — owner since stripped their display name) need
+    something to render and can't 409 the whole page; this helper
+    returns OWNER_HANDLE_MISSING_SENTINEL instead so the row remains
+    visible with a clear "needs attention" handle.
+    """
+    try:
+        return resolve_owner_handle(user)
+    except ValueError:
+        return OWNER_HANDLE_MISSING_SENTINEL
+
+
+def safe_owner_display(user: User) -> str:
+    """Display name with a stable fallback chain: name → email → user-<hex8>.
+
+    Mirrors the fallback used by every owner-rendering surface (mount
+    listing, invitation row, share-link landing). Centralised so the
+    user-<hex8> suffix shape and length stay consistent across them.
+    """
+    return user.name or user.email or f"user-{str(user.id)[:8]}"
+
+
 def resolve_owner_handle(user: User) -> str:
     """Compute the stable owner handle for `user`.
 

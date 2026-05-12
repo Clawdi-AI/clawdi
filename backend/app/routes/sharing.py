@@ -47,6 +47,7 @@ from app.services.sharing import (
     generate_share_token,
     hash_share_token,
     resolve_owner_handle,
+    safe_owner_display,
     token_prefix,
 )
 
@@ -241,8 +242,7 @@ def _owner_view(auth: AuthContext) -> tuple[str, str]:
             {
                 "error": "display_name_required",
                 "message": (
-                    "Set a display name on your profile before sharing. "
-                    "Recipients see the name."
+                    "Set a display name on your profile before sharing. Recipients see the name."
                 ),
             },
         )
@@ -253,14 +253,10 @@ def _owner_view(auth: AuthContext) -> tuple[str, str]:
             status.HTTP_409_CONFLICT,
             {
                 "error": "display_name_required",
-                "message": (
-                    "Your display name must contain at least one "
-                    "alphanumeric character."
-                ),
+                "message": ("Your display name must contain at least one alphanumeric character."),
             },
         ) from err
-    display = auth.user.name or auth.user.email or f"user-{str(auth.user_id)[:8]}"
-    return display, handle
+    return safe_owner_display(auth.user), handle
 
 
 @router.post("/{scope_id}/invitations", response_model=InvitationResponse)
@@ -308,8 +304,7 @@ async def create_invitation(
             {
                 "error": "user_not_found",
                 "message": (
-                    "No clawdi account found for that email. "
-                    "Send them a share link instead."
+                    "No clawdi account found for that email. Send them a share link instead."
                 ),
             },
         )

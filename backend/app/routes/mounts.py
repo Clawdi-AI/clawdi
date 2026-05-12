@@ -28,29 +28,11 @@ from app.models.scope import Scope
 from app.models.scope_mount import ScopeMount
 from app.models.user import User
 from app.schemas.sharing import MountCreate, MountResponse
-from app.services.sharing import resolve_owner_handle
+from app.services.sharing import safe_owner_display, safe_owner_handle
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scopes", tags=["mounts"])
-
-
-def _safe_owner_handle(owner: User) -> str:
-    """resolve_owner_handle with a stable fallback.
-
-    A historical owner can drop their display name after their scope
-    was already mounted into someone else's parent. Re-raising would
-    500 the consumer's listing — return a consistent sentinel so the
-    UI renders a clear "needs attention" row instead.
-    """
-    try:
-        return resolve_owner_handle(owner)
-    except ValueError:
-        return "owner-display-name-missing"
-
-
-def _safe_owner_display(owner: User) -> str:
-    return owner.name or owner.email or f"user-{str(owner.id)[:8]}"
 
 
 async def _build_mount_response(
@@ -77,8 +59,8 @@ async def _build_mount_response(
         source_scope_id=str(mount.source_scope_id),
         source_scope_name=src.name,
         source_scope_slug=src.slug,
-        source_owner_display=_safe_owner_display(owner),
-        source_owner_handle=_safe_owner_handle(owner),
+        source_owner_display=safe_owner_display(owner),
+        source_owner_handle=safe_owner_handle(owner),
         alias=mount.alias,
         mode=mount.mode,
         created_at=mount.created_at,
@@ -191,7 +173,7 @@ async def _resolve_default_alias(db: AsyncSession, source_id: UUID) -> tuple[str
     """Compute the natural-form alias `@<owner-handle>/<source-slug>`."""
     src = (await db.execute(select(Scope).where(Scope.id == source_id))).scalar_one()
     owner = (await db.execute(select(User).where(User.id == src.user_id))).scalar_one()
-    return f"@{_safe_owner_handle(owner)}/{src.slug}", src, owner
+    return f"@{safe_owner_handle(owner)}/{src.slug}", src, owner
 
 
 @router.get("/{parent_scope_id}/mounts", response_model=list[MountResponse])

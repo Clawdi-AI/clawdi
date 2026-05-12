@@ -37,6 +37,8 @@ from app.schemas.sharing import InvitationResponse, UpgradeBody
 from app.services.sharing import (
     resolve_auto_mount_parent,
     resolve_owner_handle,
+    safe_owner_display,
+    safe_owner_handle,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,21 +72,14 @@ async def list_my_invitations(
     ).all()
     out: list[InvitationResponse] = []
     for inv, by, scope, owner in rows:
-        try:
-            owner_handle = resolve_owner_handle(owner)
-        except ValueError:
-            # Owner stripped their display name post-invite — surface
-            # as a sentinel string so the dashboard can still render
-            # the row (with the disabled-accept UX) instead of erroring.
-            owner_handle = "<owner-needs-display-name>"
         out.append(
             InvitationResponse(
                 id=str(inv.id),
                 scope_id=str(inv.scope_id),
                 scope_name=scope.name,
                 scope_kind=scope.kind,
-                owner_display=owner.name or owner.email or f"user-{str(owner.id)[:8]}",
-                owner_handle=owner_handle,
+                owner_display=safe_owner_display(owner),
+                owner_handle=safe_owner_handle(owner),
                 invitee_email=inv.invitee_email,
                 invited_by_user_id=str(inv.invited_by),
                 invited_by_display=(by.name or by.email) if by else None,

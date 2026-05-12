@@ -34,7 +34,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem
 from app.routes.mounts import ensure_mount
 from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
-from app.services.sharing import resolve_auto_mount_parent
+from app.services.sharing import resolve_auto_mount_parent, safe_owner_display
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,7 @@ async def _resolve_owner_for_link(
             status.HTTP_410_GONE,
             "share no longer available (owner account removed)",
         )
-    display = owner.name or owner.email or f"user-{str(owner.id)[:8]}"
-    return display, link.resolved_owner_handle, owner, scope
+    return safe_owner_display(owner), link.resolved_owner_handle, owner, scope
 
 
 async def _build_redeem_payload(ctx: ShareTokenContext, db: AsyncSession) -> ShareRedeemResponse:
