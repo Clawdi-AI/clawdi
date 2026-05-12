@@ -34,20 +34,28 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 	const owned = scopes.filter((s) => s.is_owner !== false);
 	const shared = scopes.filter((s) => s.is_owner === false);
 
-	// Fetch mounts per owned scope (best-effort; if the endpoint
-	// errors for one scope, we render an empty mount list for it).
+	// Parallel mount fetch — one request per owned scope, all in
+	// flight at once. Sequentially this was an N+1 stall whose
+	// total wait grew with the number of owned scopes; an account
+	// with five envs felt noticeably laggy on a slow network.
+	// Best-effort per scope: failed lookups render as an empty
+	// mount list for that parent rather than aborting the whole
+	// `scope list` invocation.
 	const mountsByParent = new Map<string, MountRow[]>();
-	for (const s of owned) {
-		try {
-			const r = await fetch(`${apiUrl}/api/scopes/${s.id}/mounts`, {
-				headers: { Authorization: `Bearer ${auth.apiKey}` },
-			});
-			if (r.ok) mountsByParent.set(s.id, (await r.json()) as MountRow[]);
-			else mountsByParent.set(s.id, []);
-		} catch {
-			mountsByParent.set(s.id, []);
-		}
-	}
+	const mountResults = await Promise.all(
+		owned.map(async (s): Promise<[string, MountRow[]]> => {
+			try {
+				const r = await fetch(`${apiUrl}/api/scopes/${s.id}/mounts`, {
+					headers: { Authorization: `Bearer ${auth.apiKey}` },
+				});
+				if (r.ok) return [s.id, (await r.json()) as MountRow[]];
+			} catch {
+				// fall through to empty
+			}
+			return [s.id, []];
+		}),
+	);
+	for (const [scopeId, mounts] of mountResults) mountsByParent.set(scopeId, mounts);
 
 	if (opts.json) {
 		console.log(
