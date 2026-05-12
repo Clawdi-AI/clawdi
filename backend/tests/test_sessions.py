@@ -536,6 +536,7 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     `monkeypatch` — three sequential page fetches with the same
     content_hash should fan out to ONE underlying blob read."""
     from app.routes import sessions as sessions_route
+    from app.services import session_content
 
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
@@ -563,8 +564,10 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     sid = next(s["id"] for s in listing["items"] if s["local_session_id"] == "sess-cache")
 
     # Reset the cache so other tests' entries don't satisfy us
-    # without a real file_store.get hit.
-    sessions_route._messages_cache.clear()
+    # without a real file_store.get hit. The cache moved to
+    # services/session_content.py (shared with the public share
+    # routes); the route handler is now a thin wrapper.
+    session_content._messages_cache.clear()
 
     # Wrap file_store.get so we can count blob reads.
     orig_get = sessions_route.file_store.get
