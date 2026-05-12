@@ -14,7 +14,6 @@ import secrets
 
 from app.models.user import User
 
-
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _TRIM_DASHES = re.compile(r"^-+|-+$")
 

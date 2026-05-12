@@ -24,9 +24,7 @@ from app.models.user import User as User  # noqa: F401 - FK target
 class ScopeMembership(Base, TimestampMixin):
     __tablename__ = "scope_memberships"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     scope_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("scopes.id", ondelete="CASCADE"),

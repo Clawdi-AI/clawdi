@@ -509,11 +509,7 @@ async def require_user_auth_unbound(
     additional rejection: api_keys bound to a specific environment
     cannot invoke sharing operations.
     """
-    if (
-        auth.is_cli
-        and auth.api_key is not None
-        and auth.api_key.environment_id is not None
-    ):
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "sharing operations require user-level auth "
@@ -625,9 +621,7 @@ async def require_share_token(
     from app.services.sharing import hash_share_token
 
     token_hash = hash_share_token(token)
-    result = await db.execute(
-        select(ScopeShareLink).where(ScopeShareLink.token_hash == token_hash)
-    )
+    result = await db.execute(select(ScopeShareLink).where(ScopeShareLink.token_hash == token_hash))
     link = result.scalar_one_or_none()
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "share link not found")

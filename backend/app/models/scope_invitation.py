@@ -27,9 +27,7 @@ from app.models.user import User as User  # noqa: F401
 class ScopeInvitation(Base, TimestampMixin):
     __tablename__ = "scope_invitations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     scope_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("scopes.id", ondelete="CASCADE"),
