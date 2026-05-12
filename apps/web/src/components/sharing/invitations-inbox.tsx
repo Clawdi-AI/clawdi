@@ -54,6 +54,18 @@ export function InvitationsInbox() {
 		return r;
 	};
 
+	// Refresh every cache that derives from membership state so the
+	// banner row disappears and skill / scope listings pick up the
+	// new mount immediately. Reused by both the normal-accept success
+	// path AND the 409 mount_target_ambiguous path (which still
+	// commits membership — the mount is just deferred).
+	const refetchMembershipDerived = () => {
+		qc.invalidateQueries({ queryKey: ["me-invitations"] });
+		qc.invalidateQueries({ queryKey: ["skills"] });
+		qc.invalidateQueries({ queryKey: ["scopes"] });
+		qc.invalidateQueries({ queryKey: ["scope-mounts"] });
+	};
+
 	const invitations = useQuery({
 		queryKey: ["me-invitations"],
 		queryFn: async (): Promise<Invitation[]> => {
@@ -68,18 +80,36 @@ export function InvitationsInbox() {
 
 	const accept = useMutation({
 		mutationFn: async (id: string) => {
-			const r = await authedFetch(`/api/me/invitations/${id}/accept`, {
+			// Bypass authedFetch's "throw on !r.ok" so we can distinguish
+			// 409 mount_target_ambiguous (membership IS created server-side,
+			// only the mount edge is deferred) from real failures. The
+			// other error paths still bubble as ApiError.
+			const token = await getToken();
+			const headers = new Headers();
+			if (token) headers.set("Authorization", `Bearer ${token}`);
+			const r = await fetch(`${API_URL}/api/me/invitations/${id}/accept`, {
 				method: "POST",
+				headers,
 			});
-			return r.json();
+			if (r.status === 409) {
+				const body = (await r.json().catch(() => ({}))) as {
+					detail?: { error?: string };
+				};
+				if (body?.detail?.error === "mount_target_ambiguous") {
+					return { mountDeferred: true as const };
+				}
+				throw new ApiError(409, JSON.stringify(body));
+			}
+			if (!r.ok) throw new ApiError(r.status, await r.text());
+			return { mountDeferred: false as const, ...(await r.json()) };
 		},
-		onSuccess: () => {
-			// Invalidate everything sharing-touching so the new
-			// scope materializes in skills / scope picker / etc.
-			qc.invalidateQueries({ queryKey: ["me-invitations"] });
-			qc.invalidateQueries({ queryKey: ["skills"] });
-			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Joined as viewer — shared skills now appear in your dashboard");
+		onSuccess: (result) => {
+			refetchMembershipDerived();
+			if (result.mountDeferred) {
+				toast.success("Joined as viewer — pick a parent scope to compose it into your workspace.");
+			} else {
+				toast.success("Joined as viewer — shared skills now appear in your dashboard");
+			}
 		},
 		onError: (e) => {
 			toast.error(
@@ -97,7 +127,7 @@ export function InvitationsInbox() {
 			await authedFetch(`/api/me/invitations/${id}/decline`, { method: "POST" });
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["me-invitations"] });
+			refetchMembershipDerived();
 			toast.success("Invitation declined");
 		},
 		onError: (e) => {
