@@ -2,7 +2,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { listScopes, resolveScopeId } from "../lib/scope-resolver";
 
 /**
  * `clawdi scope share <scope> [--label TEXT]` — generate a fresh
@@ -48,6 +48,13 @@ export async function scopeShareCommand(
 	// common "share my current scope" case. Pass-through scope name /
 	// slug / UUID still works when explicitly given.
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
+	// Look up the scope slug so the success message names which scope
+	// we just shared. Critical for the `scope share` (no arg) path —
+	// without the slug a multi-scope user has no idea whether their
+	// link went to Personal or Engineering. One round trip; cached
+	// by the caller's network stack if they already hit /api/scopes
+	// via resolveScopeId moments ago.
+	const scopeSlug = (await listScopes(apiUrl, auth.apiKey)).find((s) => s.id === scopeId)?.slug;
 	const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/share-links`, {
 		method: "POST",
 		headers: {
@@ -80,7 +87,10 @@ export async function scopeShareCommand(
 	const body = (await r.json()) as ShareLinkCreated;
 
 	console.log();
-	console.log(`${chalk.green("✓")} Share link ready`);
+	console.log(
+		`${chalk.green("✓")} Share link ready` +
+			(scopeSlug ? chalk.gray(` for ${chalk.bold(scopeSlug)}`) : ""),
+	);
 	console.log();
 	console.log(`  ${chalk.bold(body.url)}`);
 	console.log();
