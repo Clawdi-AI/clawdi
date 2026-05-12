@@ -387,6 +387,84 @@ async function acceptAnonymousUrl(apiUrl: string, urlOrToken: string): Promise<v
 	);
 }
 
+/** Build the JSON body shared by both /upgrade and /accept routes
+ * from the CLI's AcceptOpts. Resolves `--into` to a UUID up-front
+ * so the caller doesn't need to. */
+async function buildAcceptRequestBody(
+	apiUrl: string,
+	bearer: string,
+	opts: AcceptOpts,
+): Promise<Record<string, unknown>> {
+	const reqBody: Record<string, unknown> = {};
+	if (opts.into) reqBody.parent_scope_id = await resolveScopeArg(apiUrl, bearer, opts.into);
+	if (opts.alias) reqBody.alias = opts.alias;
+	if (opts.noMount) reqBody.no_mount = true;
+	return reqBody;
+}
+
+/** Render the 409 mount_target_ambiguous block. `retryHint` is the
+ * caller-specific "how to mount later" line (URL re-accept vs
+ * invitation re-accept) shown after the owned-scopes list. */
+function renderMountAmbiguous(detail: Record<string, unknown>, retryHint: string): void {
+	console.log(chalk.green("✓") + " Joined as viewer (membership saved).");
+	console.log(chalk.yellow("⚠ Mount deferred — you have 2+ owned scopes."));
+	console.log(chalk.gray("  Pick a parent for the mount:"));
+	const owned = (detail.owned_scopes ?? []) as Array<{ slug: string; kind: string }>;
+	for (const s of owned) console.log(chalk.gray(`    - ${s.slug}  (${s.kind})`));
+	console.log();
+	console.log(chalk.gray(`  ${retryHint}`));
+	console.log(chalk.gray(`  Or: clawdi scope mount <source-slug> --into <parent-slug>`));
+}
+
+/** Print the "Joined — Mounted as @x/y" success block. `noMountHint`
+ * controls whether the `--no-mount: capability only` line renders
+ * (only applies on the share-URL upgrade path, where `--no-mount`
+ * actually makes sense as a flag the user can pass). */
+function renderJoinedSuccess(
+	body: { resolved_owner_handle: string; mount_alias?: string },
+	noMountHint: boolean,
+): void {
+	console.log(
+		chalk.green("✓") +
+			` Joined as viewer — @${body.resolved_owner_handle}'s scope is in your workspace.`,
+	);
+	if (body.mount_alias) {
+		console.log(
+			chalk.gray("  Mounted as ") + chalk.bold(body.mount_alias) + chalk.gray(" into your scope."),
+		);
+	} else if (noMountHint) {
+		console.log(chalk.gray("  (--no-mount: capability only, no mount edge.)"));
+	}
+}
+
+/** Run the eager pull and print "Pulled N skills…". `verboseError`
+ * controls whether a pull failure prints a "Run `clawdi pull` later
+ * to retry" hint (matches the original per-path behavior). */
+async function eagerPullAndReport(
+	apiUrl: string,
+	bearer: string,
+	scopeId: string,
+	ownerHandle: string,
+	verboseError: boolean,
+): Promise<void> {
+	const written = await pullSharedSkills(apiUrl, bearer, scopeId, ownerHandle).catch((e) => {
+		if (verboseError) {
+			console.log(
+				chalk.yellow(
+					`  (Couldn't pull shared skills yet: ${e instanceof Error ? e.message : String(e)}. ` +
+						"Run `clawdi pull` later to retry.)",
+				),
+			);
+		}
+		return 0;
+	});
+	if (written > 0) {
+		console.log(
+			chalk.gray(`  Pulled ${written} skill${written === 1 ? "" : "s"} into your local agents.`),
+		);
+	}
+}
+
 async function acceptUrl(
 	apiUrl: string,
 	bearer: string,
@@ -394,10 +472,7 @@ async function acceptUrl(
 	opts: AcceptOpts,
 ): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
-	const reqBody: Record<string, unknown> = {};
-	if (opts.into) reqBody.parent_scope_id = await resolveScopeArg(apiUrl, bearer, opts.into);
-	if (opts.alias) reqBody.alias = opts.alias;
-	if (opts.noMount) reqBody.no_mount = true;
+	const reqBody = await buildAcceptRequestBody(apiUrl, bearer, opts);
 
 	const r = await fetch(`${apiUrl}/api/share/${token}/upgrade`, {
 		method: "POST",
@@ -408,18 +483,10 @@ async function acceptUrl(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
-			console.log(chalk.green("✓") + " Joined as viewer (membership saved).");
-			console.log(chalk.yellow("⚠ Mount deferred — you have 2+ owned scopes."));
-			console.log(chalk.gray("  Pick a parent for the mount:"));
-			for (const s of detail.owned_scopes ?? []) {
-				console.log(chalk.gray(`    - ${s.slug}  (${s.kind})`));
-			}
-			console.log();
-			console.log(
-				chalk.cyan(`  clawdi inbox accept <same-url> --into <slug>`) +
-					chalk.gray(" → re-run to mount"),
+			renderMountAmbiguous(
+				detail,
+				`${chalk.cyan("clawdi inbox accept <same-url> --into <slug>")} → re-run to mount`,
 			);
-			console.log(chalk.gray(`  Or: clawdi scope mount <source-slug> --into <parent-slug>`));
 			process.exitCode = 4;
 			return;
 		}
@@ -427,7 +494,6 @@ async function acceptUrl(
 			console.log(chalk.yellow("This is your own scope — nothing to accept."));
 			return;
 		}
-		// Unknown 409
 		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
 	}
 	if (r.status === 404) throw new Error("Share link not found.");
@@ -435,40 +501,8 @@ async function acceptUrl(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = (await r.json()) as ShareUpgradeResponse;
-	console.log(
-		chalk.green("✓") +
-			` Joined as viewer — @${body.resolved_owner_handle}'s scope is in your workspace.`,
-	);
-	if (body.mount_alias) {
-		console.log(
-			chalk.gray(`  Mounted as `) + chalk.bold(body.mount_alias) + chalk.gray(` into your scope.`),
-		);
-	} else if (opts.noMount) {
-		console.log(chalk.gray("  (--no-mount: capability only, no mount edge.)"));
-	}
-
-	// Eagerly pull skill content into adapter folders.
-	const skillsWritten = await pullSharedSkills(
-		apiUrl,
-		bearer,
-		body.scope_id,
-		body.resolved_owner_handle,
-	).catch((e) => {
-		console.log(
-			chalk.yellow(
-				`  (Couldn't pull shared skills yet: ${e instanceof Error ? e.message : String(e)}. ` +
-					"Run `clawdi pull` later to retry.)",
-			),
-		);
-		return 0;
-	});
-	if (skillsWritten > 0) {
-		console.log(
-			chalk.gray(
-				`  Pulled ${skillsWritten} skill${skillsWritten === 1 ? "" : "s"} into your local agents.`,
-			),
-		);
-	}
+	renderJoinedSuccess(body, !!opts.noMount);
+	await eagerPullAndReport(apiUrl, bearer, body.scope_id, body.resolved_owner_handle, true);
 }
 
 async function acceptInvitation(
@@ -477,10 +511,7 @@ async function acceptInvitation(
 	invitationId: string,
 	opts: AcceptOpts,
 ): Promise<void> {
-	const reqBody: Record<string, unknown> = {};
-	if (opts.into) reqBody.parent_scope_id = await resolveScopeArg(apiUrl, bearer, opts.into);
-	if (opts.alias) reqBody.alias = opts.alias;
-	if (opts.noMount) reqBody.no_mount = true;
+	const reqBody = await buildAcceptRequestBody(apiUrl, bearer, opts);
 
 	const r = await fetch(`${apiUrl}/api/me/invitations/${invitationId}/accept`, {
 		method: "POST",
@@ -491,12 +522,7 @@ async function acceptInvitation(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
-			console.log(chalk.green("✓") + " Joined as viewer (membership saved).");
-			console.log(chalk.yellow("⚠ Mount deferred — you have 2+ owned scopes."));
-			for (const s of detail.owned_scopes ?? []) {
-				console.log(chalk.gray(`    - ${s.slug}  (${s.kind})`));
-			}
-			console.log(chalk.gray("  Re-run with --into <slug> to mount."));
+			renderMountAmbiguous(detail, "Re-run with --into <slug> to mount.");
 			process.exitCode = 4;
 			return;
 		}
@@ -510,28 +536,8 @@ async function acceptInvitation(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = (await r.json()) as InvitationAcceptResponse;
-	console.log(
-		chalk.green("✓") +
-			` Joined as viewer — @${body.resolved_owner_handle}'s scope is in your workspace.`,
-	);
-	if (body.mount_alias) {
-		console.log(
-			chalk.gray("  Mounted as ") + chalk.bold(body.mount_alias) + chalk.gray(" into your scope."),
-		);
-	}
-
-	// Eager pull for invitation-accepted scopes too
-	const written = await pullSharedSkills(
-		apiUrl,
-		bearer,
-		body.scope_id,
-		body.resolved_owner_handle,
-	).catch(() => 0);
-	if (written > 0) {
-		console.log(
-			chalk.gray(`  Pulled ${written} skill${written === 1 ? "" : "s"} into your local agents.`),
-		);
-	}
+	renderJoinedSuccess(body, false);
+	await eagerPullAndReport(apiUrl, bearer, body.scope_id, body.resolved_owner_handle, false);
 }
 
 // ────────────────────────────────────────────────────────────────
