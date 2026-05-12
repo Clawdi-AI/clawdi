@@ -180,6 +180,22 @@ async def scope_id(db_session: AsyncSession, seed_user: User) -> str:
 
 
 @pytest_asyncio.fixture
+async def seed_scope(db_session: AsyncSession, seed_user: User):
+    """The Personal scope created alongside seed_user."""
+    from sqlalchemy import select
+
+    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+
+    result = await db_session.execute(
+        select(Scope).where(
+            Scope.user_id == seed_user.id,
+            Scope.kind == SCOPE_KIND_PERSONAL,
+        )
+    )
+    return result.scalar_one()
+
+
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[httpx.AsyncClient]:
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
         yield db_session

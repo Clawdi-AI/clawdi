@@ -499,6 +499,29 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     return auth
 
 
+async def require_user_auth_unbound(
+    auth: AuthContext = Depends(require_user_auth),
+) -> AuthContext:
+    """Require Clerk JWT OR fully-unbound CLI api_key.
+
+    `require_user_auth` already rejects narrowly-scoped api_keys
+    (those with explicit `scopes` list). This wrapper adds the
+    additional rejection: api_keys bound to a specific environment
+    cannot invoke sharing operations.
+    """
+    if (
+        auth.is_cli
+        and auth.api_key is not None
+        and auth.api_key.environment_id is not None
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "sharing operations require user-level auth "
+            "(env-bound deploy keys cannot manage sharing)",
+        )
+    return auth
+
+
 async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """CLI auth only (rejects Clerk JWT — no plaintext to web)
     and rejects narrowly-scoped api_keys. Env-bound deploy keys
@@ -578,3 +601,38 @@ async def require_admin_api_key(
         )
     if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")
+
+
+class ShareTokenContext:
+    """What require_share_token returns."""
+
+    def __init__(self, scope_id, link_id):
+        self.scope_id = scope_id
+        self.link_id = link_id
+
+
+async def require_share_token(
+    token: str,
+    db: AsyncSession = Depends(get_session),
+) -> ShareTokenContext:
+    """Validate an opaque share token from the URL path.
+
+    Anonymous endpoint dep - does NOT establish an AuthContext and
+    does NOT carry user identity. Token holders are bearers of access
+    to one specific scope's skill content, nothing more.
+    """
+    from app.models.scope_share_link import ScopeShareLink
+    from app.services.sharing import hash_share_token
+
+    token_hash = hash_share_token(token)
+    result = await db.execute(
+        select(ScopeShareLink).where(ScopeShareLink.token_hash == token_hash)
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "share link not found")
+    if link.revoked_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "share link has been revoked")
+    if link.expires_at is not None and link.expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_410_GONE, "share link has expired")
+    return ShareTokenContext(scope_id=link.scope_id, link_id=link.id)
