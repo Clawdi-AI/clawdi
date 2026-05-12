@@ -393,6 +393,14 @@ export async function authLogin(opts: { manual?: boolean } = {}) {
 	if (existing) {
 		p.log.warn(`Already logged in as ${existing.email || existing.userId || "unknown"}`);
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
+		// Returning users may have redeemed new share URLs anonymously since
+		// their last login (env-var auth in a new shell, share URL pasted
+		// before realizing this device is already authed). Re-running
+		// `auth login` is the obvious place to ask "is there anything else
+		// to claim?" — scanning here ensures those tokens don't sit
+		// un-upgraded forever just because the user is already signed in.
+		const { apiUrl } = getConfig();
+		await autoUpgradePendingShares(apiUrl, existing.apiKey);
 		return;
 	}
 
