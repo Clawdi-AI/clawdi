@@ -588,13 +588,19 @@ POST   /api/share/{token}/redeem
        }
        Auth: require_share_token only.
        Side-effects: increments redeem_count, sets last_redeemed_at.
-       This endpoint is **side-effecting** — call ONLY when the
-       sharee actually accepts the share (CLI `share accept` or
-       web "Add to my dashboard" click). Anything that just wants
-       to preview the scope (landing page, link-unfurler, refresh
-       of an already-redeemed landing page) MUST use `/preview`
-       above instead, so we don't double-count refresh / crawler
-       traffic in `redeem_count`.
+       This endpoint is **side-effecting** — call ONLY for
+       anonymous CLI accepts (`clawdi share accept` on a machine
+       without a CLI api_key). Anything that just previews
+       (landing page, link-unfurler, page refresh) uses GET
+       `/preview` above; logged-in-already accepts (web "Add to
+       my dashboard" + CLI accept when authed) go straight to
+       POST `/upgrade` below and DO NOT touch `redeem_count`.
+
+       `redeem_count` semantics: "anonymous CLI accepts only."
+       For "how many people actually joined" use the member list
+       on the scope. The Sharing tab surfaces both numbers
+       distinctly. This avoids the "anonymous redeem then later
+       upgrade" sharee being double-counted under one identity.
 
 GET    /api/share/{token}/scope
        Returns: full scope metadata + skill index (key, version, hash) +

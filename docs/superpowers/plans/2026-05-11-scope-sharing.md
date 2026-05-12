@@ -2837,8 +2837,29 @@ async def unshare(
     db: AsyncSession = Depends(get_session),
 ) -> UnshareResponse:
     """Revoke every share link + remove every member + delete every
-    pending invitation in one transaction. Idempotent."""
-    await _assert_scope_owner(db, auth, scope_id)
+    pending invitation in one transaction. Idempotent.
+
+    Concurrency: acquires a row lock on the SCOPE row (via
+    SELECT FOR UPDATE) at the top of the transaction. The same
+    row lock is taken by `accept_invitation` / `upgrade` /
+    `redeem` paths that create memberships. This serializes
+    unshare against in-flight membership-creation, closing the
+    race where:
+        T1 unshare reads invitations (empty after delete)
+        T2 accept_invitation reads invitation (still exists)
+        T2 inserts membership row
+        T1 commits — orphan membership against an "unshared" scope.
+    With the lock, T2 waits for T1 to commit, then sees the
+    invitation gone and 410s cleanly.
+    """
+    # Lock the scope row; serializes against accept/upgrade/redeem.
+    scope_locked = (
+        await db.execute(
+            select(Scope).where(Scope.id == scope_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if scope_locked is None or scope_locked.user_id != auth.user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
     now = datetime.now(UTC)
 
     revoke_result = await db.execute(
@@ -3696,8 +3717,12 @@ async def upgrade(
             status.HTTP_410_GONE, "share link no longer available"
         )
 
+    # Lock the scope row too — serializes against unshare /
+    # accept_invitation creating-or-deleting membership rows.
     scope = (
-        await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
+        await db.execute(
+            select(Scope).where(Scope.id == ctx.scope_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if scope is None:
         raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
@@ -3727,6 +3752,15 @@ async def upgrade(
         resolved_owner_handle=link.resolved_owner_handle,
     )
     db.add(membership)
+    # Counter semantics decision: redeem_count = "anonymous CLI
+    # accepts only" (the POST /redeem path). Direct accepts (web
+    # "Add to my dashboard" + CLI-while-logged-in) go through
+    # /upgrade and DELIBERATELY don't bump redeem_count, so the
+    # anonymous-then-upgrade flow doesn't double-count itself
+    # (one /redeem + one /upgrade for the same sharee). To see
+    # "how many people actually joined," owners use member_count
+    # from /members or the member list itself. The Sharing tab UI
+    # surfaces both numbers separately — see § 9.1.
     # Auto-cleanup: if this user has a pending email invitation to
     # the same scope, blow it away — they joined via the link first.
     await db.execute(
@@ -4141,25 +4175,46 @@ async def list_my_invitations(
 @router.post("/invitations/{invitation_id}/accept")
 async def accept_invitation(
     invitation_id: UUID,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
+    # First pass: find which scope this invitation targets so we
+    # know which row to lock. (We can't lock the invitation row
+    # itself across the unshare race — unshare deletes invitations
+    # by scope_id, not via the row we hold here.)
+    inv_pre = (
+        await db.execute(
+            select(ScopeInvitation).where(ScopeInvitation.id == invitation_id)
+        )
+    ).scalar_one_or_none()
+    if inv_pre is None or inv_pre.invitee_user_id != auth.user_id:
+        raise HTTPException(status.HTTP_410_GONE, "invitation not available")
+
+    # Lock the SCOPE row to serialize against concurrent unshare /
+    # other membership-creating endpoints. Then re-fetch the
+    # invitation — if unshare landed between the two reads, the
+    # invitation row is gone and we 410 cleanly instead of inserting
+    # an orphan membership against a now-unshared scope.
+    scope = (
+        await db.execute(
+            select(Scope).where(Scope.id == inv_pre.scope_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if scope is None:
+        raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
     inv = (
         await db.execute(
             select(ScopeInvitation).where(ScopeInvitation.id == invitation_id)
         )
     ).scalar_one_or_none()
-    # Identity check on invitee_user_id (stable across email rotations)
-    # — not on invitee_email which is purely historical context.
     if inv is None or inv.invitee_user_id != auth.user_id:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
-    scope = (
-        await db.execute(select(Scope).where(Scope.id == inv.scope_id))
-    ).scalar_one()
     owner = (
         await db.execute(select(User).where(User.id == scope.user_id))
-    ).scalar_one()
+    ).scalar_one_or_none()
+    if owner is None:
+        raise HTTPException(status.HTTP_410_GONE, "owner account removed")
 
     # Compute the frozen handle from the owner's current identity.
     # Helper raises ValueError if owner has no display_name — that
@@ -5953,10 +6008,145 @@ cd packages/cli && bun run typecheck
 ```
 Expected: clean.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Mixed-mode integration test — no duplicate folders**
+
+Create `packages/cli/src/share/sync.test.ts`:
+
+```ts
+/**
+ * Verifies the spec § 8.4 "no duplicate folder" invariant for
+ * the user-interactive auth mode:
+ *   - share-tokens.json has TWO tokens
+ *   - one marked `upgraded_at` (already converted to membership)
+ *   - one not marked (still anonymous-bound)
+ * Expectation: syncAllSharedScopes hits the server ONLY for the
+ * un-upgraded one. The upgraded one is left to the owner-side
+ * sync path (membership → scope_ids_visible_to).
+ */
+
+import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { addToken, type ShareToken } from "./tokens";
+import { syncAllSharedScopes } from "./sync";
+
+let tempHome: string;
+const ORIG_HOME = process.env.HOME;
+
+beforeEach(() => {
+	tempHome = mkdtempSync(join(tmpdir(), "clawdi-mix-"));
+	process.env.HOME = tempHome;
+});
+
+afterEach(() => {
+	rmSync(tempHome, { recursive: true, force: true });
+	process.env.HOME = ORIG_HOME;
+});
+
+describe("syncAllSharedScopes mixed-mode", () => {
+	it("user-interactive mode skips upgraded tokens", async () => {
+		addToken({
+			scope_id: "anon-1",
+			scope_name: "Anon Scope",
+			owner_display: "Alice",
+			owner_handle: "alice-a3b4",
+			token: "tok-anon",
+			redeemed_at: new Date().toISOString(),
+		} satisfies ShareToken);
+		addToken({
+			scope_id: "upgraded-1",
+			scope_name: "Upgraded Scope",
+			owner_display: "Bob",
+			owner_handle: "bob-c5d6",
+			token: "tok-upgraded",
+			redeemed_at: new Date().toISOString(),
+			upgraded_at: new Date().toISOString(),
+		} satisfies ShareToken);
+
+		const fetchCalls: string[] = [];
+		const fakeFetch = mock(async (url: string) => {
+			fetchCalls.push(url);
+			return new Response(JSON.stringify({ skills: [] }), { status: 200 });
+		});
+
+		await syncAllSharedScopes({
+			apiBaseUrl: "http://test",
+			fetchImpl: fakeFetch as unknown as typeof fetch,
+			adapter: {
+				getSkillsRootDir: () => join(tempHome, ".claude/skills"),
+				getSharedSkillPath: (key, handle) =>
+					join(tempHome, ".claude/skills", `${key}__${handle}`),
+			} as any,
+			log: { info: () => {}, warn: () => {} },
+			mode: "user-interactive",
+		});
+
+		// Only the un-upgraded scope was hit.
+		expect(fetchCalls.length).toBe(1);
+		expect(fetchCalls[0]).toContain("/api/share/tok-anon/scope");
+		expect(fetchCalls.find((u) => u.includes("tok-upgraded"))).toBeUndefined();
+	});
+
+	it("env-bound mode returns immediately (no tokens processed)", async () => {
+		addToken({
+			scope_id: "anon-1",
+			scope_name: "Anon",
+			owner_display: "Alice",
+			owner_handle: "alice-a3b4",
+			token: "tok",
+			redeemed_at: new Date().toISOString(),
+		} satisfies ShareToken);
+		const fakeFetch = mock(async () => new Response("{}", { status: 200 }));
+		await syncAllSharedScopes({
+			apiBaseUrl: "http://test",
+			fetchImpl: fakeFetch as unknown as typeof fetch,
+			adapter: {
+				getSkillsRootDir: () => "",
+				getSharedSkillPath: () => "",
+			} as any,
+			log: { info: () => {}, warn: () => {} },
+			mode: "env-bound",
+		});
+		expect(fakeFetch).toHaveBeenCalledTimes(0);
+	});
+
+	it("anonymous mode processes all tokens regardless of upgraded_at", async () => {
+		addToken({
+			scope_id: "x",
+			scope_name: "X",
+			owner_display: "Z",
+			owner_handle: "z-1234",
+			token: "tok-x",
+			redeemed_at: new Date().toISOString(),
+			upgraded_at: new Date().toISOString(),  // stale flag, no auth
+		} satisfies ShareToken);
+		const fakeFetch = mock(async () =>
+			new Response(JSON.stringify({ skills: [] }), { status: 200 }),
+		);
+		await syncAllSharedScopes({
+			apiBaseUrl: "http://test",
+			fetchImpl: fakeFetch as unknown as typeof fetch,
+			adapter: {
+				getSkillsRootDir: () => join(tempHome, ".x"),
+				getSharedSkillPath: (k, h) => join(tempHome, ".x", `${k}__${h}`),
+			} as any,
+			log: { info: () => {}, warn: () => {} },
+			mode: "anonymous",
+		});
+		expect(fakeFetch).toHaveBeenCalledTimes(1);
+	});
+});
+```
+
+Run: `cd packages/cli && bun test src/share/sync.test.ts`
+Expected: 3 PASS.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/cli/src/share/sync.ts packages/cli/src/serve/sync-engine.ts
+git add packages/cli/src/share/sync.ts packages/cli/src/share/sync.test.ts packages/cli/src/serve/sync-engine.ts
 git commit -m "feat(cli): daemon syncs shared scopes from share-tokens.json"
 ```
 
@@ -6066,7 +6256,117 @@ await maybeUpgradeShares({
 });
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Failure-doesn't-mark test**
+
+Create `packages/cli/src/share/upgrade.test.ts`:
+
+```ts
+/**
+ * Pins the spec § 8.3 / round-5 finding #4 contract:
+ *
+ *   - on 200: mark `upgraded_at` so future runs skip this entry
+ *   - on 410: delete the entry entirely (revoked)
+ *   - on any OTHER status / network error: leave entry untouched
+ *     (no false positive `upgraded_at` for a failed attempt)
+ */
+
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { addToken, listTokens, type ShareToken } from "./tokens";
+import { maybeUpgradeShares } from "./upgrade";
+
+let tempHome: string;
+const ORIG_HOME = process.env.HOME;
+
+beforeEach(() => {
+	tempHome = mkdtempSync(join(tmpdir(), "clawdi-upg-"));
+	mkdirSync(join(tempHome, ".clawdi"), { recursive: true });
+	process.env.HOME = tempHome;
+});
+
+afterEach(() => {
+	rmSync(tempHome, { recursive: true, force: true });
+	process.env.HOME = ORIG_HOME;
+});
+
+const seed = (): ShareToken => ({
+	scope_id: "s1",
+	scope_name: "S",
+	owner_display: "A",
+	owner_handle: "a-1234",
+	token: "raw-x",
+	redeemed_at: new Date().toISOString(),
+});
+
+describe("maybeUpgradeShares failure paths", () => {
+	it("200 marks upgraded_at", async () => {
+		addToken(seed());
+		const fetchImpl = mock(
+			async () => new Response(JSON.stringify({ id: "m" }), { status: 200 }),
+		);
+		await maybeUpgradeShares({
+			apiBaseUrl: "http://test",
+			apiKey: "k",
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			prompt: async () => "y",
+		});
+		const [t] = listTokens();
+		expect(t.upgraded_at).toBeTruthy();
+	});
+
+	it("410 deletes the entry", async () => {
+		addToken(seed());
+		const fetchImpl = mock(
+			async () => new Response("gone", { status: 410 }),
+		);
+		await maybeUpgradeShares({
+			apiBaseUrl: "http://test",
+			apiKey: "k",
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			prompt: async () => "y",
+		});
+		expect(listTokens()).toEqual([]);
+	});
+
+	it("500 leaves entry untouched (no false upgraded_at)", async () => {
+		addToken(seed());
+		const fetchImpl = mock(
+			async () => new Response("oops", { status: 500 }),
+		);
+		await maybeUpgradeShares({
+			apiBaseUrl: "http://test",
+			apiKey: "k",
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			prompt: async () => "y",
+		});
+		const [t] = listTokens();
+		expect(t.upgraded_at).toBeFalsy();
+	});
+
+	it("network error leaves entry untouched", async () => {
+		addToken(seed());
+		const fetchImpl = mock(async () => {
+			throw new Error("net");
+		});
+		await maybeUpgradeShares({
+			apiBaseUrl: "http://test",
+			apiKey: "k",
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			prompt: async () => "y",
+		});
+		const [t] = listTokens();
+		expect(t.upgraded_at).toBeFalsy();
+	});
+});
+```
+
+Run: `cd packages/cli && bun test src/share/upgrade.test.ts`
+Expected: 4 PASS.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add -u
@@ -6970,22 +7270,27 @@ import { Cloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function ScopeSharedBadge({
+	ownerDisplay,
 	ownerHandle,
 	className,
 }: {
+	ownerDisplay: string;
 	ownerHandle: string;
 	className?: string;
 }) {
+	// Format per spec § 17.4: "{owner_display} (@{owner_handle})".
+	// Both surfaces (CLI table, web badge) render the same string
+	// so users see one consistent identity across the product.
 	return (
 		<span
 			className={cn(
 				"inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary",
 				className,
 			)}
-			title={`Shared from @${ownerHandle}`}
+			title={`Shared by ${ownerDisplay} (@${ownerHandle})`}
 		>
 			<Cloud className="size-2.5" />
-			shared from @{ownerHandle}
+			{ownerDisplay} (@{ownerHandle})
 		</span>
 	);
 }
@@ -6993,7 +7298,7 @@ export function ScopeSharedBadge({
 
 - [ ] **Step 3: Tag rows**
 
-In the skill list page (and vault list page), when the row's `scope_id` belongs to a shared scope, render `<ScopeSharedBadge ownerHandle={...} />` next to the row title. Cross-reference with `useMyScopes().shared` to know which scope_ids are shared and their owner_handle.
+In the skill list page (and vault list page), when the row's `scope_id` belongs to a shared scope, render `<ScopeSharedBadge ownerDisplay={...} ownerHandle={...} />` next to the row title. Cross-reference with `useMyScopes().shared` to know which scope_ids are shared and pull both `owner_display` and `owner_handle` from the same entry.
 
 Also: in shared-scope mode, hide the "Edit"/"Delete"/"Push" action buttons on each row. Add a tooltip on the disabled action: "Read-only — shared by @owner".
 
