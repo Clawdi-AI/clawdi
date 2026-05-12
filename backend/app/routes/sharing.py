@@ -99,17 +99,12 @@ async def create_share_link(
     """
     await _assert_scope_owner(db, auth, scope_id)
 
-    if not auth.user.name:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "error": "display_name_required",
-                "message": (
-                    "Set a display name on your profile before sharing a "
-                    "scope. The name is shown to anyone you share with."
-                ),
-            },
-        )
+    # resolve_owner_handle raises ValueError on BOTH the
+    # "name unset" and the "name kebabs to empty" cases, so a
+    # single try/except covers both. Pre-fix the route had an
+    # explicit `if not auth.user.name` check before the try
+    # block, which raised the same 409 display_name_required —
+    # one gate is enough.
     try:
         owner_handle = resolve_owner_handle(auth.user)
     except ValueError as err:
@@ -117,7 +112,10 @@ async def create_share_link(
             status.HTTP_409_CONFLICT,
             {
                 "error": "display_name_required",
-                "message": ("Your display name must contain at least one alphanumeric character."),
+                "message": (
+                    "Set a display name on your profile (at least one alphanumeric "
+                    "character) before sharing — recipients see the name."
+                ),
             },
         ) from err
 
@@ -234,18 +232,10 @@ async def revoke_share_link(
 
 def _owner_view(auth: AuthContext) -> tuple[str, str]:
     """Helper: resolve (display, handle) for the authed owner, used
-    by invitation response shaping. Raises 409 if the owner can't
-    resolve a handle — same display_name_required gate as create."""
-    if not auth.user.name:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "error": "display_name_required",
-                "message": (
-                    "Set a display name on your profile before sharing. Recipients see the name."
-                ),
-            },
-        )
+    by invitation response shaping. Raises 409 display_name_required
+    if the owner has no resolvable handle — same gate create_share_link
+    uses; resolve_owner_handle catches both "name unset" and "name
+    kebabs to empty" so one try/except is enough."""
     try:
         handle = resolve_owner_handle(auth.user)
     except ValueError as err:
@@ -253,7 +243,10 @@ def _owner_view(auth: AuthContext) -> tuple[str, str]:
             status.HTTP_409_CONFLICT,
             {
                 "error": "display_name_required",
-                "message": ("Your display name must contain at least one alphanumeric character."),
+                "message": (
+                    "Set a display name on your profile (at least one alphanumeric "
+                    "character) before sharing — recipients see the name."
+                ),
             },
         ) from err
     return safe_owner_display(auth.user), handle
