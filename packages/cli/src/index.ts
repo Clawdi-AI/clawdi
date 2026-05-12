@@ -540,6 +540,36 @@ scopeCmd
 		await scopeInvitesCommand(scope, opts);
 	});
 
+scopeCmd
+	.command("mounts <parent>")
+	.description("List ScopeMount edges composed into a parent scope")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (parent, opts) => {
+		const { scopeMountsCommand } = await import("./commands/scope-mount.js");
+		await scopeMountsCommand(parent, opts);
+	});
+
+scopeCmd
+	.command("mount <source>")
+	.description(
+		"Mount a scope you have membership in into a parent scope you own. " +
+			"For share URLs use `inbox accept` instead — that joins AND mounts in one step.",
+	)
+	.requiredOption("-i, --into <parent>", "Parent scope (UUID, slug, or name)")
+	.option("-a, --alias <name>", "Override the mount alias (default: @<owner>/<source-slug>)")
+	.action(async (source, opts) => {
+		const { scopeMountCommand } = await import("./commands/scope-mount.js");
+		await scopeMountCommand(source, opts);
+	});
+
+scopeCmd
+	.command("unmount <parent> <alias-or-id>")
+	.description("Drop a mount edge. Membership in the source scope is preserved.")
+	.action(async (parent, aliasOrId) => {
+		const { scopeUnmountCommand } = await import("./commands/scope-mount.js");
+		await scopeUnmountCommand(parent, aliasOrId);
+	});
+
 // ─────────────────────────────────────────────────────────────
 // inbox — incoming shares awaiting my action.
 // Replaces the v1 `share accept|list|remove` verbs:
