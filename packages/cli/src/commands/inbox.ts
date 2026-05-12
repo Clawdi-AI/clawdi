@@ -72,7 +72,6 @@ interface AcceptOpts {
 	into?: string;
 	alias?: string;
 	noMount?: boolean;
-	allowVaultConflicts?: boolean;
 	invite?: string;
 	url?: string;
 }

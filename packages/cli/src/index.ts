@@ -595,10 +595,14 @@ inboxCmd
 	.option("-i, --into <scope>", "Mount target (UUID, slug, or name). Default: auto.")
 	.option("-a, --alias <name>", "Override the mount alias")
 	.option("--no-mount", "Capability only — skip the mount edge")
-	.option(
-		"--allow-vault-conflicts",
-		"Accept the warning when source's vault keys collide with parent",
-	)
+	// `--allow-vault-conflicts` was reserved for the mount-time vault-key
+	// collision detection feature called out in the spec (sharee accepting
+	// a scope whose vault has a key that already exists in their parent
+	// scope's vault → 409 vault_conflicts_blocked, flag re-enables accept).
+	// The backend detection isn't shipped yet, so we don't expose a flag
+	// that would silently no-op and mislead the caller into thinking the
+	// protection is in place. Restore the flag together with the backend
+	// detection in a future change.
 	.addHelpText(
 		"after",
 		`
