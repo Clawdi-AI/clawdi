@@ -77,9 +77,7 @@ async def _backfill_chunk(
     refs_updated = 0
     skipped = 0
 
-    rows = (
-        await db.execute(select(Session).where(Session.id.in_(session_ids)))
-    ).scalars().all()
+    rows = (await db.execute(select(Session).where(Session.id.in_(session_ids)))).scalars().all()
 
     for session in rows:
         if not session.file_key:
@@ -176,10 +174,14 @@ async def backfill_all(
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     async with SessionLocal() as db:
         user_ids = (
-            await db.execute(
-                select(Session.user_id).where(Session.file_key.is_not(None)).distinct()
+            (
+                await db.execute(
+                    select(Session.user_id).where(Session.file_key.is_not(None)).distinct()
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     log.info("backfilling %d users", len(user_ids))
     for uid in user_ids:
         await backfill_user(uid, force=force, dry_run=dry_run)

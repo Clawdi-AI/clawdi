@@ -109,9 +109,7 @@ async def load_session_messages(
         parsed = json.loads(data)
     except json.JSONDecodeError as e:
         log.exception("session %s content is not valid JSON", session.id)
-        raise SessionContentInvalid(
-            f"session {session.id} content is not valid JSON"
-        ) from e
+        raise SessionContentInvalid(f"session {session.id} content is not valid JSON") from e
 
     if not isinstance(parsed, list):
         log.error(
@@ -119,9 +117,7 @@ async def load_session_messages(
             session.id,
             type(parsed).__name__,
         )
-        raise SessionContentInvalid(
-            f"session {session.id} content is not a JSON array"
-        )
+        raise SessionContentInvalid(f"session {session.id} content is not a JSON array")
 
     _cache_put(cache_key, parsed)
     return parsed

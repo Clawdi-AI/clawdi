@@ -119,9 +119,7 @@ async def test_upload_populates_related_refs(client: httpx.AsyncClient):
         {"role": "user", "content": "what else?"},
         {"role": "assistant", "content": "all done"},
     ]
-    sid = await _push_and_upload(
-        client, local_session_id="sess-refs-real", messages=messages
-    )
+    sid = await _push_and_upload(client, local_session_id="sess-refs-real", messages=messages)
 
     detail = (await client.get(f"/api/sessions/{sid}")).json()
     assert detail["related_refs"]["prs"] == ["foo/bar#7"]
@@ -137,8 +135,6 @@ async def test_upload_with_no_refs_leaves_related_refs_null(client: httpx.AsyncC
         {"role": "user", "content": "what's the weather?"},
         {"role": "assistant", "content": "sunny"},
     ]
-    sid = await _push_and_upload(
-        client, local_session_id="sess-no-refs", messages=messages
-    )
+    sid = await _push_and_upload(client, local_session_id="sess-no-refs", messages=messages)
     detail = (await client.get(f"/api/sessions/{sid}")).json()
     assert detail["related_refs"] is None

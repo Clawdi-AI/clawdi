@@ -73,12 +73,8 @@ async def _push_session(
             },
         )
 
-    listing = (
-        await client.get(f"/api/sessions?q={local_session_id}")
-    ).json()
-    return next(
-        s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id
-    )
+    listing = (await client.get(f"/api/sessions?q={local_session_id}")).json()
+    return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
 
 
 @pytest.mark.asyncio
@@ -90,9 +86,7 @@ async def test_trgm_search_handles_typos(client: httpx.AsyncClient):
     await _push_session(
         client, env_id, local_session_id="auth-1", summary="user authentication migration"
     )
-    await _push_session(
-        client, env_id, local_session_id="dns-1", summary="DNS cache poisoning"
-    )
+    await _push_session(client, env_id, local_session_id="dns-1", summary="DNS cache poisoning")
 
     # Typo: drop the 'u' in "authentication".
     r = await client.get("/api/sessions?q=athentication")
@@ -157,9 +151,7 @@ async def test_filter_model_and_tag(client: httpx.AsyncClient):
     assert ids == {"m1", "m3"}
 
     # Filter by tag — AND semantics: must include BOTH tags.
-    items = (
-        await client.get("/api/sessions?tag=security&tag=audit")
-    ).json()["items"]
+    items = (await client.get("/api/sessions?tag=security&tag=audit")).json()["items"]
     ids = {s["local_session_id"] for s in items}
     assert ids == {"m1"}
 
@@ -204,5 +196,3 @@ async def test_filter_min_messages_and_has_pr(client: httpx.AsyncClient):
     items = (await client.get("/api/sessions?has_pr=false")).json()["items"]
     assert "small" in {s["local_session_id"] for s in items}
     assert "big-pr" not in {s["local_session_id"] for s in items}
-
-

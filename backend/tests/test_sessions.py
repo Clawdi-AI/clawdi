@@ -1216,7 +1216,9 @@ async def test_last_activity_uses_client_supplied_when_sane(client: httpx.AsyncC
 
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-active")
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == last_msg.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(
+        microsecond=0
+    ) == last_msg.replace(microsecond=0)
 
 
 @pytest.mark.asyncio
@@ -1252,7 +1254,9 @@ async def test_last_activity_falls_back_to_ended_at_when_missing(
 
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-no-msgts")
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(
+        microsecond=0
+    )
 
 
 @pytest.mark.asyncio
@@ -1322,9 +1326,7 @@ async def test_last_activity_clamps_when_started_at_also_future(client: httpx.As
     assert r.status_code == 200, r.text
 
     listing = (await client.get("/api/sessions")).json()
-    item = next(
-        s for s in listing["items"] if s["local_session_id"] == "sess-future-everything"
-    )
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-future-everything")
     persisted = datetime.fromisoformat(item["last_activity_at"])
     assert persisted < datetime.now(UTC) + timedelta(minutes=10), (
         "future timestamps in EVERY field must still clamp"
@@ -1417,7 +1419,9 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-mono")
     # Should still be the FRESHER value despite the stale repush.
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(
+        microsecond=0
+    )
 
 
 @pytest.mark.asyncio
@@ -1503,8 +1507,7 @@ async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
     p1_ids = {s["local_session_id"] for s in p1["items"]}
     p2_ids = {s["local_session_id"] for s in p2["items"]}
     assert len(p1_ids & p2_ids) == 0, (
-        f"pages overlap: {p1_ids & p2_ids} appears in both — "
-        "tiebreaker missing or unstable"
+        f"pages overlap: {p1_ids & p2_ids} appears in both — tiebreaker missing or unstable"
     )
 
 
