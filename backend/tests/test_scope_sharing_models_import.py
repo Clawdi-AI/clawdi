@@ -20,3 +20,18 @@ def test_scope_membership_model_importable():
         "joined_at",
         "resolved_owner_handle",
     } <= cols
+
+
+def test_scope_invitation_model_importable():
+    from app.models.scope_invitation import ScopeInvitation
+
+    assert ScopeInvitation.__tablename__ == "scope_invitations"
+    cols = {c.name for c in ScopeInvitation.__table__.columns}
+    assert {
+        "id",
+        "scope_id",
+        "invitee_user_id",
+        "invitee_email",
+        "invited_by",
+        "created_at",
+    } <= cols
