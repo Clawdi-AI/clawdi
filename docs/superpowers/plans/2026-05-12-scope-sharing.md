@@ -4,22 +4,20 @@
 > (`- [ ]`) syntax for tracking. Each phase produces a separately-reviewable,
 > green-on-tests commit.
 
-**Goal:** Layer a `ScopeMount` composition primitive on top of the
-shipped v1 `ScopeMembership` capability primitive. After v2, `accept`
-auto-mounts shared scopes into the user's owned scopes; the "Shared
-with me" UX section disappears in favor of nested mount rendering.
+**Goal:** Ship the two-layer scope-sharing model. `ScopeMembership` is
+the capability primitive (the access ACL); `ScopeMount` is the
+composition primitive (where shared content appears in the viewer's
+workspace). `inbox accept` writes both rows atomically.
 
-**Architecture:** Two-table model — `ScopeMembership` (v1, unchanged,
-the capability layer) + `ScopeMount` (NEW, the composition layer).
-Mount edges are config on the parent scope; resolution always re-checks
-viewer membership in the source (transitive permission expansion is
-structurally impossible).
+**Architecture:** Two-table model. Mount edges are config on the parent
+scope; resolution always re-checks viewer membership in the source
+(transitive permission expansion is structurally impossible).
 
-**Tech Stack:** Same as v1 — FastAPI + SQLAlchemy 2.0 async + alembic
-+ asyncpg backend; TypeScript + Bun + Commander CLI; Next.js 15 +
-TanStack Query + shadcn web.
+**Tech Stack:** FastAPI + SQLAlchemy 2.0 async + alembic + asyncpg
+backend; TypeScript + Bun + Commander CLI; Next.js 15 + TanStack
+Query + shadcn web.
 
-**Reference spec:** `docs/superpowers/specs/2026-05-11-scope-mount-spec.md`
+**Reference spec:** `docs/superpowers/specs/2026-05-11-scope-sharing-spec.md`
 
 ---
 
@@ -42,7 +40,7 @@ viewer's composed workspace". Mount edges are configuration on the
 PARENT (X), not permission grants on the SOURCE (Y) — the resolver
 always re-checks viewer membership against the source.
 
-Spec § "Data model" — 2026-05-11-scope-mount-spec.md.
+Spec § "Data model" — 2026-05-11-scope-sharing-spec.md.
 """
 
 from __future__ import annotations
@@ -127,9 +125,9 @@ Revision ID: <auto>
 Revises: b8e4d1c6f23a
 Create Date: 2026-05-12
 
-DDL-only migration for the v2 composition primitive. Adds
-scope_mounts table; no row-level migrations of existing v1 data
-(that lives in a separate phase MG.1 — a one-time SQL fold).
+DDL-only migration. Adds the scope_mounts composition table on top
+of the existing membership tables. No row-level data migrations needed
+on this branch.
 """
 
 from alembic import op
@@ -165,7 +163,12 @@ def upgrade() -> None:
             sa.ForeignKey("users.id"),
             nullable=False,
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -301,9 +304,9 @@ requires:
   1. Caller owns the parent scope (write-side privilege).
   2. Caller has independent membership in the source scope (or
      owns it). This re-checks the viewer's read capability so a
-     mount can't bypass v1's permission model.
+     mount can't bypass the capability layer.
 
-Spec: docs/superpowers/specs/2026-05-11-scope-mount-spec.md § "API surface"
+Spec: docs/superpowers/specs/2026-05-11-scope-sharing-spec.md § "API surface"
 """
 
 from __future__ import annotations
@@ -520,8 +523,8 @@ async def create_mount(
     """Mount a source scope into a parent scope.
 
     Auth: caller must own parent AND have viewer-or-owner membership
-    in source (re-checked via scope_ids_visible_to to honor v1's
-    capability layer).
+    in source (re-checked via scope_ids_visible_to — the capability
+    layer remains authoritative).
     """
     await validate_scope_for_caller(db, auth, parent_scope_id)
     try:
@@ -684,7 +687,7 @@ async def test_upgrade_auto_mounts_into_default_scope(
 ):
     # ... create the share link
     # ... POST /upgrade
-    # ... assert membership row created (v1 behavior preserved)
+    # ... assert membership row created (capability layer)
     # ... assert ScopeMount row created with:
     #     parent_scope_id = user's default-write scope (= seed_user's Personal)
     #     source_scope_id = the shared scope
@@ -705,21 +708,92 @@ default_parent = await resolve_default_write_scope(db, auth)
 src = (await db.execute(select(Scope).where(Scope.id == ctx.scope_id))).scalar_one()
 candidate_alias = f"@{link.resolved_owner_handle}/{src.slug}"
 
-try:
-    mount = ScopeMount(
-        parent_scope_id=default_parent,
-        source_scope_id=ctx.scope_id,
-        alias=candidate_alias,
-        mode="live",
-        created_by=auth.user_id,
-        created_at=datetime.now(UTC),
-    )
-    db.add(mount)
-    await db.flush()
-except IntegrityError:
-    await db.rollback()
-    # ... reattach membership and retry without mount (or with a
-    # disambiguated alias). Detail in spec § "Migration".
+async def _ensure_mount(
+    db: AsyncSession,
+    *,
+    parent_id: UUID,
+    source_id: UUID,
+    base_alias: str,
+    created_by: UUID,
+) -> ScopeMount | None:
+    """Create a mount row, idempotent on (parent, source).
+
+    Conflict rules (deterministic so retries land on a stable alias):
+      * (parent, source) already mounted → return existing row, no change.
+      * Natural alias (no suffix) tried FIRST. Most accepts land here
+        with a readable `@alice/engineering`-shape alias.
+      * (parent, alias) collision (a DIFFERENT source already uses
+        that alias on this parent) → suffix-disambiguate:
+        alias-2, alias-3, ... up to 9.
+      * After 9 attempts → raise (caller surfaces as 409 alias_collision,
+        owner picks an alias manually via `--alias` or
+        `scope mount --alias`).
+    """
+    # Check (parent, source) — idempotent fast path.
+    existing = (
+        await db.execute(
+            select(ScopeMount).where(
+                ScopeMount.parent_scope_id == parent_id,
+                ScopeMount.source_scope_id == source_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    for suffix in (None, 2, 3, 4, 5, 6, 7, 8, 9):
+        candidate = base_alias if suffix is None else f"{base_alias}-{suffix}"
+        mount = ScopeMount(
+            parent_scope_id=parent_id,
+            source_scope_id=source_id,
+            alias=candidate,
+            mode="live",
+            created_by=created_by,
+            created_at=datetime.now(UTC),
+        )
+        db.add(mount)
+        try:
+            await db.flush()
+            return mount
+        except IntegrityError:
+            await db.rollback()
+            continue
+    raise RuntimeError(f"could not resolve alias for {base_alias} after 9 tries")
+
+
+# In the upgrade() handler, after the membership insert, before the commit:
+parent_id = body.parent_scope_id  # explicit from caller, or None
+if parent_id is None:
+    owned = await _list_owned_scopes(db, auth)
+    if len(owned) == 1:
+        parent_id = owned[0].id
+    else:
+        # 2+ owned scopes — refuse to guess. Membership still committed
+        # (capability acquired); caller re-POSTs with parent_scope_id
+        # OR calls /api/scopes/{parent}/mounts later.
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "mount_target_ambiguous",
+                "message": (
+                    "You have multiple owned scopes. Re-run with "
+                    "--into <scope> or use `clawdi scope mount` after."
+                ),
+                "owned_scopes": [{"id": str(s.id), "slug": s.slug} for s in owned],
+                "membership_id": str(membership.id),
+            },
+        )
+
+src = (await db.execute(select(Scope).where(Scope.id == ctx.scope_id))).scalar_one()
+base_alias = f"@{link.resolved_owner_handle}/{src.slug}"
+await _ensure_mount(
+    db,
+    parent_id=parent_id,
+    source_id=ctx.scope_id,
+    base_alias=base_alias,
+    created_by=auth.user_id,
+)
 ```
 
 - [ ] **Step 3:** Verify the test passes
@@ -749,63 +823,86 @@ git commit -m "feat(mount): /upgrade auto-mounts into default-write scope"
 
 ## Phase MD — Read-path resolution walks mounts
 
-### Task MD.1 — `resolve_visible_scopes_with_mounts` helper
+### Task MD.1 — `resolve_for_parent` helper (parent-scoped resolution)
 
 **Files:**
 - Modify: `backend/app/core/scope.py`
 - Create: `backend/tests/test_scope_visibility_mounts.py`
 
-- [ ] **Step 1:** Failing test — composed-scope read sees mounted content
+The spec describes TWO resolution flavors:
+- **Unscoped read** (no `?scope_id=…`): returns
+  `scope_ids_visible_to(auth)` directly — same as today.
+- **Parent-scoped read** (`?scope_id=<parent>`): returns parent
+  plus any mounts on parent whose source the viewer ALSO sees
+  independently. This task adds the second flavor.
+
+- [ ] **Step 1:** Failing test — parent-scoped read includes mounted sources
 
 ```python
 # tests/test_scope_visibility_mounts.py
 @pytest.mark.asyncio
-async def test_resolved_visibility_includes_mounted_sources(
+async def test_parent_scoped_read_includes_mounted_sources(
     db_session, seed_user, seed_scope
 ):
-    """Bob's Personal scope mounts Alice's Engineering. Resolved
-    visibility for Bob includes BOTH scope IDs."""
-    # ... seed alice + her scope + Bob's membership + Bob's mount
-    # ... call resolve_visible_scopes_with_mounts(db, auth)
-    # ... assert alice's scope in the resolved set
+    """Bob owns Personal; he mounts Alice's Engineering into it.
+    resolve_for_parent(seed_scope.id, bob) returns {personal, engineering}."""
+    # ... seed alice + her scope + Bob's membership + Bob's mount edge
+    # ... auth = Bob's
+    # ... call resolve_for_parent(db, auth, seed_scope.id)
+    # ... assert {seed_scope.id, alice_eng.id} == result
+
+
+@pytest.mark.asyncio
+async def test_parent_scoped_read_filters_mount_when_viewer_lacks_source(
+    db_session, seed_user, seed_scope
+):
+    """Bob owns Personal; he had Alice's Engineering mounted, but
+    later left her scope (membership dropped). resolve_for_parent
+    returns {personal} only — alice_eng silently filtered out."""
+    # ... membership row absent → viewer's `visible` does NOT include alice_eng
+    # ... mount row still exists on personal pointing at alice_eng
+    # ... resolve_for_parent skips it
 ```
 
 - [ ] **Step 2:** Implement the helper
 
 ```python
 # Append to backend/app/core/scope.py
-async def resolve_visible_scopes_with_mounts(
-    db: AsyncSession, auth: AuthContext
-) -> list[UUID]:
-    """Like scope_ids_visible_to, but also unfolds shallow mount
-    edges where the viewer holds independent membership in the
-    source.
+async def resolve_for_parent(
+    db: AsyncSession, auth: AuthContext, parent_scope_id: UUID
+) -> set[UUID]:
+    """Return the set of scope IDs whose content composes 'in' the
+    given parent for this viewer:
+      - parent itself (if viewer can see it)
+      - each ScopeMount source pointing at parent, gated by viewer
+        membership in the source
 
-    Critical safety property: a mount edge does NOT grant access.
-    It only references content the viewer is already allowed to see.
+    The capability re-check is the safety invariant. A mount edge
+    that points at a scope the viewer cannot independently see is
+    silently filtered out — transitive permission expansion is
+    impossible by construction.
     """
     from app.models.scope_mount import ScopeMount
 
-    base = set(await scope_ids_visible_to(db, auth))
-    if not base:
-        return []
-    # Walk mount edges where parent IS in base AND source IS in base.
-    rows = (
+    visible = set(await scope_ids_visible_to(db, auth))
+    if parent_scope_id not in visible:
+        return set()  # 404 equivalent at the caller layer
+
+    composed: set[UUID] = {parent_scope_id}
+    mount_rows = (
         await db.execute(
             select(ScopeMount.source_scope_id).where(
-                ScopeMount.parent_scope_id.in_(base),
-                ScopeMount.source_scope_id.in_(base),
+                ScopeMount.parent_scope_id == parent_scope_id,
             )
         )
     ).scalars().all()
-    # Sources already in base (since the safety check requires
-    # independent membership). Return base + add any sources that
-    # weren't already there (cannot happen given the IN clause, but
-    # the loop keeps the semantics obvious and v3-friendly).
-    return list(base)
+    for source_id in mount_rows:
+        if source_id in visible:
+            composed.add(source_id)
+    return composed
 ```
 
-- [ ] **Step 3:** Verify the test passes
+- [ ] **Step 3:** Verify tests pass
 
 - [ ] **Step 4:** Commit
 
@@ -855,96 +952,207 @@ async def test_vault_precedence_oldest_mount_wins(...):
 
 ---
 
-## Phase ME — CLI: `scope mount/unmount/mounts`, accept UX, scope-list tree
+## Phase ME1 — Minimal CLI demo surface
 
-### Task ME.1 — New `clawdi scope mount/unmount/mounts` commands
+The smallest CLI delta needed to run the three-persona walkthrough
+end-to-end. Validates product semantics (mount target selection,
+alias readability, vault conflict warning, URL parsing) BEFORE we
+build the web on top.
+
+### Task ME1.1 — `clawdi inbox accept <id-or-url>` (the unified accept)
+
+**Files:**
+- Create: `packages/cli/src/commands/inbox.ts`
+- Modify: `packages/cli/src/index.ts`
+- Modify: `packages/cli/src/commands/share-accept.ts` (logic moves;
+  the file gets deleted in ME3 once nothing imports it)
+
+URL normalization (matches spec § "inbox accept polymorphism"):
+strip wrapping `<...>`, surrounding quotes, trailing `,.!;:`. Match
+against:
+- 36-char UUID → invitation accept (`/api/me/invitations/{id}/accept`)
+- `http(s)://.../share/<43-char-token>` → URL redeem (`/api/share/{token}/upgrade`)
+- 43-char URL-safe base64 → raw-token redeem (same endpoint, just no host)
+- Else: exit 1 with usage hint.
+
+Flags: `--into <parent>`, `--alias <name>`, `--no-mount`, `--invite`,
+`--url`, `--allow-vault-conflicts`. The server's `409
+mount_target_ambiguous` surfaces as an interactive picker (TTY) or a
+non-zero exit + suggestion (CI).
+
+### Task ME1.2 — `clawdi share <scope>` (the unified publish)
+
+**Files:**
+- Modify: `packages/cli/src/commands/scope-share.ts` → `share.ts`
+- Modify: `packages/cli/src/index.ts`
+
+`<scope>` with no flags or `--label X` → generate URL.
+`<scope> --to <email>` → email invitation.
+URL printed to stdout, confirmation to stderr — so
+`clawdi share my-scope | pbcopy` pipes cleanly.
+
+### Task ME1.3 — `clawdi scope list` tree rendering
+
+**Files:**
+- Modify: `packages/cli/src/commands/scope-list.ts`
+
+Render owned scopes with nested mount children (alias + content
+counts). No "Shared with me" section. Output a static tree (no
+interactive folding) so it's both terminal-friendly and pipe-safe.
+
+### Task ME1.4 — `clawdi vault resolve <key> [--debug]`
+
+**Files:**
+- Create: `packages/cli/src/commands/vault-resolve.ts`
+- Modify: `backend/app/routes/vault.py` — return `precedence: [...]`
+  in the response when `?debug=true`
+
+Backend's `precedence` array is the walk order it tried, each entry
+`{scope_id, alias, hit: bool, reason: "match"|"not-found"|"skipped"}`.
+CLI renders the chain only under `--debug`.
+
+---
+
+## Phase ME2 — Mid-pipeline live demo capture
+
+Validates product feel BEFORE the web work piles on. If anything in
+ME1 feels off in real use, change it now while only the CLI is
+affected.
+
+### Task ME2.1 — Three-persona demo script
+
+**Files:**
+- Create: `/tmp/run-mount-demo.sh` (not checked in; the seed +
+  capture flow is the artifact)
+- Capture output to `docs/scenarios/scope-sharing-demo.md` (the v1
+  filename can be reused — there's no v1 doc to overwrite anymore)
+
+Must demonstrate:
+- Alice creates a scope (via `clawdi setup --agent claude_code` or
+  seed-script) and adds skill + vault content with `--scope`
+- Alice `share <scope> --label "team"` → URL on stdout
+- Alice `share <scope> --list` → owner inspection surface
+  (links + pending invites + members + redemption count)
+- Bob (anonymous laptop): `inbox accept <pasted-URL-with-trailing-period>`
+  — URL parsing strips the period, accepts, stores token
+- Bob `auth login` → ideally pending tokens auto-upgrade (per ME1.5
+  below); otherwise re-run `inbox accept`
+- `scope list` on Bob — nested mount tree shows `@alice/<slug>`
+- Vault conflict scenario: pre-set OPENAI_KEY on Bob's Personal, then
+  accept → warning fires
+- Carol: email-invitation flow, same accept story
+
+If something's awkward, log it as a "discovered gap" in this task
+and either patch ME1 or open a follow-up before continuing to ME3.
+
+### Task ME1.5 — `clawdi auth login` auto-upgrades pending tokens
+
+**Files:**
+- Modify: `packages/cli/src/commands/auth.ts` (post-login hook)
+
+After a successful `auth login`, scan `~/.clawdi/share-tokens.json`
+for entries without `upgraded_at`. For each, POST `/upgrade` with
+the user's new bearer. On success, set `upgraded_at` and print
+"Auto-upgraded N pending shares → N mounts." On failure (410
+revoked, etc.), keep the entry and surface the reason.
+
+(Counted as part of ME1 so the demo in ME2 includes the smooth
+"login → it just works" path.)
+
+---
+
+## Phase ME3 — Full CLI reorg + cleanup
+
+Now that the product feel is validated, finish the consolidation
+codex called out.
+
+### Task ME3.1 — `clawdi scope mount/unmount/mounts` commands
 
 **Files:**
 - Create: `packages/cli/src/commands/scope-mount.ts`
 - Modify: `packages/cli/src/index.ts`
 
-### Task ME.2 — `share accept` and `scope invites --accept` outputs the new mount story
+Source-arg accepts UUID / slug / human name. Refuses share URLs.
+403 if caller lacks membership in the source.
+
+### Task ME3.2 — Consolidate share into one command file
 
 **Files:**
-- Modify: `packages/cli/src/commands/share-accept.ts`
-- Modify: `packages/cli/src/commands/scope-invites.ts`
+- Delete: `packages/cli/src/commands/scope-share-links.ts` (folded into share.ts)
+- Delete: `packages/cli/src/commands/scope-invite.ts` (folded into share.ts)
+- Modify: `packages/cli/src/commands/share.ts` — `--list`, `--revoke`,
+  `--to`, `--label` all wired through one entry point
 
-(Old output: "Joined as viewer — your dashboard now lists this scope".
-New output: "Mounted '<src>' into your <parent> as @<handle>/<slug>".)
-
-### Task ME.3 — `scope list` renders nested mount tree, drops "Shared with me"
+### Task ME3.3 — Consolidate inbox + retire legacy files
 
 **Files:**
-- Modify: `packages/cli/src/commands/scope-list.ts`
+- Delete: `packages/cli/src/commands/scope-invites.ts` (folded into inbox.ts)
+- Delete: `packages/cli/src/commands/share-list.ts` (mount-state lives in `scope list`)
+- Rename: `packages/cli/src/commands/share-remove.ts` → `inbox-forget.ts`
+- Modify: `packages/cli/src/index.ts` — drop old command bindings
+
+After this task, `grep -r 'scope invites\|scope share-links\|share accept\|share list\|share remove' packages/cli/src/` returns zero hits in code (excluding deprecated test fixtures).
 
 ---
 
-## Phase MF — Web: mount inbox toast + per-scope mount panel + drop "Shared with me"
+## Phase MF — Web reorg around three nouns
 
-### Task MF.1 — Modify InvitationsInbox accept handler
+### Task MF.1 — Rename `InvitationsInbox` component → `Inbox`
 
 **Files:**
-- Modify: `apps/web/src/components/sharing/invitations-inbox.tsx`
+- Rename: `apps/web/src/components/sharing/invitations-inbox.tsx`
+  → `apps/web/src/components/sharing/inbox.tsx`
+- Modify: import sites
 
 (Toast renders "Mounted into your Personal scope as @alice/engineering"
-instead of "Joined as viewer — shared skills now appear in your
-dashboard".)
+on accept; same shape as CLI's `inbox accept`.)
 
-### Task MF.2 — Per-scope mount panel component
+### Task MF.2 — Per-scope mount panel
 
 **Files:**
 - Create: `apps/web/src/components/sharing/scope-mounts-panel.tsx`
 - Wire into the per-scope detail page
 
-### Task MF.3 — Drop "Shared with me" rendering from `/skills`
+### Task MF.3 — Drop "Shared with me" section from `/skills`
 
 **Files:**
 - Modify: `apps/web/src/app/(dashboard)/skills/page.tsx`
 
-(The `<InvitationsInbox />` banner stays — pending invitations are
-still a thing. What goes is any rendering of accepted-but-not-mounted
-"shared scopes" as a separate section. Mounts replace that.)
+The Inbox banner stays (pending invitations). What gets removed is any
+rendering of "accepted but not yet mounted" content — mounts replace
+that. Inbox shows pending only.
 
 ---
 
-## Phase MG — Migration script for v1 sharees + demo doc rewrite
+## Phase MG — Demo doc + full test sweep
 
-### Task MG.1 — Data-migration SQL: backfill mounts for existing memberships
+### Task MG.1 — Capture v2 demo
 
-**Files:**
-- Create: `backend/alembic/versions/<new-rev>_backfill_mounts.py`
+Three-persona run (Alice owner, Bob anonymous→upgrade, Carol invitation
+accept), output captured to `docs/scenarios/scope-sharing-demo.md`.
+Must show:
+- `clawdi share <scope>` printing URL
+- `clawdi inbox accept <url>` mounting under default-write scope
+- `clawdi scope list` nested tree
+- `clawdi vault resolve <key> --debug` precedence chain
+- Skill folder appearing on disk at the adapter's shared-skill path
 
-Migration `op.execute(...)` runs a SQL that inserts a ScopeMount for
-each existing ScopeMembership where the user has a default-write
-scope. Conflict on alias gets numeric suffix. Spec § "Migration".
-
-### Task MG.2 — Run an integration test: every existing v1-shipped membership ends up with a mount
-
-**Files:**
-- Create: `backend/tests/test_mount_backfill.py`
-
-### Task MG.3 — Rewrite `docs/scenarios/scope-sharing-demo.md`
-
-Move the current v1 demo to `docs/scenarios/archive/scope-sharing-demo-v1.md`.
-
-Write a new top-level demo doc that captures fresh CLI output post-v2:
-- `share accept` says "Mounted into your Personal scope as @alice/engineering"
-- `scope list` shows nested mount tree
-- `vault resolve --debug` shows precedence chain
-- The "What we did NOT build (v2 territory)" section in v1 demo gets
-  inverted to "What v3 territory we deliberately did NOT build" —
-  marketplace, editor role, recursive mount-of-mount.
-
-### Task MG.4 — Final push, full test suite + demo capture
+### Task MG.2 — Full test suite
 
 ```bash
 # Should be green:
 cd backend && uv run pytest tests/
 cd packages/cli && bun test
-# Web should build cleanly
 bun run --filter web build
-# Live demo against running backend
-/tmp/run-demo-v2.sh
+```
+
+Counts to record: ~225+ backend tests + ~280+ CLI tests + new mount-
+specific tests added across phases MA-MF.
+
+### Task MG.3 — Final push
+
+```bash
+git push  # branch already feat/scope-sharing; force-push not needed
 ```
 
 ---
@@ -968,19 +1176,17 @@ bun run --filter web build
    where a mount's source_scope is unknown to the local cache. Always
    fall back to "<source-id> (no metadata)" rather than crashing.
 
-5. **Phase MG:** The data migration is one-shot. If it fails midway,
-   `op.execute("DELETE FROM scope_mounts WHERE ...")` is the rollback;
-   the existing memberships are unaffected (rollback target is just
-   the backfilled rows).
+5. **Phase ME:** Polymorphic `inbox accept <id-or-url>` must shape-
+   detect cleanly. Test both happy paths AND the "neither" case
+   (caller passed random text). Error message lists both shapes.
 
 ---
 
 ## Done = ready to ship?
 
-- [ ] All 226 v1 backend tests still green
-- [ ] All 282 v1 CLI tests still green
+- [ ] All membership-layer backend tests (~225+) still green
+- [ ] All CLI tests (~280+) still green
 - [ ] ~25 new mount-specific tests added and green
 - [ ] Backend, CLI, web all typecheck + lint clean
-- [ ] Live three-persona demo captured to new demo doc
+- [ ] Live three-persona demo captured to demo doc
 - [ ] Migration applied locally + idempotent on re-apply
-- [ ] v1 demo doc moved to archive/
