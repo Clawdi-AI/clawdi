@@ -267,3 +267,139 @@ async def test_upgrade_no_mount_skips_mount_row(
         .all()
     )
     assert mounts == []
+
+
+async def _seed_vault_key(db_session, *, scope_id, vault_slug, section, item_name):
+    """Drop a single vault key under `scope_id` for collision tests."""
+    from app.models.scope import Scope
+    from app.models.vault import Vault, VaultItem
+
+    owner = (
+        await db_session.execute(select(Scope).where(Scope.id == scope_id))
+    ).scalar_one()
+    vault = (
+        await db_session.execute(
+            select(Vault).where(Vault.scope_id == scope_id, Vault.slug == vault_slug)
+        )
+    ).scalar_one_or_none()
+    if vault is None:
+        vault = Vault(user_id=owner.user_id, scope_id=scope_id, slug=vault_slug, name=vault_slug)
+        db_session.add(vault)
+        await db_session.commit()
+        await db_session.refresh(vault)
+    db_session.add(
+        VaultItem(
+            vault_id=vault.id,
+            item_name=item_name,
+            section=section,
+            encrypted_value=b"x",
+            nonce=b"y",
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_409_on_vault_conflict(
+    db_session, seed_user, seed_scope, sharee_with_personal_scope
+):
+    """Source scope + sharee's Personal both carry the same vault key →
+    /upgrade returns 409 vault_conflicts_blocked with the conflict
+    payload. Membership is still committed (capability acquired) even
+    when the mount step blocks — same posture as mount_target_ambiguous.
+    """
+    from app.models.scope_membership import ScopeMembership
+
+    sharee, personal = sharee_with_personal_scope
+    seed_user.name = "Alice"
+    raw = await _make_share_link(db_session, seed_scope, seed_user)
+    await _seed_vault_key(
+        db_session,
+        scope_id=seed_scope.id,
+        vault_slug="ai-keys",
+        section="",
+        item_name="OPENAI_API_KEY",
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=personal.id,
+        vault_slug="ai-keys",
+        section="",
+        item_name="OPENAI_API_KEY",
+    )
+
+    _override_app(db_session, sharee)
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.post(f"/api/share/{raw}/upgrade")
+            assert r.status_code == 409, r.text
+            detail = r.json()["detail"]
+            assert detail["error"] == "vault_conflicts_blocked"
+            assert detail["conflicts"] == [
+                {"vault_slug": "ai-keys", "section": "", "item_name": "OPENAI_API_KEY"}
+            ]
+    finally:
+        app.dependency_overrides.clear()
+
+    # Membership exists (capability committed), mount does not.
+    memberships = (
+        (
+            await db_session.execute(
+                select(ScopeMembership).where(ScopeMembership.user_id == sharee.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(memberships) == 1
+    mounts = (
+        (
+            await db_session.execute(
+                select(ScopeMount).where(ScopeMount.parent_scope_id == personal.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert mounts == []
+
+
+@pytest.mark.asyncio
+async def test_upgrade_allow_vault_conflicts_bypasses_check(
+    db_session, seed_user, seed_scope, sharee_with_personal_scope
+):
+    """Same collision setup as the 409 test, but body says
+    allow_vault_conflicts=True → mount lands successfully."""
+    sharee, personal = sharee_with_personal_scope
+    seed_user.name = "Alice"
+    raw = await _make_share_link(db_session, seed_scope, seed_user)
+    await _seed_vault_key(
+        db_session,
+        scope_id=seed_scope.id,
+        vault_slug="ai-keys",
+        section="",
+        item_name="OPENAI_API_KEY",
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=personal.id,
+        vault_slug="ai-keys",
+        section="",
+        item_name="OPENAI_API_KEY",
+    )
+
+    _override_app(db_session, sharee)
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.post(
+                f"/api/share/{raw}/upgrade",
+                json={"allow_vault_conflicts": True},
+            )
+            assert r.status_code == 200, r.text
+            assert "mount_id" in r.json()
+    finally:
+        app.dependency_overrides.clear()
