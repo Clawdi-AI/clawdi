@@ -1,6 +1,6 @@
 "use client";
 
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import {
 	BarChart3,
 	Brain,
@@ -9,22 +9,17 @@ import {
 	CirclePlus,
 	Key,
 	LayoutDashboard,
-	LogOut,
 	Mail,
 	MessageCircle,
-	Monitor,
-	Moon,
 	Plug,
 	Search,
 	Settings,
 	Sparkles,
-	Sun,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTheme } from "next-themes";
 import { useState } from "react";
 import { useCommandPalette } from "@/components/command-palette";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
@@ -34,13 +29,6 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuRadioGroup,
-	DropdownMenuRadioItem,
-	DropdownMenuSeparator,
-	DropdownMenuSub,
-	DropdownMenuSubContent,
-	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
@@ -56,6 +44,7 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
+import { UserMenuItems } from "@/components/user-menu";
 import { IS_HOSTED } from "@/lib/hosted";
 
 // Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
@@ -77,10 +66,8 @@ const navItems = [
 
 export function AppSidebar() {
 	const pathname = usePathname();
-	const { signOut } = useClerk();
 	const { user } = useUser();
 	const { isMobile } = useSidebar();
-	const { theme, setTheme } = useTheme();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [addAgentOpen, setAddAgentOpen] = useState(false);
@@ -239,52 +226,7 @@ export function AppSidebar() {
 									align="end"
 									sideOffset={4}
 								>
-									<DropdownMenuLabel className="p-0 font-normal">
-										<div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-											<Avatar className="h-8 w-8 rounded-lg">
-												{user?.imageUrl ? (
-													<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
-												) : null}
-												<AvatarFallback className="rounded-lg">
-													{user?.fullName?.[0] ?? "U"}
-												</AvatarFallback>
-											</Avatar>
-											<div className="grid flex-1 text-left text-sm leading-tight">
-												<span className="truncate font-medium">{user?.fullName}</span>
-												<span className="truncate text-xs text-muted-foreground">
-													{user?.primaryEmailAddress?.emailAddress}
-												</span>
-											</div>
-										</div>
-									</DropdownMenuLabel>
-									<DropdownMenuSeparator />
-									<DropdownMenuSub>
-										<DropdownMenuSubTrigger>
-											{theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
-											Theme
-										</DropdownMenuSubTrigger>
-										<DropdownMenuSubContent>
-											<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
-												<DropdownMenuRadioItem value="light">
-													<Sun />
-													Light
-												</DropdownMenuRadioItem>
-												<DropdownMenuRadioItem value="dark">
-													<Moon />
-													Dark
-												</DropdownMenuRadioItem>
-												<DropdownMenuRadioItem value="system">
-													<Monitor />
-													System
-												</DropdownMenuRadioItem>
-											</DropdownMenuRadioGroup>
-										</DropdownMenuSubContent>
-									</DropdownMenuSub>
-									<DropdownMenuSeparator />
-									<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
-										<LogOut />
-										Sign out
-									</DropdownMenuItem>
+									<UserMenuItems />
 								</DropdownMenuContent>
 							</DropdownMenu>
 						</SidebarMenuItem>
