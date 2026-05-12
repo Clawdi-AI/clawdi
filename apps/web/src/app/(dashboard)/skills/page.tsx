@@ -1,6 +1,7 @@
 "use client";
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
+import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -20,7 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
+import { API_URL, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
 
@@ -49,6 +50,7 @@ export default function SkillsPage() {
 function SkillsPageInner() {
 	const api = useApi();
 	const queryClient = useQueryClient();
+	const { getToken } = useAuth();
 	// `?target=<env_id>` lives in nuqs — shareable, refresh-stable,
 	// and round-trippable from the agent detail page's "Install
 	// skills" deep link. `clearOnDefault` keeps `/skills` clean when
@@ -213,6 +215,37 @@ function SkillsPageInner() {
 		[envs],
 	);
 
+	// Mounts wired into the active target scope. Backend's
+	// resolve_for_parent walks these on /api/skills?scope_id=<x>,
+	// but /skills fetches account-wide (orphan section depends on
+	// the full listing). We separately fetch the mount edges so
+	// the client-side "skills for this target" filter can include
+	// every mounted-source scope_id alongside the target's own —
+	// otherwise a mounted Alice-scope skill would render in the
+	// "Orphan" section rather than as part of the current agent's
+	// composed view. Endpoint not in the typed client yet, so raw
+	// fetch with the Clerk bearer; refresh whenever target shifts.
+	interface MountRow {
+		source_scope_id: string;
+	}
+	const { data: mountRows } = useQuery<MountRow[]>({
+		queryKey: ["scope-mounts", targetScopeId],
+		queryFn: async () => {
+			if (!targetScopeId) return [];
+			const token = await getToken();
+			const r = await fetch(`${API_URL}/api/scopes/${targetScopeId}/mounts`, {
+				headers: token ? { Authorization: `Bearer ${token}` } : {},
+			});
+			if (!r.ok) return [];
+			return (await r.json()) as MountRow[];
+		},
+		enabled: !!targetScopeId,
+	});
+	const mountSourceIds = useMemo(
+		() => new Set((mountRows ?? []).map((m) => m.source_scope_id)),
+		[mountRows],
+	);
+
 	const skillsForTarget = useMemo(() => {
 		if (!skillsData?.items) return undefined;
 		if (isStaleTarget) return [];
@@ -247,8 +280,10 @@ function SkillsPageInner() {
 			// action surface.
 			return undefined;
 		}
-		return skillsData.items.filter((s) => s.scope_id === targetScopeId);
-	}, [skillsData, targetScopeId, isStaleTarget, envs]);
+		return skillsData.items.filter(
+			(s) => s.scope_id === targetScopeId || (!!s.scope_id && mountSourceIds.has(s.scope_id)),
+		);
+	}, [skillsData, targetScopeId, isStaleTarget, envs, mountSourceIds]);
 
 	// Orphan-scope skills: rows whose scope_id is NOT one of the
 	// currently-connected envs' scopes. Surfaces preserved skills
@@ -260,8 +295,15 @@ function SkillsPageInner() {
 	// state above (`!targetScopeId` already shows everything).
 	const orphanSkills = useMemo(() => {
 		if (!skillsData?.items || !targetScopeId) return [];
-		return skillsData.items.filter((s) => !s.scope_id || !envScopeIds.has(s.scope_id));
-	}, [skillsData, envScopeIds, targetScopeId]);
+		// Mounted-source skills are intentionally composed into the
+		// active target — they belong in `skillsForTarget`, not here.
+		// Pre-fix they tripped the `!envScopeIds.has(scope_id)` clause
+		// (mount sources are other users' scopes, never in the local
+		// env set) and rendered as if they were misplaced orphans.
+		return skillsData.items.filter(
+			(s) => !s.scope_id || (!envScopeIds.has(s.scope_id) && !mountSourceIds.has(s.scope_id)),
+		);
+	}, [skillsData, envScopeIds, targetScopeId, mountSourceIds]);
 
 	const installedKeysOnTarget = useMemo(() => {
 		const items = skillsForTarget;
