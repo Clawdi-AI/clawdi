@@ -8,7 +8,9 @@ route handlers stay thin.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import secrets
 
 from app.models.user import User
 
@@ -56,3 +58,32 @@ def resolve_owner_handle(user: User) -> str:
         )
     suffix = user.id.hex[:_USER_ID_SUFFIX_LEN]
     return f"{name_part}-{suffix}"
+
+
+# --- Share-token primitives ---
+
+_TOKEN_BYTES = 32  # 32 random bytes -> 43 URL-safe-b64 chars
+_TOKEN_PREFIX_LEN = 8
+
+
+def generate_share_token() -> str:
+    """Return a fresh opaque token suitable for embedding in a URL.
+
+    32 random bytes give 256 bits of entropy. URL-safe base64 with no
+    padding keeps the resulting string copy-pasteable and route-segment safe.
+    """
+    return secrets.token_urlsafe(_TOKEN_BYTES)
+
+
+def hash_share_token(raw_token: str) -> str:
+    """Return sha256(raw_token) as 64 hex chars.
+
+    The raw token NEVER lands in the DB. Server stores this hash; on
+    redeem the server hashes the URL-extracted token and looks it up.
+    """
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def token_prefix(raw_token: str) -> str:
+    """First 8 chars of the raw token - safe to store + display."""
+    return raw_token[:_TOKEN_PREFIX_LEN]
