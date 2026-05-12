@@ -7,7 +7,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -16,6 +16,14 @@ from app.models.api_key import ApiKey
 from app.models.user import User
 
 bearer_scheme = HTTPBearer()
+
+# Same scheme but with `auto_error=False` so missing-credential requests
+# don't 401 at the FastAPI dependency layer — handlers using this can
+# treat the request as anonymous and decide their own response. Used by
+# routes that serve both signed-in and signed-out visitors (e.g. the
+# public share read where owner sees one view and anonymous sees
+# another).
+optional_bearer_scheme = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX = "clawdi_"
@@ -240,6 +248,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             clerk_id=clerk_id,
             email=email,
             name=payload.get("name"),
+            avatar_url=payload.get("picture"),
         )
         db.add(new_user)
 
@@ -288,6 +297,28 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 ) from None
             await db.refresh(new_user)
             user = new_user
+
+    # Refresh display fields opportunistically on every login. Clerk
+    # rotates signed avatar URLs and users may rename in Clerk; without
+    # this the share page would show stale identity. Only commit when
+    # something actually changed to avoid a write-per-request.
+    new_name = payload.get("name")
+    new_avatar = payload.get("picture")
+    changed = False
+    if new_name and user.name != new_name:
+        user.name = new_name
+        changed = True
+    if new_avatar and user.avatar_url != new_avatar:
+        user.avatar_url = new_avatar
+        changed = True
+    if changed:
+        try:
+            await db.commit()
+        except SQLAlchemyError:
+            # Non-fatal — auth still proceeds with the in-memory user.
+            # Narrow to SQLAlchemyError so coding bugs surface instead
+            # of being silently swallowed.
+            await db.rollback()
 
     return AuthContext(user=user)
 
@@ -496,6 +527,33 @@ async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext
             "Vault plaintext is not available to scoped api keys",
         )
     return auth
+
+
+async def optional_web_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer_scheme),
+    db: AsyncSession = Depends(get_session),
+) -> AuthContext | None:
+    """Best-effort dashboard auth — returns the AuthContext if a valid
+    Clerk JWT is present, otherwise None. Never raises.
+
+    Used by the public share routes to detect the visitor: the owner
+    bypasses the permission check (their own private session is always
+    accessible to them), and direct `kind='user'` grants need a
+    visitor identity to match against. CLI api-keys are deliberately
+    ignored here — share URLs are for human browsers, not agent fetches
+    (those go through the owner-auth `/api/sessions/{id}` routes).
+    """
+    if credentials is None:
+        return None
+    token = credentials.credentials
+    try:
+        ctx = await _auth_via_clerk_jwt(token, db)
+    except HTTPException:
+        # Treat any auth failure as anonymous — caller will then check
+        # public access permissions. We deliberately do NOT fall back to
+        # API-key auth here (see docstring).
+        return None
+    return ctx
 
 
 async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:

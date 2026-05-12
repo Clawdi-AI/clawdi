@@ -156,6 +156,15 @@ class SessionBatchResponse(BaseModel):
     rejected: list[str] = []
 
 
+class PaginatedSessionsResponse(BaseModel):
+    """Paginated session list — page envelope."""
+
+    items: list["SessionListItemResponse"]
+    total: int
+    page: int
+    page_size: int
+
+
 class SessionListItemResponse(BaseModel):
     id: str
     local_session_id: str
@@ -188,10 +197,69 @@ class SessionListItemResponse(BaseModel):
     # Surfaced so `clawdi pull` can diff cloud vs. local sidecar without
     # downloading the content body.
     content_hash: str | None = None
+    # True when an active `kind='link'` row exists in `session_permissions`
+    # for this session. Computed via EXISTS subquery in the list/detail
+    # query — there is NO denormalized `sessions.visibility` column.
+    # Default False so old generated clients that don't expect the field
+    # still deserialize cleanly.
+    is_shared: bool = False
+
+    # Extracted external entities (PR refs, repo names, branches),
+    # surfaced as sidebar chips. NULL when nothing was found or when
+    # the row was uploaded before the column existed — the sidebar
+    # hides the chip row in that case. See
+    # `services/session_metrics.py` for the upload-time extraction.
+    related_refs: dict[str, list[str]] | None = None
 
 
 class SessionDetailResponse(SessionListItemResponse):
     has_content: bool
+
+
+class SessionPermissionResponse(BaseModel):
+    """One row from `session_permissions`.
+
+    Returned by `GET /api/sessions/{id}/permissions` and as the body of
+    `POST /api/sessions/{id}/permissions`. Identifier columns mirror
+    Google Drive's `permissions` resource: a `kind` discriminator plus
+    explicit fields for whichever principal type is populated.
+    """
+
+    id: str
+    kind: Literal["link", "user", "email"]
+    # Mutually exclusive based on `kind`. Both NULL for `kind='link'`.
+    user_id: str | None = None
+    email: str | None = None
+    role: Literal["viewer"]
+    invited_by: str | None = None
+    accepted_at: datetime | None = None
+    expires_at: datetime | None = None
+    created_at: datetime
+
+
+class SessionPermissionsResponse(BaseModel):
+    """`GET /api/sessions/{id}/permissions` — active permissions for a
+    session, newest-first. Drives the share popover state and (in the
+    future) the "people with access" list.
+    """
+
+    permissions: list[SessionPermissionResponse]
+
+
+class SessionPermissionCreate(BaseModel):
+    """`POST /api/sessions/{id}/permissions` body.
+
+    For today's "Public access" toggle the body is just
+    `{"kind": "link"}`. Future invite-by-email sends `{"kind": "email",
+    "email": "alice@x.com"}`; future direct user grant sends
+    `{"kind": "user", "user_id": "..."}`.
+    """
+
+    kind: Literal["link", "user", "email"]
+    user_id: str | None = None
+    email: str | None = None
+    # Optional in the request body — server defaults to 'viewer'.
+    role: Literal["viewer"] | None = None
 
 
 class SessionUploadResponse(BaseModel):
