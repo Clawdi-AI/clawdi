@@ -217,6 +217,36 @@ async def validate_scope_for_caller(
     return scope_id
 
 
+async def validate_scope_read_for_caller(
+    db: AsyncSession,
+    auth: AuthContext,
+    scope_id: UUID,
+) -> UUID:
+    """Validate that the caller may READ the given `scope_id`.
+
+    Sister of `validate_scope_for_caller` (write-side, owner-only).
+    This one accepts viewer memberships — a sharee with a
+    ScopeMembership row passes here but would be rejected by the
+    write validator. Used by read routes that need to serve shared
+    content (skill download, etc.) without granting write access.
+
+    Rules:
+      * scope_id must appear in `scope_ids_visible_to(auth)`.
+      * Env-bound api_keys still only see their bound scope (the
+        binding is enforced inside scope_ids_visible_to itself).
+
+    404 if not in the visible set — same "don't leak existence"
+    posture as the owner-only validator.
+    """
+    visible = await scope_ids_visible_to(db, auth)
+    if scope_id not in visible:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "scope not found",
+        )
+    return scope_id
+
+
 async def scope_ids_visible_to(
     db: AsyncSession,
     auth: AuthContext,

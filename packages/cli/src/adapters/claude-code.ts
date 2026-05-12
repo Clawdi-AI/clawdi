@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { extractTarGz } from "../lib/tar";
+import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -345,6 +345,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await extractTarGz(skillsDir, tarGzBytes);
+	}
+
+	async writeSharedSkillArchive(
+		key: string,
+		ownerHandle: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

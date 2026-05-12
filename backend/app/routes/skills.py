@@ -28,6 +28,7 @@ from app.core.scope import (
     resolve_default_write_scope,
     scope_ids_visible_to,
     validate_scope_for_caller,
+    validate_scope_read_for_caller,
 )
 from app.models.skill import Skill
 from app.schemas.common import Paginated
@@ -970,11 +971,19 @@ async def download_skill_scoped(
     db: AsyncSession = Depends(get_session),
 ):
     """Phase-2 scope-explicit download — exact (scope_id, skill_key)
-    lookup, no disambiguation."""
-    await validate_scope_for_caller(db, auth, scope_id)
+    lookup, no disambiguation.
+
+    Reads are permitted to viewer members (sharees) — the validator
+    accepts any scope in `scope_ids_visible_to(auth)`, which now
+    includes ScopeMembership rows. The Skill row lookup no longer
+    filters by `user_id` since membership-granted reads pull from
+    the owner's skills, not the caller's. Write paths (upload,
+    delete) still gate on `validate_scope_for_caller`, which stays
+    owner-only.
+    """
+    await validate_scope_read_for_caller(db, auth, scope_id)
     result = await db.execute(
         select(Skill).where(
-            Skill.user_id == auth.user_id,
             Skill.scope_id == scope_id,
             Skill.skill_key == skill_key,
             Skill.is_active,

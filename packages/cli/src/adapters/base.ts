@@ -119,6 +119,17 @@ export interface AgentAdapter {
 	 * may simply have never run yet. */
 	getSessionsWatchPaths(): string[];
 	writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void>;
+	/** Like `writeSkillArchive` but lands the content at the shared-
+	 * scope path (`getSharedSkillPath(key, ownerHandle)`) rather than
+	 * `getSkillsRootDir() + key`. Tarball still has `<key>/...` as its
+	 * top-level layout (uploads don't know they'll be re-served as
+	 * shared); implementations extract into a temp dir and rename
+	 * the top entry to `<key>__<ownerHandle>`.
+	 *
+	 * Called by `clawdi share accept` after a successful upgrade or
+	 * redeem so the sharee's agent immediately sees the shared
+	 * skill folder without waiting for a daemon reconcile cycle. */
+	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
 	/** Remove a skill from the agent's local skills directory.
 	 * Called by the daemon's reconcile sweep when a previously-
 	 * observed cloud skill is no longer in the listing (dashboard
