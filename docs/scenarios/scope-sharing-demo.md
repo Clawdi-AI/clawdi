@@ -709,3 +709,31 @@ Full captured transcript: `/tmp/demo-transcript.txt` (247 lines of real CLI I/O)
 **Total test coverage:** 226 backend tests · 282 CLI tests · all green.
 
 **Branch:** [`feat/scope-sharing`](https://github.com/Clawdi-AI/clawdi/tree/feat/scope-sharing)
+
+---
+
+## What we deliberately did NOT build (v2 territory)
+
+What you see above is the **permission layer**: `accept` makes Alice's
+scope *visible* to Bob. It is **not** a composition primitive — Bob can't
+mount Alice's scope INTO one of his own scopes.
+
+Use cases this v1 doesn't directly serve:
+
+| Use case | Why v1 falls short | v2 answer |
+|----------|---------------------|-----------|
+| Team workspace built from multiple contributors' slices | Each sharer's scope shows up as a SEPARATE entry under "Shared with me" — no unified workspace | `ScopeMount` lets one parent scope include several source scopes by alias |
+| Vendor-published starter packs that update for every user | Each user re-accepts on every update; suffix stays forever | Mount has `live`/`snapshot` modes — live mounts pick up source updates without re-accept |
+| "I want Alice's `git-helper` but not her vault" | All-or-nothing at scope granularity | Mount's `include_policy` filters by skill key / vault key pattern |
+| Vault key precedence (`OPENAI_KEY` in Personal vs team-workspace) | Both rows surface in `vault list` with no resolution rule | Mount precedence: parent-own > mount-listed-first > mount-listed-last |
+| Non-transitive sharing — Dave doesn't backdoor through Bob to Alice | Membership IS transitive through shared parent scopes | Mount edge is config on parent, NOT a grant on source — viewer needs own membership |
+
+**Why we shipped v1 first:** the permission layer is the foundation. Mount
+is a composition primitive that depends on the membership graph for
+safety (a mount only resolves content the viewer can independently see).
+Building composition without the underlying capability would have been
+the wrong order.
+
+See [`docs/superpowers/specs/2026-05-11-scope-composition-rfc.md`](../superpowers/specs/2026-05-11-scope-composition-rfc.md)
+for the v2 architectural sketch (membership + `ScopeMount` two-layer
+model, codex-reviewed).
