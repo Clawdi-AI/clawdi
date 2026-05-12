@@ -49,7 +49,7 @@ interface SharePreview {
 	owner_handle: string;
 	skill_count: number;
 	vault_count: number;
-	created_at: string;
+	vault_locked: boolean;
 }
 
 interface ShareUpgradeResponse {
@@ -68,7 +68,13 @@ function buildLandingUrl(token: string): string {
 }
 
 async function fetchPreview(token: string): Promise<SharePreview> {
-	const r = await fetch(`${API_URL}/api/share/${token}`, { method: "GET" });
+	// Spec § 4.4 / API §: GET /api/share/{token}/preview — side-effect free,
+	// does NOT increment redeem_count. The /redeem POST is reserved for
+	// explicit-accept CTA, which on the web is the upgrade button below
+	// (logged-in path skips redeem entirely → straight to membership).
+	const r = await fetch(`${API_URL}/api/share/${token}/preview`, {
+		method: "GET",
+	});
 	if (r.status === 404) throw new ShareError("not_found");
 	if (r.status === 410) throw new ShareError("revoked");
 	if (!r.ok) throw new ShareError("unknown", r.status);
