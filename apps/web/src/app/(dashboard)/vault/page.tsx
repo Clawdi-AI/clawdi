@@ -39,6 +39,20 @@ export default function VaultPage() {
 	});
 	const vaults = data?.items;
 
+	// Vaults from MOUNTED scopes (other users') need read-only treatment —
+	// the membership is viewer, so any write would 403. /api/vault returns
+	// them in the same list as owned vaults (the user CAN read them, after
+	// all), so we cross-reference /api/scopes' is_owner to decide which
+	// cards render with write affordances disabled and a "shared" badge.
+	const { data: scopes } = useQuery({
+		queryKey: ["scopes"],
+		queryFn: async () => unwrap(await api.GET("/api/scopes")),
+	});
+	const ownedScopeIds = useMemo(
+		() => new Set((scopes ?? []).filter((s) => s.is_owner).map((s) => s.id)),
+		[scopes],
+	);
+
 	const createVault = useMutation({
 		mutationFn: async (slug: string) =>
 			unwrap(await api.POST("/api/vault", { body: { slug, name: slug } })),
@@ -115,14 +129,22 @@ export default function VaultPage() {
 				</div>
 			) : vaults?.length ? (
 				<div className="space-y-6">
-					{vaults.map((v) => (
-						<VaultCard
-							key={v.id}
-							vault={v}
-							onDelete={() => deleteVault.mutate({ slug: v.slug, scope_id: v.scope_id })}
-							isDeleting={deleteVault.isPending}
-						/>
-					))}
+					{vaults.map((v) => {
+						// Default to owned while scopes are still loading — avoids a
+						// flash of read-only chrome on the user's own vaults during the
+						// initial render. Worst case: a mounted vault briefly shows
+						// add/delete affordances; the backend would 403 if clicked.
+						const isReadOnly = scopes !== undefined && !ownedScopeIds.has(v.scope_id);
+						return (
+							<VaultCard
+								key={v.id}
+								vault={v}
+								readOnly={isReadOnly}
+								onDelete={() => deleteVault.mutate({ slug: v.slug, scope_id: v.scope_id })}
+								isDeleting={deleteVault.isPending}
+							/>
+						);
+					})}
 				</div>
 			) : (
 				<EmptyState
@@ -137,10 +159,12 @@ export default function VaultPage() {
 
 function VaultCard({
 	vault,
+	readOnly = false,
 	onDelete,
 	isDeleting,
 }: {
 	vault: Vault;
+	readOnly?: boolean;
 	onDelete: () => void;
 	isDeleting: boolean;
 }) {
@@ -220,34 +244,41 @@ function VaultCard({
 				cell: () => <span className="font-mono text-xs text-muted-foreground">••••••••</span>,
 				size: 120,
 			},
-			{
-				id: "actions",
-				header: "",
-				cell: ({ row }) => (
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						onClick={(e) => {
-							e.stopPropagation();
-							// Removing a secret breaks any clawdi:// reference
-							// to it the next time an AI tries to resolve.
-							const ok = window.confirm(
-								`Delete "${row.original.key}"?\n\n` +
-									"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
-							);
-							if (ok) deleteItem.mutate({ section: row.original.section, name: row.original.name });
-						}}
-						disabled={deleteItem.isPending}
-						className="text-muted-foreground hover:text-destructive"
-						aria-label={`Delete ${row.original.key}`}
-					>
-						<Trash2 className="size-3.5" />
-					</Button>
-				),
-				size: 40,
-			},
+			// Read-only vaults (mounted from someone else's scope) get no
+			// per-row delete column at all — viewer membership can't mutate.
+			...(readOnly
+				? []
+				: [
+						{
+							id: "actions",
+							header: "",
+							cell: ({ row }) => (
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									onClick={(e) => {
+										e.stopPropagation();
+										// Removing a secret breaks any clawdi:// reference
+										// to it the next time an AI tries to resolve.
+										const ok = window.confirm(
+											`Delete "${row.original.key}"?\n\n` +
+												"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
+										);
+										if (ok)
+											deleteItem.mutate({ section: row.original.section, name: row.original.name });
+									}}
+									disabled={deleteItem.isPending}
+									className="text-muted-foreground hover:text-destructive"
+									aria-label={`Delete ${row.original.key}`}
+								>
+									<Trash2 className="size-3.5" />
+								</Button>
+							),
+							size: 40,
+						} satisfies ColumnDef<VaultField>,
+					]),
 		],
-		[deleteItem],
+		[deleteItem, readOnly],
 	);
 
 	// Flat section layout — heading + action row on top, then the table.
@@ -264,44 +295,55 @@ function VaultCard({
 					<span className="text-xs text-muted-foreground">
 						{allFields.length} {allFields.length === 1 ? "key" : "keys"}
 					</span>
+					{readOnly ? (
+						<Badge
+							variant="secondary"
+							className="text-xs"
+							title="Mounted from another scope — viewer membership is read-only"
+						>
+							shared
+						</Badge>
+					) : null}
 				</div>
-				<div className="flex items-center gap-1">
-					<Button
-						variant="ghost"
-						size="xs"
-						onClick={() => setAdding(!adding)}
-						className="text-muted-foreground"
-					>
-						<Plus className="size-3.5" />
-						Add Key
-					</Button>
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						onClick={() => {
-							// Vault deletion permanently destroys every key
-							// inside it — anything that resolves a clawdi://
-							// URI from this vault will start failing the next
-							// time an AI tries to use it.
-							const ok = window.confirm(
-								`Delete vault "${vault.slug}"?\n\n` +
-									`This will permanently remove ${allFields.length} ` +
-									`secret${allFields.length === 1 ? "" : "s"} stored inside. ` +
-									"Anything that uses these keys will stop working.",
-							);
-							if (ok) onDelete();
-						}}
-						disabled={isDeleting}
-						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
-						aria-label="Delete vault"
-					>
-						<Trash2 className="size-3.5" />
-					</Button>
-				</div>
+				{readOnly ? null : (
+					<div className="flex items-center gap-1">
+						<Button
+							variant="ghost"
+							size="xs"
+							onClick={() => setAdding(!adding)}
+							className="text-muted-foreground"
+						>
+							<Plus className="size-3.5" />
+							Add Key
+						</Button>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							onClick={() => {
+								// Vault deletion permanently destroys every key
+								// inside it — anything that resolves a clawdi://
+								// URI from this vault will start failing the next
+								// time an AI tries to use it.
+								const ok = window.confirm(
+									`Delete vault "${vault.slug}"?\n\n` +
+										`This will permanently remove ${allFields.length} ` +
+										`secret${allFields.length === 1 ? "" : "s"} stored inside. ` +
+										"Anything that uses these keys will stop working.",
+								);
+								if (ok) onDelete();
+							}}
+							disabled={isDeleting}
+							className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
+							aria-label="Delete vault"
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</div>
+				)}
 			</div>
 
 			{/* Inline add form, when toggled */}
-			{adding ? (
+			{!readOnly && adding ? (
 				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
 					<Label htmlFor={`key-${vault.slug}`} className="sr-only">
 						Key name
@@ -357,8 +399,11 @@ function VaultCard({
 				<DataTable columns={columns} data={allFields} />
 			) : !adding ? (
 				<p className="px-1 text-sm text-muted-foreground">
-					No keys yet. Click <span className="font-medium">Add Key</span> to store your first
-					secret.
+					{readOnly
+						? "No keys in this shared vault yet — the owner hasn't stored any secrets."
+						: "No keys yet. Click "}
+					{readOnly ? null : <span className="font-medium">Add Key</span>}
+					{readOnly ? null : " to store your first secret."}
 				</p>
 			) : null}
 		</section>
