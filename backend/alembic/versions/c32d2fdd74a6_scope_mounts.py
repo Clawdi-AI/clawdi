@@ -52,7 +52,7 @@ def upgrade() -> None:
         sa.Column(
             "created_by",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("users.id"),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(

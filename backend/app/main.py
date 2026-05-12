@@ -23,6 +23,7 @@ from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
+from app.routes.mounts import router as mounts_router
 from app.routes.public_sessions import router as public_sessions_router
 from app.routes.scopes import router as scopes_router
 from app.routes.search import router as search_router
@@ -179,6 +180,7 @@ app.include_router(search_router)
 app.include_router(share_redeem_router)
 app.include_router(sharing_router)
 app.include_router(me_router)
+app.include_router(mounts_router)
 
 
 @app.get("/health")
