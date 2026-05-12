@@ -590,17 +590,27 @@ async function pullSharedSkills(
 	const active = items.filter((s) => s.is_active !== false);
 	if (active.length === 0) return 0;
 	const adapters = allAdapterEntries().map((e) => e.create());
-	const seenKeys: string[] = [];
-	for (const skill of active) {
-		const dlUrl = `${apiUrl}/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
-		const dl = await fetch(dlUrl, { headers: { Authorization: `Bearer ${bearer}` } });
-		if (!dl.ok) continue;
-		const buf = Buffer.from(await dl.arrayBuffer());
-		for (const adapter of adapters) {
-			await adapter.writeSharedSkillArchive(skill.skill_key, ownerHandle, buf).catch(() => {});
-		}
-		seenKeys.push(skill.skill_key);
-	}
+
+	// Parallel per-skill download. Pre-fix, accepting a scope with N
+	// skills paid N sequential round trips before `inbox accept` returned —
+	// noticeable on a 10-skill scope over a slow network. Each download is
+	// independent; the writes to every adapter (claude-code, codex, …) are
+	// also independent and can fan out per skill.
+	const dlResults = await Promise.all(
+		active.map(async (skill): Promise<string | null> => {
+			const dlUrl = `${apiUrl}/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
+			const dl = await fetch(dlUrl, { headers: { Authorization: `Bearer ${bearer}` } });
+			if (!dl.ok) return null;
+			const buf = Buffer.from(await dl.arrayBuffer());
+			await Promise.all(
+				adapters.map((adapter) =>
+					adapter.writeSharedSkillArchive(skill.skill_key, ownerHandle, buf).catch(() => {}),
+				),
+			);
+			return skill.skill_key;
+		}),
+	);
+	const seenKeys = dlResults.filter((k): k is string => k !== null);
 	// Update local token record if present (anon → upgraded flow)
 	const existingToken = listTokens().find((t) => t.scope_id === scopeId);
 	if (existingToken) {
