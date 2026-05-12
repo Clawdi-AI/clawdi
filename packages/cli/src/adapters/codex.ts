@@ -293,6 +293,10 @@ export class CodexAdapter implements AgentAdapter {
 		return skillsDir();
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
+	}
+
 	getSessionsWatchPaths(): string[] {
 		// Codex dumps every session under `~/.codex/sessions/`. We
 		// watch the root recursively and let `collectSessions`

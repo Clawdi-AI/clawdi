@@ -299,6 +299,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return join(claudeDir(), "skills");
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(claudeDir(), "skills", `${skillKey}__${ownerHandle}`);
+	}
+
 	async listSkillKeys(): Promise<string[]> {
 		// Flat layout: top-level dirs under skills/. Mirrors the
 		// filtering of `collectSkills` so the daemon's hot-path

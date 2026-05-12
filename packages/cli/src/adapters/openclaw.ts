@@ -358,6 +358,10 @@ export class OpenClawAdapter implements AgentAdapter {
 		return skillsDir();
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
+	}
+
 	async listSkillKeys(): Promise<string[]> {
 		// Restricted to the CURRENT agent's `skillsDir()` —
 		// `collectSkills` walks every agent dir for `clawdi push`

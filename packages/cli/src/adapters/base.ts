@@ -94,6 +94,19 @@ export interface AgentAdapter {
 	 * skill — empty-key callers were getting `<root>/skills//SKILL.md`
 	 * before this method existed. */
 	getSkillsRootDir(): string;
+	/** Returns the on-disk path where a SHARED-SCOPE skill should
+	 * land. The owner-handle (resolved server-side, frozen at link
+	 * create per spec § 11.2) is appended with `__` separator so
+	 * the same key from different owners coexists with the sharee's
+	 * own key.
+	 *
+	 * Example for Claude Code:
+	 *   getSharedSkillPath("git-tools", "alice-a3b4")
+	 *     → "~/.claude/skills/git-tools__alice-a3b4"
+	 *
+	 * Personal scope skills keep using `getSkillsRootDir() + key`
+	 * with no suffix — see spec § 11.1. */
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi serve` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
 	 * files there) or a single file (Hermes uses a SQLite DB). The
