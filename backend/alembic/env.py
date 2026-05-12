@@ -3,19 +3,19 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-
 from app.core.config import settings
-from app.models.base import Base
 from app.models import (  # noqa: F401 - register models
     api_key,
     device_authorization,
     memory,
     scope,
     session,
+    session_permission,
     skill,
     user,
     vault,
 )
+from app.models.base import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))
