@@ -17,6 +17,7 @@ import chalk from "chalk";
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
+import { pullSharedSkills } from "../share/eager-pull";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -563,68 +564,4 @@ async function resolveScopeArg(apiUrl: string, bearer: string, raw: string): Pro
 		throw new Error(`'${raw}' matches ${matches.length} scopes; pass the UUID.`);
 	}
 	return matches[0].id;
-}
-
-interface SkillSummary {
-	skill_key: string;
-	scope_id?: string | null;
-	is_active?: boolean;
-}
-
-async function pullSharedSkills(
-	apiUrl: string,
-	bearer: string,
-	scopeId: string,
-	ownerHandle: string,
-): Promise<number> {
-	const PAGE_SIZE = 200;
-	const items: SkillSummary[] = [];
-	let page = 1;
-	while (true) {
-		const url = new URL(`${apiUrl}/api/skills`);
-		url.searchParams.set("scope_id", scopeId);
-		url.searchParams.set("page", String(page));
-		url.searchParams.set("page_size", String(PAGE_SIZE));
-		const r = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
-		if (!r.ok) throw new Error(`Skill listing failed: HTTP ${r.status}`);
-		const body = (await r.json()) as { items: SkillSummary[] };
-		items.push(...body.items);
-		if (body.items.length < PAGE_SIZE) break;
-		page += 1;
-		if (page > 50) break;
-	}
-	const active = items.filter((s) => s.is_active !== false);
-	if (active.length === 0) return 0;
-	const adapters = allAdapterEntries().map((e) => e.create());
-
-	// Parallel per-skill download. Pre-fix, accepting a scope with N
-	// skills paid N sequential round trips before `inbox accept` returned —
-	// noticeable on a 10-skill scope over a slow network. Each download is
-	// independent; the writes to every adapter (claude-code, codex, …) are
-	// also independent and can fan out per skill.
-	const dlResults = await Promise.all(
-		active.map(async (skill): Promise<string | null> => {
-			const dlUrl = `${apiUrl}/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
-			const dl = await fetch(dlUrl, { headers: { Authorization: `Bearer ${bearer}` } });
-			if (!dl.ok) return null;
-			const buf = Buffer.from(await dl.arrayBuffer());
-			await Promise.all(
-				adapters.map((adapter) =>
-					adapter.writeSharedSkillArchive(skill.skill_key, ownerHandle, buf).catch(() => {}),
-				),
-			);
-			return skill.skill_key;
-		}),
-	);
-	const seenKeys = dlResults.filter((k): k is string => k !== null);
-	// Update local token record if present (anon → upgraded flow)
-	const existingToken = listTokens().find((t) => t.scope_id === scopeId);
-	if (existingToken) {
-		addToken({
-			...existingToken,
-			upgraded_at: new Date().toISOString(),
-			last_seen_skill_keys: seenKeys,
-		});
-	}
-	return seenKeys.length;
 }

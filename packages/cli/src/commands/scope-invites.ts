@@ -1,9 +1,9 @@
 import chalk from "chalk";
 
-import { allAdapterEntries } from "../adapters/registry";
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveScopeId } from "../lib/scope-resolver";
+import { pullSharedSkills } from "../share/eager-pull";
 
 /**
  * `clawdi scope invites [<scope>] [--accept ID | --decline ID | --cancel ID]`
@@ -34,12 +34,6 @@ interface InvitationItem {
 	created_at: string;
 }
 
-interface SkillSummary {
-	skill_key: string;
-	scope_id?: string | null;
-	is_active?: boolean;
-}
-
 async function authedGet<T>(apiUrl: string, bearer: string, path: string): Promise<T> {
 	const r = await fetch(`${apiUrl}${path}`, {
 		headers: { Authorization: `Bearer ${bearer}` },
@@ -63,52 +57,6 @@ async function authedDelete(apiUrl: string, bearer: string, path: string): Promi
 		headers: { Authorization: `Bearer ${bearer}` },
 	});
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-}
-
-/** Eagerly pull the shared scope's skills to every adapter — mirrors
- * the eager pull `inbox accept` runs on its redeem path. */
-async function pullSharedSkills(
-	apiUrl: string,
-	bearer: string,
-	scopeId: string,
-	ownerHandle: string,
-): Promise<number> {
-	const PAGE_SIZE = 200;
-	const items: SkillSummary[] = [];
-	let page = 1;
-	while (true) {
-		const url = new URL(`${apiUrl}/api/skills`);
-		url.searchParams.set("scope_id", scopeId);
-		url.searchParams.set("page", String(page));
-		url.searchParams.set("page_size", String(PAGE_SIZE));
-		const r = await fetch(url, {
-			headers: { Authorization: `Bearer ${bearer}` },
-		});
-		if (!r.ok) throw new Error(`Skill listing failed: HTTP ${r.status}`);
-		const body = (await r.json()) as { items: SkillSummary[] };
-		items.push(...body.items);
-		if (body.items.length < PAGE_SIZE) break;
-		page += 1;
-		if (page > 50) break;
-	}
-	const active = items.filter((s) => s.is_active !== false);
-	if (active.length === 0) return 0;
-
-	const adapters = allAdapterEntries().map((e) => e.create());
-	let written = 0;
-	for (const skill of active) {
-		const dl = await fetch(
-			`${apiUrl}/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
-			{ headers: { Authorization: `Bearer ${bearer}` } },
-		);
-		if (!dl.ok) continue;
-		const buf = Buffer.from(await dl.arrayBuffer());
-		for (const adapter of adapters) {
-			await adapter.writeSharedSkillArchive(skill.skill_key, ownerHandle, buf).catch(() => {});
-		}
-		written += 1;
-	}
-	return written;
 }
 
 function formatInvite(inv: InvitationItem): string {
