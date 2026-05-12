@@ -11,7 +11,13 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+from uuid import UUID
 
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.scope import Scope
 from app.models.user import User
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
@@ -84,14 +90,14 @@ def hash_share_token(raw_token: str) -> str:
 
 
 async def auto_mount_target(
-    db,  # AsyncSession; imported only for type hints in callers
-    user_id,
-) -> tuple[list, str | None]:
+    db: AsyncSession,
+    user_id: UUID,
+) -> tuple[list[tuple[UUID, str, str]], UUID | None]:
     """Resolve the mount-target ownership picture for an accepting user.
 
     Returns `(owned_scopes, auto_target_id_or_None)`:
-      * `owned_scopes`: list of `(scope_id, slug)` tuples ordered by
-        kind then slug. `kind='personal'` always first.
+      * `owned_scopes`: list of `(scope_id, slug, kind)` tuples ordered
+        by kind then slug. `kind='personal'` sorts first.
       * `auto_target_id_or_None`:
         - If exactly 1 owned scope → that scope's id (silent auto-mount).
         - If 2+ owned scopes → None (caller surfaces 409
@@ -102,10 +108,6 @@ async def auto_mount_target(
     Used by /upgrade and /me/invitations/{id}/accept to pick where
     the auto-mount lands when caller didn't pass parent_scope_id.
     """
-    from sqlalchemy import select
-
-    from app.models.scope import Scope
-
     rows = (
         await db.execute(
             select(Scope.id, Scope.slug, Scope.kind)
@@ -125,11 +127,11 @@ def token_prefix(raw_token: str) -> str:
 
 
 async def resolve_auto_mount_parent(
-    db,
-    user_id,
+    db: AsyncSession,
+    user_id: UUID,
     parent_scope_id: str | None,
-    membership_id,
-):
+    membership_id: UUID,
+) -> UUID:
     """Pick the parent_scope_id for an auto-mount on accept.
 
     Encapsulates the validation logic shared by every "accept a shared
@@ -155,13 +157,6 @@ async def resolve_auto_mount_parent(
                                        and the mount is what's
                                        deferred.
     """
-    from uuid import UUID
-
-    from fastapi import HTTPException, status
-    from sqlalchemy import select
-
-    from app.models.scope import Scope
-
     if parent_scope_id:
         try:
             explicit = UUID(parent_scope_id)
