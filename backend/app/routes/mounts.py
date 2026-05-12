@@ -163,14 +163,19 @@ async def ensure_mount(
         created_by=created_by,
         created_at=datetime.now(UTC),
     )
-    db.add(mount)
+    # Wrap the INSERT in a SAVEPOINT so a race-window IntegrityError
+    # rolls back ONLY this nested transaction, not the outer one. The
+    # caller has typically already flushed a ScopeMembership row before
+    # calling us (the share-link / invitation upgrade paths); a flat
+    # `db.rollback()` here would nuke that flushed membership row too,
+    # which previously forced share_redeem.upgrade to defensively
+    # re-insert the membership on the conflict path. With the nested
+    # rollback that's no longer necessary.
     try:
-        await db.flush()
+        async with db.begin_nested():
+            db.add(mount)
+            await db.flush()
     except IntegrityError as err:
-        # Race window: another writer took the alias between our
-        # SELECT and our INSERT. Surface as 409 — caller retries the
-        # whole accept path (idempotent on (parent, source)).
-        await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {

@@ -219,37 +219,17 @@ async def upgrade(
             body.parent_scope_id,
             membership.id,
         )
-        # We have a target; build the mount.
+        # We have a target; build the mount. ensure_mount uses a
+        # SAVEPOINT internally so a race-window IntegrityError doesn't
+        # roll back our already-flushed membership row.
         base_alias = body.alias or f"@{link.resolved_owner_handle}/{scope.slug}"
-        try:
-            mount = await ensure_mount(
-                db,
-                parent_id=parent_id,
-                source_id=ctx.scope_id,
-                base_alias=base_alias,
-                created_by=auth.user_id,
-            )
-        except HTTPException:
-            # ensure_mount commits its own rollback on race; surface
-            # the error but membership is already flushed (will commit
-            # when this exception escapes — but ensure_mount called
-            # rollback, which nuked our membership too).
-            # Re-insert membership defensively and commit just it,
-            # then re-raise so caller sees the conflict.
-            if existing is None:
-                redo = ScopeMembership(
-                    scope_id=ctx.scope_id,
-                    user_id=auth.user_id,
-                    role="viewer",
-                    joined_via="link",
-                    joined_at=datetime.now(UTC),
-                    resolved_owner_handle=link.resolved_owner_handle,
-                )
-                db.add(redo)
-                await db.flush()
-                await db.commit()
-            raise
-
+        mount = await ensure_mount(
+            db,
+            parent_id=parent_id,
+            source_id=ctx.scope_id,
+            base_alias=base_alias,
+            created_by=auth.user_id,
+        )
         await db.commit()
         mount_payload = {
             "mount_id": str(mount.id),
