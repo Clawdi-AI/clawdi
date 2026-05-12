@@ -58,6 +58,15 @@ interface ShareUpgradeResponse {
 	membership_id: string;
 }
 
+// The /upgrade endpoint commits membership server-side even when it
+// can't pick an auto-mount target (user owns 2+ scopes → 409
+// mount_target_ambiguous). From the user's POV this is "joined,
+// mount deferred" — distinct from real failures like revoked or
+// not-found. The mutation's return type discriminates them so the
+// onSuccess branch can show the right message without treating a
+// genuine accept as an error.
+type UpgradeResult = { kind: "joined"; data: ShareUpgradeResponse } | { kind: "mount_deferred" };
+
 const API_URL = env.NEXT_PUBLIC_API_URL;
 
 function buildLandingUrl(token: string): string {
@@ -81,7 +90,7 @@ async function fetchPreview(token: string): Promise<SharePreview> {
 	return r.json();
 }
 
-async function upgradeShare(token: string, bearer: string): Promise<ShareUpgradeResponse> {
+async function upgradeShare(token: string, bearer: string): Promise<UpgradeResult> {
 	const r = await fetch(`${API_URL}/api/share/${token}/upgrade`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${bearer}` },
@@ -92,13 +101,17 @@ async function upgradeShare(token: string, bearer: string): Promise<ShareUpgrade
 		const body = (await r.json().catch(() => ({}))) as {
 			detail?: { error?: string };
 		};
-		if (body?.detail?.error === "already_owner") {
-			throw new ShareError("already_owner");
-		}
+		const detailError = body?.detail?.error;
+		if (detailError === "already_owner") throw new ShareError("already_owner");
+		// Membership IS created — only the auto-mount step deferred.
+		// Treat as success (user joined) and surface the mount-defer
+		// state to the UI. Without this branch, the multi-scope happy
+		// path looked like a generic "already_member" error.
+		if (detailError === "mount_target_ambiguous") return { kind: "mount_deferred" };
 		throw new ShareError("already_member");
 	}
 	if (!r.ok) throw new ShareError("unknown", r.status);
-	return r.json();
+	return { kind: "joined", data: await r.json() };
 }
 
 type ShareErrorCode = "not_found" | "revoked" | "already_member" | "already_owner" | "unknown";
@@ -131,9 +144,13 @@ export default function SharePage() {
 			if (!bearer) throw new ShareError("unknown");
 			return upgradeShare(token, bearer);
 		},
-		onSuccess: () => {
-			// Sharee lands on their dashboard with the shared scope already
-			// listed. Skills first if there are any; vault otherwise.
+		onSuccess: (result) => {
+			// Mount-deferred users stay on this page so they can read the
+			// "pick a parent" hint we render below; auto-redirecting them
+			// would dump them on /skills with no explanation of why the
+			// new scope isn't composed yet. The clean-success path is
+			// where the redirect lives.
+			if (result.kind === "mount_deferred") return;
 			const hasSkills = (preview.data?.skill_count ?? 0) > 0;
 			router.push(hasSkills ? "/skills" : "/vault");
 		},
@@ -191,7 +208,17 @@ export default function SharePage() {
 
 					<Separator />
 
-					{upgrade.isSuccess ? (
+					{upgrade.isSuccess && upgrade.data?.kind === "mount_deferred" ? (
+						<Alert>
+							<CheckCircle2 />
+							<AlertTitle>You're in — mount deferred.</AlertTitle>
+							<AlertDescription>
+								Joined as a viewer of "{data.scope_name}". Because you own multiple scopes, pick a
+								parent on the agent page to compose this one into your workspace. Until then it's
+								visible under "Shared with you but not mounted" in <code>clawdi scope list</code>.
+							</AlertDescription>
+						</Alert>
+					) : upgrade.isSuccess ? (
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>You're in.</AlertTitle>
