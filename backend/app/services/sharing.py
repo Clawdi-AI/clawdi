@@ -107,15 +107,12 @@ async def auto_mount_target(
     from app.models.scope import Scope
 
     rows = (
-        (
-            await db.execute(
-                select(Scope.id, Scope.slug, Scope.kind)
-                .where(Scope.user_id == user_id)
-                .order_by(Scope.kind, Scope.slug)
-            )
+        await db.execute(
+            select(Scope.id, Scope.slug, Scope.kind)
+            .where(Scope.user_id == user_id)
+            .order_by(Scope.kind, Scope.slug)
         )
-        .all()
-    )
+    ).all()
     owned = [(r.id, r.slug, r.kind) for r in rows]
     if len(owned) == 1:
         return owned, owned[0][0]
@@ -125,3 +122,83 @@ async def auto_mount_target(
 def token_prefix(raw_token: str) -> str:
     """First 8 chars of the raw token - safe to store + display."""
     return raw_token[:_TOKEN_PREFIX_LEN]
+
+
+async def resolve_auto_mount_parent(
+    db,
+    user_id,
+    parent_scope_id: str | None,
+    membership_id,
+):
+    """Pick the parent_scope_id for an auto-mount on accept.
+
+    Encapsulates the validation logic shared by every "accept a shared
+    scope" route (share-link upgrade, email-invitation accept). The
+    caller has already flushed a ScopeMembership row; this helper
+    decides where the auto-mount lands and surfaces the appropriate
+    error status if it can't.
+
+    Returns the resolved parent UUID. On the error paths it commits
+    the session first (so the freshly-flushed membership survives the
+    raise — capability lives even when the mount step couldn't proceed
+    automatically) and then raises HTTPException:
+
+      400 invalid_parent_scope_id     parent_scope_id present but
+                                       isn't a UUID.
+      404 parent_scope_id not found   caller doesn't own the
+                                       requested parent.
+      409 mount_target_ambiguous      no parent_scope_id passed AND
+                                       caller owns 2+ scopes. Payload
+                                       carries owned_scopes + the
+                                       membership_id so the client
+                                       knows capability is in place
+                                       and the mount is what's
+                                       deferred.
+    """
+    from uuid import UUID
+
+    from fastapi import HTTPException, status
+    from sqlalchemy import select
+
+    from app.models.scope import Scope
+
+    if parent_scope_id:
+        try:
+            explicit = UUID(parent_scope_id)
+        except (ValueError, AttributeError) as err:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                {"error": "invalid_parent_scope_id"},
+            ) from err
+        owned_check = (
+            await db.execute(
+                select(Scope).where(
+                    Scope.id == explicit,
+                    Scope.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if owned_check is None:
+            await db.commit()
+            # Same 404 shape used elsewhere so scope IDs aren't enumerable.
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "parent_scope_id not found")
+        return explicit
+
+    owned, auto = await auto_mount_target(db, user_id)
+    if auto is None:
+        # Capability survives — commit membership before surfacing the 409
+        # so the client can mount later by re-running with parent_scope_id.
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "error": "mount_target_ambiguous",
+                "message": (
+                    "You have multiple owned scopes. Re-run with "
+                    "parent_scope_id set OR call `clawdi scope mount` after."
+                ),
+                "owned_scopes": [{"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned],
+                "membership_id": str(membership_id),
+            },
+        )
+    return auto

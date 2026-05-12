@@ -34,7 +34,10 @@ from app.models.scope_membership import ScopeMembership
 from app.models.user import User
 from app.routes.mounts import ensure_mount
 from app.schemas.sharing import InvitationResponse, UpgradeBody
-from app.services.sharing import auto_mount_target, resolve_owner_handle
+from app.services.sharing import (
+    resolve_auto_mount_parent,
+    resolve_owner_handle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +123,7 @@ async def accept_invitation(
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
     scope = (
-        await db.execute(
-            select(Scope).where(Scope.id == inv_pre.scope_id).with_for_update()
-        )
+        await db.execute(select(Scope).where(Scope.id == inv_pre.scope_id).with_for_update())
     ).scalar_one_or_none()
     if scope is None:
         raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
@@ -134,9 +135,7 @@ async def accept_invitation(
     if inv is None or inv.invitee_user_id != auth.user_id:
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
-    owner = (
-        await db.execute(select(User).where(User.id == scope.user_id))
-    ).scalar_one_or_none()
+    owner = (await db.execute(select(User).where(User.id == scope.user_id))).scalar_one_or_none()
     if owner is None:
         raise HTTPException(status.HTTP_410_GONE, "owner account removed")
 
@@ -179,50 +178,12 @@ async def accept_invitation(
     # --- Auto-mount (MC) ---
     mount_payload: dict = {}
     if not body.no_mount:
-        parent_id: UUID | None = None
-        if body.parent_scope_id:
-            try:
-                explicit = UUID(body.parent_scope_id)
-            except (ValueError, AttributeError) as err:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    {"error": "invalid_parent_scope_id"},
-                ) from err
-            owned_check = (
-                await db.execute(
-                    select(Scope).where(
-                        Scope.id == explicit,
-                        Scope.user_id == auth.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if owned_check is None:
-                await db.commit()
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "parent_scope_id not found"
-                )
-            parent_id = explicit
-        else:
-            owned, auto = await auto_mount_target(db, auth.user_id)
-            if auto is None:
-                await db.commit()
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    {
-                        "error": "mount_target_ambiguous",
-                        "message": (
-                            "You have multiple owned scopes. Re-run with "
-                            "parent_scope_id set OR call `clawdi scope "
-                            "mount` after."
-                        ),
-                        "owned_scopes": [
-                            {"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned
-                        ],
-                        "membership_id": str(membership.id),
-                    },
-                )
-            parent_id = auto
-
+        parent_id = await resolve_auto_mount_parent(
+            db,
+            auth.user_id,
+            body.parent_scope_id,
+            membership.id,
+        )
         base_alias = body.alias or f"@{handle}/{scope.slug}"
         mount = await ensure_mount(
             db,

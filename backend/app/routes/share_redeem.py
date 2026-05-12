@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -35,7 +34,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem
 from app.routes.mounts import ensure_mount
 from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
-from app.services.sharing import auto_mount_target
+from app.services.sharing import resolve_auto_mount_parent
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +172,7 @@ async def upgrade(
     Hosted-pod env-bound api_keys rejected by require_user_auth_unbound.
     """
     body = body or UpgradeBody()
-    scope = (
-        await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
-    ).scalar_one_or_none()
+    scope = (await db.execute(select(Scope).where(Scope.id == ctx.scope_id))).scalar_one_or_none()
     if scope is None:
         raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
     if scope.user_id == auth.user_id:
@@ -216,56 +213,12 @@ async def upgrade(
     if body.no_mount:
         await db.commit()
     else:
-        parent_id: UUID | None = None
-        owned: list = []
-        if body.parent_scope_id:
-            try:
-                explicit = UUID(body.parent_scope_id)
-            except (ValueError, AttributeError) as err:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    {"error": "invalid_parent_scope_id"},
-                ) from err
-            # Validate caller owns it.
-            owned_check = (
-                await db.execute(
-                    select(Scope).where(
-                        Scope.id == explicit,
-                        Scope.user_id == auth.user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if owned_check is None:
-                # Caller doesn't own that scope; same 404 shape used
-                # elsewhere so scope IDs aren't enumerable.
-                await db.commit()
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "parent_scope_id not found"
-                )
-            parent_id = explicit
-        else:
-            owned, auto = await auto_mount_target(db, auth.user_id)
-            if auto is None:
-                # Membership commits; mount is deferred. Caller re-POSTs
-                # with parent_scope_id.
-                await db.commit()
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    {
-                        "error": "mount_target_ambiguous",
-                        "message": (
-                            "You have multiple owned scopes. Re-run with "
-                            "parent_scope_id set OR call `clawdi scope "
-                            "mount` after."
-                        ),
-                        "owned_scopes": [
-                            {"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned
-                        ],
-                        "membership_id": str(membership.id),
-                    },
-                )
-            parent_id = auto
-
+        parent_id = await resolve_auto_mount_parent(
+            db,
+            auth.user_id,
+            body.parent_scope_id,
+            membership.id,
+        )
         # We have a target; build the mount.
         base_alias = body.alias or f"@{link.resolved_owner_handle}/{scope.slug}"
         try:
