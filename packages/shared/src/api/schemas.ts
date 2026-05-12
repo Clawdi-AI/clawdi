@@ -71,7 +71,7 @@ export type UserSettings = Schemas["SettingsResponse"];
 export type UserSettingsUpdated = Schemas["SettingsUpdateResponse"];
 
 // ── Pagination + global search ───────────────────────────────────────────
-export type PaginatedSessions = Schemas["Paginated_SessionListItemResponse_"];
+export type PaginatedSessions = Schemas["PaginatedSessionsResponse"];
 export type PaginatedMemories = Schemas["Paginated_MemoryResponse_"];
 export type PaginatedSkills = Schemas["Paginated_SkillSummaryResponse_"];
 export type PaginatedVaults = Schemas["Paginated_VaultResponse_"];
