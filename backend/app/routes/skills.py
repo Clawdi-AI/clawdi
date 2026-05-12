@@ -325,9 +325,20 @@ async def list_skills(
     # intersect with what they're allowed to see — a scope_id
     # outside that set yields a deliberately-empty listing.
     revision = await get_skills_revision(db, auth.user_id)
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
     if scope_id is not None:
-        visible_scope_ids = [s for s in visible_scope_ids if s == scope_id]
+        # Parent-scoped read: walk mount edges so composed content
+        # surfaces. resolve_for_parent enforces viewer-source
+        # membership re-check (mount can't bypass capability layer).
+        # Empty set means caller can't see the parent at all — same
+        # signal as 404 but rendered as an empty listing here.
+        from app.core.scope import resolve_for_parent
+
+        visible_scope_ids = list(await resolve_for_parent(db, auth, scope_id))
+    else:
+        # Unscoped read: full inventory across owned + shared scopes.
+        # Mount edges are NOT unfolded — caller asked for "everything
+        # I can see", not "everything composed into a specific parent".
+        visible_scope_ids = await scope_ids_visible_to(db, auth)
     scope_tag = str(scope_id) if scope_id is not None else "all"
     # Short fingerprint of the visible-scope set (sorted for
     # determinism). 16 hex chars = 64 bits of collision space —

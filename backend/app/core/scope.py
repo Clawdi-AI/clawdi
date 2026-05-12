@@ -217,6 +217,49 @@ async def validate_scope_for_caller(
     return scope_id
 
 
+async def resolve_for_parent(
+    db: AsyncSession,
+    auth: AuthContext,
+    parent_scope_id: UUID,
+) -> set[UUID]:
+    """Return the set of scope IDs whose content composes 'in' the
+    given parent for this viewer:
+      - parent itself (if viewer can see it).
+      - each ScopeMount source pointing at parent, gated by viewer's
+        independent membership in the source.
+
+    The capability re-check is the safety invariant: a mount edge that
+    points at a scope the viewer can't see is silently filtered out.
+    Transitive permission expansion is impossible by construction.
+
+    Used by parent-scoped reads (`?scope_id=<parent>`) on skill and
+    vault listings to walk mount edges. Unscoped reads bypass this
+    and use `scope_ids_visible_to` directly.
+    """
+    from app.models.scope_mount import ScopeMount
+
+    visible = set(await scope_ids_visible_to(db, auth))
+    if parent_scope_id not in visible:
+        return set()
+
+    composed: set[UUID] = {parent_scope_id}
+    mount_sources = (
+        (
+            await db.execute(
+                select(ScopeMount.source_scope_id).where(
+                    ScopeMount.parent_scope_id == parent_scope_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for source_id in mount_sources:
+        if source_id in visible:
+            composed.add(source_id)
+    return composed
+
+
 async def validate_scope_read_for_caller(
     db: AsyncSession,
     auth: AuthContext,
