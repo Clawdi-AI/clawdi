@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, FileText, Laptop, Pencil, Save, Tag, Trash2, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,6 +91,23 @@ function SkillDetailPageInner() {
 	// path does, so the editor stays consistent with uninstall.
 	const targetScopeId = skill?.scope_id ?? defaultScope?.scope_id ?? null;
 	const isScopeReady = !!targetScopeId;
+
+	// Mounted-source skills are read-only from this viewer's perspective:
+	// hide Edit/Uninstall (would 403 from the backend), surface a
+	// "shared" badge with the owner's scope as the source. Re-uses the
+	// same is_owner cross-reference pattern as /vault and /skills.
+	const { data: ownedScopes } = useQuery({
+		queryKey: ["scopes"],
+		queryFn: async () => unwrap(await api.GET("/api/scopes")),
+	});
+	const ownedScopeIds = useMemo(
+		() => new Set((ownedScopes ?? []).filter((s) => s.is_owner).map((s) => s.id)),
+		[ownedScopes],
+	);
+	// Default to false while scopes are still loading so a brief flash
+	// of the read-only chrome doesn't appear on the user's own skills.
+	const isReadOnly =
+		ownedScopes !== undefined && !!skill?.scope_id && !ownedScopeIds.has(skill.scope_id);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -238,7 +256,18 @@ function SkillDetailPageInner() {
 						<div className="flex items-start justify-between gap-3">
 							<DetailTitle className="truncate">{skill.name}</DetailTitle>
 							<div className="flex shrink-0 gap-2">
-								{!isEditing ? (
+								{isReadOnly ? (
+									<Badge
+										variant="secondary"
+										title={
+											skill.scope_name
+												? `Mounted from "${skill.scope_name}" — viewer membership is read-only`
+												: "Mounted from another scope — viewer membership is read-only"
+										}
+									>
+										shared · read-only
+									</Badge>
+								) : !isEditing ? (
 									<>
 										<Button
 											variant="outline"
