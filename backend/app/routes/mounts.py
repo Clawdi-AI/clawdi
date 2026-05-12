@@ -35,23 +35,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scopes", tags=["mounts"])
 
 
-async def _build_mount_response(db: AsyncSession, mount: ScopeMount) -> MountResponse:
-    src = (await db.execute(select(Scope).where(Scope.id == mount.source_scope_id))).scalar_one()
-    owner = (await db.execute(select(User).where(User.id == src.user_id))).scalar_one()
+def _safe_owner_handle(owner: User) -> str:
+    """resolve_owner_handle with a stable fallback.
+
+    A historical owner can drop their display name after their scope
+    was already mounted into someone else's parent. Re-raising would
+    500 the consumer's listing — return a consistent sentinel so the
+    UI renders a clear "needs attention" row instead.
+    """
     try:
-        handle = resolve_owner_handle(owner)
+        return resolve_owner_handle(owner)
     except ValueError:
-        # Owner stripped their display name after the mount was
-        # created. Surface a sentinel rather than 500ing the listing.
-        handle = "owner-display-name-missing"
+        return "owner-display-name-missing"
+
+
+def _safe_owner_display(owner: User) -> str:
+    return owner.name or owner.email or f"user-{str(owner.id)[:8]}"
+
+
+async def _build_mount_response(
+    db: AsyncSession,
+    mount: ScopeMount,
+    *,
+    src: Scope | None = None,
+    owner: User | None = None,
+) -> MountResponse:
+    """Build the response shape from a mount row.
+
+    `src` and `owner` may be passed in by callers that already
+    fetched them (avoids a post-commit re-query in create_mount).
+    """
+    if src is None:
+        src = (
+            await db.execute(select(Scope).where(Scope.id == mount.source_scope_id))
+        ).scalar_one()
+    if owner is None:
+        owner = (await db.execute(select(User).where(User.id == src.user_id))).scalar_one()
     return MountResponse(
         id=str(mount.id),
         parent_scope_id=str(mount.parent_scope_id),
         source_scope_id=str(mount.source_scope_id),
         source_scope_name=src.name,
         source_scope_slug=src.slug,
-        source_owner_display=owner.name or owner.email or f"user-{str(owner.id)[:8]}",
-        source_owner_handle=handle,
+        source_owner_display=_safe_owner_display(owner),
+        source_owner_handle=_safe_owner_handle(owner),
         alias=mount.alias,
         mode=mount.mode,
         created_at=mount.created_at,
@@ -159,11 +186,7 @@ async def _resolve_default_alias(db: AsyncSession, source_id: UUID) -> tuple[str
     """Compute the natural-form alias `@<owner-handle>/<source-slug>`."""
     src = (await db.execute(select(Scope).where(Scope.id == source_id))).scalar_one()
     owner = (await db.execute(select(User).where(User.id == src.user_id))).scalar_one()
-    try:
-        handle = resolve_owner_handle(owner)
-    except ValueError:
-        handle = "unknown-owner"
-    return f"@{handle}/{src.slug}", src, owner
+    return f"@{_safe_owner_handle(owner)}/{src.slug}", src, owner
 
 
 @router.get("/{parent_scope_id}/mounts", response_model=list[MountResponse])
@@ -257,11 +280,6 @@ async def create_mount(
     )
     await db.commit()
 
-    try:
-        handle = resolve_owner_handle(owner)
-    except ValueError:
-        handle = "owner-display-name-missing"
-
     logger.info(
         "scope_mount_created parent=%s source=%s alias=%s by=%s",
         parent_scope_id,
@@ -269,18 +287,7 @@ async def create_mount(
         mount.alias,
         auth.user_id,
     )
-    return MountResponse(
-        id=str(mount.id),
-        parent_scope_id=str(mount.parent_scope_id),
-        source_scope_id=str(mount.source_scope_id),
-        source_scope_name=src.name,
-        source_scope_slug=src.slug,
-        source_owner_display=owner.name or owner.email or f"user-{str(owner.id)[:8]}",
-        source_owner_handle=handle,
-        alias=mount.alias,
-        mode=mount.mode,
-        created_at=mount.created_at,
-    )
+    return await _build_mount_response(db, mount, src=src, owner=owner)
 
 
 @router.delete("/{parent_scope_id}/mounts/{mount_id}")
