@@ -32,7 +32,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.scope import Scope
 from app.models.scope_share_link import ScopeShareLink
-from app.schemas.sharing import ShareLinkCreate, ShareLinkCreated
+from app.schemas.sharing import ShareLinkCreate, ShareLinkCreated, ShareLinkResponse
 from app.services.sharing import (
     generate_share_token,
     hash_share_token,
@@ -142,3 +142,80 @@ async def create_share_link(
         created_at=link.created_at,
         expires_at=link.expires_at,
     )
+
+
+@router.get("/{scope_id}/share-links", response_model=list[ShareLinkResponse])
+async def list_share_links(
+    scope_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> list[ShareLinkResponse]:
+    """List active + revoked share-links for a scope.
+
+    Returns prefix-only data — the raw token was shown ONCE at create
+    time and is unrecoverable. Owners refresh the dialog to see
+    redeem counts, last-redeemed timestamps, and revoke individual
+    links.
+
+    Sorted created_at DESC so the freshest link surfaces first.
+    Revoked links remain in the listing (with revoked_at populated)
+    so the owner can see a history; the client renders them muted.
+    """
+    await _assert_scope_owner(db, auth, scope_id)
+    result = await db.execute(
+        select(ScopeShareLink)
+        .where(ScopeShareLink.scope_id == scope_id)
+        .order_by(ScopeShareLink.created_at.desc())
+    )
+    return [
+        ShareLinkResponse(
+            id=str(link.id),
+            prefix=link.token_prefix,
+            label=link.label,
+            created_at=link.created_at,
+            expires_at=link.expires_at,
+            revoked_at=link.revoked_at,
+            redeem_count=link.redeem_count,
+            last_redeemed_at=link.last_redeemed_at,
+        )
+        for link in result.scalars().all()
+    ]
+
+
+@router.delete("/{scope_id}/share-links/{link_id}")
+async def revoke_share_link(
+    scope_id: UUID,
+    link_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Soft-revoke a share-link by stamping revoked_at.
+
+    Idempotent: revoking an already-revoked link returns 200 with
+    the same response, doesn't double-stamp.
+
+    Once revoked, /preview, /redeem, /upgrade all return 410 Gone
+    via require_share_token's expiry check. Anonymous tokens already
+    accepted on a device stop syncing — the daemon's next reconcile
+    sees 410 and prunes the local share-tokens.json entry.
+
+    Pre-existing ScopeMembership rows (created via /upgrade BEFORE
+    revoke) are NOT removed — revoking the LINK doesn't remove
+    members who already joined via it. Owner must explicitly call
+    DELETE /api/scopes/{id}/members/{user_id} (B.7) for that.
+    """
+    await _assert_scope_owner(db, auth, scope_id)
+    result = await db.execute(
+        select(ScopeShareLink).where(
+            ScopeShareLink.id == link_id,
+            ScopeShareLink.scope_id == scope_id,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "share link not found")
+    if link.revoked_at is None:
+        link.revoked_at = datetime.now(UTC)
+        await db.commit()
+        logger.info("share_link_revoked link_id=%s by=%s", link_id, auth.user_id)
+    return {"status": "revoked"}
