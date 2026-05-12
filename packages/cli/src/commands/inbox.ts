@@ -111,11 +111,47 @@ interface InvitationAcceptResponse {
 export async function inboxListCommand(opts: { json?: boolean }): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
+
+	// Anonymous: server invitations require auth, but locally-redeemed
+	// share-tokens (anonymous redeem path) live in ~/.clawdi/share-tokens.json
+	// and ARE this device's inbox of un-claimed shares. Surface them so
+	// the user can see what they redeemed before logging in.
 	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
+		const tokens = listTokens().filter((t) => !t.upgraded_at);
+		if (opts.json) {
+			// Redact the raw token — it's the bearer credential for the
+			// scope and stdout / agent logs are not 0600. Consumers that
+			// need the raw value can read ~/.clawdi/share-tokens.json directly.
+			const redacted = tokens.map(({ token: _omit, ...rest }) => rest);
+			console.log(JSON.stringify({ invitations: [], local_share_tokens: redacted }, null, 2));
+			return;
+		}
+		if (tokens.length === 0) {
+			console.log("Nothing in your inbox.");
+			console.log(
+				chalk.gray(
+					"Sign in with `clawdi auth login` to see invitations and convert any " +
+						"anonymous share-tokens to permanent memberships.",
+				),
+			);
+			return;
+		}
+		console.log(chalk.bold(`Anonymous share-tokens on this device (${tokens.length}):`));
+		for (const t of tokens) {
+			console.log(
+				`  ${chalk.bold(t.scope_name)}  ${chalk.gray(`— from ${t.owner_display} (@${t.owner_handle})`)}`,
+			);
+			console.log(chalk.gray(`    scope_id: ${t.scope_id}`));
+		}
+		console.log();
+		console.log(
+			chalk.gray("Run ") +
+				chalk.cyan("clawdi auth login") +
+				chalk.gray(" — pending tokens upgrade to permanent memberships automatically."),
+		);
 		return;
 	}
+
 	const r = await fetch(`${apiUrl}/api/me/invitations`, {
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
@@ -142,7 +178,11 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		);
 	}
 	console.log();
-	console.log(chalk.gray("Accept: ") + chalk.cyan("clawdi inbox accept <id>"));
+	console.log(
+		chalk.gray("Accept: ") +
+			chalk.cyan("clawdi inbox accept <id>") +
+			chalk.gray("  (a share URL also works)"),
+	);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -241,7 +281,9 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 	const token = findToken(scopeIdOrAlias);
 	if (!token) {
 		console.error(chalk.red(`No local share-token entry found for '${scopeIdOrAlias}'.`));
-		console.error(chalk.gray("Run `clawdi share list` to see local entries."));
+		console.error(
+			chalk.gray("Run `clawdi inbox` (signed-out) to list local share-tokens on this device."),
+		);
 		process.exitCode = 1;
 		return;
 	}

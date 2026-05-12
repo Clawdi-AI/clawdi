@@ -86,5 +86,5 @@ export async function scopeShareCommand(scopeArg: string, opts: { label?: string
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
-	console.log("Recipient runs: " + chalk.cyan(`clawdi share accept ${body.url}`));
+	console.log("Recipient runs: " + chalk.cyan(`clawdi inbox accept ${body.url}`));
 }
