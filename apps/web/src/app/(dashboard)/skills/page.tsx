@@ -9,6 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
+import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
 import { AgentTargetPicker } from "@/components/skills/agent-target-picker";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -341,7 +342,14 @@ function SkillsPageInner() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Skills" />
+			<PageHeader
+				title="Skills"
+				actions={
+					targetScopeId ? (
+						<ShareScopeDialog scopeId={targetScopeId} scopeName={targetAgentLabel} />
+					) : null
+				}
+			/>
 
 			{scopeError ? (
 				<Alert variant="destructive">
