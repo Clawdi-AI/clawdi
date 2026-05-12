@@ -89,7 +89,7 @@ export async function scopeInvitesCommand(
 				resolved_owner_handle: string;
 				joined_at: string;
 			}>(apiUrl, auth.apiKey, `/api/me/invitations/${opts.accept}/accept`);
-			console.log(chalk.green("✓") + " Accepted invitation, joined as viewer.");
+			console.log(`${chalk.green("✓")} Accepted invitation, joined as viewer.`);
 			console.log(`  ${chalk.gray("Scope ID:")} ${body.scope_id}`);
 			console.log(`  ${chalk.gray("Owner handle:")} @${body.resolved_owner_handle}`);
 			const written = await pullSharedSkills(
@@ -117,7 +117,7 @@ export async function scopeInvitesCommand(
 		}
 		if (opts.decline) {
 			await authedPost(apiUrl, auth.apiKey, `/api/me/invitations/${opts.decline}/decline`);
-			console.log(chalk.green("✓") + " Invitation declined.");
+			console.log(`${chalk.green("✓")} Invitation declined.`);
 			return;
 		}
 		// Default: list MY inbox.
@@ -138,7 +138,7 @@ export async function scopeInvitesCommand(
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
 	if (opts.cancel) {
 		await authedDelete(apiUrl, auth.apiKey, `/api/scopes/${scopeId}/invitations/${opts.cancel}`);
-		console.log(chalk.green("✓") + " Invitation cancelled.");
+		console.log(`${chalk.green("✓")} Invitation cancelled.`);
 		return;
 	}
 	const items = await authedGet<InvitationItem[]>(
@@ -149,7 +149,7 @@ export async function scopeInvitesCommand(
 	if (items.length === 0) {
 		console.log("No invitations on this scope.");
 		console.log();
-		console.log("Send one: " + chalk.cyan(`clawdi scope invite ${scopeArg} --email <addr>`));
+		console.log(`Send one: ${chalk.cyan(`clawdi scope invite ${scopeArg} --email <addr>`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Invitations on this scope (${items.length}):`));

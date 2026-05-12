@@ -284,7 +284,7 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	console.log(chalk.green("✓") + " Invitation declined.");
+	console.log(`${chalk.green("✓")} Invitation declined.`);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -320,7 +320,7 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 	}
 	removeToken(token.scope_id);
 
-	console.log(chalk.green("✓") + ` Forgot local share for "${chalk.bold(token.scope_name)}".`);
+	console.log(`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.scope_name)}".`);
 	if (removed > 0) {
 		console.log(chalk.gray(`  Removed ${removed} local skill folder${removed === 1 ? "" : "s"}.`));
 	}
@@ -407,7 +407,7 @@ async function buildAcceptRequestBody(
  * caller-specific "how to mount later" line (URL re-accept vs
  * invitation re-accept) shown after the owned-scopes list. */
 function renderMountAmbiguous(detail: Record<string, unknown>, retryHint: string): void {
-	console.log(chalk.green("✓") + " Joined as viewer (membership saved).");
+	console.log(`${chalk.green("✓")} Joined as viewer (membership saved).`);
 	console.log(chalk.yellow("⚠ Mount deferred — you have 2+ owned scopes."));
 	console.log(chalk.gray("  Pick a parent for the mount:"));
 	const owned = (detail.owned_scopes ?? []) as Array<{ slug: string; kind: string }>;

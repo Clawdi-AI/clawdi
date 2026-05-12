@@ -99,7 +99,7 @@ export async function scopeShareLinksCommand(
 			return;
 		}
 		if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-		console.log(chalk.green("✓") + " Link revoked.");
+		console.log(`${chalk.green("✓")} Link revoked.`);
 		return;
 	}
 
@@ -107,7 +107,7 @@ export async function scopeShareLinksCommand(
 	if (links.length === 0) {
 		console.log("No share links on this scope yet.");
 		console.log();
-		console.log("Generate one: " + chalk.cyan(`clawdi scope share ${scopeArg}`));
+		console.log(`Generate one: ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Share links (${links.length}):`));

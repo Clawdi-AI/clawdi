@@ -61,10 +61,10 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 			console.error(chalk.red(ALREADY_OWNER_HINT));
 		} else if (err === "user_not_found") {
 			console.error(chalk.red(NOT_REGISTERED_HINT));
-			console.error("  " + chalk.cyan(`clawdi scope share ${scopeArg}`));
+			console.error(`  ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
 		} else if (err === "ambiguous_email") {
 			console.error(chalk.red(AMBIGUOUS_HINT));
-			console.error("  " + chalk.cyan(`clawdi scope share ${scopeArg}`));
+			console.error(`  ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
 		} else if (err === "already_member") {
 			console.error(chalk.yellow("That user is already a member of this scope."));
 		} else if (err === "already_invited") {
@@ -80,6 +80,6 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = (await r.json()) as InvitationResponse;
-	console.log(chalk.green("✓") + ` Invitation sent to ${body.invitee_email}`);
+	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
 	console.log(chalk.gray(`  They'll see it in their \`clawdi inbox\` + the web /skills banner.`));
 }

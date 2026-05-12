@@ -61,9 +61,7 @@ export async function resolveScopeId(
 	}
 	if (matches.length > 1) {
 		const ids = matches.map((m) => m.id).join(", ");
-		throw new Error(
-			`'${input}' matches ${matches.length} scopes (${ids}). ` + `Use the UUID directly.`,
-		);
+		throw new Error(`'${input}' matches ${matches.length} scopes (${ids}). Use the UUID directly.`);
 	}
 	return matches[0].id;
 }

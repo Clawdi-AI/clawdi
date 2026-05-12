@@ -74,17 +74,17 @@ export async function scopeShareCommand(scopeArg: string, opts: { label?: string
 	const body = (await r.json()) as ShareLinkCreated;
 
 	console.log();
-	console.log(chalk.green("✓") + ` Share link ready`);
+	console.log(`${chalk.green("✓")} Share link ready`);
 	console.log();
 	console.log(`  ${chalk.bold(body.url)}`);
 	console.log();
 	console.log(
 		chalk.gray(
-			"Save this URL now — only the prefix " + chalk.bold(body.prefix) + " remains visible later.",
+			`Save this URL now — only the prefix ${chalk.bold(body.prefix)} remains visible later.`,
 		),
 	);
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
-	console.log("Recipient runs: " + chalk.cyan(`clawdi inbox accept ${body.url}`));
+	console.log(`Recipient runs: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 }
