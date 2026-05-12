@@ -136,3 +136,30 @@ class SharedScopeResponse(BaseModel):
     role: str
     joined_at: datetime
     is_owner: bool = False
+
+
+class MountCreate(BaseModel):
+    """Body for POST /api/scopes/{parent_scope_id}/mounts."""
+
+    source_scope_id: str
+    alias: str | None = None
+    mode: str = "live"
+
+
+class MountResponse(BaseModel):
+    """Returned by GET /api/scopes/{id}/mounts and the POST create.
+
+    Includes denormalized source-scope display fields so the CLI/web
+    can render the mount tree without an extra round-trip per row.
+    """
+
+    id: str
+    parent_scope_id: str
+    source_scope_id: str
+    source_scope_name: str
+    source_scope_slug: str
+    source_owner_display: str
+    source_owner_handle: str
+    alias: str
+    mode: str
+    created_at: datetime
