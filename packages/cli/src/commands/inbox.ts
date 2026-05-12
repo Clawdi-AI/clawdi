@@ -41,6 +41,18 @@ function normalizeAcceptArg(raw: string): string {
 	return s;
 }
 
+/** Detect what shape a polymorphic accept argument has so the
+ * dispatcher can route it (or surface the right error). The
+ * anonymous-mode and authed-mode branches both run the same
+ * detection on the positional argument; extracting it keeps the
+ * "what does this string look like?" rule in one place. */
+function detectAcceptArgShape(normalized: string): "uuid" | "url" | "raw_token" | "unknown" {
+	if (UUID_RE.test(normalized)) return "uuid";
+	if (RAW_TOKEN_RE.test(normalized)) return "raw_token";
+	if (normalized.startsWith("http")) return "url";
+	return "unknown";
+}
+
 function extractTokenFromUrl(input: string): string {
 	if (RAW_TOKEN_RE.test(input)) return input;
 	let url: URL;
@@ -212,7 +224,7 @@ export async function inboxAcceptCommand(
 		// these REQUIRE auth, so direct the user at `auth login` rather than
 		// letting the URL parser fail with "Not a valid share link".
 		const normalized = opts.url ?? normalizeAcceptArg(posArg ?? "");
-		if (UUID_RE.test(normalized) && !opts.url) {
+		if (detectAcceptArgShape(normalized) === "uuid" && !opts.url) {
 			console.error(
 				chalk.red(
 					"That looks like an invitation id. Invitations require an account — " +
@@ -250,15 +262,16 @@ export async function inboxAcceptCommand(
 	}
 
 	const normalized = normalizeAcceptArg(posArg);
-	if (UUID_RE.test(normalized)) {
+	const shape = detectAcceptArgShape(normalized);
+	if (shape === "uuid") {
 		await acceptInvitation(apiUrl, auth.apiKey, normalized, opts);
-	} else if (normalized.startsWith("http") || RAW_TOKEN_RE.test(normalized)) {
+	} else if (shape === "url" || shape === "raw_token") {
 		await acceptUrl(apiUrl, auth.apiKey, normalized, opts);
 	} else {
 		console.error(
 			chalk.red(
 				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation id or a URL.\n` +
-					"  Invitation id shape:  00000000-0000-0000-0000-000000000000\n" +
+					"  Invitation id shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
 					"  Share URL shape:      https://.../share/<43-char-token>\n" +
 					"  Use --invite <id> or --url <link> to be explicit.",
 			),
