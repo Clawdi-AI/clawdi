@@ -1,22 +1,34 @@
 "use client";
 
-import type { Deployment } from "@clawdi/shared/api";
+import type { components, Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 import { env } from "@/lib/env";
+
+type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
  * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
+ *
+ * `cloudEnvs` is the cloud-api environments list the parent already
+ * fetches for the self-managed grid; passing it through lets each
+ * hosted tile attach its matching `EnvironmentResponse` (joined via
+ * `deployment.config_info.clawdi_cloud_environments[agent_type] ===
+ * env.id`). With the join, the same `DaemonStatusBadge` that powers
+ * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
+ * — Phase 4a registers each hosted pod as a cloud-api env with its
+ * own daemon, so the data is the same shape; only the "Clawdi" pill
+ * + external management URL distinguish hosted in the UI.
  */
-export function useHostedAgentTiles({ enabled }: { enabled: boolean }) {
+export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const api = useClawdiApi();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
 		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
-		enabled,
 		// Status changes (Provisioning → Ready) — refetch periodically
 		// while a deployment is still spinning up. 10s is the balance
 		// between snappy feedback and not hammering clawdi.ai.
@@ -27,9 +39,53 @@ export function useHostedAgentTiles({ enabled }: { enabled: boolean }) {
 		},
 	});
 
-	const tiles: AgentTile[] = (query.data ?? []).flatMap(deploymentToTiles);
+	// Memoize the env-by-id index so the tile join is O(N+M) instead
+	// of O(N×M) on every render of the hosted-agent grid.
+	//
+	// Both index keys and lookup keys are forced lowercase. PostgreSQL
+	// stores UUIDs case-insensitively by convention but emits them
+	// lowercase via asyncpg; the SaaS side that writes
+	// `clawdi_cloud_environments` could in principle hand us mixed
+	// case at the rim (a custom client uppercasing for display, JSON
+	// round-tripping through a model that normalizes differently,
+	// etc.). Comparing as-stored would silently miss a real match,
+	// leaving both a hosted tile AND a self-managed tile for the
+	// same env. Normalize at the boundary, not the comparison site.
+	const envById = useMemo(() => {
+		const m = new Map<string, Env>();
+		for (const e of cloudEnvs) m.set(e.id.toLowerCase(), e);
+		return m;
+	}, [cloudEnvs]);
+
+	// Both `tiles` and `claimedEnvIds` derive from `query.data`. Memoize
+	// them so refetchInterval (10s for transient deployments) doesn't
+	// rebuild N×M JSX trees on every poll when nothing actually changed.
+	// TanStack Query gives the same `data` reference back on no-op
+	// refetches, so the memo deps stay stable.
+	const tiles = useMemo<AgentTile[]>(
+		() => (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById)),
+		[query.data, envById],
+	);
+
+	// Env ids that are owned by a hosted deployment. The dashboard
+	// excludes these from its self-managed grid so a hosted pod's env
+	// — which cloud-api also returns from /api/environments because
+	// the admin endpoint registered it — doesn't double-count as both
+	// a hosted tile and a self-managed tile. Lower-cased for the same
+	// case-sensitivity defense as `envById`.
+	const claimedEnvIds = useMemo(() => {
+		const s = new Set<string>();
+		for (const d of query.data ?? []) {
+			for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
+				if (envId) s.add(envId.toLowerCase());
+			}
+		}
+		return s;
+	}, [query.data]);
+
 	return {
 		tiles,
+		claimedEnvIds,
 		isLoading: query.isLoading,
 		error: query.error,
 	};
@@ -43,58 +99,119 @@ function isKnownRuntime(s: string): s is Runtime {
 }
 
 /**
- * One deployment fans out to one tile per onboarded runtime. OpenClaw
+ * One deployment fans out to one tile per running runtime. OpenClaw
  * (:18789) and Hermes (:18793) are completely separate dashboard
- * surfaces in clawdi.ai — different web servers, capability
- * sets, management URLs — so the unified grid renders them as
- * distinct agents.
+ * surfaces in clawdi.ai — different web servers, capability sets,
+ * management URLs — so the unified grid renders them as distinct
+ * agents.
  *
- * `onboarded_agents` is the source of truth: backend writes
- * `["hermes"]` or `["openclaw"]` at deploy time
- * (backend/app/routes/deployments.py:705,1122 — they're mutually
- * exclusive at provision), and grows the array via
- * `/deployments/{id}/onboard-agent` when a user later adds a second
- * runtime. We trust the array literally — never synthesize a runtime
- * that isn't in it (the pod doesn't have that process).
+ * Runtime resolution priority (see `resolveRuntimes` below):
+ *   1. `clawdi_cloud_environments` keys — Phase 4a+ deploys.
+ *      Authoritative because every key in this map corresponds to
+ *      a daemon currently running with a live cloud-api env binding.
+ *   2. `onboarded_agents` — fallback for deployments where
+ *      `CLAWDI_CLOUD_LIVE_SYNC_ENABLED` is off, mint failed soft,
+ *      or the SaaS hasn't been redeployed since Phase 4a. Now writes
+ *      both runtimes for dual-agent deploys (was previously mutually-
+ *      exclusive — that bug hid OpenClaw on dual-agent pods).
+ *   3. `enable_hermes` flag — final fallback for very old
+ *      deployments that pre-date `onboarded_agents`.
+ *
+ * We never synthesize a runtime that isn't surfaced by one of these
+ * sources (the pod doesn't have that process running).
  */
-function deploymentToTiles(d: Deployment): AgentTile[] {
+function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);
 	const slug = deploymentSlug(d);
 	const statusLabel = displayStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	const active = d.status === "running" || d.status === "ready";
-	return runtimes.map((runtime) => ({
-		id: `${d.id}:${runtime}`,
-		source: "on-clawdi" as const,
-		// Runtime is the primary identifier on hosted tiles since the
-		// AgentIcon already brands it and one deployment fans out to
-		// multiple tiles — using `d.name` here would print
-		// "openclaw-b5451f9c" on a Hermes tile.
-		name: runtimeDisplayName(runtime),
-		agentType: runtime,
-		// Deployment slug as the secondary line lets users disambiguate
-		// when they have more than one pod. Mode info ("Daemon") is
-		// implied by the "Clawdi" badge — every hosted runtime is daemon.
-		runtimeLabel: slug,
-		statusLabel,
-		href: deploymentManageUrl(d, runtime),
-		external: true,
-		active,
-	}));
+	const cloudEnvIds = d.config_info?.clawdi_cloud_environments ?? {};
+	return runtimes.map((runtime) => {
+		// Phase 4a join: each hosted pod registers a cloud-api env per
+		// agent_type via the admin endpoint. Match by agent_type →
+		// environment_id so the tile picks up daemon sync state
+		// (last_sync_at, queue depth, status badge) from cloud-api,
+		// AND the primary click target points at the in-app env detail
+		// page — same UX as a self-managed agent. Lifecycle ops
+		// (Restart/Stop/Delete) live on the SaaS dashboard, surfaced
+		// via the secondary `manageHref` button on the tile.
+		//
+		// Missing match (legacy pre-Phase-4a deployment, mint failed,
+		// or `CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false`) → fall back to the
+		// SaaS dashboard URL as the primary, so the tile still has a
+		// useful place to click.
+		const envId = cloudEnvIds[runtime];
+		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+		const manageUrl = deploymentManageUrl(d, runtime);
+		return {
+			id: `${d.id}:${runtime}`,
+			source: "on-clawdi" as const,
+			// Runtime is the primary identifier on hosted tiles since the
+			// AgentIcon already brands it and one deployment fans out to
+			// multiple tiles — using `d.name` here would print
+			// "openclaw-b5451f9c" on a Hermes tile.
+			name: runtimeDisplayName(runtime),
+			agentType: runtime,
+			// Deployment slug as the secondary line lets users disambiguate
+			// when they have more than one pod. Mode info ("Daemon") is
+			// implied by the "Clawdi" badge — every hosted runtime is daemon.
+			runtimeLabel: slug,
+			statusLabel,
+			lastSeenAt: matchedEnv?.last_seen_at ?? null,
+			// `?source=on-clawdi` is the breadcrumb the agent detail page
+			// reads so its sync badge can mirror the hosted-aware copy
+			// we render here. A user who bookmarks/shares this URL keeps
+			// that intent; a self-managed user who happens to navigate
+			// to the same env without the param defaults to the standard
+			// self-managed badge.
+			href: matchedEnv ? `/agents/${matchedEnv.id}?source=on-clawdi` : manageUrl,
+			external: !matchedEnv,
+			// Only surface a separate "Manage" affordance when the
+			// primary link goes IN-APP (matchedEnv present). On the
+			// fallback path (no cloud-api env join — typically a SaaS
+			// deployment that pre-dates the admin-mint integration)
+			// the primary link already goes to the SaaS dashboard, so
+			// a trailing "Manage" button pointing at the same URL is
+			// pure visual noise. Leaving manageHref undefined falls
+			// the tile back to the plain ArrowUpRight glyph, which is
+			// exactly the pre-Phase-4a UX.
+			manageHref: matchedEnv ? manageUrl : undefined,
+			active,
+			env: matchedEnv ?? null,
+		};
+	});
 }
 
 function resolveRuntimes(d: Deployment): Runtime[] {
-	// Trust `onboarded_agents` — it reflects the actual processes the
-	// backend provisioned. A Hermes-only pod has no OpenClaw daemon
-	// listening on :18789, so showing an OpenClaw tile would dead-link.
+	// `clawdi_cloud_environments` is the most authoritative source
+	// post-Phase-4a: every agent that has a live-sync env on cloud-api
+	// is by definition a daemon running in the pod. If it's there, it's
+	// real. This catches the historical bug where dual-agent deploys
+	// only wrote `["hermes"]` into onboarded_agents (legacy mutual-
+	// exclusion convention), making OpenClaw vanish from the tile grid
+	// even though its daemon was running.
 	const set = new Set<Runtime>();
+	for (const r of Object.keys(d.config_info?.clawdi_cloud_environments ?? {})) {
+		if (isKnownRuntime(r)) set.add(r);
+	}
+	// `onboarded_agents` is the next source: trust it ONLY when it
+	// names recognizable runtimes. Empty arrays and arrays full of
+	// unknown strings both fall through to the `enable_hermes` legacy
+	// flag below — they almost always mean "mint hadn't yet populated
+	// this field" rather than "this deployment has zero running
+	// agents," and yielding zero tiles would silently make the
+	// deployment vanish from the dashboard even though the pod is
+	// still up.
 	for (const r of d.config_info?.onboarded_agents ?? []) {
 		if (isKnownRuntime(r)) set.add(r);
 	}
 	if (set.size > 0) return Array.from(set);
-	// Older deployments may have populated only `enable_hermes` without
-	// the `onboarded_agents` array. Fall back to the same mutual
-	// exclusion the backend uses (deployments.py:705).
+	// Final fallback: very-pre-Phase-4a deployments only had
+	// `enable_hermes`, without `onboarded_agents`. Mirror the backend's
+	// old mutual-exclusion convention so the tile points at the right
+	// agent — and keep the deployment visible even when both newer
+	// sources came up empty.
 	return [d.config_info?.enable_hermes ? "hermes" : "openclaw"];
 }
 

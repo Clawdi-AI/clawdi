@@ -5,6 +5,12 @@
  *     bun --cwd apps/web run generate-deploy-api
  *
  * (requires clawdi.ai running on :50021).
+ *
+ * The generated file is intentionally a FILTERED subset of clawdi.ai's
+ * OpenAPI surface — `scripts/filter-deploy-openapi.py` keeps only the
+ * endpoints listed in its `KEEP_PATHS` allowlist plus their transitive
+ * schema closure. Adding a new endpoint = adding it to that allowlist
+ * + running the regen command. See the filter script for details.
  */
 import type { components as DeployComponents } from "./deploy.generated";
 
@@ -12,9 +18,4 @@ export type { components as DeployComponents, paths as DeployPaths } from "./dep
 
 type S = DeployComponents["schemas"];
 
-// Phase 1 only ships the read path (`GET /deployments`). Plan,
-// Subscription, AgentCatalogItem, DeployRequest aren't consumed yet
-// — re-add them when the in-app deploy dialog (Phase 2) lands so we
-// don't ship dead exports. The full schema is still reachable via
-// `DeployComponents["schemas"]` for one-off probing.
 export type Deployment = S["DeploymentResponse"];

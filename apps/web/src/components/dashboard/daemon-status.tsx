@@ -139,8 +139,32 @@ const SHORT_LABEL: Record<Status, string> = {
 	paused: "Sync paused",
 };
 
-export function DaemonStatusBadge({ env }: { env: Env }) {
+export function DaemonStatusBadge({
+	env,
+	source = "self-managed",
+	manageHref,
+}: {
+	env: Env;
+	/** "on-clawdi" tiles change the dialog copy across every non-
+	 * live state: hosted users don't have a CLI to run
+	 * `clawdi serve install` / `clawdi serve status` / `clawdi auth login`
+	 * against — the supervised daemon ships in the pod image. All
+	 * remediation copy points back at the Clawdi dashboard
+	 * (`manageHref`) instead. Self-managed installs see the
+	 * existing CLI instructions across every state. */
+	source?: "self-managed" | "on-clawdi";
+	/** When provided on a hosted (`source="on-clawdi"`) tile, errored /
+	 * paused dialog branches render a link to this URL (the SaaS
+	 * dashboard's Restart / Stop / Delete affordance) so the dead-end
+	 * "the daemon is broken and you can't fix it from here" UX
+	 * becomes "click here to restart the pod." Self-managed callers
+	 * omit it; hosted callers that lack a registered SaaS deployment
+	 * (pre-Phase-4a fallback path) may also omit it and get a plain
+	 * "contact support / check the Clawdi dashboard" message. */
+	manageHref?: string;
+}) {
 	const status = classify(env);
+	const isHosted = source === "on-clawdi";
 	const [open, setOpen] = useState(false);
 	const inner = (
 		<span
@@ -151,9 +175,27 @@ export function DaemonStatusBadge({ env }: { env: Env }) {
 			)}
 		>
 			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", DOT_TONE[status])} />
-			<span>{SHORT_LABEL[status]}</span>
+			<span>
+				{/* Hosted "set-up" reads as "Sync pending" — the rollout
+				    is in flight, not waiting on the user. Other states
+				    use the same label as self-managed because they have
+				    the same product meaning regardless of who provisioned
+				    the pod. */}
+				{isHosted && status === "set-up" ? "Sync pending" : SHORT_LABEL[status]}
+			</span>
 		</span>
 	);
+	// Hosted users see a tooltip that doesn't promise a CLI fix.
+	// "Run setup" is meaningless when there's nothing to install;
+	// "Daemon isn't checking in" is true but the actionable next
+	// step lives on the Clawdi dashboard, not the user's terminal.
+	const tooltip = isHosted
+		? status === "set-up"
+			? "Sync activates on the next image rollout."
+			: status === "paused"
+				? "Pod isn't checking in. Manage from the Clawdi dashboard."
+				: STATUS_TOOLTIP[status]
+		: STATUS_TOOLTIP[status];
 	return (
 		<>
 			<Tooltip>
@@ -178,7 +220,7 @@ export function DaemonStatusBadge({ env }: { env: Env }) {
 					</button>
 				</TooltipTrigger>
 				<TooltipContent side="bottom" className="text-xs">
-					{STATUS_TOOLTIP[status]}
+					{tooltip}
 				</TooltipContent>
 			</Tooltip>
 			{/* Dialog content portals into document.body, but React events
@@ -194,7 +236,14 @@ export function DaemonStatusBadge({ env }: { env: Env }) {
 			    user closes the help modal. It's a propagation barrier,
 			    not a real interactive control. */}
 			<div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-				<SyncHelpDialog env={env} status={status} open={open} onOpenChange={setOpen} />
+				<SyncHelpDialog
+					env={env}
+					status={status}
+					source={source}
+					manageHref={manageHref}
+					open={open}
+					onOpenChange={setOpen}
+				/>
 			</div>
 		</>
 	);
@@ -219,14 +268,19 @@ function TechRow({ label, value }: { label: string; value: string }) {
 function SyncHelpDialog({
 	env,
 	status,
+	source,
+	manageHref,
 	open,
 	onOpenChange,
 }: {
 	env: Env;
 	status: Status;
+	source: "self-managed" | "on-clawdi";
+	manageHref?: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const isHosted = source === "on-clawdi";
 	const dropped = env.dropped_count ?? 0;
 	const queuePeak = env.queue_depth_high_water ?? 0;
 	const lastSyncRel = env.last_sync_at ? relativeTime(env.last_sync_at) : "never";
@@ -238,10 +292,14 @@ function SyncHelpDialog({
 		status === "live"
 			? "Live sync details"
 			: status === "set-up"
-				? "Turn on live sync for this agent"
+				? isHosted
+					? "Live sync is activating"
+					: "Turn on live sync for this agent"
 				: status === "errored"
 					? "Sync hit an error"
-					: "Sync paused — daemon isn't checking in";
+					: isHosted
+						? "Sync paused — pod isn't checking in"
+						: "Sync paused — daemon isn't checking in";
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -251,12 +309,33 @@ function SyncHelpDialog({
 				</DialogHeader>
 				<div className="space-y-4">
 					{status === "set-up" ? (
-						<>
-							<p className="text-sm text-muted-foreground">
-								A small background service that keeps this agent in sync.
-							</p>
-							<SyncSetupSnippet env={env} />
-						</>
+						isHosted ? (
+							// Hosted pods get sync wired up automatically when
+							// the agent image rolls out — there's nothing for the
+							// user to configure. Explain the flow + point at the
+							// SaaS dashboard's lifecycle UI for the rare manual
+							// kick (Restart) so this dialog is informational, not
+							// a dead-end.
+							<div className="space-y-3">
+								<p className="text-sm text-muted-foreground">
+									This agent runs on Clawdi&apos;s infrastructure. Live sync activates automatically
+									once the pod is on the latest agent image. New deploys are already on the latest
+									image; older pods activate on their next upgrade.
+								</p>
+								<p className="text-xs text-muted-foreground">
+									Nothing to install or configure on your side. The first heartbeat will flip this
+									badge to <span className="font-medium">Live sync</span> within a minute or two of
+									pod boot.
+								</p>
+							</div>
+						) : (
+							<>
+								<p className="text-sm text-muted-foreground">
+									A small background service that keeps this agent in sync.
+								</p>
+								<SyncSetupSnippet env={env} />
+							</>
+						)
 					) : (
 						<>
 							{status === "live" ? (
@@ -272,20 +351,29 @@ function SyncHelpDialog({
 										{formatErrorForDisplay(env.last_sync_error)}
 									</code>
 									{isErroredAndStale ? (
-										<>
-											<p className="text-xs text-muted-foreground">
-												Daemon stopped after this error. Inspect:
-											</p>
-											<CommandLine command="clawdi serve status" />
-											<p className="text-xs text-muted-foreground">
-												Token revoked? Log in again with{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-													clawdi auth login
-												</code>
-												.
-											</p>
-										</>
+										isHosted ? (
+											<>
+												<p className="text-xs text-muted-foreground">
+													Daemon stopped after this error. The pod runs on Clawdi&apos;s
+													infrastructure — restart it from the Clawdi dashboard to recover.
+												</p>
+												<ManageOnClawdiLink manageHref={manageHref} />
+											</>
+										) : (
+											<>
+												<p className="text-xs text-muted-foreground">
+													Daemon stopped after this error. Inspect:
+												</p>
+												<CommandLine command="clawdi serve status" />
+												<AuthLoginHint />
+											</>
+										)
 									) : isPermanentError(env.last_sync_error) ? (
+										// Same product story on both sides: permanent drop means the
+										// daemon is still healthy and will pick up the next edit.
+										// Self-managed offers `clawdi serve status` as a sanity check;
+										// hosted users have no CLI, so we just explain the daemon
+										// state and let the next file save do the rest.
 										<>
 											<p className="text-xs text-muted-foreground">
 												This won&apos;t auto-recover — the daemon dropped the change after the
@@ -298,17 +386,25 @@ function SyncHelpDialog({
 												build output). Fix the source and re-save to retry — the daemon is still
 												healthy and will pick up the next edit.
 											</p>
-											<CommandLine command="clawdi serve status" />
+											{isHosted ? null : <CommandLine command="clawdi serve status" />}
 										</>
 									) : isRetryExhaustedError(env.last_sync_error) ? (
 										<>
 											<p className="text-xs text-muted-foreground">
 												The daemon retried for a few minutes and gave up — usually a network outage
 												or backend hiccup. The next 5-minute rescan re-queues the change
-												automatically once connectivity is back; no source edit needed. If your
-												network looks fine, inspect:
+												automatically once connectivity is back; no source edit needed.
+												{isHosted ? null : " If your network looks fine, inspect:"}
 											</p>
-											<CommandLine command="clawdi serve status" />
+											{isHosted ? null : <CommandLine command="clawdi serve status" />}
+										</>
+									) : isHosted ? (
+										<>
+											<p className="text-xs text-muted-foreground">
+												The daemon will keep retrying. If the error persists, restart the pod from
+												the Clawdi dashboard.
+											</p>
+											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
 									) : (
 										<>
@@ -316,27 +412,31 @@ function SyncHelpDialog({
 												It will keep retrying. If this persists:
 											</p>
 											<CommandLine command="clawdi serve status" />
-											<p className="text-xs text-muted-foreground">
-												Token revoked? Log in again with{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-													clawdi auth login
-												</code>
-												.
-											</p>
+											<AuthLoginHint />
 										</>
 									)}
 								</div>
 							) : null}
 
 							{status === "paused" ? (
-								<div className="space-y-2">
-									<p className="text-sm text-muted-foreground">
-										Daemon isn&apos;t checking in. From the same terminal you set it up on:
-									</p>
-									<CommandLine command="clawdi serve status" />
-									<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
-									<CommandLine command={`clawdi serve install --agent ${env.agent_type}`} />
-								</div>
+								isHosted ? (
+									<div className="space-y-2">
+										<p className="text-sm text-muted-foreground">
+											The pod isn&apos;t checking in. It may be restarting, suspended, or out of
+											memory — manage it from the Clawdi dashboard.
+										</p>
+										<ManageOnClawdiLink manageHref={manageHref} />
+									</div>
+								) : (
+									<div className="space-y-2">
+										<p className="text-sm text-muted-foreground">
+											Daemon isn&apos;t checking in. From the same terminal you set it up on:
+										</p>
+										<CommandLine command="clawdi serve status" />
+										<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
+										<CommandLine command={`clawdi serve install --agent ${env.agent_type}`} />
+									</div>
+								)
 							) : null}
 
 							{dropped > 0 ? (
@@ -473,6 +573,44 @@ function PromptBlock({ text }: { text: string }) {
 			</div>
 			<pre className="whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{text}</pre>
 		</div>
+	);
+}
+
+/** Two of the self-managed errored-state branches ("daemon stopped"
+ * and the generic "keep retrying" fallback) end with the same nudge
+ * to `clawdi auth login`. Inline both was 8 lines of identical JSX. */
+function AuthLoginHint() {
+	return (
+		<p className="text-xs text-muted-foreground">
+			Token revoked? Log in again with{" "}
+			<code className="rounded bg-muted px-1 py-0.5 text-[11px]">clawdi auth login</code>.
+		</p>
+	);
+}
+
+/** Affordance for hosted-pod remediation. Renders a button-styled link
+ * to the Clawdi dashboard's lifecycle UI (Restart / Stop / Delete) when
+ * `manageHref` is provided. Falls back to a static muted-text breadcrumb
+ * when it isn't — pre-Phase-4a hosted tiles can land here without a SaaS
+ * deployment URL on hand, and showing "no link" is still better than
+ * advertising a CLI fix that doesn't apply. */
+function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
+	if (!manageHref) {
+		return (
+			<p className="text-xs text-muted-foreground">
+				Use the Clawdi dashboard to restart or inspect the pod.
+			</p>
+		);
+	}
+	return (
+		<a
+			href={manageHref}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/80 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+		>
+			Open in Clawdi dashboard
+		</a>
 	);
 }
 

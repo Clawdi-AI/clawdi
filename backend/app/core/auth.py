@@ -1,10 +1,11 @@
 import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -14,6 +15,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.user import User
+from app.services.user_provisioning import lazy_create_user_with_personal_scope
 
 bearer_scheme = HTTPBearer()
 
@@ -155,6 +157,41 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     user = result.scalar_one_or_none()
 
     email = payload.get("email") or payload.get("email_address")
+    name = payload.get("name")
+
+    # Backfill email/name on rows that were lazy-created via the
+    # admin path (`_resolve_or_create_user` in routes/admin.py) — that
+    # path doesn't have a Clerk JWT in scope so the row starts with
+    # email=None / name=None. The first time the user signs into
+    # cloud.clawdi.ai directly, this branch fills them in.
+    #
+    # Idempotent: once filled, subsequent JWTs hit the same row,
+    # see non-null values, and skip the update. Backfill only — we
+    # NEVER overwrite an existing email/name because that would let
+    # a Clerk-side display-name change silently rewrite our row
+    # (Clerk is the source of truth for identity, not display).
+    if user is not None and ((user.email is None and email) or (user.name is None and name)):
+        if user.email is None and email:
+            user.email = email
+        if user.name is None and name:
+            user.name = name
+        try:
+            await db.commit()
+            await db.refresh(user)
+            # Log only on the success path. If the commit raises and
+            # we fall into the rollback branch below, this request is
+            # the race LOSER — the winner already wrote the values
+            # and is the one whose log line should claim the backfill.
+            # Logging here both ways would lie about who wrote what
+            # and corrupt audit / debugging trails.
+            logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
+        except IntegrityError:
+            # Concurrent backfill — another request won. Re-read the
+            # row (which now carries the winner's values) instead of
+            # 500-ing the user out of their session.
+            await db.rollback()
+            result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+            user = result.scalar_one()
 
     # Sub miss + snapshot-rebind opted in: try to attach to an existing
     # snapshot row by verified email. We deliberately fail closed if any
@@ -229,74 +266,29 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     if not user:
         # First login (production path, or rebind enabled with no
-        # match): create a fresh user row bound to this Clerk sub.
-        # The Personal scope is created in the same transaction so
-        # every user always has a default-write target — phase 1's
-        # resolver assumes it exists and 500s if not. Migration
-        # backfilled it for pre-existing users; this covers new
-        # signups.
+        # match): create a fresh user row + Personal scope bound to
+        # this Clerk sub. Downstream resolvers assume every user has
+        # a Personal scope; the helper enforces that invariant in a
+        # single transaction.
         #
-        # Concurrent first-login requests race here: both find
-        # user=None, both try to insert. The second commit hits
-        # the `users.clerk_id` unique constraint. Catch the
-        # IntegrityError, rollback, and re-query — the row is
-        # there now from the winner.
-        from app.models.scope import SCOPE_KIND_PERSONAL
-        from app.models.scope import Scope as _Scope
-
-        new_user = User(
+        # Race-loser status is 401: this is a user-auth flow, so a
+        # vanishing winner row is fail-closed-and-let-the-client-
+        # retry territory, not the operational 500 the admin path
+        # uses.
+        user = await lazy_create_user_with_personal_scope(
+            db,
             clerk_id=clerk_id,
             email=email,
             name=payload.get("name"),
             avatar_url=payload.get("picture"),
+            name=name,
+            race_loser_status=status.HTTP_401_UNAUTHORIZED,
         )
-        db.add(new_user)
-
-        # Narrow IntegrityError handling: ONLY the User flush is
-        # racy (clerk_id unique). The Scope insert can't race
-        # because new_user.id is freshly generated. Wrapping both
-        # in one try would silently swallow a Scope-side error
-        # and leave the user without a Personal scope.
-        try:
-            await db.flush()  # may raise on clerk_id conflict
-        except IntegrityError:
-            await db.rollback()
-            # Winner committed first; adopt its row.
-            result = await db.execute(select(User).where(User.clerk_id == clerk_id))
-            user = result.scalar_one_or_none()
-            if user is None:
-                raise HTTPException(
-                    status.HTTP_401_UNAUTHORIZED,
-                    "could not create or load user",
-                ) from None
-        else:
-            # Scope insert can't race on user_id (fresh) but the
-            # commit() below could still raise on bizarre states
-            # (the partial unique index on kind=personal, a
-            # connection drop mid-commit). Catch and log instead
-            # of letting the SQLAlchemy traceback leak as a 500.
-            personal = _Scope(
-                user_id=new_user.id,
-                name="Personal",
-                slug="personal",
-                kind=SCOPE_KIND_PERSONAL,
-            )
-            db.add(personal)
-            try:
-                await db.commit()
-            except Exception:
-                logger.exception(
-                    "personal_scope_create_failed user=%s clerk_id=%s",
-                    new_user.id,
-                    clerk_id,
-                )
-                await db.rollback()
-                raise HTTPException(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                ) from None
-            await db.refresh(new_user)
-            user = new_user
+        # Helper leaves rows flushed-not-committed so admin callers
+        # can bundle their own writes. The JWT path has nothing else
+        # to write, so commit + refresh here.
+        await db.commit()
+        await db.refresh(user)
 
     # Refresh display fields opportunistically on every login. Clerk
     # rotates signed avatar URLs and users may rename in Clerk; without
@@ -569,3 +561,25 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )
     return auth
+
+
+async def require_admin_api_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
+    a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
+    + ops-side scripts that don't have a per-user Clerk JWT in scope.
+
+    503 when `admin_api_key` is empty — endpoints are disabled by default
+    for OSS self-hosters who don't need ops tooling. Constant-time
+    comparison once configured (defense against timing oracle even though
+    the gate is binary).
+    """
+    expected = settings.admin_api_key
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "admin endpoints are disabled (admin_api_key not configured)",
+        )
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")
