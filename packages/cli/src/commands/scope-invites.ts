@@ -65,8 +65,8 @@ async function authedDelete(apiUrl: string, bearer: string, path: string): Promi
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 }
 
-/** Eagerly pull the shared scope's skills to every adapter — same
- * shape as the share-accept eager pull, factored out for reuse. */
+/** Eagerly pull the shared scope's skills to every adapter — mirrors
+ * the eager pull `inbox accept` runs on its redeem path. */
 async function pullSharedSkills(
 	apiUrl: string,
 	bearer: string,

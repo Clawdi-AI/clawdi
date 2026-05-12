@@ -540,35 +540,12 @@ scopeCmd
 		await scopeInvitesCommand(scope, opts);
 	});
 
-const shareCmd = program.command("share").description("Manage shared scopes");
-
-shareCmd
-	.command("list")
-	.description("List shared scopes accepted on this device")
-	.action(async () => {
-		const { shareListCommand } = await import("./commands/share-list.js");
-		shareListCommand();
-	});
-
-shareCmd
-	.command("remove <scope-id>")
-	.description("Remove a shared scope from this device")
-	.action(async (scopeId) => {
-		const { shareRemoveCommand } = await import("./commands/share-remove.js");
-		shareRemoveCommand(scopeId);
-	});
-
-shareCmd
-	.command("accept <url>")
-	.description("Accept a share link from a scope owner")
-	.addHelpText("after", "\nExample:\n  $ clawdi share accept https://clawdi.ai/share/abc123...")
-	.action(async (url) => {
-		const { shareAcceptCommand } = await import("./commands/share-accept.js");
-		await shareAcceptCommand(url);
-	});
-
 // ─────────────────────────────────────────────────────────────
-// inbox — incoming shares awaiting my action
+// inbox — incoming shares awaiting my action.
+// Replaces the v1 `share accept|list|remove` verbs:
+//   share accept <url>     →  inbox accept <url>
+//   share list             →  scope list ("Shared with you but not mounted")
+//   share remove <id>      →  inbox forget <id-or-alias>
 // ─────────────────────────────────────────────────────────────
 const inboxCmd = program
 	.command("inbox")

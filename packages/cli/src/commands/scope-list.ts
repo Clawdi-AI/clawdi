@@ -1,6 +1,5 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 import { listScopes } from "../lib/scope-resolver";
 
