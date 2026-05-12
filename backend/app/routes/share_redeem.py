@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -32,7 +33,9 @@ from app.models.scope_share_link import ScopeShareLink
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
-from app.schemas.sharing import ShareRedeemResponse
+from app.routes.mounts import ensure_mount
+from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
+from app.services.sharing import auto_mount_target
 
 logger = logging.getLogger(__name__)
 
@@ -148,23 +151,31 @@ async def redeem(
 
 @router.post("/{token}/upgrade")
 async def upgrade(
+    body: UpgradeBody | None = None,
     ctx: ShareTokenContext = Depends(require_share_token),
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
     """Convert a valid share-token + authed user into a permanent
-    ScopeMembership. Idempotent: re-running for the same (user, scope)
-    pair returns the existing row instead of erroring.
+    ScopeMembership AND a ScopeMount in one transaction.
 
-    409 if the requester is the scope owner (can't accept your own
-    scope - the dashboard already lists it).
+    Idempotent on (user, scope) for membership and (parent, source)
+    for mount.
 
-    Hosted-pod env-bound api_keys are REJECTED here (the unbound
-    dep enforces this) - share-link membership is a personal-account
-    concept; expanding a hosted pod's blast radius into another
-    user's scope is exactly the wrong direction.
+    Mount target resolution:
+      - body.parent_scope_id explicit → use it (validated as caller-owned).
+      - body.no_mount=True → skip mount, capability only.
+      - exactly 1 owned scope → auto-mount silently.
+      - 2+ owned scopes → membership commits, mount returns
+        409 mount_target_ambiguous with owned_scopes in context.
+
+    409 already_owner if caller IS the source scope's owner.
+    Hosted-pod env-bound api_keys rejected by require_user_auth_unbound.
     """
-    scope = (await db.execute(select(Scope).where(Scope.id == ctx.scope_id))).scalar_one_or_none()
+    body = body or UpgradeBody()
+    scope = (
+        await db.execute(select(Scope).where(Scope.id == ctx.scope_id))
+    ).scalar_one_or_none()
     if scope is None:
         raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
     if scope.user_id == auth.user_id:
@@ -177,6 +188,7 @@ async def upgrade(
         await db.execute(select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id))
     ).scalar_one()
 
+    # Membership row (capability) — idempotent insert.
     existing = (
         await db.execute(
             select(ScopeMembership).where(
@@ -186,24 +198,111 @@ async def upgrade(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return {
-            "scope_id": str(existing.scope_id),
-            "resolved_owner_handle": existing.resolved_owner_handle,
-            "membership_id": str(existing.id),
-        }
+        membership = existing
+    else:
+        membership = ScopeMembership(
+            scope_id=ctx.scope_id,
+            user_id=auth.user_id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=link.resolved_owner_handle,
+        )
+        db.add(membership)
+        await db.flush()
 
-    membership = ScopeMembership(
-        scope_id=ctx.scope_id,
-        user_id=auth.user_id,
-        role="viewer",
-        joined_via="link",
-        joined_at=datetime.now(UTC),
-        resolved_owner_handle=link.resolved_owner_handle,
-    )
-    db.add(membership)
-    await db.flush()
-    await db.commit()
-    await db.refresh(membership)
+    # Mount target resolution.
+    mount_payload: dict = {}
+    if body.no_mount:
+        await db.commit()
+    else:
+        parent_id: UUID | None = None
+        owned: list = []
+        if body.parent_scope_id:
+            try:
+                explicit = UUID(body.parent_scope_id)
+            except (ValueError, AttributeError) as err:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"error": "invalid_parent_scope_id"},
+                ) from err
+            # Validate caller owns it.
+            owned_check = (
+                await db.execute(
+                    select(Scope).where(
+                        Scope.id == explicit,
+                        Scope.user_id == auth.user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_check is None:
+                # Caller doesn't own that scope; same 404 shape used
+                # elsewhere so scope IDs aren't enumerable.
+                await db.commit()
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "parent_scope_id not found"
+                )
+            parent_id = explicit
+        else:
+            owned, auto = await auto_mount_target(db, auth.user_id)
+            if auto is None:
+                # Membership commits; mount is deferred. Caller re-POSTs
+                # with parent_scope_id.
+                await db.commit()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    {
+                        "error": "mount_target_ambiguous",
+                        "message": (
+                            "You have multiple owned scopes. Re-run with "
+                            "parent_scope_id set OR call `clawdi scope "
+                            "mount` after."
+                        ),
+                        "owned_scopes": [
+                            {"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned
+                        ],
+                        "membership_id": str(membership.id),
+                    },
+                )
+            parent_id = auto
+
+        # We have a target; build the mount.
+        base_alias = body.alias or f"@{link.resolved_owner_handle}/{scope.slug}"
+        try:
+            mount = await ensure_mount(
+                db,
+                parent_id=parent_id,
+                source_id=ctx.scope_id,
+                base_alias=base_alias,
+                created_by=auth.user_id,
+            )
+        except HTTPException:
+            # ensure_mount commits its own rollback on race; surface
+            # the error but membership is already flushed (will commit
+            # when this exception escapes — but ensure_mount called
+            # rollback, which nuked our membership too).
+            # Re-insert membership defensively and commit just it,
+            # then re-raise so caller sees the conflict.
+            if existing is None:
+                redo = ScopeMembership(
+                    scope_id=ctx.scope_id,
+                    user_id=auth.user_id,
+                    role="viewer",
+                    joined_via="link",
+                    joined_at=datetime.now(UTC),
+                    resolved_owner_handle=link.resolved_owner_handle,
+                )
+                db.add(redo)
+                await db.flush()
+                await db.commit()
+            raise
+
+        await db.commit()
+        mount_payload = {
+            "mount_id": str(mount.id),
+            "mount_alias": mount.alias,
+            "mount_parent_scope_id": str(mount.parent_scope_id),
+        }
 
     logger.info(
         "share_link.upgraded",
@@ -211,10 +310,12 @@ async def upgrade(
             "scope_id": str(ctx.scope_id),
             "link_id": str(ctx.link_id),
             "user_id": str(auth.user_id),
+            "mount_target": mount_payload.get("mount_parent_scope_id"),
         },
     )
     return {
         "scope_id": str(membership.scope_id),
         "resolved_owner_handle": membership.resolved_owner_handle,
         "membership_id": str(membership.id),
+        **mount_payload,
     }

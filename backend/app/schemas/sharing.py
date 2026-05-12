@@ -138,6 +138,20 @@ class SharedScopeResponse(BaseModel):
     is_owner: bool = False
 
 
+class UpgradeBody(BaseModel):
+    """Optional body for POST /api/share/{token}/upgrade and
+    POST /api/me/invitations/{id}/accept.
+
+    Carries the mount target the caller wants. Omitted → server
+    picks via the auto-mount target resolution rules (1 owned
+    scope → silent; 2+ → 409 mount_target_ambiguous).
+    """
+
+    parent_scope_id: str | None = None
+    alias: str | None = None
+    no_mount: bool = False
+
+
 class MountCreate(BaseModel):
     """Body for POST /api/scopes/{parent_scope_id}/mounts."""
 

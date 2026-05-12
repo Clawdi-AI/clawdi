@@ -83,6 +83,45 @@ def hash_share_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
+async def auto_mount_target(
+    db,  # AsyncSession; imported only for type hints in callers
+    user_id,
+) -> tuple[list, str | None]:
+    """Resolve the mount-target ownership picture for an accepting user.
+
+    Returns `(owned_scopes, auto_target_id_or_None)`:
+      * `owned_scopes`: list of `(scope_id, slug)` tuples ordered by
+        kind then slug. `kind='personal'` always first.
+      * `auto_target_id_or_None`:
+        - If exactly 1 owned scope → that scope's id (silent auto-mount).
+        - If 2+ owned scopes → None (caller surfaces 409
+          mount_target_ambiguous).
+        - If 0 owned scopes → None (impossible by construction but
+          treated like ambiguous to be safe).
+
+    Used by /upgrade and /me/invitations/{id}/accept to pick where
+    the auto-mount lands when caller didn't pass parent_scope_id.
+    """
+    from sqlalchemy import select
+
+    from app.models.scope import Scope
+
+    rows = (
+        (
+            await db.execute(
+                select(Scope.id, Scope.slug, Scope.kind)
+                .where(Scope.user_id == user_id)
+                .order_by(Scope.kind, Scope.slug)
+            )
+        )
+        .all()
+    )
+    owned = [(r.id, r.slug, r.kind) for r in rows]
+    if len(owned) == 1:
+        return owned, owned[0][0]
+    return owned, None
+
+
 def token_prefix(raw_token: str) -> str:
     """First 8 chars of the raw token - safe to store + display."""
     return raw_token[:_TOKEN_PREFIX_LEN]

@@ -167,14 +167,21 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             raw = await _make_share_link(db_session, seed_scope, seed_user)
-            r = await ac.post(f"/api/share/{raw}/upgrade")
+            # Use no_mount=True since this test user was created
+            # inline without a Personal scope. Auto-mount target
+            # resolution would 409 mount_target_ambiguous otherwise
+            # (owned=[]). Real users have a Personal scope
+            # auto-created at signup; capability-only path is the
+            # right shape to verify here.
+            r = await ac.post(f"/api/share/{raw}/upgrade", json={"no_mount": True})
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["scope_id"] == str(seed_scope.id)
             assert body["resolved_owner_handle"] == "alice-a3b4"
+            assert "mount_id" not in body  # capability-only
             # Idempotent repeat call returns the same row (and same
             # membership_id, not a fresh one).
-            r2 = await ac.post(f"/api/share/{raw}/upgrade")
+            r2 = await ac.post(f"/api/share/{raw}/upgrade", json={"no_mount": True})
             assert r2.status_code == 200
             assert r2.json()["membership_id"] == body["membership_id"]
     finally:

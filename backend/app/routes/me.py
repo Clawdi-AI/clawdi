@@ -32,8 +32,9 @@ from app.models.scope import Scope
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
 from app.models.user import User
-from app.schemas.sharing import InvitationResponse
-from app.services.sharing import resolve_owner_handle
+from app.routes.mounts import ensure_mount
+from app.schemas.sharing import InvitationResponse, UpgradeBody
+from app.services.sharing import auto_mount_target, resolve_owner_handle
 
 logger = logging.getLogger(__name__)
 
@@ -93,18 +94,22 @@ async def list_my_invitations(
 @router.post("/invitations/{invitation_id}/accept")
 async def accept_invitation(
     invitation_id: UUID,
+    body: UpgradeBody | None = None,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Turn a pending invitation into a permanent ScopeMembership.
+    """Turn a pending invitation into a permanent ScopeMembership
+    AND a ScopeMount in one transaction.
+
+    Body shape (UpgradeBody): optional parent_scope_id for the mount,
+    optional alias, no_mount flag. If parent_scope_id is omitted and
+    the user has 2+ owned scopes, returns 409 mount_target_ambiguous
+    after committing the membership.
 
     Lock the SCOPE row across the transaction to serialize against
-    concurrent unshare / membership-creating endpoints — without
-    this, an unshare landing mid-accept would orphan-insert a
-    membership against a scope whose other rows just got cleared.
-    Re-fetch the invitation after the lock: if unshare deleted it
-    in the meantime, 410 cleanly.
+    concurrent unshare / membership-creating endpoints.
     """
+    body = body or UpgradeBody()
     # Pre-fetch to know which scope to lock. (We can't lock the
     # invitation row across an unshare race — unshare deletes
     # invitations by scope_id, not via the row we hold here.)
@@ -169,13 +174,76 @@ async def accept_invitation(
             ScopeInvitation.invitee_user_id == auth.user_id,
         )
     )
+    await db.flush()
+
+    # --- Auto-mount (MC) ---
+    mount_payload: dict = {}
+    if not body.no_mount:
+        parent_id: UUID | None = None
+        if body.parent_scope_id:
+            try:
+                explicit = UUID(body.parent_scope_id)
+            except (ValueError, AttributeError) as err:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"error": "invalid_parent_scope_id"},
+                ) from err
+            owned_check = (
+                await db.execute(
+                    select(Scope).where(
+                        Scope.id == explicit,
+                        Scope.user_id == auth.user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_check is None:
+                await db.commit()
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "parent_scope_id not found"
+                )
+            parent_id = explicit
+        else:
+            owned, auto = await auto_mount_target(db, auth.user_id)
+            if auto is None:
+                await db.commit()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    {
+                        "error": "mount_target_ambiguous",
+                        "message": (
+                            "You have multiple owned scopes. Re-run with "
+                            "parent_scope_id set OR call `clawdi scope "
+                            "mount` after."
+                        ),
+                        "owned_scopes": [
+                            {"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned
+                        ],
+                        "membership_id": str(membership.id),
+                    },
+                )
+            parent_id = auto
+
+        base_alias = body.alias or f"@{handle}/{scope.slug}"
+        mount = await ensure_mount(
+            db,
+            parent_id=parent_id,
+            source_id=inv.scope_id,
+            base_alias=base_alias,
+            created_by=auth.user_id,
+        )
+        mount_payload = {
+            "mount_id": str(mount.id),
+            "mount_alias": mount.alias,
+            "mount_parent_scope_id": str(mount.parent_scope_id),
+        }
+
     await db.commit()
-    await db.refresh(membership)
     logger.info(
-        "invitation_accepted invitation_id=%s by=%s scope_id=%s",
+        "invitation_accepted invitation_id=%s by=%s scope_id=%s mount=%s",
         invitation_id,
         auth.user_id,
         inv.scope_id,
+        mount_payload.get("mount_parent_scope_id"),
     )
     return {
         "id": str(membership.id),
@@ -184,6 +252,7 @@ async def accept_invitation(
         "joined_via": membership.joined_via,
         "joined_at": membership.joined_at.isoformat(),
         "resolved_owner_handle": membership.resolved_owner_handle,
+        **mount_payload,
     }
 
 
