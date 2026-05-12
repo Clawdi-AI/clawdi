@@ -32,7 +32,7 @@ from app.models.scope_share_link import ScopeShareLink
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
-from app.routes.mounts import ensure_mount
+from app.routes.mounts import ensure_mount, mount_payload
 from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
 from app.services.sharing import resolve_auto_mount_parent, safe_owner_display
 
@@ -208,7 +208,7 @@ async def upgrade(
         await db.flush()
 
     # Mount target resolution.
-    mount_payload: dict = {}
+    mount_fields: dict = {}
     if body.no_mount:
         await db.commit()
     else:
@@ -230,11 +230,7 @@ async def upgrade(
             created_by=auth.user_id,
         )
         await db.commit()
-        mount_payload = {
-            "mount_id": str(mount.id),
-            "mount_alias": mount.alias,
-            "mount_parent_scope_id": str(mount.parent_scope_id),
-        }
+        mount_fields = mount_payload(mount)
 
     logger.info(
         "share_link.upgraded",
@@ -242,12 +238,12 @@ async def upgrade(
             "scope_id": str(ctx.scope_id),
             "link_id": str(ctx.link_id),
             "user_id": str(auth.user_id),
-            "mount_target": mount_payload.get("mount_parent_scope_id"),
+            "mount_target": mount_fields.get("mount_parent_scope_id"),
         },
     )
     return {
         "scope_id": str(membership.scope_id),
         "resolved_owner_handle": membership.resolved_owner_handle,
         "membership_id": str(membership.id),
-        **mount_payload,
+        **mount_fields,
     }

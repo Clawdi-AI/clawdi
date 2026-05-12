@@ -32,7 +32,7 @@ from app.models.scope import Scope
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
 from app.models.user import User
-from app.routes.mounts import ensure_mount
+from app.routes.mounts import ensure_mount, mount_payload
 from app.schemas.sharing import InvitationResponse, UpgradeBody
 from app.services.sharing import (
     resolve_auto_mount_parent,
@@ -171,7 +171,7 @@ async def accept_invitation(
     await db.flush()
 
     # --- Auto-mount (MC) ---
-    mount_payload: dict = {}
+    mount_fields: dict = {}
     if not body.no_mount:
         parent_id = await resolve_auto_mount_parent(
             db,
@@ -187,11 +187,7 @@ async def accept_invitation(
             base_alias=base_alias,
             created_by=auth.user_id,
         )
-        mount_payload = {
-            "mount_id": str(mount.id),
-            "mount_alias": mount.alias,
-            "mount_parent_scope_id": str(mount.parent_scope_id),
-        }
+        mount_fields = mount_payload(mount)
 
     await db.commit()
     logger.info(
@@ -199,7 +195,7 @@ async def accept_invitation(
         invitation_id,
         auth.user_id,
         inv.scope_id,
-        mount_payload.get("mount_parent_scope_id"),
+        mount_fields.get("mount_parent_scope_id"),
     )
     return {
         "id": str(membership.id),
@@ -208,7 +204,7 @@ async def accept_invitation(
         "joined_via": membership.joined_via,
         "joined_at": membership.joined_at.isoformat(),
         "resolved_owner_handle": membership.resolved_owner_handle,
-        **mount_payload,
+        **mount_fields,
     }
 
 

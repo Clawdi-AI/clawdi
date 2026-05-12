@@ -67,6 +67,22 @@ async def _build_mount_response(
     )
 
 
+def mount_payload(mount: ScopeMount) -> dict[str, str]:
+    """The `mount_*` dict spread into every accept-route response.
+
+    Single source for the shape so the share-link upgrade response,
+    the invitation accept response, and any future accept-shape route
+    can't drift apart. The keys are part of the published API
+    contract (web + CLI both unpack them), so don't rename without
+    also bumping the OpenAPI schema and the typed-client.
+    """
+    return {
+        "mount_id": str(mount.id),
+        "mount_alias": mount.alias,
+        "mount_parent_scope_id": str(mount.parent_scope_id),
+    }
+
+
 async def ensure_mount(
     db: AsyncSession,
     *,
