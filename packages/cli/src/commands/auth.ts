@@ -78,6 +78,82 @@ function postLoginHint() {
 	p.outro(chalk.gray("Credentials saved to ~/.clawdi/auth.json"));
 }
 
+/**
+ * Scan ~/.clawdi/share-tokens.json for un-upgraded entries and POST
+ * /upgrade for each. Synchronous + reported: blocks `auth login`
+ * until done so a subsequent `clawdi scope list` shows the new
+ * mounts deterministically.
+ *
+ * Per-token failures don't abort the loop; they print a reason and
+ * the token stays in share-tokens.json for manual cleanup.
+ */
+async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise<void> {
+	const { listTokens, addToken } = await import("../share/tokens");
+	const tokens = listTokens().filter((t) => !t.upgraded_at);
+	if (tokens.length === 0) return;
+
+	const results: Array<{ name: string; alias?: string; reason?: string }> = [];
+	for (const t of tokens) {
+		try {
+			const r = await fetch(`${apiUrl}/api/share/${t.token}/upgrade`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: "{}",
+			});
+			if (r.status === 410) {
+				// Revoked / expired — drop the local entry.
+				results.push({ name: t.scope_name, reason: "revoked by owner" });
+				continue;
+			}
+			if (r.status === 409) {
+				const body = (await r.json().catch(() => ({}))) as {
+					detail?: { error?: string };
+				};
+				if (body?.detail?.error === "mount_target_ambiguous") {
+					results.push({
+						name: t.scope_name,
+						reason: "needs --into <parent> (2+ owned scopes)",
+					});
+					continue;
+				}
+				if (body?.detail?.error === "already_owner") {
+					addToken({ ...t, upgraded_at: new Date().toISOString() });
+					continue;
+				}
+				results.push({ name: t.scope_name, reason: `409 ${body.detail?.error}` });
+				continue;
+			}
+			if (!r.ok) {
+				results.push({ name: t.scope_name, reason: `HTTP ${r.status}` });
+				continue;
+			}
+			const body = (await r.json()) as { mount_alias?: string };
+			addToken({ ...t, upgraded_at: new Date().toISOString() });
+			results.push({ name: t.scope_name, alias: body.mount_alias });
+		} catch (e) {
+			results.push({
+				name: t.scope_name,
+				reason: e instanceof Error ? e.message : "network error",
+			});
+		}
+	}
+
+	const ok = results.filter((r) => !r.reason);
+	const fail = results.filter((r) => r.reason);
+	if (ok.length > 0) {
+		p.log.success(`Auto-upgraded ${ok.length} pending share${ok.length === 1 ? "" : "s"}:`);
+		for (const o of ok) {
+			p.log.message(chalk.gray(`  → `) + chalk.bold(o.alias ?? o.name) + chalk.gray(` ready`));
+		}
+	}
+	for (const f of fail) {
+		p.log.warn(`Could not upgrade "${f.name}": ${f.reason}`);
+	}
+}
+
 async function authLoginManual(apiUrl: string) {
 	p.log.message(
 		"To get an API key:\n" +
@@ -122,6 +198,7 @@ async function authLoginManual(apiUrl: string) {
 	}
 
 	verifySpinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+	await autoUpgradePendingShares(apiUrl, apiKey);
 	postLoginHint();
 }
 
@@ -264,6 +341,7 @@ async function pollUntilApproved(
 				return true;
 			}
 			verify.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+			await autoUpgradePendingShares(pending.apiUrl, poll.api_key);
 			postLoginHint();
 			return true;
 		}

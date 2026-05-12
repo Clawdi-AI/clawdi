@@ -493,10 +493,11 @@ const scopeCmd = program
 
 scopeCmd
 	.command("list")
-	.description("List every scope you own or are a viewer of")
-	.action(async () => {
+	.description("List owned scopes + nested mount tree")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (opts) => {
 		const { scopeListCommand } = await import("./commands/scope-list.js");
-		await scopeListCommand();
+		await scopeListCommand(opts);
 	});
 
 scopeCmd
@@ -564,6 +565,64 @@ shareCmd
 	.action(async (url) => {
 		const { shareAcceptCommand } = await import("./commands/share-accept.js");
 		await shareAcceptCommand(url);
+	});
+
+// ─────────────────────────────────────────────────────────────
+// inbox — incoming shares awaiting my action
+// ─────────────────────────────────────────────────────────────
+const inboxCmd = program
+	.command("inbox")
+	.description("Incoming invitations + URLs awaiting your action")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (opts) => {
+		// `clawdi inbox` (no subcommand) → list pending invitations
+		const { inboxListCommand } = await import("./commands/inbox.js");
+		await inboxListCommand(opts);
+	});
+
+inboxCmd
+	.command("accept [id-or-url]")
+	.description("Accept an invitation OR redeem a share URL")
+	.option("--invite <id>", "Explicit invitation UUID (bypass shape detection)")
+	.option("--url <link>", "Explicit share URL (bypass shape detection)")
+	.option("-i, --into <scope>", "Mount target (UUID, slug, or name). Default: auto.")
+	.option("-a, --alias <name>", "Override the mount alias")
+	.option("--no-mount", "Capability only — skip the mount edge")
+	.option(
+		"--allow-vault-conflicts",
+		"Accept the warning when source's vault keys collide with parent",
+	)
+	.addHelpText(
+		"after",
+		`
+Examples:
+  Human-friendly (polymorphic):
+    $ clawdi inbox accept https://clawdi.ai/share/abc...
+    $ clawdi inbox accept 1a2b3c4d-...    # invitation id
+
+  Agent-blessed (explicit):
+    $ clawdi inbox accept --url <link> --into engineering
+    $ clawdi inbox accept --invite <id> --into engineering`,
+	)
+	.action(async (idOrUrl, opts) => {
+		const { inboxAcceptCommand } = await import("./commands/inbox.js");
+		await inboxAcceptCommand(idOrUrl, opts);
+	});
+
+inboxCmd
+	.command("decline <id>")
+	.description("Decline a pending invitation")
+	.action(async (id) => {
+		const { inboxDeclineCommand } = await import("./commands/inbox.js");
+		await inboxDeclineCommand(id);
+	});
+
+inboxCmd
+	.command("forget <scope-id-or-alias>")
+	.description("Local-only: drop a redeemed share-token entry + cached files")
+	.action(async (scopeId) => {
+		const { inboxForgetCommand } = await import("./commands/inbox.js");
+		inboxForgetCommand(scopeId);
 	});
 
 // Auto-update tick: prints any "✓ Updated to v…" notice from a previous
