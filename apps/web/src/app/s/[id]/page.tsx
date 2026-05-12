@@ -11,6 +11,9 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { MessageList } from "@/components/sessions/message-list";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
+import { ShareHeaderUser } from "@/components/share/header-user";
+import { NoAccess } from "@/components/share/no-access";
+import { SignInToView } from "@/components/share/sign-in-to-view";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
@@ -20,9 +23,6 @@ import {
 	formatSessionSummary,
 	relativeTime,
 } from "@/lib/utils";
-import { NoAccess } from "./_components/no-access";
-import { ShareHeaderUser } from "./_components/share-header-user";
-import { SignInToView } from "./_components/sign-in-to-view";
 
 /**
  * Public share page for a Clawdi session.
