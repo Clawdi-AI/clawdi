@@ -56,3 +56,27 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 	}
 	return result.data as T;
 }
+
+/**
+ * Raw-fetch helper bound to the current Clerk session. Use when the
+ * typed openapi-fetch client doesn't yet cover the endpoint (e.g.
+ * /api/scopes/{id}/mounts isn't in the generated paths until codex
+ * regenerates) — the typed `useApi()` client is still the default
+ * for everything in the OpenAPI surface.
+ *
+ * Throws ApiError on non-2xx, mirroring `unwrap()`'s shape so a
+ * useQuery / useMutation error path routes through the same channel.
+ */
+export function useAuthedFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+	const { getToken } = useAuth();
+	return useMemo(() => {
+		return async (path: string, init?: RequestInit) => {
+			const token = await getToken();
+			const headers = new Headers(init?.headers);
+			if (token) headers.set("Authorization", `Bearer ${token}`);
+			const r = await fetch(`${API_URL}${path}`, { ...init, headers });
+			if (!r.ok) throw new ApiError(r.status, await r.text());
+			return r;
+		};
+	}, [getToken]);
+}

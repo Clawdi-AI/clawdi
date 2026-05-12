@@ -8,8 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { ApiError } from "@/lib/api";
-import { env } from "@/lib/env";
+import { API_URL, ApiError, useAuthedFetch } from "@/lib/api";
 
 /**
  * Invitee-side inbox surface: GET /api/me/invitations + accept/decline.
@@ -39,20 +38,10 @@ interface Invitation {
 	created_at: string;
 }
 
-const API_URL = env.NEXT_PUBLIC_API_URL;
-
 export function InvitationsInbox() {
 	const { getToken } = useAuth();
 	const qc = useQueryClient();
-
-	const authedFetch = async (path: string, init?: RequestInit) => {
-		const token = await getToken();
-		const headers = new Headers(init?.headers);
-		if (token) headers.set("Authorization", `Bearer ${token}`);
-		const r = await fetch(`${API_URL}${path}`, { ...init, headers });
-		if (!r.ok) throw new ApiError(r.status, await r.text());
-		return r;
-	};
+	const authedFetch = useAuthedFetch();
 
 	// Refresh every cache that derives from membership state so the
 	// banner row disappears and skill / scope listings pick up the

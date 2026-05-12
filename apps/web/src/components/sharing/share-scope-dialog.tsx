@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Copy, Link2, Plus, Share2, Trash2, Users } from "lucide-react";
 import { useState } from "react";
@@ -20,8 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ApiError } from "@/lib/api";
-import { env } from "@/lib/env";
+import { ApiError, useAuthedFetch } from "@/lib/api";
 
 /**
  * Owner-side scope-sharing surface (Spec §6 / Plan Phase F).
@@ -83,8 +81,6 @@ interface ShareScopeDialogProps {
 	children?: React.ReactNode;
 }
 
-const API_URL = env.NEXT_PUBLIC_API_URL;
-
 export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDialogProps) {
 	const [open, setOpen] = useState(false);
 	return (
@@ -129,21 +125,13 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 }
 
 function ShareLinksPanel({ scopeId }: { scopeId: string }) {
-	const { getToken } = useAuth();
 	const qc = useQueryClient();
 	// The just-created link's full URL — surfaced once in a banner
 	// because the server stores only the prefix going forward.
 	// Cleared on next create or on dialog close (panel unmount).
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
 
-	const authedFetch = async (path: string, init?: RequestInit) => {
-		const token = await getToken();
-		const headers = new Headers(init?.headers);
-		if (token) headers.set("Authorization", `Bearer ${token}`);
-		const r = await fetch(`${API_URL}${path}`, { ...init, headers });
-		if (!r.ok) throw new ApiError(r.status, await r.text());
-		return r;
-	};
+	const authedFetch = useAuthedFetch();
 
 	const links = useQuery({
 		queryKey: ["share-links", scopeId],
@@ -346,18 +334,10 @@ function LinkRow({
 }
 
 function InvitationsPanel({ scopeId }: { scopeId: string }) {
-	const { getToken } = useAuth();
 	const qc = useQueryClient();
 	const [email, setEmail] = useState("");
 
-	const authedFetch = async (path: string, init?: RequestInit) => {
-		const token = await getToken();
-		const headers = new Headers(init?.headers);
-		if (token) headers.set("Authorization", `Bearer ${token}`);
-		const r = await fetch(`${API_URL}${path}`, { ...init, headers });
-		if (!r.ok) throw new ApiError(r.status, await r.text());
-		return r;
-	};
+	const authedFetch = useAuthedFetch();
 
 	const invites = useQuery({
 		queryKey: ["invitations", scopeId],
