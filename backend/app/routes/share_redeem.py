@@ -34,7 +34,11 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem
 from app.routes.mounts import ensure_mount, mount_payload
 from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
-from app.services.sharing import resolve_auto_mount_parent, safe_owner_display
+from app.services.sharing import (
+    assert_no_vault_conflicts,
+    resolve_auto_mount_parent,
+    safe_owner_display,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +221,12 @@ async def upgrade(
             auth.user_id,
             body.parent_scope_id,
             membership.id,
+        )
+        await assert_no_vault_conflicts(
+            db,
+            parent_scope_id=parent_id,
+            source_scope_id=ctx.scope_id,
+            allow=body.allow_vault_conflicts,
         )
         # We have a target; build the mount. ensure_mount uses a
         # SAVEPOINT internally so a race-window IntegrityError doesn't

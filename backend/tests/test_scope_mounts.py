@@ -253,3 +253,140 @@ async def test_create_mount_400_on_invalid_mode(client, db_session, seed_user, s
     )
     assert r.status_code == 400
     assert r.json()["detail"]["error"] == "unsupported_mode"
+
+
+async def _seed_vault_key(db_session, *, scope_id, vault_slug: str, section: str, name: str):
+    """Helper: drop a single (vault_slug, section, item_name) row under
+    `scope_id` so collision tests can pre-stage state on either side."""
+    from app.models.scope import Scope
+    from app.models.vault import Vault, VaultItem
+
+    owner = (
+        await db_session.execute(select(Scope).where(Scope.id == scope_id))
+    ).scalar_one()
+    vault = (
+        await db_session.execute(
+            select(Vault).where(Vault.scope_id == scope_id, Vault.slug == vault_slug)
+        )
+    ).scalar_one_or_none()
+    if vault is None:
+        vault = Vault(
+            user_id=owner.user_id,
+            scope_id=scope_id,
+            slug=vault_slug,
+            name=vault_slug,
+        )
+        db_session.add(vault)
+        await db_session.commit()
+        await db_session.refresh(vault)
+    db_session.add(
+        VaultItem(
+            vault_id=vault.id,
+            item_name=name,
+            section=section,
+            encrypted_value=b"x",
+            nonce=b"y",
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_create_mount_409_on_vault_conflict(client, db_session, seed_user, seed_scope):
+    """Source + parent both carry the same (vault_slug, section, name)
+    key → 409 vault_conflicts_blocked, no mount row created."""
+    seed_user.name = "Bob"
+    src = await _seed_other_users_scope(
+        db_session, viewer_membership=True, viewer_user_id=seed_user.id
+    )
+    # Same key in both vaults.
+    await _seed_vault_key(
+        db_session,
+        scope_id=seed_scope.id,
+        vault_slug="ai-keys",
+        section="",
+        name="OPENAI_API_KEY",
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=src.id,
+        vault_slug="ai-keys",
+        section="",
+        name="OPENAI_API_KEY",
+    )
+
+    r = await client.post(
+        f"/api/scopes/{seed_scope.id}/mounts",
+        json={"source_scope_id": str(src.id)},
+    )
+    assert r.status_code == 409, r.text
+    body = r.json()["detail"]
+    assert body["error"] == "vault_conflicts_blocked"
+    assert body["conflicts"] == [
+        {"vault_slug": "ai-keys", "section": "", "item_name": "OPENAI_API_KEY"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_mount_skips_conflict_check_with_allow_flag(
+    client, db_session, seed_user, seed_scope
+):
+    """Same setup, but request body says allow_vault_conflicts=true →
+    mount created successfully (collision is the user's call now)."""
+    seed_user.name = "Bob"
+    src = await _seed_other_users_scope(
+        db_session, viewer_membership=True, viewer_user_id=seed_user.id
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=seed_scope.id,
+        vault_slug="ai-keys",
+        section="",
+        name="OPENAI_API_KEY",
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=src.id,
+        vault_slug="ai-keys",
+        section="",
+        name="OPENAI_API_KEY",
+    )
+
+    r = await client.post(
+        f"/api/scopes/{seed_scope.id}/mounts",
+        json={"source_scope_id": str(src.id), "allow_vault_conflicts": True},
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_create_mount_no_conflict_when_keys_differ(
+    client, db_session, seed_user, seed_scope
+):
+    """Same vault slug + section, DIFFERENT item names → no conflict;
+    mount goes through cleanly. Ensures we're matching the full triple
+    and not just (slug, section)."""
+    seed_user.name = "Bob"
+    src = await _seed_other_users_scope(
+        db_session, viewer_membership=True, viewer_user_id=seed_user.id
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=seed_scope.id,
+        vault_slug="ai-keys",
+        section="",
+        name="OPENAI_API_KEY",
+    )
+    await _seed_vault_key(
+        db_session,
+        scope_id=src.id,
+        vault_slug="ai-keys",
+        section="",
+        name="ANTHROPIC_API_KEY",
+    )
+
+    r = await client.post(
+        f"/api/scopes/{seed_scope.id}/mounts",
+        json={"source_scope_id": str(src.id)},
+    )
+    assert r.status_code == 200, r.text

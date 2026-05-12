@@ -72,6 +72,7 @@ interface AcceptOpts {
 	into?: string;
 	alias?: string;
 	noMount?: boolean;
+	allowVaultConflicts?: boolean;
 	invite?: string;
 	url?: string;
 }
@@ -412,7 +413,34 @@ async function buildAcceptRequestBody(
 	if (opts.into) reqBody.parent_scope_id = await resolveScopeArg(apiUrl, bearer, opts.into);
 	if (opts.alias) reqBody.alias = opts.alias;
 	if (opts.noMount) reqBody.no_mount = true;
+	if (opts.allowVaultConflicts) reqBody.allow_vault_conflicts = true;
 	return reqBody;
+}
+
+/** Render the 409 vault_conflicts_blocked block — same shape across
+ * URL and invitation accept paths. The caller sets process.exitCode
+ * = 5 so agent wrappers can branch on the specific failure. */
+function renderVaultConflicts(detail: Record<string, unknown>, retryHint: string): void {
+	const conflicts = (detail.conflicts ?? []) as Array<{
+		vault_slug: string;
+		section: string;
+		item_name: string;
+	}>;
+	console.error(chalk.red("⚠ Vault conflict — accept blocked."));
+	console.error(
+		chalk.gray(
+			"  The source scope has vault key(s) that already exist in your parent scope's vault.\n" +
+				"  Accepting would silently shadow your own keys. Inspect the list, then either:\n" +
+				"    - rename / remove the conflicting keys on either side, OR\n" +
+				"    - re-run with --allow-vault-conflicts to keep both (source values win for clawdi:// lookups).",
+		),
+	);
+	for (const c of conflicts) {
+		const sec = c.section ? `${c.section}/` : "";
+		console.error(chalk.gray(`    · ${c.vault_slug}/${sec}${c.item_name}`));
+	}
+	console.error();
+	console.error(chalk.gray(`  ${retryHint}`));
 }
 
 /** Render the 409 mount_target_ambiguous block. `retryHint` is the
@@ -503,6 +531,14 @@ async function acceptUrl(
 			process.exitCode = 4;
 			return;
 		}
+		if (detail.error === "vault_conflicts_blocked") {
+			renderVaultConflicts(
+				detail,
+				`${chalk.cyan("clawdi inbox accept <same-url> --allow-vault-conflicts")} → override`,
+			);
+			process.exitCode = 5;
+			return;
+		}
 		if (detail.error === "already_owner") {
 			console.log(chalk.yellow("This is your own scope — nothing to accept."));
 			return;
@@ -537,6 +573,11 @@ async function acceptInvitation(
 		if (detail.error === "mount_target_ambiguous") {
 			renderMountAmbiguous(detail, "Re-run with --into <slug> to mount.");
 			process.exitCode = 4;
+			return;
+		}
+		if (detail.error === "vault_conflicts_blocked") {
+			renderVaultConflicts(detail, "Re-run with --allow-vault-conflicts to override.");
+			process.exitCode = 5;
 			return;
 		}
 		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });

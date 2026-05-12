@@ -35,6 +35,7 @@ from app.models.user import User
 from app.routes.mounts import ensure_mount, mount_payload
 from app.schemas.sharing import InvitationResponse, UpgradeBody
 from app.services.sharing import (
+    assert_no_vault_conflicts,
     resolve_auto_mount_parent,
     resolve_owner_handle,
     safe_owner_display,
@@ -178,6 +179,12 @@ async def accept_invitation(
             auth.user_id,
             body.parent_scope_id,
             membership.id,
+        )
+        await assert_no_vault_conflicts(
+            db,
+            parent_scope_id=parent_id,
+            source_scope_id=inv.scope_id,
+            allow=body.allow_vault_conflicts,
         )
         base_alias = body.alias or f"@{handle}/{scope.slug}"
         mount = await ensure_mount(

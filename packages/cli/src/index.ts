@@ -558,6 +558,10 @@ scopeCmd
 	)
 	.requiredOption("-i, --into <parent>", "Parent scope (UUID, slug, or name)")
 	.option("-a, --alias <name>", "Override the mount alias (default: @<owner>/<source-slug>)")
+	.option(
+		"--allow-vault-conflicts",
+		"Override 409 vault_conflicts_blocked — source values win for clawdi:// lookups",
+	)
 	.action(async (source, opts) => {
 		const { scopeMountCommand } = await import("./commands/scope-mount.js");
 		await scopeMountCommand(source, opts);
@@ -596,14 +600,10 @@ inboxCmd
 	.option("-i, --into <scope>", "Mount target (UUID, slug, or name). Default: auto.")
 	.option("-a, --alias <name>", "Override the mount alias")
 	.option("--no-mount", "Capability only — skip the mount edge")
-	// `--allow-vault-conflicts` was reserved for the mount-time vault-key
-	// collision detection feature called out in the spec (sharee accepting
-	// a scope whose vault has a key that already exists in their parent
-	// scope's vault → 409 vault_conflicts_blocked, flag re-enables accept).
-	// The backend detection isn't shipped yet, so we don't expose a flag
-	// that would silently no-op and mislead the caller into thinking the
-	// protection is in place. Restore the flag together with the backend
-	// detection in a future change.
+	.option(
+		"--allow-vault-conflicts",
+		"Override 409 vault_conflicts_blocked — source values win for clawdi:// lookups",
+	)
 	.addHelpText(
 		"after",
 		`

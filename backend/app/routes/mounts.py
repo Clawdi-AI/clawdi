@@ -28,7 +28,11 @@ from app.models.scope import Scope
 from app.models.scope_mount import ScopeMount
 from app.models.user import User
 from app.schemas.sharing import MountCreate, MountResponse
-from app.services.sharing import safe_owner_display, safe_owner_handle
+from app.services.sharing import (
+    assert_no_vault_conflicts,
+    safe_owner_display,
+    safe_owner_handle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +270,13 @@ async def create_mount(
                 "message": "Only 'live' mode is supported in this release.",
             },
         )
+
+    await assert_no_vault_conflicts(
+        db,
+        parent_scope_id=parent_scope_id,
+        source_scope_id=source_id,
+        allow=body.allow_vault_conflicts,
+    )
 
     # Pre-resolve the source + owner so the response can be built
     # from in-memory data; avoids a post-commit re-query that has

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scope import Scope
 from app.models.user import User
+from app.models.vault import Vault, VaultItem
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _TRIM_DASHES = re.compile(r"^-+|-+$")
@@ -155,6 +156,100 @@ async def auto_mount_target(
 def token_prefix(raw_token: str) -> str:
     """First 8 chars of the raw token - safe to store + display."""
     return raw_token[:_TOKEN_PREFIX_LEN]
+
+
+async def detect_vault_conflicts(
+    db: AsyncSession,
+    *,
+    parent_scope_id: UUID,
+    source_scope_id: UUID,
+) -> list[dict[str, str]]:
+    """List vault keys that exist in BOTH the source and parent scope.
+
+    A collision is `(vault.slug, section, item_name)` showing up under
+    both scopes' vaults. `clawdi://<vault>/<section>/<item>` URIs
+    resolve through scope_ids_visible_to in priority order, so a
+    collision on accept-mount would silently change which value the
+    sharee's agent reads — surface as 409 vault_conflicts_blocked at
+    mount time so the sharee can inspect before committing.
+
+    Empty list = no conflicts; safe to mount. Used by every accept
+    surface that creates a mount (share-link upgrade, invitation
+    accept, explicit \`scope mount\`).
+    """
+    src_vault = Vault.__table__.alias("v_src")
+    src_item = VaultItem.__table__.alias("vi_src")
+    parent_vault = Vault.__table__.alias("v_parent")
+    parent_item = VaultItem.__table__.alias("vi_parent")
+
+    stmt = (
+        select(
+            src_vault.c.slug.label("vault_slug"),
+            src_item.c.section.label("section"),
+            src_item.c.item_name.label("item_name"),
+        )
+        .select_from(
+            src_item.join(src_vault, src_vault.c.id == src_item.c.vault_id)
+            .join(
+                parent_vault,
+                parent_vault.c.slug == src_vault.c.slug,
+            )
+            .join(
+                parent_item,
+                (parent_item.c.vault_id == parent_vault.c.id)
+                & (parent_item.c.section == src_item.c.section)
+                & (parent_item.c.item_name == src_item.c.item_name),
+            )
+        )
+        .where(
+            src_vault.c.scope_id == source_scope_id,
+            parent_vault.c.scope_id == parent_scope_id,
+        )
+        .order_by(src_vault.c.slug, src_item.c.section, src_item.c.item_name)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {"vault_slug": r.vault_slug, "section": r.section, "item_name": r.item_name} for r in rows
+    ]
+
+
+async def assert_no_vault_conflicts(
+    db: AsyncSession,
+    *,
+    parent_scope_id: UUID,
+    source_scope_id: UUID,
+    allow: bool,
+) -> None:
+    """409 vault_conflicts_blocked if accept-time vault collision detected.
+
+    The caller passes `allow` from the body's `allow_vault_conflicts`
+    flag — `True` skips the check entirely (user has consented to
+    the override after inspecting the conflict list from a prior
+    blocked attempt). Commits the session before raising so a
+    membership row flushed by the caller survives the 409 — same
+    posture as resolve_auto_mount_parent.
+    """
+    if allow:
+        return
+    conflicts = await detect_vault_conflicts(
+        db, parent_scope_id=parent_scope_id, source_scope_id=source_scope_id
+    )
+    if not conflicts:
+        return
+    await db.commit()
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        {
+            "error": "vault_conflicts_blocked",
+            "message": (
+                f"Source scope has {len(conflicts)} vault "
+                f"key{'' if len(conflicts) == 1 else 's'} that already "
+                "exist in your parent scope's vault. Re-run with "
+                "allow_vault_conflicts=true after inspecting."
+            ),
+            "conflicts": conflicts,
+        },
+    )
 
 
 async def resolve_auto_mount_parent(

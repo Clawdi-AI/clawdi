@@ -106,7 +106,7 @@ export async function scopeMountsCommand(
 
 export async function scopeMountCommand(
 	sourceArg: string,
-	opts: { into: string; alias?: string },
+	opts: { into: string; alias?: string; allowVaultConflicts?: boolean },
 ): Promise<void> {
 	const ctx = await requireAuth();
 	if (!ctx) return;
@@ -137,6 +137,7 @@ export async function scopeMountCommand(
 			source_scope_id: sourceId,
 			alias: opts.alias,
 			mode: "live",
+			allow_vault_conflicts: !!opts.allowVaultConflicts,
 		}),
 	});
 
@@ -165,6 +166,27 @@ export async function scopeMountCommand(
 						"Pass --alias <name> with a free name.",
 				),
 			);
+		} else if (err === "vault_conflicts_blocked") {
+			const conflicts =
+				(
+					body.detail as {
+						conflicts?: Array<{ vault_slug: string; section: string; item_name: string }>;
+					}
+				)?.conflicts ?? [];
+			console.error(chalk.red("⚠ Vault conflict — mount blocked."));
+			console.error(
+				chalk.gray(
+					"  The source scope has vault key(s) that already exist in your parent vault.\n" +
+						"  Re-run with --allow-vault-conflicts to keep both (source values win for\n" +
+						"  clawdi:// lookups), or remove the conflicting key on one side.",
+				),
+			);
+			for (const c of conflicts) {
+				const sec = c.section ? `${c.section}/` : "";
+				console.error(chalk.gray(`    · ${c.vault_slug}/${sec}${c.item_name}`));
+			}
+			process.exitCode = 5;
+			return;
 		} else {
 			console.error(chalk.red(`Failed: ${body.detail?.message ?? r.status}`));
 		}

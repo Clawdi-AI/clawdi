@@ -150,6 +150,14 @@ class UpgradeBody(BaseModel):
     parent_scope_id: str | None = None
     alias: str | None = None
     no_mount: bool = False
+    # Mount-time vault conflict detection: if source scope has any
+    # vault key (slug + section + name triple) that already exists
+    # in the parent's vault, the mount returns 409
+    # vault_conflicts_blocked. Setting this to True skips the check —
+    # the sharee has inspected the conflict list and consented to the
+    # collision (the source vault values WIN for clawdi:// resolution
+    # priority while the mount is in place).
+    allow_vault_conflicts: bool = False
 
 
 class MountCreate(BaseModel):
@@ -158,6 +166,7 @@ class MountCreate(BaseModel):
     source_scope_id: str
     alias: str | None = None
     mode: str = "live"
+    allow_vault_conflicts: bool = False
 
 
 class MountResponse(BaseModel):
