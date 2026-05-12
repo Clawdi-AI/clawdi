@@ -207,8 +207,21 @@ export async function inboxAcceptCommand(
 			process.exitCode = 1;
 			return;
 		}
-		const url = opts.url ?? normalizeAcceptArg(posArg ?? "");
-		await acceptAnonymousUrl(apiUrl, url);
+		// Friendlier error when the arg is shaped like an invitation UUID:
+		// these REQUIRE auth, so direct the user at `auth login` rather than
+		// letting the URL parser fail with "Not a valid share link".
+		const normalized = opts.url ?? normalizeAcceptArg(posArg ?? "");
+		if (UUID_RE.test(normalized) && !opts.url) {
+			console.error(
+				chalk.red(
+					"That looks like an invitation id. Invitations require an account — " +
+						"run `clawdi auth login` first, then re-run.",
+				),
+			);
+			process.exitCode = 1;
+			return;
+		}
+		await acceptAnonymousUrl(apiUrl, normalized);
 		return;
 	}
 

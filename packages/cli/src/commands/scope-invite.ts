@@ -10,8 +10,8 @@ import { resolveScopeId } from "../lib/scope-resolver";
  * (email lookup); for unregistered emails the CLI suggests using
  * `clawdi scope share` to send a public link instead.
  *
- * The invitation surfaces in the invitee's `clawdi scope invites`
- * inbox + the web dashboard's banner on /skills.
+ * The invitation surfaces in the invitee's `clawdi inbox` and the
+ * web dashboard's banner on /skills.
  */
 
 interface InvitationResponse {
@@ -81,7 +81,5 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 
 	const body = (await r.json()) as InvitationResponse;
 	console.log(chalk.green("✓") + ` Invitation sent to ${body.invitee_email}`);
-	console.log(
-		chalk.gray(`  They'll see it in their /skills banner + \`clawdi scope invites\` inbox.`),
-	);
+	console.log(chalk.gray(`  They'll see it in their \`clawdi inbox\` + the web /skills banner.`));
 }

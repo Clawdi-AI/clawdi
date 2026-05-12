@@ -181,8 +181,8 @@ export async function scopeInvitesCommand(
 		console.log(chalk.bold(`Pending invitations (${items.length}):`));
 		for (const inv of items) console.log(formatInvite(inv));
 		console.log();
-		console.log(chalk.gray("Accept: ") + chalk.cyan(`clawdi scope invites --accept <id>`));
-		console.log(chalk.gray("Decline: ") + chalk.cyan(`clawdi scope invites --decline <id>`));
+		console.log(chalk.gray("Accept: ") + chalk.cyan(`clawdi inbox accept <id>`));
+		console.log(chalk.gray("Decline: ") + chalk.cyan(`clawdi inbox decline <id>`));
 		return;
 	}
 
