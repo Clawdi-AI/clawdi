@@ -17,7 +17,16 @@ const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 // but explicitly carves `.json` *out* of the `.js` exclusion, so without
 // this entry `/s/{token}.json` would 307 to /sign-in. Share access is
 // gated by the token, not the user's Clerk session.
-const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)"];
+//
+// `/share/*` is the public landing page for shared scopes; anonymous
+// previews + sign-in handoff happen there.
+const publicRoutes = [
+	"/sign-in(.*)",
+	"/sign-up(.*)",
+	"/skill.md",
+	"/s/(.*)",
+	"/share/(.*)",
+];
 
 if (isHostedBuild) {
 	// PostHog first-party proxy path is hosted-only.
