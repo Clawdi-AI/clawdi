@@ -12,6 +12,7 @@
 
 import { rmSync } from "node:fs";
 
+import * as p from "@clack/prompts";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
@@ -457,6 +458,34 @@ function renderMountAmbiguous(detail: Record<string, unknown>, retryHint: string
 	console.log(chalk.gray(`  Or: clawdi scope mount <source-slug> --into <parent-slug>`));
 }
 
+/** Interactive prompt for mount_target_ambiguous — used only in TTY
+ * mode. Returns the picked parent scope id, or null if the user
+ * cancelled (Ctrl+C). The caller falls back to the non-interactive
+ * renderer if the picker returned null OR we're piped / non-TTY in
+ * the first place — agents and CI must NEVER block on stdin. */
+async function pickMountParentInteractive(detail: Record<string, unknown>): Promise<string | null> {
+	if (!process.stdout.isTTY || !process.stdin.isTTY) return null;
+	const owned = (detail.owned_scopes ?? []) as Array<{
+		id: string;
+		slug: string;
+		kind: string;
+	}>;
+	if (owned.length === 0) return null;
+
+	console.log();
+	console.log(`${chalk.green("✓")} Joined as viewer (membership saved).`);
+	console.log(chalk.yellow("⚠ Mount deferred — pick a parent to compose this scope into:"));
+	const picked = await p.select({
+		message: "Mount into which of your scopes?",
+		options: owned.map((s) => ({
+			value: s.id,
+			label: `${s.slug}  ${chalk.gray(`(${s.kind})`)}`,
+		})),
+	});
+	if (p.isCancel(picked)) return null;
+	return picked as string;
+}
+
 /** Print the "Joined — Mounted as @x/y" success block. `noMountHint`
  * controls whether the `--no-mount: capability only` line renders
  * (only applies on the share-URL upgrade path, where `--no-mount`
@@ -524,6 +553,11 @@ async function acceptUrl(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
+			const picked = await pickMountParentInteractive(detail);
+			if (picked) {
+				await acceptUrl(apiUrl, bearer, urlOrToken, { ...opts, into: picked });
+				return;
+			}
 			renderMountAmbiguous(
 				detail,
 				`${chalk.cyan("clawdi inbox accept <same-url> --into <slug>")} → re-run to mount`,
@@ -571,6 +605,11 @@ async function acceptInvitation(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
+			const picked = await pickMountParentInteractive(detail);
+			if (picked) {
+				await acceptInvitation(apiUrl, bearer, invitationId, { ...opts, into: picked });
+				return;
+			}
 			renderMountAmbiguous(detail, "Re-run with --into <slug> to mount.");
 			process.exitCode = 4;
 			return;
