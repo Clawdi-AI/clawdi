@@ -1907,20 +1907,6 @@ export interface components {
             /** Source Machine Name */
             source_machine_name?: string | null;
         };
-        /**
-         * PaginatedSessionsResponse
-         * @description Paginated session list — page envelope.
-         */
-        PaginatedSessionsResponse: {
-            /** Items */
-            items: components["schemas"]["SessionListItemResponse"][];
-            /** Total */
-            total: number;
-            /** Page */
-            page: number;
-            /** Page Size */
-            page_size: number;
-        };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
             /** Items */
@@ -1936,6 +1922,17 @@ export interface components {
         Paginated_MemoryResponse_: {
             /** Items */
             items: components["schemas"]["MemoryResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
+        /** Paginated[SessionListItemResponse] */
+        Paginated_SessionListItemResponse_: {
+            /** Items */
+            items: components["schemas"]["SessionListItemResponse"][];
             /** Total */
             total: number;
             /** Page */
@@ -3117,7 +3114,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaginatedSessionsResponse"];
+                    "application/json": components["schemas"]["Paginated_SessionListItemResponse_"];
                 };
             };
             /** @description Validation Error */

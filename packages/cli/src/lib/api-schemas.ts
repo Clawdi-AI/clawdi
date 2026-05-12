@@ -23,5 +23,5 @@ export type VaultSections = Schemas["VaultSectionsResponse"];
 // ── Pagination ────────────────────────────────────────────────────────────
 export type PaginatedMemories = Schemas["Paginated_MemoryResponse_"];
 export type PaginatedSkills = Schemas["Paginated_SkillSummaryResponse_"];
-export type PaginatedSessions = Schemas["PaginatedSessionsResponse"];
+export type PaginatedSessions = Schemas["Paginated_SessionListItemResponse_"];
 export type PaginatedVaults = Schemas["Paginated_VaultResponse_"];

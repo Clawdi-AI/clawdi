@@ -37,6 +37,7 @@ async def lazy_create_user_with_personal_scope(
     clerk_id: str,
     email: str | None,
     name: str | None,
+    avatar_url: str | None = None,
     race_loser_status: int,
 ) -> User:
     """Insert a User row + Personal scope for `clerk_id`, race-safe.
@@ -48,10 +49,11 @@ async def lazy_create_user_with_personal_scope(
             the same txn; auth.py commits after refresh).
         clerk_id: Clerk user id; must be already-authenticated by
             the caller's context (JWT verify or X-Admin-Key trust).
-        email / name: identity fields if the caller has them. The
-            admin path leaves both None; the JWT path forwards
-            whatever Clerk handed it. Backfill of admin-created rows
-            happens later in `_auth_via_clerk_jwt`'s backfill branch.
+        email / name / avatar_url: identity fields if the caller has
+            them. The admin path leaves them None; the JWT path
+            forwards whatever Clerk handed it. Backfill of admin-
+            created rows happens later in `_auth_via_clerk_jwt`'s
+            backfill branch.
         race_loser_status: HTTP status code to raise if the concurrent-
             create race produces a winner row that then vanishes (a
             pathological case — would require a concurrent delete).
@@ -71,7 +73,7 @@ async def lazy_create_user_with_personal_scope(
         HTTPException 500 — Personal scope insert failed. Bizarre
         states only (partial unique index, mid-flush connection drop).
     """
-    new_user = User(clerk_id=clerk_id, email=email, name=name)
+    new_user = User(clerk_id=clerk_id, email=email, name=name, avatar_url=avatar_url)
     db.add(new_user)
 
     # User flush: the ONLY racy point. `users.clerk_id` is unique, so

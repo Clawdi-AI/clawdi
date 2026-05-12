@@ -279,9 +279,8 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             db,
             clerk_id=clerk_id,
             email=email,
-            name=payload.get("name"),
-            avatar_url=payload.get("picture"),
             name=name,
+            avatar_url=payload.get("picture"),
             race_loser_status=status.HTTP_401_UNAUTHORIZED,
         )
         # Helper leaves rows flushed-not-committed so admin callers
@@ -290,20 +289,16 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         await db.commit()
         await db.refresh(user)
 
-    # Refresh display fields opportunistically on every login. Clerk
-    # rotates signed avatar URLs and users may rename in Clerk; without
-    # this the share page would show stale identity. Only commit when
-    # something actually changed to avoid a write-per-request.
-    new_name = payload.get("name")
+    # Refresh `avatar_url` opportunistically on every login — Clerk
+    # rotates signed picture URLs, and the share page would otherwise
+    # render a stale 404'd avatar. Only commit when the value actually
+    # changed to avoid a write-per-request. `name` is intentionally NOT
+    # synced here: the contract elsewhere (see backfill tests) is that
+    # user.name is one-way — once set, it's user-owned and not
+    # clobbered by Clerk on subsequent logins.
     new_avatar = payload.get("picture")
-    changed = False
-    if new_name and user.name != new_name:
-        user.name = new_name
-        changed = True
     if new_avatar and user.avatar_url != new_avatar:
         user.avatar_url = new_avatar
-        changed = True
-    if changed:
         try:
             await db.commit()
         except SQLAlchemyError:

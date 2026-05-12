@@ -31,11 +31,11 @@ from app.models.session_permission import (
     PERMISSION_KINDS,
     SessionPermission,
 )
+from app.schemas.common import Paginated
 from app.schemas.session import (
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentResponse,
-    PaginatedSessionsResponse,
     SessionBatchRequest,
     SessionBatchResponse,
     SessionDetailResponse,
@@ -962,7 +962,7 @@ async def list_sessions(
     # "today" as `[start_of_today, start_of_tomorrow)` cleanly).
     since: datetime | None = Query(default=None, description="Filter to last_activity_at >= since"),
     until: datetime | None = Query(default=None, description="Filter to last_activity_at < until"),
-) -> PaginatedSessionsResponse:
+) -> Paginated[SessionListItemResponse]:
     # Env binding: a bound api_key (deploy key) can only see its
     # own env's sessions. Without this, a key for env A would list
     # env B's sessions because user_id alone doesn't fence them.
@@ -1096,7 +1096,7 @@ async def list_sessions(
 
     rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
 
-    return PaginatedSessionsResponse(
+    return Paginated[SessionListItemResponse](
         items=[
             _session_to_response(s, at, mn, is_shared=bool(shared)) for s, at, mn, shared in rows
         ],

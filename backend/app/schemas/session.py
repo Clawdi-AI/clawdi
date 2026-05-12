@@ -156,15 +156,6 @@ class SessionBatchResponse(BaseModel):
     rejected: list[str] = []
 
 
-class PaginatedSessionsResponse(BaseModel):
-    """Paginated session list — page envelope."""
-
-    items: list["SessionListItemResponse"]
-    total: int
-    page: int
-    page_size: int
-
-
 class SessionListItemResponse(BaseModel):
     id: str
     local_session_id: str
