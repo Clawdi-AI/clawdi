@@ -14,6 +14,7 @@ import {
 	setAuth,
 	setPendingAuth,
 } from "../lib/config";
+import type { ShareToken } from "../share/tokens";
 
 interface MeResponse {
 	id: string;
@@ -92,52 +93,72 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	const tokens = listTokens().filter((t) => !t.upgraded_at);
 	if (tokens.length === 0) return;
 
-	const results: Array<{ name: string; alias?: string; reason?: string }> = [];
-	for (const t of tokens) {
-		try {
-			const r = await fetch(`${apiUrl}/api/share/${t.token}/upgrade`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					"Content-Type": "application/json",
-				},
-				body: "{}",
-			});
-			if (r.status === 410) {
-				// Revoked / expired — drop the local entry.
-				results.push({ name: t.scope_name, reason: "revoked by owner" });
-				continue;
-			}
-			if (r.status === 409) {
-				const body = (await r.json().catch(() => ({}))) as {
-					detail?: { error?: string };
-				};
-				if (body?.detail?.error === "mount_target_ambiguous") {
-					results.push({
+	// Parallel network round-trips, sequential disk writes. addToken
+	// is load-modify-save unlocked, so two concurrent calls can race
+	// and silently drop one upsert; keeping the disk writes inside
+	// a serial loop avoids that without holding 5 round-trips in
+	// series for a user with 5 pending shares.
+	type Outcome =
+		| { kind: "ok"; token: ShareToken; alias?: string }
+		| { kind: "already_owner"; token: ShareToken }
+		| { kind: "fail"; name: string; reason: string };
+
+	const outcomes = await Promise.all(
+		tokens.map(async (t): Promise<Outcome> => {
+			try {
+				const r = await fetch(`${apiUrl}/api/share/${t.token}/upgrade`, {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						"Content-Type": "application/json",
+					},
+					body: "{}",
+				});
+				if (r.status === 410) {
+					return { kind: "fail", name: t.scope_name, reason: "revoked by owner" };
+				}
+				if (r.status === 409) {
+					const body = (await r.json().catch(() => ({}))) as {
+						detail?: { error?: string };
+					};
+					if (body?.detail?.error === "mount_target_ambiguous") {
+						return {
+							kind: "fail",
+							name: t.scope_name,
+							reason: "needs --into <parent> (2+ owned scopes)",
+						};
+					}
+					if (body?.detail?.error === "already_owner") {
+						return { kind: "already_owner", token: t };
+					}
+					return {
+						kind: "fail",
 						name: t.scope_name,
-						reason: "needs --into <parent> (2+ owned scopes)",
-					});
-					continue;
+						reason: `409 ${body.detail?.error}`,
+					};
 				}
-				if (body?.detail?.error === "already_owner") {
-					addToken({ ...t, upgraded_at: new Date().toISOString() });
-					continue;
+				if (!r.ok) {
+					return { kind: "fail", name: t.scope_name, reason: `HTTP ${r.status}` };
 				}
-				results.push({ name: t.scope_name, reason: `409 ${body.detail?.error}` });
-				continue;
+				const body = (await r.json()) as { mount_alias?: string };
+				return { kind: "ok", token: t, alias: body.mount_alias };
+			} catch (e) {
+				return {
+					kind: "fail",
+					name: t.scope_name,
+					reason: e instanceof Error ? e.message : "network error",
+				};
 			}
-			if (!r.ok) {
-				results.push({ name: t.scope_name, reason: `HTTP ${r.status}` });
-				continue;
-			}
-			const body = (await r.json()) as { mount_alias?: string };
-			addToken({ ...t, upgraded_at: new Date().toISOString() });
-			results.push({ name: t.scope_name, alias: body.mount_alias });
-		} catch (e) {
-			results.push({
-				name: t.scope_name,
-				reason: e instanceof Error ? e.message : "network error",
-			});
+		}),
+	);
+
+	const results: Array<{ name: string; alias?: string; reason?: string }> = [];
+	for (const o of outcomes) {
+		if (o.kind === "ok" || o.kind === "already_owner") {
+			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
+			if (o.kind === "ok") results.push({ name: o.token.scope_name, alias: o.alias });
+		} else {
+			results.push({ name: o.name, reason: o.reason });
 		}
 	}
 
