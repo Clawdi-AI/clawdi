@@ -477,6 +477,33 @@ program
 		await run(args);
 	});
 
+const shareCmd = program.command("share").description("Manage shared scopes");
+
+shareCmd
+	.command("list")
+	.description("List shared scopes accepted on this device")
+	.action(async () => {
+		const { shareListCommand } = await import("./commands/share-list.js");
+		shareListCommand();
+	});
+
+shareCmd
+	.command("remove <scope-id>")
+	.description("Remove a shared scope from this device")
+	.action(async (scopeId) => {
+		const { shareRemoveCommand } = await import("./commands/share-remove.js");
+		shareRemoveCommand(scopeId);
+	});
+
+shareCmd
+	.command("accept <url>")
+	.description("Accept a share link from a scope owner")
+	.addHelpText("after", "\nExample:\n  $ clawdi share accept https://clawdi.ai/share/abc123...")
+	.action(async (url) => {
+		const { shareAcceptCommand } = await import("./commands/share-accept.js");
+		await shareAcceptCommand(url);
+	});
+
 // Auto-update tick: prints any "✓ Updated to v…" notice from a previous
 // run's background install, and (when due) kicks off another detached
 // install. Best-effort and fully off-the-hot-path — see commands/update.ts.
