@@ -38,7 +38,7 @@ interface Invitation {
 	created_at: string;
 }
 
-export function InvitationsInbox() {
+export function Inbox() {
 	const { getToken } = useAuth();
 	const qc = useQueryClient();
 	const authedFetch = useAuthedFetch();

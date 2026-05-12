@@ -10,7 +10,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
-import { InvitationsInbox } from "@/components/sharing/invitations-inbox";
+import { Inbox } from "@/components/sharing/inbox";
 import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
 import { AgentTargetPicker } from "@/components/skills/agent-target-picker";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
@@ -395,7 +395,7 @@ function SkillsPageInner() {
 				}
 			/>
 
-			<InvitationsInbox />
+			<Inbox />
 
 			{scopeError ? (
 				<Alert variant="destructive">
