@@ -1,5 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
+const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
+
 // Protection is "everything not on this list". A positive-allowlist for
 // protected routes would default new pages to PUBLIC if someone forgets
 // to update it — the opposite of what we want for a dashboard. Keep
@@ -15,7 +17,14 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // but explicitly carves `.json` *out* of the `.js` exclusion, so without
 // this entry `/s/{token}.json` would 307 to /sign-in. Share access is
 // gated by the token, not the user's Clerk session.
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)"]);
+const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)"];
+
+if (isHostedBuild) {
+	// PostHog first-party proxy path is hosted-only.
+	publicRoutes.push("/_cdi/px(.*)");
+}
+
+const isPublicRoute = createRouteMatcher(publicRoutes);
 
 // signInUrl / signUpUrl must live here — they tell auth.protect() where
 // to send unauth'd users. Without them, Clerk falls back to its hosted
