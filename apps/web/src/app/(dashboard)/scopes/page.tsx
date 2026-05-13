@@ -155,14 +155,14 @@ export default function ScopesPage() {
 			) : null}
 
 			<form
-				className="space-y-2"
+				className="rounded-lg border bg-muted/20 p-3"
 				onSubmit={(event) => {
 					event.preventDefault();
 					if (!newScopeName.trim() || createScope.isPending) return;
 					createScope.mutate();
 				}}
 			>
-				<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_auto] md:items-end">
+				<div className="grid gap-3 lg:grid-cols-[minmax(260px,480px)_220px_auto] lg:items-end">
 					<div className="space-y-1.5">
 						<Label htmlFor="scope-name">Name</Label>
 						<Input
@@ -183,7 +183,11 @@ export default function ScopesPage() {
 							onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
 						/>
 					</div>
-					<Button type="submit" disabled={!newScopeName.trim() || createScope.isPending}>
+					<Button
+						type="submit"
+						disabled={!newScopeName.trim() || createScope.isPending}
+						className="w-full lg:w-auto"
+					>
 						<Plus className="mr-1.5 size-4" />
 						{createScope.isPending ? "Creating..." : "Create"}
 					</Button>
@@ -191,9 +195,11 @@ export default function ScopesPage() {
 			</form>
 
 			<section className="space-y-3">
-				<div className="flex items-baseline justify-between gap-3">
+				<div className="flex items-center gap-2">
 					<h2 className="text-base font-semibold">My scopes</h2>
-					<span className="text-sm text-muted-foreground">{ownedScopes.length}</span>
+					<Badge variant="secondary" className="text-xs">
+						{ownedScopes.length}
+					</Badge>
 				</div>
 				{ownedScopes.length === 0 ? (
 					<EmptyLine message="No owned scopes yet. Connect an agent or create a shareable scope." />
@@ -212,9 +218,11 @@ export default function ScopesPage() {
 			</section>
 
 			<section className="space-y-3">
-				<div className="flex items-baseline justify-between gap-3">
+				<div className="flex items-center gap-2">
 					<h2 className="text-base font-semibold">Shared with me</h2>
-					<span className="text-sm text-muted-foreground">{sharedScopes.length}</span>
+					<Badge variant="secondary" className="text-xs">
+						{sharedScopes.length}
+					</Badge>
 				</div>
 				{sharedScopes.length === 0 ? (
 					<EmptyLine message="Accepted shares will appear here before or after you mount them." />

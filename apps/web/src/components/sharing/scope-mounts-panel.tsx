@@ -221,7 +221,7 @@ export function ScopeMountsPanel({
 				</Badge>
 			</div>
 			{mountCandidates.length > 0 ? (
-				<div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center">
+				<div className="flex max-w-3xl flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
 					<Select
 						value={sourceScopeId}
 						onValueChange={(next) => {
@@ -245,6 +245,7 @@ export function ScopeMountsPanel({
 					</Select>
 					<Button
 						size="sm"
+						className="w-full sm:w-auto"
 						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
 						aria-label="Mount selected source scope"

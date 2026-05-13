@@ -313,7 +313,7 @@ export default function ScopeDetailPage() {
 				<MetricCard icon={KeyRound} label="Vaults" value={vaults.data?.items.length ?? 0} />
 			</div>
 
-			<div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
 						<h2 className="text-base font-semibold">Associated scopes</h2>
@@ -375,8 +375,8 @@ export default function ScopeDetailPage() {
 					</section>
 				</div>
 
-				<aside className="space-y-4">
-					{!isOwner ? (
+				{!isOwner ? (
+					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-4">
 							<h2 className="text-sm font-semibold">Mount target</h2>
 							{mountTargets.length > 0 ? (
@@ -460,8 +460,8 @@ export default function ScopeDetailPage() {
 								</AlertDialogContent>
 							</AlertDialog>
 						</section>
-					) : null}
-				</aside>
+					</aside>
+				) : null}
 			</div>
 		</div>
 	);
@@ -477,12 +477,12 @@ function MetricCard({
 	value: number;
 }) {
 	return (
-		<div className="rounded-lg border p-4">
-			<div className="flex items-center gap-2 text-sm text-muted-foreground">
-				<Icon className="size-4" />
-				{label}
+		<div className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3">
+			<div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+				<Icon className="size-4 shrink-0" />
+				<span className="truncate">{label}</span>
 			</div>
-			<div className="mt-2 text-2xl font-semibold">{value}</div>
+			<div className="text-xl font-semibold">{value}</div>
 		</div>
 	);
 }
