@@ -106,7 +106,7 @@ export async function scopeMountsCommand(
 
 export async function scopeMountCommand(
 	sourceArg: string,
-	opts: { into: string; alias?: string; allowVaultConflicts?: boolean },
+	opts: { into: string; alias?: string; allowVaultConflicts?: boolean; json?: boolean },
 ): Promise<void> {
 	const ctx = await requireAuth();
 	if (!ctx) return;
@@ -177,8 +177,8 @@ export async function scopeMountCommand(
 			console.error(
 				chalk.gray(
 					"  The source scope has vault key(s) that already exist in your parent vault.\n" +
-						"  Re-run with --allow-vault-conflicts to keep both (source values win for\n" +
-						"  clawdi:// lookups), or remove the conflicting key on one side.",
+						"  Re-run with --allow-vault-conflicts to keep both (your parent values\n" +
+						"  keep priority), or remove the conflicting key on one side.",
 				),
 			);
 			for (const c of conflicts) {
@@ -196,6 +196,10 @@ export async function scopeMountCommand(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const mount = (await r.json()) as MountRow;
+	if (opts.json) {
+		console.log(JSON.stringify({ status: "mounted", mount }, null, 2));
+		return;
+	}
 	console.log(
 		chalk.green("✓") +
 			` Mounted ` +
@@ -212,7 +216,11 @@ export async function scopeMountCommand(
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function scopeUnmountCommand(parentArg: string, aliasOrId: string): Promise<void> {
+export async function scopeUnmountCommand(
+	parentArg: string,
+	aliasOrId: string,
+	opts: { json?: boolean } = {},
+): Promise<void> {
 	const ctx = await requireAuth();
 	if (!ctx) return;
 
@@ -259,6 +267,16 @@ export async function scopeUnmountCommand(parentArg: string, aliasOrId: string):
 	}
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
+	if (opts.json) {
+		console.log(
+			JSON.stringify(
+				{ status: "unmounted", parent_scope_id: parentId, mount_id: mountId },
+				null,
+				2,
+			),
+		);
+		return;
+	}
 	console.log(`${chalk.green("✓")} Unmounted.`);
 	console.log(
 		chalk.gray(

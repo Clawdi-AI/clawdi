@@ -1,0 +1,101 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { vaultResolveCommand } from "../../src/commands/vault-resolve";
+import { jsonResponse, mockFetch } from "./helpers";
+
+let tmpHome: string;
+let origHome: string | undefined;
+let origApiUrl: string | undefined;
+
+beforeEach(() => {
+	origHome = process.env.HOME;
+	origApiUrl = process.env.CLAWDI_API_URL;
+	tmpHome = join(tmpdir(), `clawdi-vault-resolve-${Date.now()}-${Math.random().toString(36)}`);
+	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
+	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	process.env.HOME = tmpHome;
+	process.env.CLAWDI_API_URL = "http://api.test";
+});
+
+afterEach(() => {
+	if (origHome) process.env.HOME = origHome;
+	else delete process.env.HOME;
+	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
+	else delete process.env.CLAWDI_API_URL;
+	rmSync(tmpHome, { recursive: true, force: true });
+});
+
+describe("vaultResolveCommand", () => {
+	it("resolves against the default parent scope and prints debug precedence", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/scopes/default",
+				response: () => jsonResponse({ scope_id: "scope-parent" }),
+			},
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						key: "OPENAI_API_KEY",
+						value: "sk-test",
+						source_scope_id: "scope-source",
+						source_alias: "@alice/engineering",
+						precedence: [
+							{ scope_id: "scope-parent", alias: "personal", hit: false, reason: "not-found" },
+							{ scope_id: "scope-source", alias: "@alice/engineering", hit: true, reason: "match" },
+						],
+					}),
+			},
+		]);
+		const orig = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY", { debug: true });
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		expect(captured.at(-1)?.path).toContain("key=OPENAI_API_KEY");
+		expect(captured.at(-1)?.path).toContain("scope_id=scope-parent");
+		expect(captured.at(-1)?.path).toContain("debug=true");
+		expect(out).toContain("sk-test");
+		expect(out).toContain("@alice/engineering");
+		expect(out).toContain("searched:");
+	});
+
+	it("emits raw JSON for agent consumers", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/scopes/default",
+				response: () => jsonResponse({ scope_id: "scope-parent" }),
+			},
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () => jsonResponse({ key: "OPENAI_API_KEY", value: "sk-test" }),
+			},
+		]);
+		const orig = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out = args.map(String).join(" ");
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY", { json: true });
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		expect(JSON.parse(out).value).toBe("sk-test");
+	});
+});

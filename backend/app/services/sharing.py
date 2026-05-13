@@ -42,7 +42,7 @@ def safe_owner_handle(user: User) -> str:
     """resolve_owner_handle with a stable fallback for read paths.
 
     Write paths (create-share-link, accept-invitation) must raise a
-    409 \`display_name_required\` so the user fixes their profile
+    409 `display_name_required` so the user fixes their profile
     before durable state is created with a meaningless handle. Read
     paths (listings, displays of mounts the user has already accepted
     months ago — owner since stripped their display name) need
@@ -167,15 +167,15 @@ async def detect_vault_conflicts(
     """List vault keys that exist in BOTH the source and parent scope.
 
     A collision is `(vault.slug, section, item_name)` showing up under
-    both scopes' vaults. `clawdi://<vault>/<section>/<item>` URIs
-    resolve through scope_ids_visible_to in priority order, so a
-    collision on accept-mount would silently change which value the
-    sharee's agent reads — surface as 409 vault_conflicts_blocked at
-    mount time so the sharee can inspect before committing.
+    both scopes' vaults. Composed vault resolution is parent-first, so
+    a collision on accept-mount would silently hide the shared value
+    behind the sharee's parent value — surface as 409
+    vault_conflicts_blocked at mount time so the sharee can inspect
+    before committing.
 
     Empty list = no conflicts; safe to mount. Used by every accept
     surface that creates a mount (share-link upgrade, invitation
-    accept, explicit \`scope mount\`).
+    accept, explicit `scope mount`).
     """
     src_vault = Vault.__table__.alias("v_src")
     src_item = VaultItem.__table__.alias("vi_src")

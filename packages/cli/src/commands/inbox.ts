@@ -76,6 +76,7 @@ interface AcceptOpts {
 	allowVaultConflicts?: boolean;
 	invite?: string;
 	url?: string;
+	json?: boolean;
 }
 
 interface ShareUpgradeResponse {
@@ -235,7 +236,7 @@ export async function inboxAcceptCommand(
 			process.exitCode = 1;
 			return;
 		}
-		await acceptAnonymousUrl(apiUrl, normalized);
+		await acceptAnonymousUrl(apiUrl, normalized, opts);
 		return;
 	}
 
@@ -350,11 +351,20 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 // Internal: accept paths
 // ────────────────────────────────────────────────────────────────
 
-async function acceptAnonymousUrl(apiUrl: string, urlOrToken: string): Promise<void> {
+async function acceptAnonymousUrl(
+	apiUrl: string,
+	urlOrToken: string,
+	opts: AcceptOpts,
+): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
 
 	const existing = listTokens().find((t) => t.token === token);
 	if (existing) {
+		if (opts.json) {
+			const { token: _raw, ...safe } = existing;
+			console.log(JSON.stringify({ status: "already_redeemed", local_share_token: safe }, null, 2));
+			return;
+		}
 		console.log(
 			chalk.gray(
 				`Already accepted: ${existing.scope_name} (@${existing.owner_handle}). ` +
@@ -383,6 +393,10 @@ async function acceptAnonymousUrl(apiUrl: string, urlOrToken: string): Promise<v
 		redeemed_at: new Date().toISOString(),
 	};
 	addToken(record);
+	if (opts.json) {
+		console.log(JSON.stringify({ status: "redeemed", share: body }, null, 2));
+		return;
+	}
 	console.log(
 		chalk.green("✓") +
 			` Accepted "${chalk.bold(body.scope_name)}" from ${body.owner_display} (@${body.owner_handle}).`,
@@ -431,9 +445,9 @@ function renderVaultConflicts(detail: Record<string, unknown>, retryHint: string
 	console.error(
 		chalk.gray(
 			"  The source scope has vault key(s) that already exist in your parent scope's vault.\n" +
-				"  Accepting would silently shadow your own keys. Inspect the list, then either:\n" +
+				"  The shared values would be present but skipped while your parent values keep priority.\n" +
 				"    - rename / remove the conflicting keys on either side, OR\n" +
-				"    - re-run with --allow-vault-conflicts to keep both (source values win for clawdi:// lookups).",
+				"    - re-run with --allow-vault-conflicts to keep both (your parent-scope values keep priority).",
 		),
 	);
 	for (const c of conflicts) {
@@ -516,9 +530,10 @@ async function eagerPullAndReport(
 	scopeId: string,
 	ownerHandle: string,
 	verboseError: boolean,
-): Promise<void> {
+	report = true,
+): Promise<number> {
 	const written = await pullSharedSkills(apiUrl, bearer, scopeId, ownerHandle).catch((e) => {
-		if (verboseError) {
+		if (verboseError && report) {
 			console.log(
 				chalk.yellow(
 					`  (Couldn't pull shared skills yet: ${e instanceof Error ? e.message : String(e)}. ` +
@@ -528,11 +543,12 @@ async function eagerPullAndReport(
 		}
 		return 0;
 	});
-	if (written > 0) {
+	if (written > 0 && report) {
 		console.log(
 			chalk.gray(`  Pulled ${written} skill${written === 1 ? "" : "s"} into your local agents.`),
 		);
 	}
+	return written;
 }
 
 async function acceptUrl(
@@ -553,9 +569,14 @@ async function acceptUrl(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
-			const picked = await pickMountParentInteractive(detail);
+			const picked = opts.json ? null : await pickMountParentInteractive(detail);
 			if (picked) {
 				await acceptUrl(apiUrl, bearer, urlOrToken, { ...opts, into: picked });
+				return;
+			}
+			if (opts.json) {
+				console.log(JSON.stringify({ status: "mount_deferred", detail }, null, 2));
+				process.exitCode = 4;
 				return;
 			}
 			renderMountAmbiguous(
@@ -566,6 +587,11 @@ async function acceptUrl(
 			return;
 		}
 		if (detail.error === "vault_conflicts_blocked") {
+			if (opts.json) {
+				console.log(JSON.stringify({ status: "vault_conflicts_blocked", detail }, null, 2));
+				process.exitCode = 5;
+				return;
+			}
 			renderVaultConflicts(
 				detail,
 				`${chalk.cyan("clawdi inbox accept <same-url> --allow-vault-conflicts")} → override`,
@@ -574,6 +600,10 @@ async function acceptUrl(
 			return;
 		}
 		if (detail.error === "already_owner") {
+			if (opts.json) {
+				console.log(JSON.stringify({ status: "already_owner" }, null, 2));
+				return;
+			}
 			console.log(chalk.yellow("This is your own scope — nothing to accept."));
 			return;
 		}
@@ -584,8 +614,19 @@ async function acceptUrl(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = (await r.json()) as ShareUpgradeResponse;
+	const pulled = await eagerPullAndReport(
+		apiUrl,
+		bearer,
+		body.scope_id,
+		body.resolved_owner_handle,
+		true,
+		!opts.json,
+	);
+	if (opts.json) {
+		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
+		return;
+	}
 	renderJoinedSuccess(body, !!opts.noMount);
-	await eagerPullAndReport(apiUrl, bearer, body.scope_id, body.resolved_owner_handle, true);
 }
 
 async function acceptInvitation(
@@ -605,9 +646,14 @@ async function acceptInvitation(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "mount_target_ambiguous") {
-			const picked = await pickMountParentInteractive(detail);
+			const picked = opts.json ? null : await pickMountParentInteractive(detail);
 			if (picked) {
 				await acceptInvitation(apiUrl, bearer, invitationId, { ...opts, into: picked });
+				return;
+			}
+			if (opts.json) {
+				console.log(JSON.stringify({ status: "mount_deferred", detail }, null, 2));
+				process.exitCode = 4;
 				return;
 			}
 			renderMountAmbiguous(detail, "Re-run with --into <slug> to mount.");
@@ -615,6 +661,11 @@ async function acceptInvitation(
 			return;
 		}
 		if (detail.error === "vault_conflicts_blocked") {
+			if (opts.json) {
+				console.log(JSON.stringify({ status: "vault_conflicts_blocked", detail }, null, 2));
+				process.exitCode = 5;
+				return;
+			}
 			renderVaultConflicts(detail, "Re-run with --allow-vault-conflicts to override.");
 			process.exitCode = 5;
 			return;
@@ -629,8 +680,19 @@ async function acceptInvitation(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = (await r.json()) as InvitationAcceptResponse;
+	const pulled = await eagerPullAndReport(
+		apiUrl,
+		bearer,
+		body.scope_id,
+		body.resolved_owner_handle,
+		false,
+		!opts.json,
+	);
+	if (opts.json) {
+		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
+		return;
+	}
 	renderJoinedSuccess(body, false);
-	await eagerPullAndReport(apiUrl, bearer, body.scope_id, body.resolved_owner_handle, false);
 }
 
 // ────────────────────────────────────────────────────────────────

@@ -99,7 +99,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	// a serial loop avoids that without holding 5 round-trips in
 	// series for a user with 5 pending shares.
 	type Outcome =
-		| { kind: "ok"; token: ShareToken; alias?: string }
+		| { kind: "ok"; token: ShareToken; alias?: string; scopeId: string; ownerHandle: string }
 		| { kind: "already_owner"; token: ShareToken }
 		| { kind: "fail"; name: string; reason: string };
 
@@ -140,8 +140,18 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 				if (!r.ok) {
 					return { kind: "fail", name: t.scope_name, reason: `HTTP ${r.status}` };
 				}
-				const body = (await r.json()) as { mount_alias?: string };
-				return { kind: "ok", token: t, alias: body.mount_alias };
+				const body = (await r.json()) as {
+					scope_id?: string;
+					resolved_owner_handle?: string;
+					mount_alias?: string;
+				};
+				return {
+					kind: "ok",
+					token: t,
+					alias: body.mount_alias,
+					scopeId: body.scope_id ?? t.scope_id,
+					ownerHandle: body.resolved_owner_handle ?? t.owner_handle,
+				};
 			} catch (e) {
 				return {
 					kind: "fail",
@@ -152,11 +162,17 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 		}),
 	);
 
-	const results: Array<{ name: string; alias?: string; reason?: string }> = [];
+	const { pullSharedSkills } = await import("../share/eager-pull");
+	const results: Array<{ name: string; alias?: string; pulled?: number; reason?: string }> = [];
 	for (const o of outcomes) {
-		if (o.kind === "ok" || o.kind === "already_owner") {
+		if (o.kind === "ok") {
 			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
-			if (o.kind === "ok") results.push({ name: o.token.scope_name, alias: o.alias });
+			const pulled = await pullSharedSkills(apiUrl, apiKey, o.scopeId, o.ownerHandle).catch(
+				() => 0,
+			);
+			results.push({ name: o.token.scope_name, alias: o.alias, pulled });
+		} else if (o.kind === "already_owner") {
+			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
 		} else {
 			results.push({ name: o.name, reason: o.reason });
 		}
@@ -167,7 +183,13 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	if (ok.length > 0) {
 		p.log.success(`Auto-upgraded ${ok.length} pending share${ok.length === 1 ? "" : "s"}:`);
 		for (const o of ok) {
-			p.log.message(chalk.gray(`  → `) + chalk.bold(o.alias ?? o.name) + chalk.gray(` ready`));
+			const pulled =
+				o.pulled && o.pulled > 0
+					? chalk.gray(` · pulled ${o.pulled} skill${o.pulled === 1 ? "" : "s"}`)
+					: "";
+			p.log.message(
+				chalk.gray(`  → `) + chalk.bold(o.alias ?? o.name) + chalk.gray(` ready`) + pulled,
+			);
 		}
 	}
 	for (const f of fail) {

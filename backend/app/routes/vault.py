@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
 from app.core.database import get_session
 from app.core.query_utils import like_needle
-from app.core.scope import resolve_default_write_scope, scope_ids_visible_to
+from app.core.scope import resolve_default_write_scope, resolve_for_parent, scope_ids_visible_to
+from app.models.scope import Scope
+from app.models.scope_mount import ScopeMount
 from app.models.vault import Vault, VaultItem
 from app.schemas.common import Paginated
 from app.schemas.vault import (
@@ -18,7 +20,6 @@ from app.schemas.vault import (
     VaultItemsDeleteResponse,
     VaultItemsUpsertResponse,
     VaultItemUpsert,
-    VaultResolveResponse,
     VaultResponse,
     VaultSectionsResponse,
 )
@@ -35,6 +36,10 @@ async def list_vaults(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, description="Filter by slug / name"),
+    scope_id: UUID | None = Query(
+        default=None,
+        description="Optional parent scope. When set, include vaults from mounted source scopes.",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
 ) -> Paginated[VaultResponse]:
@@ -48,7 +53,10 @@ async def list_vaults(
     # Plaintext resolution (`/api/vault/resolve`) keeps the
     # Clerk-auth-only gate so a leaked anonymous share-token can't
     # exfiltrate secrets.
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
+    if scope_id is not None:
+        visible_scope_ids = list(await resolve_for_parent(db, auth, scope_id))
+    else:
+        visible_scope_ids = await scope_ids_visible_to(db, auth)
     base = (
         select(Vault)
         .where(
@@ -248,21 +256,158 @@ async def delete_vault_items(
 # --- Resolve (CLI only — returns plaintext values) ---
 
 
+def _env_key(section: str, item_name: str) -> str:
+    return f"{section}_{item_name}".upper() if section else item_name.upper()
+
+
+async def _composition_precedence(
+    db: AsyncSession,
+    auth: AuthContext,
+    parent_scope_id: UUID,
+) -> list[dict]:
+    """Return parent first, then readable mounted sources by created_at.
+
+    This is the vault-specific ordered version of `resolve_for_parent`.
+    Skill listings only need a set; vault resolution needs deterministic
+    precedence so `--debug` can show exactly why a value won.
+    """
+    visible = set(await scope_ids_visible_to(db, auth))
+    if parent_scope_id not in visible:
+        return []
+
+    parent = (
+        await db.execute(select(Scope).where(Scope.id == parent_scope_id))
+    ).scalar_one_or_none()
+    if parent is None:
+        return []
+
+    entries: list[dict] = [
+        {
+            "scope_id": parent.id,
+            "alias": parent.slug,
+            "display": parent.name,
+            "mounted_at": None,
+        }
+    ]
+    rows = (
+        await db.execute(
+            select(ScopeMount, Scope)
+            .join(Scope, Scope.id == ScopeMount.source_scope_id)
+            .where(ScopeMount.parent_scope_id == parent_scope_id)
+            .order_by(ScopeMount.created_at.asc(), ScopeMount.id.asc())
+        )
+    ).all()
+    for mount, source in rows:
+        if mount.source_scope_id not in visible:
+            continue
+        entries.append(
+            {
+                "scope_id": mount.source_scope_id,
+                "alias": mount.alias,
+                "display": source.name,
+                "mounted_at": mount.created_at,
+            }
+        )
+    return entries
+
+
 @router.post("/resolve")
 async def resolve_vault(
+    key: str | None = Query(default=None),
+    scope_id: UUID | None = Query(
+        default=None,
+        description="Parent scope for composed resolution. Required for mount precedence.",
+    ),
+    debug: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
-) -> VaultResolveResponse:
+) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
     Scope-filtered: an api_key bound to env A only sees vaults in
     that env's scope. Without this filter a leaked daemon key
     could decrypt vaults belonging to Personal or to another env.
     """
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
+    if scope_id is None:
+        visible_scope_ids = await scope_ids_visible_to(db, auth)
+    else:
+        ordered = await _composition_precedence(db, auth, scope_id)
+        if not ordered:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
+        visible_scope_ids = [entry["scope_id"] for entry in ordered]
+
+    if key is not None:
+        if scope_id is None:
+            ordered = [
+                {
+                    "scope_id": sid,
+                    "alias": str(sid),
+                    "display": str(sid),
+                    "mounted_at": None,
+                }
+                for sid in visible_scope_ids
+            ]
+
+        wanted = key.upper()
+        precedence: list[dict] = []
+        winner: dict | None = None
+        for entry in ordered:
+            vaults = (
+                (await db.execute(select(Vault).where(Vault.scope_id == entry["scope_id"])))
+                .scalars()
+                .all()
+            )
+            hit_item: VaultItem | None = None
+            hit_vault: Vault | None = None
+            for vault in vaults:
+                items = (
+                    (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))
+                    .scalars()
+                    .all()
+                )
+                for item in items:
+                    if _env_key(item.section, item.item_name) == wanted:
+                        hit_item = item
+                        hit_vault = vault
+                        break
+                if hit_item is not None:
+                    break
+
+            entry_debug = {
+                "scope_id": str(entry["scope_id"]),
+                "alias": entry["alias"],
+                "hit": hit_item is not None,
+                "reason": "match" if hit_item is not None and winner is None else "not-found",
+            }
+            if entry["mounted_at"] is not None:
+                entry_debug["mounted_at"] = entry["mounted_at"].isoformat()
+            if hit_item is not None and winner is not None:
+                entry_debug["reason"] = "skipped"
+            precedence.append(entry_debug)
+
+            if hit_item is not None and winner is None:
+                winner = {
+                    "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
+                    "source_scope_id": str(entry["scope_id"]),
+                    "source_alias": entry["alias"],
+                    "vault_slug": hit_vault.slug if hit_vault else None,
+                    "section": hit_item.section,
+                    "item_name": hit_item.item_name,
+                }
+
+        if winner is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail={"code": "vault_key_not_found", "key": key, "precedence": precedence},
+            )
+
+        response = {"key": key, **winner}
+        if debug:
+            response["precedence"] = precedence
+        return response
+
     result = await db.execute(
         select(Vault).where(
-            Vault.user_id == auth.user_id,
             Vault.scope_id.in_(visible_scope_ids),
         )
     )
@@ -274,13 +419,9 @@ async def resolve_vault(
         for item in items_result.scalars().all():
             plaintext = decrypt(item.encrypted_value, item.nonce)
             # Build env var name: SECTION_FIELDNAME (uppercase)
-            if item.section:
-                key = f"{item.section}_{item.item_name}".upper()
-            else:
-                key = item.item_name.upper()
-            env[key] = plaintext
+            env[_env_key(item.section, item.item_name)] = plaintext
 
-    return VaultResolveResponse(env)
+    return env
 
 
 async def _get_vault(

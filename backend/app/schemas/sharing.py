@@ -155,8 +155,8 @@ class UpgradeBody(BaseModel):
     # in the parent's vault, the mount returns 409
     # vault_conflicts_blocked. Setting this to True skips the check —
     # the sharee has inspected the conflict list and consented to the
-    # collision (the source vault values WIN for clawdi:// resolution
-    # priority while the mount is in place).
+    # collision. Parent-scope values keep priority; conflicting source
+    # values are present but skipped by composed vault resolution.
     allow_vault_conflicts: bool = False
 
 

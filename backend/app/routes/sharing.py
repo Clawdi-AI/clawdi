@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,14 +35,17 @@ from app.core.database import get_session
 from app.models.scope import Scope
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
+from app.models.scope_mount import ScopeMount
 from app.models.scope_share_link import ScopeShareLink
 from app.models.user import User
 from app.schemas.sharing import (
     InvitationCreate,
     InvitationResponse,
+    MemberResponse,
     ShareLinkCreate,
     ShareLinkCreated,
     ShareLinkResponse,
+    UnshareResponse,
 )
 from app.services.sharing import (
     generate_share_token,
@@ -430,3 +434,224 @@ async def cancel_invitation(
     await db.commit()
     logger.info("invitation_cancelled id=%s by=%s", invitation_id, auth.user_id)
     return {"status": "cancelled"}
+
+
+@router.get("/{scope_id}/members", response_model=list[MemberResponse])
+async def list_members(
+    scope_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> list[MemberResponse]:
+    """Owner view of accepted members on a shared scope.
+
+    Owners are not represented by ScopeMembership rows, so this
+    lists sharees only. Pending invitations remain under
+    /invitations; revoked links remain under /share-links.
+    """
+    await _assert_scope_owner(db, auth, scope_id)
+    rows = (
+        await db.execute(
+            select(ScopeMembership, User)
+            .join(User, User.id == ScopeMembership.user_id)
+            .where(ScopeMembership.scope_id == scope_id)
+            .order_by(ScopeMembership.joined_at.desc(), ScopeMembership.id.desc())
+        )
+    ).all()
+    return [
+        MemberResponse(
+            id=str(member.id),
+            user_id=str(user.id),
+            user_email=user.email,
+            user_display=user.name,
+            role=member.role,
+            joined_via=member.joined_via,
+            joined_at=member.joined_at,
+            resolved_owner_handle=member.resolved_owner_handle,
+        )
+        for member, user in rows
+    ]
+
+
+async def _delete_mounts_for_member_source(
+    db: AsyncSession,
+    *,
+    member_user_id: UUID,
+    source_scope_id: UUID,
+) -> int:
+    """Remove mount edges this member owns into `source_scope_id`.
+
+    Dropping membership is enough to hide composed reads, because
+    resolve_for_parent re-checks membership. Deleting the mount rows
+    as well keeps the UI honest: after leave/remove, the stale mount
+    no longer appears in "Mounted scopes".
+    """
+    owned_parent_ids = select(Scope.id).where(Scope.user_id == member_user_id).scalar_subquery()
+    result = await db.execute(
+        sql_delete(ScopeMount).where(
+            ScopeMount.source_scope_id == source_scope_id,
+            ScopeMount.parent_scope_id.in_(owned_parent_ids),
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+@router.delete("/{scope_id}/members/{member_user_id}")
+async def remove_member(
+    scope_id: UUID,
+    member_user_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, int | str]:
+    """Owner removes a sharee's access to this scope.
+
+    This is the access-revocation counterpart to share-link revoke:
+    links only block future joins; member removal drops an existing
+    user's capability and their mount edges into this source.
+    """
+    scope = await _assert_scope_owner(db, auth, scope_id)
+    if member_user_id == scope.user_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"error": "owner_cannot_be_removed"},
+        )
+    member = (
+        await db.execute(
+            select(ScopeMembership).where(
+                ScopeMembership.scope_id == scope_id,
+                ScopeMembership.user_id == member_user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "member not found")
+
+    mounts_removed = await _delete_mounts_for_member_source(
+        db,
+        member_user_id=member_user_id,
+        source_scope_id=scope_id,
+    )
+    await db.delete(member)
+    await db.commit()
+    logger.info(
+        "scope_member_removed scope_id=%s member_user_id=%s by=%s mounts_removed=%s",
+        scope_id,
+        member_user_id,
+        auth.user_id,
+        mounts_removed,
+    )
+    return {"status": "removed", "mounts_removed": mounts_removed}
+
+
+@router.post("/{scope_id}/leave")
+async def leave_scope(
+    scope_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, int | str]:
+    """Sharee leaves a scope they previously joined.
+
+    Owners cannot leave their own scope through this route. Leaving
+    removes the membership and every mount edge from the sharee's
+    owned parent scopes into this shared source.
+    """
+    scope = (await db.execute(select(Scope).where(Scope.id == scope_id))).scalar_one_or_none()
+    if scope is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
+    if scope.user_id == auth.user_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"error": "owner_cannot_leave"},
+        )
+    member = (
+        await db.execute(
+            select(ScopeMembership).where(
+                ScopeMembership.scope_id == scope_id,
+                ScopeMembership.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "membership not found")
+
+    mounts_removed = await _delete_mounts_for_member_source(
+        db,
+        member_user_id=auth.user_id,
+        source_scope_id=scope_id,
+    )
+    await db.delete(member)
+    await db.commit()
+    logger.info(
+        "scope_left scope_id=%s user_id=%s mounts_removed=%s",
+        scope_id,
+        auth.user_id,
+        mounts_removed,
+    )
+    return {"status": "left", "mounts_removed": mounts_removed}
+
+
+@router.post("/{scope_id}/unshare", response_model=UnshareResponse)
+async def unshare_scope(
+    scope_id: UUID,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> UnshareResponse:
+    """Owner fully stops sharing a scope.
+
+    This is stronger than revoking a link: it revokes all active
+    links, cancels pending invitations, removes accepted members,
+    and deletes mount edges those members had into this source.
+    """
+    await _assert_scope_owner(db, auth, scope_id)
+    now = datetime.now(UTC)
+
+    active_links = (
+        (
+            await db.execute(
+                select(ScopeShareLink).where(
+                    ScopeShareLink.scope_id == scope_id,
+                    ScopeShareLink.revoked_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for link in active_links:
+        link.revoked_at = now
+
+    invite_result = await db.execute(
+        sql_delete(ScopeInvitation).where(ScopeInvitation.scope_id == scope_id)
+    )
+    invitations_cancelled = int(invite_result.rowcount or 0)
+
+    members = (
+        (await db.execute(select(ScopeMembership).where(ScopeMembership.scope_id == scope_id)))
+        .scalars()
+        .all()
+    )
+    member_user_ids = [m.user_id for m in members]
+    mounts_removed = 0
+    for member_user_id in member_user_ids:
+        mounts_removed += await _delete_mounts_for_member_source(
+            db,
+            member_user_id=member_user_id,
+            source_scope_id=scope_id,
+        )
+    for member in members:
+        await db.delete(member)
+
+    await db.commit()
+    logger.info(
+        "scope_unshared scope_id=%s by=%s links=%s members=%s invitations=%s mounts=%s",
+        scope_id,
+        auth.user_id,
+        len(active_links),
+        len(members),
+        invitations_cancelled,
+        mounts_removed,
+    )
+    return UnshareResponse(
+        links_revoked=len(active_links),
+        members_removed=len(members),
+        invitations_cancelled=invitations_cancelled,
+    )

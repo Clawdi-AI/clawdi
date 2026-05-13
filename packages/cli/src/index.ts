@@ -266,6 +266,21 @@ vaultCmd
 		await vaultImport(file, opts);
 	});
 
+vaultCmd
+	.command("resolve <key>")
+	.description("Resolve one vault key through a composed scope")
+	.option("-s, --scope <scope>", "Parent scope to resolve from (default: your default-write scope)")
+	.option("--debug", "Show scope precedence and skipped matches")
+	.option("--json", "Output the full resolve response as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi vault resolve OPENAI_API_KEY\n  $ clawdi vault resolve OPENAI_API_KEY --scope personal --debug",
+	)
+	.action(async (key, opts) => {
+		const { vaultResolveCommand } = await import("./commands/vault-resolve.js");
+		await vaultResolveCommand(key, opts);
+	});
+
 // ─────────────────────────────────────────────────────────────
 // skill
 // ─────────────────────────────────────────────────────────────
@@ -501,6 +516,15 @@ scopeCmd
 	});
 
 scopeCmd
+	.command("show <scope>")
+	.description("Show scope metadata, parent-owned content counts, and mount tree")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (scope, opts) => {
+		const { scopeShowCommand } = await import("./commands/scope-show.js");
+		await scopeShowCommand(scope, opts);
+	});
+
+scopeCmd
 	.command("share [scope]")
 	.description("Generate a share link. Defaults to your write scope when [scope] is omitted.")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
@@ -542,6 +566,37 @@ scopeCmd
 	});
 
 scopeCmd
+	.command("members <scope>")
+	.description("List or remove accepted members on a scope you own")
+	.option("--remove <email-or-user-id>", "Remove one accepted member")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi scope members engineering --remove bob@example.com")
+	.action(async (scope, opts) => {
+		const { scopeMembersCommand } = await import("./commands/scope-members.js");
+		await scopeMembersCommand(scope, opts);
+	});
+
+scopeCmd
+	.command("leave <scope>")
+	.description("Leave a shared scope and remove its mount edges from your workspaces")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi scope leave @alice-cdbf/engineering")
+	.action(async (scope, opts) => {
+		const { scopeLeaveCommand } = await import("./commands/scope-members.js");
+		await scopeLeaveCommand(scope, opts);
+	});
+
+scopeCmd
+	.command("unshare <scope>")
+	.description("Owner: revoke links, cancel invitations, and remove all members")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi scope unshare engineering")
+	.action(async (scope, opts) => {
+		const { scopeUnshareCommand } = await import("./commands/scope-members.js");
+		await scopeUnshareCommand(scope, opts);
+	});
+
+scopeCmd
 	.command("mounts <parent>")
 	.description("List scopes mounted into <parent>")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
@@ -556,9 +611,10 @@ scopeCmd
 	.description("Mount a scope you have access to into a scope you own")
 	.requiredOption("-i, --into <parent>", "Parent scope (UUID, slug, or name)")
 	.option("-a, --alias <name>", "Override the mount alias (default: @<owner>/<source-slug>)")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option(
 		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — source values win for clawdi:// lookups",
+		"Override 409 vault_conflicts_blocked — parent-scope values keep priority",
 	)
 	.addHelpText(
 		"after",
@@ -575,10 +631,11 @@ scopeCmd
 scopeCmd
 	.command("unmount <parent> <alias-or-id>")
 	.description("Drop a mount edge. Membership in the source scope is preserved.")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText("after", "\nExample:\n  $ clawdi scope unmount personal @alice-cdbf/engineering")
-	.action(async (parent, aliasOrId) => {
+	.action(async (parent, aliasOrId, opts) => {
 		const { scopeUnmountCommand } = await import("./commands/scope-mount.js");
-		await scopeUnmountCommand(parent, aliasOrId);
+		await scopeUnmountCommand(parent, aliasOrId, opts);
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -606,9 +663,10 @@ inboxCmd
 	.option("-i, --into <scope>", "Mount target (UUID, slug, or name). Default: auto.")
 	.option("-a, --alias <name>", "Override the mount alias")
 	.option("--no-mount", "Capability only — skip the mount edge")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option(
 		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — source values win for clawdi:// lookups",
+		"Override 409 vault_conflicts_blocked — parent-scope values keep priority",
 	)
 	.addHelpText(
 		"after",

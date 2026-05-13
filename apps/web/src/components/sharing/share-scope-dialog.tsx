@@ -1,7 +1,17 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, Copy, Link2, Plus, Share2, Trash2, Users } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle2,
+	Copy,
+	Link2,
+	Plus,
+	Share2,
+	Trash2,
+	UserMinus,
+	Users,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -70,9 +80,17 @@ interface ShareLinkCreated {
 interface Invitation {
 	id: string;
 	invitee_email: string;
-	invitee_display: string | null;
-	status: "pending" | "accepted" | "declined" | "cancelled";
 	created_at: string;
+}
+
+interface Member {
+	id: string;
+	user_id: string;
+	user_email: string | null;
+	user_display: string | null;
+	role: string;
+	joined_via: string;
+	joined_at: string;
 }
 
 interface ShareScopeDialogProps {
@@ -102,7 +120,7 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 					</DialogDescription>
 				</DialogHeader>
 				<Tabs defaultValue="links" className="w-full">
-					<TabsList className="grid w-full grid-cols-2">
+					<TabsList className="grid w-full grid-cols-3">
 						<TabsTrigger value="links">
 							<Link2 className="mr-2 size-3.5" />
 							Share links
@@ -111,12 +129,19 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 							<Users className="mr-2 size-3.5" />
 							Invite by email
 						</TabsTrigger>
+						<TabsTrigger value="members">
+							<UserMinus className="mr-2 size-3.5" />
+							Members
+						</TabsTrigger>
 					</TabsList>
 					<TabsContent value="links" className="mt-4">
 						<ShareLinksPanel scopeId={scopeId} />
 					</TabsContent>
 					<TabsContent value="invitations" className="mt-4">
 						<InvitationsPanel scopeId={scopeId} />
+					</TabsContent>
+					<TabsContent value="members" className="mt-4">
+						<MembersPanel scopeId={scopeId} />
 					</TabsContent>
 				</Tabs>
 			</DialogContent>
@@ -430,23 +455,150 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 							<div>
 								<div className="font-medium">{inv.invitee_email}</div>
 								<div className="text-xs text-muted-foreground">
-									<Badge variant={inv.status === "pending" ? "outline" : "secondary"}>
-										{inv.status}
-									</Badge>
+									<Badge variant="outline">pending</Badge>
 								</div>
 							</div>
-							{inv.status === "pending" ? (
+							<Button
+								variant="ghost"
+								size="icon"
+								onClick={() => cancel.mutate(inv.id)}
+								title="Cancel invitation"
+							>
+								<Trash2 className="size-3.5 text-destructive" />
+							</Button>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
+function MembersPanel({ scopeId }: { scopeId: string }) {
+	const qc = useQueryClient();
+	const authedFetch = useAuthedFetch();
+
+	const members = useQuery({
+		queryKey: ["scope-members", scopeId],
+		queryFn: async (): Promise<Member[]> => {
+			const r = await authedFetch(`/api/scopes/${scopeId}/members`);
+			return r.json();
+		},
+	});
+
+	const refreshSharingState = () => {
+		qc.invalidateQueries({ queryKey: ["scope-members", scopeId] });
+		qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
+		qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
+		qc.invalidateQueries({ queryKey: ["skills"] });
+		qc.invalidateQueries({ queryKey: ["scopes"] });
+		qc.invalidateQueries({ queryKey: ["scope-mounts"] });
+	};
+
+	const remove = useMutation({
+		mutationFn: async (userId: string) => {
+			const r = await authedFetch(`/api/scopes/${scopeId}/members/${userId}`, {
+				method: "DELETE",
+			});
+			return r.json() as Promise<{ mounts_removed: number }>;
+		},
+		onSuccess: (body) => {
+			refreshSharingState();
+			toast.success(
+				body.mounts_removed > 0
+					? `Member removed — ${body.mounts_removed} mount edge removed`
+					: "Member removed",
+			);
+		},
+		onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to remove member"),
+	});
+
+	const unshare = useMutation({
+		mutationFn: async () => {
+			const r = await authedFetch(`/api/scopes/${scopeId}/unshare`, { method: "POST" });
+			return r.json() as Promise<{
+				links_revoked: number;
+				members_removed: number;
+				invitations_cancelled: number;
+			}>;
+		},
+		onSuccess: (body) => {
+			refreshSharingState();
+			toast.success(
+				`Stopped sharing — revoked ${body.links_revoked} link(s), removed ${body.members_removed} member(s)`,
+			);
+		},
+		onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to stop sharing"),
+	});
+
+	const rows = members.data ?? [];
+
+	return (
+		<div className="space-y-3">
+			<div className="flex items-center justify-between gap-3">
+				<p className="text-xs text-muted-foreground">
+					Accepted viewers with permanent access. Removing a member also removes their mount edges
+					into this scope.
+				</p>
+				<Button
+					variant="destructive"
+					size="sm"
+					disabled={unshare.isPending}
+					onClick={() => {
+						const ok = window.confirm(
+							"Stop sharing this scope?\n\nThis revokes active links, cancels pending invitations, removes accepted members, and removes their mount edges.",
+						);
+						if (ok) unshare.mutate();
+					}}
+				>
+					{unshare.isPending ? "Stopping…" : "Stop sharing"}
+				</Button>
+			</div>
+			<Separator />
+			{members.isLoading ? (
+				<Skeleton className="h-16 w-full" />
+			) : members.error ? (
+				<EmptyHint
+					message={
+						members.error instanceof Error ? members.error.message : "Couldn't load members."
+					}
+				/>
+			) : rows.length === 0 ? (
+				<EmptyHint message="No accepted members yet." />
+			) : (
+				<ul className="space-y-2">
+					{rows.map((member) => {
+						const label = member.user_email ?? member.user_display ?? member.user_id;
+						return (
+							<li
+								key={member.id}
+								className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
+							>
+								<div className="min-w-0">
+									<div className="truncate font-medium">{label}</div>
+									<div className="text-xs text-muted-foreground">
+										{member.role} · joined via {member.joined_via} ·{" "}
+										{new Date(member.joined_at).toLocaleDateString(undefined, {
+											month: "short",
+											day: "numeric",
+										})}
+									</div>
+								</div>
 								<Button
 									variant="ghost"
 									size="icon"
-									onClick={() => cancel.mutate(inv.id)}
-									title="Cancel invitation"
+									disabled={remove.isPending}
+									onClick={() => {
+										const ok = window.confirm(`Remove ${label} from this scope?`);
+										if (ok) remove.mutate(member.user_id);
+									}}
+									title="Remove member"
 								>
-									<Trash2 className="size-3.5 text-destructive" />
+									<UserMinus className="size-3.5 text-destructive" />
 								</Button>
-							) : null}
-						</li>
-					))}
+							</li>
+						);
+					})}
 				</ul>
 			)}
 		</div>
