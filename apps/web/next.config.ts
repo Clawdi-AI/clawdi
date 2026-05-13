@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
+const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
+const posthogProxyPath = "/_cdi/px";
+
 const nextConfig: NextConfig = {
 	transpilePackages: ["@clawdi/shared"],
+	// PostHog uses trailing slashes in capture endpoints (e.g. `/e/`).
+	// Redirecting these breaks payload delivery.
+	skipTrailingSlashRedirect: isHostedBuild,
 	images: {
 		remotePatterns: [{ hostname: "img.clerk.com" }],
 	},
@@ -14,10 +20,25 @@ const nextConfig: NextConfig = {
 	// `[format]` segment that a single route handler covers. The browser
 	// still sees `/s/abc.md` in the URL bar — the rewrite is internal.
 	async rewrites() {
-		return [
+		const rewrites = [
 			{ source: "/s/:id.md", destination: "/s/:id/md" },
 			{ source: "/s/:id.json", destination: "/s/:id/json" },
 		];
+
+		if (isHostedBuild) {
+			rewrites.push(
+				{
+					source: `${posthogProxyPath}/static/:path*`,
+					destination: "https://us-assets.i.posthog.com/static/:path*",
+				},
+				{
+					source: `${posthogProxyPath}/:path*`,
+					destination: "https://us.i.posthog.com/:path*",
+				},
+			);
+		}
+
+		return rewrites;
 	},
 };
 

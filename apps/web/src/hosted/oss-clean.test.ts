@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
@@ -108,6 +108,90 @@ function stripComments(src: string): string {
 	return out;
 }
 
+function findMatchingBrace(src: string, openBraceIndex: number): number {
+	let depth = 0;
+	let inSingleQuote = false;
+	let inDoubleQuote = false;
+	let inTemplate = false;
+	let inLineComment = false;
+	let inBlockComment = false;
+
+	for (let i = openBraceIndex; i < src.length; i++) {
+		const c = src[i];
+		const n = src[i + 1];
+
+		if (inLineComment) {
+			if (c === "\n") inLineComment = false;
+			continue;
+		}
+		if (inBlockComment) {
+			if (c === "*" && n === "/") {
+				inBlockComment = false;
+				i++;
+			}
+			continue;
+		}
+		if (inSingleQuote) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === "'") inSingleQuote = false;
+			continue;
+		}
+		if (inDoubleQuote) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === '"') inDoubleQuote = false;
+			continue;
+		}
+		if (inTemplate) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === "`") inTemplate = false;
+			continue;
+		}
+
+		if (c === "/" && n === "/") {
+			inLineComment = true;
+			i++;
+			continue;
+		}
+		if (c === "/" && n === "*") {
+			inBlockComment = true;
+			i++;
+			continue;
+		}
+		if (c === "'") {
+			inSingleQuote = true;
+			continue;
+		}
+		if (c === '"') {
+			inDoubleQuote = true;
+			continue;
+		}
+		if (c === "`") {
+			inTemplate = true;
+			continue;
+		}
+
+		if (c === "{") {
+			depth++;
+			continue;
+		}
+		if (c === "}") {
+			depth--;
+			if (depth === 0) return i;
+		}
+	}
+
+	return -1;
+}
+
 describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
 		const files = listHostedTsx();
@@ -191,5 +275,115 @@ describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
 				`Ungated dynamic imports of @/hosted/* leak the hosted chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
 			);
 		}
+	});
+});
+
+describe("posthog-js is hosted-only", () => {
+	test("non-hosted source files do not import posthog-js", () => {
+		const offenders: string[] = [];
+		const posthogImport =
+			/(?:^\s*import\s+[^"']+\s+from\s+["']posthog-js["'])|(?:\bimport\s*\(\s*["']posthog-js["']\s*\))/m;
+
+		for (const file of walkSrcExceptHosted(SRC_DIR)) {
+			const src = readFileSync(file, "utf8");
+			if (posthogImport.test(src)) offenders.push(relative(SRC_DIR, file));
+		}
+
+		const instrumentationClient = join(SRC_DIR, "..", "instrumentation-client.ts");
+		if (existsSync(instrumentationClient)) {
+			const src = readFileSync(instrumentationClient, "utf8");
+			if (posthogImport.test(src)) {
+				offenders.push(relative(SRC_DIR, instrumentationClient));
+			}
+		}
+
+		if (offenders.length > 0) {
+			throw new Error(
+				`posthog-js must stay hosted-only. Move imports under src/hosted and reach them via IS_HOSTED-gated dynamic import:\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
+describe("instrumentation-client hosted imports", () => {
+	test("hosted dynamic imports are gated by compile-time hosted checks", () => {
+		const instrumentationClient = join(SRC_DIR, "..", "instrumentation-client.ts");
+		if (!existsSync(instrumentationClient)) return;
+
+		const src = readFileSync(instrumentationClient, "utf8");
+		const offenders: string[] = [];
+		const hostedDynamic = /import\s*\(\s*["']@\/hosted\/[^"']+["']\s*\)/g;
+		const compileTimeHostedGate = /\bprocess\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/;
+
+		for (const match of src.matchAll(hostedDynamic)) {
+			const idx = match.index ?? 0;
+			const lookbehind = src.slice(Math.max(0, idx - 200), idx);
+			if (!/\bIS_HOSTED\b/.test(lookbehind) && !compileTimeHostedGate.test(lookbehind)) {
+				offenders.push(`${relative(SRC_DIR, instrumentationClient)} — ${match[0]}`);
+			}
+		}
+
+		if (offenders.length > 0) {
+			throw new Error(
+				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
+describe("PostHog proxy route boundaries", () => {
+	test("next.config.ts gates PostHog rewrites behind hosted builds", () => {
+		const nextConfig = join(SRC_DIR, "..", "next.config.ts");
+		if (!existsSync(nextConfig)) return;
+
+		const src = readFileSync(nextConfig, "utf8");
+		expect(src).toMatch(
+			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
+		);
+		expect(src).toMatch(/source:\s*["']\/s\/:id\.md["']\s*,\s*destination:\s*["']\/s\/:id\/md["']/);
+		expect(src).toMatch(
+			/source:\s*["']\/s\/:id\.json["']\s*,\s*destination:\s*["']\/s\/:id\/json["']/,
+		);
+
+		const hostedIfMatch = /\bif\s*\(\s*isHostedBuild\s*\)\s*\{/.exec(src);
+		expect(hostedIfMatch).not.toBeNull();
+		if (!hostedIfMatch) return;
+
+		const hostedIfOpenBrace = src.indexOf("{", hostedIfMatch.index);
+		expect(hostedIfOpenBrace).toBeGreaterThanOrEqual(0);
+		if (hostedIfOpenBrace < 0) return;
+
+		const hostedIfCloseBrace = findMatchingBrace(src, hostedIfOpenBrace);
+		expect(hostedIfCloseBrace).toBeGreaterThan(hostedIfOpenBrace);
+		if (hostedIfCloseBrace <= hostedIfOpenBrace) return;
+
+		const hostedPosthogBlock = src.slice(hostedIfOpenBrace + 1, hostedIfCloseBrace);
+		expect(hostedPosthogBlock).toMatch(/rewrites\.push\s*\(/);
+		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/static\/:path\*`/);
+		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/:path\*`/);
+
+		const posthogRewriteSources = [
+			...src.matchAll(/source:\s*`\$\{posthogProxyPath\}\/(?:static\/)?:path\*`/g),
+		];
+		expect(posthogRewriteSources.length).toBe(2);
+		for (const sourceMatch of posthogRewriteSources) {
+			const sourceIndex = sourceMatch.index ?? -1;
+			expect(sourceIndex).toBeGreaterThanOrEqual(hostedIfOpenBrace + 1);
+			expect(sourceIndex).toBeLessThan(hostedIfCloseBrace);
+		}
+	});
+
+	test("proxy.ts only exposes /_cdi/px as public in hosted builds", () => {
+		const proxyFile = join(SRC_DIR, "proxy.ts");
+		if (!existsSync(proxyFile)) return;
+
+		const src = readFileSync(proxyFile, "utf8");
+		expect(src).toMatch(
+			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
+		);
+		expect(src).toMatch(
+			/if\s*\(\s*isHostedBuild\s*\)\s*\{[\s\S]*publicRoutes\.push\(\s*["']\/_cdi\/px\(\.\*\)["']\s*\)/,
+		);
+		expect(src).not.toMatch(/createRouteMatcher\s*\(\s*\[[\s\S]*["']\/_cdi\/px\(\.\*\)["']/);
 	});
 });

@@ -53,6 +53,10 @@ export const env = createEnv({
 			.string()
 			.optional()
 			.transform((v) => v === "true"),
+
+		// Hosted-only analytics token. Optional so OSS and hosted-without-
+		// analytics both validate cleanly.
+		NEXT_PUBLIC_POSTHOG_TOKEN: z.string().min(1).optional(),
 	},
 	runtimeEnv: {
 		VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
@@ -63,6 +67,7 @@ export const env = createEnv({
 		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
+		NEXT_PUBLIC_POSTHOG_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_TOKEN,
 	},
 	// `bun test` preloads `test-setup.ts` to seed required vars, so
 	// validation runs in tests too — this preserves the schema's
