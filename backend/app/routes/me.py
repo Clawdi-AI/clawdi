@@ -34,9 +34,7 @@ from app.schemas.sharing import InvitationResponse, UpgradeBody
 from app.services.sharing import (
     assert_no_vault_conflicts,
     resolve_auto_mount_parent,
-    resolve_owner_handle,
     safe_owner_display,
-    safe_owner_handle,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +75,7 @@ async def list_my_invitations(
                 scope_name=scope.name,
                 scope_kind=scope.kind,
                 owner_display=safe_owner_display(owner),
-                owner_handle=safe_owner_handle(owner),
+                owner_handle=inv.resolved_owner_handle,
                 invitee_email=inv.invitee_email,
                 invited_by_user_id=str(inv.invited_by),
                 invited_by_display=(by.name or by.email) if by else None,
@@ -132,19 +130,7 @@ async def accept_invitation(
     if owner is None:
         raise HTTPException(status.HTTP_410_GONE, "owner account removed")
 
-    try:
-        handle = resolve_owner_handle(owner)
-    except ValueError as err:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "error": "owner_display_name_required",
-                "message": (
-                    "The scope owner has no display name set. Ask them to set "
-                    "one before you can join."
-                ),
-            },
-        ) from err
+    handle = inv.resolved_owner_handle
 
     existing_membership = (
         await db.execute(

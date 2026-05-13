@@ -28,7 +28,43 @@ afterEach(() => {
 });
 
 describe("vaultResolveCommand", () => {
-	it("resolves against the default parent scope and prints debug precedence", async () => {
+	it("resolves unscoped by default without walking mounted sources", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						key: "OPENAI_API_KEY",
+						value: "sk-local",
+						source_scope_id: "scope-default",
+						source_alias: "scope-default",
+						precedence: [
+							{ scope_id: "scope-default", alias: "scope-default", hit: true, reason: "match" },
+						],
+					}),
+			},
+		]);
+		const orig = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY", { debug: true });
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		expect(captured.length).toBe(1);
+		expect(captured[0].path).toContain("key=OPENAI_API_KEY");
+		expect(captured[0].path).not.toContain("scope_id=");
+		expect(captured[0].path).toContain("debug=true");
+		expect(out).toContain("sk-local");
+	});
+
+	it("resolves through an explicit parent scope and prints debug precedence", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -57,7 +93,7 @@ describe("vaultResolveCommand", () => {
 			out += `${args.map(String).join(" ")}\n`;
 		};
 		try {
-			await vaultResolveCommand("OPENAI_API_KEY", { debug: true });
+			await vaultResolveCommand("OPENAI_API_KEY", { scope: "default", debug: true });
 		} finally {
 			console.log = orig;
 			restore();
@@ -73,11 +109,6 @@ describe("vaultResolveCommand", () => {
 
 	it("emits raw JSON for agent consumers", async () => {
 		const { restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/api/scopes/default",
-				response: () => jsonResponse({ scope_id: "scope-parent" }),
-			},
 			{
 				method: "POST",
 				path: "/api/vault/resolve",

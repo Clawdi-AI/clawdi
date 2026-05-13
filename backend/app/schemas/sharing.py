@@ -159,10 +159,10 @@ class UpgradeBody(BaseModel):
     no_mount: bool = False
     # Mount-time vault conflict detection: if source scope has any
     # vault key (slug + section + name triple) that already exists
-    # in the parent's vault, the mount returns 409
+    # in the parent's current composition, the mount returns 409
     # vault_conflicts_blocked. Setting this to True skips the check —
     # the sharee has inspected the conflict list and consented to the
-    # collision. Parent-scope values keep priority; conflicting source
+    # collision. Existing composed values keep priority; conflicting source
     # values are present but skipped by composed vault resolution.
     allow_vault_conflicts: bool = False
 

@@ -10,10 +10,11 @@ Adds the four tables needed for cross-user scope sharing:
   - scope_share_links     : opaque-token share URLs
   - scope_mounts          : composition edges into owned parent scopes
 
-DDL-only - no data backfill needed because this is greenfield. The
-existing scope.kind CHECK constraint is NOT modified (sharing is
-orthogonal to scope kind; a personal or environment scope can both
-be shared without the kind changing).
+Also extends scope.kind with `workspace` so users can create explicit
+project/team boundaries without pretending they came from an agent
+environment. Sharing is still orthogonal to kind; personal,
+environment, and workspace scopes can all be shared without kind
+mutation.
 
 All four tables ON DELETE CASCADE from scopes(id) and users(id) so
 deleting an owner or a scope cleans up rows automatically.
@@ -33,6 +34,13 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.drop_constraint("ck_scopes_kind_v1", "scopes", type_="check")
+    op.create_check_constraint(
+        "ck_scopes_kind_v2",
+        "scopes",
+        "kind IN ('personal', 'environment', 'workspace')",
+    )
+
     op.create_table(
         "scope_memberships",
         sa.Column(
@@ -111,6 +119,7 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column("resolved_owner_handle", sa.String(64), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -275,3 +284,9 @@ def downgrade() -> None:
     op.drop_index("ix_scope_memberships_user_id", "scope_memberships")
     op.drop_index("ix_scope_memberships_scope_id", "scope_memberships")
     op.drop_table("scope_memberships")
+    op.drop_constraint("ck_scopes_kind_v2", "scopes", type_="check")
+    op.create_check_constraint(
+        "ck_scopes_kind_v1",
+        "scopes",
+        "kind IN ('personal', 'environment')",
+    )

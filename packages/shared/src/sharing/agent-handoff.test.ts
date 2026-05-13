@@ -51,6 +51,7 @@ describe("buildShareAgentHandoffPrompt", () => {
 		]);
 		expect(prompt).toContain("Never invent a mount target");
 		expect(prompt).toContain("Never override vault conflicts");
+		expect(prompt).toContain("clawdi vault resolve <key> --scope <parent-scope> --debug --json");
 	});
 
 	test("sanitizes owner-controlled labels before embedding the handoff payload", () => {

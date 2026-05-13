@@ -2,7 +2,6 @@
 
 import { useUser } from "@clerk/nextjs";
 import {
-	BarChart3,
 	Brain,
 	ChevronsUpDown,
 	CircleHelp,
@@ -11,10 +10,12 @@ import {
 	LayoutDashboard,
 	Mail,
 	MessageCircle,
+	MessageSquare,
 	Plug,
 	Search,
 	Settings,
 	Sparkles,
+	Workflow,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
@@ -57,7 +58,8 @@ const DeployTrigger = IS_HOSTED
 
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
-	{ href: "/sessions", label: "Sessions", icon: BarChart3 },
+	{ href: "/sessions", label: "Sessions", icon: MessageSquare },
+	{ href: "/scopes", label: "Scopes", icon: Workflow },
 	{ href: "/memories", label: "Memories", icon: Brain },
 	{ href: "/skills", label: "Skills", icon: Sparkles },
 	{ href: "/vault", label: "Vault", icon: Key },

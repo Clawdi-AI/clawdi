@@ -33,6 +33,7 @@ def test_scope_invitation_model_importable():
         "invitee_user_id",
         "invitee_email",
         "invited_by",
+        "resolved_owner_handle",
         "created_at",
     } <= cols
     index_names = {i.name for i in ScopeInvitation.__table__.indexes}

@@ -1,9 +1,9 @@
 # Scope Sharing Demo: Complete Product Flows
 
 **Date:** 2026-05-13
-**Context:** Demo script for `feat/scope-sharing`. Scope sharing is
-workspace composition: accepting a share grants read capability, and
-mounting decides where the shared content appears.
+**Context:** Demo script for `feat/scope-sharing`. Scope sharing has two
+separate pieces: accepting a share grants read capability, and mounting
+decides which owned scope receives the shared context.
 
 ---
 
@@ -11,7 +11,7 @@ mounting decides where the shared content appears.
 
 Show that Clawdi can share a scope across people and agents without
 turning collaboration into a loose pile of copied files, leaked
-secrets, or ambiguous workspaces.
+secrets, or ambiguous context boundaries.
 
 The audience should leave with this mental model:
 
@@ -23,9 +23,9 @@ Owner scope
       v
 Sharee membership
       |
-      | mount into one or more owned workspaces
+      | mount into one or more owned scopes
       v
-Composed workspace visible to agents
+Composed scope visible to agents
 ```
 
 Secrets are never displayed in the demo. We only show key names,
@@ -62,13 +62,27 @@ export CLAWDI_API_URL=http://localhost:8000
 Use the web dashboard for the visual path, then the CLI for the
 agent/operator path. They should describe the same state.
 
+Create the shareable project scope explicitly when the account does not
+already have one:
+
+```bash
+clawdi scope create "Engineering" --slug engineering
+clawdi scope list
+```
+
+In the dashboard, use **Scopes → Create a shareable scope** for the same
+path. Agent environment scopes still appear automatically after setup.
+Shareable scopes are project/team boundaries that should outlive one
+machine. The API stores these as `kind=workspace`, but the product
+mental model should stay: everything users compose is a scope.
+
 ---
 
 ## Flow 1: Owner Shares A Scope
 
 **Narration:** "Alice is not exporting a zip or copying secrets. She is
 publishing a readable scope. The receiver still decides where it belongs
-in their workspace."
+in their owned scopes."
 
 CLI:
 
@@ -84,20 +98,24 @@ Web:
 3. Create a link in the **Links** tab.
 4. Confirm the share dialog also exposes **Invite by email** and
    **Members**.
+5. Open **Scopes** from the dashboard sidebar and confirm the same
+   scope appears under **My scopes** with sharing and mount controls.
 
 Expected result:
 
 - A share URL is printed once.
 - Web lists the link with a revocable prefix.
 - No secret value is visible.
+- The Scopes page frames this as scope membership plus scope composition,
+  not as a one-off skill export.
 
 ---
 
 ## Flow 2: Anonymous Preview And Later Login
 
 **Narration:** "Carol can open the link before she has an account. The
-preview is useful, but it is not a permanent workspace until she signs
-in."
+preview is useful, but it is not attached to one of her scopes until she
+signs in."
 
 CLI while signed out:
 
@@ -135,7 +153,7 @@ Recovery branch:
 
 ## Flow 3: Existing User Accepts A Share Link
 
-**Narration:** "Bob is the happy path. One owned workspace means Clawdi
+**Narration:** "Bob is the happy path. One owned scope means Clawdi
 can mount the shared scope without asking a product question he already
 answered by having only one place to put it."
 
@@ -158,8 +176,9 @@ Expected result:
 - `vault resolve --debug` shows which scope won; the secret value is
   not printed during the narrated demo.
 - Shared vault plaintext is only resolved through an explicit parent
-  scope. Unscoped `vault resolve` reads the caller's single default
-  write scope and does not fan out across mounted/shared scopes.
+  scope (`--scope <parent>`). Unscoped `vault resolve` reads the
+  caller's single default write scope and does not fan out across
+  mounted/shared scopes.
 
 Web:
 
@@ -201,9 +220,9 @@ Expected result:
 
 ---
 
-## Flow 5: Multiple Workspaces Require A Choice
+## Flow 5: Multiple Owned Scopes Require A Choice
 
-**Narration:** "If Dana owns more than one workspace, Clawdi refuses to
+**Narration:** "If Dana owns more than one scope, Clawdi refuses to
 guess. This is one of the places where the product should slow down."
 
 CLI:
@@ -246,7 +265,7 @@ Agent logic:
 ## Flow 6: Vault Conflict Is Visible And Safe
 
 **Narration:** "Bob can receive Alice's key name even if he already has
-one locally, but Bob's own workspace keeps priority. Shared values are
+one locally, but Bob's target scope keeps priority. Shared values are
 available only if Bob explicitly accepts the conflict."
 
 Setup:
@@ -304,11 +323,19 @@ Expected result:
 - Unmount removes Alice's content from `personal`.
 - Bob still has membership.
 - Bob can mount it again into the same or another owned scope.
+- The same shared source can appear in multiple owned scopes; each
+  mount is its own composition edge.
 
 Web:
 
-1. Use the mount panel to unmount.
-2. Use "Add shared scope" to mount it again.
+1. Open **Scopes** from the dashboard sidebar.
+2. In **Shared with me**, confirm Alice's scope shows whether it is
+   mounted or only visible by membership.
+3. Mount Alice's scope into one owned scope, then mount the same shared
+   scope into another owned scope.
+4. In **My scopes**, open the target scope's **Mounts** panel and
+   unmount one edge.
+5. Confirm membership remains in **Shared with me** after unmounting.
 
 ---
 
@@ -345,7 +372,7 @@ Expected result:
 ## Flow 9: Sharee Leaves
 
 **Narration:** "A receiver can also end the relationship without asking
-Alice. Leaving removes both capability and workspace composition."
+Alice. Leaving removes both capability and scope composition."
 
 CLI:
 
@@ -358,7 +385,7 @@ clawdi scope mounts personal
 Expected result:
 
 - Bob no longer sees Alice's scope as shared-with-me.
-- Mount edges from Bob's workspaces are removed.
+- Mount edges from Bob's owned scopes are removed.
 - Alice's source scope is unchanged.
 
 ---
@@ -372,13 +399,13 @@ clawdi inbox accept --url <link> --into <scope> --json
 clawdi scope list --json
 clawdi scope show <scope> --json
 clawdi scope mounts <scope> --json
-clawdi vault resolve OPENAI_API_KEY --scope <scope> --debug --json
+clawdi vault resolve OPENAI_API_KEY --scope <parent-scope> --debug --json
 ```
 
 Agent rules:
 
 - Treat `membership` and `mount` as separate states.
-- Pass `--scope <scope>` for composed vault reads; unscoped vault
+- Pass `--scope <parent-scope>` for composed vault reads; unscoped vault
   resolve intentionally reads only the caller's default write scope.
 - If accept returns `mount_target_ambiguous`, stop and ask for a parent
   scope instead of guessing.
@@ -394,6 +421,9 @@ Agent rules:
 
 Human UI should make these states obvious:
 
+- **Scopes** is a first-class dashboard entry, searchable via command
+  palette, and shows owned scopes, shared memberships, and mount
+  placements in one place.
 - "Shared with you but not mounted" is not an error; it is a pending
   composition decision.
 - A mount row should show source owner, source scope, alias, and remove
@@ -457,6 +487,5 @@ Manual web checks:
   the demo.
 - Sessions and memories are intentionally not mounted.
 - Mount resolution is shallow in this iteration.
-- Web E2E should be added once authenticated dashboard fixtures are
-  stable; the current runnable demo covers the product paths through API
-  and CLI contracts.
+- Web product paths are centered on the Scopes control surface; authenticated
+  browser E2E should still be added once stable dashboard fixtures exist.

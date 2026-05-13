@@ -108,16 +108,23 @@ interface Member {
 interface ShareScopeDialogProps {
 	scopeId: string;
 	scopeName: string;
+	scopeKind?: string;
 	children?: React.ReactNode;
 }
 
-export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDialogProps) {
+export function ShareScopeDialog({
+	scopeId,
+	scopeName,
+	scopeKind,
+	children,
+}: ShareScopeDialogProps) {
 	const [open, setOpen] = useState(false);
+	const isPersonalScope = scopeKind === "personal";
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				{children ?? (
-					<Button variant="outline" size="sm">
+					<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
 						<Share2 className="mr-2 size-4" />
 						Share scope
 					</Button>
@@ -127,10 +134,21 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 				<DialogHeader>
 					<DialogTitle>Share "{scopeName}"</DialogTitle>
 					<DialogDescription>
-						Give others read-only access to this scope's skills and vault key references. Sharees
-						join as viewers and cannot edit your scope.
+						Give others read-only membership in this scope. They decide which of their owned scopes
+						should mount it, and they cannot edit your scope.
 					</DialogDescription>
 				</DialogHeader>
+				{isPersonalScope ? (
+					<Alert>
+						<AlertCircle />
+						<AlertTitle>Personal scope sharing needs extra care</AlertTitle>
+						<AlertDescription>
+							Personal scopes often mix experiments, one-off vault references, and default context.
+							Prefer sharing an agent or project scope when you want a cleaner collaboration
+							boundary.
+						</AlertDescription>
+					</Alert>
+				) : null}
 				<Tabs defaultValue="links" className="w-full">
 					<TabsList className="grid w-full grid-cols-3">
 						<TabsTrigger value="links" className="min-w-0 px-2">
@@ -357,6 +375,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 							variant="outline"
 							size="sm"
 							onClick={() => copyText(agentPrompt, "Agent prompt copied")}
+							aria-label={`Copy agent handoff prompt for share link ${link.prefix}`}
 						>
 							<Copy className="mr-1.5 size-3.5" />
 							Copy prompt
@@ -532,8 +551,14 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 					value={email}
 					onChange={(e) => setEmail(e.target.value)}
 					autoComplete="email"
+					aria-label="Invitee email"
 				/>
-				<Button type="submit" size="sm" disabled={!looksLikeEmail || invite.isPending}>
+				<Button
+					type="submit"
+					size="sm"
+					disabled={!looksLikeEmail || invite.isPending}
+					aria-label="Invite email to scope"
+				>
 					{invite.isPending ? "Sending…" : "Invite"}
 				</Button>
 			</form>
@@ -689,7 +714,12 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 				</p>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
-						<Button variant="destructive" size="sm" disabled={unshare.isPending}>
+						<Button
+							variant="destructive"
+							size="sm"
+							disabled={unshare.isPending}
+							aria-label="Stop all sharing for this scope"
+						>
 							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
 						</Button>
 					</AlertDialogTrigger>

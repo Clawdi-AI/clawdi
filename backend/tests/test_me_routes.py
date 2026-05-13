@@ -24,6 +24,7 @@ from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
 from app.models.scope_mount import ScopeMount
 from app.models.vault import Vault, VaultItem
+from app.services.sharing import resolve_owner_handle
 from app.services.vault_crypto import encrypt
 
 
@@ -63,6 +64,7 @@ async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
         invitee_user_id=invitee_user.id,
         invitee_email=invitee_user.email.lower() if invitee_user.email else "inv@x.dev",
         invited_by=owner.id,
+        resolved_owner_handle=resolve_owner_handle(owner),
         created_at=datetime.now(UTC),
     )
     db_session.add(inv)
@@ -131,6 +133,7 @@ async def test_me_invitations_lists_only_addressed_to_me(client, db_session, see
             invitee_user_id=other.id,
             invitee_email=other.email,
             invited_by=owner.id,
+            resolved_owner_handle=resolve_owner_handle(owner),
             created_at=datetime.now(UTC),
         )
     )
@@ -204,6 +207,38 @@ async def test_accept_invitation_creates_membership(client, db_session, seed_use
         assert all(it["id"] != str(inv_id) for it in inbox.json())
     finally:
         # Clean up membership + remaining scope/owner.
+        memberships = (
+            (
+                await db_session.execute(
+                    select(ScopeMembership).where(
+                        ScopeMembership.scope_id == scope.id,
+                        ScopeMembership.user_id == seed_user.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for m in memberships:
+            await db_session.delete(m)
+        await db_session.delete(scope)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_accept_invitation_uses_frozen_owner_handle(client, db_session, seed_user):
+    """Owner profile edits after invite creation must not break a
+    pending invite; email invites freeze the handle just like share links."""
+    owner, scope, inv_id = await _seed_owner_and_invite(db_session, seed_user)
+    frozen_handle = resolve_owner_handle(owner)
+    owner.name = None
+    await db_session.commit()
+    try:
+        r = await client.post(f"/api/me/invitations/{inv_id}/accept")
+        assert r.status_code == 200, r.text
+        assert r.json()["resolved_owner_handle"] == frozen_handle
+    finally:
         memberships = (
             (
                 await db_session.execute(

@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scope import Scope
+from app.models.scope_mount import ScopeMount
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
 
@@ -164,23 +165,40 @@ async def detect_vault_conflicts(
     parent_scope_id: UUID,
     source_scope_id: UUID,
 ) -> list[dict[str, str]]:
-    """List vault keys that exist in BOTH the source and parent scope.
+    """List vault keys that would be shadowed by the parent composition.
 
-    A collision is `(vault.slug, section, item_name)` showing up under
-    both scopes' vaults. Composed vault resolution is parent-first, so
-    a collision on accept-mount would silently hide the shared value
-    behind the sharee's parent value — surface as 409
-    vault_conflicts_blocked at mount time so the sharee can inspect
-    before committing.
+    A collision is `(vault.slug, section, item_name)` showing up under the
+    new source and any scope that already has precedence in the parent:
+    the parent itself, plus existing mounted sources. Composed vault
+    resolution is parent-first, then mounted sources by created_at, so a
+    collision on accept-mount would silently hide the new shared value
+    behind an existing value — surface as 409 vault_conflicts_blocked at
+    mount time so the sharee can inspect before committing.
 
     Empty list = no conflicts; safe to mount. Used by every accept
     surface that creates a mount (share-link upgrade, invitation
     accept, explicit `scope mount`).
     """
+    mounted_source_ids = (
+        (
+            await db.execute(
+                select(ScopeMount.source_scope_id)
+                .where(
+                    ScopeMount.parent_scope_id == parent_scope_id,
+                    ScopeMount.source_scope_id != source_scope_id,
+                )
+                .order_by(ScopeMount.created_at.asc(), ScopeMount.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    blocking_scope_ids = [parent_scope_id, *mounted_source_ids]
+
     src_vault = Vault.__table__.alias("v_src")
     src_item = VaultItem.__table__.alias("vi_src")
-    parent_vault = Vault.__table__.alias("v_parent")
-    parent_item = VaultItem.__table__.alias("vi_parent")
+    blocking_vault = Vault.__table__.alias("v_blocking")
+    blocking_item = VaultItem.__table__.alias("vi_blocking")
 
     stmt = (
         select(
@@ -188,22 +206,23 @@ async def detect_vault_conflicts(
             src_item.c.section.label("section"),
             src_item.c.item_name.label("item_name"),
         )
+        .distinct()
         .select_from(
             src_item.join(src_vault, src_vault.c.id == src_item.c.vault_id)
             .join(
-                parent_vault,
-                parent_vault.c.slug == src_vault.c.slug,
+                blocking_vault,
+                blocking_vault.c.slug == src_vault.c.slug,
             )
             .join(
-                parent_item,
-                (parent_item.c.vault_id == parent_vault.c.id)
-                & (parent_item.c.section == src_item.c.section)
-                & (parent_item.c.item_name == src_item.c.item_name),
+                blocking_item,
+                (blocking_item.c.vault_id == blocking_vault.c.id)
+                & (blocking_item.c.section == src_item.c.section)
+                & (blocking_item.c.item_name == src_item.c.item_name),
             )
         )
         .where(
             src_vault.c.scope_id == source_scope_id,
-            parent_vault.c.scope_id == parent_scope_id,
+            blocking_vault.c.scope_id.in_(blocking_scope_ids),
         )
         .order_by(src_vault.c.slug, src_item.c.section, src_item.c.item_name)
     )
@@ -231,6 +250,16 @@ async def assert_no_vault_conflicts(
     """
     if allow:
         return
+    existing_mount = (
+        await db.execute(
+            select(ScopeMount.id).where(
+                ScopeMount.parent_scope_id == parent_scope_id,
+                ScopeMount.source_scope_id == source_scope_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_mount is not None:
+        return
     conflicts = await detect_vault_conflicts(
         db, parent_scope_id=parent_scope_id, source_scope_id=source_scope_id
     )
@@ -244,7 +273,7 @@ async def assert_no_vault_conflicts(
             "message": (
                 f"Source scope has {len(conflicts)} vault "
                 f"key{'' if len(conflicts) == 1 else 's'} that already "
-                "exist in your parent scope's vault. Re-run with "
+                "exist in your parent scope composition. Re-run with "
                 "allow_vault_conflicts=true after inspecting."
             ),
             "conflicts": conflicts,

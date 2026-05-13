@@ -6,7 +6,7 @@
  *
  *   - Move a mount to a different parent (unmount + mount)
  *   - Drop a mount edge while keeping membership (sharee wants
- *     read access but not composition in their workspace)
+ *     read access but not composition in an owned scope)
  *   - Mount a scope you already have membership in (after
  *     `inbox accept --no-mount` or after dropping a prior mount)
  *   - Inspect mounts on a parent (also surfaced by `scope list`
@@ -175,9 +175,9 @@ export async function scopeMountCommand(
 			console.error(chalk.red("⚠ Vault conflict — mount blocked."));
 			console.error(
 				chalk.gray(
-					"  The source scope has vault key(s) that already exist in your parent vault.\n" +
-						"  Re-run with --allow-vault-conflicts to keep both (your parent values\n" +
-						"  keep priority), or remove the conflicting key on one side.",
+					"  The source scope has vault key(s) that already exist in the parent composition.\n" +
+						"  Re-run with --allow-vault-conflicts to keep both (existing values keep\n" +
+						"  priority), or remove the conflicting key on one side.",
 				),
 			);
 			for (const c of conflicts) {
@@ -279,9 +279,8 @@ export async function scopeUnmountCommand(
 	console.log(`${chalk.green("✓")} Unmounted.`);
 	console.log(
 		chalk.gray(
-			"  Membership in the source scope is unchanged — you still see its " +
-				"content in unscoped reads. Drop the membership separately if you want " +
-				"to fully leave.",
+			"  Membership in the source scope is unchanged — it remains available as " +
+				"a shared scope. Drop the membership separately if you want to fully leave.",
 		),
 	);
 }

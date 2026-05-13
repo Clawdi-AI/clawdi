@@ -151,7 +151,7 @@ export function Inbox() {
 			refetchMembershipDerived();
 			if (result.mountDeferred) {
 				setMountDeferredInvite({ id: variables.id, detail: result.detail, parentScopeId: "" });
-				toast.success("Joined as viewer — pick a parent scope to compose it into your workspace.");
+				toast.success("Joined as viewer — pick a target scope to compose it into.");
 			} else {
 				setMountDeferredInvite(null);
 				toast.success("Joined as viewer — shared skills now appear in your dashboard");
@@ -309,7 +309,7 @@ function MountDeferredChooser({
 }) {
 	return (
 		<div className="rounded-md border bg-muted/30 p-3">
-			<div className="text-xs font-medium">Mount this shared scope into a workspace</div>
+			<div className="text-xs font-medium">Mount this shared scope into an owned scope</div>
 			<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
 				<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
 					<SelectTrigger className="min-w-0 flex-1">

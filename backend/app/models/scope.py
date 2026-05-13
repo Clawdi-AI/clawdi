@@ -3,10 +3,9 @@
 A scope is a tenancy sub-unit owned by a user. Skills (and later vaults,
 memories, sessions) belong to one scope at a time. Each user gets a
 single Personal scope on signup; each registered agent environment
-gets its own env-local scope on registration. Cross-scope sharing
-(workspaces, teams, public marketplace) is a future milestone — the
-schema here keeps `owner_user_id` single-valued and adds `kind` so
-later sharing types extend cleanly via a CHECK-constraint update.
+gets its own env-local scope on registration. Users can also create
+workspace scopes explicitly for project/team boundaries. Sharing and
+mounting compose these boundaries without changing ownership.
 
 See `docs/plans/env-scoped-skills.md` for the architectural rationale.
 """
@@ -20,13 +19,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
 
-# Allowed values for `Scope.kind`. Future entries — `'shared'` for
-# multi-user invited scopes, `'shared_public'` for subscribe-only
-# marketplace scopes — will be added by dropping and re-adding the
-# CHECK constraint, not via ENUM ALTER (cheaper to evolve).
+# Allowed values for `Scope.kind`. Future entries — e.g. public
+# subscribe-only marketplace scopes — will be added by dropping and
+# re-adding the CHECK constraint, not via ENUM ALTER (cheaper to evolve).
 SCOPE_KIND_PERSONAL = "personal"
 SCOPE_KIND_ENVIRONMENT = "environment"
-SCOPE_KINDS_V1 = (SCOPE_KIND_PERSONAL, SCOPE_KIND_ENVIRONMENT)
+SCOPE_KIND_WORKSPACE = "workspace"
+SCOPE_KINDS_V2 = (SCOPE_KIND_PERSONAL, SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_WORKSPACE)
 
 
 class Scope(Base, TimestampMixin):
@@ -47,8 +46,8 @@ class Scope(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(80), nullable=False)
 
     # Kind separates auto-managed scope types (personal, environment)
-    # from future shareable types. CHECK constraint enforces the v1
-    # set; new kinds get added by replacing the CHECK constraint.
+    # from user-created workspace scopes. New kinds get added by
+    # replacing the CHECK constraint.
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
 
     # Env-local scopes record which env they were spawned for so the
@@ -73,11 +72,10 @@ class Scope(Base, TimestampMixin):
         # is unambiguous within an account; slugs can repeat across
         # owners.
         UniqueConstraint("user_id", "slug", name="uq_scopes_user_slug"),
-        # Database-enforced kind whitelist. v1 covers personal +
-        # environment; future ALTERs extend it.
+        # Database-enforced kind whitelist.
         CheckConstraint(
-            "kind IN ('personal', 'environment')",
-            name="ck_scopes_kind_v1",
+            "kind IN ('personal', 'environment', 'workspace')",
+            name="ck_scopes_kind_v2",
         ),
         # Exactly one personal-kind scope per user. Partial unique
         # index — environment-kind scopes are unrestricted (one per

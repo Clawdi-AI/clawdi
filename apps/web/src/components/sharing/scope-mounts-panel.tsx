@@ -68,7 +68,13 @@ interface ScopeRow {
 	is_owner?: boolean;
 }
 
-export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
+export function ScopeMountsPanel({
+	scopeId,
+	showEmpty = false,
+}: {
+	scopeId: string;
+	showEmpty?: boolean;
+}) {
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const [sourceScopeId, setSourceScopeId] = useState("");
@@ -99,9 +105,9 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 	);
 	const mountCandidates = useMemo(
 		() =>
-			(scopes.data ?? []).filter(
-				(s) => s.is_owner === false && s.id !== scopeId && !mountedSourceIds.has(s.id),
-			),
+			(scopes.data ?? [])
+				.filter((s) => s.id !== scopeId && !mountedSourceIds.has(s.id))
+				.sort(compareScopesForProductUse),
 		[scopes.data, scopeId, mountedSourceIds],
 	);
 
@@ -134,7 +140,7 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 			qc.invalidateQueries({ queryKey: ["scope-mounts", scopeId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Scope mounted — shared skills now appear in this workspace.");
+			toast.success("Scope mounted — shared skills now appear in this target scope.");
 		},
 		onError: (e, variables) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -187,21 +193,33 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 		);
 	}
 	const rows = mounts.data ?? [];
-	if (rows.length === 0 && mountCandidates.length === 0) return null;
+	if (rows.length === 0 && mountCandidates.length === 0) {
+		if (!showEmpty) return null;
+		return (
+			<section className="space-y-3">
+				<div className="flex items-center gap-2 px-1">
+					<Workflow className="size-4 text-muted-foreground" />
+					<h3 className="font-semibold text-sm">Source scopes</h3>
+					<Badge variant="secondary" className="text-xs">
+						0
+					</Badge>
+				</div>
+				<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
+					No source scopes are mounted into this scope yet.
+				</div>
+			</section>
+		);
+	}
 
 	return (
 		<section className="space-y-3">
 			<div className="flex items-center gap-2 px-1">
 				<Workflow className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Mounted scopes</h3>
+				<h3 className="font-semibold text-sm">Source scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{rows.length}
 				</Badge>
 			</div>
-			<p className="px-1 text-xs text-muted-foreground">
-				Shared scopes composed into this workspace. Skills are read-only; vault lookups use your own
-				values first. The same shared scope can be mounted into multiple workspaces.
-			</p>
 			{mountCandidates.length > 0 ? (
 				<div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center">
 					<Select
@@ -211,8 +229,11 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 							setBlockedMount(null);
 						}}
 					>
-						<SelectTrigger className="min-w-0 flex-1 sm:min-w-[220px]">
-							<SelectValue placeholder="Add a shared scope" />
+						<SelectTrigger
+							className="min-w-0 flex-1 sm:min-w-[220px]"
+							aria-label="Select source scope to mount"
+						>
+							<SelectValue placeholder="Add source scope" />
 						</SelectTrigger>
 						<SelectContent>
 							{mountCandidates.map((scope) => (
@@ -226,6 +247,7 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 						size="sm"
 						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
+						aria-label="Mount selected source scope"
 					>
 						<Plus className="mr-1.5 size-3.5" />
 						{mount.isPending ? "Mounting…" : "Mount"}
@@ -302,4 +324,11 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 			) : null}
 		</section>
 	);
+}
+
+function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
+	const rank = (kind: string) => (kind === "workspace" ? 0 : kind === "personal" ? 1 : 2);
+	const byRank = rank(a.kind) - rank(b.kind);
+	if (byRank !== 0) return byRank;
+	return a.name.localeCompare(b.name);
 }

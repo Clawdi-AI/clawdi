@@ -31,11 +31,13 @@ export async function vaultResolveCommand(
 		return;
 	}
 
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, opts.scope ?? "default");
 	const params = new URLSearchParams({
 		key,
-		scope_id: scopeId,
 	});
+	if (opts.scope) {
+		const scopeId = await resolveScopeId(apiUrl, auth.apiKey, opts.scope);
+		params.set("scope_id", scopeId);
+	}
 	if (opts.debug) params.set("debug", "true");
 
 	const r = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {

@@ -64,7 +64,10 @@ export function buildShareAgentHandoffPrompt(link: ShareAgentHandoffLink): strin
 			revoked_or_expired: "Ask the owner for a fresh link.",
 			ambiguous_argument: "Use the explicit --url form from accept_command.",
 		},
-		post_accept_checks: ["clawdi scope list --json", "clawdi vault resolve <key> --debug --json"],
+		post_accept_checks: [
+			"clawdi scope list --json",
+			"clawdi vault resolve <key> --scope <parent-scope> --debug --json",
+		],
 	};
 	return [
 		"Use this Clawdi shared scope as read-only context.",

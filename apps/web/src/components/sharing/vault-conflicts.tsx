@@ -62,8 +62,9 @@ export function VaultConflictsAlert({
 			<AlertTitle>Vault key conflict</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					This shared scope has vault key names that already exist in your parent scope. Your parent
-					values keep priority; shared values stay available but are skipped on read.
+					This shared scope has vault key names that already exist in the target scope's current
+					composition. Existing values keep priority; the new shared values stay available but are
+					skipped on read.
 				</p>
 				{conflicts.length > 0 ? (
 					<ul className="max-h-28 space-y-1 overflow-auto rounded-md border bg-background/50 p-2 font-mono text-xs">

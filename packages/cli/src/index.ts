@@ -268,13 +268,15 @@ vaultCmd
 
 vaultCmd
 	.command("resolve <key>")
-	.description("Resolve one vault key through a composed scope")
-	.option("-s, --scope <scope>", "Parent scope to resolve from (default: your default-write scope)")
+	.description("Resolve one vault key")
+	.option("-s, --scope <scope>", "Parent scope to resolve from; enables mounted-source precedence")
 	.option("--debug", "Show scope precedence and skipped matches")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault resolve OPENAI_API_KEY\n  $ clawdi vault resolve OPENAI_API_KEY --scope personal --debug",
+		"\nExamples:\n" +
+			"  $ clawdi vault resolve OPENAI_API_KEY                       # default-write scope only\n" +
+			"  $ clawdi vault resolve OPENAI_API_KEY --scope personal --debug",
 	)
 	.action(async (key, opts) => {
 		const { vaultResolveCommand } = await import("./commands/vault-resolve.js");
@@ -504,7 +506,23 @@ program
 
 const scopeCmd = program
 	.command("scope")
-	.description("Manage your scopes — list, share, invite, mount");
+	.description("Manage your scopes — create, list, share, invite, mount");
+
+scopeCmd
+	.command("create <name>")
+	.description("Create a project/team scope")
+	.option("--slug <slug>", "Optional stable slug (lowercase letters, numbers, hyphens)")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			'  $ clawdi scope create "Engineering toolkit"\n' +
+			'  $ clawdi scope create "Client Alpha" --slug client-alpha --json',
+	)
+	.action(async (name, opts) => {
+		const { scopeCreateCommand } = await import("./commands/scope-create.js");
+		await scopeCreateCommand(name, opts);
+	});
 
 scopeCmd
 	.command("list")
@@ -578,7 +596,7 @@ scopeCmd
 
 scopeCmd
 	.command("leave <scope>")
-	.description("Leave a shared scope and remove its mount edges from your workspaces")
+	.description("Leave a shared scope and remove its mount edges from your owned scopes")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText("after", "\nExample:\n  $ clawdi scope leave @alice-cdbf/engineering")
 	.action(async (scope, opts) => {
@@ -614,7 +632,7 @@ scopeCmd
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option(
 		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — parent-scope values keep priority",
+		"Override 409 vault_conflicts_blocked — existing composed values keep priority",
 	)
 	.addHelpText(
 		"after",
@@ -662,7 +680,7 @@ inboxCmd
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option(
 		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — parent-scope values keep priority",
+		"Override 409 vault_conflicts_blocked — existing composed values keep priority",
 	)
 	.addHelpText(
 		"after",

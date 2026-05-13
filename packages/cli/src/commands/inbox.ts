@@ -451,10 +451,10 @@ function renderVaultConflicts(detail: Record<string, unknown>, retryHint: string
 	console.error(chalk.red("⚠ Vault conflict — accept blocked."));
 	console.error(
 		chalk.gray(
-			"  The source scope has vault key(s) that already exist in your parent scope's vault.\n" +
-				"  The shared values would be present but skipped while your parent values keep priority.\n" +
+			"  The source scope has vault key(s) that already exist in the parent composition.\n" +
+				"  The shared values would be present but skipped while existing values keep priority.\n" +
 				"    - rename / remove the conflicting keys on either side, OR\n" +
-				"    - re-run with --allow-vault-conflicts to keep both (your parent-scope values keep priority).",
+				"    - re-run with --allow-vault-conflicts to keep both (existing values keep priority).",
 		),
 	);
 	for (const c of conflicts) {
@@ -517,7 +517,7 @@ function renderJoinedSuccess(
 ): void {
 	console.log(
 		chalk.green("✓") +
-			` Joined as viewer — @${body.resolved_owner_handle}'s scope is in your workspace.`,
+			` Joined as viewer — @${body.resolved_owner_handle}'s scope is available to your account.`,
 	);
 	if (body.mount_alias) {
 		console.log(

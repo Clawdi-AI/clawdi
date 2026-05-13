@@ -3,7 +3,8 @@
 import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, Key, Plus, Settings, Trash2, User } from "lucide-react";
+import { Copy, Key, Plus, Settings, Trash2, User, Workflow } from "lucide-react";
+import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -31,11 +32,12 @@ import { type ApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
 
-type Section = "general" | "profile" | "api-keys";
+type Section = "general" | "profile" | "scopes" | "api-keys";
 
 const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "general", label: "General", icon: Settings },
 	{ id: "profile", label: "Profile", icon: User },
+	{ id: "scopes", label: "Scopes", icon: Workflow },
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
 
@@ -94,6 +96,7 @@ export function SettingsDialog({
 						<div className="flex flex-col gap-6 px-6 py-6">
 							{section === "general" ? <GeneralPanel /> : null}
 							{section === "profile" ? <ProfilePanel /> : null}
+							{section === "scopes" ? <ScopesPanel onClose={onClose} /> : null}
 							{section === "api-keys" ? <ApiKeysPanel /> : null}
 						</div>
 					</div>
@@ -143,6 +146,38 @@ function GeneralPanel() {
 						<SelectItem value="system">System</SelectItem>
 					</SelectContent>
 				</Select>
+			</div>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Scopes — link to the first-class context/composition control surface.
+// ---------------------------------------------------------------------------
+
+function ScopesPanel({ onClose }: { onClose: () => void }) {
+	return (
+		<>
+			<PanelHeader
+				title="Scopes"
+				description="Scopes define the context boundaries that people and agents can share, mount, and revoke."
+			/>
+			<div className="rounded-lg border p-4">
+				<div className="flex items-start gap-3">
+					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
+					<div className="min-w-0 flex-1 space-y-2">
+						<div className="text-sm font-medium">Manage scope access and composition</div>
+						<p className="text-sm text-muted-foreground">
+							Use the Scopes page to review owned scopes, shared memberships, mount placements,
+							share links, invitations, and member access in one place.
+						</p>
+						<Button asChild size="sm" variant="outline">
+							<Link href="/scopes" onClick={onClose}>
+								Open Scopes
+							</Link>
+						</Button>
+					</div>
+				</div>
 			</div>
 		</>
 	);

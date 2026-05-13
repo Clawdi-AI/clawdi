@@ -625,7 +625,15 @@ export interface paths {
          */
         get: operations["list_scopes_api_scopes_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Scope
+         * @description Create an explicit project/team scope owned by the caller.
+         *
+         *     Env-bound deploy keys are rejected: creating shareable scopes is
+         *     an account-level action, not something a hosted agent pod should do
+         *     with a leaked environment key.
+         */
+        post: operations["create_scope_api_scopes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1441,16 +1449,20 @@ export interface paths {
         /**
          * Upgrade
          * @description Convert a valid share-token + authed user into a permanent
-         *     ScopeMembership. Idempotent: re-running for the same (user, scope)
-         *     pair returns the existing row instead of erroring.
+         *     ScopeMembership AND a ScopeMount in one transaction.
          *
-         *     409 if the requester is the scope owner (can't accept your own
-         *     scope - the dashboard already lists it).
+         *     Idempotent on (user, scope) for membership and (parent, source)
+         *     for mount.
          *
-         *     Hosted-pod env-bound api_keys are REJECTED here (the unbound
-         *     dep enforces this) - share-link membership is a personal-account
-         *     concept; expanding a hosted pod's blast radius into another
-         *     user's scope is exactly the wrong direction.
+         *     Mount target resolution:
+         *       - body.parent_scope_id explicit → use it (validated as caller-owned).
+         *       - body.no_mount=True → skip mount, capability only.
+         *       - exactly 1 owned scope → auto-mount silently.
+         *       - 2+ owned scopes → membership commits, mount returns
+         *         409 mount_target_ambiguous with owned_scopes in context.
+         *
+         *     409 already_owner if caller IS the source scope's owner.
+         *     Hosted-pod env-bound api_keys rejected by require_user_auth_unbound.
          */
         post: operations["upgrade_api_share__token__upgrade_post"];
         delete?: never;
@@ -1596,6 +1608,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scopes/{scope_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Members
+         * @description Owner view of accepted members on a shared scope.
+         *
+         *     Owners are not represented by ScopeMembership rows, so this
+         *     lists sharees only. Pending invitations remain under
+         *     /invitations; revoked links remain under /share-links.
+         */
+        get: operations["list_members_api_scopes__scope_id__members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/members/{member_user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Member
+         * @description Owner removes a sharee's access to this scope.
+         *
+         *     This is the access-revocation counterpart to share-link revoke:
+         *     links only block future joins; member removal drops an existing
+         *     user's capability and their mount edges into this source.
+         */
+        delete: operations["remove_member_api_scopes__scope_id__members__member_user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/leave": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Leave Scope
+         * @description Sharee leaves a scope they previously joined.
+         *
+         *     Owners cannot leave their own scope through this route. Leaving
+         *     removes the membership and every mount edge from the sharee's
+         *     owned parent scopes into this shared source.
+         */
+        post: operations["leave_scope_api_scopes__scope_id__leave_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{scope_id}/unshare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unshare Scope
+         * @description Owner fully stops sharing a scope.
+         *
+         *     This is stronger than revoking a link: it revokes all active
+         *     links, cancels pending invitations, removes accepted members,
+         *     and deletes mount edges those members had into this source.
+         */
+        post: operations["unshare_scope_api_scopes__scope_id__unshare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/invitations": {
         parameters: {
             query?: never;
@@ -1632,14 +1740,16 @@ export interface paths {
         put?: never;
         /**
          * Accept Invitation
-         * @description Turn a pending invitation into a permanent ScopeMembership.
+         * @description Turn a pending invitation into a permanent ScopeMembership
+         *     AND a ScopeMount in one transaction.
+         *
+         *     Body shape (UpgradeBody): optional parent_scope_id for the mount,
+         *     optional alias, no_mount flag. If parent_scope_id is omitted and
+         *     the user has 2+ owned scopes, returns 409 mount_target_ambiguous
+         *     after committing the membership.
          *
          *     Lock the SCOPE row across the transaction to serialize against
-         *     concurrent unshare / membership-creating endpoints — without
-         *     this, an unshare landing mid-accept would orphan-insert a
-         *     membership against a scope whose other rows just got cleared.
-         *     Re-fetch the invitation after the lock: if unshare deleted it
-         *     in the meantime, 410 cleanly.
+         *     concurrent unshare / membership-creating endpoints.
          */
         post: operations["accept_invitation_api_me_invitations__invitation_id__accept_post"];
         delete?: never;
@@ -1664,6 +1774,55 @@ export interface paths {
          */
         post: operations["decline_invitation_api_me_invitations__invitation_id__decline_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{parent_scope_id}/mounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mounts
+         * @description List mounts on a parent scope (owner only).
+         */
+        get: operations["list_mounts_api_scopes__parent_scope_id__mounts_get"];
+        put?: never;
+        /**
+         * Create Mount
+         * @description Mount a source scope into a parent the caller owns.
+         *
+         *     Auth: caller owns parent AND has viewer-or-owner membership in
+         *     source. The capability re-check uses scope_ids_visible_to(auth)
+         *     so the membership graph stays authoritative.
+         */
+        post: operations["create_mount_api_scopes__parent_scope_id__mounts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scopes/{parent_scope_id}/mounts/{mount_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Mount
+         * @description Drop a mount edge. Does NOT touch the underlying membership;
+         *     sharee can `POST /api/scopes/{source}/leave` to drop membership.
+         */
+        delete: operations["delete_mount_api_scopes__parent_scope_id__mounts__mount_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2195,6 +2354,31 @@ export interface components {
              */
             created_at: string;
         };
+        /**
+         * MemberResponse
+         * @description Returned by GET /api/scopes/{scope_id}/members.
+         */
+        MemberResponse: {
+            /** Id */
+            id: string;
+            /** User Id */
+            user_id: string;
+            /** User Email */
+            user_email: string | null;
+            /** User Display */
+            user_display: string | null;
+            /** Role */
+            role: string;
+            /** Joined Via */
+            joined_via: string;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            joined_at: string;
+            /** Resolved Owner Handle */
+            resolved_owner_handle: string;
+        };
         /** MemoryCreate */
         MemoryCreate: {
             /** Content */
@@ -2247,6 +2431,58 @@ export interface components {
             source_environment_id?: string | null;
             /** Source Machine Name */
             source_machine_name?: string | null;
+        };
+        /**
+         * MountCreate
+         * @description Body for POST /api/scopes/{parent_scope_id}/mounts.
+         */
+        MountCreate: {
+            /** Source Scope Id */
+            source_scope_id: string;
+            /** Alias */
+            alias?: string | null;
+            /**
+             * Mode
+             * @default live
+             */
+            mode: string;
+            /**
+             * Allow Vault Conflicts
+             * @default false
+             */
+            allow_vault_conflicts: boolean;
+        };
+        /**
+         * MountResponse
+         * @description Returned by GET /api/scopes/{id}/mounts and the POST create.
+         *
+         *     Includes denormalized source-scope display fields so the CLI/web
+         *     can render the mount tree without an extra round-trip per row.
+         */
+        MountResponse: {
+            /** Id */
+            id: string;
+            /** Parent Scope Id */
+            parent_scope_id: string;
+            /** Source Scope Id */
+            source_scope_id: string;
+            /** Source Scope Name */
+            source_scope_name: string;
+            /** Source Scope Slug */
+            source_scope_slug: string;
+            /** Source Owner Display */
+            source_owner_display: string;
+            /** Source Owner Handle */
+            source_owner_handle: string;
+            /** Alias */
+            alias: string;
+            /** Mode */
+            mode: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
@@ -2302,6 +2538,13 @@ export interface components {
             page: number;
             /** Page Size */
             page_size: number;
+        };
+        /** ScopeCreate */
+        ScopeCreate: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug?: string | null;
         };
         /** ScopeResponse */
         ScopeResponse: {
@@ -2950,6 +3193,43 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
+        };
+        /**
+         * UnshareResponse
+         * @description Returned by POST /api/scopes/{scope_id}/unshare.
+         */
+        UnshareResponse: {
+            /** Links Revoked */
+            links_revoked: number;
+            /** Members Removed */
+            members_removed: number;
+            /** Invitations Cancelled */
+            invitations_cancelled: number;
+        };
+        /**
+         * UpgradeBody
+         * @description Optional body for POST /api/share/{token}/upgrade and
+         *     POST /api/me/invitations/{id}/accept.
+         *
+         *     Carries the mount target the caller wants. Omitted → server
+         *     picks via the auto-mount target resolution rules (1 owned
+         *     scope → silent; 2+ → 409 mount_target_ambiguous).
+         */
+        UpgradeBody: {
+            /** Parent Scope Id */
+            parent_scope_id?: string | null;
+            /** Alias */
+            alias?: string | null;
+            /**
+             * No Mount
+             * @default false
+             */
+            no_mount: boolean;
+            /**
+             * Allow Vault Conflicts
+             * @default false
+             */
+            allow_vault_conflicts: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -4084,6 +4364,39 @@ export interface operations {
             };
         };
     };
+    create_scope_api_scopes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_skills_api_skills_get: {
         parameters: {
             query?: {
@@ -4745,6 +5058,8 @@ export interface operations {
             query?: {
                 /** @description Filter by slug / name */
                 q?: string | null;
+                /** @description Optional parent scope. When set, include vaults from mounted source scopes. */
+                scope_id?: string | null;
                 page?: number;
                 page_size?: number;
             };
@@ -4951,7 +5266,12 @@ export interface operations {
     };
     resolve_vault_api_vault_resolve_post: {
         parameters: {
-            query?: never;
+            query?: {
+                key?: string | null;
+                /** @description Parent scope for composed resolution. Required for mount precedence. */
+                scope_id?: string | null;
+                debug?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4965,6 +5285,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5321,7 +5650,9 @@ export interface operations {
     redeem_api_share__token__redeem_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 token: string;
             };
@@ -5358,7 +5689,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpgradeBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5582,6 +5917,135 @@ export interface operations {
             };
         };
     };
+    list_members_api_scopes__scope_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_member_api_scopes__scope_id__members__member_user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+                member_user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number | string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    leave_scope_api_scopes__scope_id__leave_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number | string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unshare_scope_api_scopes__scope_id__unshare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnshareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_my_invitations_api_me_invitations_get: {
         parameters: {
             query?: never;
@@ -5611,7 +6075,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpgradeBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5641,6 +6109,106 @@ export interface operations {
             header?: never;
             path: {
                 invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mounts_api_scopes__parent_scope_id__mounts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parent_scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MountResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_mount_api_scopes__parent_scope_id__mounts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parent_scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MountCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mount_api_scopes__parent_scope_id__mounts__mount_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parent_scope_id: string;
+                mount_id: string;
             };
             cookie?: never;
         };

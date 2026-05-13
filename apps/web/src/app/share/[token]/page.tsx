@@ -286,8 +286,8 @@ export default function SharePage() {
 							<CheckCircle2 />
 							<AlertTitle>You're in.</AlertTitle>
 							<AlertDescription>
-								Added to your workspace as a read-only scope — you'll see {data.owner_display}'s
-								skills alongside your own. Redirecting…
+								Added to your scopes as read-only access — you'll see {data.owner_display}'s skills
+								alongside your own. Redirecting…
 							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
@@ -413,8 +413,8 @@ function MountDeferredPanel({
 			<AlertTitle>You're in — mount it where you need it.</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					Joined as a viewer of "{scopeName}". Mount it into one workspace now; you can mount the
-					same shared scope into more workspaces later.
+					Joined as a viewer of "{scopeName}". Mount it into one owned scope now; you can mount the
+					same shared scope into more owned scopes later.
 				</p>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 					<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
@@ -518,7 +518,7 @@ function describeError(code: ShareErrorCode): string {
 		case "already_owner":
 			return "You own this scope — nothing to accept.";
 		case "vault_conflicts":
-			return "Some vault key names already exist in your parent scope.";
+			return "Some vault key names already exist in the target scope's current composition.";
 		default:
 			return "Please try again. If the problem persists, ping the owner.";
 	}

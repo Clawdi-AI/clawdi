@@ -20,6 +20,7 @@ from app.schemas.vault import (
     VaultItemsDeleteResponse,
     VaultItemsUpsertResponse,
     VaultItemUpsert,
+    VaultResolveResponse,
     VaultResponse,
     VaultSectionsResponse,
 )
@@ -311,7 +312,7 @@ async def _composition_precedence(
     return entries
 
 
-@router.post("/resolve")
+@router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
 async def resolve_vault(
     key: str | None = Query(default=None),
     scope_id: UUID | None = Query(

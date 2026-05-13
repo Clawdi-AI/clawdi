@@ -2,13 +2,14 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-	BarChart3,
 	Brain,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
+	MessageSquare,
 	Plug,
 	Sparkles,
+	Workflow,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -28,7 +29,8 @@ import { useDebouncedValue } from "@/lib/use-debounced";
 
 const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
 	{ label: "Overview", href: "/", icon: LayoutDashboard },
-	{ label: "Sessions", href: "/sessions", icon: BarChart3 },
+	{ label: "Sessions", href: "/sessions", icon: MessageSquare },
+	{ label: "Scopes", href: "/scopes", icon: Workflow },
 	{ label: "Memories", href: "/memories", icon: Brain },
 	{ label: "Skills", href: "/skills", icon: Sparkles },
 	{ label: "Vault", href: "/vault", icon: Key },
@@ -36,7 +38,7 @@ const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
 ];
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
-	session: BarChart3,
+	session: MessageSquare,
 	memory: Brain,
 	skill: Sparkles,
 	vault: Key,
@@ -144,6 +146,14 @@ function CommandPalette({
 	}, [data]);
 
 	const hasQuery = debounced.trim().length > 0;
+	const normalizedQuery = debounced.trim().toLowerCase();
+	const navMatches = useMemo(
+		() =>
+			normalizedQuery
+				? NAV_SHORTCUTS.filter((s) => s.label.toLowerCase().includes(normalizedQuery))
+				: NAV_SHORTCUTS,
+		[normalizedQuery],
+	);
 
 	// Whether we have a stale results payload we can keep showing while a
 	// new debounced query is in flight.
@@ -153,7 +163,11 @@ function CommandPalette({
 	// fetching is finished, (c) we don't have any results. Previously we
 	// flashed through an in-between state each keystroke.
 	const showEmpty =
-		hasQuery && !isFetching && !hasStaleResults && (data?.results.length ?? 0) === 0;
+		hasQuery &&
+		!isFetching &&
+		!hasStaleResults &&
+		navMatches.length === 0 &&
+		(data?.results.length ?? 0) === 0;
 
 	return (
 		<CommandDialog
@@ -190,9 +204,9 @@ function CommandPalette({
 					</div>
 				) : null}
 
-				{!hasQuery ? (
+				{navMatches.length > 0 ? (
 					<CommandGroup heading="Jump to">
-						{NAV_SHORTCUTS.map((s) => (
+						{navMatches.map((s) => (
 							<CommandItem
 								key={s.href}
 								value={s.label}

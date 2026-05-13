@@ -9,8 +9,8 @@ DB instead of mocked crypto.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 import uuid
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest

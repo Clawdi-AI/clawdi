@@ -342,6 +342,7 @@ async def create_invitation(
         invitee_user_id=invitee.id,
         invitee_email=target_email,
         invited_by=auth.user_id,
+        resolved_owner_handle=handle,
         created_at=datetime.now(UTC),
     )
     db.add(invitation)
@@ -389,7 +390,7 @@ async def list_invitations(
     contains only PENDING invitations from the owner's perspective.
     """
     scope = await _assert_scope_owner(db, auth, scope_id)
-    display, handle = _owner_view(auth)
+    display = safe_owner_display(auth.user)
     rows = (
         await db.execute(
             select(ScopeInvitation, User)
@@ -405,7 +406,7 @@ async def list_invitations(
             scope_name=scope.name,
             scope_kind=scope.kind,
             owner_display=display,
-            owner_handle=handle,
+            owner_handle=inv.resolved_owner_handle,
             invitee_email=inv.invitee_email,
             invited_by_user_id=str(inv.invited_by),
             invited_by_display=(by.name or by.email) if by else None,
