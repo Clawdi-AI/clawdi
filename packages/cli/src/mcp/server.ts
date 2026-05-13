@@ -209,6 +209,162 @@ export async function startMcpServer() {
 		}),
 	);
 
+	// --- Session tools (sharing + search) -------------------------------------
+	//
+	// Mirrors Amp's unified model: agents reference threads by URL/ID and
+	// search past threads as a single capability — there is NO separate
+	// "read shared" vs "read own" tool. The reference resolver routes to
+	// the public-or-owner backend route by reference shape, so the agent
+	// doesn't need to care which one it's holding.
+
+	// Build URLs using the CLI's stored apiUrl. Note that for the public
+	// share routes, anonymous fetch works — but we send the auth header
+	// anyway because (a) the backend ignores it on public routes and
+	// (b) it keeps the request shape identical to the owner-route case,
+	// which simplifies the proxy / retry logic in api-client.
+	const apiBase = cliConfig.apiUrl;
+	// Pull the API key off the shared ApiClient instance for direct
+	// `fetch()` calls (the Markdown export endpoints return text, not
+	// JSON, so the openapi-fetch typed wrapper isn't a great fit).
+	const apiKey = (api as unknown as { apiKey?: string }).apiKey ?? "";
+	const apiAuth: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+
+	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+	const SHARE_URL_RE = /\/s\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
+
+	server.tool(
+		"session_read",
+		"Read a Clawdi session and return its content as Markdown so you can ingest the conversation as context. Use this when the user references a Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles owned + shared sessions uniformly — you don't need to know which one. Returns the same Markdown shape as a WebFetch of the .md URL: a YAML front-matter block (source/agent/model/project/messages) followed by `## User` / `## Assistant` turn headings.",
+		{
+			reference: z
+				.string()
+				.describe(
+					"Either a full Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or a bare session UUID. URLs route to the public share endpoint (anonymous access when the link permission is on); bare UUIDs route to the owner endpoint via the CLI API key.",
+				),
+		},
+		async ({ reference }) => {
+			const ref = reference.trim();
+			let url: string;
+
+			// Route by reference shape. The backend enforces access control;
+			// the resolver only picks the URL.
+			//   - `/s/{uuid}` in the input → public route (anon OK if linked)
+			//   - bare UUID → owner route (CLI api-key auth)
+			const urlMatch = ref.match(SHARE_URL_RE);
+			if (urlMatch) {
+				url = `${apiBase}/api/public/sessions/${urlMatch[1]}/export.md`;
+			} else if (UUID_RE.test(ref)) {
+				url = `${apiBase}/api/sessions/${ref}/export.md`;
+			} else {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Reference must be a Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or a session UUID.",
+						},
+					],
+				};
+			}
+
+			try {
+				const res = await fetch(url, { headers: apiAuth });
+				if (!res.ok) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Session not found or not accessible (HTTP ${res.status}).`,
+							},
+						],
+					};
+				}
+				return { content: [{ type: "text" as const, text: await res.text() }] };
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
+				return {
+					content: [{ type: "text" as const, text: `Error fetching session: ${message}` }],
+				};
+			}
+		},
+	);
+
+	type SessionItem = {
+		id: string;
+		summary?: string | null;
+		local_session_id?: string;
+		project_path?: string | null;
+		model?: string | null;
+		agent_type?: string | null;
+		last_activity_at?: string | null;
+		message_count?: number;
+	};
+
+	const formatSessionLines = (items: SessionItem[]): string =>
+		items
+			.map((s) => {
+				const date = s.last_activity_at
+					? new Date(s.last_activity_at).toISOString().slice(0, 10)
+					: "—";
+				const summary = s.summary || s.local_session_id || "(untitled)";
+				const project = s.project_path ? ` · ${s.project_path}` : "";
+				const model = s.model ? ` · ${s.model}` : "";
+				return `- **${summary}**${project}${model}\n  - id: \`${s.id}\` · ${s.agent_type ?? "unknown"} · ${date} · ${s.message_count ?? 0} msgs`;
+			})
+			.join("\n");
+
+	server.tool(
+		"session_search",
+		"Search the user's past Clawdi sessions by keyword. Use when the user asks about prior work (e.g. 'find the auth migration session'). Returns up to N matching sessions with summary, agent, model, project, started_at, and message count. The session UUID in each result can be passed back to session_read to fetch the full conversation.",
+		{
+			query: z
+				.string()
+				.describe(
+					"Keyword query — matches against session summary and metadata via pg_trgm substring ranking with typo tolerance.",
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.optional()
+				.describe("Max results to return (default 10, max 20)."),
+		},
+		async ({ query, limit }) => {
+			const cap = limit ?? 10;
+			try {
+				const { items } = unwrap(
+					await api.GET("/api/sessions", {
+						params: { query: { q: query, page_size: cap } },
+					}),
+				);
+				if (items.length === 0) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `No sessions matched "${query}". Try a broader phrase, fewer filter words, or check the dashboard.`,
+							},
+						],
+					};
+				}
+				const lines = formatSessionLines(items);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Found ${items.length} session${items.length === 1 ? "" : "s"} matching "${query}":\n\n${lines}`,
+						},
+					],
+				};
+			} catch (e: unknown) {
+				const message = e instanceof Error ? e.message : String(e);
+				return {
+					content: [{ type: "text" as const, text: `Search failed: ${message}` }],
+				};
+			}
+		},
+	);
+
 	// --- Dynamically registered connector tools (from Composio via backend) ---
 
 	if (mcpConfig && remoteTools.length > 0) {

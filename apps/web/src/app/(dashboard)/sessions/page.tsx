@@ -3,7 +3,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle } from "lucide-react";
-import { createParser, parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
+import {
+	createParser,
+	parseAsBoolean,
+	parseAsString,
+	parseAsStringLiteral,
+	useQueryStates,
+} from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
@@ -21,12 +27,18 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
+// `relevance` (trgm similarity) joins the legacy date/count sorts.
+// Relevance is special-cased server-side: it's only meaningful when q
+// is non-empty, and the route silently falls back to last_activity_at
+// otherwise. We mirror that in the UI by only surfacing the "Relevance"
+// sort option when the search box has text.
 const SORT_KEYS = [
 	"last_activity_at",
 	"started_at",
 	"message_count",
 	"tokens",
 	"updated_at",
+	"relevance",
 ] as const;
 type SortKey = (typeof SORT_KEYS)[number];
 
@@ -76,6 +88,9 @@ function SessionsListInner() {
 			page: parseAsPositiveInt.withDefault(1),
 			pageSize: parseAsPositiveInt.withDefault(25),
 			agent: parseAsString.withDefault(""),
+			// `has_pr=true/false` is tri-state via the undefined default
+			// (no filter) — nuqs's nullable boolean handles all three.
+			has_pr: parseAsBoolean,
 		},
 		{ clearOnDefault: true, history: "replace" },
 	);
@@ -87,7 +102,7 @@ function SessionsListInner() {
 	// onSortingChange.
 	const sorting: SortingState = [{ id: params.sort, desc: params.order !== "asc" }];
 
-	const isFiltered = params.agent !== "" || debouncedSearch !== "";
+	const isFiltered = params.agent !== "" || debouncedSearch !== "" || params.has_pr !== null;
 
 	const { data, isLoading, isFetching, error } = useQuery({
 		queryKey: [
@@ -98,6 +113,7 @@ function SessionsListInner() {
 			params.sort,
 			params.order,
 			params.agent,
+			params.has_pr,
 		],
 		queryFn: async () =>
 			unwrap(
@@ -110,6 +126,7 @@ function SessionsListInner() {
 							sort: params.sort,
 							order: params.order,
 							agent: params.agent || undefined,
+							has_pr: params.has_pr ?? undefined,
 						},
 					},
 				}),
@@ -142,6 +159,14 @@ function SessionsListInner() {
 				),
 			}));
 	}, [envs, params.agent]);
+
+	const prFilterOptions = useMemo(
+		() => [
+			{ label: "Has PR refs", value: "true" },
+			{ label: "No PR refs", value: "false" },
+		],
+		[],
+	);
 
 	const total = data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / params.pageSize));
@@ -229,7 +254,21 @@ function SessionsListInner() {
 							<DataTableToolbar
 								value={params.q}
 								onChange={(v) => {
-									void setParams({ q: v, page: 1 });
+									// Switch sort to relevance the moment the user
+									// starts typing — mirrors Amp's "type and rank by
+									// match quality" UX. Restore the date sort if the
+									// box is cleared so the empty-search default goes
+									// back to the activity timeline.
+									void setParams({
+										q: v,
+										page: 1,
+										sort:
+											v && params.sort === "last_activity_at"
+												? "relevance"
+												: !v && params.sort === "relevance"
+													? "last_activity_at"
+													: params.sort,
+									});
 								}}
 								placeholder="Search summary, project, ID…"
 							>
@@ -243,12 +282,33 @@ function SessionsListInner() {
 										}}
 									/>
 								) : null}
+								<DataTableFacetedFilter
+									title="PR refs"
+									options={prFilterOptions}
+									selected={
+										params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []
+									}
+									onChange={(arr) => {
+										const v = arr[0];
+										void setParams({
+											has_pr: v === "true" ? true : v === "false" ? false : null,
+											page: 1,
+										});
+									}}
+								/>
 								{isFiltered ? (
 									<Button
 										variant="ghost"
 										size="sm"
 										className="h-8 px-2"
-										onClick={() => void setParams({ q: "", agent: "", page: 1 })}
+										onClick={() =>
+											void setParams({
+												q: "",
+												agent: "",
+												has_pr: null,
+												page: 1,
+											})
+										}
 									>
 										Reset
 									</Button>

@@ -1,9 +1,6 @@
 import hashlib
 import json
 import logging
-import threading
-import time
-from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -14,6 +11,7 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Response,
     UploadFile,
     status,
 )
@@ -26,9 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.core.query_utils import like_needle
 from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
 from app.models.session import AgentEnvironment, Session
+from app.models.session_permission import (
+    PERMISSION_KIND_LINK,
+    PERMISSION_KINDS,
+    SessionPermission,
+)
 from app.schemas.common import Paginated
 from app.schemas.session import (
     EnvironmentCreate,
@@ -41,61 +43,26 @@ from app.schemas.session import (
     SessionListItemResponse,
     SessionMessageResponse,
     SessionMessagesPage,
+    SessionPermissionCreate,
+    SessionPermissionResponse,
+    SessionPermissionsResponse,
     SessionUploadResponse,
 )
 from app.services.file_store import get_file_store
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
+from app.services.session_content import (
+    SessionContentInvalid,
+    SessionContentMissing,
+    load_session_messages,
+)
+from app.services.session_export import session_to_markdown
+from app.services.session_refs import extract_related_refs
 
 router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
-
-
-# In-process cache for parsed `/api/sessions/{id}/messages`
-# blobs. Each unique (file_key, content_hash) snapshot is parsed
-# once and re-sliced on subsequent paginated requests. Without
-# this, a 50-page scroll through a long session re-downloads and
-# re-parses the same 10 MB JSON blob 50 times — the pagination
-# fix is then load-bearing for bandwidth alone, not latency.
-#
-# Bounded: at most _MESSAGES_CACHE_MAX entries (LRU-ish — we
-# touch by reinserting on hit). Each entry holds the parsed list
-# (Python objects), which for a 10 MB JSON blob with ~5k messages
-# is roughly 30-50 MB of resident memory. 16 × 50 MB = ~800 MB
-# worst case, well within typical app server budget. TTL is
-# also set so a long-quiet entry doesn't pin memory; the
-# content_hash component of the key already invalidates a
-# stale snapshot, so TTL is just memory hygiene.
-_MESSAGES_CACHE_MAX = 16
-_MESSAGES_CACHE_TTL_S = 300.0
-_messages_cache: OrderedDict[tuple[str, str], tuple[float, list]] = OrderedDict()
-_messages_cache_lock = threading.Lock()
-
-
-def _messages_cache_get(key: tuple[str, str]) -> list | None:
-    now = time.monotonic()
-    with _messages_cache_lock:
-        entry = _messages_cache.get(key)
-        if entry is None:
-            return None
-        ts, parsed = entry
-        if now - ts > _MESSAGES_CACHE_TTL_S:
-            _messages_cache.pop(key, None)
-            return None
-        # Touch — bump to end for LRU.
-        _messages_cache.move_to_end(key)
-        return parsed
-
-
-def _messages_cache_put(key: tuple[str, str], parsed: list) -> None:
-    now = time.monotonic()
-    with _messages_cache_lock:
-        _messages_cache[key] = (now, parsed)
-        _messages_cache.move_to_end(key)
-        while len(_messages_cache) > _MESSAGES_CACHE_MAX:
-            _messages_cache.popitem(last=False)
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
@@ -931,7 +898,21 @@ _SESSION_SORT_COLUMNS = {
     "started_at": Session.started_at,
     "message_count": Session.message_count,
     "tokens": Session.input_tokens + Session.output_tokens,
+    # `relevance` is special-cased in the route: it's only valid when
+    # `q` is non-empty (else it's silently ignored and we fall back
+    # to `last_activity_at` so the empty-search default still works).
+    # The actual ranking expression is built inline below from
+    # `similarity(col, :q)` and isn't a static column.
 }
+
+
+# pg_trgm similarity threshold. Default `pg_trgm.similarity_threshold`
+# is 0.3 which is fairly strict — close to "all the trigrams match".
+# For typo tolerance ("athentication" still surfacing "authentication")
+# we want something lower. 0.15 is the sweet spot from the memories
+# search benchmark — captures typos and partial-word matches without
+# drowning the results in distant relatives.
+_TRGM_THRESHOLD = 0.15
 
 
 @router.get("/api/sessions")
@@ -946,9 +927,28 @@ async def list_sessions(
     q: str | None = Query(default=None, description="Fuzzy search on summary/project/id"),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
+    # Faceted filters. Multi-valued where the dashboard wants chip
+    # multi-select (model, tag); scalar where the chip is single-pick
+    # (min_messages, has_pr). All optional — list page renders the
+    # full corpus with no filters as the default.
+    model: list[str] | None = Query(default=None, description="Filter by model (multi)"),
+    tag: list[str] | None = Query(
+        default=None,
+        description="Filter by tag (multi, AND semantics — every requested tag must be present)",
+    ),
+    min_messages: int | None = Query(
+        default=None, ge=0, description="Only sessions with at least N messages"
+    ),
+    min_duration: int | None = Query(
+        default=None, ge=0, description="Only sessions with duration_seconds >= N"
+    ),
+    has_pr: bool | None = Query(
+        default=None,
+        description="Filter to sessions that referenced a GitHub PR",
+    ),
     sort: str = Query(
         default="last_activity_at",
-        pattern=r"^(last_activity_at|updated_at|started_at|message_count|tokens)$",
+        pattern=r"^(last_activity_at|updated_at|started_at|message_count|tokens|relevance)$",
     ),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
@@ -976,8 +976,36 @@ async def list_sessions(
             "api key bound to a different environment",
         )
 
+    # `is_shared` is a correlated EXISTS — true when an active (non-revoked)
+    # `kind='link'` row in `session_permissions` exists for this session.
+    # Computing inline avoids a denormalized `sessions.visibility` column
+    # (which would require app-code discipline to keep in sync on every
+    # toggle). The partial unique index on
+    # `session_permissions(session_id, kind, COALESCE(...)) WHERE revoked_at
+    # IS NULL` makes this lookup index-only.
+    is_shared_subq = _link_is_shared_subq()
+
+    # Build the trigram relevance expression once — used both for
+    # filtering (similarity > threshold) and for `sort=relevance`
+    # (ORDER BY similarity DESC). Greatest-of-three so a match in
+    # ANY of summary / project / id wins, and the strongest match
+    # drives the rank. NULL-safe via COALESCE — sessions with NULL
+    # summary still match if their project_path or id does.
+    if q:
+        sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
+        sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
+        sim_local = func.similarity(Session.local_session_id, q)
+        relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
+    else:
+        relevance_expr = None  # type: ignore[assignment]
+
     base = (
-        select(Session, AgentEnvironment.agent_type, AgentEnvironment.machine_name)
+        select(
+            Session,
+            AgentEnvironment.agent_type,
+            AgentEnvironment.machine_name,
+            is_shared_subq,
+        )
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(Session.user_id == auth.user_id)
     )
@@ -994,17 +1022,49 @@ async def list_sessions(
         base = base.where(AgentEnvironment.agent_type == agent)
     if environment_id:
         base = base.where(Session.environment_id == environment_id)
-    if q:
-        # ILIKE on three columns — kept simple; pg_trgm GIN index on these
-        # columns is on the to-do list for when session volume grows.
-        needle = like_needle(q)
+
+    if model:
+        base = base.where(Session.model.in_(model))
+    if tag:
+        # AND semantics for tags: every requested tag must be present.
+        # `tags @> ARRAY[...]` is the indexable form vs N separate
+        # `tags && ARRAY[t]` clauses.
+        base = base.where(Session.tags.op("@>")(tag))
+    if min_messages is not None:
+        base = base.where(Session.message_count >= min_messages)
+    if min_duration is not None:
+        base = base.where(Session.duration_seconds >= min_duration)
+    if has_pr is True:
+        # `related_refs ? 'prs'` would also match `{"prs": null}` — we
+        # want a non-empty array. The JSONB length check is explicit
+        # and matches what `_session_to_response` carries.
+        base = base.where(
+            Session.related_refs.is_not(None),
+            func.jsonb_array_length(Session.related_refs.op("->")("prs")) > 0,
+        )
+    elif has_pr is False:
+        # Explicit "no PRs" — NULL `related_refs` (never extracted)
+        # counts as "no PR".
         base = base.where(
             or_(
-                Session.summary.ilike(needle, escape="\\"),
-                Session.project_path.ilike(needle, escape="\\"),
-                Session.local_session_id.ilike(needle, escape="\\"),
+                Session.related_refs.is_(None),
+                func.coalesce(
+                    func.jsonb_array_length(Session.related_refs.op("->")("prs")),
+                    0,
+                )
+                == 0,
             )
         )
+
+    if q:
+        # pg_trgm `similarity()` for typo / partial-word tolerance.
+        # NOT index-accelerated — the function-call form doesn't trigger
+        # the `gin_trgm_ops` operator class (only `%` / `<->` / `LIKE`
+        # do). Runs as a Seq Scan over the user's session set; fine
+        # for the typical few-thousand-rows-per-user. If a power user
+        # ever hits real latency here, swap to `WHERE summary % :q`
+        # plus a GIN index. Threshold tuned for "type to filter" UX.
+        base = base.where(relevance_expr >= _TRGM_THRESHOLD)
 
     # Run the count BEFORE attaching ORDER BY: PG would otherwise
     # plan a sort over the full filtered set just to discard it for
@@ -1012,7 +1072,18 @@ async def list_sessions(
     # fraction of list-page latency.
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
-    sort_col = _SESSION_SORT_COLUMNS[sort]
+    # Resolve sort column. `relevance` is special — only valid when
+    # `q` is present (else fall back to the date default so the empty-
+    # search experience doesn't break). The trgm-relevance expression
+    # was built up above; reuse it here so the sort matches the
+    # similarity used for filtering.
+    if sort == "relevance":
+        if relevance_expr is None:
+            sort_col = _SESSION_SORT_COLUMNS["last_activity_at"]
+        else:
+            sort_col = relevance_expr
+    else:
+        sort_col = _SESSION_SORT_COLUMNS[sort]
     # Tiebreaker on `id` for deterministic offset-pagination order.
     # Without this, two rows with identical `last_activity_at`
     # values (same `func.greatest()` clamp output, same
@@ -1026,7 +1097,9 @@ async def list_sessions(
     rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
 
     return Paginated[SessionListItemResponse](
-        items=[_session_to_response(s, at, mn) for s, at, mn in rows],
+        items=[
+            _session_to_response(s, at, mn, is_shared=bool(shared)) for s, at, mn, shared in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -1040,8 +1113,14 @@ async def get_session_detail(
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
     bound_env = _bound_env_id(auth)
+    is_shared_subq = _link_is_shared_subq()
     stmt = (
-        select(Session, AgentEnvironment.agent_type, AgentEnvironment.machine_name)
+        select(
+            Session,
+            AgentEnvironment.agent_type,
+            AgentEnvironment.machine_name,
+            is_shared_subq,
+        )
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(
             Session.user_id == auth.user_id,
@@ -1057,9 +1136,11 @@ async def get_session_detail(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    session, agent_type, machine_name = row
+    session, agent_type, machine_name, is_shared = row
     return SessionDetailResponse(
-        **_session_to_response(session, agent_type, machine_name).model_dump(),
+        **_session_to_response(
+            session, agent_type, machine_name, is_shared=bool(is_shared)
+        ).model_dump(),
         has_content=bool(session.file_key),
     )
 
@@ -1126,6 +1207,26 @@ async def upload_session_content(
     session.file_key = fk
     session.content_hash = content_hash
     session.content_uploaded_at = datetime.now(UTC)
+
+    # Extract `related_refs` server-side from the just-uploaded
+    # messages for sidebar chips. Best-effort — a parse
+    # failure here MUST NOT fail the upload (the bytes are already in
+    # the file store and the row's content_hash is the source of truth;
+    # we'd rather have a session with NULL related_refs than a
+    # half-committed upload).
+    try:
+        parsed = json.loads(data)
+        if isinstance(parsed, list):
+            session.related_refs = extract_related_refs(parsed) or None
+    except (json.JSONDecodeError, ValueError, TypeError):
+        # log.exception (not warning) so the traceback lands in logs —
+        # without it, debugging "why did this session land NULL refs"
+        # means re-uploading and watching events live.
+        log.exception(
+            "refs_extract_failed local_session_id=%s — leaving field NULL",
+            local_session_id,
+        )
+
     await db.commit()
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
@@ -1225,45 +1326,19 @@ async def get_session_messages(
     if not session.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
-    # Cache the parsed list keyed on (file_key, content_hash).
-    # Both components matter:
-    #   - file_key uniquely identifies the blob in object
-    #     storage (multiple sessions can hold byte-identical
-    #     content; their separate file_keys keep their cache
-    #     entries distinct).
-    #   - content_hash invalidates the cache when the daemon
-    #     re-uploads (common during a live conversation).
-    # Without this cache, a 50-page scroll re-downloads +
-    # re-parses the same 10 MB blob 50 times — same backend
-    # latency as the legacy full-content endpoint, just split
-    # across more requests. With it, page 1 pays the parse
-    # cost and pages 2..N are pure dict slicing.
-    cache_hash = session.content_hash or ""
-    cache_key = (session.file_key, cache_hash)
-    raw = _messages_cache_get(cache_key)
-    if raw is None:
-        try:
-            data = await file_store.get(session.file_key)
-        except Exception:
-            log.exception("session_content_fetch_failed file_key=%s", session.file_key)
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "Session content file not found"
-            ) from None
-
-        try:
-            raw = json.loads(data)
-        except json.JSONDecodeError:
-            log.exception("session %s content is not valid JSON", session_id)
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-
-        if not isinstance(raw, list):
-            log.error(
-                "session %s content is not a JSON array (got %s)",
-                session_id,
-                type(raw).__name__,
-            )
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-        _messages_cache_put(cache_key, raw)
+    # Shared loader handles the (file_key, content_hash)-keyed cache,
+    # the file_store fetch, JSON parse, and shape validation. Lives in
+    # `services/session_content.py` so the public share routes can
+    # share the same cache — a popular shared link must not re-parse
+    # a 10 MB JSON blob per visitor.
+    try:
+        raw = await load_session_messages(session, file_store)
+    except SessionContentMissing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentInvalid:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+        ) from None
 
     total = len(raw)
     sliced = raw[offset : offset + limit]
@@ -1371,10 +1446,260 @@ async def extract_session_memories(
     return SessionExtractResponse(memories_created=len(extracted))
 
 
+# --- Owner-side export + Share-link routes ---------------------------------
+#
+# The `/export.md` route below is OWNER-readable via `require_scope("sessions:read")`
+# — it serves both the dashboard and the MCP `session_read` tool's UUID
+# branch (which authenticates as the CLI api-key user).
+#
+# The `/permissions` routes use `require_web_auth`, rejecting bound
+# deploy keys outright: a leaked write-scoped daemon key has no
+# legitimate business minting / revoking visibility grants on
+# arbitrary sessions, so the gate stays on Clerk JWT.
+
+
+@router.get("/api/sessions/{session_id}/export.md")
+async def export_owned_session_markdown(
+    session_id: UUID,
+    auth: AuthContext = Depends(require_scope("sessions:read")),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    """Owner-side Markdown export — mirror of the public route.
+
+    Feeds the MCP `session_read` tool's UUID branch: when the agent
+    passes a session UUID (not a share token), the tool authenticates
+    as the owner and hits this route. The body is byte-for-byte the
+    same shape the public `.md` export returns — same `session_export.py`
+    serializer — so an agent gets identical context whether the user
+    referenced one of their own sessions or a shared link.
+
+    Owner-only path → `public=False`: no `url:` line in the front-matter
+    and `source` is `clawdi-session` instead of `clawdi-shared-session`
+    so the LLM can tell the two apart if it cares.
+    """
+    bound_env = _bound_env_id(auth)
+    stmt = (
+        select(Session, AgentEnvironment.agent_type)
+        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+        .where(
+            Session.user_id == auth.user_id,
+            Session.id == session_id,
+        )
+    )
+    if bound_env is not None:
+        stmt = stmt.where(Session.environment_id == bound_env)
+    row = (await db.execute(stmt)).first()
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    session, agent_type = row
+
+    if not session.file_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
+
+    try:
+        messages = await load_session_messages(session, file_store)
+    except SessionContentMissing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentInvalid:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+        ) from None
+
+    body = session_to_markdown(session, messages, agent_type=agent_type)
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        # No public cache header here — the owner can re-upload at any
+        # time and expects the next fetch to reflect it. The (file_key,
+        # content_hash) cache in load_session_messages is the only layer
+        # we actually want serving stale-but-correct bytes.
+    )
+
+
+@router.get("/api/sessions/{session_id}/permissions")
+async def list_session_permissions(
+    session_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> SessionPermissionsResponse:
+    """List active permissions for a session — drives the Share popover.
+
+    Returns rows in newest-first order. Today the popover only renders
+    the `kind='link'` row (if any); when invite-by-people lands, the
+    same response shape powers the "people with access" list.
+    """
+    await _load_session_for_owner(db, auth, session_id)
+
+    rows = (
+        (
+            await db.execute(
+                select(SessionPermission)
+                .where(
+                    SessionPermission.session_id == session_id,
+                    SessionPermission.revoked_at.is_(None),
+                )
+                .order_by(SessionPermission.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return SessionPermissionsResponse(permissions=[_permission_to_response(p) for p in rows])
+
+
+@router.post("/api/sessions/{session_id}/permissions")
+async def create_session_permission(
+    session_id: UUID,
+    body: SessionPermissionCreate,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> SessionPermissionResponse:
+    """Idempotent permission grant.
+
+    For today's "Public access" toggle the body is just
+    `{"kind": "link"}`. The handler:
+      - normalises the body (lowercases email, validates kind matches the
+        identifier columns),
+      - returns the existing active row if one already matches the
+        composite key (so toggling on twice is a no-op),
+      - inserts a new row otherwise. The
+        `uq_active_permission_per_principal` partial unique index closes
+        the race between concurrent callers — the loser's INSERT raises
+        IntegrityError and we re-read.
+    """
+    await _load_session_for_owner(db, auth, session_id)
+    kind, user_id, email = _validate_permission_create(body)
+
+    # Fast path: active row already matches.
+    existing = await _find_active_permission(db, session_id, kind, user_id, email)
+    if existing is not None:
+        return _permission_to_response(existing)
+
+    new_perm = SessionPermission(
+        session_id=session_id,
+        kind=kind,
+        user_id=user_id,
+        email=email,
+        role=body.role or "viewer",
+        invited_by=auth.user_id,
+        accepted_at=datetime.now(UTC) if kind != "email" else None,
+    )
+    db.add(new_perm)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        winner = await _find_active_permission(db, session_id, kind, user_id, email)
+        if winner is None:
+            # Index conflict but no row found — shouldn't happen with the
+            # partial unique index. Surface as 500 so it can be debugged.
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Permission insert raced and the winning row could not be located",
+            )
+        return _permission_to_response(winner)
+
+    await db.refresh(new_perm)
+    return _permission_to_response(new_perm)
+
+
+@router.delete(
+    "/api/sessions/{session_id}/permissions",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_session_permission(
+    session_id: UUID,
+    kind: str,
+    user_id: UUID | None = None,
+    email: str | None = None,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Revoke the active permission matching the composite key.
+
+    Toggle-off path: `DELETE …/permissions?kind=link`. Soft-delete
+    (`revoked_at = now()`) preserves the row for future audit.
+    """
+    await _load_session_for_owner(db, auth, session_id)
+
+    if kind not in PERMISSION_KINDS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown permission kind: {kind}")
+    normalized_email = email.strip().lower() if email else None
+
+    active = await _find_active_permission(db, session_id, kind, user_id, normalized_email)
+    if active is not None:
+        active.revoked_at = datetime.now(UTC)
+        await db.commit()
+
+
+def _validate_permission_create(
+    body: SessionPermissionCreate,
+) -> tuple[str, UUID | None, str | None]:
+    """Validate the request body's kind/identifier consistency and
+    normalise the email column. Returns (kind, user_id, email).
+
+    Pydantic's Literal types already reject unknown `kind` / `role`
+    values before this runs (422); we only enforce the cross-field
+    invariants that Pydantic can't express declaratively.
+    """
+    kind = body.kind
+    user_id = UUID(body.user_id) if body.user_id else None
+    email = body.email.strip().lower() if body.email else None
+
+    if kind == "link":
+        if user_id is not None or email is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "kind=link must not carry a user_id or email",
+            )
+    elif kind == "user":
+        if user_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "kind=user requires user_id")
+        if email is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "kind=user must not carry an email",
+            )
+    elif kind == "email":
+        if email is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "kind=email requires email")
+        if user_id is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "kind=email must not carry a user_id",
+            )
+    return kind, user_id, email
+
+
+async def _find_active_permission(
+    db: AsyncSession,
+    session_id: UUID,
+    kind: str,
+    user_id: UUID | None,
+    email: str | None,
+) -> SessionPermission | None:
+    """Locate the single active row matching the composite key, or None."""
+    stmt = select(SessionPermission).where(
+        SessionPermission.session_id == session_id,
+        SessionPermission.kind == kind,
+        SessionPermission.revoked_at.is_(None),
+    )
+    if user_id is None:
+        stmt = stmt.where(SessionPermission.user_id.is_(None))
+    else:
+        stmt = stmt.where(SessionPermission.user_id == user_id)
+    if email is None:
+        stmt = stmt.where(SessionPermission.email.is_(None))
+    else:
+        stmt = stmt.where(SessionPermission.email == email)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 def _session_to_response(
     s: Session,
     agent_type: str | None = None,
     machine_name: str | None = None,
+    is_shared: bool = False,
 ) -> SessionListItemResponse:
     return SessionListItemResponse(
         id=str(s.id),
@@ -1397,4 +1722,66 @@ def _session_to_response(
         tags=s.tags,
         status=s.status,
         content_hash=s.content_hash,
+        is_shared=is_shared,
+        related_refs=s.related_refs,
     )
+
+
+# --- Permission helpers ----------------------------------------------------
+
+
+def _link_is_shared_subq():
+    """Correlated EXISTS used in list/detail queries to compute
+    `Session.is_shared`. True when an active `kind='link'` permission
+    row exists for the session. Index-only via the partial unique
+    index on `session_permissions(session_id, kind, COALESCE(...))
+    WHERE revoked_at IS NULL`.
+    """
+    return (
+        select(1)
+        .where(
+            SessionPermission.session_id == Session.id,
+            SessionPermission.kind == PERMISSION_KIND_LINK,
+            SessionPermission.revoked_at.is_(None),
+        )
+        .correlate(Session)
+        .exists()
+        .label("is_shared")
+    )
+
+
+def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:
+    return SessionPermissionResponse(
+        id=str(p.id),
+        kind=p.kind,
+        user_id=str(p.user_id) if p.user_id else None,
+        email=p.email,
+        role=p.role,
+        invited_by=str(p.invited_by) if p.invited_by else None,
+        accepted_at=p.accepted_at,
+        expires_at=p.expires_at,
+        created_at=p.created_at,
+    )
+
+
+async def _load_session_for_owner(
+    db: AsyncSession,
+    auth: AuthContext,
+    session_id: UUID,
+) -> Session:
+    """Fetch a session the current caller is allowed to mutate.
+
+    404s rather than 403s on visibility violations (env-binding mismatch)
+    to avoid leaking which session-ids exist outside the caller's scope.
+    """
+    bound_env = _bound_env_id(auth)
+    stmt = select(Session).where(
+        Session.user_id == auth.user_id,
+        Session.id == session_id,
+    )
+    if bound_env is not None:
+        stmt = stmt.where(Session.environment_id == bound_env)
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    return row

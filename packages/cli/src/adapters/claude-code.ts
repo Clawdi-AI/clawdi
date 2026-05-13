@@ -185,7 +185,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				}
 
 				if (role === "user" || role === "assistant") {
-					// Extract text content for messages
 					const c = msg?.content;
 					let text = "";
 					if (typeof c === "string") {

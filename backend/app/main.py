@@ -22,6 +22,7 @@ from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
 from app.routes.memories import router as memories_router
+from app.routes.public_sessions import router as public_sessions_router
 from app.routes.scopes import router as scopes_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
@@ -155,6 +156,11 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
+# Public share routes — mounted under /api/public/sessions/{id}/...,
+# auth is optional (signed-in owners + active link permissions get
+# served; anon hits 401, signed-in non-grantees hit 403). See
+# routes/public_sessions.py for the access-check helper.
+app.include_router(public_sessions_router)
 app.include_router(dashboard_router)
 app.include_router(scopes_router)
 app.include_router(skills_router)

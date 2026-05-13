@@ -536,6 +536,7 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     `monkeypatch` — three sequential page fetches with the same
     content_hash should fan out to ONE underlying blob read."""
     from app.routes import sessions as sessions_route
+    from app.services import session_content
 
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
@@ -563,8 +564,10 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     sid = next(s["id"] for s in listing["items"] if s["local_session_id"] == "sess-cache")
 
     # Reset the cache so other tests' entries don't satisfy us
-    # without a real file_store.get hit.
-    sessions_route._messages_cache.clear()
+    # without a real file_store.get hit. The cache moved to
+    # services/session_content.py (shared with the public share
+    # routes); the route handler is now a thin wrapper.
+    session_content._messages_cache.clear()
 
     # Wrap file_store.get so we can count blob reads.
     orig_get = sessions_route.file_store.get
@@ -1213,7 +1216,9 @@ async def test_last_activity_uses_client_supplied_when_sane(client: httpx.AsyncC
 
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-active")
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == last_msg.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(
+        microsecond=0
+    ) == last_msg.replace(microsecond=0)
 
 
 @pytest.mark.asyncio
@@ -1249,7 +1254,9 @@ async def test_last_activity_falls_back_to_ended_at_when_missing(
 
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-no-msgts")
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(
+        microsecond=0
+    )
 
 
 @pytest.mark.asyncio
@@ -1319,9 +1326,7 @@ async def test_last_activity_clamps_when_started_at_also_future(client: httpx.As
     assert r.status_code == 200, r.text
 
     listing = (await client.get("/api/sessions")).json()
-    item = next(
-        s for s in listing["items"] if s["local_session_id"] == "sess-future-everything"
-    )
+    item = next(s for s in listing["items"] if s["local_session_id"] == "sess-future-everything")
     persisted = datetime.fromisoformat(item["last_activity_at"])
     assert persisted < datetime.now(UTC) + timedelta(minutes=10), (
         "future timestamps in EVERY field must still clamp"
@@ -1414,7 +1419,9 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
     listing = (await client.get("/api/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-mono")
     # Should still be the FRESHER value despite the stale repush.
-    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(microsecond=0)
+    assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(
+        microsecond=0
+    )
 
 
 @pytest.mark.asyncio
@@ -1500,8 +1507,7 @@ async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
     p1_ids = {s["local_session_id"] for s in p1["items"]}
     p2_ids = {s["local_session_id"] for s in p2["items"]}
     assert len(p1_ids & p2_ids) == 0, (
-        f"pages overlap: {p1_ids & p2_ids} appears in both — "
-        "tiebreaker missing or unstable"
+        f"pages overlap: {p1_ids & p2_ids} appears in both — tiebreaker missing or unstable"
     )
 
 

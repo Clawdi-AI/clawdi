@@ -14,6 +14,12 @@ class User(Base, TimestampMixin):
     clerk_id: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String(320))
     name: Mapped[str | None] = mapped_column(String(200))
+    # Profile picture URL captured from the Clerk JWT `picture` claim
+    # on sign-in. Refreshed every time the user signs in (Clerk rotates
+    # the underlying signed URL periodically). Public session-share
+    # pages render this so visitors see the owner's avatar in the
+    # message stream.
+    avatar_url: Mapped[str | None] = mapped_column(String(512))
     # Monotonic counter incremented on any skill insert / update /
     # soft-delete (`is_active=False`). Exposed as a collection-level
     # ETag on `GET /api/skills` and embedded in SSE `skill_changed`

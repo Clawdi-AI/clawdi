@@ -24,7 +24,7 @@ import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, get_auth, optional_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
@@ -187,8 +187,45 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
     async def _override_get_auth() -> AuthContext:
         return AuthContext(user=seed_user)
 
+    async def _override_optional_web_auth() -> AuthContext:
+        # The dashboard `client` fixture represents a signed-in browser
+        # session — public routes that take `optional_web_auth` should
+        # see the same identity as `get_auth` would, so owner-detection
+        # in the public route works in tests.
+        return AuthContext(user=seed_user)
+
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
+    app.dependency_overrides[optional_web_auth] = _override_optional_web_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def anon_client(
+    db_session: AsyncSession, seed_user: User
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Anonymous client — no Clerk JWT, no API key.
+
+    `seed_user` is still required so the public route's session-by-id
+    lookups have an owner to match against, but no auth dependency
+    overrides install identity for the request. `optional_web_auth`
+    returns None (anonymous); `get_auth` is unset so any owner-only
+    route returns 401, exactly like a browser with no cookies.
+    """
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_optional_web_auth() -> None:
+        return None
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[optional_web_auth] = _override_optional_web_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:

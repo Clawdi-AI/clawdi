@@ -7,7 +7,15 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 //
 // `/skill.md` must be publicly reachable — fresh AI agents fetch it during
 // the "Send to Agent" onboarding flow and have no Clerk session yet.
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/skill.md"]);
+//
+// `/s/(.*)` covers the public session-share routes: the HTML page at
+// `/s/{token}`, the `.md` / `.json` formats served by the format route
+// handler, and the `next.config.ts` rewrites that land between them.
+// The matcher above already lets `.md` URLs through (extension carve-out)
+// but explicitly carves `.json` *out* of the `.js` exclusion, so without
+// this entry `/s/{token}.json` would 307 to /sign-in. Share access is
+// gated by the token, not the user's Clerk session.
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)"]);
 
 // signInUrl / signUpUrl must live here — they tell auth.protect() where
 // to send unauth'd users. Without them, Clerk falls back to its hosted

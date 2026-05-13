@@ -12,7 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -150,3 +150,20 @@ class Session(Base, TimestampMixin):
     # and by `clawdi pull` to diff cloud state against local sidecars.
     content_hash: Mapped[str | None] = mapped_column(String(64))
     content_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Extracted external entities surfaced in the session sidebar. Schema:
+    #   {"prs": ["owner/repo#123"], "repos": [...], "branches": [...]}
+    # Best-effort regex extraction over message content at upload time;
+    # the sidebar renders whatever we find. Promotable to a relational
+    # `session_refs` table when cross-session queries become a need.
+    #
+    # `none_as_null=True` is load-bearing: without it SQLAlchemy
+    # serializes Python `None` as the JSONB literal `'null'`, NOT as
+    # SQL NULL. That breaks `COALESCE(excluded.related_refs, ...)`
+    # in the batch upsert — `'null'::jsonb IS NOT NULL`, so the
+    # coalesce returns it instead of falling through to the prior
+    # value, and a re-push from an older CLI that omits this field
+    # would clobber related_refs back to JSON null. With this flag,
+    # Python None → SQL NULL, and the coalesce preserves the
+    # server-computed value across re-pushes.
+    related_refs: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
