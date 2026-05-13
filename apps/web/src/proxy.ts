@@ -20,13 +20,7 @@ const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 //
 // `/share/*` is the public landing page for shared scopes; anonymous
 // previews + sign-in handoff happen there.
-const publicRoutes = [
-	"/sign-in(.*)",
-	"/sign-up(.*)",
-	"/skill.md",
-	"/s/(.*)",
-	"/share/(.*)",
-];
+const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)", "/share/(.*)"];
 
 if (isHostedBuild) {
 	// PostHog first-party proxy path is hosted-only.

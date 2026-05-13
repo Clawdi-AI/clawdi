@@ -1,5 +1,6 @@
 "use client";
 
+import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
@@ -15,6 +16,17 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,9 +42,11 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, useAuthedFetch } from "@/lib/api";
+import { errorMessage } from "@/lib/utils";
+import { formatApiError } from "./vault-conflicts";
 
 /**
- * Owner-side scope-sharing surface (Spec §6 / Plan Phase F).
+ * Owner-side scope-sharing surface.
  *
  * Two surfaces in one dialog:
  *   - Links tab: list of share-links with redeem counts + revoke buttons,
@@ -40,7 +54,7 @@ import { ApiError, useAuthedFetch } from "@/lib/api";
  *   - Invitations tab: email-based invitations (in-dashboard "you've been
  *     added" entries on the invitee's side, no public token).
  *
- * Backend endpoints land in Phase B:
+ * Backend endpoints:
  *   GET    /api/scopes/{scope_id}/share-links
  *   POST   /api/scopes/{scope_id}/share-links
  *   DELETE /api/scopes/{scope_id}/share-links/{link_id}
@@ -48,12 +62,10 @@ import { ApiError, useAuthedFetch } from "@/lib/api";
  *   POST   /api/scopes/{scope_id}/invitations
  *   DELETE /api/scopes/{scope_id}/invitations/{invitation_id}
  *
- * Until those land the dialog renders empty + actions error gracefully.
  * Schemas swap to typed openapi-fetch once codex regenerates them.
  */
 
-// List shape (Phase B.3): prefix-only, raw_token is unrecoverable
-// once create returned.
+// List shape: prefix-only, raw_token is unrecoverable once create returned.
 interface ShareLinkRow {
 	id: string;
 	prefix: string;
@@ -65,7 +77,7 @@ interface ShareLinkRow {
 	last_redeemed_at: string | null;
 }
 
-// Create-time shape (Phase B.2): raw_token + url shown ONCE.
+// Create-time shape: raw_token + url shown ONCE.
 interface ShareLinkCreated {
 	id: string;
 	raw_token: string;
@@ -111,27 +123,27 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-w-xl">
+			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>Share "{scopeName}"</DialogTitle>
 					<DialogDescription>
-						Give others read-only access to the skills and vault secrets in this scope. Sharees join
-						as viewers — they can't edit your scope.
+						Give others read-only access to this scope's skills and vault key references. Sharees
+						join as viewers and cannot edit your scope.
 					</DialogDescription>
 				</DialogHeader>
 				<Tabs defaultValue="links" className="w-full">
 					<TabsList className="grid w-full grid-cols-3">
-						<TabsTrigger value="links">
+						<TabsTrigger value="links" className="min-w-0 px-2">
 							<Link2 className="mr-2 size-3.5" />
-							Share links
+							<span className="truncate">Links</span>
 						</TabsTrigger>
-						<TabsTrigger value="invitations">
+						<TabsTrigger value="invitations" className="min-w-0 px-2">
 							<Users className="mr-2 size-3.5" />
-							Invite by email
+							<span className="truncate">Invites</span>
 						</TabsTrigger>
-						<TabsTrigger value="members">
+						<TabsTrigger value="members" className="min-w-0 px-2">
 							<UserMinus className="mr-2 size-3.5" />
-							Members
+							<span className="truncate">Members</span>
 						</TabsTrigger>
 					</TabsList>
 					<TabsContent value="links" className="mt-4">
@@ -151,6 +163,7 @@ export function ShareScopeDialog({ scopeId, scopeName, children }: ShareScopeDia
 
 function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	const qc = useQueryClient();
+	const [label, setLabel] = useState("");
 	// The just-created link's full URL — surfaced once in a banner
 	// because the server stores only the prefix going forward.
 	// Cleared on next create or on dialog close (panel unmount).
@@ -167,15 +180,17 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	});
 
 	const create = useMutation({
-		mutationFn: async (): Promise<ShareLinkCreated> => {
+		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
+			const trimmedLabel = nextLabel.trim();
 			const r = await authedFetch(`/api/scopes/${scopeId}/share-links`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: "{}",
+				body: JSON.stringify({ label: trimmedLabel.length > 0 ? trimmedLabel : null }),
 			});
 			return r.json();
 		},
 		onSuccess: (body) => {
+			setLabel("");
 			setFreshLink(body);
 			qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
 			// Best-effort auto-copy. Browsers without the async
@@ -208,7 +223,9 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 			toast.success("Link revoked");
 		},
 		onError: (e) => {
-			toast.error(e instanceof Error ? e.message : "Failed to revoke link");
+			toast.error("Failed to revoke link", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			});
 		},
 	});
 
@@ -216,14 +233,40 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 
 	return (
 		<div className="space-y-3">
-			<div className="flex items-center justify-between">
+			<form
+				className="space-y-2 rounded-lg border p-3"
+				onSubmit={(e) => {
+					e.preventDefault();
+					create.mutate(label);
+				}}
+			>
+				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+					<Input
+						value={label}
+						onChange={(e) => setLabel(e.target.value)}
+						maxLength={200}
+						placeholder="Link label, e.g. Bob onboarding"
+						aria-label="Share link label"
+						className="min-w-0 flex-1"
+					/>
+					<Button type="submit" size="sm" disabled={create.isPending}>
+						<Plus className="mr-1.5 size-3.5" />
+						{create.isPending ? "Creating…" : "Generate link"}
+					</Button>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Labels stay visible after the full URL is hidden, so you can tell links apart before
+					revoking them.
+				</p>
+			</form>
+
+			<div className="flex items-center justify-between gap-2">
 				<p className="text-xs text-muted-foreground">
 					Anyone with a share link can preview the scope and accept it. Revoke anytime.
 				</p>
-				<Button size="sm" onClick={() => create.mutate()} disabled={create.isPending}>
-					<Plus className="mr-1.5 size-3.5" />
-					{create.isPending ? "Creating…" : "Generate link"}
-				</Button>
+				<Badge variant="secondary" className="text-xs">
+					{visibleLinks.filter((link) => link.revoked_at === null).length} active
+				</Badge>
 			</div>
 
 			{freshLink ? <FreshLinkBanner link={freshLink} onDismiss={() => setFreshLink(null)} /> : null}
@@ -234,7 +277,12 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 				<Skeleton className="h-16 w-full" />
 			) : links.error ? (
 				<EmptyHint
-					message={links.error instanceof Error ? links.error.message : "Couldn't load links."}
+					variant="destructive"
+					message={
+						links.error instanceof ApiError
+							? formatApiError(links.error.detail)
+							: errorMessage(links.error)
+					}
 				/>
 			) : visibleLinks.length === 0 ? (
 				<EmptyHint message="No share links yet. Generate one to start sharing this scope." />
@@ -255,14 +303,17 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 }
 
 function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismiss: () => void }) {
-	const copy = () => {
+	const copyText = (value: string, success: string) => {
 		if (typeof navigator !== "undefined" && navigator.clipboard) {
 			navigator.clipboard
-				.writeText(link.url)
-				.then(() => toast.success("Link copied"))
-				.catch(() => toast.error("Couldn't copy — select the URL and copy manually"));
+				.writeText(value)
+				.then(() => toast.success(success))
+				.catch(() => toast.error("Couldn't copy — select the text and copy manually"));
+		} else {
+			toast.error("Couldn't copy — select the text and copy manually");
 		}
 	};
+	const agentPrompt = buildShareAgentHandoffPrompt(link);
 	return (
 		<Alert>
 			<CheckCircle2 />
@@ -273,14 +324,44 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					prefix <span className="font-mono">{link.prefix}</span> stays visible — revoke if it
 					leaks.
 				</p>
-				<div className="mt-2 flex items-center gap-2">
-					<Input readOnly value={link.url} className="font-mono text-xs" />
-					<Button variant="outline" size="icon" onClick={copy}>
+				{link.label ? (
+					<p className="mt-1 text-xs text-muted-foreground">
+						Label: <span className="font-medium text-foreground">{link.label}</span>
+					</p>
+				) : null}
+				<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+					<Input readOnly value={link.url} className="min-w-0 font-mono text-xs" />
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => copyText(link.url, "Link copied")}
+						className="sm:size-9 sm:px-0"
+						aria-label="Copy share link"
+					>
 						<Copy className="size-3.5" />
+						<span className="sm:sr-only">Copy</span>
 					</Button>
 					<Button variant="ghost" size="sm" onClick={onDismiss}>
 						Done
 					</Button>
+				</div>
+				<div className="mt-2 rounded-md border bg-background/60 p-2">
+					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<div className="min-w-0">
+							<div className="text-xs font-medium">Agent handoff prompt</div>
+							<div className="truncate font-mono text-[11px] text-muted-foreground">
+								clawdi.share.v1 · {link.prefix}
+							</div>
+						</div>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => copyText(agentPrompt, "Agent prompt copied")}
+						>
+							<Copy className="mr-1.5 size-3.5" />
+							Copy prompt
+						</Button>
+					</div>
 				</div>
 			</AlertDescription>
 		</Alert>
@@ -343,15 +424,37 @@ function LinkRow({
 					</div>
 				</div>
 				{!revoked ? (
-					<Button
-						variant="ghost"
-						size="icon"
-						onClick={onRevoke}
-						disabled={revoking}
-						title="Revoke link"
-					>
-						<Trash2 className="size-3.5 text-destructive" />
-					</Button>
+					<AlertDialog>
+						<AlertDialogTrigger asChild>
+							<Button
+								variant="ghost"
+								size="icon"
+								disabled={revoking}
+								title="Revoke link"
+								aria-label={`Revoke share link ${link.prefix}`}
+							>
+								<Trash2 className="size-3.5 text-destructive" />
+							</Button>
+						</AlertDialogTrigger>
+						<AlertDialogContent>
+							<AlertDialogHeader>
+								<AlertDialogTitle>Revoke this share link?</AlertDialogTitle>
+								<AlertDialogDescription>
+									Anyone who has not already joined through this link will lose access to it.
+									Existing members stay connected until you remove them.
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel>Cancel</AlertDialogCancel>
+								<AlertDialogAction
+									onClick={onRevoke}
+									className="bg-destructive text-white hover:bg-destructive/90"
+								>
+									Revoke link
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
 				) : null}
 			</div>
 		</li>
@@ -388,7 +491,9 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 			toast.success("Invitation sent");
 		},
 		onError: (e) => {
-			toast.error(e instanceof Error ? e.message : "Failed to send invitation");
+			toast.error("Failed to send invitation", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			});
 		},
 	});
 
@@ -402,6 +507,11 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 			qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
 			toast.success("Invitation cancelled");
 		},
+		onError: (e) => {
+			toast.error("Failed to cancel invitation", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			});
+		},
 	});
 
 	const looksLikeEmail = /^\S+@\S+\.\S+$/.test(email);
@@ -414,7 +524,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 					if (!looksLikeEmail) return;
 					invite.mutate(email);
 				}}
-				className="flex gap-2"
+				className="flex flex-col gap-2 sm:flex-row"
 			>
 				<Input
 					type="email"
@@ -435,12 +545,13 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 				<Skeleton className="h-16 w-full" />
 			) : invites.error ? (
 				<EmptyHint
+					variant="destructive"
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
-							? "Email invitations aren't enabled yet. Backend Phase B endpoints land soon."
-							: invites.error instanceof Error
-								? invites.error.message
-								: "Couldn't load invitations."
+							? "Email invitations are unavailable for this scope."
+							: invites.error instanceof ApiError
+								? formatApiError(invites.error.detail)
+								: errorMessage(invites.error)
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? (
@@ -450,22 +561,52 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 					{invites.data?.map((inv) => (
 						<li
 							key={inv.id}
-							className="flex items-center justify-between rounded-md border p-2 text-sm"
+							className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
 						>
-							<div>
-								<div className="font-medium">{inv.invitee_email}</div>
-								<div className="text-xs text-muted-foreground">
+							<div className="min-w-0">
+								<div className="truncate font-medium">{inv.invitee_email}</div>
+								<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 									<Badge variant="outline">pending</Badge>
+									<span aria-hidden>·</span>
+									<span>
+										Sent{" "}
+										{new Date(inv.created_at).toLocaleDateString(undefined, {
+											month: "short",
+											day: "numeric",
+										})}
+									</span>
 								</div>
 							</div>
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={() => cancel.mutate(inv.id)}
-								title="Cancel invitation"
-							>
-								<Trash2 className="size-3.5 text-destructive" />
-							</Button>
+							<AlertDialog>
+								<AlertDialogTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon"
+										disabled={cancel.isPending && cancel.variables === inv.id}
+										title="Cancel invitation"
+										aria-label={`Cancel invitation for ${inv.invitee_email}`}
+									>
+										<Trash2 className="size-3.5 text-destructive" />
+									</Button>
+								</AlertDialogTrigger>
+								<AlertDialogContent>
+									<AlertDialogHeader>
+										<AlertDialogTitle>Cancel this invitation?</AlertDialogTitle>
+										<AlertDialogDescription>
+											{inv.invitee_email} will no longer see this invitation in their dashboard.
+										</AlertDialogDescription>
+									</AlertDialogHeader>
+									<AlertDialogFooter>
+										<AlertDialogCancel>Keep invitation</AlertDialogCancel>
+										<AlertDialogAction
+											onClick={() => cancel.mutate(inv.id)}
+											className="bg-destructive text-white hover:bg-destructive/90"
+										>
+											Cancel invitation
+										</AlertDialogAction>
+									</AlertDialogFooter>
+								</AlertDialogContent>
+							</AlertDialog>
 						</li>
 					))}
 				</ul>
@@ -510,7 +651,10 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 					: "Member removed",
 			);
 		},
-		onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to remove member"),
+		onError: (e) =>
+			toast.error("Failed to remove member", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			}),
 	});
 
 	const unshare = useMutation({
@@ -528,39 +672,57 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 				`Stopped sharing — revoked ${body.links_revoked} link(s), removed ${body.members_removed} member(s)`,
 			);
 		},
-		onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to stop sharing"),
+		onError: (e) =>
+			toast.error("Failed to stop sharing", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			}),
 	});
 
 	const rows = members.data ?? [];
 
 	return (
 		<div className="space-y-3">
-			<div className="flex items-center justify-between gap-3">
-				<p className="text-xs text-muted-foreground">
-					Accepted viewers with permanent access. Removing a member also removes their mount edges
-					into this scope.
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+				<p className="text-xs text-muted-foreground sm:max-w-sm">
+					Accepted viewers with permanent access. Removing a member also removes mount edges that
+					point to this scope.
 				</p>
-				<Button
-					variant="destructive"
-					size="sm"
-					disabled={unshare.isPending}
-					onClick={() => {
-						const ok = window.confirm(
-							"Stop sharing this scope?\n\nThis revokes active links, cancels pending invitations, removes accepted members, and removes their mount edges.",
-						);
-						if (ok) unshare.mutate();
-					}}
-				>
-					{unshare.isPending ? "Stopping…" : "Stop sharing"}
-				</Button>
+				<AlertDialog>
+					<AlertDialogTrigger asChild>
+						<Button variant="destructive" size="sm" disabled={unshare.isPending}>
+							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
+						</Button>
+					</AlertDialogTrigger>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>Stop sharing this scope?</AlertDialogTitle>
+							<AlertDialogDescription>
+								This revokes active links, cancels pending invitations, removes accepted members,
+								and removes their mount edges.
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<AlertDialogFooter>
+							<AlertDialogCancel>Keep sharing</AlertDialogCancel>
+							<AlertDialogAction
+								onClick={() => unshare.mutate()}
+								className="bg-destructive text-white hover:bg-destructive/90"
+							>
+								Stop all sharing
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
 			</div>
 			<Separator />
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : members.error ? (
 				<EmptyHint
+					variant="destructive"
 					message={
-						members.error instanceof Error ? members.error.message : "Couldn't load members."
+						members.error instanceof ApiError
+							? formatApiError(members.error.detail)
+							: errorMessage(members.error)
 					}
 				/>
 			) : rows.length === 0 ? (
@@ -584,18 +746,37 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 										})}
 									</div>
 								</div>
-								<Button
-									variant="ghost"
-									size="icon"
-									disabled={remove.isPending}
-									onClick={() => {
-										const ok = window.confirm(`Remove ${label} from this scope?`);
-										if (ok) remove.mutate(member.user_id);
-									}}
-									title="Remove member"
-								>
-									<UserMinus className="size-3.5 text-destructive" />
-								</Button>
+								<AlertDialog>
+									<AlertDialogTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											disabled={remove.isPending}
+											title="Remove member"
+											aria-label={`Remove member ${label}`}
+										>
+											<UserMinus className="size-3.5 text-destructive" />
+										</Button>
+									</AlertDialogTrigger>
+									<AlertDialogContent>
+										<AlertDialogHeader>
+											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
+											<AlertDialogDescription>
+												{label} will lose access to this scope. Any mount edges that point to this
+												scope are removed with the membership.
+											</AlertDialogDescription>
+										</AlertDialogHeader>
+										<AlertDialogFooter>
+											<AlertDialogCancel>Cancel</AlertDialogCancel>
+											<AlertDialogAction
+												onClick={() => remove.mutate(member.user_id)}
+												className="bg-destructive text-white hover:bg-destructive/90"
+											>
+												Remove member
+											</AlertDialogAction>
+										</AlertDialogFooter>
+									</AlertDialogContent>
+								</AlertDialog>
 							</li>
 						);
 					})}
@@ -605,9 +786,9 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 	);
 }
 
-function EmptyHint({ message }: { message: string }) {
+function EmptyHint({ message, variant }: { message: string; variant?: "default" | "destructive" }) {
 	return (
-		<Alert>
+		<Alert variant={variant}>
 			<AlertCircle />
 			<AlertDescription>{message}</AlertDescription>
 		</Alert>

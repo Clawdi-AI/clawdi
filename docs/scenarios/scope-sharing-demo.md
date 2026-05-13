@@ -23,7 +23,7 @@ Owner scope
       v
 Sharee membership
       |
-      | mount into one owned workspace
+      | mount into one or more owned workspaces
       v
 Composed workspace visible to agents
 ```
@@ -157,6 +157,9 @@ Expected result:
 - `vault list` includes Alice's vault metadata.
 - `vault resolve --debug` shows which scope won; the secret value is
   not printed during the narrated demo.
+- Shared vault plaintext is only resolved through an explicit parent
+  scope. Unscoped `vault resolve` reads the caller's single default
+  write scope and does not fan out across mounted/shared scopes.
 
 Web:
 
@@ -220,6 +223,17 @@ Web:
 
 1. Accept the share.
 2. Pick the parent scope from the mount-target picker.
+
+Follow-up composition:
+
+```bash
+clawdi scope mount engineering --into client-b --alias alice-engineering
+clawdi scope mounts client-a
+clawdi scope mounts client-b
+```
+
+The same shared source may be mounted into multiple owned scopes. The
+only uniqueness rule is one `(parent, source)` edge per parent.
 
 Agent logic:
 
@@ -364,6 +378,8 @@ clawdi vault resolve OPENAI_API_KEY --scope <scope> --debug --json
 Agent rules:
 
 - Treat `membership` and `mount` as separate states.
+- Pass `--scope <scope>` for composed vault reads; unscoped vault
+  resolve intentionally reads only the caller's default write scope.
 - If accept returns `mount_target_ambiguous`, stop and ask for a parent
   scope instead of guessing.
 - If accept or mount returns `vault_conflicts_blocked`, explain the

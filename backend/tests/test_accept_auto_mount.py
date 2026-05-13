@@ -8,6 +8,8 @@ The two accept paths share the auto-mount target resolution rule:
     (membership commits, mount deferred).
 """
 
+from __future__ import annotations
+
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -22,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
+from app.models.scope import SCOPE_KIND_PERSONAL, Scope
 from app.models.scope_mount import ScopeMount
 from app.models.scope_share_link import ScopeShareLink
 from app.models.user import User
@@ -31,12 +34,10 @@ from app.services.sharing import generate_share_token, hash_share_token
 @pytest_asyncio.fixture
 async def sharee_with_personal_scope(
     db_session: AsyncSession,
-) -> AsyncIterator[tuple[User, "Scope"]]:
+) -> AsyncIterator[tuple[User, Scope]]:
     """A test user with exactly ONE owned scope (Personal). Real
     Clawdi accounts get this auto-created at signup.
     """
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
-
     nonce = uuid.uuid4().hex[:8]
     user = User(
         clerk_id=f"sharee_{nonce}",

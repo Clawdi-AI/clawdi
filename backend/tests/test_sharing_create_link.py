@@ -100,7 +100,7 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
 async def test_create_share_link_requires_display_name(client, seed_user, seed_scope):
     """Owner without a display name → 409 display_name_required.
     Falling back to email local-part would leak PII to recipients;
-    spec § 4.5 + § 11.2 say we hard-block instead."""
+    sharing requires a stable owner handle, so we hard-block instead."""
     seed_user.name = None
 
     r = await client.post(

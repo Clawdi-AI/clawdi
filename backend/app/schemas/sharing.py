@@ -9,6 +9,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+MOUNT_ALIAS_PATTERN = r"^[A-Za-z0-9@._:/ -]+$"
+
 
 class ShareLinkCreate(BaseModel):
     """Body for POST /api/scopes/{scope_id}/share-links."""
@@ -148,7 +150,12 @@ class UpgradeBody(BaseModel):
     """
 
     parent_scope_id: str | None = None
-    alias: str | None = None
+    alias: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=MOUNT_ALIAS_PATTERN,
+    )
     no_mount: bool = False
     # Mount-time vault conflict detection: if source scope has any
     # vault key (slug + section + name triple) that already exists
@@ -164,7 +171,12 @@ class MountCreate(BaseModel):
     """Body for POST /api/scopes/{parent_scope_id}/mounts."""
 
     source_scope_id: str
-    alias: str | None = None
+    alias: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=MOUNT_ALIAS_PATTERN,
+    )
     mode: str = "live"
     allow_vault_conflicts: bool = False
 

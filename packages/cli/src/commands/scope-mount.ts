@@ -13,8 +13,7 @@
  *     as a tree; the explicit `scope mounts <parent>` command
  *     gives a focused single-parent view + machine-readable JSON)
  *
- * Spec: docs/superpowers/specs/2026-05-11-scope-sharing-spec.md
- * Plan: docs/superpowers/plans/2026-05-12-scope-sharing.md §ME3.1
+ * User-facing flow: docs/scenarios/scope-sharing-demo.md
  */
 
 import chalk from "chalk";

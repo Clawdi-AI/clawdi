@@ -6,16 +6,17 @@ auth (api_key OR Clerk JWT, both unbound - not env-bound deploy
 keys) AND a valid share token, then creates a permanent
 ScopeMembership for the requesting user.
 
-Vault item plaintext is NEVER available via this surface (spec §7.4
-+ §10) - CLI clients gate vault resolve on Clerk auth.
+Vault item plaintext is NEVER available via this surface - CLI clients
+gate vault resolve on Clerk auth.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from threading import Lock
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +44,106 @@ from app.services.sharing import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/share", tags=["share-redeem"])
+
+_REDEEM_RATE_WINDOW = timedelta(minutes=1)
+_REDEEM_RATE_LIMIT = 30
+_REDEEM_RATE_MAX_BUCKETS = 2048
+_REDEEM_RATE_PRUNE_INTERVAL = timedelta(minutes=1)
+_REDEEM_IDEMPOTENCY_TTL = timedelta(hours=24)
+_REDEEM_IDEMPOTENCY_MAX = 2048
+_redeem_rate_lock = Lock()
+_redeem_rate: dict[str, list[datetime]] = {}
+_redeem_rate_last_prune_at: datetime | None = None
+_redeem_idempotency_seen: dict[str, datetime] = {}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip() or "unknown"
+    return request.client.host if request.client else "unknown"
+
+
+def _check_redeem_rate_limit(request: Request, ctx: ShareTokenContext) -> None:
+    """Bound anonymous redeem attempts per IP + link.
+
+    Preview remains side-effect free. Redeem is a mutable anonymous
+    endpoint, so valid-token holders get a small per-minute budget
+    instead of unbounded counter writes and COUNT queries.
+
+    This is a process-local defense layer for app correctness and
+    accidental floods. Production deployments should still enforce
+    edge/gateway rate limits so the budget is global across workers
+    and pods.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - _REDEEM_RATE_WINDOW
+    bucket = f"{_client_ip(request)}:{ctx.link_id}"
+    global _redeem_rate_last_prune_at
+    with _redeem_rate_lock:
+        should_prune = (
+            _redeem_rate_last_prune_at is None
+            or now - _redeem_rate_last_prune_at >= _REDEEM_RATE_PRUNE_INTERVAL
+        )
+        if should_prune:
+            for existing_bucket, existing_timestamps in list(_redeem_rate.items()):
+                fresh = [ts for ts in existing_timestamps if ts >= cutoff]
+                if fresh:
+                    _redeem_rate[existing_bucket] = fresh
+                else:
+                    _redeem_rate.pop(existing_bucket, None)
+            _redeem_rate_last_prune_at = now
+
+        timestamps = [ts for ts in _redeem_rate.get(bucket, []) if ts >= cutoff]
+        if len(timestamps) >= _REDEEM_RATE_LIMIT:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "share redeem rate limit exceeded",
+                headers={"Retry-After": str(int(_REDEEM_RATE_WINDOW.total_seconds()))},
+            )
+        if bucket not in _redeem_rate and len(_redeem_rate) >= _REDEEM_RATE_MAX_BUCKETS:
+            oldest = min(
+                _redeem_rate,
+                key=lambda key: (
+                    max(_redeem_rate[key])
+                    if _redeem_rate[key]
+                    else datetime.min.replace(tzinfo=UTC)
+                ),
+            )
+            _redeem_rate.pop(oldest, None)
+        timestamps.append(now)
+        _redeem_rate[bucket] = timestamps
+
+
+def _idempotency_seen(ctx: ShareTokenContext, idempotency_key: str | None) -> bool:
+    if idempotency_key is None:
+        return False
+    if len(idempotency_key) > 200:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Idempotency-Key too long")
+
+    now = datetime.now(UTC)
+    cutoff = now - _REDEEM_IDEMPOTENCY_TTL
+    cache_key = f"{ctx.link_id}:{idempotency_key}"
+    with _redeem_rate_lock:
+        stale = [key for key, ts in _redeem_idempotency_seen.items() if ts < cutoff]
+        for key in stale:
+            _redeem_idempotency_seen.pop(key, None)
+        if cache_key in _redeem_idempotency_seen:
+            _redeem_idempotency_seen[cache_key] = now
+            return True
+    return False
+
+
+def _remember_idempotency(ctx: ShareTokenContext, idempotency_key: str | None) -> None:
+    if idempotency_key is None:
+        return
+    now = datetime.now(UTC)
+    cache_key = f"{ctx.link_id}:{idempotency_key}"
+    with _redeem_rate_lock:
+        if len(_redeem_idempotency_seen) >= _REDEEM_IDEMPOTENCY_MAX:
+            oldest = min(_redeem_idempotency_seen, key=_redeem_idempotency_seen.__getitem__)
+            _redeem_idempotency_seen.pop(oldest, None)
+        _redeem_idempotency_seen[cache_key] = now
 
 
 async def _resolve_owner_for_link(
@@ -128,16 +229,21 @@ async def preview(
 
 @router.post("/{token}/redeem", response_model=ShareRedeemResponse)
 async def redeem(
+    request: Request,
     ctx: ShareTokenContext = Depends(require_share_token),
     db: AsyncSession = Depends(get_session),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> ShareRedeemResponse:
     """Anonymous accept - bumps redeem_count + stamps last_redeemed_at.
 
-    Call on explicit user action only (CLI `share accept` from a
-    logged-out terminal). The web landing page uses /preview for
+    Call on explicit user action only (CLI `inbox accept <url>` from
+    a logged-out terminal). The web landing page uses /preview for
     page render and /upgrade for the logged-in accept path; only
     the CLI's anonymous flow hits /redeem.
     """
+    if _idempotency_seen(ctx, idempotency_key):
+        return await _build_redeem_payload(ctx, db)
+    _check_redeem_rate_limit(request, ctx)
     await db.execute(
         update(ScopeShareLink)
         .where(ScopeShareLink.id == ctx.link_id)
@@ -148,6 +254,7 @@ async def redeem(
     )
     payload = await _build_redeem_payload(ctx, db)
     await db.commit()
+    _remember_idempotency(ctx, idempotency_key)
     return payload
 
 
@@ -175,7 +282,9 @@ async def upgrade(
     Hosted-pod env-bound api_keys rejected by require_user_auth_unbound.
     """
     body = body or UpgradeBody()
-    scope = (await db.execute(select(Scope).where(Scope.id == ctx.scope_id))).scalar_one_or_none()
+    scope = (
+        await db.execute(select(Scope).where(Scope.id == ctx.scope_id).with_for_update())
+    ).scalar_one_or_none()
     if scope is None:
         raise HTTPException(status.HTTP_410_GONE, "scope no longer available")
     if scope.user_id == auth.user_id:
@@ -187,6 +296,14 @@ async def upgrade(
     link = (
         await db.execute(select(ScopeShareLink).where(ScopeShareLink.id == ctx.link_id))
     ).scalar_one()
+    # Defense-in-depth after the source Scope row lock above: the auth
+    # dependency validates token state before route entry, and this
+    # re-check catches a revoke/expire that wins the race before we
+    # create durable membership.
+    if link.revoked_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "share link has been revoked")
+    if link.expires_at is not None and link.expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_410_GONE, "share link has expired")
 
     # Membership row (capability) — idempotent insert.
     existing = (

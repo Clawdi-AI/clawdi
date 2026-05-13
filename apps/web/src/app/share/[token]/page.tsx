@@ -14,16 +14,30 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
+import {
+	isVaultConflictDetail,
+	type VaultConflictDetail,
+	VaultConflictsAlert,
+} from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { env } from "@/lib/env";
 
 /**
- * Public share-link landing page (Spec §6 Web Surface).
+ * Public share-link landing page.
  *
  * Flow:
  *   1. Anonymous preview — call GET /api/share/{token} unauthenticated,
@@ -39,7 +53,7 @@ import { env } from "@/lib/env";
  * Auth handling:
  *   - Preview endpoint is anonymous.
  *   - Upgrade endpoint is Clerk-authenticated.
- *   - Vault content is NEVER previewed here; only counts. Spec §10.
+ *   - Vault content is NEVER previewed here; only counts.
  */
 
 interface SharePreview {
@@ -58,6 +72,19 @@ interface ShareUpgradeResponse {
 	membership_id: string;
 }
 
+interface MountTarget {
+	id: string;
+	slug: string;
+	kind: string;
+}
+
+interface MountDeferredDetail {
+	error: "mount_target_ambiguous";
+	message?: string;
+	owned_scopes: MountTarget[];
+	membership_id: string;
+}
+
 // The /upgrade endpoint commits membership server-side even when it
 // can't pick an auto-mount target (user owns 2+ scopes → 409
 // mount_target_ambiguous). From the user's POV this is "joined,
@@ -65,7 +92,9 @@ interface ShareUpgradeResponse {
 // not-found. The mutation's return type discriminates them so the
 // onSuccess branch can show the right message without treating a
 // genuine accept as an error.
-type UpgradeResult = { kind: "joined"; data: ShareUpgradeResponse } | { kind: "mount_deferred" };
+type UpgradeResult =
+	| { kind: "joined"; data: ShareUpgradeResponse }
+	| { kind: "mount_deferred"; detail: MountDeferredDetail };
 
 const API_URL = env.NEXT_PUBLIC_API_URL;
 
@@ -77,7 +106,7 @@ function buildLandingUrl(token: string): string {
 }
 
 async function fetchPreview(token: string): Promise<SharePreview> {
-	// Spec § 4.4 / API §: GET /api/share/{token}/preview — side-effect free,
+	// Preview is side-effect free:
 	// does NOT increment redeem_count. The /redeem POST is reserved for
 	// explicit-accept CTA, which on the web is the upgrade button below
 	// (logged-in path skips redeem entirely → straight to membership).
@@ -90,36 +119,57 @@ async function fetchPreview(token: string): Promise<SharePreview> {
 	return r.json();
 }
 
-async function upgradeShare(token: string, bearer: string): Promise<UpgradeResult> {
+async function upgradeShare(
+	token: string,
+	bearer: string,
+	allowVaultConflicts: boolean,
+	parentScopeId?: string,
+): Promise<UpgradeResult> {
 	const r = await fetch(`${API_URL}/api/share/${token}/upgrade`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${bearer}` },
+		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+		body: JSON.stringify({
+			allow_vault_conflicts: allowVaultConflicts,
+			...(parentScopeId ? { parent_scope_id: parentScopeId } : {}),
+		}),
 	});
 	if (r.status === 404) throw new ShareError("not_found");
 	if (r.status === 410) throw new ShareError("revoked");
 	if (r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {
-			detail?: { error?: string };
+			detail?: { error?: string } | VaultConflictDetail | MountDeferredDetail;
 		};
 		const detailError = body?.detail?.error;
 		if (detailError === "already_owner") throw new ShareError("already_owner");
+		if (isVaultConflictDetail(body?.detail)) {
+			throw new ShareError("vault_conflicts", r.status, body.detail);
+		}
 		// Membership IS created — only the auto-mount step deferred.
 		// Treat as success (user joined) and surface the mount-defer
 		// state to the UI. Without this branch, the multi-scope happy
 		// path looked like a generic "already_member" error.
-		if (detailError === "mount_target_ambiguous") return { kind: "mount_deferred" };
+		if (detailError === "mount_target_ambiguous") {
+			return { kind: "mount_deferred", detail: body.detail as MountDeferredDetail };
+		}
 		throw new ShareError("already_member");
 	}
 	if (!r.ok) throw new ShareError("unknown", r.status);
 	return { kind: "joined", data: await r.json() };
 }
 
-type ShareErrorCode = "not_found" | "revoked" | "already_member" | "already_owner" | "unknown";
+type ShareErrorCode =
+	| "not_found"
+	| "revoked"
+	| "already_member"
+	| "already_owner"
+	| "vault_conflicts"
+	| "unknown";
 
 class ShareError extends Error {
 	constructor(
 		public code: ShareErrorCode,
 		public status?: number,
+		public detail?: VaultConflictDetail,
 	) {
 		super(code);
 	}
@@ -131,6 +181,8 @@ export default function SharePage() {
 	const router = useRouter();
 	const { isSignedIn, getToken } = useAuth();
 	const { user } = useUser();
+	const [vaultConflict, setVaultConflict] = useState<VaultConflictDetail | null>(null);
+	const [parentScopeId, setParentScopeId] = useState("");
 
 	const preview = useQuery({
 		queryKey: ["share-preview", token],
@@ -139,12 +191,19 @@ export default function SharePage() {
 	});
 
 	const upgrade = useMutation({
-		mutationFn: async () => {
+		mutationFn: async ({
+			allowVaultConflicts = false,
+			parentScopeId: nextParentScopeId,
+		}: {
+			allowVaultConflicts?: boolean;
+			parentScopeId?: string;
+		} = {}) => {
 			const bearer = await getToken();
 			if (!bearer) throw new ShareError("unknown");
-			return upgradeShare(token, bearer);
+			return upgradeShare(token, bearer, allowVaultConflicts, nextParentScopeId);
 		},
 		onSuccess: (result) => {
+			setVaultConflict(null);
 			// Mount-deferred users stay on this page so they can read the
 			// "pick a parent" hint we render below; auto-redirecting them
 			// would dump them on /skills with no explanation of why the
@@ -153,6 +212,11 @@ export default function SharePage() {
 			if (result.kind === "mount_deferred") return;
 			const hasSkills = (preview.data?.skill_count ?? 0) > 0;
 			router.push(hasSkills ? "/skills" : "/vault");
+		},
+		onError: (error) => {
+			if (error instanceof ShareError && error.code === "vault_conflicts" && error.detail) {
+				setVaultConflict(error.detail);
+			}
 		},
 	});
 
@@ -199,9 +263,9 @@ export default function SharePage() {
 						/>
 						<ContentTile
 							icon={<Lock className="size-5" />}
-							label="Vault secrets"
+							label="Vault keys"
 							count={data.vault_count}
-							hint="Sign in to unlock"
+							hint="Key names only"
 							muted={data.vault_count === 0}
 						/>
 					</div>
@@ -209,15 +273,14 @@ export default function SharePage() {
 					<Separator />
 
 					{upgrade.isSuccess && upgrade.data?.kind === "mount_deferred" ? (
-						<Alert>
-							<CheckCircle2 />
-							<AlertTitle>You're in — mount deferred.</AlertTitle>
-							<AlertDescription>
-								Joined as a viewer of "{data.scope_name}". Because you own multiple scopes, pick a
-								parent on the agent page to compose this one into your workspace. Until then it's
-								visible under "Shared with you but not mounted" in <code>clawdi scope list</code>.
-							</AlertDescription>
-						</Alert>
+						<MountDeferredPanel
+							scopeName={data.scope_name}
+							detail={upgrade.data.detail}
+							parentScopeId={parentScopeId}
+							onParentScopeIdChange={setParentScopeId}
+							isPending={upgrade.isPending}
+							onMount={() => upgrade.mutate({ parentScopeId })}
+						/>
 					) : upgrade.isSuccess ? (
 						<Alert>
 							<CheckCircle2 />
@@ -236,7 +299,7 @@ export default function SharePage() {
 					) : isSignedIn ? (
 						<div className="space-y-3">
 							<Button
-								onClick={() => upgrade.mutate()}
+								onClick={() => upgrade.mutate({})}
 								disabled={upgrade.isPending}
 								className="w-full"
 								size="lg"
@@ -246,9 +309,17 @@ export default function SharePage() {
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">viewer</Badge> — read-only access to
-								skills{data.vault_count > 0 ? " and vault secrets" : ""}. {data.owner_display} keeps
-								full control.
+								skills{data.vault_count > 0 ? " and vault key references" : ""}.{" "}
+								{data.owner_display} keeps full control.
 							</p>
+							{vaultConflict ? (
+								<VaultConflictsAlert
+									detail={vaultConflict}
+									actionLabel="Accept anyway"
+									actionPending={upgrade.isPending}
+									onAction={() => upgrade.mutate({ allowVaultConflicts: true, parentScopeId })}
+								/>
+							) : null}
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
@@ -256,7 +327,8 @@ export default function SharePage() {
 										You're already a member — check your dashboard.
 									</AlertDescription>
 								</Alert>
-							) : upgrade.error ? (
+							) : upgrade.error instanceof ShareError &&
+								upgrade.error.code === "vault_conflicts" ? null : upgrade.error ? (
 								<Alert variant="destructive">
 									<AlertCircle />
 									<AlertDescription>
@@ -279,8 +351,8 @@ export default function SharePage() {
 									Prefer the CLI?
 								</div>
 								<p className="mt-1 text-xs text-muted-foreground">
-									Run this in your terminal — skills sync immediately; sign in later to unlock vault
-									secrets and add it permanently.
+									Run this in your terminal — skills sync immediately; sign in later to keep the
+									membership across devices.
 								</p>
 								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
 							</div>
@@ -320,18 +392,70 @@ function ContentTile({
 	);
 }
 
+function MountDeferredPanel({
+	scopeName,
+	detail,
+	parentScopeId,
+	onParentScopeIdChange,
+	isPending,
+	onMount,
+}: {
+	scopeName: string;
+	detail: MountDeferredDetail;
+	parentScopeId: string;
+	onParentScopeIdChange: (value: string) => void;
+	isPending: boolean;
+	onMount: () => void;
+}) {
+	return (
+		<Alert>
+			<CheckCircle2 />
+			<AlertTitle>You're in — mount it where you need it.</AlertTitle>
+			<AlertDescription className="space-y-3">
+				<p>
+					Joined as a viewer of "{scopeName}". Mount it into one workspace now; you can mount the
+					same shared scope into more workspaces later.
+				</p>
+				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+					<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
+						<SelectTrigger className="min-w-0 flex-1">
+							<SelectValue placeholder="Choose parent scope" />
+						</SelectTrigger>
+						<SelectContent>
+							{detail.owned_scopes.map((scope) => (
+								<SelectItem key={scope.id} value={scope.id}>
+									{scope.slug} ({scope.kind})
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<Button size="sm" disabled={!parentScopeId || isPending} onClick={onMount}>
+						{isPending ? "Mounting…" : "Mount here"}
+					</Button>
+				</div>
+			</AlertDescription>
+		</Alert>
+	);
+}
+
 function CopyableCommand({ command }: { command: string }) {
 	return (
-		<div className="mt-2 flex items-center gap-2">
+		<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
 			<code className="flex-1 truncate rounded border bg-background px-2 py-1 font-mono text-xs">
 				$ {command}
 			</code>
 			<Button
 				variant="outline"
 				size="sm"
+				aria-label="Copy CLI accept command"
 				onClick={() => {
 					if (typeof navigator !== "undefined" && navigator.clipboard) {
-						navigator.clipboard.writeText(command).catch(() => {});
+						navigator.clipboard
+							.writeText(command)
+							.then(() => toast.success("Command copied"))
+							.catch(() => toast.error("Couldn't copy — select the command and copy manually"));
+					} else {
+						toast.error("Couldn't copy — select the command and copy manually");
 					}
 				}}
 			>
@@ -376,6 +500,8 @@ function titleForError(code: ShareErrorCode): string {
 			return "Already a member";
 		case "already_owner":
 			return "That's your own scope";
+		case "vault_conflicts":
+			return "Vault key conflict";
 		default:
 			return "Couldn't load this share";
 	}
@@ -391,6 +517,8 @@ function describeError(code: ShareErrorCode): string {
 			return "You already accepted this share — find it on your dashboard.";
 		case "already_owner":
 			return "You own this scope — nothing to accept.";
+		case "vault_conflicts":
+			return "Some vault key names already exist in your parent scope.";
 		default:
 			return "Please try again. If the problem persists, ping the owner.";
 	}

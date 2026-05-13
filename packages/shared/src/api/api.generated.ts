@@ -1417,8 +1417,8 @@ export interface paths {
          * Redeem
          * @description Anonymous accept - bumps redeem_count + stamps last_redeemed_at.
          *
-         *     Call on explicit user action only (CLI `share accept` from a
-         *     logged-out terminal). The web landing page uses /preview for
+         *     Call on explicit user action only (CLI `inbox accept <url>` from
+         *     a logged-out terminal). The web landing page uses /preview for
          *     page render and /upgrade for the logged-in accept path; only
          *     the CLI's anonymous flow hits /redeem.
          */
@@ -1488,7 +1488,7 @@ export interface paths {
          *     Contract:
          *     - Raw token is returned ONCE in the create response; server
          *       stores only the SHA-256 hash + prefix.
-         *     - Gate on owner having `users.name` set (spec § 4.5). Falling
+         *     - Gate on owner having `users.name` set. Falling
          *       back to email local-part would leak PII to recipients.
          *     - Resolves + freezes `resolved_owner_handle` on the link row so
          *       every downstream consumer (preview, redeem, upgrade) reads

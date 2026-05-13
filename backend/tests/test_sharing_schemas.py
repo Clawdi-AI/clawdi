@@ -36,3 +36,22 @@ def test_invitation_create_validates_email_shape():
 
     parsed = InvitationCreate.model_validate({"email": "alice@example.com"})
     assert parsed.email == "alice@example.com"
+
+
+def test_mount_alias_validation_matches_database_shape():
+    from app.schemas.sharing import MountCreate, UpgradeBody
+
+    parsed = UpgradeBody.model_validate({"alias": "@alice/team-tools-2"})
+    assert parsed.alias == "@alice/team-tools-2"
+
+    parsed_mount = MountCreate.model_validate(
+        {"source_scope_id": "source", "alias": "alice shared/tools"}
+    )
+    assert parsed_mount.alias == "alice shared/tools"
+
+    with pytest.raises(ValidationError):
+        UpgradeBody.model_validate({"alias": ""})
+    with pytest.raises(ValidationError):
+        MountCreate.model_validate({"source_scope_id": "source", "alias": "../bad\nalias"})
+    with pytest.raises(ValidationError):
+        UpgradeBody.model_validate({"alias": "x" * 81})

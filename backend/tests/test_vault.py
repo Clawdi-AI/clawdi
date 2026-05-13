@@ -9,8 +9,20 @@ DB instead of mocked crypto.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+import uuid
+
 import httpx
 import pytest
+from httpx import ASGITransport
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import AuthContext, get_auth
+from app.core.database import get_session
+from app.main import app
+from app.models.api_key import ApiKey
+from app.models.vault import Vault
 
 
 @pytest.mark.asyncio
@@ -75,6 +87,62 @@ async def test_vault_delete_cascades_items(cli_client: httpx.AsyncClient):
     # After vault deletion, resolve must not surface that item anymore.
     resolved = (await cli_client.post("/api/vault/resolve")).json()
     assert "AWS_ACCESS_KEY" not in resolved
+
+
+@pytest.mark.asyncio
+async def test_env_bound_key_cannot_mutate_other_owned_scope_vault(db_session, seed_user):
+    from tests.conftest import create_env_with_scope
+
+    env_a = await create_env_with_scope(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="vault-env-a",
+        machine_name="Vault Env A",
+    )
+    env_b = await create_env_with_scope(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="vault-env-b",
+        machine_name="Vault Env B",
+    )
+    vault_a = Vault(user_id=seed_user.id, scope_id=env_a.default_scope_id, slug="shared", name="A")
+    vault_b = Vault(user_id=seed_user.id, scope_id=env_b.default_scope_id, slug="shared", name="B")
+    db_session.add_all([vault_a, vault_b])
+    await db_session.commit()
+
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash=uuid.uuid4().hex,
+        key_prefix="clawdi_test",
+        label="env-a",
+        scopes=None,
+        environment_id=env_a.id,
+    )
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=key)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            blocked = await ac.delete(f"/api/vault/shared?scope_id={env_b.default_scope_id}")
+            assert blocked.status_code == 404, blocked.text
+
+            own = await ac.delete(f"/api/vault/shared?scope_id={env_a.default_scope_id}")
+            assert own.status_code == 200, own.text
+    finally:
+        app.dependency_overrides.clear()
+
+    remaining = (
+        await db_session.execute(select(Vault).where(Vault.scope_id == env_b.default_scope_id))
+    ).scalar_one_or_none()
+    assert remaining is not None
 
 
 @pytest.mark.asyncio

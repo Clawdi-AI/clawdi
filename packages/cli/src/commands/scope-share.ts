@@ -1,3 +1,4 @@
+import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
@@ -103,4 +104,7 @@ export async function scopeShareCommand(
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
 	console.log(`Recipient runs: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
+	console.log();
+	console.log(chalk.bold("Agent handoff prompt:"));
+	console.log(buildShareAgentHandoffPrompt(body));
 }

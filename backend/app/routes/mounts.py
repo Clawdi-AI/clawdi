@@ -7,7 +7,8 @@ grant on the source. Creating a mount requires:
      scope. This re-checks the viewer's read capability so a mount
      can't bypass the membership model.
 
-Spec: docs/superpowers/specs/2026-05-11-scope-sharing-spec.md
+See docs/scenarios/scope-sharing-demo.md for the user-facing
+composition flows.
 """
 
 from __future__ import annotations
@@ -178,6 +179,16 @@ async def ensure_mount(
             db.add(mount)
             await db.flush()
     except IntegrityError as err:
+        existing_after_race = (
+            await db.execute(
+                select(ScopeMount).where(
+                    ScopeMount.parent_scope_id == parent_id,
+                    ScopeMount.source_scope_id == source_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_after_race is not None:
+            return existing_after_race
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {

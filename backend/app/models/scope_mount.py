@@ -7,9 +7,8 @@ layer). Mount edges are configuration on the PARENT (X), not
 permission grants on the SOURCE (Y) — the resolver always re-checks
 the viewer's independent membership in the source.
 
-See `docs/superpowers/specs/2026-05-11-scope-sharing-spec.md`
-§ "Data model" and § "Auto-mount target resolution" for the full
-contract.
+See `docs/scenarios/scope-sharing-demo.md` for the end-to-end
+composition flow this model supports.
 """
 
 import uuid
@@ -22,6 +21,7 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,7 +34,12 @@ from app.models.user import User as User  # noqa: F401 - FK target
 class ScopeMount(Base, TimestampMixin):
     __tablename__ = "scope_mounts"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
     parent_scope_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("scopes.id", ondelete="CASCADE"),
@@ -46,8 +51,8 @@ class ScopeMount(Base, TimestampMixin):
         nullable=False,
     )
     # Alias is unique within parent_scope_id (see uq below). Natural
-    # form is `@<owner-handle>/<source-slug>` — suffix-bumped only on
-    # collision per spec § Hard questions #7.
+    # form is `@<owner-handle>/<source-slug>` — suffix-bumped only
+    # on collision.
     alias: Mapped[str] = mapped_column(String(80), nullable=False)
     # 'live' is the only v2 mode. 'snapshot_rev_N' reserved for v3
     # (pin a mount to a specific revision of the source); CHECK
@@ -78,4 +83,5 @@ class ScopeMount(Base, TimestampMixin):
         CheckConstraint("mode IN ('live')", name="ck_scope_mounts_mode_v2"),
         Index("ix_scope_mounts_parent", "parent_scope_id"),
         Index("ix_scope_mounts_source", "source_scope_id"),
+        Index("ix_scope_mounts_created_by", "created_by"),
     )

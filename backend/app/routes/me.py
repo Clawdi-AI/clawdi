@@ -7,11 +7,8 @@ Three surfaces used by the invitee dashboard:
   POST /api/me/invitations/{id}/decline  — delete pending row, no
         membership created
 
-The `auth` dep on accept is `require_user_auth_unbound` — env-bound
-deploy keys cannot accept invitations (would expand a hosted-pod's
-blast radius into another user's scope). List/decline use
-`require_user_auth` (read-only / cleanup are harmless from a
-deploy key).
+All routes use `require_user_auth_unbound` — env-bound deploy keys
+cannot inspect or mutate human invitation state.
 """
 
 from __future__ import annotations
@@ -26,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.auth import AuthContext, require_user_auth, require_user_auth_unbound
+from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.models.scope import Scope
 from app.models.scope_invitation import ScopeInvitation
@@ -49,7 +46,7 @@ router = APIRouter(prefix="/api/me", tags=["me"])
 
 @router.get("/invitations", response_model=list[InvitationResponse])
 async def list_my_invitations(
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
     """Return every pending invitation addressed to the current user.
@@ -228,7 +225,7 @@ async def accept_invitation(
 @router.post("/invitations/{invitation_id}/decline")
 async def decline_invitation(
     invitation_id: UUID,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """Hard-delete the pending invitation. 410 if it's already gone

@@ -1,12 +1,12 @@
 """Smoke tests for /api/share/{token}/{preview,redeem,upgrade}.
 
-Sanity coverage only — full per-edge testing lands with Phase G E2E.
-The point here is: with Phase A models in place, the three endpoints
-load, route, and respond with the right shapes + status codes.
+Sanity coverage for public share-token endpoints: the routes load,
+route, and respond with the right shapes + status codes.
 """
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -19,6 +19,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.scope_share_link import ScopeShareLink
 from app.models.user import User
+from app.routes import share_redeem as share_redeem_routes
 from app.services.sharing import generate_share_token, hash_share_token
 
 
@@ -111,6 +112,87 @@ async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, s
     ).scalar_one()
     assert link.redeem_count == 2
     assert link.last_redeemed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_redeem_idempotency_key_dedupes_counter(
+    client_unauth, db_session, seed_user, seed_scope
+):
+    from sqlalchemy import select
+
+    share_redeem_routes._redeem_idempotency_seen.clear()
+    raw = await _make_share_link(db_session, seed_scope, seed_user)
+    headers = {"Idempotency-Key": "retry-1"}
+    first = await client_unauth.post(f"/api/share/{raw}/redeem", headers=headers)
+    second = await client_unauth.post(f"/api/share/{raw}/redeem", headers=headers)
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    db_session.expire_all()
+    link = (
+        await db_session.execute(
+            select(ScopeShareLink).where(ScopeShareLink.token_hash == hash_share_token(raw))
+        )
+    ).scalar_one()
+    assert link.redeem_count == 1
+
+
+@pytest.mark.asyncio
+async def test_redeem_rate_limit_blocks_valid_token_flood(
+    client_unauth, db_session, monkeypatch, seed_user, seed_scope
+):
+    share_redeem_routes._redeem_rate.clear()
+    monkeypatch.setattr(share_redeem_routes, "_REDEEM_RATE_LIMIT", 2)
+    raw = await _make_share_link(db_session, seed_scope, seed_user)
+
+    assert (await client_unauth.post(f"/api/share/{raw}/redeem")).status_code == 200
+    assert (await client_unauth.post(f"/api/share/{raw}/redeem")).status_code == 200
+    blocked = await client_unauth.post(f"/api/share/{raw}/redeem")
+    assert blocked.status_code == 429, blocked.text
+    assert blocked.headers["retry-after"]
+
+
+def test_redeem_rate_limit_prunes_stale_and_bounds_buckets(monkeypatch):
+    share_redeem_routes._redeem_rate.clear()
+    monkeypatch.setattr(share_redeem_routes, "_REDEEM_RATE_MAX_BUCKETS", 2)
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        share_redeem_routes,
+        "_redeem_rate_last_prune_at",
+        now - timedelta(minutes=2),
+    )
+    share_redeem_routes._redeem_rate.update(
+        {
+            "stale": [now - timedelta(minutes=5)],
+            "oldest": [now - timedelta(seconds=50)],
+            "newest": [now - timedelta(seconds=10)],
+        }
+    )
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+    ctx = SimpleNamespace(link_id="fresh-link")
+
+    share_redeem_routes._check_redeem_rate_limit(request, ctx)
+
+    assert "stale" not in share_redeem_routes._redeem_rate
+    assert "oldest" not in share_redeem_routes._redeem_rate
+    assert "127.0.0.1:fresh-link" in share_redeem_routes._redeem_rate
+    assert len(share_redeem_routes._redeem_rate) <= 2
+
+
+def test_redeem_rate_limit_prune_is_time_gated(monkeypatch):
+    share_redeem_routes._redeem_rate.clear()
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(share_redeem_routes, "_redeem_rate_last_prune_at", now)
+    share_redeem_routes._redeem_rate["stale-other"] = [now - timedelta(minutes=5)]
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+    ctx = SimpleNamespace(link_id="fresh-link")
+
+    share_redeem_routes._check_redeem_rate_limit(request, ctx)
+
+    assert "stale-other" in share_redeem_routes._redeem_rate
+    assert "127.0.0.1:fresh-link" in share_redeem_routes._redeem_rate
 
 
 @pytest.mark.asyncio

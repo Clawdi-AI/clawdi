@@ -46,8 +46,8 @@ class ScopeMembership(Base, TimestampMixin):
     #              or post-anonymous token upgrade - all converge here)
     joined_via: Mapped[str] = mapped_column(String(32), nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # See spec section 11.6 - frozen owner display at join time so the local
-    # skill folder `<key>__<handle>/` never moves under the sharee.
+    # Frozen owner display at join time so the local skill folder
+    # `<key>__<handle>/` never moves under the sharee.
     resolved_owner_handle: Mapped[str] = mapped_column(String(64), nullable=False)
 
     __table_args__ = (

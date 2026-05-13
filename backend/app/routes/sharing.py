@@ -8,13 +8,9 @@ Every route is gated by:
      owns it. 404 (not 403) on either condition to avoid leaking
      scope existence to non-owners.
 
-Public anonymous routes (share-link redemption etc.) live in
-`share_redeem.py`; that one uses require_share_token instead.
-
-This module covers Plan Phase B tasks B.1–B.8 incrementally. The
-MVP commit ships B.1 skeleton + B.2 create-link so the owner
-dialog's "Generate link" action goes through end-to-end; list,
-revoke, invitations, members, and unshare land in follow-ups.
+Public anonymous routes (share-link preview, anonymous redemption,
+and logged-in upgrade) live in `share_redeem.py`; that module uses
+require_share_token for token-gated reads.
 """
 
 from __future__ import annotations
@@ -60,12 +56,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scopes", tags=["sharing"])
 
 
-async def _assert_scope_owner(db: AsyncSession, auth: AuthContext, scope_id: UUID) -> Scope:
+async def _assert_scope_owner(
+    db: AsyncSession,
+    auth: AuthContext,
+    scope_id: UUID,
+    *,
+    for_update: bool = False,
+) -> Scope:
     """Resolve scope and verify the caller owns it. 404 if the
     scope doesn't exist OR the caller isn't its owner — refusing
     to distinguish the two keeps scope IDs un-enumerable by
     non-owners."""
-    result = await db.execute(select(Scope).where(Scope.id == scope_id))
+    stmt = select(Scope).where(Scope.id == scope_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
     scope = result.scalar_one_or_none()
     if scope is None or scope.user_id != auth.user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
@@ -95,7 +100,7 @@ async def create_share_link(
     Contract:
     - Raw token is returned ONCE in the create response; server
       stores only the SHA-256 hash + prefix.
-    - Gate on owner having `users.name` set (spec § 4.5). Falling
+    - Gate on owner having `users.name` set. Falling
       back to email local-part would leak PII to recipients.
     - Resolves + freezes `resolved_owner_handle` on the link row so
       every downstream consumer (preview, redeem, upgrade) reads
@@ -217,7 +222,7 @@ async def revoke_share_link(
     members who already joined via it. Owner must explicitly call
     DELETE /api/scopes/{id}/members/{user_id} (B.7) for that.
     """
-    await _assert_scope_owner(db, auth, scope_id)
+    await _assert_scope_owner(db, auth, scope_id, for_update=True)
     result = await db.execute(
         select(ScopeShareLink).where(
             ScopeShareLink.id == link_id,
@@ -419,7 +424,7 @@ async def cancel_invitation(
 ) -> dict[str, str]:
     """Hard-delete a pending invitation. The invitee loses the
     pending entry on their dashboard next refresh."""
-    await _assert_scope_owner(db, auth, scope_id)
+    await _assert_scope_owner(db, auth, scope_id, for_update=True)
     row = (
         await db.execute(
             select(ScopeInvitation).where(
@@ -601,7 +606,7 @@ async def unshare_scope(
     links, cancels pending invitations, removes accepted members,
     and deletes mount edges those members had into this source.
     """
-    await _assert_scope_owner(db, auth, scope_id)
+    await _assert_scope_owner(db, auth, scope_id, for_update=True)
     now = datetime.now(UTC)
 
     active_links = (

@@ -6,10 +6,10 @@
  *   inbox decline <id>             # decline pending invitation
  *   inbox forget <id-or-alias>     # local-only: drop redeemed token
  *
- * Spec: docs/superpowers/specs/2026-05-11-scope-sharing-spec.md
- * § "clawdi inbox — incoming, awaiting my decision"
+ * User-facing flow: docs/scenarios/scope-sharing-demo.md
  */
 
+import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 
 import * as p from "@clack/prompts";
@@ -30,7 +30,7 @@ const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
  *   "https://…"      → https://…
  *   https://…,       → https://…
  *
- * Spec § "inbox accept polymorphism" normalize_accept_arg.
+ * Keep URL pastes from chat / Markdown usable for agents and humans.
  */
 function normalizeAcceptArg(raw: string): string {
 	let s = raw.trim();
@@ -67,6 +67,10 @@ function extractTokenFromUrl(input: string): string {
 		throw new Error(`URL is not a clawdi share link: ${input}`);
 	}
 	return match[1];
+}
+
+function redeemIdempotencyKey(token: string): string {
+	return `redeem-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
 }
 
 interface AcceptOpts {
@@ -374,7 +378,10 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await fetch(`${apiUrl}/api/share/${token}/redeem`, { method: "POST" });
+	const r = await fetch(`${apiUrl}/api/share/${token}/redeem`, {
+		method: "POST",
+		headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
+	});
 	if (r.status === 404) {
 		throw new Error("Share link not found. Ask the owner for a fresh one.");
 	}

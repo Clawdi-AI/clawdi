@@ -50,7 +50,7 @@ export interface ShareToken {
 	// most recent /api/share/{token}/scope index call. Used at
 	// cleanup time to avoid erasing folders that belong to OTHER
 	// shared scopes from the same owner (which share the
-	// `__<owner-handle>` suffix). See spec § 11.1.
+	// `__<owner-handle>` suffix).
 	last_seen_skill_keys?: string[];
 }
 

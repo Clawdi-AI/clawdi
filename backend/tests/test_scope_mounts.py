@@ -179,6 +179,49 @@ async def test_create_mount_idempotent_on_same_pair(
 
 
 @pytest.mark.asyncio
+async def test_same_source_can_mount_into_multiple_parent_scopes(
+    client, db_session, seed_user, seed_scope
+):
+    """The uniqueness boundary is (parent, source), not (user, source).
+
+    A user may compose the same shared source into multiple owned
+    workspaces. Re-posting to the same parent is idempotent, but
+    posting to another parent creates a second mount edge.
+    """
+    from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+
+    seed_user.name = "Bob"
+    second_parent = Scope(
+        user_id=seed_user.id,
+        name="Client",
+        slug=f"client-{uuid.uuid4().hex[:8]}",
+        kind=SCOPE_KIND_ENVIRONMENT,
+    )
+    db_session.add(second_parent)
+    await db_session.commit()
+    await db_session.refresh(second_parent)
+
+    src = await _seed_other_users_scope(
+        db_session, viewer_membership=True, viewer_user_id=seed_user.id
+    )
+
+    first = await client.post(
+        f"/api/scopes/{seed_scope.id}/mounts",
+        json={"source_scope_id": str(src.id)},
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"/api/scopes/{second_parent.id}/mounts",
+        json={"source_scope_id": str(src.id)},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] != first.json()["id"]
+    assert second.json()["parent_scope_id"] == str(second_parent.id)
+    assert second.json()["source_scope_id"] == str(src.id)
+
+
+@pytest.mark.asyncio
 async def test_delete_mount_drops_only_the_edge(
     client, db_session, seed_user, seed_scope
 ):

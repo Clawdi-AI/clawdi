@@ -9,7 +9,7 @@ Uniqueness is `(scope_id, invitee_user_id)` (NOT email): invitees
 are looked up to a `users.id` at invitation time, and email changes
 on the Clerk side don't lose the invite. `invitee_email` is kept
 as historical context for the owner's UI but is no longer the
-identity key. See spec sections 4.5 and 6.1.
+identity key.
 """
 
 import uuid
@@ -45,6 +45,7 @@ class ScopeInvitation(Base, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

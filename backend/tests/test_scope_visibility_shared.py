@@ -124,12 +124,11 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
     """A deploy-key bound to env X must NEVER gain visibility to
     scopes the user is a member of. The env binding is the blast-
     radius boundary (PR #77)."""
-    from tests.conftest import create_env_with_scope
-
     from app.models.api_key import ApiKey
     from app.models.scope import SCOPE_KIND_PERSONAL, Scope
     from app.models.scope_membership import ScopeMembership
     from app.models.user import User
+    from tests.conftest import create_env_with_scope
 
     nonce = uuid.uuid4().hex[:8]
     owner = User(

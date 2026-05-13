@@ -35,6 +35,8 @@ def test_scope_invitation_model_importable():
         "invited_by",
         "created_at",
     } <= cols
+    index_names = {i.name for i in ScopeInvitation.__table__.indexes}
+    assert "ix_scope_invitations_invited_by" in index_names
 
 
 def test_scope_share_link_model_importable():
@@ -56,3 +58,5 @@ def test_scope_share_link_model_importable():
         "redeem_count",
         "last_redeemed_at",
     } <= cols
+    index_names = {i.name for i in ScopeShareLink.__table__.indexes}
+    assert "ix_scope_share_links_created_by" in index_names

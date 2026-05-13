@@ -639,11 +639,7 @@ scopeCmd
 	});
 
 // ─────────────────────────────────────────────────────────────
-// inbox — incoming shares awaiting my action.
-// Replaces the v1 `share accept|list|remove` verbs:
-//   share accept <url>     →  inbox accept <url>
-//   share list             →  scope list ("Shared with you but not mounted")
-//   share remove <id>      →  inbox forget <id-or-alias>
+// inbox — incoming invitations and share URLs awaiting my action.
 // ─────────────────────────────────────────────────────────────
 const inboxCmd = program
 	.command("inbox")

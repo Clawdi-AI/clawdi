@@ -18,6 +18,9 @@ async def test_scope_mount_model_imports():
     constraint_names = {c.name for c in ScopeMount.__table__.constraints}
     assert "uq_scope_mounts_parent_source" in constraint_names
     assert "uq_scope_mounts_parent_alias" in constraint_names
+    index_names = {i.name for i in ScopeMount.__table__.indexes}
+    assert "ix_scope_mounts_created_by" in index_names
+    assert ScopeMount.__table__.c.id.server_default is not None
 
 
 @pytest.mark.asyncio

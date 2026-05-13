@@ -41,10 +41,11 @@ class ScopeShareLink(Base, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     # Owner handle frozen at link creation; every downstream consumer
     # (anonymous redeem response, membership row at upgrade time)
-    # reads this same value. See spec sections 11.2 and 11.6.
+    # reads this same value.
     resolved_owner_handle: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,11 +1,9 @@
 /**
  * Eager-pull helper used by every "accept a shared scope" surface
- * (inbox accept URL, inbox accept invitation, scope invites --accept,
- * email-invitation accept). Pre-extraction this lived in inbox.ts AND
- * scope-invites.ts in two subtly-different shapes — the inbox copy
- * was parallelized, the scope-invites copy wasn't, and only the
- * inbox copy updated the local share-tokens record on the anon →
- * upgraded transition.
+ * (inbox accept URL, inbox accept invitation, email-invitation
+ * accept). Pre-extraction this lived in multiple accept paths in
+ * subtly different shapes; this helper keeps eager pulls and local
+ * share-token updates consistent.
  *
  * Shape:
  *   1. Page through /api/skills?scope_id=<x> to enumerate active

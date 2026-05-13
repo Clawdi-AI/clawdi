@@ -162,7 +162,7 @@ async def delete_vault(
     # in multiple scopes (Personal + env-A); without it, a multi-
     # match raises 409 ambiguous_vault_slug rather than silently
     # picking the most-recently-updated.
-    vault = await _get_vault(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
     await db.delete(vault)
     await db.commit()
     return VaultDeleteResponse(status="deleted")
@@ -209,7 +209,7 @@ async def upsert_vault_items(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
-    vault = await _get_vault(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
@@ -241,7 +241,7 @@ async def delete_vault_items(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
-    vault = await _get_vault(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name in body.fields:
@@ -329,12 +329,18 @@ async def resolve_vault(
     could decrypt vaults belonging to Personal or to another env.
     """
     if scope_id is None:
-        visible_scope_ids = await scope_ids_visible_to(db, auth)
+        # Unscoped CLI resolution intentionally uses exactly one
+        # write-default scope. Mounted/shared scopes are only included
+        # when the caller passes an explicit parent scope_id, which
+        # prevents accidental fan-out of another owner's plaintext
+        # secrets into a sharee's process environment.
+        default_scope_id = await resolve_default_write_scope(db, auth)
+        effective_scope_ids = [default_scope_id]
     else:
         ordered = await _composition_precedence(db, auth, scope_id)
         if not ordered:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
-        visible_scope_ids = [entry["scope_id"] for entry in ordered]
+        effective_scope_ids = [entry["scope_id"] for entry in ordered]
 
     if key is not None:
         if scope_id is None:
@@ -345,7 +351,7 @@ async def resolve_vault(
                     "display": str(sid),
                     "mounted_at": None,
                 }
-                for sid in visible_scope_ids
+                for sid in effective_scope_ids
             ]
 
         wanted = key.upper()
@@ -408,7 +414,7 @@ async def resolve_vault(
 
     result = await db.execute(
         select(Vault).where(
-            Vault.scope_id.in_(visible_scope_ids),
+            Vault.scope_id.in_(effective_scope_ids),
         )
     )
     vaults = result.scalars().all()
@@ -422,6 +428,54 @@ async def resolve_vault(
             env[_env_key(item.section, item.item_name)] = plaintext
 
     return env
+
+
+async def _get_vault_write(
+    auth: AuthContext,
+    slug: str,
+    db: AsyncSession,
+    *,
+    scope_id: UUID | None = None,
+) -> Vault:
+    """Fetch a vault for mutation, restricted to caller-owned scopes.
+
+    Shared memberships can read vault metadata, but they never grant
+    mutation rights. Write paths therefore use an owner-only scope
+    inventory instead of `_get_vault`'s visibility set, while still
+    preserving env-bound api_key blast-radius limits.
+    """
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        owned_scope_ids = [await resolve_default_write_scope(db, auth)]
+    else:
+        owned_scope_ids = (
+            (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id)))
+            .scalars()
+            .all()
+        )
+    base_q = select(Vault).where(
+        Vault.scope_id.in_(owned_scope_ids),
+        Vault.slug == slug,
+    )
+    if scope_id is not None:
+        if scope_id not in owned_scope_ids:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
+        base_q = base_q.where(Vault.scope_id == scope_id)
+    rows = (await db.execute(base_q)).scalars().all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
+    if len(rows) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ambiguous_vault_slug",
+                "message": (
+                    f"Vault '{slug}' exists in multiple owned scopes; "
+                    "specify scope_id query param to disambiguate."
+                ),
+                "scope_ids": [str(r.scope_id) for r in rows],
+            },
+        )
+    return rows[0]
 
 
 async def _get_vault(

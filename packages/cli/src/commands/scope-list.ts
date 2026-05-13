@@ -56,6 +56,10 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 		}),
 	);
 	for (const [scopeId, mounts] of mountResults) mountsByParent.set(scopeId, mounts);
+	const mountsAcrossParents = [...mountsByParent.values()].flat();
+	const mountedSourceIds = new Set(mountsAcrossParents.map((m) => m.source_scope_id));
+	const sharedMounted = shared.filter((s) => mountedSourceIds.has(s.id));
+	const sharedPendingMount = shared.filter((s) => !mountedSourceIds.has(s.id));
 
 	if (opts.json) {
 		console.log(
@@ -69,14 +73,23 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 						is_owner: true,
 						mounts: mountsByParent.get(s.id) ?? [],
 					})),
-					// Shared scopes (membership, not mounted into any owned)
-					// surfaced for completeness — agents can render them as
-					// "ready to mount" rows.
-					shared_pending_mount: shared.map((s) => ({
+					// Shared scopes with no mount edge into any owned
+					// parent. Agents can render these as "ready to mount".
+					shared_pending_mount: sharedPendingMount.map((s) => ({
 						id: s.id,
 						slug: s.slug,
 						name: s.name,
 						kind: s.kind,
+					})),
+					// A shared source can be mounted into more than one
+					// owned parent. Surface mounted memberships separately
+					// so callers do not mistake them for unmounted work.
+					shared_mounted: sharedMounted.map((s) => ({
+						id: s.id,
+						slug: s.slug,
+						name: s.name,
+						kind: s.kind,
+						mounts: mountsAcrossParents.filter((m) => m.source_scope_id === s.id),
 					})),
 				},
 				null,
@@ -108,17 +121,34 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 		}
 	}
 
-	if (shared.length > 0) {
+	if (sharedMounted.length > 0) {
 		console.log();
 		console.log(
 			chalk.gray(
-				`Shared with you but not mounted (${shared.length}) — these scopes are visible via membership but ` +
+				`Shared with you and mounted (${sharedMounted.length}) — you can mount the same shared scope ` +
+					`into additional owned scopes with \`clawdi scope mount <slug> --into <parent>\`.`,
+			),
+		);
+		for (const s of sharedMounted) {
+			const mounts = mountsAcrossParents.filter((m) => m.source_scope_id === s.id);
+			console.log(
+				`  ${chalk.magenta(s.slug)}  ${chalk.gray(s.id.slice(0, 8))}  ` +
+					chalk.dim(`mounted ${mounts.length} time${mounts.length === 1 ? "" : "s"}`),
+			);
+		}
+	}
+
+	if (sharedPendingMount.length > 0) {
+		console.log();
+		console.log(
+			chalk.gray(
+				`Shared with you but not mounted (${sharedPendingMount.length}) — these scopes are visible via membership but ` +
 					`haven't been composed into one of your scopes yet. ` +
 					`Run \`clawdi scope mount <slug> --into <parent>\` to compose, ` +
 					`or accept again via \`clawdi inbox accept <url>\`.`,
 			),
 		);
-		for (const s of shared) {
+		for (const s of sharedPendingMount) {
 			console.log(
 				`  ${chalk.magenta(s.slug)}  ${chalk.gray(s.id.slice(0, 8))}  ${chalk.dim(`(${s.kind})`)}`,
 			);

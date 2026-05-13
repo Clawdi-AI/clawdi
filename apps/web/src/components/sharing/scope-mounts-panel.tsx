@@ -4,6 +4,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Workflow } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +28,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, useAuthedFetch } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
+import {
+	formatApiError,
+	isVaultConflictDetail,
+	parseApiDetail,
+	type VaultConflictDetail,
+	VaultConflictsAlert,
+} from "./vault-conflicts";
 
 /**
  * Per-scope mount management panel (Plan §MF.2).
@@ -53,6 +72,10 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const [sourceScopeId, setSourceScopeId] = useState("");
+	const [blockedMount, setBlockedMount] = useState<{
+		sourceScopeId: string;
+		detail: VaultConflictDetail;
+	} | null>(null);
 
 	const mounts = useQuery({
 		queryKey: ["scope-mounts", scopeId],
@@ -89,23 +112,40 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 	}, [mountCandidates, sourceScopeId]);
 
 	const mount = useMutation({
-		mutationFn: async (sourceId: string) => {
+		mutationFn: async ({
+			sourceId,
+			allowVaultConflicts = false,
+		}: {
+			sourceId: string;
+			allowVaultConflicts?: boolean;
+		}) => {
 			await authedFetch(`/api/scopes/${scopeId}/mounts`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ source_scope_id: sourceId }),
+				body: JSON.stringify({
+					source_scope_id: sourceId,
+					allow_vault_conflicts: allowVaultConflicts,
+				}),
 			});
 		},
 		onSuccess: () => {
 			setSourceScopeId("");
+			setBlockedMount(null);
 			qc.invalidateQueries({ queryKey: ["scope-mounts", scopeId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Scope mounted — shared skills now compose into this agent.");
+			toast.success("Scope mounted — shared skills now appear in this workspace.");
 		},
-		onError: (e) => {
+		onError: (e, variables) => {
+			if (e instanceof ApiError && e.status === 409) {
+				const detail = parseApiDetail(e.detail);
+				if (isVaultConflictDetail(detail)) {
+					setBlockedMount({ sourceScopeId: variables.sourceId, detail });
+					return;
+				}
+			}
 			toast.error("Failed to mount scope", {
-				description: e instanceof ApiError ? `HTTP ${e.status}: ${e.detail}` : errorMessage(e),
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
 	});
@@ -127,13 +167,24 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 		},
 		onError: (e) => {
 			toast.error("Failed to unmount", {
-				description: e instanceof ApiError ? `HTTP ${e.status}: ${e.detail}` : errorMessage(e),
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
 	});
 
 	if (mounts.isLoading || scopes.isLoading) {
 		return <Skeleton className="h-20 w-full" />;
+	}
+	if (mounts.error || scopes.error) {
+		const error = mounts.error ?? scopes.error;
+		return (
+			<Alert variant="destructive">
+				<Workflow className="size-4" />
+				<AlertDescription>
+					{error instanceof ApiError ? formatApiError(error.detail) : errorMessage(error)}
+				</AlertDescription>
+			</Alert>
+		);
 	}
 	const rows = mounts.data ?? [];
 	if (rows.length === 0 && mountCandidates.length === 0) return null;
@@ -148,13 +199,19 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 				</Badge>
 			</div>
 			<p className="px-1 text-xs text-muted-foreground">
-				Other people's scopes composed into this one. Their skills + vault read through here as
-				read-only.
+				Shared scopes composed into this workspace. Skills are read-only; vault lookups use your own
+				values first. The same shared scope can be mounted into multiple workspaces.
 			</p>
 			{mountCandidates.length > 0 ? (
-				<div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
-					<Select value={sourceScopeId} onValueChange={setSourceScopeId}>
-						<SelectTrigger className="min-w-[220px] flex-1">
+				<div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center">
+					<Select
+						value={sourceScopeId}
+						onValueChange={(next) => {
+							setSourceScopeId(next);
+							setBlockedMount(null);
+						}}
+					>
+						<SelectTrigger className="min-w-0 flex-1 sm:min-w-[220px]">
 							<SelectValue placeholder="Add a shared scope" />
 						</SelectTrigger>
 						<SelectContent>
@@ -167,13 +224,26 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 					</Select>
 					<Button
 						size="sm"
-						onClick={() => mount.mutate(sourceScopeId)}
+						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
 					>
 						<Plus className="mr-1.5 size-3.5" />
 						{mount.isPending ? "Mounting…" : "Mount"}
 					</Button>
 				</div>
+			) : null}
+			{blockedMount ? (
+				<VaultConflictsAlert
+					detail={blockedMount.detail}
+					actionLabel="Mount anyway"
+					actionPending={mount.isPending}
+					onAction={() =>
+						mount.mutate({
+							sourceId: blockedMount.sourceScopeId,
+							allowVaultConflicts: true,
+						})
+					}
+				/>
 			) : null}
 			{rows.length > 0 ? (
 				<ul className="space-y-2">
@@ -195,24 +265,37 @@ export function ScopeMountsPanel({ scopeId }: { scopeId: string }) {
 									<span className="font-mono">@{m.source_owner_handle}</span>
 								</div>
 							</div>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								onClick={() => {
-									const ok = window.confirm(
-										`Unmount "${m.alias}"?\n\n` +
-											"This drops the composition edge only. Your read access to the " +
-											"source scope (via membership) stays intact — you can mount it " +
-											"again later from the CLI or web.",
-									);
-									if (ok) unmount.mutate(m.id);
-								}}
-								disabled={unmount.isPending}
-								className="text-muted-foreground hover:text-destructive"
-								aria-label={`Unmount ${m.alias}`}
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
+							<AlertDialog>
+								<AlertDialogTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										disabled={unmount.isPending}
+										className="text-muted-foreground hover:text-destructive"
+										aria-label={`Unmount ${m.alias}`}
+									>
+										<Trash2 className="size-3.5" />
+									</Button>
+								</AlertDialogTrigger>
+								<AlertDialogContent>
+									<AlertDialogHeader>
+										<AlertDialogTitle>Unmount "{m.alias}"?</AlertDialogTitle>
+										<AlertDialogDescription>
+											This removes only the composition edge. Your read access to the source scope
+											stays intact, so you can mount it again later.
+										</AlertDialogDescription>
+									</AlertDialogHeader>
+									<AlertDialogFooter>
+										<AlertDialogCancel>Cancel</AlertDialogCancel>
+										<AlertDialogAction
+											onClick={() => unmount.mutate(m.id)}
+											className="bg-destructive text-white hover:bg-destructive/90"
+										>
+											Unmount
+										</AlertDialogAction>
+									</AlertDialogFooter>
+								</AlertDialogContent>
+							</AlertDialog>
 						</li>
 					))}
 				</ul>

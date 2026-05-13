@@ -7,11 +7,19 @@ shape.
 """
 
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
+import httpx
 import pytest
+from httpx import ASGITransport
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import AuthContext, get_auth
+from app.core.database import get_session
+from app.main import app
+from app.models.api_key import ApiKey
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
 from app.models.scope_mount import ScopeMount
@@ -334,6 +342,47 @@ async def test_decline_invitation_deletes_without_membership(client, db_session,
         ).scalar_one_or_none()
         if leftover is not None:
             await db_session.delete(leftover)
+        await db_session.delete(scope)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_env_bound_key_cannot_list_or_decline_invitations(db_session, seed_user):
+    owner, scope, inv_id = await _seed_owner_and_invite(db_session, seed_user)
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="h" * 64,
+        key_prefix="clawdi_e",
+        label="env-bound",
+        environment_id=uuid.uuid4(),
+        scopes=None,
+    )
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=key)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            listed = await ac.get("/api/me/invitations")
+            assert listed.status_code == 403, listed.text
+
+            declined = await ac.post(f"/api/me/invitations/{inv_id}/decline")
+            assert declined.status_code == 403, declined.text
+    finally:
+        app.dependency_overrides.clear()
+        leftover = (
+            await db_session.execute(select(ScopeInvitation).where(ScopeInvitation.id == inv_id))
+        ).scalar_one_or_none()
+        assert leftover is not None
+        await db_session.delete(leftover)
         await db_session.delete(scope)
         await db_session.delete(owner)
         await db_session.commit()
