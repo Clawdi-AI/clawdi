@@ -108,6 +108,90 @@ function stripComments(src: string): string {
 	return out;
 }
 
+function findMatchingBrace(src: string, openBraceIndex: number): number {
+	let depth = 0;
+	let inSingleQuote = false;
+	let inDoubleQuote = false;
+	let inTemplate = false;
+	let inLineComment = false;
+	let inBlockComment = false;
+
+	for (let i = openBraceIndex; i < src.length; i++) {
+		const c = src[i];
+		const n = src[i + 1];
+
+		if (inLineComment) {
+			if (c === "\n") inLineComment = false;
+			continue;
+		}
+		if (inBlockComment) {
+			if (c === "*" && n === "/") {
+				inBlockComment = false;
+				i++;
+			}
+			continue;
+		}
+		if (inSingleQuote) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === "'") inSingleQuote = false;
+			continue;
+		}
+		if (inDoubleQuote) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === '"') inDoubleQuote = false;
+			continue;
+		}
+		if (inTemplate) {
+			if (c === "\\") {
+				i++;
+				continue;
+			}
+			if (c === "`") inTemplate = false;
+			continue;
+		}
+
+		if (c === "/" && n === "/") {
+			inLineComment = true;
+			i++;
+			continue;
+		}
+		if (c === "/" && n === "*") {
+			inBlockComment = true;
+			i++;
+			continue;
+		}
+		if (c === "'") {
+			inSingleQuote = true;
+			continue;
+		}
+		if (c === '"') {
+			inDoubleQuote = true;
+			continue;
+		}
+		if (c === "`") {
+			inTemplate = true;
+			continue;
+		}
+
+		if (c === "{") {
+			depth++;
+			continue;
+		}
+		if (c === "}") {
+			depth--;
+			if (depth === 0) return i;
+		}
+	}
+
+	return -1;
+}
+
 describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
 		const files = listHostedTsx();
@@ -256,8 +340,37 @@ describe("PostHog proxy route boundaries", () => {
 		expect(src).toMatch(
 			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
 		);
-		expect(src).toMatch(/if\s*\(\s*!isHostedBuild\s*\)\s*return\s*\[\s*\]/);
-		expect(src).toMatch(/source:\s*`\$\{posthogProxyPath\}\/:path\*`/);
+		expect(src).toMatch(/source:\s*["']\/s\/:id\.md["']\s*,\s*destination:\s*["']\/s\/:id\/md["']/);
+		expect(src).toMatch(
+			/source:\s*["']\/s\/:id\.json["']\s*,\s*destination:\s*["']\/s\/:id\/json["']/,
+		);
+
+		const hostedIfMatch = /\bif\s*\(\s*isHostedBuild\s*\)\s*\{/.exec(src);
+		expect(hostedIfMatch).not.toBeNull();
+		if (!hostedIfMatch) return;
+
+		const hostedIfOpenBrace = src.indexOf("{", hostedIfMatch.index);
+		expect(hostedIfOpenBrace).toBeGreaterThanOrEqual(0);
+		if (hostedIfOpenBrace < 0) return;
+
+		const hostedIfCloseBrace = findMatchingBrace(src, hostedIfOpenBrace);
+		expect(hostedIfCloseBrace).toBeGreaterThan(hostedIfOpenBrace);
+		if (hostedIfCloseBrace <= hostedIfOpenBrace) return;
+
+		const hostedPosthogBlock = src.slice(hostedIfOpenBrace + 1, hostedIfCloseBrace);
+		expect(hostedPosthogBlock).toMatch(/rewrites\.push\s*\(/);
+		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/static\/:path\*`/);
+		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/:path\*`/);
+
+		const posthogRewriteSources = [
+			...src.matchAll(/source:\s*`\$\{posthogProxyPath\}\/(?:static\/)?:path\*`/g),
+		];
+		expect(posthogRewriteSources.length).toBe(2);
+		for (const sourceMatch of posthogRewriteSources) {
+			const sourceIndex = sourceMatch.index ?? -1;
+			expect(sourceIndex).toBeGreaterThanOrEqual(hostedIfOpenBrace + 1);
+			expect(sourceIndex).toBeLessThan(hostedIfCloseBrace);
+		}
 	});
 
 	test("proxy.ts only exposes /_cdi/px as public in hosted builds", () => {
