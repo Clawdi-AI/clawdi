@@ -146,7 +146,12 @@ function MessageBlock({
 					</div>
 				) : null}
 
-				<div className="text-sm">
+				{/* `wrap-anywhere` (overflow-wrap: anywhere) lets long unbroken runs
+				    — typically inline `<code>` like `clawdi.memory_search({...})` —
+				    wrap inside the flex column instead of pushing the page wider
+				    than the viewport. Affects min-content sizing too, so the
+				    enclosing flex chain shrinks correctly on narrow screens. */}
+				<div className="text-sm wrap-anywhere">
 					{isUser ? (
 						<UserMessageBody content={message.content} />
 					) : (
