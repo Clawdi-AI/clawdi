@@ -149,27 +149,27 @@ async def accept_invitation(
             },
         ) from err
 
-    membership = ScopeMembership(
-        scope_id=inv.scope_id,
-        user_id=auth.user_id,
-        role="viewer",
-        joined_via="invite",
-        joined_at=datetime.now(UTC),
-        resolved_owner_handle=handle,
-    )
-    db.add(membership)
-    await db.delete(inv)
-    # Defensive sweep: clear any other pending invitations to this
-    # user for this scope. The unique constraint on
-    # (scope_id, invitee_user_id) makes this near-impossible, but a
-    # leftover row would surface as a phantom invite forever.
-    await db.execute(
-        sql_delete(ScopeInvitation).where(
-            ScopeInvitation.scope_id == inv.scope_id,
-            ScopeInvitation.invitee_user_id == auth.user_id,
+    existing_membership = (
+        await db.execute(
+            select(ScopeMembership).where(
+                ScopeMembership.scope_id == inv.scope_id,
+                ScopeMembership.user_id == auth.user_id,
+            )
         )
-    )
-    await db.flush()
+    ).scalar_one_or_none()
+    if existing_membership is not None:
+        membership = existing_membership
+    else:
+        membership = ScopeMembership(
+            scope_id=inv.scope_id,
+            user_id=auth.user_id,
+            role="viewer",
+            joined_via="invite",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=handle,
+        )
+        db.add(membership)
+        await db.flush()
 
     # --- Auto-mount (MC) ---
     mount_fields: dict = {}
@@ -196,6 +196,16 @@ async def accept_invitation(
         )
         mount_fields = mount_payload(mount)
 
+    # Defensive sweep: clear any other pending invitations to this
+    # user for this scope. The unique constraint on
+    # (scope_id, invitee_user_id) makes this near-impossible, but a
+    # leftover row would surface as a phantom invite forever.
+    await db.execute(
+        sql_delete(ScopeInvitation).where(
+            ScopeInvitation.scope_id == inv.scope_id,
+            ScopeInvitation.invitee_user_id == auth.user_id,
+        )
+    )
     await db.commit()
     logger.info(
         "invitation_accepted invitation_id=%s by=%s scope_id=%s mount=%s",

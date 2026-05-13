@@ -64,13 +64,15 @@ class ScopeMount(Base, TimestampMixin):
         # Same (parent, source) can only be mounted once. Updates to
         # alias/mode go via UPDATE rather than re-INSERT.
         UniqueConstraint(
-            "parent_scope_id", "source_scope_id",
+            "parent_scope_id",
+            "source_scope_id",
             name="uq_scope_mounts_parent_source",
         ),
         # Alias must be unique within a parent so the composed
         # namespace (`@alice/eng`, `@bob/eng`) stays unambiguous.
         UniqueConstraint(
-            "parent_scope_id", "alias",
+            "parent_scope_id",
+            "alias",
             name="uq_scope_mounts_parent_alias",
         ),
         CheckConstraint("mode IN ('live')", name="ck_scope_mounts_mode_v2"),

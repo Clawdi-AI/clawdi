@@ -14,6 +14,9 @@ from sqlalchemy import select
 
 from app.models.scope_invitation import ScopeInvitation
 from app.models.scope_membership import ScopeMembership
+from app.models.scope_mount import ScopeMount
+from app.models.vault import Vault, VaultItem
+from app.services.vault_crypto import encrypt
 
 
 async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
@@ -60,10 +63,34 @@ async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
     return owner, scope, inv.id
 
 
-@pytest.mark.asyncio
-async def test_me_invitations_lists_only_addressed_to_me(
-    client, db_session, seed_user
+async def _seed_vault_key(
+    db_session,
+    *,
+    user_id,
+    scope_id,
+    vault_slug: str,
+    item_name: str,
+    value: str = "test-value",
+    section: str = "",
 ):
+    vault = Vault(user_id=user_id, scope_id=scope_id, slug=vault_slug, name=vault_slug.upper())
+    db_session.add(vault)
+    await db_session.flush()
+    ciphertext, nonce = encrypt(value)
+    db_session.add(
+        VaultItem(
+            vault_id=vault.id,
+            section=section,
+            item_name=item_name,
+            encrypted_value=ciphertext,
+            nonce=nonce,
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_me_invitations_lists_only_addressed_to_me(client, db_session, seed_user):
     """Seed_user has email set in conftest; an invitation pointing at
     a DIFFERENT user must not appear in seed_user's inbox."""
     from app.models.scope import Scope
@@ -118,20 +145,28 @@ async def test_me_invitations_lists_only_addressed_to_me(
     finally:
         # Clean up parallel data
         other_invs = (
-            await db_session.execute(
-                select(ScopeInvitation).where(ScopeInvitation.scope_id == other_scope.id)
+            (
+                await db_session.execute(
+                    select(ScopeInvitation).where(ScopeInvitation.scope_id == other_scope.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for x in other_invs:
             await db_session.delete(x)
         await db_session.delete(other_scope)
         await db_session.delete(other)
         # And the primary one
         my_invs = (
-            await db_session.execute(
-                select(ScopeInvitation).where(ScopeInvitation.invitee_user_id == seed_user.id)
+            (
+                await db_session.execute(
+                    select(ScopeInvitation).where(ScopeInvitation.invitee_user_id == seed_user.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for x in my_invs:
             await db_session.delete(x)
         await db_session.delete(scope)
@@ -162,13 +197,17 @@ async def test_accept_invitation_creates_membership(client, db_session, seed_use
     finally:
         # Clean up membership + remaining scope/owner.
         memberships = (
-            await db_session.execute(
-                select(ScopeMembership).where(
-                    ScopeMembership.scope_id == scope.id,
-                    ScopeMembership.user_id == seed_user.id,
+            (
+                await db_session.execute(
+                    select(ScopeMembership).where(
+                        ScopeMembership.scope_id == scope.id,
+                        ScopeMembership.user_id == seed_user.id,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for m in memberships:
             await db_session.delete(m)
         await db_session.delete(scope)
@@ -177,9 +216,107 @@ async def test_accept_invitation_creates_membership(client, db_session, seed_use
 
 
 @pytest.mark.asyncio
-async def test_decline_invitation_deletes_without_membership(
-    client, db_session, seed_user
+async def test_accept_invitation_vault_conflict_can_retry_with_same_invitation(
+    client, db_session, seed_user, seed_scope
 ):
+    """A vault conflict blocks mount creation, but the pending
+    invitation must remain retryable. Otherwise the CLI's
+    `inbox accept <id> --allow-vault-conflicts` recovery path turns
+    into a 410 after the first blocked attempt.
+    """
+    owner, scope, inv_id = await _seed_owner_and_invite(db_session, seed_user)
+    await _seed_vault_key(
+        db_session,
+        user_id=owner.id,
+        scope_id=scope.id,
+        vault_slug="ai",
+        item_name="OPENAI_API_KEY",
+        value="owner-value",
+    )
+    await _seed_vault_key(
+        db_session,
+        user_id=seed_user.id,
+        scope_id=seed_scope.id,
+        vault_slug="ai",
+        item_name="OPENAI_API_KEY",
+        value="local-value",
+    )
+
+    try:
+        blocked = await client.post(f"/api/me/invitations/{inv_id}/accept")
+        assert blocked.status_code == 409, blocked.text
+        assert blocked.json()["detail"]["error"] == "vault_conflicts_blocked"
+
+        inbox = await client.get("/api/me/invitations")
+        assert inbox.status_code == 200
+        assert any(it["id"] == str(inv_id) for it in inbox.json())
+
+        memberships = (
+            (
+                await db_session.execute(
+                    select(ScopeMembership).where(
+                        ScopeMembership.scope_id == scope.id,
+                        ScopeMembership.user_id == seed_user.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(memberships) == 1
+
+        retried = await client.post(
+            f"/api/me/invitations/{inv_id}/accept",
+            json={"allow_vault_conflicts": True},
+        )
+        assert retried.status_code == 200, retried.text
+        body = retried.json()
+        assert body["scope_id"] == str(scope.id)
+        assert body["mount_parent_scope_id"] == str(seed_scope.id)
+
+        empty_inbox = await client.get("/api/me/invitations")
+        assert all(it["id"] != str(inv_id) for it in empty_inbox.json())
+
+        mounts = (
+            (
+                await db_session.execute(
+                    select(ScopeMount).where(
+                        ScopeMount.parent_scope_id == seed_scope.id,
+                        ScopeMount.source_scope_id == scope.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(mounts) == 1
+    finally:
+        memberships = (
+            (
+                await db_session.execute(
+                    select(ScopeMembership).where(
+                        ScopeMembership.scope_id == scope.id,
+                        ScopeMembership.user_id == seed_user.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for m in memberships:
+            await db_session.delete(m)
+        invitation = (
+            await db_session.execute(select(ScopeInvitation).where(ScopeInvitation.id == inv_id))
+        ).scalar_one_or_none()
+        if invitation is not None:
+            await db_session.delete(invitation)
+        await db_session.delete(scope)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_decline_invitation_deletes_without_membership(client, db_session, seed_user):
     """Decline removes the pending row; no membership ever appears."""
     owner, scope, inv_id = await _seed_owner_and_invite(db_session, seed_user)
     try:
@@ -193,9 +330,7 @@ async def test_decline_invitation_deletes_without_membership(
     finally:
         # Belt & suspenders cleanup
         leftover = (
-            await db_session.execute(
-                select(ScopeInvitation).where(ScopeInvitation.id == inv_id)
-            )
+            await db_session.execute(select(ScopeInvitation).where(ScopeInvitation.id == inv_id))
         ).scalar_one_or_none()
         if leftover is not None:
             await db_session.delete(leftover)
@@ -205,9 +340,7 @@ async def test_decline_invitation_deletes_without_membership(
 
 
 @pytest.mark.asyncio
-async def test_accept_invitation_addressed_to_other_user_410(
-    client, db_session, seed_user
-):
+async def test_accept_invitation_addressed_to_other_user_410(client, db_session, seed_user):
     """Cross-user attempt: A invites B, but C tries to accept B's
     invitation → 410 invitation not available (privacy-safe: same
     response shape as not-found)."""
@@ -229,10 +362,14 @@ async def test_accept_invitation_addressed_to_other_user_410(
     finally:
         # Clean
         rows = (
-            await db_session.execute(
-                select(ScopeInvitation).where(ScopeInvitation.scope_id == scope.id)
+            (
+                await db_session.execute(
+                    select(ScopeInvitation).where(ScopeInvitation.scope_id == scope.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for x in rows:
             await db_session.delete(x)
         await db_session.delete(scope)

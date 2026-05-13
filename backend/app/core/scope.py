@@ -345,16 +345,12 @@ async def scope_ids_visible_to(
     from app.models.scope_membership import ScopeMembership
 
     owned_ids = list(
-        (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id)))
-        .scalars()
-        .all()
+        (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))).scalars().all()
     )
     shared_ids = list(
         (
             await db.execute(
-                select(ScopeMembership.scope_id).where(
-                    ScopeMembership.user_id == auth.user_id
-                )
+                select(ScopeMembership.scope_id).where(ScopeMembership.user_id == auth.user_id)
             )
         )
         .scalars()
