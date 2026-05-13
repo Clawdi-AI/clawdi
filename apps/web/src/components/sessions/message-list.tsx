@@ -117,8 +117,12 @@ function MessageBlock({
 						<AgentIcon agent={agentType} size="lg" shape="circle" />
 					)
 				) : message.timestamp ? (
+					// Hover-reveal on pointer devices; always-on for touch
+					// (`hover: none`) — `group-hover` never fires from a tap,
+					// so without this fallback mobile users lose the
+					// timestamp entirely on grouped continuation rows.
 					<div
-						className="hidden h-5 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/60 group-hover:flex"
+						className="hidden h-5 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/60 group-hover:flex [@media(hover:none)]:flex"
 						title={formatAbsoluteTooltip(message.timestamp)}
 					>
 						{new Date(message.timestamp).toLocaleTimeString([], {
@@ -132,12 +136,18 @@ function MessageBlock({
 			{/* Content */}
 			<div className="min-w-0 flex-1">
 				{isGroupStart ? (
-					<div className="mb-1 flex items-center gap-2">
+					// `flex-wrap` is what keeps long header rows
+					// (`username · Opus 4.7 · 5/13/26, 15:30`) inside a
+					// narrow viewport. Without it, a 320px screen forces
+					// the whole page into horizontal scroll. The timestamp
+					// keeps `whitespace-nowrap` so it doesn't split
+					// mid-string when it wraps to its own line.
+					<div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
 						<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
 						{isUser ? null : <ModelBadge modelId={message.model} />}
 						{message.timestamp ? (
 							<span
-								className="text-xs text-muted-foreground"
+								className="whitespace-nowrap text-xs text-muted-foreground"
 								title={formatAbsoluteTooltip(message.timestamp)}
 							>
 								{formatGroupHeaderTime(message.timestamp)}
