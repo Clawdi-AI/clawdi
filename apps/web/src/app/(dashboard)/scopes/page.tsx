@@ -324,12 +324,21 @@ function SharedScopeRow({
 						Not mounted
 					</Badge>
 				) : (
-					<div className="flex flex-wrap gap-2">
+					<div className="space-y-1.5">
 						{placements.map((placement) => (
-							<Badge key={placement.id} variant="outline" className="font-mono">
-								{ownedScopeById.get(placement.parent_scope_id)?.name ?? "Owned scope"} /{" "}
-								{placement.alias}
-							</Badge>
+							<div
+								key={placement.id}
+								className="flex max-w-full items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs"
+							>
+								<Workflow className="size-3.5 shrink-0 text-muted-foreground" />
+								<span className="min-w-0 truncate">
+									{ownedScopeById.get(placement.parent_scope_id)?.name ?? "Owned scope"}
+								</span>
+								<span className="shrink-0 text-muted-foreground">/</span>
+								<span className="min-w-0 truncate font-mono text-muted-foreground">
+									{placement.alias}
+								</span>
+							</div>
 						))}
 					</div>
 				)}

@@ -273,17 +273,21 @@ export function ScopeMountsPanel({
 					{rows.map((m) => (
 						<li
 							key={m.id}
-							className="flex items-center justify-between gap-2 rounded-lg border p-3"
+							className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3"
 						>
-							<div className="min-w-0 flex-1">
-								<div className="flex items-center gap-2 text-sm">
-									<span className="font-mono font-medium">{m.alias}</span>
-									<span className="text-xs text-muted-foreground">
-										→ {m.source_scope_name}{" "}
-										<span className="font-mono">({m.source_scope_slug})</span>
+							<div className="min-w-0 space-y-1">
+								<div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+									<Badge variant="outline" className="w-fit max-w-full font-mono font-normal">
+										<span className="truncate">{m.alias}</span>
+									</Badge>
+									<span className="min-w-0 truncate text-sm font-medium">
+										{m.source_scope_name}
 									</span>
 								</div>
-								<div className="mt-0.5 text-xs text-muted-foreground">
+								<div className="truncate font-mono text-xs text-muted-foreground">
+									{m.source_scope_slug}
+								</div>
+								<div className="truncate text-xs text-muted-foreground">
 									from {m.source_owner_display}{" "}
 									<span className="font-mono">@{m.source_owner_handle}</span>
 								</div>
