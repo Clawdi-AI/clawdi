@@ -41,7 +41,9 @@ function CopyLinkButton({ url }: { url: string }) {
 		<Button
 			variant="outline"
 			size="icon"
-			className={cn("size-8", copied && "text-emerald-600")}
+			// 36px on mobile (matches Button's default `size="icon"`), 32px
+			// at `sm:` and up — denser desktop cluster, thumb-safe phone.
+			className={cn("size-9 sm:size-8", copied && "text-emerald-600")}
 			onClick={copy}
 			aria-label="Copy share link"
 			title="Copy share link"
@@ -62,7 +64,7 @@ function ExportMenu({ url }: { url: string }) {
 				<Button
 					variant="outline"
 					size="icon"
-					className="size-8"
+					className="size-9 sm:size-8"
 					aria-label="More options"
 					title="More options"
 				>

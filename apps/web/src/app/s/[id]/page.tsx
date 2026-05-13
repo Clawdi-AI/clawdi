@@ -187,8 +187,21 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 	return (
 		<>
 			<ShareHeader />
-			<div className="mx-auto max-w-4xl space-y-5 px-4 py-6 lg:px-6">
-				<div className="flex items-start justify-between gap-3">
+			{/* `w-full` pins this div to the body's cross-axis width even
+			    though it's a flex item with `mx-auto`. Without it,
+			    `mx-auto` (= `margin-inline: auto`) absorbs the cross-axis
+			    free space and the item shrinks to fit its **content** —
+			    which lets a `<pre>` rendered by `<Markdown>` push the
+			    wrapper past the viewport and trigger page-level horizontal
+			    scroll on narrow screens. `w-full` (`width: 100%`) restores
+			    the "fill body, capped at max-w-4xl, then centered"
+			    behavior that the visual design already assumed. */}
+			<div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 lg:px-6">
+				{/* Below `sm` (640px), controls drop under the title block —
+				    a long summary then claims the full row instead of fighting
+				    two icon buttons for ~80px on a 320px screen. Reverts to
+				    the original side-by-side at `sm:` and up. */}
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div className="min-w-0 flex-1 space-y-2">
 						<DetailTitle>{summaryText}</DetailTitle>
 						<DetailMeta>
@@ -196,7 +209,18 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 							{share.project_path ? (
 								<>
 									<span>·</span>
-									<span className="truncate font-mono">{share.project_path}</span>
+									{/* `truncate` alone (= `white-space:nowrap`) lets the
+									    span grow to its content inside a `flex-wrap`
+									    parent — `max-w-full` caps it at the row's
+									    content box and `min-w-0` breaks the flex
+									    `min-width:auto` default so the ellipsis can
+									    actually engage. */}
+									<span
+										className="min-w-0 max-w-full truncate font-mono"
+										title={share.project_path}
+									>
+										{share.project_path}
+									</span>
 								</>
 							) : null}
 							<span>·</span>
@@ -216,7 +240,9 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 							) : null}
 						</DetailMeta>
 					</div>
-					<PublicShareControls sessionId={share.id} />
+					<div className="sm:shrink-0">
+						<PublicShareControls sessionId={share.id} />
+					</div>
 				</div>
 
 				<SessionSidebar relatedRefs={share.related_refs} />
@@ -245,7 +271,12 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 				)}
 
 				{truncated ? (
-					<p className="text-xs text-muted-foreground">
+					// `wrap-anywhere` breaks the long `/s/{uuid}.md|json` URLs at
+					// any character — without it browsers treat the URL as one
+					// atomic word and push the page wider than the viewport at
+					// the `sm` breakpoint (where the available width is still
+					// only ~640px). Same trick we use in `MessageBlock` bodies.
+					<p className="text-xs text-muted-foreground wrap-anywhere">
 						Showing first {messagesPage.items.length} of {messagesPage.total} messages. Fetch the
 						full conversation via{" "}
 						<Link href={mdUrl} className="underline">
