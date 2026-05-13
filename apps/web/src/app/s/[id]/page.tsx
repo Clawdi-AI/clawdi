@@ -13,6 +13,7 @@ import { MessageList } from "@/components/sessions/message-list";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { ShareHeaderUser } from "@/components/share/header-user";
 import { NoAccess } from "@/components/share/no-access";
+import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { env } from "@/lib/env";
@@ -31,9 +32,10 @@ import {
  * don't run JavaScript. Mirrors the dashboard `/sessions/[id]` layout
  * (DetailTitle / DetailMeta / SessionSidebar / DetailStats / message
  * stream) so a visitor's view of a session looks the same as the owner's
- * — minus owner-only chrome (no share controls, no breadcrumb, no
+ * — minus owner-only chrome (no visibility toggle, no breadcrumb, no
  * direction toggle, no infinite-pagination — first page is enough for
- * the visit-then-leave use case).
+ * the visit-then-leave use case). Read-only share affordances (copy
+ * link, copy Markdown/JSON URLs) live in `PublicShareControls`.
  *
  * Auth: optional. JWT is forwarded so the backend can identify the
  * session owner — owner sees the same view as a visitor (no extra
@@ -186,32 +188,35 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 		<>
 			<ShareHeader />
 			<div className="mx-auto max-w-4xl space-y-5 px-4 py-6 lg:px-6">
-				<div className="space-y-2">
-					<DetailTitle>{summaryText}</DetailTitle>
-					<DetailMeta>
-						<AgentInline machineName={null} type={share.agent_type} />
-						{share.project_path ? (
-							<>
-								<span>·</span>
-								<span className="truncate font-mono">{share.project_path}</span>
-							</>
-						) : null}
-						<span>·</span>
-						<span title={formatAbsoluteTooltip(share.started_at)}>
-							Started {relativeTime(share.started_at)}
-						</span>
-						{Math.abs(
-							new Date(share.last_activity_at).getTime() - new Date(share.started_at).getTime(),
-						) >
-						5 * 60_000 ? (
-							<>
-								<span>·</span>
-								<span title={formatAbsoluteTooltip(share.last_activity_at)}>
-									Last activity {relativeTime(share.last_activity_at)}
-								</span>
-							</>
-						) : null}
-					</DetailMeta>
+				<div className="flex items-start justify-between gap-3">
+					<div className="min-w-0 flex-1 space-y-2">
+						<DetailTitle>{summaryText}</DetailTitle>
+						<DetailMeta>
+							<AgentInline machineName={null} type={share.agent_type} />
+							{share.project_path ? (
+								<>
+									<span>·</span>
+									<span className="truncate font-mono">{share.project_path}</span>
+								</>
+							) : null}
+							<span>·</span>
+							<span title={formatAbsoluteTooltip(share.started_at)}>
+								Started {relativeTime(share.started_at)}
+							</span>
+							{Math.abs(
+								new Date(share.last_activity_at).getTime() - new Date(share.started_at).getTime(),
+							) >
+							5 * 60_000 ? (
+								<>
+									<span>·</span>
+									<span title={formatAbsoluteTooltip(share.last_activity_at)}>
+										Last activity {relativeTime(share.last_activity_at)}
+									</span>
+								</>
+							) : null}
+						</DetailMeta>
+					</div>
+					<PublicShareControls sessionId={share.id} />
 				</div>
 
 				<SessionSidebar relatedRefs={share.related_refs} />
