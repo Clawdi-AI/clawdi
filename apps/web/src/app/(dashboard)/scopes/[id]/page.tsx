@@ -288,7 +288,7 @@ export default function ScopeDetailPage() {
 
 			<PageHeader
 				title={scope.name}
-				description={`${scope.slug} · ${isOwner ? "owned" : "viewer access"}`}
+				description={`${isOwner ? "Owned" : "Shared viewer"} ${scope.kind} scope · ${scope.slug}`}
 				actions={
 					<div className="flex items-center gap-2">
 						<ScopeKindBadge kind={scope.kind} />
@@ -304,19 +304,18 @@ export default function ScopeDetailPage() {
 				}
 			/>
 
-			<div className={`grid gap-3 ${isOwner ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
-				{isOwner ? (
-					<MetricCard icon={Workflow} label="Source scopes" value={parentSourceMounts.length} />
-				) : null}
-				<MetricCard icon={Box} label="Mounted into" value={placements.length} />
-				<MetricCard icon={Sparkles} label="Skills" value={skills.data?.items.length ?? 0} />
-				<MetricCard icon={KeyRound} label="Vaults" value={vaults.data?.items.length ?? 0} />
-			</div>
+			<ScopeStatsStrip
+				isOwner={isOwner}
+				sourceCount={parentSourceMounts.length}
+				placementCount={placements.length}
+				skillCount={skills.data?.items.length ?? 0}
+				vaultCount={vaults.data?.items.length ?? 0}
+			/>
 
 			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<h2 className="text-base font-semibold">Associated scopes</h2>
+						<h2 className="text-base font-semibold">Composition</h2>
 						{isOwner ? (
 							<ScopeMountsPanel scopeId={scope.id} showEmpty />
 						) : (
@@ -377,8 +376,13 @@ export default function ScopeDetailPage() {
 
 				{!isOwner ? (
 					<aside className="space-y-4">
-						<section className="space-y-3 rounded-lg border p-4">
-							<h2 className="text-sm font-semibold">Mount target</h2>
+						<section className="space-y-3 rounded-lg border p-3">
+							<div className="space-y-1">
+								<h2 className="text-sm font-semibold">Mount this shared scope</h2>
+								<p className="text-xs text-muted-foreground">
+									Pick an owned scope where this shared content should become visible.
+								</p>
+							</div>
 							{mountTargets.length > 0 ? (
 								<div className="flex flex-col gap-2">
 									<Select value={selectedParentId} onValueChange={setSelectedParentId}>
@@ -403,7 +407,7 @@ export default function ScopeDetailPage() {
 										}}
 									>
 										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Mounting..." : "Mount"}
+										{mountSharedScope.isPending ? "Mounting..." : "Mount into target"}
 									</Button>
 								</div>
 							) : ownedScopes.length > 0 ? (
@@ -467,7 +471,34 @@ export default function ScopeDetailPage() {
 	);
 }
 
-function MetricCard({
+function ScopeStatsStrip({
+	isOwner,
+	sourceCount,
+	placementCount,
+	skillCount,
+	vaultCount,
+}: {
+	isOwner: boolean;
+	sourceCount: number;
+	placementCount: number;
+	skillCount: number;
+	vaultCount: number;
+}) {
+	return (
+		<div
+			className={`grid divide-y rounded-lg border sm:divide-x sm:divide-y-0 ${
+				isOwner ? "sm:grid-cols-4" : "sm:grid-cols-3"
+			}`}
+		>
+			{isOwner ? <StatCell icon={Workflow} label="Source scopes" value={sourceCount} /> : null}
+			<StatCell icon={Box} label="Mounted into" value={placementCount} />
+			<StatCell icon={Sparkles} label="Visible skills" value={skillCount} />
+			<StatCell icon={KeyRound} label="Visible vaults" value={vaultCount} />
+		</div>
+	);
+}
+
+function StatCell({
 	icon: Icon,
 	label,
 	value,
@@ -477,7 +508,7 @@ function MetricCard({
 	value: number;
 }) {
 	return (
-		<div className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3">
+		<div className="flex items-center justify-between gap-3 px-4 py-3">
 			<div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
 				<Icon className="size-4 shrink-0" />
 				<span className="truncate">{label}</span>
@@ -498,7 +529,7 @@ function MountedIntoList({
 		<section className="space-y-2">
 			<div className="flex items-center gap-2 px-1">
 				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Mounted into</h3>
+				<h3 className="font-semibold text-sm">Mounted into owned scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{placements.length}
 				</Badge>
@@ -506,14 +537,11 @@ function MountedIntoList({
 			{placements.length === 0 ? (
 				<EmptyLine message="This scope is not mounted into any owned scope." />
 			) : (
-				<ul className="space-y-2">
+				<ul className="divide-y rounded-lg border">
 					{placements.map((placement) => {
 						const parent = ownedScopeById.get(placement.parent_scope_id);
 						return (
-							<li
-								key={placement.id}
-								className="flex items-center justify-between gap-3 rounded-lg border p-3"
-							>
+							<li key={placement.id} className="flex items-center justify-between gap-3 p-3">
 								<div className="min-w-0">
 									<div className="truncate text-sm font-medium">
 										{parent?.name ?? "Owned scope"}
@@ -565,7 +593,7 @@ function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "mounted"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "source"}</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
 					{skill.skill_key}
@@ -591,7 +619,7 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "mounted"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "source"}</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
 			</div>
@@ -601,8 +629,7 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 }
 
 function ScopeKindBadge({ kind }: { kind: string }) {
-	const label =
-		kind === "workspace" ? "project scope" : kind === "environment" ? "agent env" : kind;
+	const label = kind === "workspace" ? "workspace" : kind === "environment" ? "agent" : kind;
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}

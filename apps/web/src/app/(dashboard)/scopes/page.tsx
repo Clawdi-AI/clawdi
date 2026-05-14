@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, useAuthedFetch } from "@/lib/api";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 interface ScopeRow {
 	id: string;
@@ -140,9 +140,10 @@ export default function ScopesPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Scopes"
-				description="Manage scope access, sharing, and mounts."
+				description="Compose the context boundaries your agents and collaborators can read."
 				actions={
 					<Button
+						variant={createOpen ? "secondary" : "outline"}
 						size="sm"
 						onClick={() => {
 							if (!createOpen) {
@@ -225,16 +226,15 @@ export default function ScopesPage() {
 			) : null}
 
 			<section className="space-y-3">
-				<div className="flex items-center gap-2">
-					<h2 className="text-base font-semibold">Owned scopes</h2>
-					<Badge variant="secondary" className="text-xs">
-						{ownedScopes.length}
-					</Badge>
-				</div>
+				<SectionHeader
+					title="Owned scopes"
+					count={ownedScopes.length}
+					description="Scopes you can edit, share, and use as mount targets."
+				/>
 				{ownedScopes.length === 0 ? (
 					<EmptyLine message="No owned scopes yet. Connect an agent or create a shareable scope." />
 				) : (
-					<div className="grid gap-3 lg:grid-cols-2">
+					<div className="divide-y rounded-lg border">
 						{ownedScopes.map((scope) => (
 							<OwnedScopeRow
 								key={scope.id}
@@ -248,16 +248,15 @@ export default function ScopesPage() {
 			</section>
 
 			<section className="space-y-3">
-				<div className="flex items-center gap-2">
-					<h2 className="text-base font-semibold">Shared scopes</h2>
-					<Badge variant="secondary" className="text-xs">
-						{sharedScopes.length}
-					</Badge>
-				</div>
+				<SectionHeader
+					title="Shared scopes"
+					count={sharedScopes.length}
+					description="Read-only scopes accepted from other people. Mount them into owned scopes to compose their contents."
+				/>
 				{sharedScopes.length === 0 ? (
 					<EmptyLine message="Accepted shares will appear here before or after you mount them." />
 				) : (
-					<div className="space-y-3">
+					<div className="divide-y rounded-lg border">
 						{sharedScopes.map((scope) => (
 							<SharedScopeRow
 								key={scope.id}
@@ -283,15 +282,16 @@ function OwnedScopeRow({
 	placements: MountRow[];
 }) {
 	return (
-		<div className="group relative rounded-lg border px-3 py-3 transition-colors hover:bg-muted/20">
+		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/scopes/${scope.id}`}
 				aria-label={`Open ${scope.name}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
-			<div className="flex items-start justify-between gap-3">
+			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
 				<ScopeIdentity scope={scope} />
-				<div className="relative z-20 flex shrink-0 items-center gap-1">
+				<ScopeRelationshipSummary mounts={mounts} placements={placements} />
+				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
 					<ShareScopeDialog scopeId={scope.id} scopeName={scope.name} scopeKind={scope.kind}>
 						<Button variant="outline" size="sm" aria-label={`Share ${scope.name}`}>
 							<Share2 className="mr-1.5 size-3.5" />
@@ -300,20 +300,6 @@ function OwnedScopeRow({
 					</ShareScopeDialog>
 					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 				</div>
-			</div>
-			<div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-				{mounts.length > 0 ? (
-					<Badge variant="outline" className="font-normal">
-						<Link2 className="size-3.5" />
-						{mounts.length} source scope{mounts.length === 1 ? "" : "s"}
-					</Badge>
-				) : null}
-				{placements.length > 0 ? (
-					<Badge variant="outline" className="font-normal">
-						<Workflow className="size-3.5" />
-						Mounted into {placements.length}
-					</Badge>
-				) : null}
 			</div>
 		</div>
 	);
@@ -330,61 +316,34 @@ function SharedScopeRow({
 }) {
 	const ownedScopeById = new Map(ownedScopes.map((s) => [s.id, s]));
 	return (
-		<div className="group relative rounded-lg border px-3 py-3 transition-colors hover:bg-muted/20">
+		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/scopes/${scope.id}`}
 				aria-label={`Open ${scope.name}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<div className="flex flex-wrap items-center gap-2">
-						<h3 className="truncate text-sm font-semibold">{scope.name}</h3>
-						<Badge variant="secondary">
-							<UserCheck className="size-3.5" />
-							viewer
-						</Badge>
-						<ScopeKindBadge kind={scope.kind} />
-					</div>
-					<div className="mt-1 font-mono text-xs text-muted-foreground">{scope.slug}</div>
+			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
+				<div className="relative z-20 min-w-0 pointer-events-none">
+					<ScopeIdentity scope={scope} tone="shared" />
 				</div>
-				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-			</div>
-			<div className="mt-2">
-				{placements.length === 0 ? (
-					<Badge variant="outline" className="font-normal">
-						Not mounted
-					</Badge>
-				) : (
-					<div className="space-y-1.5">
-						<div className="px-1 text-xs font-medium text-muted-foreground">Mounted into</div>
-						{placements.map((placement) => (
-							<div
-								key={placement.id}
-								className="flex max-w-full items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs"
-							>
-								<Workflow className="size-3.5 shrink-0 text-muted-foreground" />
-								<span className="min-w-0 truncate">
-									{ownedScopeById.get(placement.parent_scope_id)?.name ?? "Owned scope"}
-								</span>
-								<span className="shrink-0 text-muted-foreground">/</span>
-								<span className="min-w-0 truncate font-mono text-muted-foreground">
-									{placement.alias}
-								</span>
-							</div>
-						))}
-					</div>
-				)}
+				<SharedPlacementSummary placements={placements} ownedScopeById={ownedScopeById} />
+				<ArrowRight className="relative z-20 size-4 justify-self-end text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 			</div>
 		</div>
 	);
 }
 
-function ScopeIdentity({ scope }: { scope: ScopeRow }) {
+function ScopeIdentity({ scope, tone = "owned" }: { scope: ScopeRow; tone?: "owned" | "shared" }) {
 	return (
 		<div className="relative z-20 min-w-0 pointer-events-none">
 			<div className="flex flex-wrap items-center gap-2">
 				<h3 className="truncate text-sm font-semibold">{scope.name}</h3>
+				{tone === "shared" ? (
+					<Badge variant="secondary">
+						<UserCheck className="size-3.5" />
+						viewer
+					</Badge>
+				) : null}
 				<ScopeKindBadge kind={scope.kind} />
 			</div>
 			<div className="mt-1 font-mono text-xs text-muted-foreground">{scope.slug}</div>
@@ -392,17 +351,126 @@ function ScopeIdentity({ scope }: { scope: ScopeRow }) {
 	);
 }
 
+function ScopeRelationshipSummary({
+	mounts,
+	placements,
+}: {
+	mounts: MountRow[];
+	placements: MountRow[];
+}) {
+	const empty = mounts.length === 0 && placements.length === 0;
+	return (
+		<div className="relative z-20 flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground pointer-events-none">
+			<RelationshipBadge
+				icon={Link2}
+				label={
+					mounts.length === 0
+						? "No sources"
+						: `${mounts.length} source scope${mounts.length === 1 ? "" : "s"}`
+				}
+				muted={mounts.length === 0}
+			/>
+			{placements.length > 0 ? (
+				<RelationshipBadge icon={Workflow} label={`Mounted into ${placements.length}`} />
+			) : empty ? null : (
+				<RelationshipBadge icon={Workflow} label="Not mounted elsewhere" muted />
+			)}
+		</div>
+	);
+}
+
+function SharedPlacementSummary({
+	placements,
+	ownedScopeById,
+}: {
+	placements: MountRow[];
+	ownedScopeById: Map<string, ScopeRow>;
+}) {
+	if (placements.length === 0) {
+		return (
+			<div className="relative z-20 pointer-events-none">
+				<RelationshipBadge icon={Workflow} label="Not mounted" muted />
+			</div>
+		);
+	}
+	return (
+		<div className="relative z-20 min-w-0 space-y-1 pointer-events-none">
+			<div className="text-xs font-medium text-muted-foreground">Mounted into</div>
+			<div className="flex min-w-0 flex-wrap gap-1.5">
+				{placements.slice(0, 3).map((placement) => (
+					<Badge key={placement.id} variant="outline" className="max-w-full font-normal">
+						<Workflow className="size-3.5" />
+						<span className="min-w-0 truncate">
+							{ownedScopeById.get(placement.parent_scope_id)?.name ?? "Owned scope"}
+						</span>
+						<span className="text-muted-foreground">/</span>
+						<span className="min-w-0 truncate font-mono text-muted-foreground">
+							{placement.alias}
+						</span>
+					</Badge>
+				))}
+				{placements.length > 3 ? (
+					<Badge variant="secondary" className="font-normal">
+						+{placements.length - 3}
+					</Badge>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+function RelationshipBadge({
+	icon: Icon,
+	label,
+	muted = false,
+}: {
+	icon: typeof Link2;
+	label: string;
+	muted?: boolean;
+}) {
+	return (
+		<Badge
+			variant="outline"
+			className={cn("font-normal", muted && "border-dashed text-muted-foreground")}
+		>
+			<Icon className="size-3.5" />
+			{label}
+		</Badge>
+	);
+}
+
 function ScopeKindBadge({ kind }: { kind: string }) {
-	const label =
-		kind === "workspace" ? "project scope" : kind === "environment" ? "agent env" : kind;
+	const label = kind === "workspace" ? "workspace" : kind === "environment" ? "agent" : kind;
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}
 			className="text-xs"
-			title={`scope kind: ${kind}`}
+			title={`Scope kind: ${kind}`}
 		>
 			{label}
 		</Badge>
+	);
+}
+
+function SectionHeader({
+	title,
+	count,
+	description,
+}: {
+	title: string;
+	count: number;
+	description: string;
+}) {
+	return (
+		<div className="space-y-1 px-1">
+			<div className="flex items-center gap-2">
+				<h2 className="text-base font-semibold">{title}</h2>
+				<Badge variant="secondary" className="text-xs">
+					{count}
+				</Badge>
+			</div>
+			<p className="text-xs text-muted-foreground">{description}</p>
+		</div>
 	);
 }
 

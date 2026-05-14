@@ -251,7 +251,7 @@ export function ScopeMountsPanel({
 						aria-label="Mount selected source scope"
 					>
 						<Plus className="mr-1.5 size-3.5" />
-						{mount.isPending ? "Mounting…" : "Mount"}
+						{mount.isPending ? "Mounting…" : "Mount source"}
 					</Button>
 				</div>
 			) : null}
@@ -269,12 +269,9 @@ export function ScopeMountsPanel({
 				/>
 			) : null}
 			{rows.length > 0 ? (
-				<ul className="space-y-2">
+				<ul className="divide-y rounded-lg border">
 					{rows.map((m) => (
-						<li
-							key={m.id}
-							className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3"
-						>
+						<li key={m.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3">
 							<div className="min-w-0 space-y-1">
 								<div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
 									<Badge variant="outline" className="w-fit max-w-full font-mono font-normal">
@@ -299,7 +296,7 @@ export function ScopeMountsPanel({
 										size="icon-sm"
 										disabled={unmount.isPending}
 										className="text-muted-foreground hover:text-destructive"
-										aria-label={`Unmount ${m.alias}`}
+										aria-label={`Unmount source ${m.alias}`}
 									>
 										<Trash2 className="size-3.5" />
 									</Button>
