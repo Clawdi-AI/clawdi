@@ -203,10 +203,19 @@ export default function ProjectDetailPage() {
 				vaultCount={vaults.data?.items.length ?? 0}
 			/>
 
-			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
+			{!isOwner ? <SharedReadOnlyNotice project={project} /> : null}
+
+			<div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<ContentHeader title="Skills" />
+						<ContentHeader
+							title="Skills"
+							description={
+								isOwner
+									? "Reusable instructions stored directly in this project."
+									: "Readable shared instructions. You cannot edit this project's content."
+							}
+						/>
 						{isOwner ? (
 							<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 						) : null}
@@ -230,7 +239,14 @@ export default function ProjectDetailPage() {
 					</section>
 
 					<section className="space-y-3">
-						<ContentHeader title="Vaults" />
+						<ContentHeader
+							title="Vault references"
+							description={
+								isOwner
+									? "Project-owned vault references available to bound agents."
+									: "Read-only vault reference names from the project owner."
+							}
+						/>
 						{isOwner ? (
 							<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
 						) : null}
@@ -250,63 +266,147 @@ export default function ProjectDetailPage() {
 					</section>
 				</div>
 
-				{!isOwner ? (
-					<aside className="space-y-4">
-						<section className="space-y-3 rounded-lg border p-3">
-							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Project Access Granted</h2>
-								<p className="text-xs text-muted-foreground">
-									You can read this shared project
-									{project.owner_display ? ` from ${project.owner_display}` : ""}. Bind it to one or
-									more agents from the agents page when you want runtime access.
-								</p>
-								{project.owner_handle ? (
-									<div className="font-mono text-xs text-muted-foreground">
-										@{project.owner_handle}/{project.slug}
-									</div>
-								) : null}
-								<Button asChild size="sm" variant="outline" className="w-fit">
-									<Link href="/agents">
-										<GitBranch className="mr-1.5 size-3.5" />
-										Bind to agent
-									</Link>
-								</Button>
-							</div>
-							<AlertDialog>
-								<AlertDialogTrigger asChild>
-									<Button
-										variant="ghost"
-										size="sm"
-										disabled={leaveSharedProject.isPending}
-										className="w-fit text-muted-foreground hover:text-destructive"
-									>
-										<LogOut className="mr-1.5 size-3.5" />
-										{leaveSharedProject.isPending ? "Leaving..." : "Leave project"}
-									</Button>
-								</AlertDialogTrigger>
-								<AlertDialogContent>
-									<AlertDialogHeader>
-										<AlertDialogTitle>Leave "{displayProjectName(project)}"?</AlertDialogTitle>
-										<AlertDialogDescription>
-											This removes your read membership from the shared project.
-										</AlertDialogDescription>
-									</AlertDialogHeader>
-									<AlertDialogFooter>
-										<AlertDialogCancel>Cancel</AlertDialogCancel>
-										<AlertDialogAction
-											onClick={() => leaveSharedProject.mutate()}
-											className="bg-destructive text-white hover:bg-destructive/90"
-										>
-											Leave project
-										</AlertDialogAction>
-									</AlertDialogFooter>
-								</AlertDialogContent>
-							</AlertDialog>
-						</section>
-					</aside>
-				) : null}
+				<aside className="space-y-4">
+					{isOwner ? (
+						<OwnerAccessPanel project={project} />
+					) : (
+						<SharedAccessPanel
+							project={project}
+							isLeaving={leaveSharedProject.isPending}
+							onLeave={() => leaveSharedProject.mutate()}
+						/>
+					)}
+				</aside>
 			</div>
 		</div>
+	);
+}
+
+function SharedReadOnlyNotice({ project }: { project: ProjectRow }) {
+	return (
+		<Alert>
+			<GitBranch className="size-4" />
+			<AlertTitle>Viewer access</AlertTitle>
+			<AlertDescription>
+				You can read this project
+				{project.owner_display ? ` from ${project.owner_display}` : ""}. It will not affect any
+				agent until you bind it as an attached context.
+			</AlertDescription>
+		</Alert>
+	);
+}
+
+function OwnerAccessPanel({ project }: { project: ProjectRow }) {
+	const projectName = displayProjectName(project);
+	return (
+		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+			<div className="space-y-1">
+				<div className="flex items-center gap-2">
+					<Share2 className="size-4 text-muted-foreground" />
+					<h2 className="text-sm font-semibold">Collaboration</h2>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Manage people, pending invites, and share links for this project. Shared members join as
+					read-only viewers.
+				</p>
+			</div>
+			<div className="grid gap-2 text-xs text-muted-foreground">
+				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
+					<span>Default shared role</span>
+					<Badge variant="secondary">viewer</Badge>
+				</div>
+				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
+					<span>Agent access</span>
+					<span className="font-medium text-foreground">Explicit binding</span>
+				</div>
+			</div>
+			<ShareProjectDialog
+				projectId={project.id}
+				projectName={projectName}
+				projectKind={project.kind}
+			>
+				<Button className="w-full" size="sm">
+					<Share2 className="mr-1.5 size-3.5" />
+					Share / manage access
+				</Button>
+			</ShareProjectDialog>
+		</section>
+	);
+}
+
+function SharedAccessPanel({
+	project,
+	isLeaving,
+	onLeave,
+}: {
+	project: ProjectRow;
+	isLeaving: boolean;
+	onLeave: () => void;
+}) {
+	const alias = project.owner_handle ? `@${project.owner_handle}/${project.slug}` : project.slug;
+	return (
+		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+			<div className="space-y-1">
+				<div className="flex items-center gap-2">
+					<GitBranch className="size-4 text-muted-foreground" />
+					<h2 className="text-sm font-semibold">Access</h2>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					You are a read-only viewer. Bind this project to an agent when you want its context in
+					runtime resolution.
+				</p>
+			</div>
+			<div className="space-y-2 rounded-md border bg-background/60 p-3 text-xs">
+				<div className="flex items-center justify-between gap-3">
+					<span className="text-muted-foreground">Role</span>
+					<Badge variant="secondary">viewer</Badge>
+				</div>
+				<div className="flex items-center justify-between gap-3">
+					<span className="text-muted-foreground">Owner</span>
+					<span className="truncate font-medium">
+						{project.owner_display ?? project.owner_handle ?? "Unknown"}
+					</span>
+				</div>
+				<div className="truncate font-mono text-muted-foreground">{alias}</div>
+			</div>
+			<Button asChild size="sm" className="w-full">
+				<Link href="/agents">
+					<GitBranch className="mr-1.5 size-3.5" />
+					Bind to agent
+				</Link>
+			</Button>
+			<AlertDialog>
+				<AlertDialogTrigger asChild>
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={isLeaving}
+						className="w-full text-muted-foreground hover:text-destructive"
+					>
+						<LogOut className="mr-1.5 size-3.5" />
+						{isLeaving ? "Leaving..." : "Leave project"}
+					</Button>
+				</AlertDialogTrigger>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Leave "{displayProjectName(project)}"?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This removes your read-only membership. Any context binding for this project stops
+							applying to your agents.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={onLeave}
+							className="bg-destructive text-white hover:bg-destructive/90"
+						>
+							Leave project
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</section>
 	);
 }
 
@@ -339,10 +439,11 @@ function StatCell({
 	);
 }
 
-function ContentHeader({ title }: { title: string }) {
+function ContentHeader({ title, description }: { title: string; description: string }) {
 	return (
-		<div className="flex items-center justify-between gap-3">
+		<div className="space-y-1">
 			<h2 className="text-base font-semibold">{title}</h2>
+			<p className="text-xs text-muted-foreground">{description}</p>
 		</div>
 	);
 }

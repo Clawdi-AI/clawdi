@@ -49,7 +49,7 @@ function formatRow(link: ShareLinkRow): string {
 	return (
 		`  ${chalk.bold(link.prefix)}…${label}  ` +
 		`${status}  ${chalk.gray(created)}  ` +
-		`${chalk.gray(`${link.redeem_count} redeem${link.redeem_count === 1 ? "" : "s"}`)}` +
+		`${chalk.gray(`${link.redeem_count} accept${link.redeem_count === 1 ? "" : "s"}`)}` +
 		last
 	);
 }
@@ -99,7 +99,8 @@ export async function projectShareLinksCommand(
 			return;
 		}
 		if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-		console.log(`${chalk.green("✓")} Link revoked.`);
+		console.log(`${chalk.green("✓")} Share link revoked.`);
+		console.log(chalk.gray("  Existing members keep access until you remove them."));
 		return;
 	}
 
@@ -107,10 +108,13 @@ export async function projectShareLinksCommand(
 	if (links.length === 0) {
 		console.log("No share links on this project yet.");
 		console.log();
-		console.log(`Generate one: ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
+		console.log(`Create a read-only link: ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
 		return;
 	}
-	console.log(chalk.bold(`Share links (${links.length}):`));
+	console.log(chalk.bold(`Project share links (${links.length})`));
+	console.log(
+		chalk.gray("  Links grant viewer access after accept. Agent binding stays separate."),
+	);
 	for (const link of links) {
 		console.log(formatRow(link));
 	}

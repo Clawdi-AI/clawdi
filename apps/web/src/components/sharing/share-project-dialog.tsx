@@ -7,6 +7,7 @@ import {
 	CheckCircle2,
 	Copy,
 	Link2,
+	MailPlus,
 	Plus,
 	Share2,
 	Trash2,
@@ -132,10 +133,10 @@ export function ShareProjectDialog({
 			</DialogTrigger>
 			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
-					<DialogTitle>Share "{projectName}"</DialogTitle>
+					<DialogTitle>Share {projectName}</DialogTitle>
 					<DialogDescription>
-						Give others read-only membership in this project. Accepting grants project access; agent
-						binding remains a separate explicit step.
+						Invite people or create a link. Everyone joins as a read-only viewer; agent binding is
+						always explicit.
 					</DialogDescription>
 				</DialogHeader>
 				{isPersonalProject ? (
@@ -148,33 +149,54 @@ export function ShareProjectDialog({
 						</AlertDescription>
 					</Alert>
 				) : null}
-				<Tabs defaultValue="links" className="w-full">
+				<PermissionSummary />
+				<Tabs defaultValue="members" className="w-full">
 					<TabsList className="grid w-full grid-cols-3">
+						<TabsTrigger value="members" className="min-w-0 px-2">
+							<Users className="mr-2 size-3.5" />
+							<span className="truncate">People</span>
+						</TabsTrigger>
+						<TabsTrigger value="invitations" className="min-w-0 px-2">
+							<MailPlus className="mr-2 size-3.5" />
+							<span className="truncate">Invites</span>
+						</TabsTrigger>
 						<TabsTrigger value="links" className="min-w-0 px-2">
 							<Link2 className="mr-2 size-3.5" />
 							<span className="truncate">Links</span>
 						</TabsTrigger>
-						<TabsTrigger value="invitations" className="min-w-0 px-2">
-							<Users className="mr-2 size-3.5" />
-							<span className="truncate">Invites</span>
-						</TabsTrigger>
-						<TabsTrigger value="members" className="min-w-0 px-2">
-							<UserMinus className="mr-2 size-3.5" />
-							<span className="truncate">Members</span>
-						</TabsTrigger>
 					</TabsList>
-					<TabsContent value="links" className="mt-4">
-						<ShareLinksPanel projectId={projectId} />
+					<TabsContent value="members" className="mt-4">
+						<MembersPanel projectId={projectId} />
 					</TabsContent>
 					<TabsContent value="invitations" className="mt-4">
 						<InvitationsPanel projectId={projectId} />
 					</TabsContent>
-					<TabsContent value="members" className="mt-4">
-						<MembersPanel projectId={projectId} />
+					<TabsContent value="links" className="mt-4">
+						<ShareLinksPanel projectId={projectId} />
 					</TabsContent>
 				</Tabs>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function PermissionSummary() {
+	return (
+		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2">
+			<div>
+				<div className="font-medium text-foreground">Permission</div>
+				<p className="mt-1 text-muted-foreground">
+					Viewers can read project skills and vault reference names. They cannot edit content.
+				</p>
+			</div>
+			<div>
+				<div className="font-medium text-foreground">Agent binding</div>
+				<p className="mt-1 text-muted-foreground">
+					Accepting access does not attach the project to an agent. The recipient chooses that
+					later.
+				</p>
+			</div>
+		</div>
 	);
 }
 
@@ -268,18 +290,18 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					/>
 					<Button type="submit" size="sm" disabled={create.isPending}>
 						<Plus className="mr-1.5 size-3.5" />
-						{create.isPending ? "Creating…" : "Generate link"}
+						{create.isPending ? "Creating…" : "Create link"}
 					</Button>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Labels stay visible after the full URL is hidden, so you can tell links apart before
-					revoking them.
+					The full URL is shown once after creation. Labels stay visible so you can recognize links
+					before revoking them.
 				</p>
 			</form>
 
 			<div className="flex items-center justify-between gap-2">
 				<p className="text-xs text-muted-foreground">
-					Anyone with a share link can preview the project and accept it. Revoke anytime.
+					Anyone with an active link can preview and join as a read-only viewer. Revoke anytime.
 				</p>
 				<Badge variant="secondary" className="text-xs">
 					{visibleLinks.filter((link) => link.revoked_at === null).length} active
@@ -302,7 +324,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : visibleLinks.length === 0 ? (
-				<EmptyHint message="No share links yet. Generate one to start sharing this project." />
+				<EmptyHint message="No share links yet. Create one when you need a lightweight invite." />
 			) : (
 				<ul className="space-y-2">
 					{visibleLinks.map((link) => (
@@ -334,12 +356,11 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	return (
 		<Alert>
 			<CheckCircle2 />
-			<AlertTitle>Link ready — save it now</AlertTitle>
+			<AlertTitle>Copy this link now</AlertTitle>
 			<AlertDescription>
 				<p className="text-xs text-muted-foreground">
-					This is the only time you'll see the full URL. After you close this dialog, only the
-					prefix <span className="font-mono">{link.prefix}</span> stays visible — revoke if it
-					leaks.
+					This is the only time the full URL is visible. After this, only the prefix{" "}
+					<span className="font-mono">{link.prefix}</span> remains available.
 				</p>
 				{link.label ? (
 					<p className="mt-1 text-xs text-muted-foreground">
@@ -367,7 +388,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						<div className="min-w-0">
 							<div className="text-xs font-medium">Agent setup prompt</div>
 							<div className="truncate font-mono text-[11px] text-muted-foreground">
-								clawdi.share.v1 · {link.prefix}
+								Viewer access · explicit agent binding · {link.prefix}
 							</div>
 						</div>
 						<Button
@@ -459,7 +480,7 @@ function LinkRow({
 								<AlertDialogTitle>Revoke this share link?</AlertDialogTitle>
 								<AlertDialogDescription>
 									Anyone who has not already joined through this link will lose access to it.
-									Existing members stay connected until you remove them.
+									Existing viewers stay connected until you remove them from People.
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							<AlertDialogFooter>
@@ -562,7 +583,8 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				The recipient needs a Clawdi account; the invitation appears in their dashboard.
+				The recipient needs a Clawdi account. They join as a read-only viewer and bind to agents
+				separately.
 			</p>
 			<Separator />
 			{invites.isLoading ? (
@@ -579,7 +601,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? (
-				<EmptyHint message="No invitations yet." />
+				<EmptyHint message="No pending invites. Invite a person when you know their account email." />
 			) : (
 				<ul className="space-y-2">
 					{invites.data?.map((inv) => (
@@ -703,7 +725,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<p className="text-xs text-muted-foreground sm:max-w-sm">
-					Accepted viewers with permanent access to this project.
+					People who accepted access. Viewers can read this project until you remove them.
 				</p>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
@@ -721,7 +743,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							<AlertDialogTitle>Stop sharing this project?</AlertDialogTitle>
 							<AlertDialogDescription>
 								This revokes active links, cancels pending invitations, and removes accepted
-								members.
+								viewers. Project content remains yours.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
@@ -749,7 +771,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : rows.length === 0 ? (
-				<EmptyHint message="No accepted members yet." />
+				<EmptyHint message="No accepted viewers yet. Invite someone or create a link." />
 			) : (
 				<ul className="space-y-2">
 					{rows.map((member) => {

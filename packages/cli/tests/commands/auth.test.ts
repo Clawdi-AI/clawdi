@@ -54,7 +54,7 @@ describe("authLogin pending share upgrade", () => {
 	it("upgrades anonymous share tokens and eager-pulls shared skills", async () => {
 		addToken({
 			project_id: "project-shared",
-			scope_name: "Team Toolkit",
+			project_name: "Team Toolkit",
 			owner_display: "Alice",
 			owner_handle: "alice-example",
 			token: rawToken,
@@ -70,8 +70,6 @@ describe("authLogin pending share upgrade", () => {
 						project_id: "project-shared",
 						resolved_owner_handle: "alice-example",
 						membership_id: "membership-1",
-						mount_id: "mount-1",
-						mount_alias: "@alice-example/team-toolkit",
 					}),
 			},
 			{

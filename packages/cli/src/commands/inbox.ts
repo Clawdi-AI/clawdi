@@ -17,6 +17,7 @@ import chalk from "chalk";
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
+import { listProjects } from "../lib/project-resolver";
 import { pullSharedSkills } from "../share/eager-pull";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
@@ -107,6 +108,12 @@ interface InvitationAcceptResponse {
 	role: string;
 	joined_via: string;
 	joined_at: string;
+	resolved_owner_handle: string;
+	bound_agent_ids?: string[];
+}
+
+interface JoinedProject {
+	project_id: string;
 	resolved_owner_handle: string;
 	bound_agent_ids?: string[];
 }
@@ -430,14 +437,27 @@ async function acceptAnonymousUrl(
 	);
 }
 
-function renderJoinedSuccess(
-	body: { resolved_owner_handle: string; bound_agent_ids?: string[] },
-	opts: AcceptOpts,
-): void {
+async function acceptedProjectAlias(
+	apiUrl: string,
+	bearer: string,
+	body: JoinedProject,
+): Promise<string> {
+	const projects = await listProjects(apiUrl, bearer).catch(() => []);
+	const project = projects.find((item) => item.id === body.project_id);
+	if (project) {
+		if (project.is_owner === false && project.owner_handle) {
+			return `@${project.owner_handle}/${project.slug}`;
+		}
+		return project.slug;
+	}
+	return `@${body.resolved_owner_handle}/${body.project_id}`;
+}
+
+function renderJoinedSuccess(body: JoinedProject, opts: AcceptOpts, projectAlias: string): void {
 	console.log(
-		chalk.green("✓") +
-			` Joined as viewer — @${body.resolved_owner_handle}'s project is now available to your account.`,
+		`${chalk.green("✓")} Joined as viewer — ${projectAlias} is now available to your account.`,
 	);
+	console.log(chalk.gray("  Read-only project access is active."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
 		const bindAs = (opts.bindAs ?? "context").toLowerCase();
@@ -446,9 +466,7 @@ function renderJoinedSuccess(
 		);
 	} else {
 		console.log(
-			chalk.gray(
-				"  No agent bindings changed. Bind explicitly with `clawdi agent projects ...` when ready.",
-			),
+			chalk.gray(`  Next: clawdi agent projects add-context <agent-id> --project ${projectAlias}`),
 		);
 	}
 }
@@ -524,7 +542,8 @@ async function acceptUrl(
 		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
 		return;
 	}
-	renderJoinedSuccess(body, opts);
+	const alias = await acceptedProjectAlias(apiUrl, bearer, body);
+	renderJoinedSuccess(body, opts, alias);
 }
 
 async function acceptInvitation(
@@ -561,5 +580,6 @@ async function acceptInvitation(
 		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
 		return;
 	}
-	renderJoinedSuccess(body, opts);
+	const alias = await acceptedProjectAlias(apiUrl, bearer, body);
+	renderJoinedSuccess(body, opts, alias);
 }

@@ -557,7 +557,9 @@ program
 		await run(args);
 	});
 
-const projectCmd = program.command("project").description("Manage your projects and sharing");
+const projectCmd = program
+	.command("project")
+	.description("Manage projects, people, invites, links, and shared access");
 
 projectCmd
 	.command("create <name>")
@@ -577,7 +579,7 @@ projectCmd
 
 projectCmd
 	.command("list")
-	.description("List projects you can access")
+	.description("List owned projects and projects shared with you")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option("--shared-with-me", "Show only projects shared with you")
 	.option("--owned", "Show only projects you own")
@@ -592,7 +594,7 @@ projectCmd
 
 projectCmd
 	.command("show <project>")
-	.description("Show project metadata and owned content counts")
+	.description("Show project content, role, owner, and next actions")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (project: string, opts: { json?: boolean }) => {
 		const { projectShowCommand } = await import("./commands/project-show.js");
@@ -601,7 +603,7 @@ projectCmd
 
 projectCmd
 	.command("share [project]")
-	.description("Generate a share link. Defaults to your write project when [project] is omitted.")
+	.description("Create a read-only project share link")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
 	.action(async (project: string | undefined, opts: { label?: string }) => {
 		const { projectShareCommand } = await import("./commands/project-share.js");
@@ -610,7 +612,7 @@ projectCmd
 
 projectCmd
 	.command("share-links <project>")
-	.description("List or revoke share links on a project")
+	.description("List or revoke read-only project links")
 	.option("--revoke <id-or-prefix>", "Revoke a specific link")
 	.action(async (project: string, opts: { revoke?: string }) => {
 		const { projectShareLinksCommand } = await import("./commands/project-share-links.js");
@@ -619,7 +621,7 @@ projectCmd
 
 projectCmd
 	.command("invite <project>")
-	.description("Send an email invitation to a registered clawdi user")
+	.description("Invite a person to read-only project access")
 	.requiredOption("-e, --email <addr>", "Email address to invite")
 	.action(async (project: string, opts: { email: string }) => {
 		const { projectInviteCommand } = await import("./commands/project-invite.js");
@@ -628,7 +630,7 @@ projectCmd
 
 projectCmd
 	.command("invites <project>")
-	.description("List pending invitations on a project you own.")
+	.description("List or cancel pending project invites")
 	.option("--cancel <id>", "Cancel one of the pending invitations on this project")
 	.addHelpText(
 		"after",
@@ -642,7 +644,7 @@ projectCmd
 
 projectCmd
 	.command("members <project>")
-	.description("List or remove accepted members on a project you own")
+	.description("List or remove people with project access")
 	.option("--remove <email-or-user-id>", "Remove one accepted member")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
@@ -656,7 +658,7 @@ projectCmd
 
 projectCmd
 	.command("leave <project>")
-	.description("Leave a shared project")
+	.description("Leave a project shared with you")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering")
 	.action(async (project: string, opts: { json?: boolean }) => {
@@ -666,7 +668,7 @@ projectCmd
 
 projectCmd
 	.command("unshare <project>")
-	.description("Owner: revoke links, cancel invitations, and remove all members")
+	.description("Owner: revoke links, cancel invites, and remove accepted viewers")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText("after", "\nExample:\n  $ clawdi project unshare engineering")
 	.action(async (project: string, opts: { json?: boolean }) => {
@@ -677,11 +679,11 @@ projectCmd
 const agentCmd = program.command("agent").description("Manage agents");
 const agentProjectsCmd = agentCmd
 	.command("projects")
-	.description("Manage project bindings for an agent");
+	.description("Bind projects to an agent Home and attached contexts");
 
 agentProjectsCmd
 	.command("list <agent-id>")
-	.description("List project bindings for an agent")
+	.description("Show the agent's Home project and context order")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
@@ -690,7 +692,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("set-primary <agent-id>")
-	.description("Set the agent's primary project")
+	.description("Set the agent's owned Home project")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.action(async (agentId, opts) => {
 		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
@@ -699,7 +701,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("add-context <agent-id>")
-	.description("Add a context project binding to an agent")
+	.description("Attach an owned or shared project as agent context")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.option("--priority <n>", "Optional priority (>=1)")
 	.action(async (agentId, opts) => {
@@ -709,7 +711,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("remove-context <agent-id>")
-	.description("Remove a context project binding from an agent")
+	.description("Detach a context project from an agent")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -718,7 +720,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("reorder <agent-id>")
-	.description("Reorder context project bindings for an agent")
+	.description("Reorder attached context projects for an agent")
 	.option(
 		"--item <binding-id:priority>",
 		"Context binding id and target priority (repeatable)",
@@ -739,7 +741,7 @@ agentProjectsCmd
 // ─────────────────────────────────────────────────────────────
 const inboxCmd = program
 	.command("inbox")
-	.description("Incoming invitations + URLs awaiting your action")
+	.description("Incoming project invites and share links")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (opts) => {
 		// `clawdi inbox` (no subcommand) → list pending invitations
@@ -749,7 +751,7 @@ const inboxCmd = program
 
 inboxCmd
 	.command("accept [id-or-url]")
-	.description("Accept an invitation OR redeem a share URL")
+	.description("Accept read-only project access from an invite or share link")
 	.option("--invite <id>", "Explicit invitation UUID (bypass shape detection)")
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(
@@ -772,7 +774,7 @@ Examples:
     $ clawdi inbox accept https://clawdi.ai/share/abc...
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
-  Agent-blessed (explicit):
+  Accept and bind to an agent:
     $ clawdi inbox accept --url <link> --agent <agent-id>
     $ clawdi inbox accept --invite <id> --agent <agent-id> --bind-as context`,
 	)

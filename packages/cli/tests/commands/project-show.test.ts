@@ -29,6 +29,65 @@ afterEach(() => {
 });
 
 describe("projectShowCommand", () => {
+	it("prints shared project role, owner, and exact follow-up commands", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/projects",
+				response: () =>
+					jsonResponse([
+						{
+							id: "project-shared",
+							slug: "shared-toolkit",
+							name: "Shared Toolkit",
+							kind: "workspace",
+							is_owner: false,
+							owner_display: "Alice",
+							owner_handle: "alice-a3b4",
+						},
+					]),
+			},
+			{
+				method: "GET",
+				path: "/api/skills?page=1&page_size=200",
+				response: () =>
+					jsonResponse({
+						items: [{ project_id: "project-shared", skill_key: "deploy-helper" }],
+						total: 1,
+					}),
+			},
+			{
+				method: "GET",
+				path: "/api/vault?page_size=200",
+				response: () =>
+					jsonResponse({
+						items: [{ project_id: "project-shared", slug: "prod", name: "Production" }],
+					}),
+			},
+		]);
+		const orig = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+		try {
+			await projectShowCommand("@alice-a3b4/shared-toolkit");
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		const out = lines.join("\n");
+		expect(out).toContain("Role: viewer");
+		expect(out).toContain("Owner: Alice (@alice-a3b4)");
+		expect(out).toContain("Access: read-only project membership");
+		expect(out).toContain("Bind to an agent:");
+		expect(out).toContain(
+			"clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
+		);
+		expect(out).toContain("Leave: clawdi project leave @alice-a3b4/shared-toolkit");
+	});
+
 	it("prints a JSON project inventory with local skill/vault counts", async () => {
 		const { restore } = mockFetch([
 			{

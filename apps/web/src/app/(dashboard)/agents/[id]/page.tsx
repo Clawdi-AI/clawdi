@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, GitBranch, Plus, Trash2, Unplug } from "lucide-react";
+import { ArrowDown, ArrowUp, Home, Layers, Plus, Trash2, Unplug } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -430,7 +430,7 @@ function ProjectBindingsPanel({
 		onSuccess: () => {
 			setPrimaryProjectId("");
 			onChanged();
-			toast.success("Primary project updated");
+			toast.success("Home project updated");
 		},
 		onError: (e) => toast.error("Failed to set primary project", { description: errorMessage(e) }),
 	});
@@ -448,7 +448,7 @@ function ProjectBindingsPanel({
 			setContextProjectId("");
 			setContextPriority("");
 			onChanged();
-			toast.success("Context project added");
+			toast.success("Context project attached");
 		},
 		onError: (e) => toast.error("Failed to add context project", { description: errorMessage(e) }),
 	});
@@ -497,45 +497,67 @@ function ProjectBindingsPanel({
 
 	return (
 		<div className="space-y-4">
-			<div className="grid gap-3 xl:grid-cols-2">
-				<div className="space-y-3 rounded-lg border p-3">
-					<div className="flex items-center gap-2">
-						<GitBranch className="size-4 text-muted-foreground" />
-						<h2 className="text-sm font-semibold">Primary Project</h2>
+			<div className="rounded-lg border bg-card/60 p-4">
+				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
+					<div className="space-y-3">
+						<div className="flex items-center gap-2">
+							<Home className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Home / Primary project</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							The Home project is this agent&apos;s default writable context. Shared viewer projects
+							stay attached as context, not Home.
+						</p>
+						{primary ? (
+							<ProjectBindingLine
+								binding={primary}
+								project={projectsById.get(primary.project_id)}
+							/>
+						) : (
+							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+								No explicit Home project yet.
+							</div>
+						)}
 					</div>
-					{primary ? (
-						<ProjectBindingLine binding={primary} project={projectsById.get(primary.project_id)} />
-					) : (
-						<p className="text-sm text-muted-foreground">No explicit primary binding yet.</p>
-					)}
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<ProjectSelect
-							value={primaryProjectId}
-							onValueChange={setPrimaryProjectId}
-							projects={ownedProjects}
-							placeholder="Choose owned project"
-						/>
-						<Button
-							size="sm"
-							disabled={!primaryProjectId || setPrimary.isPending}
-							onClick={() => setPrimary.mutate(primaryProjectId)}
-						>
-							Set primary
-						</Button>
+					<div className="space-y-2">
+						<div className="text-xs font-medium text-muted-foreground">Set Home</div>
+						<div className="flex flex-col gap-2 sm:flex-row">
+							<ProjectSelect
+								value={primaryProjectId}
+								onValueChange={setPrimaryProjectId}
+								projects={ownedProjects}
+								placeholder="Choose owned project"
+							/>
+							<Button
+								size="sm"
+								disabled={!primaryProjectId || setPrimary.isPending}
+								onClick={() => setPrimary.mutate(primaryProjectId)}
+							>
+								Set Home
+							</Button>
+						</div>
 					</div>
 				</div>
+			</div>
 
-				<div className="space-y-3 rounded-lg border p-3">
-					<div className="flex items-center gap-2">
-						<GitBranch className="size-4 text-muted-foreground" />
-						<h2 className="text-sm font-semibold">Add Context</h2>
+			<div className="rounded-lg border bg-card/60 p-4">
+				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
+					<div className="space-y-2">
+						<div className="flex items-center gap-2">
+							<Layers className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Attached context projects</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Context projects are read in order after Home. When vault keys or skills conflict, the
+							first project in the order wins and later matches remain available by provenance.
+						</p>
 					</div>
 					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_auto]">
 						<ProjectSelect
 							value={contextProjectId}
 							onValueChange={setContextProjectId}
 							projects={contextChoices}
-							placeholder="Choose project"
+							placeholder="Attach project"
 						/>
 						<Input
 							value={contextPriority}
@@ -550,7 +572,7 @@ function ProjectBindingsPanel({
 							onClick={() => addContext.mutate()}
 						>
 							<Plus className="size-3.5" />
-							Add
+							Attach
 						</Button>
 					</div>
 				</div>
@@ -558,24 +580,30 @@ function ProjectBindingsPanel({
 
 			<section className="space-y-2">
 				<div className="flex items-center justify-between gap-2">
-					<h2 className="text-sm font-semibold">Context Projects</h2>
+					<h2 className="text-sm font-semibold">Order</h2>
 					<Badge variant="secondary">{contexts.length}</Badge>
 				</div>
 				{contexts.length === 0 ? (
 					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-						No context projects are bound to this agent.
+						No attached context projects yet. Attach an owned or shared project to extend this
+						agent&apos;s readable context.
 					</div>
 				) : (
-					<div className="divide-y rounded-lg border">
+					<div className="divide-y rounded-lg border bg-card/60">
 						{contexts.map((binding, index) => (
 							<div
 								key={binding.id}
 								className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
 							>
-								<ProjectBindingLine
-									binding={binding}
-									project={projectsById.get(binding.project_id)}
-								/>
+								<div className="flex min-w-0 items-start gap-3">
+									<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
+										{index + 1}
+									</div>
+									<ProjectBindingLine
+										binding={binding}
+										project={projectsById.get(binding.project_id)}
+									/>
+								</div>
 								<div className="flex items-center justify-end gap-1">
 									<Button
 										variant="ghost"
@@ -633,14 +661,18 @@ function ProjectSelect({
 			<SelectContent>
 				{projects.map((project) => (
 					<SelectItem key={project.id} value={project.id}>
-						{project.is_owner === false && project.owner_handle
-							? `@${project.owner_handle}/${project.slug}`
-							: project.slug}
+						{projectLabel(project)} {project.is_owner === false ? "(shared viewer)" : "(owned)"}
 					</SelectItem>
 				))}
 			</SelectContent>
 		</Select>
 	);
+}
+
+function projectLabel(project: ProjectRow): string {
+	return project.is_owner === false && project.owner_handle
+		? `@${project.owner_handle}/${project.slug}`
+		: project.slug;
 }
 
 function ProjectBindingLine({
@@ -650,22 +682,22 @@ function ProjectBindingLine({
 	binding: ProjectBindingRow;
 	project: ProjectRow | undefined;
 }) {
-	const label = project
-		? project.is_owner === false && project.owner_handle
-			? `@${project.owner_handle}/${project.slug}`
-			: project.slug
-		: binding.project_id;
+	const label = project ? projectLabel(project) : binding.project_id;
+	const bindingLabel = binding.binding_type === "primary" ? "Home" : "Context";
 	return (
 		<div className="min-w-0">
 			<div className="flex flex-wrap items-center gap-2">
 				<span className="truncate text-sm font-medium">{project?.name ?? label}</span>
 				<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
-					{binding.binding_type}
+					{bindingLabel}
 				</Badge>
-				{project?.is_owner === false ? <Badge variant="secondary">viewer</Badge> : null}
+				<Badge variant={project?.is_owner === false ? "secondary" : "outline"}>
+					{project?.is_owner === false ? "shared viewer" : "owned"}
+				</Badge>
 			</div>
 			<div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-				{label} · priority {binding.priority}
+				{label}
+				{binding.binding_type === "context" ? ` · order ${binding.priority}` : ""}
 			</div>
 		</div>
 	);

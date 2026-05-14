@@ -1,7 +1,16 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Plus, Share2, UserCheck } from "lucide-react";
+import {
+	ArrowRight,
+	FolderOpen,
+	GitBranch,
+	Inbox,
+	type LucideIcon,
+	Plus,
+	Share2,
+	UserCheck,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -98,7 +107,7 @@ export default function ProjectsPage() {
 			<div className="space-y-5 px-4 lg:px-6">
 				<PageHeader
 					title="Projects"
-					description="Manage the context boundaries your people and agents can share."
+					description="Projects hold the context people can access and agents can bind explicitly."
 				/>
 				<Skeleton className="h-36 w-full" />
 				<Skeleton className="h-48 w-full" />
@@ -110,7 +119,7 @@ export default function ProjectsPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Projects"
-				description="Control which skills and vault references each collaboration can access."
+				description="A collaboration hub for owned work, shared viewer access, and explicit agent bindings."
 				actions={
 					<Button
 						variant="outline"
@@ -195,16 +204,36 @@ export default function ProjectsPage() {
 				</DialogContent>
 			</Dialog>
 
+			<ProjectSummaryCards
+				ownedCount={ownedProjects.length}
+				sharedCount={sharedProjects.length}
+				totalCount={rows.length}
+				onCreate={() => {
+					setNewProjectName("");
+					setNewProjectSlug("");
+					setCreateOpen(true);
+				}}
+			/>
+
 			<section className="space-y-3">
 				<SectionHeader
-					title="Owned projects"
+					title="Owned"
 					count={ownedProjects.length}
-					description="Projects you control directly."
+					description="Projects where you can edit content, manage people, and create links."
 				/>
 				{ownedProjects.length === 0 ? (
-					<EmptyLine message="No owned projects yet. Connect an agent or create a shareable project." />
+					<EmptyLine
+						title="Create your first collaboration project"
+						message="Use projects for reusable context you want to manage independently from any one agent."
+						action={
+							<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+								<Plus className="size-3.5" />
+								New project
+							</Button>
+						}
+					/>
 				) : (
-					<div className="divide-y rounded-lg border">
+					<div className="divide-y rounded-lg border bg-card/60">
 						{ownedProjects.map((project) => (
 							<OwnedProjectRow key={project.id} project={project} />
 						))}
@@ -214,14 +243,25 @@ export default function ProjectsPage() {
 
 			<section className="space-y-3">
 				<SectionHeader
-					title="Shared projects"
+					title="Shared with me"
 					count={sharedProjects.length}
-					description="Projects shared with you by other people."
+					description="Read-only project memberships you can attach to agents when needed."
 				/>
 				{sharedProjects.length === 0 ? (
-					<EmptyLine message="Accepted shares appear here." />
+					<EmptyLine
+						title="No shared projects yet"
+						message="Accepted invites and share links appear here with viewer access. Binding them to an agent is always a separate step."
+						action={
+							<Button asChild size="sm" variant="outline">
+								<Link href="/">
+									<Inbox className="size-3.5" />
+									Check inbox
+								</Link>
+							</Button>
+						}
+					/>
 				) : (
-					<div className="divide-y rounded-lg border">
+					<div className="divide-y rounded-lg border bg-card/60">
 						{sharedProjects.map((project) => (
 							<SharedProjectRow key={project.id} project={project} />
 						))}
@@ -235,14 +275,19 @@ export default function ProjectsPage() {
 function OwnedProjectRow({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
+		<div className="group relative px-4 py-4 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/projects/${project.id}`}
 				aria-label={`Open ${projectName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-				<ProjectIdentity project={project} />
+				<div className="relative z-20 min-w-0 pointer-events-none">
+					<ProjectIdentity project={project} />
+					<p className="mt-1 text-xs text-muted-foreground">
+						Owner access. Edit skills and vault references, invite people, and manage links.
+					</p>
+				</div>
 				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
 					<ShareProjectDialog
 						projectId={project.id}
@@ -251,7 +296,7 @@ function OwnedProjectRow({ project }: { project: ProjectRow }) {
 					>
 						<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 							<Share2 className="mr-1.5 size-3.5" />
-							Share
+							Manage access
 						</Button>
 					</ShareProjectDialog>
 					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
@@ -264,7 +309,7 @@ function OwnedProjectRow({ project }: { project: ProjectRow }) {
 function SharedProjectRow({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
+		<div className="group relative px-4 py-4 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/projects/${project.id}`}
 				aria-label={`Open ${projectName}`}
@@ -274,11 +319,19 @@ function SharedProjectRow({ project }: { project: ProjectRow }) {
 				<div className="relative z-20 min-w-0 pointer-events-none">
 					<ProjectIdentity project={project} tone="shared" />
 					<p className="mt-1 text-xs text-muted-foreground">
-						{project.owner_display ? `Shared by ${project.owner_display}. ` : ""}
-						Bind this project to agents explicitly when needed.
+						{project.owner_display ? `Owner: ${project.owner_display}. ` : ""}
+						Viewer access is read-only until you explicitly bind it to an agent.
 					</p>
 				</div>
-				<ArrowRight className="relative z-20 size-4 justify-self-end text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
+					<Button asChild variant="outline" size="sm">
+						<Link href="/agents">
+							<GitBranch className="mr-1.5 size-3.5" />
+							Bind to agent
+						</Link>
+					</Button>
+					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</div>
 			</div>
 		</div>
 	);
@@ -300,7 +353,9 @@ function ProjectIdentity({
 						<UserCheck className="size-3.5" />
 						viewer
 					</Badge>
-				) : null}
+				) : (
+					<Badge variant="outline">owner</Badge>
+				)}
 				<ProjectKindBadge kind={project.kind} />
 			</div>
 			<div className="mt-1 font-mono text-xs text-muted-foreground">{project.slug}</div>
@@ -323,6 +378,75 @@ function ProjectKindBadge({ kind }: { kind: string }) {
 		>
 			{meta.label}
 		</Badge>
+	);
+}
+
+function ProjectSummaryCards({
+	ownedCount,
+	sharedCount,
+	totalCount,
+	onCreate,
+}: {
+	ownedCount: number;
+	sharedCount: number;
+	totalCount: number;
+	onCreate: () => void;
+}) {
+	return (
+		<div className="grid gap-3 md:grid-cols-3">
+			<SummaryCard
+				icon={FolderOpen}
+				label="Project spaces"
+				value={totalCount}
+				description="Owned and shared contexts visible to you."
+			/>
+			<SummaryCard
+				icon={Share2}
+				label="Owned"
+				value={ownedCount}
+				description="Manage content, people, invites, and links."
+				action={
+					<Button variant="ghost" size="sm" onClick={onCreate} className="h-7 px-2">
+						<Plus className="size-3.5" />
+						New
+					</Button>
+				}
+			/>
+			<SummaryCard
+				icon={UserCheck}
+				label="Shared with me"
+				value={sharedCount}
+				description="Read-only memberships ready for agent binding."
+			/>
+		</div>
+	);
+}
+
+function SummaryCard({
+	icon: Icon,
+	label,
+	value,
+	description,
+	action,
+}: {
+	icon: LucideIcon;
+	label: string;
+	value: number;
+	description: string;
+	action?: React.ReactNode;
+}) {
+	return (
+		<div className="rounded-lg border bg-card/60 p-4">
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+					<Icon className="size-4 text-muted-foreground" />
+					<span className="truncate">{label}</span>
+				</div>
+				{action}
+			</div>
+			<div className="mt-3 text-2xl font-semibold">{value}</div>
+			<p className="mt-1 text-xs text-muted-foreground">{description}</p>
+		</div>
 	);
 }
 
@@ -399,10 +523,22 @@ function displayProjectName(project: ProjectRow) {
 	return project.name;
 }
 
-function EmptyLine({ message }: { message: string }) {
+function EmptyLine({
+	title,
+	message,
+	action,
+}: {
+	title: string;
+	message: string;
+	action?: React.ReactNode;
+}) {
 	return (
-		<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-			{message}
+		<div className="flex flex-col gap-3 rounded-lg border border-dashed px-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+			<div className="space-y-1">
+				<h3 className="text-sm font-medium">{title}</h3>
+				<p className="max-w-2xl text-sm text-muted-foreground">{message}</p>
+			</div>
+			{action ? <div className="shrink-0">{action}</div> : null}
 		</div>
 	);
 }

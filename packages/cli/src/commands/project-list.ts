@@ -73,33 +73,61 @@ export async function projectListCommand(opts: {
 	}
 
 	if (visibleProjects.length === 0) {
-		console.log("No projects yet.");
+		if (opts.sharedWithMe) {
+			console.log("No shared projects yet.");
+			console.log(chalk.gray("Accept an invite with `clawdi inbox`, or accept a link with:"));
+			console.log(`  ${chalk.cyan("clawdi inbox accept <share-url>")}`);
+		} else if (opts.owned) {
+			console.log("No projects you own yet.");
+			console.log(`Create one: ${chalk.cyan('clawdi project create "Engineering"')}`);
+		} else {
+			console.log("No projects yet.");
+			console.log(`Create one: ${chalk.cyan('clawdi project create "Engineering"')}`);
+		}
 		return;
 	}
 
 	if (!opts.sharedWithMe) {
-		console.log(chalk.bold(`My projects (${owned.length}):`));
+		console.log(chalk.bold(`Projects you own (${owned.length}):`));
 		for (const s of owned) {
+			const alias = projectAlias(s);
 			console.log(
-				`  ${chalk.cyan(s.slug.padEnd(24))} ${chalk.gray(s.id.slice(0, 8))}  ${chalk.dim(`(${s.kind})`)}`,
+				`  ${chalk.cyan(alias.padEnd(24))} ${chalk.gray("owner")}  ${chalk.gray(s.id.slice(0, 8))}`,
 			);
 			if (s.name && s.name !== s.slug) {
 				console.log(`    ${chalk.dim(s.name)}`);
 			}
+			console.log(`    ${chalk.gray(`Share: clawdi project share ${alias}`)}`);
 		}
 	}
 
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
+		console.log(chalk.bold(`Shared with me (${shared.length}):`));
 		console.log(
-			chalk.gray(`Shared with you (${shared.length}) — access granted, binding is separate.`),
+			chalk.gray("  Viewer access is read-only. Bind explicitly before an agent uses it."),
 		);
 		for (const s of shared) {
-			const alias = s.owner_handle ? `@${s.owner_handle}/${s.slug}` : s.slug;
+			const alias = projectAlias(s);
 			console.log(
-				`  ${chalk.magenta(alias)}  ${chalk.gray(s.id.slice(0, 8))}  ${chalk.dim(`(${s.kind})`)}`,
+				`  ${chalk.magenta(alias.padEnd(24))} ${chalk.gray("viewer")}  ${chalk.gray(s.id.slice(0, 8))}`,
 			);
-			if (s.owner_display) console.log(`    ${chalk.dim(`from ${s.owner_display}`)}`);
+			if (s.owner_display) console.log(`    ${chalk.dim(`Owner: ${s.owner_display}`)}`);
+			console.log(`    ${chalk.gray(`Next: clawdi project show ${alias}`)}`);
+			console.log(
+				`    ${chalk.gray(`Bind: clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
+			);
 		}
 	}
+}
+
+function projectAlias(project: {
+	slug: string;
+	is_owner?: boolean;
+	owner_handle?: string | null;
+}): string {
+	if (project.is_owner === false && project.owner_handle) {
+		return `@${project.owner_handle}/${project.slug}`;
+	}
+	return project.slug;
 }

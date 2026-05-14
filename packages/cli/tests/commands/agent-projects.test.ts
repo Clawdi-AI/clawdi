@@ -33,6 +33,78 @@ afterEach(() => {
 });
 
 describe("agent project binding commands", () => {
+	it("prints Home and attached context sections with precedence copy", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/agents/agent-1/project-bindings",
+				response: () =>
+					jsonResponse([
+						{
+							id: "binding-primary",
+							agent_id: "agent-1",
+							project_id: "project-1",
+							binding_type: "primary",
+							priority: 0,
+							default_write_enabled: true,
+							created_at: "2026-05-14T00:00:00Z",
+						},
+						{
+							id: "binding-context",
+							agent_id: "agent-1",
+							project_id: "project-2",
+							binding_type: "context",
+							priority: 1,
+							default_write_enabled: false,
+							created_at: "2026-05-14T00:00:00Z",
+						},
+					]),
+			},
+			{
+				method: "GET",
+				path: "/api/projects",
+				response: () =>
+					jsonResponse([
+						{
+							id: "project-1",
+							slug: "engineering",
+							name: "Engineering",
+							kind: "workspace",
+							is_owner: true,
+						},
+						{
+							id: "project-2",
+							slug: "shared-toolkit",
+							name: "Shared Toolkit",
+							kind: "workspace",
+							is_owner: false,
+							owner_handle: "alice-a3b4",
+							owner_display: "Alice",
+						},
+					]),
+			},
+		]);
+		const orig = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+		try {
+			await agentProjectsListCommand("agent-1");
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		const out = lines.join("\n");
+		expect(out).toContain("Home project");
+		expect(out).toContain("Attached context projects (1)");
+		expect(out).toContain("@alice-a3b4/shared-toolkit");
+		expect(out).toContain("viewer");
+		expect(out).toContain("Order matters: Home wins first, then attached contexts in order.");
+		expect(out).toContain("Reorder: clawdi agent projects reorder agent-1 --item <binding-id>:1");
+	});
+
 	it("lists bindings with project metadata in JSON", async () => {
 		const { restore } = mockFetch([
 			{

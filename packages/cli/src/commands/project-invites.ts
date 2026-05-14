@@ -67,6 +67,7 @@ export async function projectInvitesCommand(
 			`/api/projects/${projectId}/invitations/${opts.cancel}`,
 		);
 		console.log(`${chalk.green("✓")} Invitation cancelled.`);
+		console.log(chalk.gray("  The recipient will no longer see it in their inbox."));
 		return;
 	}
 
@@ -76,12 +77,15 @@ export async function projectInvitesCommand(
 		`/api/projects/${projectId}/invitations`,
 	);
 	if (items.length === 0) {
-		console.log("No invitations on this project.");
+		console.log("No pending invites on this project.");
 		console.log();
-		console.log(`Send one: ${chalk.cyan(`clawdi project invite ${projectArg} --email <addr>`)}`);
+		console.log(
+			`Invite a viewer: ${chalk.cyan(`clawdi project invite ${projectArg} --email <addr>`)}`,
+		);
 		return;
 	}
-	console.log(chalk.bold(`Invitations on this project (${items.length}):`));
+	console.log(chalk.bold(`Pending project invites (${items.length})`));
+	console.log(chalk.gray("  Accepting grants read-only viewer access. Agent binding is separate."));
 	for (const inv of items) {
 		console.log(
 			`  ${chalk.bold(inv.invitee_email)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +

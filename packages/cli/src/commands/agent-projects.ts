@@ -81,21 +81,43 @@ export async function agentProjectsListCommand(
 		);
 		return;
 	}
-	if (rows.length === 0) {
-		console.log(`No project bindings on agent ${agentId}.`);
-		return;
-	}
-	console.log(chalk.bold(`Project bindings on ${agentId} (${rows.length}):`));
-	for (const row of rows) {
-		const mode = row.binding_type === "primary" ? chalk.green("primary") : chalk.cyan("context");
-		const project = projectsById.get(row.project_id);
-		const label = project
-			? `${project.is_owner === false && project.owner_handle ? `@${project.owner_handle}/` : ""}${project.slug}`
-			: row.project_id;
+	const primary = rows.find((row) => row.binding_type === "primary") ?? null;
+	const contexts = rows
+		.filter((row) => row.binding_type === "context")
+		.sort((a, b) => a.priority - b.priority);
+	console.log(chalk.bold(`Project access for ${agentId}`));
+	console.log(chalk.gray("Order matters: Home wins first, then attached contexts in order."));
+	console.log();
+	console.log(chalk.bold("Home project"));
+	if (primary) {
+		console.log(`  ${formatBindingProject(primary, projectsById)}`);
+	} else {
+		console.log("  No Home project set.");
 		console.log(
-			`  ${mode}  ${label}  ${chalk.gray(`priority=${row.priority} project=${row.project_id.slice(0, 8)} id=${row.id.slice(0, 8)}…`)}`,
+			`  ${chalk.gray(`Set one: clawdi agent projects set-primary ${agentId} --project <owned-project>`)}`,
 		);
 	}
+	console.log();
+	console.log(chalk.bold(`Attached context projects (${contexts.length})`));
+	if (contexts.length === 0) {
+		console.log("  No attached contexts yet.");
+		console.log(
+			`  ${chalk.gray(`Attach one: clawdi agent projects add-context ${agentId} --project <project>`)}`,
+		);
+		return;
+	}
+	for (const [index, row] of contexts.entries()) {
+		console.log(`  ${index + 1}. ${formatBindingProject(row, projectsById)}`);
+	}
+	console.log();
+	console.log(
+		chalk.gray("Reorder: ") +
+			chalk.cyan(`clawdi agent projects reorder ${agentId} --item <binding-id>:1`),
+	);
+	console.log(
+		chalk.gray("Detach:  ") +
+			chalk.cyan(`clawdi agent projects remove-context ${agentId} --project <project>`),
+	);
 }
 
 export async function agentProjectsSetPrimaryCommand(
@@ -114,7 +136,10 @@ export async function agentProjectsSetPrimaryCommand(
 			body: JSON.stringify({ project_id: projectId }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Set primary project for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Set Home project for ${agentId}.`);
+	console.log(
+		chalk.gray("  Shared projects stay as attached contexts; the Home project must be owned."),
+	);
 }
 
 export async function agentProjectsAddContextCommand(
@@ -137,7 +162,8 @@ export async function agentProjectsAddContextCommand(
 			body: JSON.stringify({ project_id: projectId, priority }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Added context project for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Attached context project to ${agentId}.`);
+	console.log(chalk.gray("  Order matters: Home wins first, then contexts by priority."));
 }
 
 export async function agentProjectsRemoveContextCommand(
@@ -172,7 +198,10 @@ export async function agentProjectsRemoveContextCommand(
 		`/api/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
-	console.log(`${chalk.green("✓")} Removed context project from ${agentId}.`);
+	console.log(`${chalk.green("✓")} Detached context project from ${agentId}.`);
+	console.log(
+		chalk.gray("  Project membership is unchanged; only this agent binding was removed."),
+	);
 }
 
 export async function agentProjectsReorderCommand(
@@ -201,5 +230,25 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Reordered context projects for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Reordered attached context projects for ${agentId}.`);
+}
+
+function formatBindingProject(row: BindingRow, projectsById: Map<string, ProjectBrief>): string {
+	const project = projectsById.get(row.project_id);
+	const alias = project ? projectAlias(project) : row.project_id;
+	const ownership = project?.is_owner === false ? "viewer" : "owner";
+	const name = project?.name && project.name !== project.slug ? ` ${chalk.dim(project.name)}` : "";
+	return (
+		`${chalk.cyan(alias)} ${chalk.gray(ownership)}${name} ` +
+		chalk.gray(
+			`binding=${row.id.slice(0, 8)}… project=${row.project_id.slice(0, 8)} priority=${row.priority}`,
+		)
+	);
+}
+
+function projectAlias(project: ProjectBrief): string {
+	if (project.is_owner === false && project.owner_handle) {
+		return `@${project.owner_handle}/${project.slug}`;
+	}
+	return project.slug;
 }

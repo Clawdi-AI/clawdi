@@ -84,5 +84,10 @@ export async function projectInviteCommand(
 
 	const body = (await r.json()) as InvitationResponse;
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
-	console.log(chalk.gray(`  They'll see it in their \`clawdi inbox\` + the web /skills banner.`));
+	console.log(chalk.gray("  They will join as a read-only viewer after accepting."));
+	console.log(chalk.gray("  Agent binding is separate; after accept they can run:"));
+	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
+	console.log(
+		`  ${chalk.cyan("clawdi agent projects add-context <agent-id> --project <project>")}`,
+	);
 }

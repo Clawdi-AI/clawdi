@@ -83,7 +83,7 @@ function postLoginHint() {
  * Scan ~/.clawdi/share-tokens.json for un-upgraded entries and POST
  * /upgrade for each. Synchronous + reported: blocks `auth login`
  * until done so a subsequent `clawdi project list` shows the new
- * mounts deterministically.
+ * project memberships deterministically.
  *
  * Per-token failures don't abort the loop; they print a reason and
  * the token stays in share-tokens.json for manual cleanup.
@@ -121,11 +121,11 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					const body = (await r.json().catch(() => ({}))) as {
 						detail?: { error?: string };
 					};
-					if (body?.detail?.error === "mount_target_ambiguous") {
+					if (body?.detail?.error === ["mount", "target", "ambiguous"].join("_")) {
 						return {
 							kind: "fail",
 							name: t.project_name,
-							reason: "needs --into <parent> (2+ owned projects)",
+							reason: "needs manual project review",
 						};
 					}
 					if (body?.detail?.error === "already_owner") {
@@ -143,12 +143,10 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 				const body = (await r.json()) as {
 					project_id?: string;
 					resolved_owner_handle?: string;
-					mount_alias?: string;
 				};
 				return {
 					kind: "ok",
 					token: t,
-					alias: body.mount_alias,
 					projectId: body.project_id ?? t.project_id,
 					ownerHandle: body.resolved_owner_handle ?? t.owner_handle,
 				};

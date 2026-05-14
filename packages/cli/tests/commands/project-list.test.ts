@@ -29,6 +29,51 @@ afterEach(() => {
 });
 
 describe("projectListCommand", () => {
+	it("prints ownership groups with collaboration next actions", async () => {
+		const projects = [
+			{
+				id: "project-owned",
+				slug: "engineering",
+				name: "Engineering",
+				kind: "workspace",
+				is_owner: true,
+			},
+			{
+				id: "project-shared",
+				slug: "shared-toolkit",
+				name: "Shared Toolkit",
+				kind: "workspace",
+				is_owner: false,
+				owner_display: "Alice",
+				owner_handle: "alice-a3b4",
+			},
+		];
+		const { restore } = mockFetch([
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+		]);
+		const orig = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+		try {
+			await projectListCommand({});
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		const out = lines.join("\n");
+		expect(out).toContain("Projects you own (1)");
+		expect(out).toContain("Shared with me (1)");
+		expect(out).toContain("@alice-a3b4/shared-toolkit");
+		expect(out).toContain("viewer");
+		expect(out).toContain("Next: clawdi project show @alice-a3b4/shared-toolkit");
+		expect(out).toContain(
+			"Bind: clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
+		);
+	});
+
 	it("prints JSON grouped by ownership", async () => {
 		const projects = [
 			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },

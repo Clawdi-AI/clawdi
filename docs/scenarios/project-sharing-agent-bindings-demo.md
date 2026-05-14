@@ -67,16 +67,17 @@ clawdi project share-links engineering
 Expected:
 
 - The project appears under owned projects.
-- The generated share URL is shown once.
-- Link listings show the prefix, label, timestamps, and revoke affordance.
+- The share dialog opens on People, with Invites and Links available as adjacent tabs.
+- The generated share URL is shown once and clearly marked as read-only viewer access.
+- Link listings show the prefix, label, timestamps, accepts, and revoke affordance.
 - No secret plaintext is shown.
 
 Dashboard path:
 
 1. Open Projects.
 2. Open `engineering`.
-3. Use Share.
-4. Confirm Links and Invitations tabs are populated.
+3. Use Share / manage access.
+4. Confirm People, Invites, and Links reflect the current sharing state.
 
 ## Flow 2: Recipient Accepts A Link
 
@@ -93,6 +94,8 @@ Expected:
 - Membership is created as viewer access.
 - The project appears under shared projects with `@alice/engineering`.
 - Skills and vault key names are readable; writes stay disabled.
+- Human CLI output names the exact follow-up command:
+  `clawdi agent projects add-context <agent-id> --project @alice/engineering`.
 - No agent binding is created unless Bob passes `--agent`.
 
 Dashboard path:
@@ -104,7 +107,7 @@ Dashboard path:
 
 ## Flow 3: Recipient Accepts And Binds Explicitly
 
-Bob can accept and bind in one CLI step, or accept first and bind later.
+Bob can accept and attach the project to an agent in one CLI step, or accept first and bind later.
 
 ```bash
 clawdi inbox accept https://clawdi.ai/share/<token> --agent <atlas-id> --bind-as context --json
@@ -120,9 +123,9 @@ clawdi agent projects list <atlas-id>
 
 Expected:
 
-- `engineering` appears as a context project on `atlas`.
-- Bob's primary project remains owned by Bob.
-- Shared viewer projects cannot be set as primary.
+- `engineering` appears as an attached context project on `atlas`.
+- Bob's Home/primary project remains owned by Bob.
+- Shared viewer projects cannot be set as Home.
 
 ## Flow 4: Invitations And Inbox
 
@@ -160,7 +163,7 @@ Expected:
 
 ## Flow 5: Agent Operator Manages Bindings
 
-Dana reviews primary and context projects, sets primary, adds context, and reorders.
+Dana reviews the Home project and attached context projects, sets Home, attaches context, and reorders.
 
 ```bash
 clawdi agent projects list <atlas-id> --json
@@ -173,8 +176,8 @@ clawdi agent projects remove-context <atlas-id> --project @alice/engineering
 
 Expected:
 
-- The primary project is always visible in binding listings.
-- Context project order is explicit and stable.
+- The Home project is always visible in binding listings.
+- Attached context project order is explicit and stable.
 - Removing context stops that agent from using the shared project but does not remove membership.
 
 Dashboard path:
@@ -182,7 +185,7 @@ Dashboard path:
 1. Open Agents.
 2. Open `atlas`.
 3. Select Projects.
-4. Set Primary Project, Add Context, move rows up/down, and remove context.
+4. Set Home, attach context, move rows up/down, and remove context.
 
 ## Flow 6: Vault Provenance And Conflicts
 

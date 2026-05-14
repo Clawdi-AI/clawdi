@@ -93,6 +93,7 @@ export async function projectMembersCommand(
 			return;
 		}
 		console.log(`${chalk.green("✓")} Removed ${matches[0].user_email ?? matches[0].user_id}.`);
+		console.log(chalk.gray("  Their agent bindings for this project will stop applying."));
 		return;
 	}
 
@@ -102,13 +103,16 @@ export async function projectMembersCommand(
 		return;
 	}
 	if (members.length === 0) {
-		console.log(`No members on ${projectArg}.`);
+		console.log(`No accepted viewers on ${projectArg}.`);
 		console.log(
 			chalk.gray(`Invite one: ${chalk.cyan(`clawdi project invite ${projectArg} --email <addr>`)}`),
 		);
 		return;
 	}
-	console.log(chalk.bold(`Members on ${projectArg} (${members.length}):`));
+	console.log(chalk.bold(`People with project access (${members.length})`));
+	console.log(
+		chalk.gray(`  ${projectArg} viewers are read-only. Remove access without deleting content.`),
+	);
 	for (const m of members) {
 		const who = m.user_email ?? m.user_display ?? m.user_id;
 		console.log(
@@ -118,7 +122,7 @@ export async function projectMembersCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Remove: ") +
+		chalk.gray("Remove access: ") +
 			chalk.cyan(`clawdi project members ${projectArg} --remove <email|user_id>`),
 	);
 }
@@ -141,6 +145,9 @@ export async function projectLeaveCommand(
 		return;
 	}
 	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
+	console.log(
+		chalk.gray("  Project membership removed. Any agent context binding for it stops applying."),
+	);
 }
 
 export async function projectUnshareCommand(
@@ -160,11 +167,12 @@ export async function projectUnshareCommand(
 		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
 		return;
 	}
-	console.log(`${chalk.green("✓")} Stopped sharing ${projectArg}.`);
+	console.log(`${chalk.green("✓")} Stopped project sharing for ${projectArg}.`);
 	console.log(
 		chalk.gray(
 			`  Revoked ${result.links_revoked} link(s), removed ${result.members_removed} member(s), ` +
 				`cancelled ${result.invitations_cancelled} invitation(s).`,
 		),
 	);
+	console.log(chalk.gray("  Owned project content remains in place."));
 }
