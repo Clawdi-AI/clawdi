@@ -59,12 +59,13 @@ function SkillsPageInner() {
 		"target",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
 	);
+	const hasTargetParam = targetEnvId.trim().length > 0;
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 	const [customRepo, setCustomRepo] = useState("");
 	const [customRepoError, setCustomRepoError] = useState<string | null>(null);
 
-	const { data: defaultScope, error: scopeError } = useQuery({
+	const { error: scopeError } = useQuery({
 		queryKey: ["scopes", "default"],
 		queryFn: async () => unwrap(await api.GET("/api/scopes/default")),
 	});
@@ -78,10 +79,10 @@ function SkillsPageInner() {
 
 	const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
 	useEffect(() => {
-		if (!targetEnvId || !envs) return;
+		if (!hasTargetParam || !envs) return;
 		const env = envs.find((e) => e.id === targetEnvId);
 		if (env?.default_scope_id) setSelectedScopeId(env.default_scope_id);
-	}, [targetEnvId, envs]);
+	}, [hasTargetParam, targetEnvId, envs]);
 
 	const onPickScope = useCallback(
 		(scopeId: string) => {
@@ -93,8 +94,21 @@ function SkillsPageInner() {
 		[envs, setTargetEnvId],
 	);
 
-	// Resolve the target scope synchronously from `targetEnvId` +
-	// `envs` so a deep-link `?target=X` never falls through to
+	const orderedEnvs = useMemo(() => {
+		return [...(envs ?? [])].sort((a, b) => {
+			const aT = a.last_sync_at ? new Date(a.last_sync_at).getTime() : 0;
+			const bT = b.last_sync_at ? new Date(b.last_sync_at).getTime() : 0;
+			return bT - aT;
+		});
+	}, [envs]);
+
+	const defaultAgentScopeId = useMemo(() => {
+		return orderedEnvs.find((env) => env.default_scope_id)?.default_scope_id ?? null;
+	}, [orderedEnvs]);
+
+	// Resolve the target scope synchronously from the optional
+	// `target` URL param + `envs` so a deep-link `?target=X`
+	// never falls through to
 	// the account-default during the brief render window where
 	// `selectedScopeId` hasn't been populated by its useEffect
 	// yet. Pre-fix that window (and stale/deleted target ids
@@ -107,15 +121,15 @@ function SkillsPageInner() {
 	//       env not found (stale/deleted) → null (block actions)
 	//   - URL has ?target=X but envs still loading → null
 	//   - No ?target=, picker selection (post-mount) → that scope
-	//   - No ?target=, no picker → account default scope
+	//   - No ?target=, no picker → most-recent agent scope
 	const targetEnvFromUrl = useMemo(() => {
-		if (!targetEnvId) return null;
+		if (!hasTargetParam) return null;
 		if (!envs) return undefined; // still loading
 		return envs.find((e) => e.id === targetEnvId) ?? null; // null = stale id
-	}, [targetEnvId, envs]);
+	}, [hasTargetParam, targetEnvId, envs]);
 	const isResolvingTarget = targetEnvFromUrl === undefined;
 	const targetScopeId = (() => {
-		if (targetEnvId) {
+		if (hasTargetParam) {
 			// URL-driven target: only resolve once envs say
 			// whether it's valid.
 			if (targetEnvFromUrl === undefined) return null; // loading
@@ -128,7 +142,7 @@ function SkillsPageInner() {
 		// the Personal install. Block installs until an env exists
 		// (envs still loading: `envs === undefined` → null too).
 		if (!envs || envs.length === 0) return null;
-		return selectedScopeId ?? defaultScope?.scope_id ?? null;
+		return selectedScopeId ?? defaultAgentScopeId;
 	})();
 
 	// Always fetch account-wide. Earlier shape pinned scope_id
@@ -199,7 +213,7 @@ function SkillsPageInner() {
 	// instead of the one the user thought they were operating
 	// on. Pre-fix the round-46 fallback rendered the account-
 	// wide listing here and the buttons stayed enabled.
-	const isStaleTarget = targetEnvId !== null && targetEnvFromUrl === null;
+	const isStaleTarget = hasTargetParam && targetEnvFromUrl === null;
 
 	// Set of scope_ids that belong to currently-connected envs.
 	// Anything outside this set is either Personal scope, or an
@@ -388,6 +402,7 @@ function SkillsPageInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
+				description="Install reusable capabilities on an agent. Shared scopes can add skills from collaborators too."
 				actions={
 					targetScopeId ? (
 						<ShareScopeDialog scopeId={targetScopeId} scopeName={targetAgentLabel} />
@@ -430,7 +445,7 @@ function SkillsPageInner() {
 			{agentCount >= 2 ? (
 				<AgentTargetPicker
 					envs={envs ?? []}
-					selectedScopeId={selectedScopeId}
+					selectedScopeId={targetScopeId}
 					targetEnv={targetEnv}
 					targetAgentLabel={targetAgentLabel}
 					onChange={onPickScope}
@@ -473,36 +488,6 @@ function SkillsPageInner() {
 					}
 				/>
 			</section>
-
-			{/* Orphan-scope skills. Surfaces preserved skills whose
-			    origin agent has been disconnected (backend keeps
-			    the scope + skills; the env is gone). Pre-fix the
-			    page filtered to a single connected env's scope so
-			    these rows disappeared after a disconnect. The
-			    uninstall column still works because each row
-			    carries its own scope_id and the DELETE route is
-			    scope-explicit. */}
-			{orphanSkills.length > 0 ? (
-				<section className="space-y-2">
-					<div className="flex items-baseline justify-between gap-3">
-						<h2 className="text-base font-semibold">
-							From disconnected agents
-							<span className="ml-2 text-sm font-normal text-muted-foreground">
-								{orphanSkills.length}
-							</span>
-						</h2>
-					</div>
-					<p className="text-xs text-muted-foreground">
-						These skills belong to scopes whose original agent is no longer connected. They&apos;re
-						kept here so you can uninstall them or re-connect the agent on another machine.
-					</p>
-					<DataTable
-						columns={skillColumns}
-						data={orphanSkills}
-						rowAriaLabel={(s) => `Open ${s.name}`}
-					/>
-				</section>
-			) : null}
 
 			{/* Install row. Custom GitHub repo on the left, install
 			    button on the right. The featured tiles below are
@@ -615,6 +600,36 @@ function SkillsPageInner() {
 					</div>
 				</div>
 			</section>
+
+			{/* Orphan-scope skills. Surfaces preserved skills whose
+			    origin agent has been disconnected (backend keeps
+			    the scope + skills; the env is gone). This section
+			    sits after install actions because maintaining old
+			    scopes is secondary to the common "install a skill
+			    on this agent" job. The uninstall column still works
+			    because each row carries its own scope_id and the
+			    DELETE route is scope-explicit. */}
+			{orphanSkills.length > 0 ? (
+				<section className="space-y-2">
+					<div className="flex items-baseline justify-between gap-3">
+						<h2 className="text-base font-semibold">
+							Other saved skills
+							<span className="ml-2 text-sm font-normal text-muted-foreground">
+								{orphanSkills.length}
+							</span>
+						</h2>
+					</div>
+					<p className="text-xs text-muted-foreground">
+						These skills are kept from scopes that are not connected to a current agent. You can
+						still open or uninstall them here.
+					</p>
+					<DataTable
+						columns={skillColumns}
+						data={orphanSkills}
+						rowAriaLabel={(s) => `Open ${s.name}`}
+					/>
+				</section>
+			) : null}
 		</div>
 	);
 }

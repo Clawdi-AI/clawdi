@@ -248,10 +248,10 @@ export function ScopeMountsPanel({
 						className="w-full sm:w-auto"
 						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
-						aria-label="Add selected scope"
+						aria-label="Include selected scope"
 					>
 						<Plus className="mr-1.5 size-3.5" />
-						{mount.isPending ? "Adding…" : "Add scope"}
+						{mount.isPending ? "Including…" : "Include scope"}
 					</Button>
 				</div>
 			) : null}
@@ -336,6 +336,11 @@ function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
 }
 
 function displayScopeName(scope: ScopeRow) {
-	if (scope.kind === "personal" && scope.name.toLowerCase() === "personal") return "Default";
+	if (
+		scope.kind === "personal" &&
+		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
+	) {
+		return "Account";
+	}
 	return scope.name;
 }

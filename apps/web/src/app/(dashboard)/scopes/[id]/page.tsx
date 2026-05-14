@@ -189,7 +189,7 @@ export default function ScopeDetailPage() {
 			setSelectedParentId("");
 			setBlockedMount(null);
 			refresh();
-			toast.success("Shared scope added");
+			toast.success("Shared scope included");
 		},
 		onError: (e, vars) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -382,7 +382,7 @@ export default function ScopeDetailPage() {
 					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-3">
 							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Add this shared scope</h2>
+								<h2 className="text-sm font-semibold">Include this shared scope</h2>
 								<p className="text-xs text-muted-foreground">
 									Choose an owned scope where this shared content should become visible.
 								</p>
@@ -411,12 +411,12 @@ export default function ScopeDetailPage() {
 										}}
 									>
 										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Adding..." : "Add to selected scope"}
+										{mountSharedScope.isPending ? "Including..." : "Include in selected scope"}
 									</Button>
 								</div>
 							) : ownedScopes.length > 0 ? (
 								<Badge variant="outline" className="w-fit">
-									Already added to every owned scope
+									Already included in every owned scope
 								</Badge>
 							) : (
 								<Badge variant="outline" className="w-fit">
@@ -495,7 +495,7 @@ function ScopeStatsStrip({
 			}`}
 		>
 			{isOwner ? <StatCell icon={Workflow} label="Includes" value={sourceCount} /> : null}
-			<StatCell icon={Box} label="Added to" value={placementCount} />
+			<StatCell icon={Box} label="Included in" value={placementCount} />
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
 			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
@@ -533,13 +533,13 @@ function UsedInList({
 		<section className="space-y-2">
 			<div className="flex items-center gap-2 px-1">
 				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Added to owned scopes</h3>
+				<h3 className="font-semibold text-sm">Included in owned scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{placements.length}
 				</Badge>
 			</div>
 			{placements.length === 0 ? (
-				<EmptyLine message="This scope has not been added to any owned scope." />
+				<EmptyLine message="This scope is not included in any owned scope." />
 			) : (
 				<ul className="divide-y rounded-lg border">
 					{placements.map((placement) => {
@@ -658,7 +658,7 @@ function scopeKindMeta(kind: string) {
 	if (kind === "personal") {
 		return {
 			label: "Account",
-			description: "Account default scope.",
+			description: "Account-wide fallback.",
 		};
 	}
 	return { label: kind, description: `Scope type: ${kind}` };
@@ -672,7 +672,12 @@ function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
 }
 
 function displayScopeName(scope: ScopeRow) {
-	if (scope.kind === "personal" && scope.name.toLowerCase() === "personal") return "Default";
+	if (
+		scope.kind === "personal" &&
+		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
+	) {
+		return "Account";
+	}
 	return scope.name;
 }
 
