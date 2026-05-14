@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Link2, Plus, Share2, UserCheck, Workflow } from "lucide-react";
+import { ArrowRight, Link2, Plus, Share2, UserCheck, Workflow, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -48,6 +48,7 @@ export default function ScopesPage() {
 	const router = useRouter();
 	const [newScopeName, setNewScopeName] = useState("");
 	const [newScopeSlug, setNewScopeSlug] = useState("");
+	const [createOpen, setCreateOpen] = useState(false);
 
 	const scopes = useQuery({
 		queryKey: ["scopes"],
@@ -108,6 +109,7 @@ export default function ScopesPage() {
 		onSuccess: (scope) => {
 			setNewScopeName("");
 			setNewScopeSlug("");
+			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["scopes"] });
 			toast.success("Scope created", {
 				description: `${scope.name} is ready for skills, vault references, sharing, and mounts.`,
@@ -140,10 +142,19 @@ export default function ScopesPage() {
 				title="Scopes"
 				description="Manage scope access, sharing, and mounts."
 				actions={
-					<div className="flex items-center gap-2">
-						<Badge variant="secondary">{ownedScopes.length} owned</Badge>
-						{sharedScopes.length > 0 ? <Badge>{sharedScopes.length} shared</Badge> : null}
-					</div>
+					<Button
+						size="sm"
+						onClick={() => {
+							if (!createOpen) {
+								setNewScopeName("");
+								setNewScopeSlug("");
+							}
+							setCreateOpen((open) => !open);
+						}}
+					>
+						<Plus className="size-3.5" />
+						New scope
+					</Button>
 				}
 			/>
 
@@ -154,50 +165,68 @@ export default function ScopesPage() {
 				</Alert>
 			) : null}
 
-			<form
-				className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-2 sm:flex-row sm:items-center"
-				onSubmit={(event) => {
-					event.preventDefault();
-					if (!newScopeName.trim() || createScope.isPending) return;
-					createScope.mutate();
-				}}
-			>
-				<Label htmlFor="scope-name" className="sr-only">
-					Scope name
-				</Label>
-				<Input
-					id="scope-name"
-					value={newScopeName}
-					maxLength={200}
-					placeholder="New scope name"
-					className="sm:max-w-xl sm:flex-1"
-					onChange={(event) => setNewScopeName(event.target.value)}
-				/>
-				<Label htmlFor="scope-slug" className="sr-only">
-					Scope slug
-				</Label>
-				<Input
-					id="scope-slug"
-					value={newScopeSlug}
-					maxLength={80}
-					placeholder="auto-generated slug"
-					className="sm:w-56"
-					onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
-				/>
-				<Button
-					type="submit"
-					size="sm"
-					disabled={!newScopeName.trim() || createScope.isPending}
-					className="w-full sm:w-28"
+			{createOpen ? (
+				<form
+					className="rounded-lg border bg-muted/20 p-3"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (!newScopeName.trim() || createScope.isPending) return;
+						createScope.mutate();
+					}}
 				>
-					<Plus className="size-3.5" />
-					{createScope.isPending ? "Creating..." : "Create"}
-				</Button>
-			</form>
+					<div className="mb-3 flex items-center justify-between gap-3">
+						<h2 className="font-semibold text-sm">New scope</h2>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							aria-label="Cancel new scope"
+							onClick={() => {
+								setCreateOpen(false);
+								setNewScopeName("");
+								setNewScopeSlug("");
+							}}
+						>
+							<X className="size-4" />
+						</Button>
+					</div>
+					<div className="grid gap-2 md:grid-cols-[minmax(260px,1fr)_240px_max-content] md:items-end">
+						<div className="space-y-1.5">
+							<Label htmlFor="scope-name">Name</Label>
+							<Input
+								id="scope-name"
+								value={newScopeName}
+								maxLength={200}
+								placeholder="Scope name"
+								onChange={(event) => setNewScopeName(event.target.value)}
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="scope-slug">Slug</Label>
+							<Input
+								id="scope-slug"
+								value={newScopeSlug}
+								maxLength={80}
+								placeholder="auto-generated"
+								onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
+							/>
+						</div>
+						<Button
+							type="submit"
+							size="sm"
+							disabled={!newScopeName.trim() || createScope.isPending}
+							className="w-full md:w-28"
+						>
+							<Plus className="size-3.5" />
+							{createScope.isPending ? "Creating..." : "Create"}
+						</Button>
+					</div>
+				</form>
+			) : null}
 
 			<section className="space-y-3">
 				<div className="flex items-center gap-2">
-					<h2 className="text-base font-semibold">My scopes</h2>
+					<h2 className="text-base font-semibold">Owned scopes</h2>
 					<Badge variant="secondary" className="text-xs">
 						{ownedScopes.length}
 					</Badge>
@@ -220,7 +249,7 @@ export default function ScopesPage() {
 
 			<section className="space-y-3">
 				<div className="flex items-center gap-2">
-					<h2 className="text-base font-semibold">Shared with me</h2>
+					<h2 className="text-base font-semibold">Shared scopes</h2>
 					<Badge variant="secondary" className="text-xs">
 						{sharedScopes.length}
 					</Badge>
@@ -273,14 +302,16 @@ function OwnedScopeRow({
 				</div>
 			</div>
 			<div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-				<Badge variant="outline" className="font-normal">
-					<Link2 className="size-3.5" />
-					{mounts.length} source{mounts.length === 1 ? "" : "s"}
-				</Badge>
+				{mounts.length > 0 ? (
+					<Badge variant="outline" className="font-normal">
+						<Link2 className="size-3.5" />
+						{mounts.length} source scope{mounts.length === 1 ? "" : "s"}
+					</Badge>
+				) : null}
 				{placements.length > 0 ? (
 					<Badge variant="outline" className="font-normal">
 						<Workflow className="size-3.5" />
-						{placements.length} placement{placements.length === 1 ? "" : "s"}
+						Mounted into {placements.length}
 					</Badge>
 				) : null}
 			</div>
@@ -326,6 +357,7 @@ function SharedScopeRow({
 					</Badge>
 				) : (
 					<div className="space-y-1.5">
+						<div className="px-1 text-xs font-medium text-muted-foreground">Mounted into</div>
 						{placements.map((placement) => (
 							<div
 								key={placement.id}
