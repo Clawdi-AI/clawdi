@@ -6,13 +6,14 @@
 
 ## Summary
 
-This document replaces the legacy graph/mount vocabulary with a simpler
-model:
+This document replaces legacy graph-era terminology with a simpler model:
 
 - `Project` is the collaboration and data ownership boundary.
 - `Agent` is the runtime boundary that reads from one or more projects.
 - Every agent has exactly one primary project and zero or more context
   projects.
+- Local project-folder links are CLI-only selection helpers for
+  `clawdi run`; they do not compose projects or change agent bindings.
 
 Project composition is not project-to-project. Composition happens only
 when an agent runs.
@@ -27,11 +28,13 @@ when an agent runs.
 5. Keep sharing and membership independent from agent binding:
    accepting a shared project grants access, then users bind that
    project to agents.
-6. Keep default write behavior deterministic:
+6. Keep local CLI folder links separate from the cloud Project model:
+   they only help the operator choose a Project from the current folder.
+7. Keep default write behavior deterministic:
    writes go to the agent primary project unless explicitly overridden.
-7. Enforce safe multi-project vault resolution with provenance and
+8. Enforce safe multi-project vault resolution with provenance and
    explicit conflict handling.
-8. Preserve validated PR #88 flows:
+9. Preserve validated PR #88 flows:
    links, invitations, inbox, member management, revoke/remove/unshare,
    vault conflict safety, and agent setup JSON.
 
@@ -40,8 +43,9 @@ when an agent runs.
 1. No nested project composition. Projects do not include projects.
 2. No implicit write fan-out across multiple projects.
 3. No automatic conflict override during vault/key collisions.
-4. No test implementation changes in this planning step.
-5. No backend/CLI/web runtime implementation in this planning step.
+4. No cloud Project composition through local folder links.
+5. No test implementation changes in this planning step.
+6. No backend/CLI/web runtime implementation in this planning step.
 
 ## User Model
 
@@ -59,12 +63,21 @@ when an agent runs.
   - Exactly one binding marked as `primary`.
   - Zero or more bindings marked as `context`.
   - Context bindings have explicit priority/order.
+- `Project Folder Link`
+  - Local CLI configuration that maps a filesystem folder to a visible
+    Project for operator convenience.
+  - Used by `clawdi run` for vault env injection when no explicit
+    Project is passed.
+  - Does not grant access, create membership, attach a Project to an
+    Agent, or compose cloud Projects.
 
 ## Mental Model
 
 - Sharing answers: "Who can access this project?"
 - Binding answers: "Which projects can this agent use at runtime?"
 - Primary answers: "Where do default writes go?"
+- Folder link answers: "When I run from this local folder, which
+  Project should the CLI use for vault env injection?"
 
 ## Data Model Proposal
 
@@ -161,6 +174,22 @@ can be introduced with compatibility layers if needed.
 - Writes to context projects require explicit target and write role.
 - Viewer-shared context projects are read/context only by default.
 
+## CLI Vault Env Selection
+
+`clawdi run` can select a Project for vault env injection without
+changing Project membership or Agent bindings:
+
+1. `clawdi run --project <project> -- <cmd>` uses the explicit Project.
+2. Without `--project`, `clawdi run -- <cmd>` may use a linked folder's
+   Project when the current folder or a parent folder has a local link.
+3. `clawdi run --no-project-folder -- <cmd>` skips linked-folder lookup.
+4. If no Project is selected by flag or folder link, the command keeps
+   the existing default vault resolution behavior.
+
+Folder links are local operator convenience only. They are not stored as
+cloud Project composition and do not affect which Projects an Agent has
+as Home or attached context.
+
 ## API Changes (Proposed)
 
 ## Projects and Sharing
@@ -204,7 +233,10 @@ These endpoints enforce agent-boundary composition and return provenance.
 1. `clawdi project ...` for project lifecycle and sharing.
 2. `clawdi inbox ...` for accepting links/invitations.
 3. `clawdi agent projects ...` for binding primary/context projects.
-4. `clawdi vault ... --agent <agent>` for runtime resolution.
+4. `clawdi project folder ...` for local folder-to-Project selection
+   used by `clawdi run`.
+5. `clawdi run ...` for vault env injection into local commands.
+6. `clawdi vault ... --agent <agent>` for runtime resolution.
 
 ## Example Commands
 
@@ -215,6 +247,12 @@ clawdi inbox accept https://clawdi.ai/share/<token>
 clawdi agent projects set-primary atlas --project personal
 clawdi agent projects add-context atlas --project engineering --priority 10
 clawdi vault resolve OPENAI_API_KEY --agent atlas --debug
+clawdi project folder link --project engineering
+clawdi project folder status
+clawdi run -- npm run deploy
+clawdi run --project @alice/engineering -- npm run deploy
+clawdi run --no-project-folder -- python main.py
+clawdi project folder unlink
 ```
 
 ## JSON Contracts

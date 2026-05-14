@@ -11,6 +11,13 @@
 - Agent can attach multiple Projects so their resources are available during runs.
 - Sharing grants Project membership only. It does not attach the Project to an agent.
 - Composition happens only when a user chooses to attach a Project to an Agent.
+- A project folder link is local CLI configuration that tells
+  `clawdi run` which Project to use for vault env injection from a folder.
+- Folder links do not grant membership, attach Projects to Agents, or
+  change cloud Project relationships.
+- `clawdi run --project <project>` uses an explicit Project;
+  `clawdi run -- <cmd>` can use the linked folder's Project; and
+  `clawdi run --no-project-folder -- <cmd>` skips local folder lookup.
 - Revoking membership or stopping sharing removes future agent use for affected members.
 
 ## Personas
@@ -27,10 +34,11 @@ CLI examples assume:
 export CLAWDI_API_URL=http://localhost:8000
 ```
 
-Use the dashboard and CLI as equivalent views of the same state:
+Use the dashboard and CLI as equivalent views of the same cloud state.
+Folder links are CLI-only local preferences:
 
 - Dashboard: Projects list/detail, Share dialog, Inbox banner, share landing page, Agent detail Projects tab.
-- CLI: `project`, `inbox`, `agent projects`, `vault`, `skill`, `push`, and `pull` commands.
+- CLI: `project`, `project folder`, `inbox`, `agent projects`, `run`, `vault`, `skill`, `push`, and `pull` commands.
 
 ## Role Matrix
 
@@ -49,6 +57,8 @@ Use the dashboard and CLI as equivalent views of the same state:
 | Agent operator | View Home and attached projects | Agent detail Projects tab | `clawdi agent projects list` |
 | Agent operator | Set Home project | Agent detail Projects tab | `clawdi agent projects set-primary` |
 | Agent operator | Attach/detach/reorder projects | Agent detail Projects tab | `add-context`, `remove-context`, `reorder` |
+| Local operator | Link a folder to a Project for `run` env selection | CLI only | `clawdi project folder link`, `status`, `unlink` |
+| Local operator | Run with linked or explicit Project vault env | CLI only | `clawdi run`, `run --project`, `run --no-project-folder` |
 | Security | Env-bound keys cannot manage sharing | API guard | sharing routes reject env-bound keys |
 | Security | Plaintext vault values stay CLI/API-key only | API guard | web/JWT cannot call `vault resolve` |
 | Revoke/conflict | Conflict block/allow and access cleanup | Error copy / stale attachment cleanup | `vault resolve --agent`, unshare/leave/remove |
@@ -187,7 +197,45 @@ Dashboard path:
 3. Select Projects.
 4. Set Home, attach a project, move rows up/down, and detach a project.
 
-## Flow 6: Vault Provenance And Conflicts
+## Flow 6: Local Project Folder Selection For Run
+
+Bob links a local checkout to a Project he can already access. This is a
+local shortcut for `clawdi run`, not an Agent attachment.
+
+```bash
+cd ~/work/engineering
+clawdi project folder link --project @alice/engineering
+clawdi project folder status
+clawdi run -- npm run deploy
+```
+
+Explicit Project override:
+
+```bash
+clawdi run --project personal -- python main.py
+```
+
+Skip folder lookup:
+
+```bash
+clawdi run --no-project-folder -- python main.py
+```
+
+Cleanup:
+
+```bash
+clawdi project folder unlink
+```
+
+Expected:
+
+- The link is local CLI configuration for the folder.
+- The operator must already have Project access; linking does not grant membership.
+- `clawdi run --project` uses the explicit Project instead of the linked folder.
+- `clawdi run --no-project-folder` ignores linked folders and uses run behavior without local folder selection.
+- Agent Home and attached Projects do not change. Use `clawdi agent projects ...` when an Agent should use the Project during agent-bound resolution.
+
+## Flow 7: Vault Provenance And Conflicts
 
 Setup: Alice and Bob both have key name `OPENAI_API_KEY`; Bob attaches Alice's project to an agent.
 
@@ -219,7 +267,7 @@ Security branch:
 - Env-bound deploy keys cannot manage sharing or invitations.
 - Plaintext vault resolution remains CLI/API-key only.
 
-## Flow 7: Skills, Pull, And Push Project Flags
+## Flow 8: Skills, Pull, And Push Project Flags
 
 Project-aware skill commands target a project explicitly when needed.
 
@@ -243,7 +291,7 @@ Expected:
 - Skill writes require an owned project.
 - Session push does not use cloud project aliases.
 
-## Flow 8: Revoke, Leave, And Unshare
+## Flow 9: Revoke, Leave, And Unshare
 
 Membership removal also removes future agent use for the affected member.
 
