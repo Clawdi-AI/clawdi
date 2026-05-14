@@ -155,43 +155,44 @@ export default function ScopesPage() {
 			) : null}
 
 			<form
-				className="rounded-lg border bg-muted/20 p-3"
+				className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-2 sm:flex-row sm:items-center"
 				onSubmit={(event) => {
 					event.preventDefault();
 					if (!newScopeName.trim() || createScope.isPending) return;
 					createScope.mutate();
 				}}
 			>
-				<div className="grid gap-3 lg:grid-cols-[minmax(260px,480px)_220px_auto] lg:items-end">
-					<div className="space-y-1.5">
-						<Label htmlFor="scope-name">Name</Label>
-						<Input
-							id="scope-name"
-							value={newScopeName}
-							maxLength={200}
-							placeholder="New scope name"
-							onChange={(event) => setNewScopeName(event.target.value)}
-						/>
-					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="scope-slug">Slug</Label>
-						<Input
-							id="scope-slug"
-							value={newScopeSlug}
-							maxLength={80}
-							placeholder="auto-generated"
-							onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
-						/>
-					</div>
-					<Button
-						type="submit"
-						disabled={!newScopeName.trim() || createScope.isPending}
-						className="w-full lg:w-auto"
-					>
-						<Plus className="mr-1.5 size-4" />
-						{createScope.isPending ? "Creating..." : "Create"}
-					</Button>
-				</div>
+				<Label htmlFor="scope-name" className="sr-only">
+					Scope name
+				</Label>
+				<Input
+					id="scope-name"
+					value={newScopeName}
+					maxLength={200}
+					placeholder="New scope name"
+					className="sm:max-w-xl sm:flex-1"
+					onChange={(event) => setNewScopeName(event.target.value)}
+				/>
+				<Label htmlFor="scope-slug" className="sr-only">
+					Scope slug
+				</Label>
+				<Input
+					id="scope-slug"
+					value={newScopeSlug}
+					maxLength={80}
+					placeholder="auto-generated slug"
+					className="sm:w-56"
+					onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
+				/>
+				<Button
+					type="submit"
+					size="sm"
+					disabled={!newScopeName.trim() || createScope.isPending}
+					className="w-full sm:w-28"
+				>
+					<Plus className="size-3.5" />
+					{createScope.isPending ? "Creating..." : "Create"}
+				</Button>
 			</form>
 
 			<section className="space-y-3">
@@ -253,25 +254,25 @@ function OwnedScopeRow({
 	placements: MountRow[];
 }) {
 	return (
-		<div className="rounded-lg border p-4">
+		<div className="group relative rounded-lg border px-3 py-3 transition-colors hover:bg-muted/20">
+			<Link
+				href={`/scopes/${scope.id}`}
+				aria-label={`Open ${scope.name}`}
+				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+			/>
 			<div className="flex items-start justify-between gap-3">
 				<ScopeIdentity scope={scope} />
-				<div className="flex shrink-0 items-center gap-1">
+				<div className="relative z-20 flex shrink-0 items-center gap-1">
 					<ShareScopeDialog scopeId={scope.id} scopeName={scope.name} scopeKind={scope.kind}>
 						<Button variant="outline" size="sm" aria-label={`Share ${scope.name}`}>
 							<Share2 className="mr-1.5 size-3.5" />
 							Share
 						</Button>
 					</ShareScopeDialog>
-					<Button asChild variant="secondary" size="sm">
-						<Link href={`/scopes/${scope.id}`} aria-label={`Open ${scope.name}`}>
-							Open
-							<ArrowRight className="ml-1.5 size-3.5" />
-						</Link>
-					</Button>
+					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 				</div>
 			</div>
-			<div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+			<div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
 				<Badge variant="outline" className="font-normal">
 					<Link2 className="size-3.5" />
 					{mounts.length} source{mounts.length === 1 ? "" : "s"}
@@ -298,8 +299,13 @@ function SharedScopeRow({
 }) {
 	const ownedScopeById = new Map(ownedScopes.map((s) => [s.id, s]));
 	return (
-		<div className="rounded-lg border p-4">
-			<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+		<div className="group relative rounded-lg border px-3 py-3 transition-colors hover:bg-muted/20">
+			<Link
+				href={`/scopes/${scope.id}`}
+				aria-label={`Open ${scope.name}`}
+				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+			/>
+			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
 					<div className="flex flex-wrap items-center gap-2">
 						<h3 className="truncate text-sm font-semibold">{scope.name}</h3>
@@ -311,14 +317,9 @@ function SharedScopeRow({
 					</div>
 					<div className="mt-1 font-mono text-xs text-muted-foreground">{scope.slug}</div>
 				</div>
-				<Button asChild variant="secondary" size="sm" className="w-fit">
-					<Link href={`/scopes/${scope.id}`} aria-label={`Open ${scope.name}`}>
-						Open
-						<ArrowRight className="ml-1.5 size-3.5" />
-					</Link>
-				</Button>
+				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 			</div>
-			<div className="mt-3">
+			<div className="mt-2">
 				{placements.length === 0 ? (
 					<Badge variant="outline" className="font-normal">
 						Not mounted
@@ -349,7 +350,7 @@ function SharedScopeRow({
 
 function ScopeIdentity({ scope }: { scope: ScopeRow }) {
 	return (
-		<div className="min-w-0">
+		<div className="relative z-20 min-w-0 pointer-events-none">
 			<div className="flex flex-wrap items-center gap-2">
 				<h3 className="truncate text-sm font-semibold">{scope.name}</h3>
 				<ScopeKindBadge kind={scope.kind} />
