@@ -190,6 +190,66 @@ Folder links are local operator convenience only. They are not stored as
 cloud Project composition and do not affect which Projects an Agent has
 as Home or attached context.
 
+## Agent-Native Project Adapter Direction
+
+The Clawdi cloud `Project` model must not assume every local agent uses
+one identical project primitive. Each agent adapter should translate the
+agent's native locality model into Clawdi's Project/Agent vocabulary.
+
+Current adapter research from `packages/cli/src/adapters/*`:
+
+1. Claude Code
+   - Native locality: `~/.claude/projects/<encoded-absolute-path>/` plus
+     per-entry `cwd` in JSONL.
+   - Current adapter behavior: `collectSessions({ projectFilter })`
+     prefilters encoded project directories, then verifies the real `cwd`.
+   - Design implication: Claude Code can map local filesystem folders to
+     Project selection with high confidence; folder ancestry is meaningful.
+2. Codex
+   - Native locality: `~/.codex/sessions/YYYY/MM/DD/*.jsonl` with
+     `session_meta.payload.cwd` inside each file.
+   - Current adapter behavior: full session walk, then filters by stored
+     `cwd` when `projectFilter` is passed.
+   - Design implication: Codex has no stable project directory index, so
+     Project matching is content-derived from session metadata.
+3. OpenClaw
+   - Native locality: `OPENCLAW_STATE_DIR` or an OpenClaw home with
+     `agents/<id>/sessions/sessions.json`; each entry may include
+     `acp.cwd` and OpenClaw may host multiple native agents in one state
+     root.
+   - Current adapter behavior: enumerates all `agents/<id>` directories
+     unless `OPENCLAW_AGENT_ID` narrows it, and filters by `acp.cwd`.
+   - Design implication: Clawdi's Agent boundary must map to OpenClaw's
+     native agent id as well as cwd; Project selection alone is not enough.
+4. Hermes
+   - Native locality: one SQLite `state.db`; session rows have `source`
+     as a channel/origin tag, not a filesystem cwd.
+   - Current adapter behavior: ignores `projectFilter` and reports
+     `projectPath: null`.
+   - Design implication: Hermes needs an explicit Clawdi-side binding or
+     operator-selected Project; native session storage cannot infer a
+     folder Project.
+
+Implementation direction:
+
+- Keep `AgentAdapter` responsible for agent storage formats: detecting
+  installs, collecting sessions, collecting skills, and writing skills.
+- Add a narrower project-locality layer instead of overloading cloud
+  Project semantics into every adapter:
+  - `getNativeProjectHints()` for inspectable native folders/ids when an
+    agent exposes them.
+  - `matchNativeProject(path)` for cwd-based agents such as Claude Code,
+    Codex, and OpenClaw.
+  - `supportsProjectFilter` or equivalent capability metadata so Hermes
+    and future non-filesystem agents can explicitly say "no native cwd".
+- Store Clawdi Project membership and Agent Home/attached bindings in the
+  cloud model. Use native project adapters only to choose or label local
+  data, never to create cross-Project composition.
+- For `clawdi run`, preserve the selection order:
+  explicit `--project`, then local folder link, then existing default
+  behavior. Agent-native project hints may improve UX suggestions, but
+  must not silently attach Projects to Agents.
+
 ## API Changes (Proposed)
 
 ## Projects and Sharing
