@@ -319,9 +319,9 @@ async def project_ids_visible_to(
     from app.models.project_membership import ProjectMembership
 
     owned_ids = list(
-        (
-            await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
-        ).scalars().all()
+        (await db.execute(select(Project.id).where(Project.user_id == auth.user_id)))
+        .scalars()
+        .all()
     )
     shared_ids = list(
         (

@@ -48,16 +48,20 @@ async def list_project_bindings(
 ) -> list[AgentProjectBindingResponse]:
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
     rows = (
-        await db.execute(
-            select(AgentProjectBinding)
-            .where(AgentProjectBinding.agent_id == agent_id)
-            .order_by(
-                case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
-                AgentProjectBinding.priority.asc(),
-                AgentProjectBinding.created_at.asc(),
+        (
+            await db.execute(
+                select(AgentProjectBinding)
+                .where(AgentProjectBinding.agent_id == agent_id)
+                .order_by(
+                    case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
+                    AgentProjectBinding.priority.asc(),
+                    AgentProjectBinding.created_at.asc(),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     visible_project_ids = set(await project_ids_visible_to(db, auth))
     changed = False
     stale = [row for row in rows if row.project_id not in visible_project_ids]
@@ -82,16 +86,20 @@ async def list_project_bindings(
     if changed:
         await db.commit()
         rows = (
-            await db.execute(
-                select(AgentProjectBinding)
-                .where(AgentProjectBinding.agent_id == agent_id)
-                .order_by(
-                    case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
-                    AgentProjectBinding.priority.asc(),
-                    AgentProjectBinding.created_at.asc(),
+            (
+                await db.execute(
+                    select(AgentProjectBinding)
+                    .where(AgentProjectBinding.agent_id == agent_id)
+                    .order_by(
+                        case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
+                        AgentProjectBinding.priority.asc(),
+                        AgentProjectBinding.created_at.asc(),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return [_to_response(row) for row in rows]
 
 

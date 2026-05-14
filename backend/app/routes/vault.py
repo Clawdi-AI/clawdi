@@ -367,11 +367,7 @@ async def _first_vault_key_hit(
     project_id: UUID,
     wanted: str,
 ) -> tuple[Vault | None, VaultItem | None]:
-    vaults = (
-        (await db.execute(select(Vault).where(Vault.project_id == project_id)))
-        .scalars()
-        .all()
-    )
+    vaults = (await db.execute(select(Vault).where(Vault.project_id == project_id))).scalars().all()
     for vault in vaults:
         items = (
             (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))

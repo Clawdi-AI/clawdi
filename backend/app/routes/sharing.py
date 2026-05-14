@@ -218,8 +218,7 @@ async def create_invitation(
             {
                 "error": "user_not_found",
                 "message": (
-                    "No clawdi account found for that email. "
-                    "Send them a share link instead."
+                    "No clawdi account found for that email. Send them a share link instead."
                 ),
             },
         )

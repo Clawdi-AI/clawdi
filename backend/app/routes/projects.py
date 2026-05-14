@@ -198,26 +198,30 @@ async def list_projects(
     if not visible_project_ids:
         return []
     result = await db.execute(
-        select(Project).where(Project.id.in_(visible_project_ids)).order_by(Project.created_at.desc())
+        select(Project)
+        .where(Project.id.in_(visible_project_ids))
+        .order_by(Project.created_at.desc())
     )
     rows = result.scalars().all()
     caller_user_id = auth.user_id
     owner_ids = {project.user_id for project in rows}
     owners = {}
     if owner_ids:
-        owner_rows = (
-            await db.execute(select(User).where(User.id.in_(owner_ids)))
-        ).scalars().all()
+        owner_rows = (await db.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
         owners = {owner.id: owner for owner in owner_rows}
 
     membership_rows = (
-        await db.execute(
-            select(ProjectMembership).where(
-                ProjectMembership.member_user_id == caller_user_id,
-                ProjectMembership.project_id.in_(visible_project_ids),
+        (
+            await db.execute(
+                select(ProjectMembership).where(
+                    ProjectMembership.member_user_id == caller_user_id,
+                    ProjectMembership.project_id.in_(visible_project_ids),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     memberships = {membership.project_id: membership for membership in membership_rows}
     return [
         _project_response(
@@ -252,9 +256,7 @@ async def get_project(
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
-    owner = (
-        await db.execute(select(User).where(User.id == project.user_id))
-    ).scalar_one_or_none()
+    owner = (await db.execute(select(User).where(User.id == project.user_id))).scalar_one_or_none()
     membership = (
         await db.execute(
             select(ProjectMembership).where(
