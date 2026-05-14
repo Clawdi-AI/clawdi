@@ -258,7 +258,7 @@ export default function ScopesPage() {
 				<SectionHeader
 					title="Shared scopes"
 					count={sharedScopes.length}
-					description="Read-only scopes from other people. Include them in one or more owned scopes to make their content available there."
+					description="Read-only scopes from other people. Use them in one or more owned scopes to make their content available there."
 				/>
 				{sharedScopes.length === 0 ? (
 					<EmptyLine message="Accepted shares appear here before or after you use them in an owned scope." />
@@ -374,18 +374,18 @@ function ScopeRelationshipSummary({
 				icon={Link2}
 				label={
 					mounts.length === 0
-						? "Includes no other scopes"
-						: `Includes ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
+						? "Uses no other scopes"
+						: `Uses ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
 				}
 				muted={mounts.length === 0}
 			/>
 			{placements.length > 0 ? (
 				<RelationshipBadge
 					icon={Workflow}
-					label={`Included in ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
+					label={`Used in ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
 				/>
 			) : empty ? null : (
-				<RelationshipBadge icon={Workflow} label="Not included elsewhere" muted />
+				<RelationshipBadge icon={Workflow} label="Not used elsewhere" muted />
 			)}
 		</div>
 	);
@@ -401,13 +401,13 @@ function SharedPlacementSummary({
 	if (placements.length === 0) {
 		return (
 			<div className="relative z-20 pointer-events-none">
-				<RelationshipBadge icon={Workflow} label="Not included yet" muted />
+				<RelationshipBadge icon={Workflow} label="Not used yet" muted />
 			</div>
 		);
 	}
 	return (
 		<div className="relative z-20 min-w-0 space-y-1 pointer-events-none">
-			<div className="text-xs font-medium text-muted-foreground">Included in</div>
+			<div className="text-xs font-medium text-muted-foreground">Used in</div>
 			<div className="flex min-w-0 flex-wrap gap-1.5">
 				{placements.slice(0, 3).map((placement) => (
 					<Badge key={placement.id} variant="outline" className="max-w-full font-normal">

@@ -135,7 +135,7 @@ export function ShareScopeDialog({
 					<DialogTitle>Share "{scopeName}"</DialogTitle>
 					<DialogDescription>
 						Give others read-only membership in this scope. They decide which of their owned scopes
-						should include it, and they cannot edit your scope.
+						should use it, and they cannot edit your scope.
 					</DialogDescription>
 				</DialogHeader>
 				{isPersonalScope ? (
@@ -672,7 +672,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 			refreshSharingState();
 			toast.success(
 				body.mounts_removed > 0
-					? `Member removed — ${body.mounts_removed} include removed`
+					? `Member removed — stopped using this scope in ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}`
 					: "Member removed",
 			);
 		},
@@ -709,8 +709,8 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<p className="text-xs text-muted-foreground sm:max-w-sm">
-					Accepted viewers with permanent access. Removing a member also removes includes that point
-					to this scope.
+					Accepted viewers with permanent access. Removing a member also stops using this scope in
+					their owned scopes.
 				</p>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
@@ -728,7 +728,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 							<AlertDialogTitle>Stop sharing this scope?</AlertDialogTitle>
 							<AlertDialogDescription>
 								This revokes active links, cancels pending invitations, removes accepted members,
-								and removes their includes.
+								and stops using this scope in their owned scopes.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
@@ -792,8 +792,8 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 										<AlertDialogHeader>
 											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
 											<AlertDialogDescription>
-												{label} will lose access to this scope. Any includes that point to this
-												scope are removed with the membership.
+												{label} will lose access to this scope. Any owned scopes using it stop using
+												it with the membership.
 											</AlertDialogDescription>
 										</AlertDialogHeader>
 										<AlertDialogFooter>

@@ -39,7 +39,7 @@ import {
 /**
  * Per-scope mount management panel (Plan §MF.2).
  *
- * Renders the list of other scopes included in this scope. The API still
+ * Renders the list of other scopes used by this scope. The API still
  * calls these rows ScopeMount edges, but the product surface avoids
  * that term unless it is describing the underlying CLI/API behavior.
  *
@@ -140,7 +140,7 @@ export function ScopeMountsPanel({
 			qc.invalidateQueries({ queryKey: ["scope-mounts", scopeId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Scope included — its skills now appear here.");
+			toast.success("Scope is now used here.");
 		},
 		onError: (e, variables) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -199,13 +199,13 @@ export function ScopeMountsPanel({
 			<section className="space-y-3">
 				<div className="flex items-center gap-2 px-1">
 					<Workflow className="size-4 text-muted-foreground" />
-					<h3 className="font-semibold text-sm">Includes</h3>
+					<h3 className="font-semibold text-sm">Uses other scopes</h3>
 					<Badge variant="secondary" className="text-xs">
 						0
 					</Badge>
 				</div>
 				<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-					This scope does not include any other scopes yet.
+					This scope does not use any other scopes yet.
 				</div>
 			</section>
 		);
@@ -215,7 +215,7 @@ export function ScopeMountsPanel({
 		<section className="space-y-3">
 			<div className="flex items-center gap-2 px-1">
 				<Workflow className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Includes</h3>
+				<h3 className="font-semibold text-sm">Uses other scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{rows.length}
 				</Badge>
@@ -231,9 +231,9 @@ export function ScopeMountsPanel({
 					>
 						<SelectTrigger
 							className="min-w-0 flex-1 sm:min-w-[220px]"
-							aria-label="Select scope to include"
+							aria-label="Select scope to use"
 						>
-							<SelectValue placeholder="Choose scope to include" />
+							<SelectValue placeholder="Choose scope to use" />
 						</SelectTrigger>
 						<SelectContent>
 							{mountCandidates.map((scope) => (
@@ -248,17 +248,17 @@ export function ScopeMountsPanel({
 						className="w-full sm:w-auto"
 						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
-						aria-label="Include selected scope"
+						aria-label="Use selected scope"
 					>
 						<Plus className="mr-1.5 size-3.5" />
-						{mount.isPending ? "Including…" : "Include scope"}
+						{mount.isPending ? "Using…" : "Use scope"}
 					</Button>
 				</div>
 			) : null}
 			{blockedMount ? (
 				<VaultConflictsAlert
 					detail={blockedMount.detail}
-					actionLabel="Include anyway"
+					actionLabel="Use anyway"
 					actionPending={mount.isPending}
 					onAction={() =>
 						mount.mutate({

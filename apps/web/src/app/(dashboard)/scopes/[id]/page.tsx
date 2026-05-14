@@ -11,6 +11,7 @@ import {
 	Plus,
 	Share2,
 	Sparkles,
+	Trash2,
 	UserCheck,
 	Workflow,
 } from "lucide-react";
@@ -42,6 +43,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -50,6 +52,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
@@ -189,7 +192,7 @@ export default function ScopeDetailPage() {
 			setSelectedParentId("");
 			setBlockedMount(null);
 			refresh();
-			toast.success("Shared scope included");
+			toast.success("Scope is now used there");
 		},
 		onError: (e, vars) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -209,6 +212,25 @@ export default function ScopeDetailPage() {
 		},
 	});
 
+	const removePlacement = useMutation({
+		mutationFn: async (placement: MountRow) => {
+			await authedFetch(`/api/scopes/${placement.parent_scope_id}/mounts/${placement.id}`, {
+				method: "DELETE",
+			});
+		},
+		onSuccess: (_data, placement) => {
+			refresh();
+			toast.success(
+				`Stopped using this scope in ${formatOptionalScopeName(ownedScopeById.get(placement.parent_scope_id))}.`,
+			);
+		},
+		onError: (e) => {
+			toast.error("Failed to stop using scope", {
+				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+			});
+		},
+	});
+
 	const leaveSharedScope = useMutation({
 		mutationFn: async (): Promise<{ status: string; mounts_removed: number }> => {
 			const r = await authedFetch(`/api/scopes/${scopeId}/leave`, { method: "POST" });
@@ -219,7 +241,7 @@ export default function ScopeDetailPage() {
 			toast.success("Left shared scope", {
 				description:
 					body.mounts_removed > 0
-						? `Removed this scope from ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}.`
+						? `Stopped using this scope in ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}.`
 						: "Membership removed.",
 			});
 			router.push("/scopes");
@@ -319,16 +341,22 @@ export default function ScopeDetailPage() {
 			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<h2 className="text-base font-semibold">What this scope includes</h2>
+						<h2 className="text-base font-semibold">Scope composition</h2>
 						{isOwner ? (
 							<ScopeMountsPanel scopeId={scope.id} showEmpty />
 						) : (
 							<div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
 								<UserCheck className="size-4" />
-								<span>The owner controls what this shared scope includes.</span>
+								<span>The owner controls which other scopes this shared scope uses.</span>
 							</div>
 						)}
-						<UsedInList placements={placements} ownedScopeById={ownedScopeById} />
+						<UsedInList
+							placements={placements}
+							ownedScopeById={ownedScopeById}
+							onRemove={(placement) => removePlacement.mutate(placement)}
+							removingId={removePlacement.variables?.id ?? null}
+							isRemoving={removePlacement.isPending}
+						/>
 					</section>
 
 					<section className="space-y-3">
@@ -337,6 +365,7 @@ export default function ScopeDetailPage() {
 							direct={directSkills.length}
 							composed={composedSkills.length}
 						/>
+						{isOwner ? <InstallSkillInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
 						{skills.isLoading ? (
 							<Skeleton className="h-24 w-full" />
 						) : skills.error ? (
@@ -362,6 +391,7 @@ export default function ScopeDetailPage() {
 							direct={directVaults.length}
 							composed={composedVaults.length}
 						/>
+						{isOwner ? <CreateVaultInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
 						{vaults.isLoading ? (
 							<Skeleton className="h-24 w-full" />
 						) : vaults.error ? (
@@ -382,16 +412,16 @@ export default function ScopeDetailPage() {
 					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-3">
 							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Include this shared scope</h2>
+								<h2 className="text-sm font-semibold">Use this shared scope</h2>
 								<p className="text-xs text-muted-foreground">
-									Choose an owned scope where this shared content should become visible.
+									Choose an owned scope where this shared content should be available.
 								</p>
 							</div>
 							{mountTargets.length > 0 ? (
 								<div className="flex flex-col gap-2">
 									<Select value={selectedParentId} onValueChange={setSelectedParentId}>
 										<SelectTrigger aria-label={`Select owned scope for ${displayScopeName(scope)}`}>
-											<SelectValue placeholder="Choose owned scope" />
+											<SelectValue placeholder="Choose where to use it" />
 										</SelectTrigger>
 										<SelectContent>
 											{mountTargets.map((target) => (
@@ -411,12 +441,12 @@ export default function ScopeDetailPage() {
 										}}
 									>
 										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Including..." : "Include in selected scope"}
+										{mountSharedScope.isPending ? "Using..." : "Use in selected scope"}
 									</Button>
 								</div>
 							) : ownedScopes.length > 0 ? (
 								<Badge variant="outline" className="w-fit">
-									Already included in every owned scope
+									Already used in every owned scope
 								</Badge>
 							) : (
 								<Badge variant="outline" className="w-fit">
@@ -426,7 +456,7 @@ export default function ScopeDetailPage() {
 							{blockedMount ? (
 								<VaultConflictsAlert
 									detail={blockedMount.detail}
-									actionLabel="Add anyway"
+									actionLabel="Use anyway"
 									actionPending={mountSharedScope.isPending}
 									onAction={() =>
 										mountSharedScope.mutate({
@@ -452,8 +482,8 @@ export default function ScopeDetailPage() {
 									<AlertDialogHeader>
 										<AlertDialogTitle>Leave "{displayScopeName(scope)}"?</AlertDialogTitle>
 										<AlertDialogDescription>
-											This removes your read membership and removes this scope from every owned
-											scope where you use it. The owner's scope is unchanged.
+											This removes your read membership and stops using this scope in every owned
+											scope. The owner's scope is unchanged.
 										</AlertDialogDescription>
 									</AlertDialogHeader>
 									<AlertDialogFooter>
@@ -494,8 +524,8 @@ function ScopeStatsStrip({
 				isOwner ? "sm:grid-cols-4" : "sm:grid-cols-3"
 			}`}
 		>
-			{isOwner ? <StatCell icon={Workflow} label="Includes" value={sourceCount} /> : null}
-			<StatCell icon={Box} label="Included in" value={placementCount} />
+			{isOwner ? <StatCell icon={Workflow} label="Uses" value={sourceCount} /> : null}
+			<StatCell icon={Box} label="Used in" value={placementCount} />
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
 			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
@@ -525,21 +555,27 @@ function StatCell({
 function UsedInList({
 	placements,
 	ownedScopeById,
+	onRemove,
+	removingId,
+	isRemoving,
 }: {
 	placements: MountRow[];
 	ownedScopeById: Map<string, ScopeRow>;
+	onRemove: (placement: MountRow) => void;
+	removingId: string | null;
+	isRemoving: boolean;
 }) {
 	return (
 		<section className="space-y-2">
 			<div className="flex items-center gap-2 px-1">
 				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Included in owned scopes</h3>
+				<h3 className="font-semibold text-sm">Used in owned scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{placements.length}
 				</Badge>
 			</div>
 			{placements.length === 0 ? (
-				<EmptyLine message="This scope is not included in any owned scope." />
+				<EmptyLine message="This scope is not used in any owned scope." />
 			) : (
 				<ul className="divide-y rounded-lg border">
 					{placements.map((placement) => {
@@ -552,11 +588,51 @@ function UsedInList({
 									</div>
 									<div className="font-mono text-xs text-muted-foreground">{placement.alias}</div>
 								</div>
-								<Button asChild variant="ghost" size="icon-sm">
-									<Link href={`/scopes/${placement.parent_scope_id}`} aria-label="Open owned scope">
-										<ExternalLink className="size-3.5" />
-									</Link>
-								</Button>
+								<div className="flex shrink-0 items-center gap-1">
+									<Button asChild variant="ghost" size="icon-sm">
+										<Link
+											href={`/scopes/${placement.parent_scope_id}`}
+											aria-label="Open owned scope"
+										>
+											<ExternalLink className="size-3.5" />
+										</Link>
+									</Button>
+									<AlertDialog>
+										<AlertDialogTrigger asChild>
+											<Button
+												variant="ghost"
+												size="sm"
+												disabled={isRemoving}
+												className="text-muted-foreground hover:text-destructive"
+												aria-label={`Stop using this scope in ${formatOptionalScopeName(parent)}`}
+											>
+												<Trash2 className="mr-1.5 size-3.5" />
+												Stop using
+											</Button>
+										</AlertDialogTrigger>
+										<AlertDialogContent>
+											<AlertDialogHeader>
+												<AlertDialogTitle>
+													Stop using this scope in "{formatOptionalScopeName(parent)}"?
+												</AlertDialogTitle>
+												<AlertDialogDescription>
+													This only removes it from that owned scope. Your read access to this
+													shared scope stays intact.
+												</AlertDialogDescription>
+											</AlertDialogHeader>
+											<AlertDialogFooter>
+												<AlertDialogCancel>Cancel</AlertDialogCancel>
+												<AlertDialogAction
+													onClick={() => onRemove(placement)}
+													disabled={removingId === placement.id}
+													className="bg-destructive text-white hover:bg-destructive/90"
+												>
+													Stop using
+												</AlertDialogAction>
+											</AlertDialogFooter>
+										</AlertDialogContent>
+									</AlertDialog>
+								</div>
 							</li>
 						);
 					})}
@@ -580,9 +656,132 @@ function ContentHeader({
 			<div>
 				<h2 className="text-base font-semibold">{title}</h2>
 				<p className="text-sm text-muted-foreground">
-					{direct} direct / {composed} from scopes included here
+					{direct} direct / {composed} from scopes used here
 				</p>
 			</div>
+		</div>
+	);
+}
+
+function InstallSkillInScopeForm({
+	scopeId,
+	onChanged,
+}: {
+	scopeId: string;
+	onChanged: () => void;
+}) {
+	const api = useApi();
+	const [repoInput, setRepoInput] = useState("");
+	const [error, setError] = useState<string | null>(null);
+	const install = useMutation({
+		mutationFn: async ({ repo, path }: { repo: string; path?: string }) =>
+			unwrap(
+				await api.POST("/api/scopes/{scope_id}/skills/install", {
+					params: { path: { scope_id: scopeId } },
+					body: { repo, path },
+				}),
+			),
+		onSuccess: () => {
+			setRepoInput("");
+			setError(null);
+			onChanged();
+			toast.success("Skill installed in this scope");
+		},
+		onError: (e) => {
+			setError(errorMessage(e));
+		},
+	});
+
+	const submit = () => {
+		setError(null);
+		const trimmed = repoInput.trim();
+		if (!trimmed) return;
+		const clean = trimmed.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
+		const parts = clean.split("/").filter(Boolean);
+		if (parts.length < 2) {
+			setError("Enter as `owner/repo` or `owner/repo/path-to-skill`.");
+			return;
+		}
+		install.mutate({
+			repo: `${parts[0]}/${parts[1]}`,
+			path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
+		});
+	};
+
+	return (
+		<div className="flex max-w-3xl flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:flex-wrap sm:items-center">
+			<Input
+				value={repoInput}
+				onChange={(e) => {
+					setRepoInput(e.target.value);
+					setError(null);
+				}}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") submit();
+				}}
+				placeholder="Install skill from GitHub: owner/repo or owner/repo/path"
+				aria-invalid={!!error || undefined}
+				className="min-w-0 flex-1"
+			/>
+			<Button
+				size="sm"
+				disabled={!repoInput.trim() || install.isPending}
+				onClick={submit}
+				className="w-full sm:w-auto"
+			>
+				{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+				Install skill
+			</Button>
+			{error ? <p className="text-xs text-destructive sm:basis-full">{error}</p> : null}
+		</div>
+	);
+}
+
+function CreateVaultInScopeForm({
+	scopeId,
+	onChanged,
+}: {
+	scopeId: string;
+	onChanged: () => void;
+}) {
+	const api = useApi();
+	const [slug, setSlug] = useState("");
+	const create = useMutation({
+		mutationFn: async (nextSlug: string) =>
+			unwrap(
+				await api.POST("/api/vault", {
+					params: { query: { scope_id: scopeId } },
+					body: { slug: nextSlug, name: nextSlug },
+				}),
+			),
+		onSuccess: () => {
+			setSlug("");
+			onChanged();
+			toast.success("Vault created in this scope");
+		},
+		onError: (e) => toast.error("Failed to create vault", { description: errorMessage(e) }),
+	});
+
+	return (
+		<div className="flex max-w-3xl flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
+			<Input
+				value={slug}
+				onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+				onKeyDown={(e) => {
+					if (e.key === "Enter" && slug) create.mutate(slug);
+				}}
+				placeholder="New vault name for this scope"
+				className="min-w-0 flex-1"
+			/>
+			<Button
+				size="sm"
+				disabled={!slug || create.isPending}
+				onClick={() => slug && create.mutate(slug)}
+				className="w-full sm:w-auto"
+			>
+				{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+				Create vault
+			</Button>
 		</div>
 	);
 }
