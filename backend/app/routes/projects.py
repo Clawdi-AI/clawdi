@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_user_auth_unbound
 from app.core.database import get_session
-from app.core.scope import resolve_default_write_scope, scope_ids_visible_to
+from app.core.project import project_ids_visible_to, resolve_default_write_project
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -118,12 +118,12 @@ async def get_default_project(
 ) -> DefaultProjectResponse:
     """Return the project ID where the caller's next write lands.
 
-    Resolution rules match `resolve_default_write_scope`:
+    Resolution rules match `resolve_default_write_project`:
       - api_key bound to env → that env's `default_project_id`
       - Clerk JWT or unbound api_key → most-recently-active env's
         project, falling back to Personal if no envs.
     """
-    project_id = await resolve_default_write_scope(db, auth)
+    project_id = await resolve_default_write_project(db, auth)
     return DefaultProjectResponse(project_id=str(project_id))
 
 
@@ -174,11 +174,11 @@ async def list_projects(
     """List every project the caller can read. JWT auth -> all of
     the user's visible projects. api_key -> the bound env's project only.
     """
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
-    if not visible_scope_ids:
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    if not visible_project_ids:
         return []
     result = await db.execute(
-        select(Project).where(Project.id.in_(visible_scope_ids)).order_by(Project.created_at.desc())
+        select(Project).where(Project.id.in_(visible_project_ids)).order_by(Project.created_at.desc())
     )
     rows = result.scalars().all()
     caller_user_id = auth.user_id

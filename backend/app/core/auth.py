@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.user import User
-from app.services.user_provisioning import lazy_create_user_with_personal_scope
+from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 bearer_scheme = HTTPBearer()
 
@@ -161,7 +161,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     # Backfill email/name on rows that were lazy-created via the
     # admin path (`_resolve_or_create_user` in routes/admin.py) — that
-    # path doesn't have a Clerk JWT in scope so the row starts with
+    # path doesn't have a Clerk JWT in context so the row starts with
     # email=None / name=None. The first time the user signs into
     # cloud.clawdi.ai directly, this branch fills them in.
     #
@@ -266,16 +266,16 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     if not user:
         # First login (production path, or rebind enabled with no
-        # match): create a fresh user row + Personal scope bound to
+        # match): create a fresh user row + Personal project bound to
         # this Clerk sub. Downstream resolvers assume every user has
-        # a Personal scope; the helper enforces that invariant in a
+        # a Personal project; the helper enforces that invariant in a
         # single transaction.
         #
         # Race-loser status is 401: this is a user-auth flow, so a
         # vanishing winner row is fail-closed-and-let-the-client-
         # retry territory, not the operational 500 the admin path
         # uses.
-        user = await lazy_create_user_with_personal_scope(
+        user = await lazy_create_user_with_personal_project(
             db,
             clerk_id=clerk_id,
             email=email,
@@ -467,7 +467,7 @@ def _is_env_bound_api_key(auth: AuthContext) -> bool:
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
-    this one is about env-scope visibility (used to filter
+    this one is about env-project visibility (used to filter
     list/read/delete results)."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
 
@@ -484,7 +484,7 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
     boundary for env-bound keys is enforced inside the route's
-    own `scope_ids_visible_to` / `_scope_filter_*` calls, not
+    own `project_ids_visible_to` / `_scope_filter_*` calls, not
     here.
 
     Only narrowly-scoped keys (explicit `scopes` list) are
@@ -582,7 +582,7 @@ async def require_admin_api_key(
 ) -> None:
     """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
     a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
-    + ops-side scripts that don't have a per-user Clerk JWT in scope.
+    + ops-side scripts that don't have a per-user Clerk JWT in context.
 
     503 when `admin_api_key` is empty — endpoints are disabled by default
     for OSS self-hosters who don't need ops tooling. Constant-time
@@ -605,11 +605,6 @@ class ShareTokenContext:
     def __init__(self, project_id, link_id):
         self.project_id = project_id
         self.link_id = link_id
-
-    @property
-    def scope_id(self):
-        """Backward-compat shim for routes not migrated yet."""
-        return self.project_id
 
 
 async def require_share_token(

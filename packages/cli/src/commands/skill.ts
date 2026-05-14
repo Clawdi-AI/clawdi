@@ -309,7 +309,7 @@ export async function skillInstall(
 
 	const api = new ApiClient();
 
-	// Resolve the install scope BEFORE the adapter filter so
+	// Resolve the install project BEFORE the adapter filter so
 	// `--agent X` lands the cloud install in env-X's project. Without
 	// this, the install hit the account's default project (typically
 	// the most-recently-active env) while local writes went to

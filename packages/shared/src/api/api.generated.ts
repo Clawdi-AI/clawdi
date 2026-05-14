@@ -594,7 +594,7 @@ export interface paths {
          * Get Default Project
          * @description Return the project ID where the caller's next write lands.
          *
-         *     Resolution rules match `resolve_default_write_scope`:
+         *     Resolution rules match `resolve_default_write_project`:
          *       - api_key bound to env → that env's `default_project_id`
          *       - Clerk JWT or unbound api_key → most-recently-active env's
          *         project, falling back to Personal if no envs.
@@ -666,18 +666,18 @@ export interface paths {
         /**
          * Upload Skill Legacy
          * @description Back-compat shim for pre-PR-66 CLI binaries. Resolves the
-         *     target scope via `resolve_default_write_scope` (every user
-         *     has a deterministic default after the scopes migration:
-         *     env-bound key → its env's scope; unbound key with envs →
-         *     most-recently-active env's scope; zero envs → Personal),
+         *     target project via `resolve_default_write_project` (every user
+         *     has a deterministic default after the projects migration:
+         *     env-bound key → its env's project; unbound key with envs →
+         *     most-recently-active env's project; zero envs → Personal),
          *     then runs the same upload pipeline as the project-explicit
          *     route. New CLIs and the dashboard call
          *     `POST /api/projects/{project_id}/skills/upload` directly.
          *
          *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
-         *     a wrong-scope upload creates a stray row visible in the
+         *     a wrong-project upload creates a stray row visible in the
          *     dashboard listing, recoverable in 30s by re-uploading to the
-         *     correct scope. A wrong-scope DELETE is permanent data loss.
+         *     correct project. A wrong-project DELETE is permanent data loss.
          */
         post: operations["upload_skill_legacy_api_skills_upload_post"];
         delete?: never;
@@ -695,7 +695,7 @@ export interface paths {
         };
         /**
          * Download Skill Legacy
-         * @description Phase-1 compat download — multi-scope disambiguation by
+         * @description Phase-1 compat download — multi-project disambiguation by
          *     most-recently-updated. Replaced by
          *     `/api/projects/{project_id}/skills/{skill_key}/download`.
          */
@@ -717,7 +717,7 @@ export interface paths {
         };
         /**
          * Get Skill Legacy
-         * @description Phase-1 compat detail — multi-scope disambiguation by
+         * @description Phase-1 compat detail — multi-project disambiguation by
          *     most-recently-updated. Replaced by
          *     `/api/projects/{project_id}/skills/{skill_key}` in phase 2 for
          *     callers that know which project they want.
@@ -728,14 +728,14 @@ export interface paths {
         /**
          * Delete Skill Legacy
          * @description Legacy delete by slug-only is gone in phase 2. Resolving
-         *     via `resolve_default_write_scope` would silently delete
-         *     the wrong scope's copy when the caller's account holds the
-         *     same `skill_key` in multiple scopes (which the cross-scope
+         *     via `resolve_default_write_project` would silently delete
+         *     the wrong project's copy when the caller's account holds the
+         *     same `skill_key` in multiple projects (which the cross-project
          *     listing now exposes), or 404 with no useful hint when
-         *     their default scope doesn't have that key. The CLI and
+         *     their default project doesn't have that key. The CLI and
          *     dashboard both migrated to
          *     `DELETE /api/projects/{project_id}/skills/{skill_key}` and
-         *     pass the row's own scope_id; force any stale client onto
+         *     pass the row's own project_id; force any stale client onto
          *     that path with 410 instead of guessing.
          *
          *     Argument unused — kept so FastAPI still parses the path
@@ -759,9 +759,9 @@ export interface paths {
         /**
          * Install Skill Legacy
          * @description Back-compat shim for pre-PR-66 CLI binaries. Resolves
-         *     target scope via `resolve_default_write_scope` (same
-         *     deterministic default-scope policy as `upload_skill_legacy`).
-         *     A wrong-scope install adds a stray row to the dashboard
+         *     target project via `resolve_default_write_project` (same
+         *     deterministic default-project policy as `upload_skill_legacy`).
+         *     A wrong-project install adds a stray row to the dashboard
          *     listing — recoverable, not destructive — so this stays
          *     soft-deprecated rather than 410'd.
          */
@@ -790,7 +790,7 @@ export interface paths {
          *     dashboard's content editor uses `PUT /skills/{key}/content`
          *     instead (raw markdown, server-side tar). Both converge on
          *     `_do_upload_skill`, which serializes via a Postgres advisory
-         *     lock keyed on (user, scope, skill_key); concurrent writes are
+         *     lock keyed on (user, project, skill_key); concurrent writes are
          *     last-write-wins. SSE then fans out to subscribed daemons.
          */
         post: operations["upload_skill_project_api_projects__project_id__skills_upload_post"];
@@ -850,11 +850,11 @@ export interface paths {
          *     lookup, no disambiguation.
          *
          *     Reads are permitted to viewer members (sharees) — the validator
-         *     accepts any project in `scope_ids_visible_to(auth)`, which now
+         *     accepts any project in `project_ids_visible_to(auth)`, which now
          *     includes ProjectMembership rows. The Skill row lookup no longer
          *     filters by `user_id` since membership-granted reads pull from
          *     the owner's skills, not the caller's. Write paths (upload,
-         *     delete) still gate on `validate_scope_for_caller`, which stays
+         *     delete) still gate on `validate_project_for_caller`, which stays
          *     owner-only.
          */
         get: operations["download_skill_project_api_projects__project_id__skills__skill_key__download_get"];
@@ -885,7 +885,7 @@ export interface paths {
         /**
          * Delete Skill Project
          * @description Phase-2 project-explicit delete — only the named project's copy
-         *     is deleted; the same skill_key in other scopes is unaffected.
+         *     is deleted; the same skill_key in other projects is unaffected.
          */
         delete: operations["delete_skill_project_api_projects__project_id__skills__skill_key__delete"];
         options?: never;
@@ -926,8 +926,8 @@ export interface paths {
          * Events
          * @description SSE event channel. Daemons subscribe here and pull any
          *     skill referenced in incoming `skill_changed` events. Server-
-         *     side scope filter applied at broker level: subscribers only
-         *     receive events for scopes they have read access to.
+         *     side project filter applied at broker level: subscribers only
+         *     receive events for projects they have read access to.
          *
          *     No request-scoped DB session: SSE streams live for hours,
          *     and `Depends(get_session)` would pin one connection from
@@ -1005,7 +1005,7 @@ export interface paths {
          *     Env-bound api keys are rejected: this is a maintenance/admin
          *     operation that touches every memory the user owns, including
          *     cross-env memories the bound key isn't allowed to read. Pre-fix
-         *     a leaked env-A deploy key with `scopes=None` could call this
+         *     a leaked env-A deploy key with `projects=None` could call this
          *     endpoint and feed every env's content to the embedder as a side
          *     channel.
          */
@@ -1119,7 +1119,7 @@ export interface paths {
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
          *     Project-filtered: an api_key bound to env A only sees vaults in
-         *     that env's scope. Without this filter a leaked daemon key
+         *     that env's project. Without this filter a leaked daemon key
          *     could decrypt vaults belonging to Personal or to another env.
          */
         post: operations["resolve_vault_api_vault_resolve_post"];
@@ -2259,8 +2259,6 @@ export interface components {
             sync_enabled: boolean;
             /** Default Project Id */
             default_project_id: string;
-            /** Default Scope Id */
-            default_scope_id?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2978,10 +2976,8 @@ export interface components {
             updated_at?: string | null;
             /** Project Id */
             project_id?: string | null;
-            /** Scope Id */
-            scope_id?: string | null;
-            /** Scope Name */
-            scope_name?: string | null;
+            /** Project Name */
+            project_name?: string | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -3047,10 +3043,8 @@ export interface components {
             content?: string | null;
             /** Project Id */
             project_id?: string | null;
-            /** Scope Id */
-            scope_id?: string | null;
-            /** Scope Name */
-            scope_name?: string | null;
+            /** Project Name */
+            project_name?: string | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -3209,8 +3203,6 @@ export interface components {
             name: string;
             /** Project Id */
             project_id: string;
-            /** Scope Id */
-            scope_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -4296,7 +4288,7 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 include_content?: boolean;
-                /** @description Optional explicit project to list. Without it, results span every project the caller can read (env-bound api_keys see only their env, everyone else sees all projects). The serve daemon passes its env's default_scope_id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right project instead of the most-recently-active one. */
+                /** @description Optional explicit project to list. Without it, results span every project the caller can read (env-bound api_keys see only their env, everyone else sees all projects). The serve daemon passes its env's default_project_id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right project instead of the most-recently-active one. */
                 project_id?: string | null;
             };
             header?: {

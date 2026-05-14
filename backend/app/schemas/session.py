@@ -129,8 +129,6 @@ class EnvironmentResponse(BaseModel):
     # Stringified for JSON (UUIDs serialise as strings via
     # FastAPI default).
     default_project_id: str
-    # Deprecated compatibility echo for older clients.
-    default_scope_id: str | None = None
 
 
 class SessionBatchResponse(BaseModel):

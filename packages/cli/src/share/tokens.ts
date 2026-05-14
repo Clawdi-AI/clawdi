@@ -5,7 +5,7 @@
  * The raw token IS stored locally (unlike cloud-api which stores
  * only `sha256(token)`) because the CLI needs the raw value to
  * send to the server on every sync round. The file is therefore
- * the bearer credential for every shared scope this device has
+ * the bearer credential for every shared project this device has
  * accepted; 0600 mode is the security measure. We don't envelope-
  * encrypt the file because losing the device is already game-over
  * for any locally-cached credential (api_keys, vault plaintext
@@ -39,17 +39,17 @@ function clawdiHome(): string {
 }
 
 export interface ShareToken {
-	scope_id: string;
-	scope_name: string;
+	project_id: string;
+	project_name: string;
 	owner_display: string;
 	owner_handle: string;
 	token: string;
 	redeemed_at: string; // ISO8601
 	upgraded_at?: string; // set after clawdi auth login + upgrade
-	// Last set of skill_keys this token's scope reported on the
-	// most recent /api/share/{token}/scope index call. Used at
+	// Last set of skill_keys this token's project reported on the
+	// most recent /api/share/{token}/project index call. Used at
 	// cleanup time to avoid erasing folders that belong to OTHER
-	// shared scopes from the same owner (which share the
+	// shared projects from the same owner (which share the
 	// `__<owner-handle>` suffix).
 	last_seen_skill_keys?: string[];
 }
@@ -95,7 +95,7 @@ export function listTokens(): ShareToken[] {
 
 export function addToken(token: ShareToken): void {
 	const state = loadRaw();
-	const idx = state.tokens.findIndex((t) => t.scope_id === token.scope_id);
+	const idx = state.tokens.findIndex((t) => t.project_id === token.project_id);
 	if (idx === -1) {
 		state.tokens.push(token);
 	} else {
@@ -108,12 +108,12 @@ export function addToken(token: ShareToken): void {
 	save(state);
 }
 
-export function removeToken(scopeId: string): void {
+export function removeToken(projectId: string): void {
 	const state = loadRaw();
-	state.tokens = state.tokens.filter((t) => t.scope_id !== scopeId);
+	state.tokens = state.tokens.filter((t) => t.project_id !== projectId);
 	save(state);
 }
 
-export function findToken(scopeId: string): ShareToken | undefined {
-	return listTokens().find((t) => t.scope_id === scopeId);
+export function findToken(projectId: string): ShareToken | undefined {
+	return listTokens().find((t) => t.project_id === projectId);
 }

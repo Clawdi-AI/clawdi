@@ -250,8 +250,8 @@ async function pushOneAgent(
 	);
 
 	if (modules.includes("sessions")) {
-		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
-		p.log.info(chalk.gray(`Scanning ${scope}`));
+		const project = projectFilter ? `project ${projectFilter}` : "all projects";
+		p.log.info(chalk.gray(`Scanning ${project}`));
 	}
 
 	if (agentType === "hermes" && modules.includes("sessions") && projectFilter !== undefined) {
@@ -320,7 +320,7 @@ async function pushOneAgent(
 
 	// Filter against the sessions-lock cache: any session whose hash matches
 	// the stored value can be skipped — the server already has it. This is
-	// the per-entity diff that replaces the old global mtime cursor; scope
+	// the per-entity diff that replaces the old global mtime cursor; project
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
 	if (modules.includes("sessions")) {
@@ -349,7 +349,7 @@ async function pushOneAgent(
 			} else if (projectFilter) {
 				p.log.info(
 					chalk.gray(
-						"No sessions matched. Try --all to scan every project, or pass --project <abs-path> for a different scope.",
+						"No sessions matched. Try --all to scan every project, or pass --project <abs-path> for a different project.",
 					),
 				);
 			}
@@ -543,8 +543,8 @@ async function pushOneAgent(
 
 	let skillsCacheSkipped = 0;
 	if (skills.length > 0) {
-		// Phase-2: skill upload uses scope-explicit URLs. Resolve
-		// THIS agent's env's default_scope_id directly — not the
+		// Phase-2: skill upload uses project-explicit URLs. Resolve
+		// THIS agent's env's default_project_id directly — not the
 		// auth key's "most recently active env" heuristic. With a
 		// multi-agent setup on an unbound CLI key, the latter would
 		// route a `claude_code` push under whichever env was
@@ -557,7 +557,7 @@ async function pushOneAgent(
 				`internal error: skill push without envId for ${agentType}; the early-return guard above should have caught this`,
 			);
 		}
-		const skillScopeId = await fetchProjectIdForEnv(api, envId);
+		const skillProjectId = await fetchProjectIdForEnv(api, envId);
 
 		const skillSpinner = p.spinner();
 		skillSpinner.start(`Hashing ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
@@ -569,9 +569,9 @@ async function pushOneAgent(
 				// it matches the cache, we skip the whole upload path.
 				// Cache key is partitioned by `(agentType, skillKey)`: in
 				// multi-agent push, agent A and agent B can have the same
-				// `foo` content under different scopes; a flat skill_key
+				// `foo` content under different projects; a flat skill_key
 				// cache would say "B already in sync" the moment A pushed,
-				// leaving B's scope missing the skill.
+				// leaving B's project missing the skill.
 				const computedHash = await computeSkillFolderHash(skill.directoryPath);
 				const cacheK = skillCacheKey(agentType, skill.skillKey);
 				if (skillsLock.skills[cacheK]?.hash === computedHash) {
@@ -588,7 +588,7 @@ async function pushOneAgent(
 				const tarBytes = await tarSkillDir(skill.directoryPath, undefined, skill.skillKey);
 				try {
 					await api.uploadSkill(
-						skillScopeId,
+						skillProjectId,
 						skill.skillKey,
 						tarBytes,
 						`${skill.skillKey}.tar.gz`,

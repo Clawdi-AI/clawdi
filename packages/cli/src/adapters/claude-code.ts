@@ -144,7 +144,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		}
 
 		// Dedupe resume chains. The Map is module-scoped only — it goes out of
-		// scope when this function returns and is GC'd, so uuid data never
+		// project when this function returns and is GC'd, so uuid data never
 		// leaks into RawSession or anywhere downstream.
 		return dedupeResumeChains(sessions, uuidsBySession);
 	}

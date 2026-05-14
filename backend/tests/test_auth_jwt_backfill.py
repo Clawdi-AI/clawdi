@@ -149,12 +149,12 @@ async def test_backfill_no_op_when_all_fields_set(db_session, signing_key):
 
 
 @pytest.mark.asyncio
-async def test_first_login_creates_user_and_personal_scope(db_session, signing_key):
+async def test_first_login_creates_user_and_personal_project(db_session, signing_key):
     """Brand-new Clerk sub signs in directly to cloud.clawdi.ai —
     no admin lazy-create has happened yet, no `users` row exists.
     `_auth_via_clerk_jwt` should pass through the
-    `lazy_create_user_with_personal_scope` helper, returning a row
-    with the JWT's email/name populated AND a Personal scope
+    `lazy_create_user_with_personal_project` helper, returning a row
+    with the JWT's email/name populated AND a Personal project
     invariant downstream resolvers depend on.
 
     Pins the JWT-side of the helper contract (admin-side coverage
@@ -184,7 +184,7 @@ async def test_first_login_creates_user_and_personal_scope(db_session, signing_k
     assert ctx.user.email == "new@example.com"
     assert ctx.user.name == "New User"
 
-    # Helper invariant: Personal scope must exist in the same txn.
+    # Helper invariant: Personal project must exist in the same txn.
     personal = (
         await db_session.execute(
             select(Project).where(

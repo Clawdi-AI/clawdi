@@ -8,7 +8,7 @@ SAME route, with `environment_id` set on the request body —
 gated by the user's Clerk JWT, no backend-to-backend secrets.
 
 Deploy-keys differ from interactive keys only in their
-`environment_id` column. Default scope is full account access
+`environment_id` column. Default permissions are full account access
 just like a self-installed clawdi key; the dashboard can pass an
 explicit narrower `scopes` list per use-case if it wants.
 """

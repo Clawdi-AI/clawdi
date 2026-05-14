@@ -182,7 +182,7 @@ async function pullSkills(
 	for (const skill of cloudSkills) {
 		// Cache key partitioned by `(agentType, skill_key)` so a multi-
 		// agent pull doesn't share state across agents — each agent's
-		// scope is independent.
+		// project is independent.
 		const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
 		const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
 		if (cached && cached === skill.content_hash && localExists) {

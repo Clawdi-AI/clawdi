@@ -53,7 +53,7 @@ afterEach(() => {
 describe("authLogin pending share upgrade", () => {
 	it("upgrades anonymous share tokens and eager-pulls shared skills", async () => {
 		addToken({
-			scope_id: "scope-shared",
+			project_id: "project-shared",
 			scope_name: "Team Toolkit",
 			owner_display: "Alice",
 			owner_handle: "alice-example",
@@ -67,7 +67,7 @@ describe("authLogin pending share upgrade", () => {
 				path: `/api/share/${rawToken}/upgrade`,
 				response: () =>
 					jsonResponse({
-						scope_id: "scope-shared",
+						project_id: "project-shared",
 						resolved_owner_handle: "alice-example",
 						membership_id: "membership-1",
 						mount_id: "mount-1",
@@ -79,12 +79,12 @@ describe("authLogin pending share upgrade", () => {
 				path: "/api/skills",
 				response: () =>
 					jsonResponse({
-						items: [{ scope_id: "scope-shared", skill_key: "deploy-helper", is_active: true }],
+						items: [{ project_id: "project-shared", skill_key: "deploy-helper", is_active: true }],
 					}),
 			},
 			{
 				method: "GET",
-				path: "/api/projects/scope-shared/skills/deploy-helper/download",
+				path: "/api/projects/project-shared/skills/deploy-helper/download",
 				response: () => new Response(new Uint8Array([1, 2, 3])),
 			},
 		]);
@@ -97,8 +97,8 @@ describe("authLogin pending share upgrade", () => {
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			`POST /api/share/${rawToken}/upgrade`,
-			"GET /api/skills?scope_id=scope-shared&page=1&page_size=200",
-			"GET /api/projects/scope-shared/skills/deploy-helper/download",
+			"GET /api/skills?project_id=project-shared&page=1&page_size=200",
+			"GET /api/projects/project-shared/skills/deploy-helper/download",
 		]);
 
 		const [token] = listTokens();

@@ -32,7 +32,7 @@ NOTE: this migration ONLY touches the two tables admin endpoints
 write to. Several other user-owned tables (memories, skills, vault,
 sessions, user_settings) also lack the user_id FK and have the same
 orphan-on-user-delete problem. Closing those is out of this PR's
-scope — track separately.
+set — track separately.
 """
 
 from collections.abc import Sequence

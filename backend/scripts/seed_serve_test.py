@@ -37,7 +37,11 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
-from app.models.project import SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_PERSONAL, Scope  # noqa: E402
+from app.models.project import (  # noqa: E402
+    PROJECT_KIND_ENVIRONMENT,
+    PROJECT_KIND_PERSONAL,
+    Project,
+)
 from app.models.session import AgentEnvironment  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.api_key import mint_api_key  # noqa: E402
@@ -68,26 +72,26 @@ async def main(label: str, agent_type: str) -> None:
         await db.commit()
         await db.refresh(user)
 
-        # Mirror the runtime path: every user gets a Personal scope
+        # Mirror the runtime path: every user gets a Personal project
         # (production creates this on first Clerk JWT login). Then
-        # mint an env-local scope and bind the env to it. Same
+        # mint an env-local project and bind the env to it. Same
         # mutual-FK shape `register_environment` uses.
-        personal = Scope(
+        personal = Project(
             user_id=user.id,
             name="Personal",
             slug="personal",
-            kind=SCOPE_KIND_PERSONAL,
+            kind=PROJECT_KIND_PERSONAL,
         )
         db.add(personal)
         await db.flush()
 
-        env_scope = Scope(
+        env_project = Project(
             user_id=user.id,
             name=f"e2e-{label} ({agent_type})",
             slug=f"env-{uuid.uuid4().hex[:12]}",
-            kind=SCOPE_KIND_ENVIRONMENT,
+            kind=PROJECT_KIND_ENVIRONMENT,
         )
-        db.add(env_scope)
+        db.add(env_project)
         await db.flush()
 
         env = AgentEnvironment(
@@ -97,12 +101,12 @@ async def main(label: str, agent_type: str) -> None:
             agent_type=agent_type,
             os="darwin",
             sync_enabled=True,
-            default_scope_id=env_scope.id,
+            default_project_id=env_project.id,
         )
         db.add(env)
         await db.flush()
 
-        env_scope.origin_environment_id = env.id
+        env_project.origin_environment_id = env.id
         await db.commit()
         await db.refresh(env)
 
@@ -114,7 +118,7 @@ async def main(label: str, agent_type: str) -> None:
             db,
             user_id=user.id,
             label=f"e2e-{label}",
-            scopes=None,
+            projects=None,
             environment_id=env.id,
         )
 
@@ -153,7 +157,7 @@ if __name__ == "__main__":
         "--label",
         default="serve_e2e",
         help="Slug used in the synthetic clerk_id and machine_id; "
-        "lets us scope teardown to one test run.",
+        "lets us project teardown to one test run.",
     )
     ap.add_argument("--agent-type", default="claude_code")
     ap.add_argument(

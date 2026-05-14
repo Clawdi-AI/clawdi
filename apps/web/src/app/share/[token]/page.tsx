@@ -138,8 +138,11 @@ export default function SharePage() {
 	const data = preview.data;
 	if (!data) return null;
 
+	const profileOwnerHandle =
+		(user?.publicMetadata?.project_owner_handle as string | undefined) ??
+		(user?.publicMetadata?.owner_handle as string | undefined);
 	const isOwner =
-		user?.publicMetadata?.scope_owner_handle === data.owner_handle ||
+		profileOwnerHandle === data.owner_handle ||
 		(upgrade.error instanceof ShareError && upgrade.error.code === "already_owner");
 
 	return (

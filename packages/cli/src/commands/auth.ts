@@ -82,7 +82,7 @@ function postLoginHint() {
 /**
  * Scan ~/.clawdi/share-tokens.json for un-upgraded entries and POST
  * /upgrade for each. Synchronous + reported: blocks `auth login`
- * until done so a subsequent `clawdi scope list` shows the new
+ * until done so a subsequent `clawdi project list` shows the new
  * mounts deterministically.
  *
  * Per-token failures don't abort the loop; they print a reason and
@@ -99,7 +99,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	// a serial loop avoids that without holding 5 round-trips in
 	// series for a user with 5 pending shares.
 	type Outcome =
-		| { kind: "ok"; token: ShareToken; alias?: string; scopeId: string; ownerHandle: string }
+		| { kind: "ok"; token: ShareToken; alias?: string; projectId: string; ownerHandle: string }
 		| { kind: "already_owner"; token: ShareToken }
 		| { kind: "fail"; name: string; reason: string };
 
@@ -115,7 +115,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					body: "{}",
 				});
 				if (r.status === 410) {
-					return { kind: "fail", name: t.scope_name, reason: "revoked by owner" };
+					return { kind: "fail", name: t.project_name, reason: "revoked by owner" };
 				}
 				if (r.status === 409) {
 					const body = (await r.json().catch(() => ({}))) as {
@@ -124,8 +124,8 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					if (body?.detail?.error === "mount_target_ambiguous") {
 						return {
 							kind: "fail",
-							name: t.scope_name,
-							reason: "needs --into <parent> (2+ owned scopes)",
+							name: t.project_name,
+							reason: "needs --into <parent> (2+ owned projects)",
 						};
 					}
 					if (body?.detail?.error === "already_owner") {
@@ -133,15 +133,15 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					}
 					return {
 						kind: "fail",
-						name: t.scope_name,
+						name: t.project_name,
 						reason: `409 ${body.detail?.error}`,
 					};
 				}
 				if (!r.ok) {
-					return { kind: "fail", name: t.scope_name, reason: `HTTP ${r.status}` };
+					return { kind: "fail", name: t.project_name, reason: `HTTP ${r.status}` };
 				}
 				const body = (await r.json()) as {
-					scope_id?: string;
+					project_id?: string;
 					resolved_owner_handle?: string;
 					mount_alias?: string;
 				};
@@ -149,13 +149,13 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					kind: "ok",
 					token: t,
 					alias: body.mount_alias,
-					scopeId: body.scope_id ?? t.scope_id,
+					projectId: body.project_id ?? t.project_id,
 					ownerHandle: body.resolved_owner_handle ?? t.owner_handle,
 				};
 			} catch (e) {
 				return {
 					kind: "fail",
-					name: t.scope_name,
+					name: t.project_name,
 					reason: e instanceof Error ? e.message : "network error",
 				};
 			}
@@ -167,10 +167,10 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	for (const o of outcomes) {
 		if (o.kind === "ok") {
 			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
-			const pulled = await pullSharedSkills(apiUrl, apiKey, o.scopeId, o.ownerHandle).catch(
+			const pulled = await pullSharedSkills(apiUrl, apiKey, o.projectId, o.ownerHandle).catch(
 				() => 0,
 			);
-			results.push({ name: o.token.scope_name, alias: o.alias, pulled });
+			results.push({ name: o.token.project_name, alias: o.alias, pulled });
 		} else if (o.kind === "already_owner") {
 			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
 		} else {

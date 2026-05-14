@@ -38,11 +38,11 @@ describe("vaultResolveCommand", () => {
 						key: "OPENAI_API_KEY",
 						value: "sk-local",
 						source_project_id: "project-default",
-						source_alias: "scope-default",
+						source_alias: "project-default",
 						precedence: [
 							{
 								project_id: "project-default",
-								alias: "scope-default",
+								alias: "project-default",
 								hit: true,
 								reason: "match",
 							},

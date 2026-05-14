@@ -20,8 +20,8 @@ afterEach(() => {
 });
 
 const sample: ShareToken = {
-	scope_id: "abc-123",
-	scope_name: "Team Toolkit",
+	project_id: "abc-123",
+	project_name: "Team Toolkit",
 	owner_display: "Alice",
 	owner_handle: "alice-a3b4",
 	token: "x".repeat(43),
@@ -38,7 +38,7 @@ describe("share-tokens.json", () => {
 		expect(listTokens()).toEqual([sample]);
 	});
 
-	it("addToken upserts on scope_id", () => {
+	it("addToken upserts on project_id", () => {
 		addToken(sample);
 		addToken({ ...sample, owner_handle: "alice-9999" });
 		const all = listTokens();
@@ -46,16 +46,16 @@ describe("share-tokens.json", () => {
 		expect(all[0].owner_handle).toBe("alice-9999");
 	});
 
-	it("removeToken by scope_id", () => {
+	it("removeToken by project_id", () => {
 		addToken(sample);
-		addToken({ ...sample, scope_id: "def-456" });
+		addToken({ ...sample, project_id: "def-456" });
 		removeToken("abc-123");
 		const all = listTokens();
 		expect(all).toHaveLength(1);
-		expect(all[0].scope_id).toBe("def-456");
+		expect(all[0].project_id).toBe("def-456");
 	});
 
-	it("findToken by scope_id", () => {
+	it("findToken by project_id", () => {
 		addToken(sample);
 		expect(findToken("abc-123")?.token).toBe(sample.token);
 		expect(findToken("ghost")).toBeUndefined();

@@ -25,7 +25,7 @@ class ApiKey(Base, TimestampMixin):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # Scope set this key is allowed to act under. Examples:
+    # Permission set this key is allowed to act under. Examples:
     # `["sessions:write", "skills:read", "skills:write"]` (deploy-key
     # for `clawdi serve` daemon). NULL means full account access —
     # interactive `clawdi auth login` keys keep this null for backwards

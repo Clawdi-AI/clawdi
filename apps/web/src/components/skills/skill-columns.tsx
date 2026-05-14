@@ -39,10 +39,7 @@ export function makeSkillColumns(
 			header: () => <span className="text-sm font-medium">Skill</span>,
 			cell: ({ row }) => {
 				const s = row.original;
-				const sourceProjectName =
-					(s as { project_name?: string; scope_name?: string | null }).project_name ??
-					s.scope_name ??
-					null;
+				const sourceProjectName = s.project_name ?? null;
 				const href = s.project_id
 					? `/skills/${encodeURIComponent(s.skill_key)}?project=${encodeURIComponent(s.project_id)}`
 					: `/skills/${encodeURIComponent(s.skill_key)}`;

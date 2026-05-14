@@ -6,8 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
 from app.core.database import get_session
+from app.core.project import (
+    project_ids_visible_to,
+    resolve_default_write_project,
+    resolve_for_parent,
+)
 from app.core.query_utils import like_needle
-from app.core.scope import resolve_default_write_scope, resolve_for_parent, scope_ids_visible_to
 from app.models.project import Project
 from app.models.vault import Vault, VaultItem
 from app.schemas.common import Paginated
@@ -40,29 +44,28 @@ async def list_vaults(
         default=None,
         description="Optional project filter.",
     ),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
 ) -> Paginated[VaultResponse]:
     # Project-filter: api_key bound to env A must not see vaults in
-    # env B's scope or in Personal. JWT + unbound CLI see every scope
-    # they own AND every shared-scope membership they hold.
+    # env B's project or in Personal. JWT + unbound CLI see every project
+    # they own AND every shared-project membership they hold.
     #
     # Dropped the `Vault.user_id == auth.user_id` filter that was
     # here pre-sharing — it would have blocked viewer members from
-    # seeing shared-scope vault slugs (and the key names inside).
+    # seeing shared-project vault slugs (and the key names inside).
     # Plaintext resolution (`/api/vault/resolve`) keeps the
     # Clerk-auth-only gate so a leaked anonymous share-token can't
     # exfiltrate secrets.
-    selected_project_id = project_id or scope_id
+    selected_project_id = project_id
     if selected_project_id is not None:
-        visible_scope_ids = list(await resolve_for_parent(db, auth, selected_project_id))
+        visible_project_ids = list(await resolve_for_parent(db, auth, selected_project_id))
     else:
-        visible_scope_ids = await scope_ids_visible_to(db, auth)
+        visible_project_ids = await project_ids_visible_to(db, auth)
     base = (
         select(Vault)
         .where(
-            Vault.scope_id.in_(visible_scope_ids),
+            Vault.project_id.in_(visible_project_ids),
         )
         .order_by(Vault.slug)
     )
@@ -83,8 +86,7 @@ async def list_vaults(
                 id=str(v.id),
                 slug=v.slug,
                 name=v.name,
-                project_id=str(v.scope_id),
-                scope_id=str(v.scope_id),
+                project_id=str(v.project_id),
                 created_at=v.created_at,
             )
             for v in rows
@@ -99,35 +101,34 @@ async def list_vaults(
 async def create_vault(
     body: VaultCreate,
     project_id: UUID | None = Query(default=None),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCreatedResponse:
-    # Phase-1 scope shim: vault writes inherit the caller's resolved
-    # default scope when no explicit `?scope_id=` is passed. Vault
-    # items inherit through the parent vault (no separate scope_id
+    # Phase-1 project shim: vault writes inherit the caller's resolved
+    # default project when no explicit `?project_id=` is passed. Vault
+    # items inherit through the parent vault (no separate project_id
     # on items) so this single resolution covers both rows and
     # prevents the "item says A, vault says B" invalid state.
     #
-    # When `scope_id` IS passed, validate it belongs to the caller
+    # When `project_id` IS passed, validate it belongs to the caller
     # (write access — the unwidened owner-only validator), so a
     # sharee viewer can't sneak vault items into someone else's
-    # scope via the explicit path.
-    selected_project_id = project_id or scope_id
+    # project via the explicit path.
+    selected_project_id = project_id
     if selected_project_id is not None:
-        from app.core.scope import validate_scope_for_caller
+        from app.core.project import validate_project_for_caller
 
-        await validate_scope_for_caller(db, auth, selected_project_id)
+        await validate_project_for_caller(db, auth, selected_project_id)
     else:
-        selected_project_id = await resolve_default_write_scope(db, auth)
+        selected_project_id = await resolve_default_write_project(db, auth)
 
-    # Slug uniqueness is per (user_id, scope_id, slug) — different
-    # scopes can hold the same slug. Pre-flight check is per scope
+    # Slug uniqueness is per (user_id, project_id, slug) — different
+    # projects can hold the same slug. Pre-flight check is per project
     # so the 409 message is precise about WHERE the conflict is.
     existing_result = await db.execute(
         select(Vault).where(
             Vault.user_id == auth.user_id,
-            Vault.scope_id == selected_project_id,
+            Vault.project_id == selected_project_id,
             Vault.slug == body.slug,
         )
     )
@@ -144,7 +145,7 @@ async def create_vault(
 
     vault = Vault(
         user_id=auth.user_id,
-        scope_id=selected_project_id,
+        project_id=selected_project_id,
         slug=body.slug,
         name=body.name,
     )
@@ -158,17 +159,16 @@ async def create_vault(
 async def delete_vault(
     slug: str,
     project_id: UUID | None = Query(default=None),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultDeleteResponse:
-    # Reuse the scope-filtered vault lookup so a daemon key bound
-    # to env A can't delete a vault that lives in env B's scope.
-    # `scope_id` disambiguates when a JWT user has the same slug
-    # in multiple scopes (Personal + env-A); without it, a multi-
+    # Reuse the project-filtered vault lookup so a daemon key bound
+    # to env A can't delete a vault that lives in env B's project.
+    # `project_id` disambiguates when a JWT user has the same slug
+    # in multiple projects (Personal + env-A); without it, a multi-
     # match raises 409 ambiguous_vault_slug rather than silently
     # picking the most-recently-updated.
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
     await db.delete(vault)
     await db.commit()
     return VaultDeleteResponse(status="deleted")
@@ -181,11 +181,10 @@ async def delete_vault(
 async def list_vault_sections(
     slug: str,
     project_id: UUID | None = Query(default=None),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultSectionsResponse:
-    vault = await _get_vault(auth, slug, db, project_id=project_id or scope_id)
+    vault = await _get_vault(auth, slug, db, project_id=project_id)
     result = await db.execute(
         select(VaultItem.section, VaultItem.item_name)
         .where(VaultItem.vault_id == vault.id)
@@ -213,11 +212,10 @@ async def upsert_vault_items(
     slug: str,
     body: VaultItemUpsert,
     project_id: UUID | None = Query(default=None),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
@@ -246,11 +244,10 @@ async def delete_vault_items(
     slug: str,
     body: VaultItemDelete,
     project_id: UUID | None = Query(default=None),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name in body.fields:
@@ -275,7 +272,7 @@ async def _project_precedence(
     project_id: UUID,
 ) -> list[dict]:
     """Return a one-project precedence chain for vault resolution."""
-    visible = set(await scope_ids_visible_to(db, auth))
+    visible = set(await project_ids_visible_to(db, auth))
     if project_id not in visible:
         return []
 
@@ -301,7 +298,6 @@ async def resolve_vault(
         default=None,
         description="Project to resolve from (default: caller write project).",
     ),
-    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     debug: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
@@ -309,10 +305,10 @@ async def resolve_vault(
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
     Project-filtered: an api_key bound to env A only sees vaults in
-    that env's scope. Without this filter a leaked daemon key
+    that env's project. Without this filter a leaked daemon key
     could decrypt vaults belonging to Personal or to another env.
     """
-    selected_project_id = project_id or scope_id or await resolve_default_write_scope(db, auth)
+    selected_project_id = project_id or await resolve_default_write_project(db, auth)
     ordered = await _project_precedence(db, auth, selected_project_id)
     if not ordered:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
@@ -324,7 +320,7 @@ async def resolve_vault(
         winner: dict | None = None
         for entry in ordered:
             vaults = (
-                (await db.execute(select(Vault).where(Vault.scope_id == entry["project_id"])))
+                (await db.execute(select(Vault).where(Vault.project_id == entry["project_id"])))
                 .scalars()
                 .all()
             )
@@ -377,7 +373,7 @@ async def resolve_vault(
 
     result = await db.execute(
         select(Vault).where(
-            Vault.scope_id.in_(effective_project_ids),
+            Vault.project_id.in_(effective_project_ids),
         )
     )
     vaults = result.scalars().all()
@@ -400,29 +396,29 @@ async def _get_vault_write(
     *,
     project_id: UUID | None = None,
 ) -> Vault:
-    """Fetch a vault for mutation, restricted to caller-owned scopes.
+    """Fetch a vault for mutation, restricted to caller-owned projects.
 
     Shared memberships can read vault metadata, but they never grant
-    mutation rights. Write paths therefore use an owner-only scope
+    mutation rights. Write paths therefore use an owner-only project
     inventory instead of `_get_vault`'s visibility set, while still
     preserving env-bound api_key blast-radius limits.
     """
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
-        owned_scope_ids = [await resolve_default_write_scope(db, auth)]
+        owned_project_ids = [await resolve_default_write_project(db, auth)]
     else:
-        owned_scope_ids = (
+        owned_project_ids = (
             (await db.execute(select(Project.id).where(Project.user_id == auth.user_id)))
             .scalars()
             .all()
         )
     base_q = select(Vault).where(
-        Vault.scope_id.in_(owned_scope_ids),
+        Vault.project_id.in_(owned_project_ids),
         Vault.slug == slug,
     )
     if project_id is not None:
-        if project_id not in owned_scope_ids:
+        if project_id not in owned_project_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = base_q.where(Vault.scope_id == project_id)
+        base_q = base_q.where(Vault.project_id == project_id)
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -435,7 +431,7 @@ async def _get_vault_write(
                     f"Vault '{slug}' exists in multiple owned projects; "
                     "specify project_id query param to disambiguate."
                 ),
-                "project_ids": [str(r.scope_id) for r in rows],
+                "project_ids": [str(r.project_id) for r in rows],
             },
         )
     return rows[0]
@@ -466,22 +462,22 @@ async def _get_vault(
     user happened to hold the same slug in two projects.
     """
     # No `Vault.user_id == auth.user_id` filter — visibility comes
-    # from scope_ids_visible_to which already accounts for owned +
+    # from project_ids_visible_to which already accounts for owned +
     # shared-membership projects. Sharee viewers need to read vault
     # metadata for projects they joined; plaintext resolution is a
     # separate endpoint with its own auth contract.
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
+    visible_project_ids = await project_ids_visible_to(db, auth)
     base_q = select(Vault).where(
-        Vault.scope_id.in_(visible_scope_ids),
+        Vault.project_id.in_(visible_project_ids),
         Vault.slug == slug,
     )
     if project_id is not None:
         # Caller pinned a project. If it's outside their visibility
         # we report 404 (same as if the vault didn't exist) rather
         # than leaking that the project ID is real but inaccessible.
-        if project_id not in visible_scope_ids:
+        if project_id not in visible_project_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = base_q.where(Vault.scope_id == project_id)
+        base_q = base_q.where(Vault.project_id == project_id)
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -498,7 +494,7 @@ async def _get_vault(
                     f"Vault '{slug}' exists in multiple projects; "
                     "specify project_id query param to disambiguate."
                 ),
-                "project_ids": [str(r.scope_id) for r in rows],
+                "project_ids": [str(r.project_id) for r in rows],
             },
         )
     return rows[0]

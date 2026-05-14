@@ -1,6 +1,6 @@
 # Lefthook — git hook manager
 # Runs biome check (fix + format) on staged JS/TS/JSON/CSS files before every commit.
-# Python side is handled by `ruff` in CI; we keep the pre-commit scope narrow to avoid
+# Python side is handled by `ruff` in CI; we keep the pre-commit set narrow to avoid
 # slowing commits in the backend subtree.
 
 pre-commit:

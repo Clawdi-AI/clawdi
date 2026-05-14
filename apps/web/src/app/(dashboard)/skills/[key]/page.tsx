@@ -57,9 +57,7 @@ function SkillDetailPageInner() {
 	// to the legacy endpoint for single-machine accounts (where
 	// there's only one row, so the resolver is unambiguous).
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
-	// Hidden compatibility alias for old links (`?scope=<project_id>`).
-	const [legacyScopeIdParam] = useQueryState("scope", parseAsString.withDefault(""));
-	const selectedProjectId = projectIdParam || legacyScopeIdParam;
+	const selectedProjectId = projectIdParam;
 
 	const {
 		data: skill,
@@ -241,11 +239,7 @@ function SkillDetailPageInner() {
 		if (ok) uninstall.mutate();
 	};
 
-	const sourceProjectName = skill
-		? ((skill as { project_name?: string; scope_name?: string | null }).project_name ??
-			skill.scope_name ??
-			null)
-		: null;
+	const sourceProjectName = skill?.project_name ?? null;
 	const agentCaption = skill?.machine_name
 		? `on ${skill.machine_name}`
 		: sourceProjectName

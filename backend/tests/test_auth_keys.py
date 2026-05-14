@@ -118,9 +118,9 @@ async def test_deploy_key_minted_with_full_access_by_default(
     Without this property the daemon ends up scoped to a 3-token list
     and silently can't touch vault / memories / settings, which makes
     the "iCloud for AI agents" promise a lie."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env = await create_env_with_scope(
+    env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="m-deploy",
@@ -133,7 +133,7 @@ async def test_deploy_key_minted_with_full_access_by_default(
     )
     assert r.status_code == 200, r.text
 
-    # Verify the persisted scopes column is NULL (full access),
+    # Verify the persisted projects column is NULL (full access),
     # not the legacy daemon set.
     from sqlalchemy import select
 
@@ -146,8 +146,8 @@ async def test_deploy_key_minted_with_full_access_by_default(
     )
     assert rows, "minting succeeded but no row found"
     deploy_key = next(k for k in rows if k.environment_id == env.id)
-    assert deploy_key.scopes is None, (
-        f"deploy keys must default to full access (scopes=None), got {deploy_key.scopes!r}"
+    assert deploy_key.projects is None, (
+        f"deploy keys must default to full access (projects=None), got {deploy_key.projects!r}"
     )
 
 
@@ -156,11 +156,11 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
     client: httpx.AsyncClient, db_session, seed_user
 ):
     """The default is full access, but a caller that explicitly passes
-    a narrower scope list still gets a narrowed key — the dashboard
+    a narrower project list still gets a narrowed key — the dashboard
     should be able to opt into narrower keys per use-case."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env = await create_env_with_scope(
+    env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="m-narrow",
@@ -172,7 +172,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
         json={
             "label": "narrow-pod",
             "environment_id": str(env.id),
-            "scopes": ["sessions:write"],
+            "projects": ["sessions:write"],
         },
     )
     assert r.status_code == 200, r.text
@@ -186,7 +186,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
             select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.environment_id == env.id)
         )
     ).scalar_one()
-    assert deploy_key.scopes == ["sessions:write"]
+    assert deploy_key.projects == ["sessions:write"]
 
 
 @pytest.mark.asyncio
@@ -199,13 +199,13 @@ async def test_deploy_key_rejects_cross_tenant_environment_id(
     import uuid as _uuid
 
     from app.models.user import User
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
     other = User(clerk_id=f"other_{_uuid.uuid4().hex[:8]}", email="o@x.dev", name="O")
     db_session.add(other)
     await db_session.commit()
     await db_session.refresh(other)
-    other_env = await create_env_with_scope(
+    other_env = await create_env_with_project(
         db_session,
         user_id=other.id,
         machine_id="m-other",

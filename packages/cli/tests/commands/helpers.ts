@@ -94,15 +94,15 @@ export const jsonResponse = (data: unknown, status = 200) =>
  * the probe to return 200 — drop this handler near the top of the handler
  * list and all push tests "just work".
  *
- * `default_scope_id` is part of the env shape because the skill upload path
- * reads it via `fetchProjectIdForEnv` to pin uploads to the agent's own scope.
+ * `default_project_id` is part of the env shape because the skill upload path
+ * reads it via `fetchProjectIdForEnv` to pin uploads to the agent's own project.
  * Without it, multi-agent users on an unbound CLI key would see skills land
  * under whichever env was touched last (the `/api/projects/default` heuristic
  * we replaced).
  */
 export const okEnvironmentProbe = (
 	envId = "env-test",
-	defaultScopeId = "00000000-0000-0000-0000-000000000099",
+	defaultProjectId = "00000000-0000-0000-0000-000000000099",
 ) => ({
 	method: "GET",
 	path: `/api/environments/${envId}`,
@@ -115,6 +115,6 @@ export const okEnvironmentProbe = (
 			os: "darwin",
 			last_seen_at: new Date().toISOString(),
 			created_at: new Date().toISOString(),
-			default_scope_id: defaultScopeId,
+			default_project_id: defaultProjectId,
 		}),
 });

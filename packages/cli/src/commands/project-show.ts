@@ -15,13 +15,11 @@ interface ProjectBrief {
 
 interface SkillRow {
 	project_id?: string | null;
-	scope_id?: string | null;
 	skill_key: string;
 }
 
 interface VaultRow {
 	project_id?: string | null;
-	scope_id?: string | null;
 	slug: string;
 	name: string;
 }
@@ -78,8 +76,8 @@ export async function projectShowCommand(
 			() => ({ items: [] }),
 		),
 	]);
-	const ownSkills = skills.filter((s) => (s.project_id ?? s.scope_id) === projectId);
-	const ownVaults = vaultsPage.items.filter((v) => (v.project_id ?? v.scope_id) === projectId);
+	const ownSkills = skills.filter((s) => s.project_id === projectId);
+	const ownVaults = vaultsPage.items.filter((v) => v.project_id === projectId);
 
 	const payload = {
 		project: {

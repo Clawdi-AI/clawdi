@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `scopes` table for FK resolution
+from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
 
 
 class AgentEnvironment(Base, TimestampMixin):
@@ -62,7 +62,7 @@ class AgentEnvironment(Base, TimestampMixin):
     last_revision_seen: Mapped[int | None] = mapped_column(Integer)
     # Peak retry-queue depth since the daemon last booted. Resets
     # on `clawdi serve` start. NOT a 24h rolling window — that
-    # needs real time-series storage and is out of scope for v1.
+    # needs real time-series storage and is out of project for v1.
     queue_depth_high_water_since_start: Mapped[int] = mapped_column(
         Integer, server_default="0", nullable=False
     )
@@ -76,19 +76,19 @@ class AgentEnvironment(Base, TimestampMixin):
     # envs created post-v1 default to true.
     sync_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
 
-    # Default scope this env's daemon writes into. Phase-1 migration
-    # creates one env-local scope per env and points this column at
+    # Default project this env's daemon writes into. Phase-1 migration
+    # creates one env-local project per env and points this column at
     # it. Daemon resolution: api_key bound to env → that env's
-    # default_scope_id. Reassigning this column moves NEW writes to
-    # a different scope; existing skills stay in their original
-    # scope (move/copy is a separate explicit operation).
+    # default_project_id. Reassigning this column moves NEW writes to
+    # a different project; existing skills stay in their original
+    # project (move/copy is a separate explicit operation).
     #
-    # CASCADE so user-delete propagates: user → scope cascade
+    # CASCADE so user-delete propagates: user → project cascade
     # would otherwise be RESTRICTed by this env's reference,
     # blocking the whole tear-down.
-    default_scope_id: Mapped[uuid.UUID] = mapped_column(
+    default_project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("scopes.id", ondelete="CASCADE"),
+        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
 

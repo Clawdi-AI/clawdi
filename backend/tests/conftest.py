@@ -33,7 +33,7 @@ from app.models.user import User
 TEST_DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True)
 def _ensure_crypto_keys():
     """Make sure vault/JWT keys are valid for the test run.
 
@@ -87,15 +87,15 @@ async def create_env_with_project(
     os: str = "darwin",
 ):
     """Test helper: insert an AgentEnvironment together with its
-    env-local project and wire `default_scope_id`. Mirrors the
+    env-local project and wire `default_project_id`. Mirrors the
     `register_environment` route flow so tests don't have to
     duplicate the inline-project creation pattern. Returns the
-    env (with default_scope_id populated).
+    env (with default_project_id populated).
     """
     from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
     from app.models.session import AgentEnvironment
 
-    # Mutual FK: env.default_scope_id (NOT NULL) → project.id;
+    # Mutual FK: env.default_project_id (NOT NULL) → project.id;
     # project.origin_environment_id (NULLABLE) → env.id. Insert
     # project without origin first, then env pointing at project,
     # then back-fill project.origin_environment_id.
@@ -115,7 +115,7 @@ async def create_env_with_project(
         machine_name=machine_name,
         agent_type=agent_type,
         os=os,
-        default_scope_id=project.id,
+        default_project_id=project.id,
     )
     db_session.add(env)
     await db_session.flush()
@@ -125,18 +125,13 @@ async def create_env_with_project(
     await db_session.refresh(env)
     return env
 
-
-# Backward-compatible alias for tests still importing the old helper name.
-create_env_with_scope = create_env_with_project
-
-
 @pytest_asyncio.fixture
 async def seed_user(db_session: AsyncSession) -> User:
     """A throwaway user row scoped to one test, cleaned up in teardown.
 
     Mirrors the auto-create flow in `_auth_via_clerk_jwt`: every user
-    must have a Personal scope so the default-scope resolver has a
-    fallback target. Without this, write paths that resolve scope
+    must have a Personal project so the default-project resolver has a
+    fallback target. Without this, write paths that resolve project
     server-side would 500 on a fresh test user.
     """
     from app.models.project import PROJECT_KIND_PERSONAL, Project
@@ -190,12 +185,6 @@ async def project_id(db_session: AsyncSession, seed_user: User) -> str:
 
 
 @pytest_asyncio.fixture
-async def scope_id(project_id: str) -> str:
-    """Compatibility fixture alias for legacy tests."""
-    return project_id
-
-
-@pytest_asyncio.fixture
 async def seed_project(db_session: AsyncSession, seed_user: User):
     """The Personal project created alongside seed_user."""
     from sqlalchemy import select
@@ -209,12 +198,6 @@ async def seed_project(db_session: AsyncSession, seed_user: User):
         )
     )
     return result.scalar_one()
-
-
-@pytest_asyncio.fixture
-async def seed_scope(seed_project):
-    """Compatibility fixture alias for legacy tests."""
-    return seed_project
 
 
 @pytest_asyncio.fixture

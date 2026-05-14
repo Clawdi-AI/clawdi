@@ -26,8 +26,6 @@ class VaultResponse(BaseModel):
     # Project this vault lives in. Required by clients so duplicate
     # slugs can be disambiguated on follow-up reads/writes.
     project_id: str
-    # Deprecated compatibility echo for older clients.
-    scope_id: str | None = None
     created_at: datetime
 
 

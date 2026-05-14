@@ -162,7 +162,7 @@ describe("installer.install (macOS plist)", () => {
 		// per-agent file, so a captured CLAWDI_ENVIRONMENT_ID would
 		// pin every installed agent to that one env id during
 		// `clawdi serve install --all` — all daemons trampling the
-		// same scope.
+		// same project.
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;
 

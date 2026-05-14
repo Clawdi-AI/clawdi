@@ -248,7 +248,7 @@ export class HermesAdapter implements AgentAdapter {
 
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
 		// Hermes nests skills under category dirs; route shared
-		// scope content into a dedicated `shared/` category so it
+		// project content into a dedicated `shared/` category so it
 		// doesn't intermix with user-authored categories.
 		return join(skillsDir(), "shared", `${skillKey}__${ownerHandle}`);
 	}

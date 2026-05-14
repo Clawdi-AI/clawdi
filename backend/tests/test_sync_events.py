@@ -3,7 +3,7 @@
 Two layers verified:
 
 1. **Service-layer broker** — `subscribe`, `unsubscribe`,
-   `connection_count`, `_broadcast` and the per-subscriber scope
+   `connection_count`, `_broadcast` and the per-subscriber project
    filter. Direct in-process API; no HTTP round-trip needed.
 
 2. **Atomic revision counter** — `bump_skills_revision` increments
@@ -12,7 +12,7 @@ Two layers verified:
 
 The HTTP route layer (`/api/sync/events` SSE stream) is exercised
 indirectly via the full skill-upload flow elsewhere; here we
-focus on broker correctness because that's where scope-leak
+focus on broker correctness because that's where project-leak
 regressions would land.
 """
 
@@ -96,7 +96,7 @@ async def test_stream_drops_event_queued_before_revoke():
         {
             "type": "skill_deleted",
             "skill_key": "x",
-            "scope_id": "00000000-0000-0000-0000-000000000099",
+            "project_id": "00000000-0000-0000-0000-000000000099",
             "skills_revision": 1,
         }
     )
@@ -119,20 +119,20 @@ async def test_subscribe_unsubscribe_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_broadcast_filters_by_visible_scope():
-    """The broker MUST drop events whose `scope_id` falls outside
-    the subscriber's `visible_scope_ids` set. Without this, a
+async def test_broadcast_filters_by_visible_project():
+    """The broker MUST drop events whose `project_id` falls outside
+    the subscriber's `visible_project_ids` set. Without this, a
     bound api_key for env A could observe events for skills in
-    env B's scope as a side-channel — the daemon-side filter is
+    env B's project as a side-channel — the daemon-side filter is
     defense-in-depth, not the primary boundary."""
     user_id = uuid.uuid4()
-    scope_a = uuid.uuid4()
-    scope_b = uuid.uuid4()
+    project_a = uuid.uuid4()
+    project_b = uuid.uuid4()
 
-    # Subscriber sees only scope_a.
-    q_a = sync_events.subscribe(user_id, frozenset({scope_a}))
-    # Subscriber sees both (analogous to JWT seeing all user scopes).
-    q_both = sync_events.subscribe(user_id, frozenset({scope_a, scope_b}))
+    # Subscriber sees only project_a.
+    q_a = sync_events.subscribe(user_id, frozenset({project_a}))
+    # Subscriber sees both (analogous to JWT seeing all user projects).
+    q_both = sync_events.subscribe(user_id, frozenset({project_a, project_b}))
 
     try:
         sync_events._broadcast(
@@ -140,7 +140,7 @@ async def test_broadcast_filters_by_visible_scope():
             {
                 "type": "skill_changed",
                 "skill_key": "alpha",
-                "scope_id": str(scope_a),
+                "project_id": str(project_a),
                 "skills_revision": 1,
             },
         )
@@ -149,12 +149,12 @@ async def test_broadcast_filters_by_visible_scope():
             {
                 "type": "skill_changed",
                 "skill_key": "beta",
-                "scope_id": str(scope_b),
+                "project_id": str(project_b),
                 "skills_revision": 2,
             },
         )
 
-        # `q_a` saw only the scope_a event.
+        # `q_a` saw only the project_a event.
         a_first = q_a.get_nowait()
         assert a_first["skill_key"] == "alpha"
         assert q_a.empty()
@@ -171,20 +171,20 @@ async def test_broadcast_filters_by_visible_scope():
 
 
 @pytest.mark.asyncio
-async def test_broadcast_drops_event_with_unparseable_scope():
-    """Defensive: a malformed scope_id in the event payload
+async def test_broadcast_drops_event_with_unparseable_project():
+    """Defensive: a malformed project_id in the event payload
     (shouldn't happen in practice — `bump_skills_revision`
     always stringifies a real UUID) MUST NOT bypass the filter.
-    Treat unparseable scope as "not in any subscriber's set"."""
+    Treat unparseable project as "not in any subscriber's set"."""
     user_id = uuid.uuid4()
-    scope_a = uuid.uuid4()
-    q = sync_events.subscribe(user_id, frozenset({scope_a}))
+    project_a = uuid.uuid4()
+    q = sync_events.subscribe(user_id, frozenset({project_a}))
     try:
         sync_events._broadcast(
             user_id,
-            {"type": "skill_changed", "skill_key": "x", "scope_id": "not-a-uuid"},
+            {"type": "skill_changed", "skill_key": "x", "project_id": "not-a-uuid"},
         )
-        # Filter rejects unparseable scope.
+        # Filter rejects unparseable project.
         await asyncio.sleep(0)
         assert q.empty()
     finally:
@@ -196,7 +196,7 @@ async def test_bump_skills_revision_after_commit_broadcasts(
     db_session: AsyncSession, seed_user: User
 ):
     """End-to-end: bump_skills_revision queues an event; commit
-    flushes it; visible-scope subscribers receive it."""
+    flushes it; visible-project subscribers receive it."""
     from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     personal = (
@@ -214,7 +214,7 @@ async def test_bump_skills_revision_after_commit_broadcasts(
             db_session,
             seed_user.id,
             skill_key="hello",
-            scope_id=personal.id,
+            project_id=personal.id,
         )
         # Not delivered yet — the after_commit hook runs on commit.
         await asyncio.sleep(0)
@@ -226,7 +226,7 @@ async def test_bump_skills_revision_after_commit_broadcasts(
         event = queue.get_nowait()
         assert event["type"] == "skill_changed"
         assert event["skill_key"] == "hello"
-        assert event["scope_id"] == str(personal.id)
+        assert event["project_id"] == str(personal.id)
         assert event["skills_revision"] == new_rev
     finally:
         sync_events.unsubscribe(seed_user.id, queue)

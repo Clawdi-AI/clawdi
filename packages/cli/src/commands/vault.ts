@@ -41,14 +41,14 @@ async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?
  *   1. Listing visible vaults (cheap — `/api/vault` returns
  *      a single page with project_id per row).
  *   2. Picking the row whose project_id matches the caller's
- *      default WRITE scope (`/api/projects/default`). For
+ *      default WRITE project (`/api/projects/default`). For
  *      env-bound api_keys this is unambiguous (one visible
- *      scope); for JWT/unbound it picks the same scope a
+ *      project); for JWT/unbound it picks the same project a
  *      fresh `clawdi vault set` would create the vault in,
  *      keeping CLI behavior consistent across read+write.
  *   3. Falling back to any unique match if no slug+default
  *      pair exists (fresh CLI account where the vault was
- *      created in a non-default scope by the dashboard).
+ *      created in a non-default project by the dashboard).
  *   4. Returning `null` when the slug genuinely doesn't
  *      exist for this caller; downstream calls then surface
  *      the server's 404 to the user.
@@ -66,20 +66,18 @@ async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<stri
 		const body = (await projectRes.json()) as { project_id: string };
 		def = body.project_id;
 	} else {
-		// Backward compat with older field names.
 		const legacy = (
 			unwrap(await api.GET("/api/projects/default")) as {
 				project_id?: string;
-				scope_id?: string;
 			}
 		).project_id;
 		def = legacy ?? "";
 	}
 	const inDefault = candidates.find((v) => v.project_id === def);
 	if (inDefault) return inDefault.project_id;
-	// Multiple matches, none in the default scope. Pick the
+	// Multiple matches, none in the default project. Pick the
 	// first deterministically — caller still gets a single
-	// scope, which is better than a 409 for any sane user
+	// project, which is better than a 409 for any sane user
 	// flow (and we surface a hint in the diagnostics path).
 	return candidates[0].project_id;
 }

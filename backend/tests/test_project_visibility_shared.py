@@ -1,4 +1,4 @@
-"""scope_ids_visible_to widens to include shared memberships for
+"""project_ids_visible_to widens to include shared memberships for
 Clerk JWT + unbound-CLI callers. Env-bound api_keys keep their
 single-project ceiling regardless of memberships (deploy-key blast
 radius boundary)."""
@@ -9,11 +9,11 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.auth import AuthContext
-from app.core.scope import scope_ids_visible_to
+from app.core.project import project_ids_visible_to
 
 
 @pytest.mark.asyncio
-async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, seed_scope):
+async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, seed_project):
     """Clerk JWT caller sees both owned projects and projects they
     joined as a member."""
     from app.models.project import PROJECT_KIND_PERSONAL, Project
@@ -50,11 +50,11 @@ async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, see
 
     try:
         auth = AuthContext(user=seed_user, api_key=None)
-        visible = await scope_ids_visible_to(db_session, auth)
-        assert seed_scope.id in visible
+        visible = await project_ids_visible_to(db_session, auth)
+        assert seed_project.id in visible
         assert shared.id in visible
     finally:
-        # Membership cascade-deletes when scope is deleted (FK ON DELETE
+        # Membership cascade-deletes when project is deleted (FK ON DELETE
         # CASCADE in the migration), so we only need to clean shared+owner.
         await db_session.delete(shared)
         await db_session.delete(owner)
@@ -62,7 +62,7 @@ async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, see
 
 
 @pytest.mark.asyncio
-async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed_scope):
+async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed_project):
     """Unbound CLI api_key (from `clawdi auth login` device flow,
     no environment_id) behaves like Clerk JWT — full owned+shared."""
     from app.models.api_key import ApiKey
@@ -109,8 +109,8 @@ async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed
 
     try:
         auth = AuthContext(user=seed_user, api_key=api_key)
-        visible = await scope_ids_visible_to(db_session, auth)
-        assert seed_scope.id in visible
+        visible = await project_ids_visible_to(db_session, auth)
+        assert seed_project.id in visible
         assert shared.id in visible
     finally:
         await db_session.delete(api_key)
@@ -120,15 +120,15 @@ async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed
 
 
 @pytest.mark.asyncio
-async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed_scope):
+async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed_project):
     """A deploy-key bound to env X must NEVER gain visibility to
-    scopes the user is a member of. The env binding is the blast-
+    projects the user is a member of. The env binding is the blast-
     radius boundary (PR #77)."""
     from app.models.api_key import ApiKey
     from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.project_membership import ProjectMembership
     from app.models.user import User
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
     nonce = uuid.uuid4().hex[:8]
     owner = User(
@@ -156,7 +156,7 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
             resolved_owner_handle="o3-9999",
         )
     )
-    env = await create_env_with_scope(
+    env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"visibility-{nonce}",
@@ -168,18 +168,18 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
         key_prefix=f"clawdi_e{nonce[:3]}",
         label="env-bound",
         environment_id=env.id,
-        scopes=["sessions:write"],
+        projects=["sessions:write"],
     )
     db_session.add(api_key)
     await db_session.commit()
 
     try:
         auth = AuthContext(user=seed_user, api_key=api_key)
-        visible = await scope_ids_visible_to(db_session, auth)
+        visible = await project_ids_visible_to(db_session, auth)
         # Env-bound: ONLY the bound env's default project.
-        assert visible == [env.default_scope_id]
+        assert visible == [env.default_project_id]
         assert shared.id not in visible
-        assert seed_scope.id not in visible
+        assert seed_project.id not in visible
     finally:
         await db_session.delete(api_key)
         await db_session.delete(env)

@@ -50,9 +50,7 @@ class SkillSummaryResponse(BaseModel):
     # which machine owns the skill. `machine_name` is null for
     # skills in the user's Personal project (no env-bound origin).
     project_id: str | None = None
-    # Deprecated compatibility echo for older clients.
-    scope_id: str | None = None
-    scope_name: str | None = None
+    project_name: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 
@@ -80,9 +78,7 @@ class SkillDetailResponse(BaseModel):
     # "on my-mac" so multi-machine users can tell which copy
     # they're looking at.
     project_id: str | None = None
-    # Deprecated compatibility echo for older clients.
-    scope_id: str | None = None
-    scope_name: str | None = None
+    project_name: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 

@@ -232,15 +232,15 @@ export class ApiClient {
 	}
 
 	/**
-	 * Upload a skill archive (`.tar.gz`) into the named scope.
-	 * One env binds to one scope, so a daemon's writes always land
-	 * in its own env's scope. Single writer per env means no
+	 * Upload a skill archive (`.tar.gz`) into the named project.
+	 * One env binds to one project, so a daemon's writes always land
+	 * in its own env's project. Single writer per env means no
 	 * If-Match needed; last-write-wins by definition. openapi-fetch
 	 * can't model multipart today, so this stays hand-rolled — but
 	 * the response shape is still typed from the generated schema.
 	 */
 	async uploadSkill(
-		scopeId: string,
+		projectId: string,
 		skillKey: string,
 		file: Buffer,
 		filename: string,
@@ -252,7 +252,7 @@ export class ApiClient {
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
 		return this.multipartPost<SkillUploadResponse>(
-			`/api/projects/${encodeURIComponent(scopeId)}/skills/upload`,
+			`/api/projects/${encodeURIComponent(projectId)}/skills/upload`,
 			fields,
 			file,
 			filename,

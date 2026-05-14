@@ -104,7 +104,7 @@ export interface AgentAdapter {
 	 *   getSharedSkillPath("git-tools", "alice-a3b4")
 	 *     → "~/.claude/skills/git-tools__alice-a3b4"
 	 *
-	 * Personal scope skills keep using `getSkillsRootDir() + key`
+	 * Personal project skills keep using `getSkillsRootDir() + key`
 	 * with no suffix. */
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi serve` should watch for session changes. May
@@ -120,7 +120,7 @@ export interface AgentAdapter {
 	getSessionsWatchPaths(): string[];
 	writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void>;
 	/** Like `writeSkillArchive` but lands the content at the shared-
-	 * scope path (`getSharedSkillPath(key, ownerHandle)`) rather than
+	 * project path (`getSharedSkillPath(key, ownerHandle)`) rather than
 	 * `getSkillsRootDir() + key`. Tarball still has `<key>/...` as its
 	 * top-level layout (uploads don't know they'll be re-served as
 	 * shared); implementations extract into a temp dir and rename

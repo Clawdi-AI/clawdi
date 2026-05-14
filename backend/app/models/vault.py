@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `scopes` table for FK resolution
+from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
 
 
 class Vault(Base, TimestampMixin):
@@ -14,28 +14,28 @@ class Vault(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     # Project the vault belongs to. Items inherit through the parent
-    # vault — VaultItem deliberately doesn't carry its own scope_id
+    # vault — VaultItem deliberately doesn't carry its own project_id
     # to avoid the "item says A, vault says B" invalid state. Phase 1
-    # backfill assigns existing vaults to the user's Personal scope;
+    # backfill assigns existing vaults to the user's Personal project;
     # phase 4 wires the actual read/write filtering.
-    scope_id: Mapped[uuid.UUID] = mapped_column(
+    project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        # CASCADE so scope delete propagates to vaults (and
+        # CASCADE so project delete propagates to vaults (and
         # transitively to vault_items via vault.id CASCADE).
-        # Avoids RESTRICT deadlock when a user / scope is deleted.
-        ForeignKey("scopes.id", ondelete="CASCADE"),
+        # Avoids RESTRICT deadlock when a user / project is deleted.
+        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     slug: Mapped[str] = mapped_column(String(200), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
 
-    # Slug uniqueness is per (user_id, scope_id, slug). With the
-    # one-env-one-scope model, the same slug is free to exist in
-    # different scopes — env A's "github" vault and env B's
+    # Slug uniqueness is per (user_id, project_id, slug). With the
+    # one-env-one-project model, the same slug is free to exist in
+    # different projects — env A's "github" vault and env B's
     # "github" vault are independent rows.
     __table_args__ = (
-        UniqueConstraint("user_id", "scope_id", "slug", name="uq_vault_user_scope_slug"),
+        UniqueConstraint("user_id", "project_id", "slug", name="uq_vault_user_project_slug"),
     )
 
 

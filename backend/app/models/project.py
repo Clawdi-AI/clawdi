@@ -1,9 +1,7 @@
 """Project — first-class container for skills, vaults, and memories.
 
-Projects are backed by the existing `scopes` table for database
-compatibility during the migration window.
-
-See `docs/plans/env-scoped-skills.md` for the architectural rationale.
+Projects currently map to the legacy `scopes` table name while the
+database rename is staged through migrations.
 """
 
 import uuid
@@ -64,20 +62,20 @@ class Project(Base, TimestampMixin):
         # Slug unique per owner so the dashboard URL `/projects/{slug}`
         # is unambiguous within an account; slugs can repeat across
         # owners.
-        UniqueConstraint("user_id", "slug", name="uq_scopes_user_slug"),
+        UniqueConstraint("user_id", "slug", name="uq_projects_user_slug"),
         # Database-enforced kind whitelist.
         CheckConstraint(
             "kind IN "
             f"('{PROJECT_KIND_PERSONAL}', "
             f"'{PROJECT_KIND_ENVIRONMENT}', "
             f"'{PROJECT_KIND_WORKSPACE}')",
-            name="ck_scopes_kind_v2",
+            name="ck_projects_kind_v2",
         ),
         # Exactly one personal-kind project per user. Partial unique
         # index — environment-kind projects are unrestricted (one per
         # env, naturally unique on `origin_environment_id`).
         Index(
-            "uq_scopes_one_personal_per_user",
+            "uq_projects_one_personal_per_user",
             "user_id",
             unique=True,
             postgresql_where=(f"kind = '{PROJECT_KIND_PERSONAL}'"),

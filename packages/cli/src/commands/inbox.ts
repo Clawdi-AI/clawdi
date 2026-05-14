@@ -171,9 +171,9 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		console.log(chalk.bold(`Anonymous share-tokens on this device (${tokens.length}):`));
 		for (const t of tokens) {
 			console.log(
-				`  ${chalk.bold(t.scope_name)}  ${chalk.gray(`— from ${t.owner_display} (@${t.owner_handle})`)}`,
+				`  ${chalk.bold(t.project_name)}  ${chalk.gray(`— from ${t.owner_display} (@${t.owner_handle})`)}`,
 			);
-			console.log(chalk.gray(`    project_id: ${t.scope_id}`));
+			console.log(chalk.gray(`    project_id: ${t.project_id}`));
 		}
 		console.log();
 		console.log(
@@ -344,9 +344,9 @@ export function inboxForgetCommand(projectIdOrAlias: string): void {
 			}
 		}
 	}
-	removeToken(token.scope_id);
+	removeToken(token.project_id);
 
-	console.log(`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.scope_name)}".`);
+	console.log(`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.project_name)}".`);
 	if (removed > 0) {
 		console.log(chalk.gray(`  Removed ${removed} local skill folder${removed === 1 ? "" : "s"}.`));
 	}
@@ -378,7 +378,7 @@ async function acceptAnonymousUrl(
 		}
 		console.log(
 			chalk.gray(
-				`Already accepted: ${existing.scope_name} (@${existing.owner_handle}). ` +
+				`Already accepted: ${existing.project_name} (@${existing.owner_handle}). ` +
 					`Run \`clawdi auth login\` to convert to permanent membership.`,
 			),
 		);
@@ -399,8 +399,8 @@ async function acceptAnonymousUrl(
 	const body = (await r.json()) as SharePreview;
 
 	const record: ShareToken = {
-		scope_id: body.project_id,
-		scope_name: body.project_name,
+		project_id: body.project_id,
+		project_name: body.project_name,
 		owner_display: body.owner_display,
 		owner_handle: body.owner_handle,
 		token,

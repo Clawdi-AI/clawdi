@@ -1,36 +1,33 @@
-"""Default-scope resolver — the compat shim for phase 1 of the
-env-scoped-skills milestone.
+"""Project resolution helpers.
 
-Every write target (skills, vaults) carries a required `scope_id`
+Every write target (skills, vaults) carries a required `project_id`
 column. Routes that need to resolve the project from the caller's
 auth context (rather than taking a `/api/projects/{project_id}/...`
 path parameter) use the helpers below:
 
   * api_key with environment_id binding → that env's
-    `default_scope_id`. Always defined; no ambiguity.
+    `default_project_id`. Always defined; no ambiguity.
   * Clerk JWT, single env owned by user → that env's
-    `default_scope_id`. The "I have one machine" common case.
+    `default_project_id`. The "I have one machine" common case.
   * Clerk JWT, multiple envs → the most-recently-active env's
-    `default_scope_id`. Same heuristic the migration uses to
+    `default_project_id`. Same heuristic the migration uses to
     backfill so live writes line up with where existing data
     landed (deterministic tiebreak: `last_seen_at DESC NULLS LAST,
     id DESC`).
-  * Clerk JWT, no envs registered → the user's Personal scope.
+  * Clerk JWT, no envs registered → the user's Personal project.
     Pre-daemon accounts can still create entities from the
     dashboard.
 
 For READ paths the dashboard wants to see the user's full
-inventory across every scope — different helper
-(`scope_ids_visible_to`) returns the list of scopes the caller
+inventory across every project — different helper
+(`project_ids_visible_to`) returns the list of projects the caller
 can read.
 
-The runtime kill-switch `SCOPE_ROUTING_ENABLED` (env var, default
-true) lets ops disable scope-aware behavior without rolling back
-the migration: when off, writes go to whichever scope is
+The runtime kill-switch `PROJECT_ROUTING_ENABLED` (env var, default
+true) lets ops disable project-aware behavior without rolling back
+the migration: when off, writes go to whichever project is
 convenient (still NOT NULL, but caller doesn't have to wire
 through a picker).
-
-See `docs/plans/env-scoped-skills.md` for the full design.
 """
 
 from __future__ import annotations
@@ -48,22 +45,22 @@ from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment
 
 
-def scope_routing_enabled() -> bool:
+def project_routing_enabled() -> bool:
     """Read the runtime kill switch. Default ON (`true`). When the
-    env var is `false` / `0` / `off`, scope resolution falls back
-    to the user's Personal scope unconditionally — preserves
-    correctness (every row still gets a scope_id) while taking
+    env var is `false` / `0` / `off`, project resolution falls back
+    to the user's Personal project unconditionally — preserves
+    correctness (every row still gets a project_id) while taking
     the new routing logic out of the hot path.
     """
-    raw = os.environ.get("SCOPE_ROUTING_ENABLED", "true").strip().lower()
+    raw = os.environ.get("PROJECT_ROUTING_ENABLED", "true").strip().lower()
     return raw not in ("false", "0", "off", "no")
 
 
 _log = logging.getLogger(__name__)
 
 
-async def _personal_scope_id(db: AsyncSession, user_id: UUID) -> UUID:
-    """Look up the user's Personal scope. Logs+500s if missing —
+async def _personal_project_id(db: AsyncSession, user_id: UUID) -> UUID:
+    """Look up the user's Personal project. Logs+500s if missing —
     the migration creates one for every user, and new user signup
     should as well, so a missing Personal is a real bug worth
     surfacing rather than silently creating one on the fly.
@@ -75,52 +72,52 @@ async def _personal_scope_id(db: AsyncSession, user_id: UUID) -> UUID:
             Project.kind == PROJECT_KIND_PERSONAL,
         )
     )
-    scope_id = result.scalar_one_or_none()
-    if scope_id is None:
+    project_id = result.scalar_one_or_none()
+    if project_id is None:
         _log.error(
-            "personal_scope_missing user=%s — migration or signup hook is broken",
+            "personal_project_missing user=%s — migration or signup hook is broken",
             user_id,
         )
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "internal server error",
         )
-    return scope_id
+    return project_id
 
 
-async def resolve_default_write_scope(
+async def resolve_default_write_project(
     db: AsyncSession,
     auth: AuthContext,
 ) -> UUID:
-    """Pick the scope a write from `auth` should land in.
+    """Pick the project a write from `auth` should land in.
 
     Order:
       1. Kill switch off → Personal.
-      2. api_key bound to an env → that env's default_scope_id.
+      2. api_key bound to an env → that env's default_project_id.
       3. Clerk JWT or unbound api_key → most-recently-active env's
-         default_scope_id, OR Personal if user has no envs.
+         default_project_id, OR Personal if user has no envs.
 
-    Returns a scope_id that the caller can immediately use as the
-    `scope_id` column value on insert. Always returns a value
+    Returns a project_id that the caller can immediately use as the
+    `project_id` column value on insert. Always returns a value
     (never None) — callers can treat the column as required.
     """
     # Env-bound api_key path FIRST, ahead of the kill switch.
-    # SCOPE_ROUTING_ENABLED=false is meant to ramp scope routing
+    # PROJECT_ROUTING_ENABLED=false is meant to ramp project routing
     # off for free-tier Clerk JWT users in case of migration
     # issues — it MUST NOT route a deploy key into the Personal
-    # scope, because that would let a key bound to env-A read /
+    # project, because that would let a key bound to env-A read /
     # write user-wide Personal data. The kill switch falls
     # through ONLY for unbound auth contexts below.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         bound_env_id = auth.api_key.environment_id
         result = await db.execute(
-            select(AgentEnvironment.default_scope_id).where(
+            select(AgentEnvironment.default_project_id).where(
                 AgentEnvironment.id == bound_env_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
-        scope_id = result.scalar_one_or_none()
-        if scope_id is None:
+        project_id = result.scalar_one_or_none()
+        if project_id is None:
             # Env vanished out from under the key (deleted by the
             # dashboard) — surface as 404 so the daemon can re-auth
             # rather than 500-ing.
@@ -128,17 +125,17 @@ async def resolve_default_write_scope(
                 status.HTTP_404_NOT_FOUND,
                 "bound environment not found",
             )
-        return scope_id
+        return project_id
 
-    if not scope_routing_enabled():
-        return await _personal_scope_id(db, auth.user_id)
+    if not project_routing_enabled():
+        return await _personal_project_id(db, auth.user_id)
 
     # Clerk JWT path (or unbound api_key, rare): pick most-recently-
-    # active env's default_scope_id. Same SQL the migration uses for
-    # backfill so live writes land in the same scope as existing
+    # active env's default_project_id. Same SQL the migration uses for
+    # backfill so live writes land in the same project as existing
     # data.
     result = await db.execute(
-        select(AgentEnvironment.default_scope_id)
+        select(AgentEnvironment.default_project_id)
         .where(AgentEnvironment.user_id == auth.user_id)
         .order_by(
             AgentEnvironment.last_seen_at.desc().nulls_last(),
@@ -146,54 +143,54 @@ async def resolve_default_write_scope(
         )
         .limit(1)
     )
-    scope_id = result.scalar_one_or_none()
-    if scope_id is not None:
-        return scope_id
+    project_id = result.scalar_one_or_none()
+    if project_id is not None:
+        return project_id
 
     # Zero envs — pre-daemon account. Personal is the only viable
     # target.
-    return await _personal_scope_id(db, auth.user_id)
+    return await _personal_project_id(db, auth.user_id)
 
 
-async def validate_scope_for_caller(
+async def validate_project_for_caller(
     db: AsyncSession,
     auth: AuthContext,
     project_id: UUID,
 ) -> UUID:
     """Validate that the caller may write to the given `project_id`.
 
-    Used by the phase-2 explicit-scope routes
+    Used by the phase-2 explicit-project routes
     (`/api/projects/{project_id}/skills/...`) where the project is part
     of the URL rather than auto-resolved from the caller's auth.
 
     Rules:
       * The project must exist and belong to the authenticated user.
       * If the caller is an api_key bound to a specific environment,
-        the project must equal that env's `default_scope_id`. A daemon
+        the project must equal that env's `default_project_id`. A daemon
         for env A cannot pass `project_id=B` in the URL and bypass
         the bound-env isolation.
       * Clerk JWT (dashboard) callers may target any of their own
-        projects — same as `scope_ids_visible_to` for reads.
+        projects — same as `project_ids_visible_to` for reads.
 
     404 if the project doesn't belong to the user; 403 if the caller's
     api_key binding doesn't match the project.
     """
     # Plain ownership check, no row lock. The earlier `.with_for_update()`
-    # locked the entire `scopes` row for the whole request, including
+    # locked the entire project row for the whole request, including
     # for read-only paths (GET /skills/{key}, download). A slow file-store
     # download or batch of daemon pulls would block every other operation
-    # touching the same scope (uploads, deletes, etc.) — defeating the
+    # touching the same project (uploads, deletes, etc.) — defeating the
     # per-skill advisory lock that's supposed to be the contention
     # boundary. Validation only needs to check ownership; the actual
     # write paths (upload, delete) take a `pg_advisory_xact_lock` keyed
-    # on `(user, scope, skill_key)` for serialization.
-    scope_owner = await db.execute(
+    # on `(user, project, skill_key)` for serialization.
+    project_owner = await db.execute(
         select(Project.id).where(
             Project.user_id == auth.user_id,
             Project.id == project_id,
         )
     )
-    if scope_owner.scalar_one_or_none() is None:
+    if project_owner.scalar_one_or_none() is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             "project not found",
@@ -201,14 +198,14 @@ async def validate_scope_for_caller(
 
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         bound_env_id = auth.api_key.environment_id
-        bound_scope_result = await db.execute(
-            select(AgentEnvironment.default_scope_id).where(
+        bound_project_result = await db.execute(
+            select(AgentEnvironment.default_project_id).where(
                 AgentEnvironment.id == bound_env_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
-        bound_scope = bound_scope_result.scalar_one_or_none()
-        if bound_scope != project_id:
+        bound_project = bound_project_result.scalar_one_or_none()
+        if bound_project != project_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "api key not bound to this project",
@@ -230,35 +227,35 @@ async def resolve_for_parent(
     exact one-project set when visible.
     """
 
-    visible = set(await scope_ids_visible_to(db, auth))
+    visible = set(await project_ids_visible_to(db, auth))
     if parent_project_id not in visible:
         return set()
 
     return {parent_project_id}
 
 
-async def validate_scope_read_for_caller(
+async def validate_project_read_for_caller(
     db: AsyncSession,
     auth: AuthContext,
     project_id: UUID,
 ) -> UUID:
     """Validate that the caller may READ the given `project_id`.
 
-    Sister of `validate_scope_for_caller` (write-side, owner-only).
+    Sister of `validate_project_for_caller` (write-side, owner-only).
     This one accepts viewer memberships — a sharee with a
     ProjectMembership row passes here but would be rejected by the
     write validator. Used by read routes that need to serve shared
     content (skill download, etc.) without granting write access.
 
     Rules:
-      * project_id must appear in `scope_ids_visible_to(auth)`.
-      * Env-bound api_keys still only see their bound scope (the
-        binding is enforced inside scope_ids_visible_to itself).
+      * project_id must appear in `project_ids_visible_to(auth)`.
+      * Env-bound api_keys still only see their bound project (the
+        binding is enforced inside project_ids_visible_to itself).
 
     404 if not in the visible set — same "don't leak existence"
     posture as the owner-only validator.
     """
-    visible = await scope_ids_visible_to(db, auth)
+    visible = await project_ids_visible_to(db, auth)
     if project_id not in visible:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
@@ -267,55 +264,55 @@ async def validate_scope_read_for_caller(
     return project_id
 
 
-async def scope_ids_visible_to(
+async def project_ids_visible_to(
     db: AsyncSession,
     auth: AuthContext,
 ) -> list[UUID]:
-    """Return every scope_id the caller may read.
+    """Return every project_id the caller may read.
 
     Phase-1 policy:
-      * Clerk JWT → ALL scopes the user owns (dashboard sees their
+      * Clerk JWT → ALL projects the user owns (dashboard sees their
         whole inventory). Critical: without this the dashboard
         would query Personal but most data lives in env-local
-        scopes after backfill, producing a day-1 empty-list
+        projects after backfill, producing a day-1 empty-list
         regression.
       * api_key bound to env → only the bound env's
-        `default_scope_id` (daemons get their own scope's data,
+        `default_project_id` (daemons get their own project's data,
         nothing else). This is the deploy-key blast radius
         boundary — a leaked key from env A must not gain
         visibility into env B's data ever.
       * api_key WITHOUT env binding (the device-flow CLI key from
-        `clawdi auth login`) → ALL the user's scopes, same as
+        `clawdi auth login`) → ALL the user's projects, same as
         Clerk JWT. The user authenticated as themselves; multi-
         agent setups need `clawdi serve --agent <other>` and
         `clawdi push --all` to operate on any of the user's envs,
         not just whichever was touched last. An earlier "single
-        most-recently-active scope" policy broke `serve --agent`
-        when its scope wasn't the default, since the daemon's
-        explicit `?scope_id=...` listing intersected to empty.
+        most-recently-active project" policy broke `serve --agent`
+        when its project wasn't the default, since the daemon's
+        explicit `?project_id=...` listing intersected to empty.
     """
-    # Bound api_keys are ALWAYS restricted to their bound scope —
+    # Bound api_keys are ALWAYS restricted to their bound project —
     # check this first, before the kill-switch fallback. The kill
-    # switch turns off scope-aware routing, but it must NEVER
+    # switch turns off project-aware routing, but it must NEVER
     # disable the env-binding boundary on a deploy key.
     #
-    # Env-bound api_keys ALSO never see shared scopes via membership:
+    # Env-bound api_keys ALSO never see shared projects via membership:
     # the env binding is the blast-radius boundary (PR #77). A leaked
-    # hosted-pod key must not gain visibility into scopes the user
+    # hosted-pod key must not gain visibility into projects the user
     # later joined as a sharee.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
-        env_scope = await resolve_default_write_scope(db, auth)
-        return [env_scope]
+        env_project = await resolve_default_write_project(db, auth)
+        return [env_project]
 
-    if not scope_routing_enabled():
-        # Kill-switch path: owned scopes only. Memberships are off
+    if not project_routing_enabled():
+        # Kill-switch path: owned projects only. Memberships are off
         # this code path because the kill-switch is meant to
-        # neutralize scope-aware routing — sharing piggybacks on
+        # neutralize project-aware routing — sharing piggybacks on
         # that routing, so it's correctly disabled too.
         result = await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
         return list(result.scalars().all())
 
-    # Clerk JWT and unbound CLI key: owned scopes UNION scopes the
+    # Clerk JWT and unbound CLI key: owned projects UNION projects the
     # user joined as a viewer member. Two separate queries (one
     # owned, one shared) keeps the SQL readable; both hit indexed
     # columns and run sub-millisecond.
@@ -338,7 +335,7 @@ async def scope_ids_visible_to(
         .all()
     )
     # Owned ordering preserved; shared appended deterministically.
-    # Membership rows could in theory dupe an owned scope (e.g. if
+    # Membership rows could in theory dupe an owned project (e.g. if
     # a stale row survived an ownership transfer); de-dup defensively.
     seen = set(owned_ids)
     result_ids = list(owned_ids)

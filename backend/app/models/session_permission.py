@@ -58,7 +58,7 @@ class SessionPermission(Base, TimestampMixin):
 
     # Discriminator. CHECK constraint enforces the v1 set; new kinds
     # are added by replacing the constraint, never by ENUM ALTER (the
-    # project convention from `Scope.kind` and `ApiKey.kind`).
+    # project convention from `Project.kind` and `ApiKey.kind`).
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
 
     # Identifier columns. Populated according to `kind`:

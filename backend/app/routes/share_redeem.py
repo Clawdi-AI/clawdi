@@ -157,7 +157,7 @@ async def _build_redeem_payload(ctx: ShareTokenContext, db: AsyncSession) -> Sha
     skill_count = (
         await db.execute(
             select(func.count(Skill.id)).where(
-                Skill.scope_id == ctx.project_id,
+                Skill.project_id == ctx.project_id,
                 Skill.is_active.is_(True),
             )
         )
@@ -166,7 +166,7 @@ async def _build_redeem_payload(ctx: ShareTokenContext, db: AsyncSession) -> Sha
         await db.execute(
             select(func.count(VaultItem.id))
             .join(Vault, Vault.id == VaultItem.vault_id)
-            .where(Vault.scope_id == ctx.project_id)
+            .where(Vault.project_id == ctx.project_id)
         )
     ).scalar_one() or 0
 

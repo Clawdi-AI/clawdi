@@ -81,7 +81,7 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 }
 
 /**
- * Extract a skill tarball into a shared-scope target dir.
+ * Extract a skill tarball into a shared-project target dir.
  *
  * Skill tarballs have `<skillKey>/...` at the top level (upload side
  * doesn't know the content will be re-served as shared). For a

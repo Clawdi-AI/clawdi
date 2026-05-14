@@ -3,7 +3,7 @@
 #
 # What it exercises:
 #   1. Admin endpoint (`POST /api/admin/environments`) creates an env on
-#      behalf of a brand-new clerk_id — verifies lazy user+Personal-scope
+#      behalf of a brand-new clerk_id — verifies lazy user+Personal-project
 #      creation against the same code path that fires when a user clicks
 #      Deploy on clawdi.ai before ever visiting cloud.clawdi.ai.
 #   2. Admin endpoint (`POST /api/admin/auth/keys`) mints a deploy key
@@ -23,7 +23,7 @@
 # Usage: bash scripts/local-e2e-bootstrap.sh
 #
 # NOT IDEMPOTENT: each run picks a fresh `NOVEL_CLERK_ID` from
-# `date +%s` so every invocation inserts a new test user + scope
+# `date +%s` so every invocation inserts a new test user + project
 # + env + api_key row pair. Cleanup commands are echoed at the
 # bottom and saved to /tmp/clawdi-local-e2e.env — copy them off
 # before re-running, or scrub previous test users periodically:

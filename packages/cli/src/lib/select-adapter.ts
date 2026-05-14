@@ -20,7 +20,7 @@ export function getEnvIdByAgent(agentType: string): string | null {
 }
 
 /** Ask the cloud which project this caller's next write would land
- * in. Wraps the server-side `resolve_default_write_scope` logic
+ * in. Wraps the server-side `resolve_default_write_project` logic
  * exposed by `GET /api/projects/default` — for an api_key bound to
  * an env, that's the env's `default_project_id`; for a Clerk JWT
  * (rare in CLI use) it's the most-recently-active env's project or
@@ -52,17 +52,8 @@ export async function fetchDefaultProjectId(
 		return body.project_id;
 	}
 
-	// Backward compat with older response field names.
-	const legacyRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
-	if (!legacyRes.ok) {
-		throw new Error(`Failed to resolve default project: HTTP ${legacyRes.status}`);
-	}
-	const legacyBody = (await legacyRes.json()) as {
-		project_id?: string;
-		scope_id?: string;
-	};
+	const legacyBody = (await projectRes.json()) as { project_id?: string };
 	if (legacyBody.project_id) return legacyBody.project_id;
-	if (legacyBody.scope_id) return legacyBody.scope_id;
 	throw new Error("Failed to resolve default project: missing project_id in response");
 }
 
@@ -75,7 +66,7 @@ export async function fetchDefaultProjectId(
  * agent's `envId` is the source of truth, not the auth key's
  * "most recently active" heuristic. Multi-agent users on a
  * normal unbound CLI key would otherwise see skills land under
- * the wrong scope while sessions write correctly to their own
+ * the wrong project while sessions write correctly to their own
  * envId — the daemon serving that env never reconciles those
  * skills back to disk because the listing is scoped elsewhere.
  */
@@ -89,8 +80,8 @@ export async function fetchProjectIdForEnv(
 			params: { path: { environment_id: envId } },
 		}),
 	);
-	const legacy = env as { default_scope_id?: string };
-	const projectId = env.default_project_id ?? legacy.default_scope_id;
+	const legacy = env as { default_project_id?: string };
+	const projectId = env.default_project_id ?? legacy.default_project_id;
 	if (!projectId) {
 		throw new Error(`environment ${envId} has no default project id`);
 	}

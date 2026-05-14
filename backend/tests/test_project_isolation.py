@@ -4,9 +4,9 @@ These tests pin the security/correctness fixes from PR review
 rounds 2 + B + E so they don't regress silently:
 
 - POST /api/environments heals an existing env that lost its
-  `default_scope_id` (B1). Pre-fix the new-env branch created
-  a scope, but the existing-env branch returned without
-  healing — daemons booted with "no default_scope_id" fatals.
+  `default_project_id` (B1). Pre-fix the new-env branch created
+  a project, but the existing-env branch returned without
+  healing — daemons booted with "no default_project_id" fatals.
 
 - GET /api/memories filters memories to the bound env when
   the caller is a scoped api_key (deploy key). Pre-fix any
@@ -15,7 +15,7 @@ rounds 2 + B + E so they don't regress silently:
 
 - /api/search excludes vault hits for scoped api keys so a
   leaked deploy key (which only carries skills/sessions
-  scopes) can't side-channel-read vault metadata.
+  projects) can't side-channel-read vault metadata.
 """
 
 from __future__ import annotations
@@ -61,23 +61,23 @@ async def _client_for(
 
 
 @pytest_asyncio.fixture
-async def env_without_scope(db_session: AsyncSession, seed_user: User) -> AgentEnvironment:
+async def env_without_project(db_session: AsyncSession, seed_user: User) -> AgentEnvironment:
     """A fixture for the heal-path test. Builds an env with a
-    valid scope (the schema enforces NOT NULL), then NULLs the
+    valid project (the schema enforces NOT NULL), then NULLs the
     column directly through a raw UPDATE to simulate a row that
-    lost its scope assignment via some pre-migration / cleanup
+    lost its project assignment via some pre-migration / cleanup
     bug. The next register_environment call should heal it.
     """
     from sqlalchemy import update
 
     pending_slug = f"env-{uuid.uuid4().hex[:12]}"
-    scope = Project(
+    project = Project(
         user_id=seed_user.id,
         name="Heal Test (claude_code)",
         slug=pending_slug,
         kind=PROJECT_KIND_ENVIRONMENT,
     )
-    db_session.add(scope)
+    db_session.add(project)
     await db_session.flush()
 
     env = AgentEnvironment(
@@ -86,7 +86,7 @@ async def env_without_scope(db_session: AsyncSession, seed_user: User) -> AgentE
         machine_name="Heal Test",
         agent_type="claude_code",
         os="darwin",
-        default_scope_id=scope.id,
+        default_project_id=project.id,
     )
     db_session.add(env)
     await db_session.flush()
@@ -101,7 +101,7 @@ async def env_without_scope(db_session: AsyncSession, seed_user: User) -> AgentE
         await db_session.execute(
             update(AgentEnvironment)
             .where(AgentEnvironment.id == env.id)
-            .values(default_scope_id=None)
+            .values(default_project_id=None)
         )
         await db_session.commit()
         await db_session.refresh(env)
@@ -111,15 +111,15 @@ async def env_without_scope(db_session: AsyncSession, seed_user: User) -> AgentE
     return env
 
 
-async def test_register_environment_heals_missing_scope(
+async def test_register_environment_heals_missing_project(
     db_session: AsyncSession,
     seed_user: User,
-    env_without_scope: AgentEnvironment,
+    env_without_project: AgentEnvironment,
 ):
-    """Re-registering an env that lost its default_scope_id
+    """Re-registering an env that lost its default_project_id
     must populate it before returning, so the daemon can boot.
     """
-    if env_without_scope.default_scope_id is not None:
+    if env_without_project.default_project_id is not None:
         # Constraint refused the NULL update; nothing to heal.
         # Treat as a passing no-op rather than a hard skip.
         return
@@ -129,18 +129,18 @@ async def test_register_environment_heals_missing_scope(
         resp = await client.post(
             "/api/environments",
             json={
-                "machine_id": env_without_scope.machine_id,
-                "machine_name": env_without_scope.machine_name,
-                "agent_type": env_without_scope.agent_type,
-                "os": env_without_scope.os,
+                "machine_id": env_without_project.machine_id,
+                "machine_name": env_without_project.machine_name,
+                "agent_type": env_without_project.agent_type,
+                "os": env_without_project.os,
                 "agent_version": "0.0.1",
             },
         )
         assert resp.status_code == 200, resp.text
         # Re-read the row; the heal path should have written a
-        # fresh default_scope_id.
-        await db_session.refresh(env_without_scope)
-        assert env_without_scope.default_scope_id is not None
+        # fresh default_project_id.
+        await db_session.refresh(env_without_project)
+        assert env_without_project.default_project_id is not None
     finally:
         await client.aclose()
         app.dependency_overrides.clear()
@@ -152,15 +152,15 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
 ):
     """A deploy key bound to env-A must NOT see memories whose
     source session lives in env-B (or any manual memory)."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="env-a",
         machine_name="Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="env-b",
@@ -196,17 +196,17 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
     db_session.add_all([mem_a, mem_b, mem_manual])
     await db_session.commit()
 
-    # Deploy key bound to env-A with memory:read scope (the
-    # filter applies regardless of which scopes the key carries
+    # Deploy key bound to env-A with memory:read project (the
+    # filter applies regardless of which projects the key carries
     # because the cross-env leak would happen via memories:read,
     # which deploy keys today don't have — but the fix protects
-    # any future scope shape).
+    # any future project shape).
     deploy_key = ApiKey(
         user_id=seed_user.id,
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        scopes=["memories:read"],
+        projects=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -241,15 +241,15 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
     """
     from datetime import UTC, datetime, timedelta
 
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="paged-env-a",
         machine_name="Paged Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="paged-env-b",
@@ -312,7 +312,7 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="paged-deploy",
-        scopes=["memories:read"],
+        projects=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -346,33 +346,33 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
         app.dependency_overrides.clear()
 
 
-async def test_unbound_cli_key_can_pin_any_scope(
+async def test_unbound_cli_key_can_pin_any_project(
     db_session: AsyncSession,
     seed_user: User,
 ):
     """An unbound device-flow CLI key (from `clawdi auth login`)
-    must be able to read any of the user's scopes by passing
-    `?scope_id=...`. Pre-fix `scope_ids_visible_to` returned only
-    the most-recently-active scope for ALL is_cli auth, which
-    intersected to empty when the daemon pinned a different scope
+    must be able to read any of the user's projects by passing
+    `?project_id=...`. Pre-fix `project_ids_visible_to` returned only
+    the most-recently-active project for ALL is_cli auth, which
+    intersected to empty when the daemon pinned a different project
     (e.g. `clawdi serve --agent codex` with claude_code as the
     default) — daemon got zero skills.
 
-    Bound deploy keys are still pinned to their env's scope; this
+    Bound deploy keys are still pinned to their env's project; this
     test exercises only the unbound path.
     """
     from datetime import UTC, datetime
 
     from app.models.skill import Skill
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="cli-env-a",
         machine_name="Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="cli-env-b",
@@ -380,12 +380,12 @@ async def test_unbound_cli_key_can_pin_any_scope(
         agent_type="codex",
     )
 
-    # One skill per scope.
+    # One skill per project.
     db_session.add_all(
         [
             Skill(
                 user_id=seed_user.id,
-                scope_id=env_a.default_scope_id,
+                project_id=env_a.default_project_id,
                 skill_key="alpha-skill",
                 name="alpha-skill",
                 description="env A's skill",
@@ -398,7 +398,7 @@ async def test_unbound_cli_key_can_pin_any_scope(
             ),
             Skill(
                 user_id=seed_user.id,
-                scope_id=env_b.default_scope_id,
+                project_id=env_b.default_project_id,
                 skill_key="beta-skill",
                 name="beta-skill",
                 description="env B's skill",
@@ -413,14 +413,14 @@ async def test_unbound_cli_key_can_pin_any_scope(
     )
     await db_session.commit()
 
-    # Unbound CLI key — no environment_id, no scopes list (full
+    # Unbound CLI key — no environment_id, no projects list (full
     # account access, mirrors `clawdi auth login`).
     cli_key = ApiKey(
         user_id=seed_user.id,
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="cli-unbound",
-        scopes=None,
+        projects=None,
         environment_id=None,
     )
     db_session.add(cli_key)
@@ -428,15 +428,21 @@ async def test_unbound_cli_key_can_pin_any_scope(
 
     client = await _client_for(db_session, seed_user, cli_key)
     try:
-        # Pin env-A's scope explicitly — must return env-A's
+        # Pin env-A's project explicitly — must return env-A's
         # skill, NOT empty (the pre-fix bug).
-        resp_a = await client.get("/api/skills", params={"scope_id": str(env_a.default_scope_id)})
+        resp_a = await client.get(
+            "/api/skills",
+            params={"project_id": str(env_a.default_project_id)},
+        )
         assert resp_a.status_code == 200, resp_a.text
         keys_a = {s["skill_key"] for s in resp_a.json()["items"]}
         assert keys_a == {"alpha-skill"}, keys_a
 
-        # Pin env-B's scope — must return env-B's skill.
-        resp_b = await client.get("/api/skills", params={"scope_id": str(env_b.default_scope_id)})
+        # Pin env-B's project — must return env-B's skill.
+        resp_b = await client.get(
+            "/api/skills",
+            params={"project_id": str(env_b.default_project_id)},
+        )
         keys_b = {s["skill_key"] for s in resp_b.json()["items"]}
         assert keys_b == {"beta-skill"}, keys_b
 
@@ -456,19 +462,19 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
 ):
     """The widening for unbound CLI keys must NOT widen bound
     deploy keys. A leaked env-A deploy key must still see only
-    env-A's scope, even when it pins another scope explicitly."""
+    env-A's project, even when it pins another project explicitly."""
     from datetime import UTC, datetime
 
     from app.models.skill import Skill
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="dep-env-a",
         machine_name="Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="dep-env-b",
@@ -478,7 +484,7 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
     db_session.add(
         Skill(
             user_id=seed_user.id,
-            scope_id=env_b.default_scope_id,
+            project_id=env_b.default_project_id,
             skill_key="env-b-only",
             name="env-b-only",
             description="not visible to env-A deploy key",
@@ -497,7 +503,7 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="env-a-deploy",
-        scopes=None,
+        projects=None,
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -505,9 +511,9 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        # Even when explicitly pinning env-B's scope, the deploy
+        # Even when explicitly pinning env-B's project, the deploy
         # key must see nothing (env binding wins).
-        resp = await client.get("/api/skills", params={"scope_id": str(env_b.default_scope_id)})
+        resp = await client.get("/api/skills", params={"project_id": str(env_b.default_project_id)})
         assert resp.status_code == 200
         assert resp.json()["items"] == [], resp.json()
     finally:
@@ -519,7 +525,7 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
     db_session: AsyncSession,
     seed_user: User,
 ):
-    """Global search memory hits must respect the same env-scope
+    """Global search memory hits must respect the same env-project
     filter `/api/memories` applies. Without it, an env-A scoped
     key could read env-B's memory contents (and manual memories
     that have no env attribution at all) via the search palette
@@ -528,15 +534,15 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
     """
     from datetime import UTC, datetime
 
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="search-env-a",
         machine_name="Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="search-env-b",
@@ -586,7 +592,7 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        scopes=["memories:read"],
+        projects=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -616,9 +622,9 @@ async def test_search_excludes_vault_for_scoped_keys(
     """Global search must omit vault metadata for any scoped
     api key (deploy keys + future scoped Personal keys).
     Personal CLI / Clerk auth keep full visibility."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env = await create_env_with_scope(
+    env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="search-mac",
@@ -628,7 +634,7 @@ async def test_search_excludes_vault_for_scoped_keys(
     # scoped key.
     vault = Vault(
         user_id=seed_user.id,
-        scope_id=env.default_scope_id,
+        project_id=env.default_project_id,
         slug="search-vault",
         name="Search Test Vault",
     )
@@ -649,7 +655,7 @@ async def test_search_excludes_vault_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        scopes=["sessions:write", "skills:read", "skills:write"],
+        projects=["sessions:write", "skills:read", "skills:write"],
         environment_id=env.id,
     )
     db_session.add(deploy_key)
@@ -673,17 +679,17 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
 ):
     """Round-42 P2 regression: `/api/dashboard/stats` and
     `/api/dashboard/contribution` aggregate by `user_id` only —
-    no scope filter. An env-bound deploy key (full-permission
-    api_key minted with `scopes=None` but pinned to
+    no project filter. An env-bound deploy key (full-permission
+    api_key minted with `projects=None` but pinned to
     `environment_id=A`) would otherwise read account-wide
     totals (sessions, message counts, token usage, contribution
     graph, skill/vault/memory counts) for sibling envs B/C/D
     that the resource-level routes explicitly hide from it.
     Forcing `require_web_auth` (Clerk JWT only) keeps the
     deploy-key isolation model intact."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env = await create_env_with_scope(
+    env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="env-a",
@@ -696,7 +702,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
         label="test-deploy",
         # Full permission (default) — but env-bound, so the
         # dashboard's account-wide aggregate must still refuse.
-        scopes=None,
+        projects=None,
         environment_id=env.id,
     )
     db_session.add(deploy_key)
@@ -712,17 +718,17 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
         app.dependency_overrides.clear()
 
 
-async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
+async def test_project_explicit_upload_403s_bound_key_targeting_other_project(
     db_session: AsyncSession,
     seed_user: User,
 ):
     """Round-r5 P1: a bound env-A deploy key sending
-    `POST /api/projects/{env_b.default_scope_id}/skills/upload`
+    `POST /api/projects/{env_b.default_project_id}/skills/upload`
     must 403, not silently accept the write into env-B.
-    `validate_scope_for_caller` is the boundary for ALL phase-2
-    scope-explicit writes (skills, vault, memory) — without it
+    `validate_project_for_caller` is the boundary for ALL phase-2
+    project-explicit writes (skills, vault, memory) — without it
     a leaked env-A key could plant skills (or steal vault items
-    via the symmetric route) into ANY other scope by editing
+    via the symmetric route) into ANY other project by editing
     the URL. The existing `test_bound_deploy_key_still_pinned`
     only covers READ listing; this pin closes the WRITE side.
     """
@@ -730,15 +736,15 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
     import io
     import tarfile
 
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="upload-env-a",
         machine_name="Env A",
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="upload-env-b",
@@ -751,14 +757,14 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="env-a-deploy",
-        scopes=None,
+        projects=None,
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
     await db_session.commit()
 
     # Build a minimal valid skill archive rooted at "evil/".
-    md_content = b"---\nname: evil\ndescription: cross-scope smuggle attempt\n---\n# attempt\n"
+    md_content = b"---\nname: evil\ndescription: cross-project smuggle attempt\n---\n# attempt\n"
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tf:
         info = tarfile.TarInfo(name="evil/SKILL.md")
@@ -772,18 +778,18 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
         resp = await client.post(
-            f"/api/projects/{env_b.default_scope_id}/skills/upload",
+            f"/api/projects/{env_b.default_project_id}/skills/upload",
             data={"skill_key": "evil"},
             files={"file": ("evil.tgz", archive, "application/gzip")},
         )
         # Boundary must reject — 403 (not 404, which would leak
-        # whether the scope exists).
+        # whether the project exists).
         assert resp.status_code == 403, (resp.status_code, resp.text)
     finally:
         await client.aclose()
         app.dependency_overrides.clear()
 
-    # Confirm no Skill row landed in env-B's scope. Without the
+    # Confirm no Skill row landed in env-B's project. Without the
     # validator, the upload would have created/upserted a row
     # there.
     from sqlalchemy import select as _select
@@ -792,7 +798,7 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
 
     leaked = await db_session.execute(
         _select(Skill).where(
-            Skill.scope_id == env_b.default_scope_id,
+            Skill.project_id == env_b.default_project_id,
             Skill.skill_key == "evil",
         )
     )

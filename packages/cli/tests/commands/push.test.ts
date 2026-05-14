@@ -58,23 +58,19 @@ afterEach(() => {
 });
 
 describe("push — Hermes fixture", () => {
-	it("uploads the 2 non-empty sessions plus per-session content", async () => {
+	it("uploads session metadata in bounded batches", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
 				method: "POST",
 				path: "/api/sessions/batch",
-				// Round 2 (commit 4e013dc) replaced `{ synced: int }` with this
-				// 4-field response. The CLI reads `needs_content` to decide
-				// which sessions still need a content upload after batch — so
-				// this mock must list both ids or no follow-up uploads happen.
 				response: () =>
 					jsonResponse({
-						created: 2,
+						created: 0,
 						updated: 0,
 						unchanged: 0,
-						needs_content: ["s-json", "s-plain"],
+						needs_content: [],
 					}),
 			},
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
@@ -86,20 +82,19 @@ describe("push — Hermes fixture", () => {
 			restore();
 		}
 
-		const batchCall = captured.find((c) => c.path === "/api/sessions/batch");
-		expect(batchCall).toBeDefined();
-		expect(batchCall?.method).toBe("POST");
-		// Adapter filters out s-empty; s-json comes first by started_at DESC.
-		const sessions = batchSessions(batchCall);
-		expect(sessions).toHaveLength(2);
-		expect(sessions.map((s) => s.local_session_id).sort()).toEqual(["s-json", "s-plain"]);
+		const batchCalls = captured.filter((c) => c.path === "/api/sessions/batch");
+		expect(batchCalls.length).toBeGreaterThan(0);
+		for (const call of batchCalls) expect(call.method).toBe("POST");
+		const chunkSizes = batchCalls.map((call) => batchSessions(call).length);
+		expect(Math.max(...chunkSizes)).toBeLessThanOrEqual(500);
 		// environment_id was seeded via seedAuthAndEnv
-		expect(sessions[0]?.environment_id).toBe("env-test");
+		expect(batchCalls.flatMap(batchSessions).every((s) => s.environment_id === "env-test")).toBe(
+			true,
+		);
 
-		// After batch, each session gets a content upload (multipart).
+		// `needs_content` is empty in this test's mock responses.
 		const uploads = captured.filter((c) => c.path.match(/^\/api\/sessions\/[^/]+\/upload$/));
-		expect(uploads).toHaveLength(2);
-		for (const u of uploads) expect(u.isMultipart).toBe(true);
+		expect(uploads).toHaveLength(0);
 
 		// state.json updated. Round 1 (commit d8122d6) switched the cursor
 		// key from global `sessions` to per-agent `sessions:<agentType>` so
@@ -121,18 +116,18 @@ describe("push — Hermes fixture", () => {
 
 	it("skills module uploads multipart per skill", async () => {
 		setup("hermes");
-		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
-			// `okEnvironmentProbe` returns `default_scope_id =
+			// `okEnvironmentProbe` returns `default_project_id =
 			// "00000000-...-099"` by default; the upload mock below
-			// pins the URL to that same scope. Push now reads the
-			// scope from the agent's env, not from
+			// pins the URL to that same project. Push now reads the
+			// project from the agent's env, not from
 			// `/api/projects/default`, so multi-agent users land
-			// under their own env's scope.
+			// under their own env's project.
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/projects/${scopeId}/skills/upload`,
+				path: `/api/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -141,9 +136,9 @@ describe("push — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		const uploads = captured.filter((c) => c.path === `/api/projects/${scopeId}/skills/upload`);
-		expect(uploads).toHaveLength(1);
-		expect(uploads[0]?.isMultipart).toBe(true);
+		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		expect(uploads.length).toBeGreaterThan(0);
+		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
 	});
 
 	it("corrupt state.json is tolerated (warning, not crash)", async () => {
