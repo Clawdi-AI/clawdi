@@ -51,6 +51,20 @@ async function authedJson<T>(
 	return r.json() as Promise<T>;
 }
 
+function parseOrder(raw: string, errorMessage: string): number {
+	const trimmedOrder = raw.trim();
+	const order = Number(trimmedOrder);
+	if (
+		!/^\d+$/.test(trimmedOrder) ||
+		!Number.isFinite(order) ||
+		!Number.isInteger(order) ||
+		order < 1
+	) {
+		throw new Error(errorMessage);
+	}
+	return order;
+}
+
 export async function agentProjectsListCommand(
 	agentId: string,
 	opts: { json?: boolean } = {},
@@ -86,23 +100,25 @@ export async function agentProjectsListCommand(
 		.filter((row) => row.binding_type === "context")
 		.sort((a, b) => a.priority - b.priority);
 	console.log(chalk.bold(`Projects used by ${agentId}`));
-	console.log(chalk.gray("Order matters: Home wins first, then attached projects in order."));
+	console.log(
+		chalk.gray("Order matters: Home Project wins first, then attached Projects in order."),
+	);
 	console.log();
-	console.log(chalk.bold("Home project"));
+	console.log(chalk.bold("Home Project"));
 	if (primary) {
 		console.log(`  ${formatBindingProject(primary, projectsById)}`);
 	} else {
-		console.log("  No Home project set.");
+		console.log("  No Home Project set.");
 		console.log(
-			`  ${chalk.gray(`Set one: clawdi agent projects set-primary ${agentId} --project <owned-project>`)}`,
+			`  ${chalk.gray(`Set one: clawdi agent projects set-home ${agentId} --project <owned-project>`)}`,
 		);
 	}
 	console.log();
-	console.log(chalk.bold(`Attached projects (${contexts.length})`));
+	console.log(chalk.bold(`Attached Projects (${contexts.length})`));
 	if (contexts.length === 0) {
-		console.log("  No attached projects yet.");
+		console.log("  No attached Projects yet.");
 		console.log(
-			`  ${chalk.gray(`Attach one: clawdi agent projects add-context ${agentId} --project <project>`)}`,
+			`  ${chalk.gray(`Attach one: clawdi agent projects attach ${agentId} --project <project>`)}`,
 		);
 		return;
 	}
@@ -111,12 +127,12 @@ export async function agentProjectsListCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Reorder: ") +
-			chalk.cyan(`clawdi agent projects reorder ${agentId} --item <attachment-id>:1`),
+		chalk.gray("Move:   ") +
+			chalk.cyan(`clawdi agent projects move ${agentId} --item <attachment-id>:1`),
 	);
 	console.log(
 		chalk.gray("Detach:  ") +
-			chalk.cyan(`clawdi agent projects remove-context ${agentId} --project <project>`),
+			chalk.cyan(`clawdi agent projects detach ${agentId} --project <project>`),
 	);
 }
 
@@ -136,20 +152,21 @@ export async function agentProjectsSetPrimaryCommand(
 			body: JSON.stringify({ project_id: projectId }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Set Home project for ${agentId}.`);
-	console.log(chalk.gray("  Shared projects stay attached; the Home project must be owned."));
+	console.log(`${chalk.green("✓")} Set Home Project for ${agentId}.`);
+	console.log(chalk.gray("  Shared Projects stay attached; the Home Project must be owned."));
 }
 
 export async function agentProjectsAddContextCommand(
 	agentId: string,
-	opts: { project: string; priority?: string },
+	opts: { project: string; order?: string; priority?: string },
 ): Promise<void> {
 	const { apiUrl, apiKey } = requireAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
-	const priority =
-		opts.priority !== undefined && opts.priority !== ""
-			? Number.parseInt(opts.priority, 10)
-			: undefined;
+	const order = opts.order ?? opts.priority;
+	let priority: number | undefined;
+	if (order !== undefined) {
+		priority = parseOrder(order, "--order <order> must be an integer >= 1.");
+	}
 	await authedJson<BindingRow>(
 		apiUrl,
 		apiKey,
@@ -160,8 +177,10 @@ export async function agentProjectsAddContextCommand(
 			body: JSON.stringify({ project_id: projectId, priority }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Attached project to ${agentId}.`);
-	console.log(chalk.gray("  Order matters: Home wins first, then attached projects by order."));
+	console.log(`${chalk.green("✓")} Attached Project to ${agentId}.`);
+	console.log(
+		chalk.gray("  Order matters: Home Project wins first, then attached Projects by order."),
+	);
 }
 
 export async function agentProjectsRemoveContextCommand(
@@ -179,12 +198,12 @@ export async function agentProjectsRemoveContextCommand(
 		(row) => row.binding_type === "context" && row.project_id === projectId,
 	);
 	if (matches.length === 0) {
-		console.error(chalk.red("No matching attached project found."));
+		console.error(chalk.red("No matching attached Project found."));
 		process.exitCode = 1;
 		return;
 	}
 	if (matches.length > 1) {
-		console.error(chalk.red("Multiple attachments matched this project. Detach by id."));
+		console.error(chalk.red("Multiple attachments matched this Project. Detach by id."));
 		process.exitCode = 1;
 		return;
 	}
@@ -194,7 +213,7 @@ export async function agentProjectsRemoveContextCommand(
 		`/api/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
-	console.log(`${chalk.green("✓")} Detached project from ${agentId}.`);
+	console.log(`${chalk.green("✓")} Detached Project from ${agentId}.`);
 	console.log(chalk.gray("  Project membership is unchanged; only this agent stopped using it."));
 }
 
@@ -203,16 +222,18 @@ export async function agentProjectsReorderCommand(
 	opts: { item?: string[] },
 ): Promise<void> {
 	const { apiUrl, apiKey } = requireAuth();
+	const itemError = "--item must use <attachment-id>:<order> with order >= 1.";
 	const items = (opts.item ?? []).map((raw) => {
-		const [bindingId, priorityRaw] = raw.split(":");
-		const priority = Number.parseInt(priorityRaw ?? "", 10);
-		if (!bindingId || !Number.isFinite(priority) || priority < 1) {
-			throw new Error("--item must use <attachment-id>:<priority> with priority >= 1.");
+		const parts = raw.split(":");
+		if (parts.length !== 2 || !parts[0]) {
+			throw new Error(itemError);
 		}
+		const [bindingId, priorityRaw] = parts;
+		const priority = parseOrder(priorityRaw, itemError);
 		return { binding_id: bindingId, priority };
 	});
 	if (items.length === 0) {
-		throw new Error("Pass at least one --item <attachment-id>:<priority>.");
+		throw new Error("Pass at least one --item <attachment-id>:<order>.");
 	}
 	await authedJson<{ status: string }>(
 		apiUrl,
@@ -224,7 +245,7 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Reordered attached projects for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Updated attached Project order for ${agentId}.`);
 }
 
 function formatBindingProject(row: BindingRow, projectsById: Map<string, ProjectBrief>): string {

@@ -7,7 +7,7 @@
 
 - Project is a shared workspace/library object with resources, membership, and access controls.
 - Project resources include skills and vault key names. Secret values are never shown in this demo.
-- Agent has one Home project. Home is the default writable workspace for that agent.
+- Agent has one Home Project. Home is the default writable workspace for that agent.
 - Agent can attach multiple Projects so their resources are available during runs.
 - Sharing grants Project membership only. It does not attach the Project to an agent.
 - Composition happens only when a user chooses to attach a Project to an Agent.
@@ -25,7 +25,7 @@
 - Alice owns project `engineering`.
 - Bob receives viewer access and uses `engineering` with agent `atlas`.
 - Carol accepts an invitation, then declines a later one.
-- Dana operates multiple agents and changes attached project order.
+- Dana operates multiple agents and changes attached Project order.
 - Evan is removed during cleanup.
 
 CLI examples assume:
@@ -53,15 +53,26 @@ Folder links are CLI-only local preferences:
 | Recipient | List/accept/decline invitations | Inbox banner | `clawdi inbox`, `accept`, `decline` |
 | Recipient | List accessible projects | Projects page | `clawdi project list --shared-with-me` |
 | Recipient | Leave shared project | Project detail | `clawdi project leave @owner/project` |
-| Recipient | Use accepted project with an agent | Agent detail Projects tab | `clawdi inbox accept --agent`, `agent projects add-context` |
-| Agent operator | View Home and attached projects | Agent detail Projects tab | `clawdi agent projects list` |
-| Agent operator | Set Home project | Agent detail Projects tab | `clawdi agent projects set-primary` |
-| Agent operator | Attach/detach/reorder projects | Agent detail Projects tab | `add-context`, `remove-context`, `reorder` |
+| Recipient | Use accepted project with an agent | Agent detail Projects tab | `clawdi inbox accept --agent`, `agent projects attach` |
+| Agent operator | View Home Project and attached Projects | Agent detail Projects tab | `clawdi agent projects list` |
+| Agent operator | Set Home Project | Agent detail Projects tab | `clawdi agent projects set-home` |
+| Agent operator | Attach/detach/move projects | Agent detail Projects tab | `attach`, `detach`, `move` |
 | Local operator | Link a folder to a Project for `run` env selection | CLI only | `clawdi project folder link`, `status`, `unlink` |
 | Local operator | Run with linked or explicit Project vault env | CLI only | `clawdi run`, `run --project`, `run --no-project-folder` |
 | Security | Env-bound keys cannot manage sharing | API guard | sharing routes reject env-bound keys |
 | Security | Plaintext vault values stay CLI/API-key only | API guard | web/JWT cannot call `vault resolve` |
 | Revoke/conflict | Conflict block/allow and access cleanup | Error copy / stale attachment cleanup | `vault resolve --agent`, unshare/leave/remove |
+
+## Role Logic Review
+
+| Role | What they want | Where the action lives | Invariant that prevents misuse |
+| --- | --- | --- | --- |
+| Project owner human | Share `engineering`, inspect who has access, and revoke access without controlling recipients' agents. | Project detail Share dialog; `clawdi project share`, `invite`, `members --remove`, `unshare`. | Sharing grants Project membership only; it never attaches the Project to an Agent unless the recipient or operator explicitly asks. |
+| Recipient human | Accept, decline, or leave shared Project access, then decide whether an Agent should use it. | Share landing page, Inbox banner, Project detail; `clawdi inbox accept`, `decline`, `project leave`, optional `inbox accept --agent` or later `agent projects attach`. | Accepting without an explicit Agent leaves all Agents unchanged; viewer access cannot become an Agent Home Project. |
+| Agent operator human | See the runtime Project set, choose the owned Home Project, and order attached Projects for reads. | Agent detail Projects tab; `clawdi agent projects list`, `set-home`, `attach`, `detach`, `move`. | Each Agent has one Home Project for default writes; attached Projects are ordered read sources and are not default write targets. |
+| Local operator human using `clawdi run` | Run a local command with vault env from an explicit or linked Project. | CLI only; `clawdi run --project`, `clawdi project folder link/status/unlink`, `clawdi run --no-project-folder`. | Folder links are local selection hints for `run`; they do not grant membership, change cloud state, or attach Projects to Agents. |
+| Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent-bound APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is Home Project first, then attached Projects by explicit order; conflicts block by default and include provenance without leaking plaintext. |
+| Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes or disables affected attached Projects while preserving owner data and rejecting sharing changes from env-bound keys. |
 
 ## Flow 1: Owner Creates And Shares
 
@@ -105,7 +116,7 @@ Expected:
 - The project appears under Shared with me with `@alice/engineering`.
 - Skills and vault key names are readable; writes stay disabled.
 - Human CLI output names the exact follow-up command:
-  `clawdi agent projects add-context <agent-id> --project @alice/engineering`.
+  `clawdi agent projects attach <agent-id> --project @alice/engineering`.
 - No agent attachment is created unless Bob passes `--agent`.
 
 Dashboard path:
@@ -127,15 +138,15 @@ clawdi agent projects list <atlas-id> --json
 Or attach later:
 
 ```bash
-clawdi agent projects add-context <atlas-id> --project @alice/engineering --priority 10
+clawdi agent projects attach <atlas-id> --project @alice/engineering --order 10
 clawdi agent projects list <atlas-id>
 ```
 
 Expected:
 
-- `engineering` appears as an attached project on `atlas`.
-- Bob's Home project remains owned by Bob.
-- Shared viewer projects cannot be set as Home.
+- `engineering` appears as an attached Project on `atlas`.
+- Bob's Home Project remains owned by Bob.
+- Shared viewer Projects cannot be set as the Home Project.
 
 ## Flow 4: Invitations And Inbox
 
@@ -173,22 +184,22 @@ Expected:
 
 ## Flow 5: Agent Operator Manages Projects
 
-Dana reviews the Home project and attached projects, sets Home, attaches projects, and reorders them.
+Dana reviews the Home Project and attached Projects, sets Home, attaches Projects, and moves their order.
 
 ```bash
 clawdi agent projects list <atlas-id> --json
-clawdi agent projects set-primary <atlas-id> --project personal
-clawdi agent projects add-context <atlas-id> --project @alice/engineering --priority 10
-clawdi agent projects add-context <atlas-id> --project client-a --priority 20
-clawdi agent projects reorder <atlas-id> --item <engineering-attachment-id>:20 --item <client-attachment-id>:10
-clawdi agent projects remove-context <atlas-id> --project @alice/engineering
+clawdi agent projects set-home <atlas-id> --project personal
+clawdi agent projects attach <atlas-id> --project @alice/engineering --order 10
+clawdi agent projects attach <atlas-id> --project client-a --order 20
+clawdi agent projects move <atlas-id> --item <engineering-attachment-id>:20 --item <client-attachment-id>:10
+clawdi agent projects detach <atlas-id> --project @alice/engineering
 ```
 
 Expected:
 
-- The Home project is always visible.
-- Attached project order is explicit and stable.
-- Detaching a project stops that agent from using the project but does not remove membership.
+- The Home Project is always visible.
+- Attached Project order is explicit and stable.
+- Detaching a Project stops that Agent from using the Project but does not remove membership.
 
 Dashboard path:
 
@@ -247,7 +258,7 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --debug --json
 Expected default behavior:
 
 - The command fails with `vault_conflicts_blocked`.
-- The response shows project order, winning candidate metadata, and conflicts.
+- The response shows Project order, winning candidate metadata, and conflicts.
 - The blocked response does not include plaintext.
 
 Explicit allow branch:
@@ -258,7 +269,7 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --allow-conflicts --debug
 
 Expected:
 
-- First match wins according to the agent's project order.
+- First match wins according to the Agent's Project order.
 - Provenance shows the source project, order, vault slug, section, and item name.
 
 Security branch:

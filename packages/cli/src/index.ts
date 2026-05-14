@@ -306,7 +306,7 @@ vaultCmd
 	)
 	.option(
 		"-a, --agent <agent-id-or-type>",
-		"Resolve through an agent's Home and attached project order",
+		"Resolve through an agent's Home Project and attached Project order",
 	)
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence and skipped matches")
@@ -347,7 +347,7 @@ skillCmd
 	.description("Upload a skill directory or single .md file")
 	.option(
 		"-a, --agent <type>",
-		"Upload to a specific agent's primary project (claude_code, codex, hermes, openclaw)",
+		"Upload to a specific agent's Home Project (claude_code, codex, hermes, openclaw)",
 	)
 	.option(
 		"-p, --project <id-or-slug>",
@@ -356,7 +356,7 @@ skillCmd
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill                         # default-write project\n  $ clawdi skill add ./my-skill --project engineering   # explicit project\n  $ clawdi skill add ./my-skill --agent codex            # an agent's primary project",
+		"\nExamples:\n  $ clawdi skill add ./my-skill                         # default-write project\n  $ clawdi skill add ./my-skill --project engineering   # explicit project\n  $ clawdi skill add ./my-skill --agent codex            # an agent's Home Project",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -392,7 +392,7 @@ skillCmd
 	.description("Remove a skill from the cloud")
 	.option(
 		"-a, --agent <type>",
-		"Remove from a specific agent's primary project (claude_code, codex, hermes, openclaw)",
+		"Remove from a specific agent's Home Project (claude_code, codex, hermes, openclaw)",
 	)
 	.option(
 		"-p, --project <id-or-slug>",
@@ -748,11 +748,11 @@ projectCmd
 const agentCmd = program.command("agent").description("Manage agents");
 const agentProjectsCmd = agentCmd
 	.command("projects")
-	.description("Manage an agent's Home project and attached projects");
+	.description("Manage an agent's Home Project and attached Projects");
 
 agentProjectsCmd
 	.command("list <agent-id>")
-	.description("Show the agent's Home project and attached project order")
+	.description("Show the agent's Home Project and attached Project order")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
@@ -760,8 +760,8 @@ agentProjectsCmd
 	});
 
 agentProjectsCmd
-	.command("set-primary <agent-id>")
-	.description("Set the agent's owned Home project")
+	.command("set-home <agent-id>")
+	.description("Set the agent's owned Home Project")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.action(async (agentId, opts) => {
 		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
@@ -769,18 +769,39 @@ agentProjectsCmd
 	});
 
 agentProjectsCmd
-	.command("add-context <agent-id>")
-	.description("Attach an owned or shared project to an agent")
+	.command("set-primary <agent-id>", { hidden: true })
+	.description("Compatibility alias for set-home")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
-	.option("--priority <n>", "Optional priority (>=1)")
+	.action(async (agentId, opts) => {
+		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsSetPrimaryCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("attach <agent-id>")
+	.description("Attach an owned or shared Project to an agent")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.option("--order <n>", "Optional attached Project order (>=1)")
+	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
 	.action(async (agentId, opts) => {
 		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsAddContextCommand(agentId, opts);
 	});
 
 agentProjectsCmd
-	.command("remove-context <agent-id>")
-	.description("Detach a project from an agent")
+	.command("add-context <agent-id>", { hidden: true })
+	.description("Compatibility alias for attach")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.option("--order <n>", "Optional attached Project order (>=1)")
+	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
+	.action(async (agentId, opts) => {
+		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsAddContextCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("detach <agent-id>")
+	.description("Detach a Project from an agent")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -788,17 +809,40 @@ agentProjectsCmd
 	});
 
 agentProjectsCmd
-	.command("reorder <agent-id>")
-	.description("Reorder attached projects for an agent")
+	.command("remove-context <agent-id>", { hidden: true })
+	.description("Compatibility alias for detach")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.action(async (agentId, opts) => {
+		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsRemoveContextCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("move <agent-id>")
+	.description("Move attached Projects into a new order")
 	.option(
-		"--item <attachment-id:priority>",
-		"Attached project id and target priority (repeatable)",
+		"--item <attachment-id:order>",
+		"Attached Project id and target order (repeatable)",
 		collectValues,
 		[] as string[],
 	)
 	.addHelpText(
 		"after",
-		"\nExample:\n  $ clawdi agent projects reorder <agent-id> --item <attachment-id>:1 --item <attachment-id>:2",
+		"\nExample:\n  $ clawdi agent projects move <agent-id> --item <attachment-id>:1 --item <attachment-id>:2",
+	)
+	.action(async (agentId, opts) => {
+		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsReorderCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("reorder <agent-id>", { hidden: true })
+	.description("Compatibility alias for move")
+	.option(
+		"--item <attachment-id:order>",
+		"Attached Project id and target order (repeatable)",
+		collectValues,
+		[] as string[],
 	)
 	.action(async (agentId, opts) => {
 		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");

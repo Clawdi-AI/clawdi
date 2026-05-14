@@ -10,10 +10,11 @@ This document replaces legacy graph-era terminology with a simpler model:
 
 - `Project` is the collaboration and data ownership boundary.
 - `Agent` is the runtime boundary that reads from one or more projects.
-- Every agent has exactly one primary project and zero or more context
-  projects.
+- Every Agent has exactly one Home Project and zero or more attached
+  Projects.
 - Local project-folder links are CLI-only selection helpers for
-  `clawdi run`; they do not compose projects or change agent bindings.
+  `clawdi run`; they do not compose Projects or change which Projects an
+  Agent uses.
 
 Project composition is not project-to-project. Composition happens only
 when an agent runs.
@@ -22,16 +23,16 @@ when an agent runs.
 
 1. Use `Project + Agent` as the only user-facing model.
 2. Remove legacy boundary terminology from product and docs.
-3. Ensure each agent has one primary project for default reads/writes.
-4. Support one agent bound to multiple projects in v1:
-   one primary plus zero or more context projects.
-5. Keep sharing and membership independent from agent binding:
-   accepting a shared project grants access, then users bind that
-   project to agents.
+3. Ensure each Agent has one Home Project for default reads/writes.
+4. Support one Agent using multiple Projects in v1:
+   one Home Project plus zero or more attached Projects.
+5. Keep sharing and membership independent from Agent use:
+   accepting a shared Project grants access, then users explicitly
+   attach that Project to Agents when needed.
 6. Keep local CLI folder links separate from the cloud Project model:
    they only help the operator choose a Project from the current folder.
 7. Keep default write behavior deterministic:
-   writes go to the agent primary project unless explicitly overridden.
+   writes go to the Agent Home Project unless explicitly overridden.
 8. Enforce safe multi-project vault resolution with provenance and
    explicit conflict handling.
 9. Preserve validated PR #88 flows:
@@ -55,14 +56,17 @@ when an agent runs.
   - Contains skills, vault metadata/content, and future memory/session
     data.
   - Is owned by one account and may be shared with other accounts.
-  - May be a Personal/Home project, but it is still a normal project.
+  - May be a Personal/Home Project, but it is still a normal Project.
 - `Agent`
   - Represents one runnable assistant identity or environment endpoint.
-  - Has a project binding set that defines its read/write boundary.
-- `Agent Project Binding`
-  - Exactly one binding marked as `primary`.
-  - Zero or more bindings marked as `context`.
-  - Context bindings have explicit priority/order.
+  - Has one Home Project and ordered attached Projects that define its
+    read/write boundary.
+- `Agent Project Use`
+  - Exactly one Project is the user-facing Home Project.
+  - Zero or more Projects are user-facing attached Projects.
+  - Attached Projects have explicit order.
+  - Internal API/JSON names may still use `primary`, `context`, and
+    `priority` during compatibility rollout.
 - `Project Folder Link`
   - Local CLI configuration that maps a filesystem folder to a visible
     Project for operator convenience.
@@ -73,16 +77,18 @@ when an agent runs.
 
 ## Mental Model
 
-- Sharing answers: "Who can access this project?"
-- Binding answers: "Which projects can this agent use at runtime?"
-- Primary answers: "Where do default writes go?"
+- Sharing answers: "Who can access this Project?"
+- Agent Project use answers: "Which Projects can this Agent use at runtime?"
+- Home Project answers: "Where do default writes go?"
+- Attached Project order answers: "Which extra Projects are read first?"
 - Folder link answers: "When I run from this local folder, which
   Project should the CLI use for vault env injection?"
 
 ## Data Model Proposal
 
-The names below are proposed external model names. Internal table names
-can be introduced with compatibility layers if needed.
+The names below are proposed storage/API names. User-facing surfaces use
+Home Project, attached Project, and order, with compatibility layers for
+existing internal names where needed.
 
 ## Entities
 
@@ -130,15 +136,15 @@ can be introduced with compatibility layers if needed.
 
 ## Constraints
 
-1. One primary binding per agent:
+1. One Home Project binding per agent:
    unique partial index on `agent_id` where `binding_type='primary'`.
-2. No duplicate binding to same project for same agent:
+2. No duplicate Project attachment for the same Agent:
    unique on `(agent_id, project_id)`.
-3. Context order uniqueness:
+3. Attached Project order uniqueness:
    unique on `(agent_id, binding_type, priority)`.
-4. Primary project must be writable by agent owner (owner/editor
+4. Home Project must be writable by Agent owner (owner/editor
    membership).
-5. Context project may be read-only (`viewer`) and must never be default
+5. Attached Project may be read-only (`viewer`) and must never be default
    write target.
 6. No project-to-project edges in schema.
 
@@ -147,15 +153,15 @@ can be introduced with compatibility layers if needed.
 ## Binding Boundary
 
 - Runtime composition is computed at agent boundary only.
-- Effective read set = primary project + ordered context projects.
-- Effective default write target = primary project only.
+- Effective read set = Home Project + ordered attached Projects.
+- Effective default write target = Home Project only.
 
 ## Resolution Order
 
-1. Primary project first.
-2. Context projects in explicit binding priority order.
-3. If key appears in multiple non-primary context projects at the same
-   priority, treat as conflict.
+1. Home Project first.
+2. Attached Projects in explicit order.
+3. If key appears in multiple attached Projects at the same order, treat
+   as conflict.
 
 ## Conflict Handling
 
@@ -170,9 +176,9 @@ can be introduced with compatibility layers if needed.
 
 ## Write Rules
 
-- Unqualified writes go to primary project.
-- Writes to context projects require explicit target and write role.
-- Viewer-shared context projects are read/context only by default.
+- Unqualified writes go to the Home Project.
+- Writes to attached Projects require explicit target and write role.
+- Viewer-shared attached Projects are read-only by default.
 
 ## CLI Vault Env Selection
 
@@ -188,7 +194,7 @@ changing Project membership or Agent bindings:
 
 Folder links are local operator convenience only. They are not stored as
 cloud Project composition and do not affect which Projects an Agent has
-as Home or attached context.
+as Home or attached Projects.
 
 ## Agent-Native Project Adapter Direction
 
@@ -242,9 +248,10 @@ Implementation direction:
     Codex, and OpenClaw.
   - `supportsProjectFilter` or equivalent capability metadata so Hermes
     and future non-filesystem agents can explicitly say "no native cwd".
-- Store Clawdi Project membership and Agent Home/attached bindings in the
-  cloud model. Use native project adapters only to choose or label local
-  data, never to create cross-Project composition.
+- Store Clawdi Project membership plus each Agent's Home Project and
+  attached Projects in the cloud model. Use native project adapters only
+  to choose or label local data, never to create cross-Project
+  composition.
 - For `clawdi run`, preserve the selection order:
   explicit `--project`, then local folder link, then existing default
   behavior. Agent-native project hints may improve UX suggestions, but
@@ -268,8 +275,9 @@ Implementation direction:
 1. `POST /api/inbox/accept-link`
 2. `POST /api/inbox/accept-invitation`
 
-Accept responses return membership state and binding suggestion status,
-but do not auto-bind unless requested with explicit agent ids.
+Accept responses return membership state and Agent-use suggestion status,
+but do not attach the Project to any Agent unless requested with explicit
+agent ids.
 
 ## Agent Bindings
 
@@ -292,7 +300,8 @@ These endpoints enforce agent-boundary composition and return provenance.
 
 1. `clawdi project ...` for project lifecycle and sharing.
 2. `clawdi inbox ...` for accepting links/invitations.
-3. `clawdi agent projects ...` for binding primary/context projects.
+3. `clawdi agent projects ...` for setting the Home Project and attached
+   Project order.
 4. `clawdi project folder ...` for local folder-to-Project selection
    used by `clawdi run`.
 5. `clawdi run ...` for vault env injection into local commands.
@@ -304,8 +313,8 @@ These endpoints enforce agent-boundary composition and return provenance.
 clawdi project create "Engineering"
 clawdi project share engineering --label "demo handoff"
 clawdi inbox accept https://clawdi.ai/share/<token>
-clawdi agent projects set-primary atlas --project personal
-clawdi agent projects add-context atlas --project engineering --priority 10
+clawdi agent projects set-home atlas --project personal
+clawdi agent projects attach atlas --project engineering --order 10
 clawdi vault resolve OPENAI_API_KEY --agent atlas --debug
 clawdi project folder link --project engineering
 clawdi project folder status
@@ -324,14 +333,14 @@ clawdi project folder unlink
 
 ## Web Changes (Proposed)
 
-1. Rename primary navigation and labels from legacy terminology to
+1. Rename navigation and labels from legacy terminology to
    project-centric wording.
 2. Project detail page includes sharing lifecycle surfaces:
    links, invitations, members, revoke/remove/unshare.
 3. Inbox acceptance confirms project access and next-step bind options.
 4. Agent detail page includes:
-   primary project selector,
-   context project list with priority order,
+   Home Project selector,
+   attached Project list with explicit order,
    conflict policy controls.
 5. Vault debug panel shows provenance chain at agent boundary.
 
@@ -343,19 +352,21 @@ terminology without ambiguity.
 ## Naming Migration Rules
 
 1. Use `Project` as the only user-facing data boundary term.
-2. Use `project access + agent binding` for collaboration + runtime composition.
-3. Use `context project binding` for read-only/runtime supplemental projects.
-4. Keep legacy graph terminology out of user-facing docs and UI copy.
+2. Use `Project access + Agent use` for collaboration + runtime composition.
+3. Use `Home Project` for the default-write Project.
+4. Use `attached Project` and `order` for additional Agent read sources.
+5. Keep `primary`, `context`, and `priority` in API/JSON/backcompat internals only.
+6. Keep legacy graph terminology out of user-facing docs and UI copy.
 
 ## Data/Behavior Migration Strategy
 
 1. Keep existing stored relationships functional during transition with
    compatibility shims.
 2. Map each existing share relationship to project membership.
-3. Map each existing composition edge to an agent context binding.
-4. Derive one primary project per agent from current default write
+3. Map each existing composition edge to an Agent attached Project.
+4. Derive one Home Project per Agent from current default write
    behavior.
-5. Create a Personal/Home project only when needed as fallback for
+5. Create a Personal/Home Project only when needed as fallback for
    users lacking a suitable existing project.
 6. Maintain backwards-compatible read endpoints during rollout with
    deprecation headers.
@@ -366,10 +377,10 @@ terminology without ambiguity.
    project membership gates project access; agent ownership gates binding
    edits.
 2. Write restrictions:
-   default writes to primary project; explicit writes require role
+   default writes to the Home Project; explicit writes require role
    permission.
 3. Read restrictions:
-   context project data is readable only through explicit binding.
+   attached Project data is readable only through explicit Agent use.
 4. Revocation guarantees:
    removing member or unsharing removes downstream agent bindings created
    via that access unless policy marks them explicitly retained.
@@ -388,7 +399,7 @@ terminology without ambiguity.
 3. Phase 2: Sharing lifecycle endpoints
    - Links, invitations, inbox acceptance, members management, unshare.
 4. Phase 3: Agent binding runtime
-   - Primary/context binding APIs and CLI.
+   - Home/attached Project CLI backed by primary/context APIs.
    - Vault resolution precedence and conflict blocking.
 5. Phase 4: UI/CLI rename completion
    - Remove legacy labels and deprecated command aliases.
@@ -401,7 +412,7 @@ terminology without ambiguity.
 
 1. Should explicit conflict allow be one-time per command, or persisted
    per agent binding pair?
-2. When project access is revoked, should the system hard-delete affected
-   context bindings or soft-disable them for diagnostics?
-3. Should primary project changes require a validation dry-run for vault
+2. When Project access is revoked, should the system hard-delete affected
+   attached Projects or soft-disable them for diagnostics?
+3. Should Home Project changes require a validation dry-run for vault
    conflict impact?
