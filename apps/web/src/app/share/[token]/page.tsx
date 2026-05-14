@@ -410,16 +410,16 @@ function MountDeferredPanel({
 	return (
 		<Alert>
 			<CheckCircle2 />
-			<AlertTitle>You're in — mount it where you need it.</AlertTitle>
+			<AlertTitle>You're in — include it where you need it.</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					Joined as a viewer of "{scopeName}". Mount it into one owned scope now; you can mount the
-					same shared scope into more owned scopes later.
+					Joined as a viewer of "{scopeName}". Include it in one owned scope now; you can include
+					the same shared scope in more owned scopes later.
 				</p>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 					<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
 						<SelectTrigger className="min-w-0 flex-1">
-							<SelectValue placeholder="Choose parent scope" />
+							<SelectValue placeholder="Choose where to include it" />
 						</SelectTrigger>
 						<SelectContent>
 							{detail.owned_scopes.map((scope) => (
@@ -430,7 +430,7 @@ function MountDeferredPanel({
 						</SelectContent>
 					</Select>
 					<Button size="sm" disabled={!parentScopeId || isPending} onClick={onMount}>
-						{isPending ? "Mounting…" : "Mount here"}
+						{isPending ? "Including…" : "Include here"}
 					</Button>
 				</div>
 			</AlertDescription>

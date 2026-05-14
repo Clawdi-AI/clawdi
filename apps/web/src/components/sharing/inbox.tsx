@@ -309,11 +309,11 @@ function MountDeferredChooser({
 }) {
 	return (
 		<div className="rounded-md border bg-muted/30 p-3">
-			<div className="text-xs font-medium">Mount this shared scope into an owned scope</div>
+			<div className="text-xs font-medium">Include this shared scope in an owned scope</div>
 			<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
 				<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
 					<SelectTrigger className="min-w-0 flex-1">
-						<SelectValue placeholder="Choose parent scope" />
+						<SelectValue placeholder="Choose where to include it" />
 					</SelectTrigger>
 					<SelectContent>
 						{detail.owned_scopes.map((scope) => (
@@ -324,7 +324,7 @@ function MountDeferredChooser({
 					</SelectContent>
 				</Select>
 				<Button size="sm" disabled={!parentScopeId || pending} onClick={onMount}>
-					{pending ? "Mounting…" : "Mount here"}
+					{pending ? "Including…" : "Include here"}
 				</Button>
 			</div>
 		</div>

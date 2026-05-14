@@ -135,15 +135,15 @@ export function ShareScopeDialog({
 					<DialogTitle>Share "{scopeName}"</DialogTitle>
 					<DialogDescription>
 						Give others read-only membership in this scope. They decide which of their owned scopes
-						should mount it, and they cannot edit your scope.
+						should include it, and they cannot edit your scope.
 					</DialogDescription>
 				</DialogHeader>
 				{isPersonalScope ? (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Personal scope sharing needs extra care</AlertTitle>
+						<AlertTitle>Account scope sharing needs extra care</AlertTitle>
 						<AlertDescription>
-							Personal scopes often mix experiments, one-off vault references, and default context.
+							Account scopes often mix experiments, one-off vault references, and default context.
 							Prefer sharing an agent or project scope when you want a cleaner collaboration
 							boundary.
 						</AlertDescription>
@@ -426,7 +426,7 @@ function LinkRow({
 						</span>
 						<span aria-hidden>·</span>
 						<span>
-							{link.redeem_count} redeem{link.redeem_count === 1 ? "" : "s"}
+							{link.redeem_count} accept{link.redeem_count === 1 ? "" : "s"}
 						</span>
 						{link.last_redeemed_at ? (
 							<>
@@ -672,7 +672,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 			refreshSharingState();
 			toast.success(
 				body.mounts_removed > 0
-					? `Member removed — ${body.mounts_removed} mount edge removed`
+					? `Member removed — ${body.mounts_removed} include removed`
 					: "Member removed",
 			);
 		},
@@ -709,8 +709,8 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<p className="text-xs text-muted-foreground sm:max-w-sm">
-					Accepted viewers with permanent access. Removing a member also removes mount edges that
-					point to this scope.
+					Accepted viewers with permanent access. Removing a member also removes includes that point
+					to this scope.
 				</p>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
@@ -728,7 +728,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 							<AlertDialogTitle>Stop sharing this scope?</AlertDialogTitle>
 							<AlertDialogDescription>
 								This revokes active links, cancels pending invitations, removes accepted members,
-								and removes their mount edges.
+								and removes their includes.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
@@ -792,7 +792,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 										<AlertDialogHeader>
 											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
 											<AlertDialogDescription>
-												{label} will lose access to this scope. Any mount edges that point to this
+												{label} will lose access to this scope. Any includes that point to this
 												scope are removed with the membership.
 											</AlertDialogDescription>
 										</AlertDialogHeader>
