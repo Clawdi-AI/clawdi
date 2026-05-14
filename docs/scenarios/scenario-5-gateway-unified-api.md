@@ -179,8 +179,8 @@ Current:
 
 Clawdi 2.0:
   sub2api becomes Gateway's backend engine
-  Users access it via Clawdi tokens (gateway:call scope)
-  Clawdi handles: token auth → scope check → usage tracking → proxy to sub2api
+  Users access it via Clawdi tokens (gateway:call permission)
+  Clawdi handles: token auth → permission check → usage tracking → proxy to sub2api
   sub2api is transparent to users
 
   Clawdi Token → Clawdi API Gateway → sub2api → OpenAI/Anthropic/Brave/...
@@ -201,7 +201,7 @@ https://api.clawdi.ai/v1/images          → Image generation
 https://api.clawdi.ai/v1/twitter/*       → Twitter/X API proxy
 ```
 
-All endpoints accept `Authorization: Bearer {clawdi_token}`. Scope required: `gateway:call`.
+All endpoints accept `Authorization: Bearer {clawdi_token}`. Permission required: `gateway:call`.
 
 ---
 

@@ -1,8 +1,4 @@
-"""Project — first-class container for skills, vaults, and memories.
-
-Projects currently map to the legacy `scopes` table name while the
-database rename is staged through migrations.
-"""
+"""Project — first-class container for skills, vaults, and memories."""
 
 import uuid
 from datetime import datetime
@@ -23,7 +19,7 @@ PROJECT_KINDS_V2 = (PROJECT_KIND_PERSONAL, PROJECT_KIND_ENVIRONMENT, PROJECT_KIN
 
 
 class Project(Base, TimestampMixin):
-    __tablename__ = "scopes"
+    __tablename__ = "projects"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(

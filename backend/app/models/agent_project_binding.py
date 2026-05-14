@@ -27,7 +27,7 @@ class AgentProjectBinding(Base, TimestampMixin):
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("scopes.id", ondelete="CASCADE"),
+        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
     binding_type: Mapped[str] = mapped_column(nullable=False)

@@ -11,7 +11,6 @@ runtime composition:
   - project_share_links
   - agent_project_bindings
 
-`scopes` remains the underlying project store in pass 1.
 """
 
 from collections.abc import Sequence
@@ -28,10 +27,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_constraint("ck_scopes_kind_v1", "scopes", type_="check")
+    op.drop_constraint("ck_projects_kind_v1", "projects", type_="check")
     op.create_check_constraint(
-        "ck_scopes_kind_v2",
-        "scopes",
+        "ck_projects_kind_v2",
+        "projects",
         "kind IN ('personal', 'environment', 'workspace')",
     )
 
@@ -46,7 +45,7 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("scopes.id", ondelete="CASCADE"),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -105,7 +104,7 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("scopes.id", ondelete="CASCADE"),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -163,7 +162,7 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("scopes.id", ondelete="CASCADE"),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("token_hash", sa.String(64), nullable=False, unique=True),
@@ -214,7 +213,7 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("scopes.id", ondelete="CASCADE"),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("binding_type", sa.String(length=20), nullable=False),
@@ -302,9 +301,9 @@ def downgrade() -> None:
     op.drop_index("ix_project_memberships_project_id", "project_memberships")
     op.drop_table("project_memberships")
 
-    op.drop_constraint("ck_scopes_kind_v2", "scopes", type_="check")
+    op.drop_constraint("ck_projects_kind_v2", "projects", type_="check")
     op.create_check_constraint(
-        "ck_scopes_kind_v1",
-        "scopes",
+        "ck_projects_kind_v1",
+        "projects",
         "kind IN ('personal', 'environment')",
     )

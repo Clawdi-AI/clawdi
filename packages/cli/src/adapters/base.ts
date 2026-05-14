@@ -94,7 +94,7 @@ export interface AgentAdapter {
 	 * skill — empty-key callers were getting `<root>/skills//SKILL.md`
 	 * before this method existed. */
 	getSkillsRootDir(): string;
-	/** Returns the on-disk path where a SHARED-SCOPE skill should
+	/** Returns the on-disk path where a SHARED-PROJECT skill should
 	 * land. The owner-handle (resolved server-side, frozen at link
 	 * create for each shared owner) is appended with `__` separator so
 	 * the same key from different owners coexists with the sharee's

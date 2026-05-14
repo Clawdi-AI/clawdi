@@ -25,7 +25,7 @@ class ApiKey(Base, TimestampMixin):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # Permission set this key is allowed to act under. Examples:
+    # API permission set this key is allowed to act under. Examples:
     # `["sessions:write", "skills:read", "skills:write"]` (deploy-key
     # for `clawdi serve` daemon). NULL means full account access —
     # interactive `clawdi auth login` keys keep this null for backwards
@@ -34,8 +34,8 @@ class ApiKey(Base, TimestampMixin):
 
     # Optional binding to a single agent environment. When set, the
     # key may only act on that env's resources (e.g. push sessions
-    # under that env_id, pull skills as that env). Resource-scoping
-    # alone isn't enough — a leaked deploy-key from pod A shouldn't
+    # under that env_id, pull skills as that env). Resource-level
+    # checks alone aren't enough — a leaked deploy-key from pod A shouldn't
     # be able to write into pod B's sessions on the same account.
     # NULL = no binding (laptop / VPS / interactive keys).
     environment_id: Mapped[uuid.UUID | None] = mapped_column(

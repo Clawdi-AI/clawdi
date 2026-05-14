@@ -1,9 +1,8 @@
 /**
  * Session-directory watcher with file-stable debounce.
  *
- * Per docs/plans/cloud-clawdi-integration.md (v0.25, line 1711):
- * `Pod → Cloud | sessions | ✓ (write-on-detect, file-stable
- * debounce)`. Push happens after a file has been quiescent for
+ * Hosted sync design requirement: session push is "write-on-detect
+ * with file-stable debounce". Push happens after a file has been quiescent for
  * `STABLE_AFTER_MS` so we don't upload half-written transcripts
  * mid-conversation.
  *

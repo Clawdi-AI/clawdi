@@ -42,7 +42,7 @@ Under the hood, `clawdi setup` calls `claude mcp add-json` to register a stdio M
 
 ```bash
 # What clawdi setup does internally for Claude Code:
-claude mcp add-json clawdi '{"type":"stdio","command":"clawdi","args":["mcp","stdio"]}' --scope user
+claude mcp add-json clawdi '{"type":"stdio","command":"clawdi","args":["mcp","stdio"]}' [user-level registration flag]
 ```
 
 This tells Claude Code: "whenever you start, spawn `clawdi mcp stdio` as a local MCP server." The registration persists in `~/.claude.json` — no need to repeat.

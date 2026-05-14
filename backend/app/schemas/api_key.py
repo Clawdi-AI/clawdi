@@ -13,7 +13,7 @@ class ApiKeyCreate(BaseModel):
     # owned by the calling user — enforced at the service layer
     # in `mint_api_key`.
     #
-    # `scopes` defaults to None — i.e. full account access, same as
+    # `scopes` defaults to None — i.e. full API permission access, same as
     # a key the user mints for their own laptop. The hosted agent
     # behaves identically to a self-installed clawdi: vault, memory,
     # settings, sessions, skills are all reachable. Pass an explicit

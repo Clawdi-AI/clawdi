@@ -484,7 +484,7 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
     boundary for env-bound keys is enforced inside the route's
-    own `project_ids_visible_to` / `_scope_filter_*` calls, not
+    own `project_ids_visible_to` / `_project_filter_*` calls, not
     here.
 
     Only narrowly-scoped keys (explicit `scopes` list) are

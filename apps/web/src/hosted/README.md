@@ -60,8 +60,7 @@ OSS users running their own clawdi-cloud see none of this UI.
 The connector flow used to live here too (`use-hosted-connectors.ts`)
 but was removed once cloud-api adopted Clerk-id-based Composio
 entities — both deploy modes now read connectors from the same
-`/api/connectors` route. See `docs/plans/cloud-clawdi-integration.md`
-for the migration rationale.
+`/api/connectors` route.
 
 Future additions (later phases, not yet built):
 

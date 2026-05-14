@@ -558,7 +558,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// missed change, and the safety-net poll silently
 			// misses it. `lastSeenRevision` represents
 			// "highest revision we've fully reconciled FOR OUR
-			// SCOPE"; sibling events don't grant that.
+			// PROJECT"; sibling events don't grant that.
 			return;
 		}
 		log.info("engine.sse_event", { type: event.type, skill_key: event.skill_key });

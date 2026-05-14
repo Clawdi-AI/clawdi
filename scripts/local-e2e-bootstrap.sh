@@ -7,7 +7,8 @@
 #      creation against the same code path that fires when a user clicks
 #      Deploy on clawdi.ai before ever visiting cloud.clawdi.ai.
 #   2. Admin endpoint (`POST /api/admin/auth/keys`) mints a deploy key
-#      bound to that env. Default `scopes=null` → full account access
+#      bound to that env. Default API permission scopes (`scopes=null`)
+#      mean full account access
 #      (read + write across sessions / skills / memories / vault), same
 #      as a user-self-minted key. Hosted pods need this parity.
 #   3. Prints env vars for running `clawdi serve` against the local
@@ -84,7 +85,7 @@ echo "  key_id=$KEY_ID"
 echo "  raw_key=${RAW_KEY:0:25}... (full key in env vars below)"
 echo
 
-echo "=== Step 4: verify minted key has full account access (scopes=NULL) ==="
+echo "=== Step 4: verify minted key has full account access (api permission scopes=NULL) ==="
 # Empty value = NULL = full account access, identical to user-self-mint via
 # Clerk JWT. Earlier rounds clamped admin-mint to a write-side allowlist —
 # `f9337d1` removed that ceiling so hosted pods get parity with self-managed

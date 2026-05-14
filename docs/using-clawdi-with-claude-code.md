@@ -45,7 +45,7 @@ $ clawdi setup --agent claude_code
 
 What this does:
 - Creates a row in the backend `AgentEnvironment` table for this machine + Claude Code
-- Runs `claude mcp add-json clawdi '...' --scope user` so Claude Code spawns the Clawdi MCP server on every launch
+- Runs `claude mcp add-json clawdi '...'` with Claude Code's user-level registration flag so Claude Code spawns the Clawdi MCP server on every launch
 - Copies the bundled `clawdi` skill to `~/.claude/skills/clawdi/SKILL.md` so Claude Code can surface memory-retrieval guidance
 
 Re-running `clawdi setup --agent claude_code` later is safe — the skill is overwritten with the latest bundled version; the MCP registration is idempotent.

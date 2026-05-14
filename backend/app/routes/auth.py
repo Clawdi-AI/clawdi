@@ -42,7 +42,8 @@ async def create_api_key(
     # agent should be able to do whatever the user can do (vault,
     # memories, settings — not just push sessions/skills). The
     # `scopes` body field is still honoured if the caller wants to
-    # narrow on purpose; passing `null`/omitting it = no narrowing.
+    # narrow API permissions on purpose; passing `null`/omitting it
+    # = no permission narrowing.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ):
@@ -84,7 +85,7 @@ async def create_api_key(
 async def list_api_keys(
     # Dashboard-only: a leaked deploy key would otherwise be able
     # to enumerate every other key issued for the account (id /
-    # label / prefix / scopes / env binding). Mirrors the lockdown
+    # label / prefix / permission scopes / env binding). Mirrors the lockdown
     # already applied to POST + DELETE.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),

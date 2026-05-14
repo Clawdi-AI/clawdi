@@ -6,7 +6,7 @@
 
 ## Summary
 
-This document replaces the user-facing scope/mount model with a simpler
+This document replaces the legacy graph/mount vocabulary with a simpler
 model:
 
 - `Project` is the collaboration and data ownership boundary.
@@ -20,8 +20,7 @@ when an agent runs.
 ## Goals
 
 1. Use `Project + Agent` as the only user-facing model.
-2. Remove account-level and agent-level scope language from product and
-   docs.
+2. Remove legacy boundary terminology from product and docs.
 3. Ensure each agent has one primary project for default reads/writes.
 4. Support one agent bound to multiple projects in v1:
    one primary plus zero or more context projects.
@@ -227,7 +226,7 @@ clawdi vault resolve OPENAI_API_KEY --agent atlas --debug
 
 ## Web Changes (Proposed)
 
-1. Rename primary navigation and labels from scope-centric wording to
+1. Rename primary navigation and labels from legacy terminology to
    project-centric wording.
 2. Project detail page includes sharing lifecycle surfaces:
    links, invitations, members, revoke/remove/unshare.
@@ -243,24 +242,12 @@ clawdi vault resolve OPENAI_API_KEY --agent atlas --debug
 This section is intentionally explicit so implementation PRs can migrate
 terminology without ambiguity.
 
-## Term Mapping
+## Naming Migration Rules
 
-1. `scope` -> `project` (user-facing).
-2. `membership + mount` -> `project access + agent binding`.
-3. `mounted source` -> `context project binding`.
-4. `composed scope` -> `agent runtime composition`.
-
-## Legacy Phrase Removal Checklist
-
-The following phrases should not appear in user-facing docs or UI text
-after migration, except in this migration section or anti-goal notes:
-
-1. `parent scope`
-2. `source scope`
-3. `scope mount`
-4. `account scope`
-5. `agent scope`
-6. `project mount project`
+1. Use `Project` as the only user-facing data boundary term.
+2. Use `project access + agent binding` for collaboration + runtime composition.
+3. Use `context project binding` for read-only/runtime supplemental projects.
+4. Keep legacy graph terminology out of user-facing docs and UI copy.
 
 ## Data/Behavior Migration Strategy
 
@@ -299,7 +286,7 @@ after migration, except in this migration section or anti-goal notes:
    - Freeze user-facing vocabulary to `Project + Agent`.
 2. Phase 1: Schema and compatibility layer
    - Introduce project and agent binding entities.
-   - Add compatibility mapping from existing scope naming.
+   - Add compatibility mapping from existing legacy naming.
 3. Phase 2: Sharing lifecycle endpoints
    - Links, invitations, inbox acceptance, members management, unshare.
 4. Phase 3: Agent binding runtime

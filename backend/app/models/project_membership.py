@@ -1,8 +1,4 @@
-"""Membership of a user in a shared project.
-
-Projects are backed by the existing `scopes` table in pass 1; the
-user-facing API surface uses project terminology.
-"""
+"""Membership of a user in a shared project."""
 
 import uuid
 from datetime import datetime
@@ -22,7 +18,7 @@ class ProjectMembership(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("scopes.id", ondelete="CASCADE"),
+        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

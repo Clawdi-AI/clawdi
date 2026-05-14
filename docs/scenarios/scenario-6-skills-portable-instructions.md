@@ -43,7 +43,7 @@ It tells the agent "how to do X" — loaded into the system prompt before the se
 
 | | CLAUDE.md | Clawdi Skills |
 |---|---|---|
-| Scope | Per-project | Cross-project, cross-agent |
+| Boundary | Per-project | Cross-project, cross-agent |
 | Maintained by | You | You / community / official |
 | Updates | Edit file manually | `clawdi skills sync` pulls latest version |
 | Sharing | Copy-paste | Subscribe + auto-distribute |

@@ -47,7 +47,7 @@ export type QueueItem =
 	| (ItemBase & {
 			kind: "skill_push";
 			skill_key: string;
-			// Scope_id this item was enqueued under. Drained items
+			// Project ID this item was enqueued under. Drained items
 			// whose stamped project no longer matches the daemon's
 			// current project are dropped (mid-flight reassignment).
 			// Optional for back-compat with queue files written by

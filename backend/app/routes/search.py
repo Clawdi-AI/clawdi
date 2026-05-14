@@ -228,8 +228,9 @@ async def global_search(
     """
     # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are
-    # gated by the caller's permission list so a narrowly-scoped api_key
-    # (e.g. one the dashboard mints with `scopes=["sessions:write"]`)
+    # gated by the caller's API-permission list so a narrowly-scoped
+    # api_key (e.g. one the dashboard mints with
+    # `scopes=["sessions:write"]`)
     # can't use global search as a side-channel to read resources
     # its permission list doesn't cover. Deploy keys default to full
     # access and pass all gates — same as a self-installed clawdi.
