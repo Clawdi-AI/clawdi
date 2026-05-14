@@ -29,6 +29,7 @@ from app.schemas.sharing import (
     ShareLinkResponse,
     UnshareResponse,
 )
+from app.services.agent_bindings import delete_project_bindings_for_users
 from app.services.sharing import (
     generate_share_token,
     hash_share_token,
@@ -371,7 +372,7 @@ async def remove_member(
     member_user_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> dict[str, str | int]:
     project = await _assert_project_owner(db, auth, project_id)
     if member_user_id == project.user_id:
         raise HTTPException(
@@ -390,8 +391,13 @@ async def remove_member(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "member not found")
 
     await db.delete(member)
+    bindings_removed = await delete_project_bindings_for_users(
+        db,
+        project_id=project_id,
+        user_ids=[member_user_id],
+    )
     await db.commit()
-    return {"status": "removed"}
+    return {"status": "removed", "agent_bindings_removed": bindings_removed}
 
 
 @router.post("/{project_id}/leave")
@@ -399,7 +405,7 @@ async def leave_project(
     project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> dict[str, str | int]:
     project = (
         await db.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
@@ -422,8 +428,13 @@ async def leave_project(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "membership not found")
 
     await db.delete(member)
+    bindings_removed = await delete_project_bindings_for_users(
+        db,
+        project_id=project_id,
+        user_ids=[auth.user_id],
+    )
     await db.commit()
-    return {"status": "left"}
+    return {"status": "left", "agent_bindings_removed": bindings_removed}
 
 
 @router.post("/{project_id}/unshare", response_model=UnshareResponse)
@@ -464,6 +475,12 @@ async def unshare_project(
         .scalars()
         .all()
     )
+    member_user_ids = [member.member_user_id for member in members]
+    agent_bindings_removed = await delete_project_bindings_for_users(
+        db,
+        project_id=project_id,
+        user_ids=member_user_ids,
+    )
     for member in members:
         await db.delete(member)
 
@@ -472,4 +489,5 @@ async def unshare_project(
         links_revoked=len(active_links),
         members_removed=len(members),
         invitations_cancelled=invitations_cancelled,
+        agent_bindings_removed=agent_bindings_removed,
     )

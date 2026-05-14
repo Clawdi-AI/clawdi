@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
+import { getEnvIdByAgent } from "../lib/select-adapter";
 
 interface VaultResolveHit {
 	key: string;
@@ -14,19 +15,39 @@ interface VaultResolveHit {
 		project_id: string;
 		alias: string;
 		hit: boolean;
-		reason: "match" | "not-found" | "skipped";
-		mounted_at?: string;
+		reason: "match" | "not-found" | "skipped" | "conflict";
+		binding_type?: string;
+		priority?: number;
+	}>;
+	conflicts?: Array<{
+		project_id: string;
+		alias: string;
+		display?: string;
+		binding_type?: string;
+		priority?: number;
+		vault_slug?: string | null;
 	}>;
 }
 
 export async function vaultResolveCommand(
 	key: string,
-	opts: { project?: string; debug?: boolean; json?: boolean } = {},
+	opts: {
+		project?: string;
+		agent?: string;
+		allowConflicts?: boolean;
+		debug?: boolean;
+		json?: boolean;
+	} = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
 		console.error(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		process.exitCode = 1;
+		return;
+	}
+	if (opts.project && opts.agent) {
+		console.error(chalk.red("Pass either --project or --agent, not both."));
 		process.exitCode = 1;
 		return;
 	}
@@ -38,6 +59,10 @@ export async function vaultResolveCommand(
 		const projectId = await resolveProjectId(apiUrl, auth.apiKey, opts.project);
 		params.set("project_id", projectId);
 	}
+	if (opts.agent) {
+		params.set("agent_id", resolveAgentId(opts.agent));
+	}
+	if (opts.allowConflicts) params.set("allow_conflicts", "true");
 	if (opts.debug) params.set("debug", "true");
 
 	const r = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {
@@ -53,6 +78,10 @@ export async function vaultResolveCommand(
 			console.error(chalk.red(`No vault value found for ${key}.`));
 		} else if (r.status === 403) {
 			console.error(chalk.red("vault resolve requires CLI authentication."));
+		} else if (r.status === 409) {
+			const detail = (body as { detail?: { code?: string; message?: string } }).detail;
+			console.error(chalk.red(detail?.message ?? "Vault conflict blocked."));
+			console.error(chalk.gray("Re-run with --allow-conflicts to use the first agent project."));
 		} else {
 			console.error(chalk.red(`vault resolve failed (${r.status}).`));
 		}
@@ -74,11 +103,20 @@ export async function vaultResolveCommand(
 			const suffix =
 				entry.reason === "match"
 					? chalk.green("match")
-					: entry.reason === "skipped"
-						? chalk.yellow("skipped")
-						: chalk.gray("not found");
-			const mounted = entry.mounted_at ? chalk.gray(` mounted_at=${entry.mounted_at}`) : "";
-			console.log(`    ${entry.alias} ${suffix}${mounted}`);
+					: entry.reason === "conflict"
+						? chalk.red("conflict")
+						: entry.reason === "skipped"
+							? chalk.yellow("skipped")
+							: chalk.gray("not found");
+			const binding = entry.binding_type
+				? chalk.gray(` ${entry.binding_type}:${entry.priority}`)
+				: "";
+			console.log(`    ${entry.alias} ${suffix}${binding}`);
 		}
 	}
+}
+
+function resolveAgentId(agent: string): string {
+	const localEnvId = getEnvIdByAgent(agent);
+	return localEnvId ?? agent;
 }

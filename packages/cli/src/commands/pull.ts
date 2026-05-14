@@ -7,6 +7,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
@@ -29,6 +30,7 @@ const DOWN_MODULES = [
 
 interface PullOpts {
 	modules?: string;
+	project?: string;
 	dryRun?: boolean;
 	agent?: string;
 	allAgents?: boolean;
@@ -67,6 +69,12 @@ export async function pull(opts: PullOpts) {
 	}
 	if (modules.length === 0) {
 		p.outro(chalk.gray("Nothing to download."));
+		return;
+	}
+	if (opts.project && modules.includes("sessions")) {
+		p.log.error("--project is supported for skill pulls only. Use --modules skills.");
+		p.outro(chalk.red("Aborted."));
+		process.exitCode = 1;
 		return;
 	}
 
@@ -143,21 +151,34 @@ async function pullSkills(
 	const adapter = adapterForType(agentType);
 	if (!adapter) return { pulled: 0, alreadyInSync: 0 };
 
-	// Resolve the target agent's project upfront. Without this, the
+	// Resolve the target project upfront. Without this, the
 	// listing below returns every project's skills and the loop
 	// installs sibling-agent skills into this adapter's directory
 	// — `pull --all-agents` on a multi-agent unbound key would
 	// duplicate every codex skill into claude_code's home and
 	// vice versa. The download URL ALSO needs the project_id so
 	// duplicate-key skills resolve to the right bytes.
-	const envId = getEnvIdByAgent(agentType);
-	if (!envId) {
-		p.log.warn(
-			`No environment registered for ${adapterRegistry[agentType].displayName}; skip. Run \`clawdi setup\` first.`,
-		);
-		return { pulled: 0, alreadyInSync: 0 };
+	let projectId: string;
+	let sharedOwnerHandle: string | null = null;
+	if (opts.project) {
+		projectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
+		const project = (await listProjects(api.baseUrl, api.apiKey)).find((p) => p.id === projectId);
+		if (project?.is_owner === false) {
+			sharedOwnerHandle = project.owner_handle ?? null;
+			if (!sharedOwnerHandle) {
+				throw new Error("Shared project is missing owner handle; cannot choose shared skill path.");
+			}
+		}
+	} else {
+		const envId = getEnvIdByAgent(agentType);
+		if (!envId) {
+			p.log.warn(
+				`No environment registered for ${adapterRegistry[agentType].displayName}; skip. Run \`clawdi setup\` first.`,
+			);
+			return { pulled: 0, alreadyInSync: 0 };
+		}
+		projectId = await fetchProjectIdForEnv(api, envId);
 	}
-	const projectId = await fetchProjectIdForEnv(api, envId);
 
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching skills...");
@@ -183,8 +204,14 @@ async function pullSkills(
 		// Cache key partitioned by `(agentType, skill_key)` so a multi-
 		// agent pull doesn't share state across agents — each agent's
 		// project is independent.
-		const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
-		const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
+		const cacheKey = opts.project
+			? skillCacheKey(agentType, `${projectId}:${skill.skill_key}`)
+			: skillCacheKey(agentType, skill.skill_key);
+		const cached = skillsLock.skills[cacheKey]?.hash;
+		const localPath = sharedOwnerHandle
+			? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
+			: adapter.getSkillPath(skill.skill_key);
+		const localExists = existsSync(localPath);
 		if (cached && cached === skill.content_hash && localExists) {
 			alreadyInSync++;
 			continue;
@@ -192,7 +219,12 @@ async function pullSkills(
 		toDownload.push(skill);
 	}
 
-	const newCount = toDownload.filter((s) => !existsSync(adapter.getSkillPath(s.skill_key))).length;
+	const newCount = toDownload.filter((s) => {
+		const localPath = sharedOwnerHandle
+			? adapter.getSharedSkillPath(s.skill_key, sharedOwnerHandle)
+			: adapter.getSkillPath(s.skill_key);
+		return !existsSync(localPath);
+	}).length;
 	const updatedCount = toDownload.length - newCount;
 	p.log.message(
 		chalk.gray(`${newCount} new, ${updatedCount} updated, ${alreadyInSync} already in sync`),
@@ -208,7 +240,9 @@ async function pullSkills(
 	let pulled = 0;
 	for (const skill of toDownload) {
 		const safeKey = sanitizeMetadata(skill.skill_key);
-		const dest = adapter.getSkillPath(skill.skill_key);
+		const dest = sharedOwnerHandle
+			? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
+			: adapter.getSkillPath(skill.skill_key);
 		if (existsSync(dest) && !opts.yes) {
 			const overwrite = await askYesNo(`${safeKey} already exists. Overwrite?`, false);
 			if (!overwrite) {
@@ -225,11 +259,18 @@ async function pullSkills(
 			const tarBytes = await api.getBytes(
 				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
-			await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-			skillsLock.skills[skillCacheKey(agentType, skill.skill_key)] = {
+			if (sharedOwnerHandle) {
+				await adapter.writeSharedSkillArchive(skill.skill_key, sharedOwnerHandle, tarBytes);
+			} else {
+				await adapter.writeSkillArchive(skill.skill_key, tarBytes);
+			}
+			const cacheKey = opts.project
+				? skillCacheKey(agentType, `${projectId}:${skill.skill_key}`)
+				: skillCacheKey(agentType, skill.skill_key);
+			skillsLock.skills[cacheKey] = {
 				hash: skill.content_hash,
 			};
-			const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
+			const skillDir = dirname(dest);
 			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 			pulled++;
 		} catch (e) {

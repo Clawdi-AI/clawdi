@@ -59,10 +59,26 @@ function countFiles(dir: string): number {
 	return count;
 }
 
-export async function skillList(opts: { json?: boolean } = {}) {
+export async function skillList(opts: { json?: boolean; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+	let projectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	}
+	const page = unwrap(
+		await api.GET("/api/skills", {
+			params: { query: projectId ? { page_size: 200, project_id: projectId } : { page_size: 200 } },
+		}),
+	);
 	const skills = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
@@ -271,7 +287,7 @@ export async function skillAdd(
 
 export async function skillInstall(
 	repoInput: string,
-	opts: { agent?: string; list?: boolean; yes?: boolean } = {},
+	opts: { agent?: string; project?: string; list?: boolean; yes?: boolean } = {},
 ) {
 	requireAuth();
 
@@ -326,7 +342,22 @@ export async function skillInstall(
 	// SKILL.md file and no cloud row in their own project, so
 	// their dashboard / daemon state diverged.
 	let targetAgent: string | undefined = opts.agent;
-	if (opts.agent) {
+	if (opts.agent && opts.project) {
+		console.log(chalk.red("Pass either --project or --agent, not both."));
+		process.exit(1);
+	}
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		targetAgent = "__skip_local__";
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
@@ -481,7 +512,7 @@ export async function skillInstall(
 	}
 }
 
-export async function skillRm(key: string, opts: { agent?: string } = {}) {
+export async function skillRm(key: string, opts: { agent?: string; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
 	// Phase-2 project-explicit delete: only the targeted project's
@@ -494,7 +525,21 @@ export async function skillRm(key: string, opts: { agent?: string } = {}) {
 	// "most-recently-active env" which on multi-machine accounts
 	// is often someone else's env.)
 	let projectId: string;
-	if (opts.agent) {
+	if (opts.agent && opts.project) {
+		console.log(chalk.red("Pass either --project or --agent, not both."));
+		process.exit(1);
+	}
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];

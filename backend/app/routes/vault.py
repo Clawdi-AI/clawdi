@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
@@ -12,6 +12,7 @@ from app.core.project import (
     resolve_for_parent,
 )
 from app.core.query_utils import like_needle
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
 from app.models.vault import Vault, VaultItem
 from app.schemas.common import Paginated
@@ -27,6 +28,7 @@ from app.schemas.vault import (
     VaultResponse,
     VaultSectionsResponse,
 )
+from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
@@ -287,8 +289,99 @@ async def _project_precedence(
             "project_id": project.id,
             "alias": project.slug,
             "display": project.name,
+            "binding_type": "project",
+            "priority": 0,
         }
     ]
+
+
+async def _agent_project_precedence(
+    db: AsyncSession,
+    auth: AuthContext,
+    agent_id: UUID,
+) -> list[dict]:
+    """Return an agent's primary + context projects in runtime order."""
+    if (
+        auth.is_cli
+        and auth.api_key is not None
+        and auth.api_key.environment_id is not None
+        and auth.api_key.environment_id != agent_id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "api key bound to a different agent")
+
+    agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    visible = set(await project_ids_visible_to(db, auth))
+    rows = (
+        await db.execute(
+            select(AgentProjectBinding, Project)
+            .join(Project, Project.id == AgentProjectBinding.project_id)
+            .where(AgentProjectBinding.agent_id == agent_id)
+            .order_by(
+                case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
+                AgentProjectBinding.priority.asc(),
+                AgentProjectBinding.created_at.asc(),
+            )
+        )
+    ).all()
+
+    entries: list[dict] = []
+    has_primary = False
+    for binding, project in rows:
+        if project.id not in visible:
+            continue
+        if binding.binding_type == "primary":
+            has_primary = True
+        entries.append(
+            {
+                "project_id": project.id,
+                "alias": project.slug,
+                "display": project.name,
+                "binding_type": binding.binding_type,
+                "priority": binding.priority,
+            }
+        )
+
+    if not has_primary and agent.default_project_id in visible:
+        project = (
+            await db.execute(select(Project).where(Project.id == agent.default_project_id))
+        ).scalar_one_or_none()
+        if project is not None:
+            entries.insert(
+                0,
+                {
+                    "project_id": project.id,
+                    "alias": project.slug,
+                    "display": project.name,
+                    "binding_type": "primary",
+                    "priority": 0,
+                },
+            )
+
+    entries.sort(key=lambda e: (0 if e["binding_type"] == "primary" else 1, e["priority"]))
+    return entries
+
+
+async def _first_vault_key_hit(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    wanted: str,
+) -> tuple[Vault | None, VaultItem | None]:
+    vaults = (
+        (await db.execute(select(Vault).where(Vault.project_id == project_id)))
+        .scalars()
+        .all()
+    )
+    for vault in vaults:
+        items = (
+            (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))
+            .scalars()
+            .all()
+        )
+        for item in items:
+            if _env_key(item.section, item.item_name) == wanted:
+                return vault, item
+    return None, None
 
 
 @router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
@@ -297,6 +390,14 @@ async def resolve_vault(
     project_id: UUID | None = Query(
         default=None,
         description="Project to resolve from (default: caller write project).",
+    ),
+    agent_id: UUID | None = Query(
+        default=None,
+        description="Resolve through an agent's primary/context project order.",
+    ),
+    allow_conflicts: bool = Query(
+        default=False,
+        description="Allow first-match wins when agent-bound projects contain the same key.",
     ),
     debug: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_cli),
@@ -308,8 +409,13 @@ async def resolve_vault(
     that env's project. Without this filter a leaked daemon key
     could decrypt vaults belonging to Personal or to another env.
     """
-    selected_project_id = project_id or await resolve_default_write_project(db, auth)
-    ordered = await _project_precedence(db, auth, selected_project_id)
+    if project_id is not None and agent_id is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")
+    if agent_id is not None:
+        ordered = await _agent_project_precedence(db, auth, agent_id)
+    else:
+        selected_project_id = project_id or await resolve_default_write_project(db, auth)
+        ordered = await _project_precedence(db, auth, selected_project_id)
     if not ordered:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     effective_project_ids = [entry["project_id"] for entry in ordered]
@@ -318,36 +424,37 @@ async def resolve_vault(
         wanted = key.upper()
         precedence: list[dict] = []
         winner: dict | None = None
+        conflicts: list[dict] = []
         for entry in ordered:
-            vaults = (
-                (await db.execute(select(Vault).where(Vault.project_id == entry["project_id"])))
-                .scalars()
-                .all()
+            hit_vault, hit_item = await _first_vault_key_hit(
+                db,
+                project_id=entry["project_id"],
+                wanted=wanted,
             )
-            hit_item: VaultItem | None = None
-            hit_vault: Vault | None = None
-            for vault in vaults:
-                items = (
-                    (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))
-                    .scalars()
-                    .all()
-                )
-                for item in items:
-                    if _env_key(item.section, item.item_name) == wanted:
-                        hit_item = item
-                        hit_vault = vault
-                        break
-                if hit_item is not None:
-                    break
 
             entry_debug = {
                 "project_id": str(entry["project_id"]),
                 "alias": entry["alias"],
+                "display": entry["display"],
+                "binding_type": entry["binding_type"],
+                "priority": entry["priority"],
                 "hit": hit_item is not None,
                 "reason": "match" if hit_item is not None and winner is None else "not-found",
             }
             if hit_item is not None and winner is not None:
-                entry_debug["reason"] = "skipped"
+                entry_debug["reason"] = "conflict"
+                conflicts.append(
+                    {
+                        "project_id": str(entry["project_id"]),
+                        "alias": entry["alias"],
+                        "display": entry["display"],
+                        "binding_type": entry["binding_type"],
+                        "priority": entry["priority"],
+                        "vault_slug": hit_vault.slug if hit_vault else None,
+                        "section": hit_item.section,
+                        "item_name": hit_item.item_name,
+                    }
+                )
             precedence.append(entry_debug)
 
             if hit_item is not None and winner is None:
@@ -355,6 +462,9 @@ async def resolve_vault(
                     "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
                     "source_project_id": str(entry["project_id"]),
                     "source_alias": entry["alias"],
+                    "source_display": entry["display"],
+                    "source_binding_type": entry["binding_type"],
+                    "source_priority": entry["priority"],
                     "vault_slug": hit_vault.slug if hit_vault else None,
                     "section": hit_item.section,
                     "item_name": hit_item.item_name,
@@ -366,10 +476,91 @@ async def resolve_vault(
                 detail={"code": "vault_key_not_found", "key": key, "precedence": precedence},
             )
 
+        if conflicts and not allow_conflicts:
+            assert winner is not None
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "vault_conflicts_blocked",
+                    "key": key,
+                    "message": (
+                        "Vault key exists in multiple agent-bound projects; "
+                        "pass allow_conflicts=true to use the first project in agent order."
+                    ),
+                    "winner": {
+                        "source_project_id": winner["source_project_id"],
+                        "source_alias": winner["source_alias"],
+                        "source_display": winner["source_display"],
+                        "source_binding_type": winner["source_binding_type"],
+                        "source_priority": winner["source_priority"],
+                        "vault_slug": winner["vault_slug"],
+                        "section": winner["section"],
+                        "item_name": winner["item_name"],
+                    },
+                    "conflicts": conflicts,
+                    "precedence": precedence,
+                },
+            )
+
         response = {"key": key, **winner}
         if debug:
             response["precedence"] = precedence
+        if conflicts:
+            response["conflicts"] = conflicts
         return response
+
+    if agent_id is not None:
+        env: dict[str, str] = {}
+        seen: dict[str, dict] = {}
+        conflicts: list[dict] = []
+        for entry in ordered:
+            vaults = (
+                (await db.execute(select(Vault).where(Vault.project_id == entry["project_id"])))
+                .scalars()
+                .all()
+            )
+            for vault in vaults:
+                items_result = await db.execute(
+                    select(VaultItem).where(VaultItem.vault_id == vault.id)
+                )
+                for item in items_result.scalars().all():
+                    env_key = _env_key(item.section, item.item_name)
+                    source = {
+                        "project_id": str(entry["project_id"]),
+                        "alias": entry["alias"],
+                        "display": entry["display"],
+                        "binding_type": entry["binding_type"],
+                        "priority": entry["priority"],
+                        "vault_slug": vault.slug,
+                        "section": item.section,
+                        "item_name": item.item_name,
+                    }
+                    if env_key in env:
+                        conflicts.append(
+                            {
+                                "key": env_key,
+                                "winner": seen[env_key],
+                                "conflict": source,
+                            }
+                        )
+                        continue
+                    env[env_key] = decrypt(item.encrypted_value, item.nonce)
+                    seen[env_key] = source
+        if conflicts and not allow_conflicts:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "vault_conflicts_blocked",
+                    "message": (
+                        "Vault keys conflict across agent-bound projects; "
+                        "pass allow_conflicts=true to use the first project in agent order."
+                    ),
+                    "conflicts": conflicts,
+                },
+            )
+        if debug:
+            return {"env": env, "precedence": ordered, "conflicts": conflicts}
+        return env
 
     result = await db.execute(
         select(Vault).where(

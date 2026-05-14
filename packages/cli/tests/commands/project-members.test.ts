@@ -47,6 +47,8 @@ const projects = [
 		name: "Shared Toolkit",
 		kind: "environment",
 		is_owner: false,
+		owner_display: "Alice",
+		owner_handle: "alice-a3b4",
 	},
 ];
 
@@ -116,7 +118,7 @@ describe("project member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await projectLeaveCommand("shared-toolkit", { json: true });
+			await projectLeaveCommand("@alice-a3b4/shared-toolkit", { json: true });
 		} finally {
 			console.log = orig;
 			restore();

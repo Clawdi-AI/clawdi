@@ -117,9 +117,8 @@ export default function SharePage() {
 			if (!bearer) throw new ShareError("unknown");
 			return upgradeShare(token, bearer);
 		},
-		onSuccess: () => {
-			const hasSkills = (preview.data?.skill_count ?? 0) > 0;
-			router.push(hasSkills ? "/skills" : "/vault");
+		onSuccess: (result) => {
+			router.push(`/projects/${result.project_id}`);
 		},
 	});
 

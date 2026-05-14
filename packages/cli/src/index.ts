@@ -14,6 +14,10 @@ function collectCsvValues(value: string, prev: string[] = []): string[] {
 	return prev.concat(values);
 }
 
+function collectValues(value: string, prev: string[] = []): string[] {
+	return prev.concat(value);
+}
+
 program
 	.name("clawdi")
 	.description("iCloud for AI Agents — share sessions, skills, vault across agents")
@@ -175,7 +179,10 @@ program
 	.command("push")
 	.description("Push local data (sessions, skills) to the cloud")
 	.option("--modules <modules>", "Comma-separated: sessions,skills")
-	.option("--project <path>", "Push a specific project's data (default: current directory)")
+	.option(
+		"--project <path>",
+		"Push sessions from a specific local project path (default: current directory)",
+	)
 	.option(
 		"--exclude-project <path>",
 		"Exclude a project path (repeatable, mutex with --project)",
@@ -208,6 +215,10 @@ program
 		"Pull cloud data — `skills` writes archives to agent dirs; `sessions` mirrors to ~/.clawdi/sessions/",
 	)
 	.option("--modules <modules>", "Comma-separated: skills,sessions")
+	.option(
+		"-p, --project <id-or-slug>",
+		"Pull skills from an explicit project into the target agent(s)",
+	)
 	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
 	.option("--all-agents", "Pull for every registered agent on this machine")
 	.option("--dry-run", "Preview without downloading")
@@ -218,7 +229,8 @@ program
 Examples:
   $ clawdi pull
   $ clawdi pull --modules sessions --all-agents --yes
-  $ clawdi pull --agent claude_code --dry-run`,
+  $ clawdi pull --agent claude_code --dry-run
+  $ clawdi pull --modules skills --project @alice/engineering --agent codex`,
 	)
 	.action(async (opts) => {
 		const { pull } = await import("./commands/pull.js");
@@ -257,6 +269,10 @@ vaultCmd
 vaultCmd
 	.command("list")
 	.description("List stored keys")
+	.option(
+		"-p, --project <id-or-slug>",
+		"List vaults in a specific project (default: all visible projects)",
+	)
 	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { vaultList } = await import("./commands/vault.js");
@@ -287,13 +303,20 @@ vaultCmd
 		"-p, --project <project>",
 		"Project to resolve from (default: your default-write project)",
 	)
+	.option(
+		"-a, --agent <agent-id-or-type>",
+		"Resolve through an agent's primary/context project order",
+	)
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence and skipped matches")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
 			"  $ clawdi vault resolve OPENAI_API_KEY                       # default-write project\n" +
-			"  $ clawdi vault resolve OPENAI_API_KEY --project personal --debug",
+			"  $ clawdi vault resolve OPENAI_API_KEY --project personal --debug\n" +
+			"  $ clawdi vault resolve OPENAI_API_KEY --agent <agent-id> --debug\n" +
+			"  $ clawdi vault resolve OPENAI_API_KEY --agent codex --allow-conflicts --json",
 	)
 	.action(async (key, opts) => {
 		const { vaultResolveCommand } = await import("./commands/vault-resolve.js");
@@ -308,6 +331,10 @@ const skillCmd = program.command("skill").description("Manage skills");
 skillCmd
 	.command("list")
 	.description("List uploaded skills")
+	.option(
+		"-p, --project <id-or-slug>",
+		"List skills in a specific project (default: all visible projects)",
+	)
 	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { skillList } = await import("./commands/skill.js");
@@ -339,6 +366,10 @@ skillCmd
 	.command("install <repo>")
 	.description("Install a skill from GitHub (owner/repo or owner/repo/path)")
 	.option("-a, --agent <type>", "Install to a single agent (claude_code, codex, hermes, openclaw)")
+	.option(
+		"-p, --project <id-or-slug>",
+		"Install into an explicit owned project (UUID, slug, or name). Mutex with --agent.",
+	)
 	.option("-l, --list", "List skills in the repo without installing (planned)")
 	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
@@ -347,7 +378,8 @@ skillCmd
 Examples:
   $ clawdi skill install vercel-labs/agent-skills
   $ clawdi skill install owner/repo/path/to/skill
-  $ clawdi skill install owner/repo --agent claude_code`,
+  $ clawdi skill install owner/repo --agent claude_code
+  $ clawdi skill install owner/repo --project engineering`,
 	)
 	.action(async (repo, opts) => {
 		const { skillInstall } = await import("./commands/skill.js");
@@ -360,6 +392,10 @@ skillCmd
 	.option(
 		"-a, --agent <type>",
 		"Remove from a specific agent's primary project (claude_code, codex, hermes, openclaw)",
+	)
+	.option(
+		"-p, --project <id-or-slug>",
+		"Remove from an explicit owned project (UUID, slug, or name). Mutex with --agent.",
 	)
 	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
@@ -543,7 +579,13 @@ projectCmd
 	.command("list")
 	.description("List projects you can access")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.action(async (opts: { json?: boolean }) => {
+	.option("--shared-with-me", "Show only projects shared with you")
+	.option("--owned", "Show only projects you own")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --shared-with-me --json",
+	)
+	.action(async (opts: { json?: boolean; sharedWithMe?: boolean; owned?: boolean }) => {
 		const { projectListCommand } = await import("./commands/project-list.js");
 		await projectListCommand(opts);
 	});
@@ -672,6 +714,24 @@ agentProjectsCmd
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsRemoveContextCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("reorder <agent-id>")
+	.description("Reorder context project bindings for an agent")
+	.option(
+		"--item <binding-id:priority>",
+		"Context binding id and target priority (repeatable)",
+		collectValues,
+		[] as string[],
+	)
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi agent projects reorder <agent-id> --item <binding-id>:1 --item <binding-id>:2",
+	)
+	.action(async (agentId, opts) => {
+		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsReorderCommand(agentId, opts);
 	});
 
 // ─────────────────────────────────────────────────────────────

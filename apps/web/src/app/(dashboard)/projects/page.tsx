@@ -34,6 +34,8 @@ interface ProjectRow {
 	archived_at: string | null;
 	created_at: string;
 	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
 }
 
 export default function ProjectsPage() {
@@ -272,7 +274,8 @@ function SharedProjectRow({ project }: { project: ProjectRow }) {
 				<div className="relative z-20 min-w-0 pointer-events-none">
 					<ProjectIdentity project={project} tone="shared" />
 					<p className="mt-1 text-xs text-muted-foreground">
-						Access granted via sharing. Bind this project to agents explicitly when needed.
+						{project.owner_display ? `Shared by ${project.owner_display}. ` : ""}
+						Bind this project to agents explicitly when needed.
 					</p>
 				</div>
 				<ArrowRight className="relative z-20 size-4 justify-self-end text-muted-foreground transition-transform group-hover:translate-x-0.5" />
@@ -301,6 +304,11 @@ function ProjectIdentity({
 				<ProjectKindBadge kind={project.kind} />
 			</div>
 			<div className="mt-1 font-mono text-xs text-muted-foreground">{project.slug}</div>
+			{tone === "shared" && project.owner_handle ? (
+				<div className="mt-0.5 font-mono text-xs text-muted-foreground">
+					@{project.owner_handle}/{project.slug}
+				</div>
+			) : null}
 		</div>
 	);
 }

@@ -11,6 +11,8 @@ interface ProjectBrief {
 	archived_at?: string | null;
 	created_at?: string;
 	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
 }
 
 interface SkillRow {
@@ -89,6 +91,8 @@ export async function projectShowCommand(
 			origin_environment_id: project.origin_environment_id ?? null,
 			archived_at: project.archived_at ?? null,
 			created_at: project.created_at ?? null,
+			owner_display: project.owner_display ?? null,
+			owner_handle: project.owner_handle ?? null,
 		},
 		skills: {
 			count: ownSkills.length,
@@ -108,6 +112,11 @@ export async function projectShowCommand(
 	console.log(
 		`  kind: ${project.kind}${project.is_owner === false ? chalk.gray(" (shared)") : ""}`,
 	);
+	if (project.is_owner === false && project.owner_handle) {
+		console.log(
+			`  owner: @${project.owner_handle}${project.owner_display ? ` (${project.owner_display})` : ""}`,
+		);
+	}
 	console.log(`  skills: ${ownSkills.length}`);
 	console.log(`  vaults: ${ownVaults.length}`);
 }

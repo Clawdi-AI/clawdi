@@ -92,6 +92,7 @@ class UnshareResponse(BaseModel):
     links_revoked: int
     members_removed: int
     invitations_cancelled: int
+    agent_bindings_removed: int = 0
 
 
 class ShareRedeemResponse(BaseModel):
@@ -141,6 +142,19 @@ class UpgradeBody(BaseModel):
         if value not in {"context", "primary"}:
             raise ValueError("bind_as must be 'context' or 'primary'")
         return value
+
+
+class InboxAcceptLinkBody(UpgradeBody):
+    """Body for POST /api/inbox/accept-link."""
+
+    token: str | None = None
+    url: str | None = None
+
+
+class InboxAcceptInvitationBody(UpgradeBody):
+    """Body for POST /api/inbox/accept-invitation."""
+
+    invitation_id: str
 
 
 class BindingCreate(BaseModel):

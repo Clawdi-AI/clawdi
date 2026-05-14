@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Runnable smoke demo for the project-sharing + agent-bindings paths.
+# Runnable no-Docker smoke for the project-sharing + agent-bindings paths.
 #
-# This script does not require real Clawdi accounts or local secrets. It
-# executes the backend and CLI tests that map to the live demo flows in:
+# This script executes tests that map to the live demo in:
 #
 #   docs/scenarios/project-sharing-agent-bindings-demo.md
 #
@@ -19,16 +18,22 @@ section() {
 
 section "Project sharing + agent bindings demo smoke"
 echo "Repository: $ROOT"
-echo "Story: share project -> accept access -> bind agent projects -> resolve vault -> manage members"
+echo "Story: project owner shares -> recipient accepts -> agent binds -> vault provenance -> revoke cleanup"
 
-section "Backend project paths"
+section "Backend role paths"
 (
   cd "$ROOT/backend"
   uv run pytest \
+    tests/test_project_agent_role_paths.py \
+    tests/test_me_routes.py \
+    tests/test_share_redeem_routes.py \
     tests/test_sharing_create_link.py \
-    tests/test_require_share_token.py \
-    tests/test_project_sharing_models_import.py \
-    tests/test_agent_project_binding_model.py \
+    tests/test_sharing_invitations.py \
+    tests/test_sharing_list_revoke.py \
+    tests/test_agent_project_bindings_routes.py \
+    tests/test_project_visibility_shared.py \
+    tests/test_vault.py \
+    tests/test_skills.py \
     -q
 )
 
@@ -36,10 +41,11 @@ section "CLI user and agent contracts"
 (
   cd "$ROOT/packages/cli"
   bun test \
+    tests/commands/agent-projects.test.ts \
     tests/commands/auth.test.ts \
+    tests/commands/project-list.test.ts \
     tests/commands/project-members.test.ts \
     tests/commands/project-show.test.ts \
-    tests/commands/project-list.test.ts \
     tests/commands/vault-resolve.test.ts
 )
 

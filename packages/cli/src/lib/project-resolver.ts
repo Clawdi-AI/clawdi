@@ -25,6 +25,8 @@ interface ProjectBrief {
 	slug: string;
 	kind: string;
 	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
 }
 
 export async function resolveProjectId(
@@ -45,9 +47,13 @@ export async function resolveProjectId(
 	if (UUID_RE.test(input)) return input;
 
 	const projects = await listProjects(apiUrl, bearer);
-	const needle = input.toLowerCase();
-	const slugMatches = projects.filter((s) => s.slug.toLowerCase() === needle);
-	const nameMatches = projects.filter((s) => s.name.toLowerCase() === needle);
+	const ownerQualified = parseOwnerQualifiedProject(input);
+	const candidates = ownerQualified
+		? projects.filter((s) => s.owner_handle?.toLowerCase() === ownerQualified.ownerHandle)
+		: projects;
+	const needle = (ownerQualified?.project ?? input).toLowerCase();
+	const slugMatches = candidates.filter((s) => s.slug.toLowerCase() === needle);
+	const nameMatches = candidates.filter((s) => s.name.toLowerCase() === needle);
 	const matches = slugMatches.length > 0 ? slugMatches : nameMatches;
 
 	if (matches.length === 0) {
@@ -62,6 +68,18 @@ export async function resolveProjectId(
 		);
 	}
 	return matches[0].id;
+}
+
+function parseOwnerQualifiedProject(
+	input: string,
+): { ownerHandle: string; project: string } | null {
+	if (!input.startsWith("@")) return null;
+	const slash = input.indexOf("/");
+	if (slash <= 1 || slash === input.length - 1) return null;
+	return {
+		ownerHandle: input.slice(1, slash).toLowerCase(),
+		project: input.slice(slash + 1),
+	};
 }
 
 export async function listProjects(apiUrl: string, bearer: string): Promise<ProjectBrief[]> {

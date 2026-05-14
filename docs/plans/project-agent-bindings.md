@@ -33,7 +33,7 @@ when an agent runs.
    explicit conflict handling.
 8. Preserve validated PR #88 flows:
    links, invitations, inbox, member management, revoke/remove/unshare,
-   vault conflict safety, and agent handoff JSON.
+   vault conflict safety, and agent setup JSON.
 
 ## Non-goals
 

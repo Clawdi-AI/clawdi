@@ -131,14 +131,32 @@ export async function vaultSet(key: string, opts: { project?: string } = {}) {
 	console.log(chalk.green(`✓ Stored ${key}`));
 }
 
-export async function vaultList(opts: { json?: boolean } = {}) {
+export async function vaultList(opts: { json?: boolean; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
+	let projectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	}
 	// `page_size=100` covers ~all realistic tenants; if someone crosses it we
 	// surface the overflow below rather than silently dropping vaults.
 	const VAULT_PAGE_SIZE = 100;
 	const page = unwrap(
-		await api.GET("/api/vault", { params: { query: { page_size: VAULT_PAGE_SIZE } } }),
+		await api.GET("/api/vault", {
+			params: {
+				query: projectId
+					? { page_size: VAULT_PAGE_SIZE, project_id: projectId }
+					: { page_size: VAULT_PAGE_SIZE },
+			},
+		}),
 	);
 	const vaults = page.items;
 

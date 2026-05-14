@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowLeft,
 	ExternalLink,
+	GitBranch,
 	KeyRound,
 	LogOut,
 	type LucideIcon,
@@ -51,6 +52,8 @@ interface ProjectRow {
 	archived_at: string | null;
 	created_at: string;
 	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
 }
 
 export default function ProjectDetailPage() {
@@ -253,9 +256,21 @@ export default function ProjectDetailPage() {
 							<div className="space-y-1">
 								<h2 className="text-sm font-semibold">Project Access Granted</h2>
 								<p className="text-xs text-muted-foreground">
-									You can read this shared project. Bind it to one or more agents from the agents
-									page when you want runtime access.
+									You can read this shared project
+									{project.owner_display ? ` from ${project.owner_display}` : ""}. Bind it to one or
+									more agents from the agents page when you want runtime access.
 								</p>
+								{project.owner_handle ? (
+									<div className="font-mono text-xs text-muted-foreground">
+										@{project.owner_handle}/{project.slug}
+									</div>
+								) : null}
+								<Button asChild size="sm" variant="outline" className="w-fit">
+									<Link href="/agents">
+										<GitBranch className="mr-1.5 size-3.5" />
+										Bind to agent
+									</Link>
+								</Button>
 							</div>
 							<AlertDialog>
 								<AlertDialogTrigger asChild>

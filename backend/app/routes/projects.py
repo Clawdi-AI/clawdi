@@ -18,6 +18,9 @@ from app.core.auth import AuthContext, get_auth, require_user_auth_unbound
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to, resolve_default_write_project
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
+from app.models.user import User
+from app.services.sharing import safe_owner_display, safe_owner_handle
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -35,6 +38,8 @@ class ProjectResponse(BaseModel):
     # the dashboard render "My projects" vs "Shared with me" sections
     # and the CLI render a shared_with_me column.
     is_owner: bool = True
+    owner_display: str | None = None
+    owner_handle: str | None = None
 
 
 class DefaultProjectResponse(BaseModel):
@@ -67,7 +72,20 @@ class ProjectCreate(BaseModel):
         return value
 
 
-def _project_response(project: Project, caller_user_id) -> ProjectResponse:
+def _project_response(
+    project: Project,
+    caller_user_id,
+    *,
+    owner: User | None = None,
+    membership: ProjectMembership | None = None,
+) -> ProjectResponse:
+    is_owner = project.user_id == caller_user_id
+    owner_display = safe_owner_display(owner) if owner is not None else None
+    owner_handle = None
+    if is_owner:
+        owner_handle = safe_owner_handle(owner) if owner is not None else None
+    elif membership is not None:
+        owner_handle = membership.resolved_owner_handle
     return ProjectResponse(
         id=str(project.id),
         name=project.name,
@@ -78,7 +96,9 @@ def _project_response(project: Project, caller_user_id) -> ProjectResponse:
         ),
         archived_at=project.archived_at,
         created_at=project.created_at,
-        is_owner=project.user_id == caller_user_id,
+        is_owner=is_owner,
+        owner_display=owner_display,
+        owner_handle=owner_handle,
     )
 
 
@@ -163,7 +183,7 @@ async def create_project(
             "A project with this slug already exists",
         ) from exc
     await db.refresh(project)
-    return _project_response(project, user_id)
+    return _project_response(project, user_id, owner=auth.user)
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -182,4 +202,65 @@ async def list_projects(
     )
     rows = result.scalars().all()
     caller_user_id = auth.user_id
-    return [_project_response(p, caller_user_id) for p in rows]
+    owner_ids = {project.user_id for project in rows}
+    owners = {}
+    if owner_ids:
+        owner_rows = (
+            await db.execute(select(User).where(User.id.in_(owner_ids)))
+        ).scalars().all()
+        owners = {owner.id: owner for owner in owner_rows}
+
+    membership_rows = (
+        await db.execute(
+            select(ProjectMembership).where(
+                ProjectMembership.member_user_id == caller_user_id,
+                ProjectMembership.project_id.in_(visible_project_ids),
+            )
+        )
+    ).scalars().all()
+    memberships = {membership.project_id: membership for membership in membership_rows}
+    return [
+        _project_response(
+            p,
+            caller_user_id,
+            owner=owners.get(p.user_id),
+            membership=memberships.get(p.id),
+        )
+        for p in rows
+    ]
+
+
+@router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: str,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> ProjectResponse:
+    """Show one project if it is visible to the caller."""
+    try:
+        from uuid import UUID
+
+        project_uuid = UUID(project_id)
+    except ValueError as err:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found") from err
+
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    if project_uuid not in visible_project_ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    project = (
+        await db.execute(select(Project).where(Project.id == project_uuid))
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    owner = (
+        await db.execute(select(User).where(User.id == project.user_id))
+    ).scalar_one_or_none()
+    membership = (
+        await db.execute(
+            select(ProjectMembership).where(
+                ProjectMembership.project_id == project.id,
+                ProjectMembership.member_user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return _project_response(project, auth.user_id, owner=owner, membership=membership)

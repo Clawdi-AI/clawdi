@@ -365,7 +365,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 				<div className="mt-2 rounded-md border bg-background/60 p-2">
 					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div className="min-w-0">
-							<div className="text-xs font-medium">Agent handoff prompt</div>
+							<div className="text-xs font-medium">Agent setup prompt</div>
 							<div className="truncate font-mono text-[11px] text-muted-foreground">
 								clawdi.share.v1 · {link.prefix}
 							</div>
@@ -374,7 +374,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 							variant="outline"
 							size="sm"
 							onClick={() => copyText(agentPrompt, "Agent prompt copied")}
-							aria-label={`Copy agent handoff prompt for share link ${link.prefix}`}
+							aria-label={`Copy agent setup prompt for share link ${link.prefix}`}
 						>
 							<Copy className="mr-1.5 size-3.5" />
 							Copy prompt

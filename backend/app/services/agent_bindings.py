@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +78,32 @@ async def assert_project_writable_by_user(
             "primary project must be owned by the caller",
         )
     return project
+
+
+async def delete_project_bindings_for_users(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    user_ids: list[UUID],
+) -> int:
+    """Delete agent bindings that let specific users use a project.
+
+    Membership removal and project unsharing both remove the sharee's
+    future access. Agent bindings are derived runtime use, so they must
+    disappear with the membership instead of leaving stale context rows on
+    the sharee's agents.
+    """
+    if not user_ids:
+        return 0
+
+    agent_ids = select(AgentEnvironment.id).where(AgentEnvironment.user_id.in_(user_ids))
+    result = await db.execute(
+        sql_delete(AgentProjectBinding).where(
+            AgentProjectBinding.project_id == project_id,
+            AgentProjectBinding.agent_id.in_(agent_ids),
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 async def _next_context_priority(db: AsyncSession, *, agent_id: UUID) -> int:

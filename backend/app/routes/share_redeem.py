@@ -220,6 +220,16 @@ async def upgrade(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
+    return await upgrade_share_token(ctx=ctx, body=body, auth=auth, db=db)
+
+
+async def upgrade_share_token(
+    *,
+    ctx: ShareTokenContext,
+    body: UpgradeBody | None,
+    auth: AuthContext,
+    db: AsyncSession,
+) -> dict:
     body = body or UpgradeBody()
     project = (
         await db.execute(select(Project).where(Project.id == ctx.project_id).with_for_update())

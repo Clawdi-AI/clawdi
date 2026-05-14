@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, RootModel
 
@@ -51,5 +51,5 @@ class VaultItemsDeleteResponse(BaseModel):
     status: Literal["deleted"]
 
 
-class VaultResolveResponse(RootModel[dict[str, str]]):
+class VaultResolveResponse(RootModel[dict[str, Any]]):
     pass

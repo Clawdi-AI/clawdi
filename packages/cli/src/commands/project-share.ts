@@ -55,7 +55,9 @@ export async function projectShareCommand(
 	// link went to Personal or Engineering. One round trip; cached
 	// by the caller's network stack if they already hit /api/projects
 	// via resolveProjectId moments ago.
-	const scopeSlug = (await listProjects(apiUrl, auth.apiKey)).find((s) => s.id === projectId)?.slug;
+	const projectSlug = (await listProjects(apiUrl, auth.apiKey)).find(
+		(s) => s.id === projectId,
+	)?.slug;
 	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
 		method: "POST",
 		headers: {
@@ -90,7 +92,7 @@ export async function projectShareCommand(
 	console.log();
 	console.log(
 		`${chalk.green("✓")} Share link ready` +
-			(scopeSlug ? chalk.gray(` for ${chalk.bold(scopeSlug)}`) : ""),
+			(projectSlug ? chalk.gray(` for ${chalk.bold(projectSlug)}`) : ""),
 	);
 	console.log();
 	console.log(`  ${chalk.bold(body.url)}`);
@@ -105,6 +107,6 @@ export async function projectShareCommand(
 	console.log();
 	console.log(`Recipient runs: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	console.log();
-	console.log(chalk.bold("Agent handoff prompt:"));
+	console.log(chalk.bold("Agent setup prompt:"));
 	console.log(buildShareAgentHandoffPrompt(body));
 }

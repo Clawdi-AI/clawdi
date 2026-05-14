@@ -45,6 +45,8 @@ describe("projectListCommand", () => {
 				name: "Shared Toolkit",
 				kind: "workspace",
 				is_owner: false,
+				owner_display: "Alice",
+				owner_handle: "alice-a3b4",
 			},
 		];
 		const { restore } = mockFetch([
@@ -68,6 +70,7 @@ describe("projectListCommand", () => {
 			"engineering",
 		]);
 		expect(parsed.shared_projects.map((p: { slug: string }) => p.slug)).toEqual(["shared-toolkit"]);
+		expect(parsed.shared_projects[0].owner_handle).toBe("alice-a3b4");
 		expect(parsed.projects).toHaveLength(3);
 	});
 });

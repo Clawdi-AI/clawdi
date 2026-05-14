@@ -76,6 +76,21 @@ async def accept_invitation(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
+    return await accept_invitation_for_user(
+        invitation_id=invitation_id,
+        body=body,
+        auth=auth,
+        db=db,
+    )
+
+
+async def accept_invitation_for_user(
+    *,
+    invitation_id: UUID,
+    body: UpgradeBody | None,
+    auth: AuthContext,
+    db: AsyncSession,
+) -> dict:
     body = body or UpgradeBody()
     inv_pre = (
         await db.execute(select(ProjectInvitation).where(ProjectInvitation.id == invitation_id))
