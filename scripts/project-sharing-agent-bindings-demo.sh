@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Runnable smoke demo for the scope-sharing product paths.
+# Runnable smoke demo for the project-sharing + agent-bindings paths.
 #
 # This script does not require real Clawdi accounts or local secrets. It
 # executes the backend and CLI tests that map to the live demo flows in:
 #
-#   docs/scenarios/scope-sharing-demo.md
+#   docs/scenarios/project-sharing-agent-bindings-demo.md
 #
 # Usage:
-#   bash scripts/scope-sharing-demo.sh
+#   bash scripts/project-sharing-agent-bindings-demo.sh
 
 set -euo pipefail
 
@@ -17,9 +17,9 @@ section() {
   printf "\n== %s ==\n" "$1"
 }
 
-section "Scope sharing demo smoke"
+section "Project sharing + agent bindings demo smoke"
 echo "Repository: $ROOT"
-echo "Story: owner share -> accept -> mount -> resolve vault -> manage members"
+echo "Story: share project -> accept access -> bind agent projects -> resolve vault -> manage members"
 
 section "Backend product paths"
 (
@@ -42,4 +42,4 @@ section "CLI user and agent contracts"
 )
 
 section "Demo smoke passed"
-echo "Use docs/scenarios/scope-sharing-demo.md as the human-facing walkthrough."
+echo "Use docs/scenarios/project-sharing-agent-bindings-demo.md as the human-facing walkthrough."
