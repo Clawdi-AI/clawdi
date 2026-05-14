@@ -15,15 +15,16 @@ from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.admin import router as admin_router
+from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.inbox import router as inbox_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
-from app.routes.mounts import router as mounts_router
 from app.routes.public_sessions import router as public_sessions_router
 from app.routes.scopes import router as scopes_router
 from app.routes.search import router as search_router
@@ -178,9 +179,10 @@ app.include_router(connectors_router)
 app.include_router(mcp_proxy_router)
 app.include_router(search_router)
 app.include_router(share_redeem_router)
+app.include_router(inbox_router)
 app.include_router(sharing_router)
 app.include_router(me_router)
-app.include_router(mounts_router)
+app.include_router(agent_project_bindings_router)
 
 
 @app.get("/health")

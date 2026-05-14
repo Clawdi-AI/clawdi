@@ -1,12 +1,12 @@
-"""Scope metadata routes — list a user's scopes and pick the
+"""Project metadata routes — list a user's projects and pick the
 default. Skill / vault / memory scope-explicit operations live
 on their own routers (e.g. `/api/scopes/{scope_id}/skills/...`)
 so the routing tree stays organised by entity type.
 
 CLI commands hitting phase-2 scope-explicit URLs need to know
-*which* scope to address. The api_key is bound to an env on the
+*which* project to address. The api_key is bound to an env on the
 server side, but the daemon-started CLI doesn't know its own
-env's default_scope_id without a round-trip. `/api/scopes/default`
+env's default_scope_id without a round-trip. `/api/projects/default`
 exposes the same logic `resolve_default_write_scope` runs
 server-side as an HTTP read so any caller can ask "where would
 my next write land?" without local env tracking.
@@ -28,10 +28,10 @@ from app.core.database import get_session
 from app.core.scope import resolve_default_write_scope, scope_ids_visible_to
 from app.models.scope import SCOPE_KIND_WORKSPACE, Scope
 
-router = APIRouter(prefix="/api/scopes", tags=["scopes"])
+router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-class ScopeResponse(BaseModel):
+class ProjectResponse(BaseModel):
     id: str
     name: str
     slug: str
@@ -39,21 +39,21 @@ class ScopeResponse(BaseModel):
     origin_environment_id: str | None
     archived_at: datetime | None
     created_at: datetime
-    # Derived per-caller: True if the caller owns this scope, False
-    # if it's visible via a ScopeMembership (shared with them). Lets
-    # the dashboard render "My scopes" vs "Shared with me" sections
+    # Derived per-caller: True if the caller owns this project, False
+    # if it's visible via a ProjectMembership (shared with them). Lets
+    # the dashboard render "My projects" vs "Shared with me" sections
     # and the CLI render a shared_with_me column.
     is_owner: bool = True
 
 
-class DefaultScopeResponse(BaseModel):
-    scope_id: str
+class DefaultProjectResponse(BaseModel):
+    project_id: str
 
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 
 
-class ScopeCreate(BaseModel):
+class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     slug: str | None = Field(default=None, min_length=1, max_length=80, pattern=SLUG_RE.pattern)
 
@@ -76,8 +76,8 @@ class ScopeCreate(BaseModel):
         return value
 
 
-def _scope_response(scope: Scope, caller_user_id) -> ScopeResponse:
-    return ScopeResponse(
+def _scope_response(scope: Scope, caller_user_id) -> ProjectResponse:
+    return ProjectResponse(
         id=str(scope.id),
         name=scope.name,
         slug=scope.slug,
@@ -94,7 +94,7 @@ def _scope_response(scope: Scope, caller_user_id) -> ScopeResponse:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     slug = re.sub(r"-{2,}", "-", slug)
-    return (slug or "scope")[:80].strip("-") or "scope"
+    return (slug or "project")[:80].strip("-") or "project"
 
 
 async def _unique_slug(
@@ -104,28 +104,28 @@ async def _unique_slug(
     *,
     allow_suffix: bool = True,
 ) -> str:
-    base = preferred[:80].strip("-") or "scope"
+    base = preferred[:80].strip("-") or "project"
     result = await db.execute(select(Scope.slug).where(Scope.user_id == user_id))
     existing = set(result.scalars().all())
     if base not in existing:
         return base
     if not allow_suffix:
-        raise HTTPException(status.HTTP_409_CONFLICT, "A scope with this slug already exists")
+        raise HTTPException(status.HTTP_409_CONFLICT, "A project with this slug already exists")
 
     for suffix in range(2, 10_000):
         suffix_text = f"-{suffix}"
         candidate = f"{base[: 80 - len(suffix_text)]}{suffix_text}"
         if candidate not in existing:
             return candidate
-    raise HTTPException(status.HTTP_409_CONFLICT, "Could not allocate a unique scope slug")
+    raise HTTPException(status.HTTP_409_CONFLICT, "Could not allocate a unique project slug")
 
 
-@router.get("/default", response_model=DefaultScopeResponse)
+@router.get("/default", response_model=DefaultProjectResponse)
 async def get_default_scope(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> DefaultScopeResponse:
-    """Return the scope_id where the caller's next write would
+) -> DefaultProjectResponse:
+    """Return the project_id where the caller's next write would
     land if they used a legacy non-scoped route. Lets CLI tools
     construct phase-2 `/api/scopes/{scope_id}/...` URLs without
     locally tracking which env they're bound to.
@@ -136,15 +136,15 @@ async def get_default_scope(
         scope, falling back to Personal if no envs.
     """
     scope_id = await resolve_default_write_scope(db, auth)
-    return DefaultScopeResponse(scope_id=str(scope_id))
+    return DefaultProjectResponse(project_id=str(scope_id))
 
 
-@router.post("", response_model=ScopeResponse, status_code=status.HTTP_201_CREATED)
-async def create_scope(
-    body: ScopeCreate,
+@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+async def create_project(
+    body: ProjectCreate,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> ScopeResponse:
+) -> ProjectResponse:
     """Create an explicit project/team scope owned by the caller.
 
     Env-bound deploy keys are rejected: creating shareable scopes is
@@ -172,19 +172,19 @@ async def create_scope(
         await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "A scope with this slug already exists",
+            "A project with this slug already exists",
         ) from exc
     await db.refresh(scope)
     return _scope_response(scope, user_id)
 
 
-@router.get("", response_model=list[ScopeResponse])
-async def list_scopes(
+@router.get("", response_model=list[ProjectResponse])
+async def list_projects(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> list[ScopeResponse]:
-    """List every scope the caller can read. JWT auth → all of
-    the user's scopes. api_key → the bound env's scope only.
+) -> list[ProjectResponse]:
+    """List every project the caller can read. JWT auth -> all of
+    the user's visible projects. api_key -> the bound env's project only.
     """
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     if not visible_scope_ids:

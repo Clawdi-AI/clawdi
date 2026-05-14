@@ -1,9 +1,4 @@
-"""Pydantic request + response models for cross-user scope sharing.
-
-Owner-facing schemas live alongside sharee-facing ones - the route
-modules are split (sharing.py vs share_redeem.py vs me.py) but the
-contract types are small enough to keep together.
-"""
+"""Pydantic models for cross-user project sharing and binding flows."""
 
 from datetime import datetime
 
@@ -13,20 +8,14 @@ MOUNT_ALIAS_PATTERN = r"^[A-Za-z0-9@._:/ -]+$"
 
 
 class ShareLinkCreate(BaseModel):
-    """Body for POST /api/scopes/{scope_id}/share-links."""
+    """Body for POST /api/projects/{project_id}/share-links."""
 
     label: str | None = Field(default=None, max_length=200)
     expires_at: datetime | None = None
 
 
 class ShareLinkCreated(BaseModel):
-    """Returned ONCE on link creation - includes the raw token.
-
-    Subsequent GETs only return `prefix` (raw token is unrecoverable).
-    `owner_handle` is the frozen value stored on the link row that
-    every sharee will see; the owner sees their own resolved handle
-    in case they want to verify or change their display name first.
-    """
+    """Returned once on link creation; includes the raw token."""
 
     id: str
     raw_token: str
@@ -39,7 +28,7 @@ class ShareLinkCreated(BaseModel):
 
 
 class ShareLinkResponse(BaseModel):
-    """Returned by GET /api/scopes/{scope_id}/share-links."""
+    """Returned by GET /api/projects/{project_id}/share-links."""
 
     id: str
     prefix: str
@@ -54,7 +43,7 @@ class ShareLinkResponse(BaseModel):
 
 
 class InvitationCreate(BaseModel):
-    """Body for POST /api/scopes/{scope_id}/invitations."""
+    """Body for POST /api/projects/{project_id}/invitations."""
 
     email: str
 
@@ -68,19 +57,12 @@ class InvitationCreate(BaseModel):
 
 
 class InvitationResponse(BaseModel):
-    """Returned by owner and sharee invitation listings.
-
-    Scope fields (`scope_name`, `scope_kind`, `owner_display`,
-    `owner_handle`) are populated unconditionally - the owner-facing
-    listing uses them to render alongside the invitee email, and
-    the sharee-facing inbox uses them as the primary "what is this
-    invitation about?" copy.
-    """
+    """Returned by owner and sharee invitation listings."""
 
     id: str
-    scope_id: str
-    scope_name: str
-    scope_kind: str
+    project_id: str
+    project_name: str
+    project_kind: str
     owner_display: str
     owner_handle: str
     invitee_email: str
@@ -92,7 +74,7 @@ class InvitationResponse(BaseModel):
 
 
 class MemberResponse(BaseModel):
-    """Returned by GET /api/scopes/{scope_id}/members."""
+    """Returned by GET /api/projects/{project_id}/members."""
 
     id: str
     user_id: str
@@ -107,7 +89,7 @@ class MemberResponse(BaseModel):
 
 
 class UnshareResponse(BaseModel):
-    """Returned by POST /api/scopes/{scope_id}/unshare."""
+    """Returned by POST /api/projects/{project_id}/unshare."""
 
     links_revoked: int
     members_removed: int
@@ -115,19 +97,19 @@ class UnshareResponse(BaseModel):
 
 
 class ShareRedeemResponse(BaseModel):
-    """Returned by POST /api/share/{token}/redeem - anonymous endpoint."""
+    """Returned by POST /api/share/{token}/redeem."""
 
-    scope_id: str
-    scope_name: str
+    project_id: str
+    project_name: str
     owner_display: str
     owner_handle: str
     skill_count: int
     vault_count: int
-    vault_locked: bool  # always True for token-only access in v1
+    vault_locked: bool
 
 
-class SharedScopeResponse(BaseModel):
-    """An entry in GET /api/me/scopes 'shared' list."""
+class SharedProjectResponse(BaseModel):
+    """An entry in GET /api/me/projects when listing shared projects."""
 
     id: str
     name: str
@@ -140,36 +122,57 @@ class SharedScopeResponse(BaseModel):
     is_owner: bool = False
 
 
+# Backward-compat alias for old imports during pass 1.
+SharedScopeResponse = SharedProjectResponse
+
+
 class UpgradeBody(BaseModel):
     """Optional body for POST /api/share/{token}/upgrade and
     POST /api/me/invitations/{id}/accept.
 
-    Carries the mount target the caller wants. Omitted → server
-    picks via the auto-mount target resolution rules (1 owned
-    scope → silent; 2+ → 409 mount_target_ambiguous).
+    Accepting access does not auto-bind by default. Callers can pass
+    explicit `agent_ids` to create context bindings during accept.
     """
 
-    parent_scope_id: str | None = None
-    alias: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=80,
-        pattern=MOUNT_ALIAS_PATTERN,
-    )
-    no_mount: bool = False
-    # Mount-time vault conflict detection: if source scope has any
-    # vault key (slug + section + name triple) that already exists
-    # in the parent's current composition, the mount returns 409
-    # vault_conflicts_blocked. Setting this to True skips the check —
-    # the sharee has inspected the conflict list and consented to the
-    # collision. Existing composed values keep priority; conflicting source
-    # values are present but skipped by composed vault resolution.
-    allow_vault_conflicts: bool = False
+    agent_ids: list[str] | None = None
+    bind_as: str = "context"
+
+    @field_validator("bind_as")
+    @classmethod
+    def _validate_bind_as(cls, value: str) -> str:
+        if value not in {"context", "primary"}:
+            raise ValueError("bind_as must be 'context' or 'primary'")
+        return value
 
 
+class BindingCreate(BaseModel):
+    project_id: str
+    priority: int | None = None
+
+
+class BindingReorderItem(BaseModel):
+    binding_id: str
+    priority: int
+
+
+class BindingReorderBody(BaseModel):
+    items: list[BindingReorderItem]
+
+
+class AgentProjectBindingResponse(BaseModel):
+    id: str
+    agent_id: str
+    project_id: str
+    binding_type: str
+    priority: int
+    default_write_enabled: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# Deprecated mount schemas retained only so legacy imports compile.
 class MountCreate(BaseModel):
-    """Body for POST /api/scopes/{parent_scope_id}/mounts."""
-
     source_scope_id: str
     alias: str | None = Field(
         default=None,
@@ -182,12 +185,6 @@ class MountCreate(BaseModel):
 
 
 class MountResponse(BaseModel):
-    """Returned by GET /api/scopes/{id}/mounts and the POST create.
-
-    Includes denormalized source-scope display fields so the CLI/web
-    can render the mount tree without an extra round-trip per row.
-    """
-
     id: str
     parent_scope_id: str
     source_scope_id: str

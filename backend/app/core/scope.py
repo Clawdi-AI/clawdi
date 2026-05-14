@@ -342,7 +342,7 @@ async def scope_ids_visible_to(
     # user joined as a viewer member. Two separate queries (one
     # owned, one shared) keeps the SQL readable; both hit indexed
     # columns and run sub-millisecond.
-    from app.models.scope_membership import ScopeMembership
+    from app.models.project_membership import ProjectMembership
 
     owned_ids = list(
         (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))).scalars().all()
@@ -350,7 +350,9 @@ async def scope_ids_visible_to(
     shared_ids = list(
         (
             await db.execute(
-                select(ScopeMembership.scope_id).where(ScopeMembership.user_id == auth.user_id)
+                select(ProjectMembership.project_id).where(
+                    ProjectMembership.member_user_id == auth.user_id
+                )
             )
         )
         .scalars()

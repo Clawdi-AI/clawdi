@@ -8,7 +8,7 @@ and revoke idempotency.
 
 import pytest
 
-from app.models.scope_share_link import ScopeShareLink
+from app.models.project_share_link import ProjectShareLink
 
 
 @pytest.mark.asyncio
@@ -17,10 +17,10 @@ async def test_list_share_links_returns_prefix_not_raw(client, seed_user, seed_s
     never recoverable after create-time. Two links → newest first."""
     seed_user.name = "Alice"
 
-    await client.post(f"/api/scopes/{seed_scope.id}/share-links", json={"label": "alpha"})
-    await client.post(f"/api/scopes/{seed_scope.id}/share-links", json={"label": "beta"})
+    await client.post(f"/api/projects/{seed_scope.id}/share-links", json={"label": "alpha"})
+    await client.post(f"/api/projects/{seed_scope.id}/share-links", json={"label": "beta"})
 
-    r = await client.get(f"/api/scopes/{seed_scope.id}/share-links")
+    r = await client.get(f"/api/projects/{seed_scope.id}/share-links")
     assert r.status_code == 200, r.text
     items = r.json()
     assert len(items) == 2
@@ -39,17 +39,17 @@ async def test_list_share_links_returns_prefix_not_raw(client, seed_user, seed_s
 async def test_revoke_share_link_stamps_revoked_at(client, seed_user, seed_scope):
     """DELETE → 200 status:revoked; subsequent list shows revoked_at."""
     seed_user.name = "Alice"
-    create = await client.post(f"/api/scopes/{seed_scope.id}/share-links", json={})
+    create = await client.post(f"/api/projects/{seed_scope.id}/share-links", json={})
     link_id = create.json()["id"]
 
-    r = await client.delete(f"/api/scopes/{seed_scope.id}/share-links/{link_id}")
+    r = await client.delete(f"/api/projects/{seed_scope.id}/share-links/{link_id}")
     assert r.status_code == 200
     assert r.json()["status"] == "revoked"
 
     # Verify via the list endpoint rather than touching the DB
     # directly — same test client/session, no cross-pool greenlet
     # issues, and exercises the list serialization path too.
-    listing = await client.get(f"/api/scopes/{seed_scope.id}/share-links")
+    listing = await client.get(f"/api/projects/{seed_scope.id}/share-links")
     assert listing.status_code == 200
     row = next(item for item in listing.json() if item["id"] == link_id)
     assert row["revoked_at"] is not None
@@ -61,14 +61,14 @@ async def test_revoke_share_link_idempotent(client, seed_user, seed_scope):
     semantics are unit-tested implicitly: the second DELETE doesn't
     error and returns the same response shape."""
     seed_user.name = "Alice"
-    create = await client.post(f"/api/scopes/{seed_scope.id}/share-links", json={})
+    create = await client.post(f"/api/projects/{seed_scope.id}/share-links", json={})
     link_id = create.json()["id"]
 
-    r1 = await client.delete(f"/api/scopes/{seed_scope.id}/share-links/{link_id}")
+    r1 = await client.delete(f"/api/projects/{seed_scope.id}/share-links/{link_id}")
     assert r1.status_code == 200
     assert r1.json()["status"] == "revoked"
 
-    r2 = await client.delete(f"/api/scopes/{seed_scope.id}/share-links/{link_id}")
+    r2 = await client.delete(f"/api/projects/{seed_scope.id}/share-links/{link_id}")
     assert r2.status_code == 200
     assert r2.json()["status"] == "revoked"
 
@@ -78,7 +78,7 @@ async def test_revoke_unknown_link_404(client, seed_user, seed_scope):
     """Unknown link_id → 404, even if the scope_id is valid."""
     seed_user.name = "Alice"
     r = await client.delete(
-        f"/api/scopes/{seed_scope.id}/share-links/00000000-0000-0000-0000-000000000000"
+        f"/api/projects/{seed_scope.id}/share-links/00000000-0000-0000-0000-000000000000"
     )
     assert r.status_code == 404
 
@@ -114,8 +114,8 @@ async def test_revoked_link_blocks_unauth_access(client, seed_user, seed_scope):
     assert db_session is not None
 
     raw = generate_share_token()
-    link = ScopeShareLink(
-        scope_id=seed_scope.id,
+    link = ProjectShareLink(
+        project_id=seed_scope.id,
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         label="will revoke",
@@ -140,7 +140,7 @@ async def test_revoked_link_blocks_unauth_access(client, seed_user, seed_scope):
             app.dependency_overrides[get_auth] = saved_auth
 
     # Revoke via owner endpoint (uses the original `client` fixture).
-    r = await client.delete(f"/api/scopes/{seed_scope.id}/share-links/{link_id}")
+    r = await client.delete(f"/api/projects/{seed_scope.id}/share-links/{link_id}")
     assert r.status_code == 200
 
     # /preview after revoke → 410.

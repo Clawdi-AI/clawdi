@@ -1,17 +1,4 @@
-"""Owner-facing sharing endpoints.
-
-Every route is gated by:
-  1. require_user_auth_unbound — Clerk JWT OR fully-unbound CLI api_key.
-     Narrowly-scoped api_keys and env-bound deploy keys are rejected
-     (the latter wraps PR #77's blast-radius boundary).
-  2. _assert_scope_owner — verifies the scope exists AND the caller
-     owns it. 404 (not 403) on either condition to avoid leaking
-     scope existence to non-owners.
-
-Public anonymous routes (share-link preview, anonymous redemption,
-and logged-in upgrade) live in `share_redeem.py`; that module uses
-require_share_token for token-gated reads.
-"""
+"""Owner-facing project sharing endpoints."""
 
 from __future__ import annotations
 
@@ -28,11 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.project_invitation import ProjectInvitation
+from app.models.project_membership import ProjectMembership
+from app.models.project_share_link import ProjectShareLink
 from app.models.scope import Scope
-from app.models.scope_invitation import ScopeInvitation
-from app.models.scope_membership import ScopeMembership
-from app.models.scope_mount import ScopeMount
-from app.models.scope_share_link import ScopeShareLink
 from app.models.user import User
 from app.schemas.sharing import (
     InvitationCreate,
@@ -53,67 +39,40 @@ from app.services.sharing import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/scopes", tags=["sharing"])
+router = APIRouter(prefix="/api/projects", tags=["sharing"])
 
 
-async def _assert_scope_owner(
+async def _assert_project_owner(
     db: AsyncSession,
     auth: AuthContext,
-    scope_id: UUID,
+    project_id: UUID,
     *,
     for_update: bool = False,
 ) -> Scope:
-    """Resolve scope and verify the caller owns it. 404 if the
-    scope doesn't exist OR the caller isn't its owner — refusing
-    to distinguish the two keeps scope IDs un-enumerable by
-    non-owners."""
-    stmt = select(Scope).where(Scope.id == scope_id)
+    stmt = select(Scope).where(Scope.id == project_id)
     if for_update:
         stmt = stmt.with_for_update()
     result = await db.execute(stmt)
-    scope = result.scalar_one_or_none()
-    if scope is None or scope.user_id != auth.user_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
-    return scope
+    project = result.scalar_one_or_none()
+    if project is None or project.user_id != auth.user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    return project
 
 
 def _share_url(raw_token: str) -> str:
-    """Compose the public share URL from the raw token.
-
-    Hosts the public landing page on the dashboard origin
-    (settings.web_origin). Falls back to a sentinel for OSS
-    self-hosters who haven't configured a public dashboard URL.
-    """
     base = settings.web_origin.rstrip("/") if settings.web_origin else "https://example.invalid"
     return f"{base}/share/{raw_token}"
 
 
-@router.post("/{scope_id}/share-links", response_model=ShareLinkCreated)
+@router.post("/{project_id}/share-links", response_model=ShareLinkCreated)
 async def create_share_link(
-    scope_id: UUID,
+    project_id: UUID,
     body: ShareLinkCreate,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ShareLinkCreated:
-    """Generate a new share link for a scope.
+    await _assert_project_owner(db, auth, project_id)
 
-    Contract:
-    - Raw token is returned ONCE in the create response; server
-      stores only the SHA-256 hash + prefix.
-    - Gate on owner having `users.name` set. Falling
-      back to email local-part would leak PII to recipients.
-    - Resolves + freezes `resolved_owner_handle` on the link row so
-      every downstream consumer (preview, redeem, upgrade) reads
-      the same value — even if the owner later renames themselves.
-    """
-    await _assert_scope_owner(db, auth, scope_id)
-
-    # resolve_owner_handle raises ValueError on BOTH the
-    # "name unset" and the "name kebabs to empty" cases, so a
-    # single try/except covers both. Pre-fix the route had an
-    # explicit `if not auth.user.name` check before the try
-    # block, which raised the same 409 display_name_required —
-    # one gate is enough.
     try:
         owner_handle = resolve_owner_handle(auth.user)
     except ValueError as err:
@@ -123,14 +82,14 @@ async def create_share_link(
                 "error": "display_name_required",
                 "message": (
                     "Set a display name on your profile (at least one alphanumeric "
-                    "character) before sharing — recipients see the name."
+                    "character) before sharing - recipients see the name."
                 ),
             },
         ) from err
 
     raw = generate_share_token()
-    link = ScopeShareLink(
-        scope_id=scope_id,
+    link = ProjectShareLink(
+        project_id=project_id,
         token_hash=hash_share_token(raw),
         token_prefix=token_prefix(raw),
         label=body.label,
@@ -144,8 +103,8 @@ async def create_share_link(
     await db.refresh(link)
 
     logger.info(
-        "share_link_created scope_id=%s link_id=%s by=%s handle=%s",
-        scope_id,
+        "project_share_link_created project_id=%s link_id=%s by=%s handle=%s",
+        project_id,
         link.id,
         auth.user_id,
         owner_handle,
@@ -162,28 +121,17 @@ async def create_share_link(
     )
 
 
-@router.get("/{scope_id}/share-links", response_model=list[ShareLinkResponse])
+@router.get("/{project_id}/share-links", response_model=list[ShareLinkResponse])
 async def list_share_links(
-    scope_id: UUID,
+    project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[ShareLinkResponse]:
-    """List active + revoked share-links for a scope.
-
-    Returns prefix-only data — the raw token was shown ONCE at create
-    time and is unrecoverable. Owners refresh the dialog to see
-    redeem counts, last-redeemed timestamps, and revoke individual
-    links.
-
-    Sorted created_at DESC so the freshest link surfaces first.
-    Revoked links remain in the listing (with revoked_at populated)
-    so the owner can see a history; the client renders them muted.
-    """
-    await _assert_scope_owner(db, auth, scope_id)
+    await _assert_project_owner(db, auth, project_id)
     result = await db.execute(
-        select(ScopeShareLink)
-        .where(ScopeShareLink.scope_id == scope_id)
-        .order_by(ScopeShareLink.created_at.desc())
+        select(ProjectShareLink)
+        .where(ProjectShareLink.project_id == project_id)
+        .order_by(ProjectShareLink.created_at.desc())
     )
     return [
         ShareLinkResponse(
@@ -200,33 +148,18 @@ async def list_share_links(
     ]
 
 
-@router.delete("/{scope_id}/share-links/{link_id}")
+@router.delete("/{project_id}/share-links/{link_id}")
 async def revoke_share_link(
-    scope_id: UUID,
+    project_id: UUID,
     link_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    """Soft-revoke a share-link by stamping revoked_at.
-
-    Idempotent: revoking an already-revoked link returns 200 with
-    the same response, doesn't double-stamp.
-
-    Once revoked, /preview, /redeem, /upgrade all return 410 Gone
-    via require_share_token's expiry check. Anonymous tokens already
-    accepted on a device stop syncing — the daemon's next reconcile
-    sees 410 and prunes the local share-tokens.json entry.
-
-    Pre-existing ScopeMembership rows (created via /upgrade BEFORE
-    revoke) are NOT removed — revoking the LINK doesn't remove
-    members who already joined via it. Owner must explicitly call
-    DELETE /api/scopes/{id}/members/{user_id} (B.7) for that.
-    """
-    await _assert_scope_owner(db, auth, scope_id, for_update=True)
+    await _assert_project_owner(db, auth, project_id, for_update=True)
     result = await db.execute(
-        select(ScopeShareLink).where(
-            ScopeShareLink.id == link_id,
-            ScopeShareLink.scope_id == scope_id,
+        select(ProjectShareLink).where(
+            ProjectShareLink.id == link_id,
+            ProjectShareLink.project_id == project_id,
         )
     )
     link = result.scalar_one_or_none()
@@ -235,16 +168,11 @@ async def revoke_share_link(
     if link.revoked_at is None:
         link.revoked_at = datetime.now(UTC)
         await db.commit()
-        logger.info("share_link_revoked link_id=%s by=%s", link_id, auth.user_id)
+        logger.info("project_share_link_revoked link_id=%s by=%s", link_id, auth.user_id)
     return {"status": "revoked"}
 
 
 def _owner_view(auth: AuthContext) -> tuple[str, str]:
-    """Helper: resolve (display, handle) for the authed owner, used
-    by invitation response shaping. Raises 409 display_name_required
-    if the owner has no resolvable handle — same gate create_share_link
-    uses; resolve_owner_handle catches both "name unset" and "name
-    kebabs to empty" so one try/except is enough."""
     try:
         handle = resolve_owner_handle(auth.user)
     except ValueError as err:
@@ -254,36 +182,21 @@ def _owner_view(auth: AuthContext) -> tuple[str, str]:
                 "error": "display_name_required",
                 "message": (
                     "Set a display name on your profile (at least one alphanumeric "
-                    "character) before sharing — recipients see the name."
+                    "character) before sharing - recipients see the name."
                 ),
             },
         ) from err
     return safe_owner_display(auth.user), handle
 
 
-@router.post("/{scope_id}/invitations", response_model=InvitationResponse)
+@router.post("/{project_id}/invitations", response_model=InvitationResponse)
 async def create_invitation(
-    scope_id: UUID,
+    project_id: UUID,
     body: InvitationCreate,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> InvitationResponse:
-    """Send a pending invitation to a registered clawdi user.
-
-    Email lookup is case-insensitive. The invitee MUST already have
-    an account — for non-users the response instructs the owner to
-    send a share-link instead (which works for any email and creates
-    a Clerk account via the sign-in handoff).
-
-    Cases:
-      - target == self → 400 already_owner
-      - target email not found → 404 user_not_found
-      - multiple accounts with that email → 409 ambiguous_email
-        (privacy: silently picking one would invite the wrong account)
-      - target already a member → 409 already_member
-      - target already invited (FK uniqueness) → 409 already_invited
-    """
-    scope = await _assert_scope_owner(db, auth, scope_id)
+    project = await _assert_project_owner(db, auth, project_id)
     display, handle = _owner_view(auth)
     target_email = body.email.lower()
 
@@ -293,8 +206,6 @@ async def create_invitation(
             {"error": "already_owner", "message": "You're already the owner."},
         )
 
-    # `users.email` is NOT unique in production (snapshot import
-    # permits dupes). Handle 0 / 1 / N explicitly.
     invitee_rows = (
         (await db.execute(select(User).where(func.lower(User.email) == target_email)))
         .scalars()
@@ -306,7 +217,8 @@ async def create_invitation(
             {
                 "error": "user_not_found",
                 "message": (
-                    "No clawdi account found for that email. Send them a share link instead."
+                    "No clawdi account found for that email. "
+                    "Send them a share link instead."
                 ),
             },
         )
@@ -315,19 +227,16 @@ async def create_invitation(
             status.HTTP_409_CONFLICT,
             {
                 "error": "ambiguous_email",
-                "message": (
-                    "Multiple accounts match that email — we can't tell which "
-                    "to invite. Send them a share link instead."
-                ),
+                "message": "Multiple accounts match that email. Send them a share link instead.",
             },
         )
     invitee = invitee_rows[0]
 
     existing_member = (
         await db.execute(
-            select(ScopeMembership).where(
-                ScopeMembership.scope_id == scope_id,
-                ScopeMembership.user_id == invitee.id,
+            select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.member_user_id == invitee.id,
             )
         )
     ).scalar_one_or_none()
@@ -337,8 +246,8 @@ async def create_invitation(
             {"error": "already_member", "message": "Already a member."},
         )
 
-    invitation = ScopeInvitation(
-        scope_id=scope_id,
+    invitation = ProjectInvitation(
+        project_id=project_id,
         invitee_user_id=invitee.id,
         invitee_email=target_email,
         invited_by=auth.user_id,
@@ -349,7 +258,6 @@ async def create_invitation(
     try:
         await db.commit()
     except IntegrityError:
-        # uq_scope_invitations_scope_user collision.
         await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -357,17 +265,11 @@ async def create_invitation(
         ) from None
     await db.refresh(invitation)
 
-    logger.info(
-        "invitation_created scope_id=%s email=%s by=%s",
-        scope_id,
-        target_email,
-        auth.user_id,
-    )
     return InvitationResponse(
         id=str(invitation.id),
-        scope_id=str(scope_id),
-        scope_name=scope.name,
-        scope_kind=scope.kind,
+        project_id=str(project_id),
+        project_name=project.name,
+        project_kind=project.kind,
         owner_display=display,
         owner_handle=handle,
         invitee_email=target_email,
@@ -377,34 +279,28 @@ async def create_invitation(
     )
 
 
-@router.get("/{scope_id}/invitations", response_model=list[InvitationResponse])
+@router.get("/{project_id}/invitations", response_model=list[InvitationResponse])
 async def list_invitations(
-    scope_id: UUID,
+    project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
-    """List all pending invitations on this scope, newest first.
-
-    Accepted/declined invitations roll up into ScopeMembership rows
-    on accept and get deleted on decline; this listing therefore
-    contains only PENDING invitations from the owner's perspective.
-    """
-    scope = await _assert_scope_owner(db, auth, scope_id)
+    project = await _assert_project_owner(db, auth, project_id)
     display = safe_owner_display(auth.user)
     rows = (
         await db.execute(
-            select(ScopeInvitation, User)
-            .outerjoin(User, User.id == ScopeInvitation.invited_by)
-            .where(ScopeInvitation.scope_id == scope_id)
-            .order_by(ScopeInvitation.created_at.desc())
+            select(ProjectInvitation, User)
+            .outerjoin(User, User.id == ProjectInvitation.invited_by)
+            .where(ProjectInvitation.project_id == project_id)
+            .order_by(ProjectInvitation.created_at.desc())
         )
     ).all()
     return [
         InvitationResponse(
             id=str(inv.id),
-            scope_id=str(inv.scope_id),
-            scope_name=scope.name,
-            scope_kind=scope.kind,
+            project_id=str(inv.project_id),
+            project_name=project.name,
+            project_kind=project.kind,
             owner_display=display,
             owner_handle=inv.resolved_owner_handle,
             invitee_email=inv.invitee_email,
@@ -416,21 +312,19 @@ async def list_invitations(
     ]
 
 
-@router.delete("/{scope_id}/invitations/{invitation_id}")
+@router.delete("/{project_id}/invitations/{invitation_id}")
 async def cancel_invitation(
-    scope_id: UUID,
+    project_id: UUID,
     invitation_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    """Hard-delete a pending invitation. The invitee loses the
-    pending entry on their dashboard next refresh."""
-    await _assert_scope_owner(db, auth, scope_id, for_update=True)
+    await _assert_project_owner(db, auth, project_id, for_update=True)
     row = (
         await db.execute(
-            select(ScopeInvitation).where(
-                ScopeInvitation.id == invitation_id,
-                ScopeInvitation.scope_id == scope_id,
+            select(ProjectInvitation).where(
+                ProjectInvitation.id == invitation_id,
+                ProjectInvitation.project_id == project_id,
             )
         )
     ).scalar_one_or_none()
@@ -438,29 +332,22 @@ async def cancel_invitation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "invitation not found")
     await db.delete(row)
     await db.commit()
-    logger.info("invitation_cancelled id=%s by=%s", invitation_id, auth.user_id)
     return {"status": "cancelled"}
 
 
-@router.get("/{scope_id}/members", response_model=list[MemberResponse])
+@router.get("/{project_id}/members", response_model=list[MemberResponse])
 async def list_members(
-    scope_id: UUID,
+    project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[MemberResponse]:
-    """Owner view of accepted members on a shared scope.
-
-    Owners are not represented by ScopeMembership rows, so this
-    lists sharees only. Pending invitations remain under
-    /invitations; revoked links remain under /share-links.
-    """
-    await _assert_scope_owner(db, auth, scope_id)
+    await _assert_project_owner(db, auth, project_id)
     rows = (
         await db.execute(
-            select(ScopeMembership, User)
-            .join(User, User.id == ScopeMembership.user_id)
-            .where(ScopeMembership.scope_id == scope_id)
-            .order_by(ScopeMembership.joined_at.desc(), ScopeMembership.id.desc())
+            select(ProjectMembership, User)
+            .join(User, User.id == ProjectMembership.member_user_id)
+            .where(ProjectMembership.project_id == project_id)
+            .order_by(ProjectMembership.joined_at.desc(), ProjectMembership.id.desc())
         )
     ).all()
     return [
@@ -478,144 +365,80 @@ async def list_members(
     ]
 
 
-async def _delete_mounts_for_member_source(
-    db: AsyncSession,
-    *,
-    member_user_id: UUID,
-    source_scope_id: UUID,
-) -> int:
-    """Remove mount edges this member owns into `source_scope_id`.
-
-    Dropping membership is enough to hide composed reads, because
-    resolve_for_parent re-checks membership. Deleting the mount rows
-    as well keeps the UI honest: after leave/remove, the stale mount
-    no longer appears in "Mounted scopes".
-    """
-    owned_parent_ids = select(Scope.id).where(Scope.user_id == member_user_id).scalar_subquery()
-    result = await db.execute(
-        sql_delete(ScopeMount).where(
-            ScopeMount.source_scope_id == source_scope_id,
-            ScopeMount.parent_scope_id.in_(owned_parent_ids),
-        )
-    )
-    return int(result.rowcount or 0)
-
-
-@router.delete("/{scope_id}/members/{member_user_id}")
+@router.delete("/{project_id}/members/{member_user_id}")
 async def remove_member(
-    scope_id: UUID,
+    project_id: UUID,
     member_user_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, int | str]:
-    """Owner removes a sharee's access to this scope.
-
-    This is the access-revocation counterpart to share-link revoke:
-    links only block future joins; member removal drops an existing
-    user's capability and their mount edges into this source.
-    """
-    scope = await _assert_scope_owner(db, auth, scope_id)
-    if member_user_id == scope.user_id:
+) -> dict[str, str]:
+    project = await _assert_project_owner(db, auth, project_id)
+    if member_user_id == project.user_id:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             {"error": "owner_cannot_be_removed"},
         )
     member = (
         await db.execute(
-            select(ScopeMembership).where(
-                ScopeMembership.scope_id == scope_id,
-                ScopeMembership.user_id == member_user_id,
+            select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.member_user_id == member_user_id,
             )
         )
     ).scalar_one_or_none()
     if member is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "member not found")
 
-    mounts_removed = await _delete_mounts_for_member_source(
-        db,
-        member_user_id=member_user_id,
-        source_scope_id=scope_id,
-    )
     await db.delete(member)
     await db.commit()
-    logger.info(
-        "scope_member_removed scope_id=%s member_user_id=%s by=%s mounts_removed=%s",
-        scope_id,
-        member_user_id,
-        auth.user_id,
-        mounts_removed,
-    )
-    return {"status": "removed", "mounts_removed": mounts_removed}
+    return {"status": "removed"}
 
 
-@router.post("/{scope_id}/leave")
-async def leave_scope(
-    scope_id: UUID,
+@router.post("/{project_id}/leave")
+async def leave_project(
+    project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, int | str]:
-    """Sharee leaves a scope they previously joined.
-
-    Owners cannot leave their own scope through this route. Leaving
-    removes the membership and every mount edge from the sharee's
-    owned parent scopes into this shared source.
-    """
-    scope = (await db.execute(select(Scope).where(Scope.id == scope_id))).scalar_one_or_none()
-    if scope is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
-    if scope.user_id == auth.user_id:
+) -> dict[str, str]:
+    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    if project.user_id == auth.user_id:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             {"error": "owner_cannot_leave"},
         )
     member = (
         await db.execute(
-            select(ScopeMembership).where(
-                ScopeMembership.scope_id == scope_id,
-                ScopeMembership.user_id == auth.user_id,
+            select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.member_user_id == auth.user_id,
             )
         )
     ).scalar_one_or_none()
     if member is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "membership not found")
 
-    mounts_removed = await _delete_mounts_for_member_source(
-        db,
-        member_user_id=auth.user_id,
-        source_scope_id=scope_id,
-    )
     await db.delete(member)
     await db.commit()
-    logger.info(
-        "scope_left scope_id=%s user_id=%s mounts_removed=%s",
-        scope_id,
-        auth.user_id,
-        mounts_removed,
-    )
-    return {"status": "left", "mounts_removed": mounts_removed}
+    return {"status": "left"}
 
 
-@router.post("/{scope_id}/unshare", response_model=UnshareResponse)
-async def unshare_scope(
-    scope_id: UUID,
+@router.post("/{project_id}/unshare", response_model=UnshareResponse)
+async def unshare_project(
+    project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> UnshareResponse:
-    """Owner fully stops sharing a scope.
-
-    This is stronger than revoking a link: it revokes all active
-    links, cancels pending invitations, removes accepted members,
-    and deletes mount edges those members had into this source.
-    """
-    await _assert_scope_owner(db, auth, scope_id, for_update=True)
+    await _assert_project_owner(db, auth, project_id, for_update=True)
     now = datetime.now(UTC)
 
     active_links = (
         (
             await db.execute(
-                select(ScopeShareLink).where(
-                    ScopeShareLink.scope_id == scope_id,
-                    ScopeShareLink.revoked_at.is_(None),
+                select(ProjectShareLink).where(
+                    ProjectShareLink.project_id == project_id,
+                    ProjectShareLink.revoked_at.is_(None),
                 )
             )
         )
@@ -626,36 +449,23 @@ async def unshare_scope(
         link.revoked_at = now
 
     invite_result = await db.execute(
-        sql_delete(ScopeInvitation).where(ScopeInvitation.scope_id == scope_id)
+        sql_delete(ProjectInvitation).where(ProjectInvitation.project_id == project_id)
     )
     invitations_cancelled = int(invite_result.rowcount or 0)
 
     members = (
-        (await db.execute(select(ScopeMembership).where(ScopeMembership.scope_id == scope_id)))
+        (
+            await db.execute(
+                select(ProjectMembership).where(ProjectMembership.project_id == project_id)
+            )
+        )
         .scalars()
         .all()
     )
-    member_user_ids = [m.user_id for m in members]
-    mounts_removed = 0
-    for member_user_id in member_user_ids:
-        mounts_removed += await _delete_mounts_for_member_source(
-            db,
-            member_user_id=member_user_id,
-            source_scope_id=scope_id,
-        )
     for member in members:
         await db.delete(member)
 
     await db.commit()
-    logger.info(
-        "scope_unshared scope_id=%s by=%s links=%s members=%s invitations=%s mounts=%s",
-        scope_id,
-        auth.user_id,
-        len(active_links),
-        len(members),
-        invitations_cancelled,
-        mounts_removed,
-    )
     return UnshareResponse(
         links_revoked=len(active_links),
         members_removed=len(members),

@@ -602,9 +602,14 @@ async def require_admin_api_key(
 class ShareTokenContext:
     """What require_share_token returns."""
 
-    def __init__(self, scope_id, link_id):
-        self.scope_id = scope_id
+    def __init__(self, project_id, link_id):
+        self.project_id = project_id
         self.link_id = link_id
+
+    @property
+    def scope_id(self):
+        """Backward-compat shim for routes not migrated yet."""
+        return self.project_id
 
 
 async def require_share_token(
@@ -615,13 +620,15 @@ async def require_share_token(
 
     Anonymous endpoint dep - does NOT establish an AuthContext and
     does NOT carry user identity. Token holders are bearers of access
-    to one specific scope's skill content, nothing more.
+    to one specific project's skill content, nothing more.
     """
-    from app.models.scope_share_link import ScopeShareLink
+    from app.models.project_share_link import ProjectShareLink
     from app.services.sharing import hash_share_token
 
     token_hash = hash_share_token(token)
-    result = await db.execute(select(ScopeShareLink).where(ScopeShareLink.token_hash == token_hash))
+    result = await db.execute(
+        select(ProjectShareLink).where(ProjectShareLink.token_hash == token_hash)
+    )
     link = result.scalar_one_or_none()
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "share link not found")
@@ -629,4 +636,4 @@ async def require_share_token(
         raise HTTPException(status.HTTP_410_GONE, "share link has been revoked")
     if link.expires_at is not None and link.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_410_GONE, "share link has expired")
-    return ShareTokenContext(scope_id=link.scope_id, link_id=link.id)
+    return ShareTokenContext(project_id=link.project_id, link_id=link.id)

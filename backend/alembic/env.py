@@ -5,14 +5,15 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.core.config import settings
 from app.models import (  # noqa: F401 - register models
+    agent_project_binding,
     api_key,
     device_authorization,
     memory,
+    project_invitation,
+    project_membership,
+    project_share_link,
     scope,
-    scope_invitation,
-    scope_membership,
     scope_mount,
-    scope_share_link,
     session,
     session_permission,
     skill,

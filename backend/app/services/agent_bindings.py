@@ -1,0 +1,177 @@
+"""Helpers for agent->project binding operations."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.agent_project_binding import AgentProjectBinding
+from app.models.project_membership import ProjectMembership
+from app.models.scope import Scope
+from app.models.session import AgentEnvironment
+
+
+async def get_owned_agent_or_404(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent_id: UUID,
+) -> AgentEnvironment:
+    agent = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    return agent
+
+
+async def assert_project_visible_to_user(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    project_id: UUID,
+) -> Scope:
+    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    if project.user_id == user_id:
+        return project
+
+    member = (
+        await db.execute(
+            select(ProjectMembership.id).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.member_user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "project is not accessible")
+    return project
+
+
+async def assert_project_writable_by_user(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    project_id: UUID,
+) -> Scope:
+    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    if project.user_id != user_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "primary project must be owned by the caller",
+        )
+    return project
+
+
+async def _next_context_priority(db: AsyncSession, *, agent_id: UUID) -> int:
+    max_priority = (
+        await db.execute(
+            select(func.max(AgentProjectBinding.priority)).where(
+                AgentProjectBinding.agent_id == agent_id,
+                AgentProjectBinding.binding_type == "context",
+            )
+        )
+    ).scalar_one_or_none()
+    return int(max_priority or 0) + 1
+
+
+async def ensure_context_binding(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+    project_id: UUID,
+    created_by_user_id: UUID,
+    priority: int | None = None,
+) -> AgentProjectBinding:
+    existing = (
+        await db.execute(
+            select(AgentProjectBinding).where(
+                AgentProjectBinding.agent_id == agent_id,
+                AgentProjectBinding.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if existing.binding_type == "primary":
+            return existing
+        if priority is not None and priority >= 1:
+            existing.priority = priority
+        return existing
+
+    if priority is None:
+        priority = await _next_context_priority(db, agent_id=agent_id)
+    if priority < 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "context priority must be >= 1")
+
+    binding = AgentProjectBinding(
+        agent_id=agent_id,
+        project_id=project_id,
+        binding_type="context",
+        priority=priority,
+        default_write_enabled=False,
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(binding)
+    await db.flush()
+    return binding
+
+
+async def set_primary_binding(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+    project_id: UUID,
+    created_by_user_id: UUID,
+) -> AgentProjectBinding:
+    existing = (
+        await db.execute(
+            select(AgentProjectBinding).where(
+                AgentProjectBinding.agent_id == agent_id,
+                AgentProjectBinding.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    # Demote current primary if switching projects.
+    current_primary = (
+        await db.execute(
+            select(AgentProjectBinding).where(
+                AgentProjectBinding.agent_id == agent_id,
+                AgentProjectBinding.binding_type == "primary",
+            )
+        )
+    ).scalar_one_or_none()
+    if current_primary is not None and current_primary.project_id != project_id:
+        current_primary.binding_type = "context"
+        current_primary.default_write_enabled = False
+        current_primary.priority = await _next_context_priority(db, agent_id=agent_id)
+
+    if existing is not None:
+        existing.binding_type = "primary"
+        existing.priority = 0
+        existing.default_write_enabled = True
+        return existing
+
+    binding = AgentProjectBinding(
+        agent_id=agent_id,
+        project_id=project_id,
+        binding_type="primary",
+        priority=0,
+        default_write_enabled=True,
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(binding)
+    await db.flush()
+    return binding

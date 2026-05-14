@@ -1,6 +1,4 @@
-"""Sanity-check that the sharing schemas accept their canonical shapes
-and reject obviously bad ones. Heavier validation lives in endpoint
-tests where the route-level guards also fire."""
+"""Schema sanity checks for project-sharing models."""
 
 import pytest
 from pydantic import ValidationError
@@ -38,20 +36,12 @@ def test_invitation_create_validates_email_shape():
     assert parsed.email == "alice@example.com"
 
 
-def test_mount_alias_validation_matches_database_shape():
-    from app.schemas.sharing import MountCreate, UpgradeBody
+def test_upgrade_body_validates_bind_as_and_agent_ids():
+    from app.schemas.sharing import UpgradeBody
 
-    parsed = UpgradeBody.model_validate({"alias": "@alice/team-tools-2"})
-    assert parsed.alias == "@alice/team-tools-2"
-
-    parsed_mount = MountCreate.model_validate(
-        {"source_scope_id": "source", "alias": "alice shared/tools"}
-    )
-    assert parsed_mount.alias == "alice shared/tools"
+    parsed = UpgradeBody.model_validate({"agent_ids": ["a", "b"], "bind_as": "context"})
+    assert parsed.bind_as == "context"
+    assert parsed.agent_ids == ["a", "b"]
 
     with pytest.raises(ValidationError):
-        UpgradeBody.model_validate({"alias": ""})
-    with pytest.raises(ValidationError):
-        MountCreate.model_validate({"source_scope_id": "source", "alias": "../bad\nalias"})
-    with pytest.raises(ValidationError):
-        UpgradeBody.model_validate({"alias": "x" * 81})
+        UpgradeBody.model_validate({"bind_as": "invalid"})

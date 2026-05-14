@@ -1,43 +1,34 @@
-"""Smoke tests for the ScopeMount model + schemas.
-
-Just import smoke. Real uniqueness + cascade behavior is verified
-in tests/test_scope_mounts.py (MB phase) when the CRUD endpoints
-actually exercise the constraints.
-"""
+"""Smoke tests for the AgentProjectBinding model + schemas."""
 
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_scope_mount_model_imports():
-    from app.models.scope_mount import ScopeMount
+async def test_agent_project_binding_model_imports():
+    from app.models.agent_project_binding import AgentProjectBinding
 
-    assert ScopeMount.__tablename__ == "scope_mounts"
-    # Sanity check the unique constraints are declared on the model;
-    # alembic migration test verifies they exist in the DB itself.
-    constraint_names = {c.name for c in ScopeMount.__table__.constraints}
-    assert "uq_scope_mounts_parent_source" in constraint_names
-    assert "uq_scope_mounts_parent_alias" in constraint_names
-    index_names = {i.name for i in ScopeMount.__table__.indexes}
-    assert "ix_scope_mounts_created_by" in index_names
-    assert ScopeMount.__table__.c.id.server_default is not None
+    assert AgentProjectBinding.__tablename__ == "agent_project_bindings"
+    constraint_names = {c.name for c in AgentProjectBinding.__table__.constraints}
+    assert "uq_agent_project_bindings_agent_project" in constraint_names
+    assert "uq_agent_project_bindings_agent_type_priority" in constraint_names
+    assert "ck_agent_project_bindings_type_v1" in constraint_names
+    index_names = {i.name for i in AgentProjectBinding.__table__.indexes}
+    assert "ix_agent_project_bindings_agent" in index_names
+    assert "uq_agent_project_bindings_one_primary" in index_names
 
 
 @pytest.mark.asyncio
-async def test_mount_schemas_import():
-    from app.schemas.sharing import MountCreate, MountResponse
+async def test_binding_schemas_import():
+    from app.schemas.sharing import AgentProjectBindingResponse, BindingCreate
 
-    assert MountCreate.model_fields["source_scope_id"].annotation is str
+    assert BindingCreate.model_fields["project_id"].annotation is str
     expected = {
         "id",
-        "parent_scope_id",
-        "source_scope_id",
-        "source_scope_name",
-        "source_scope_slug",
-        "source_owner_display",
-        "source_owner_handle",
-        "alias",
-        "mode",
+        "agent_id",
+        "project_id",
+        "binding_type",
+        "priority",
+        "default_write_enabled",
         "created_at",
     }
-    assert set(MountResponse.model_fields.keys()) == expected
+    assert set(AgentProjectBindingResponse.model_fields.keys()) == expected

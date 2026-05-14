@@ -1,4 +1,4 @@
-"""Smoke tests for POST /api/scopes/{id}/share-links.
+"""Smoke tests for POST /api/projects/{id}/share-links.
 
 B.1 router skeleton + B.2 create-link coverage. Full owner-side
 surface (list/revoke/invitations/members/unshare) lands in B.3+.
@@ -19,7 +19,7 @@ async def test_create_share_link_returns_raw_token_once(client, seed_user, seed_
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/scopes/{seed_scope.id}/share-links",
+        f"/api/projects/{seed_scope.id}/share-links",
         json={"label": "team link"},
     )
     assert r.status_code == 200, r.text
@@ -43,7 +43,7 @@ async def test_create_share_link_persists_hash_not_raw(client, seed_user, seed_s
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/scopes/{seed_scope.id}/share-links",
+        f"/api/projects/{seed_scope.id}/share-links",
         json={},
     )
     assert r.status_code == 200
@@ -53,7 +53,7 @@ async def test_create_share_link_persists_hash_not_raw(client, seed_user, seed_s
     preview = await client.get(f"/api/share/{raw}/preview")
     assert preview.status_code == 200, preview.text
     body = preview.json()
-    assert body["scope_id"] == str(seed_scope.id)
+    assert body["project_id"] == str(seed_scope.id)
     assert body["owner_handle"].startswith("alice-")
 
 
@@ -86,7 +86,7 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
 
     try:
         r = await client.post(
-            f"/api/scopes/{other_scope.id}/share-links",
+            f"/api/projects/{other_scope.id}/share-links",
             json={},
         )
         assert r.status_code == 404
@@ -104,7 +104,7 @@ async def test_create_share_link_requires_display_name(client, seed_user, seed_s
     seed_user.name = None
 
     r = await client.post(
-        f"/api/scopes/{seed_scope.id}/share-links",
+        f"/api/projects/{seed_scope.id}/share-links",
         json={},
     )
     assert r.status_code == 409, r.text

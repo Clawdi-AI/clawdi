@@ -14,7 +14,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.models.scope_invitation import ScopeInvitation
+from app.models.project_invitation import ProjectInvitation
 
 
 @pytest.mark.asyncio
@@ -40,16 +40,16 @@ async def test_invite_existing_user_creates_invitation(
 
     try:
         r = await client.post(
-            f"/api/scopes/{seed_scope.id}/invitations",
+            f"/api/projects/{seed_scope.id}/invitations",
             json={"email": invitee.email},
         )
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["invitee_email"] == invitee.email.lower()
-        assert body["scope_id"] == str(seed_scope.id)
+        assert body["project_id"] == str(seed_scope.id)
         assert body["owner_handle"].startswith("alice-")
         # Verify via list endpoint (avoids cross-pool greenlet issue).
-        listing = await client.get(f"/api/scopes/{seed_scope.id}/invitations")
+        listing = await client.get(f"/api/projects/{seed_scope.id}/invitations")
         assert listing.status_code == 200
         items = listing.json()
         assert any(it["invitee_email"] == invitee.email.lower() for it in items)
@@ -58,8 +58,8 @@ async def test_invite_existing_user_creates_invitation(
         # Delete invitation first to avoid orphan-row checks.
         rows = (
             await db_session.execute(
-                select(ScopeInvitation).where(
-                    ScopeInvitation.invitee_user_id == invitee_id
+                select(ProjectInvitation).where(
+                    ProjectInvitation.invitee_user_id == invitee_id
                 )
             )
         ).scalars().all()
@@ -75,7 +75,7 @@ async def test_invite_unregistered_email_returns_404(client, seed_user, seed_sco
     points the owner at the share-link path instead."""
     seed_user.name = "Alice"
     r = await client.post(
-        f"/api/scopes/{seed_scope.id}/invitations",
+        f"/api/projects/{seed_scope.id}/invitations",
         json={"email": f"ghost_{uuid.uuid4().hex[:8]}@nowhere.test"},
     )
     assert r.status_code == 404
@@ -87,7 +87,7 @@ async def test_invite_self_rejected(client, seed_user, seed_scope):
     """You can't invite your own email — already the owner."""
     seed_user.name = "Alice"
     r = await client.post(
-        f"/api/scopes/{seed_scope.id}/invitations",
+        f"/api/projects/{seed_scope.id}/invitations",
         json={"email": seed_user.email},
     )
     assert r.status_code == 400
@@ -112,12 +112,12 @@ async def test_invite_existing_pending_409(client, db_session, seed_user, seed_s
     invitee_id = invitee.id
     try:
         first = await client.post(
-            f"/api/scopes/{seed_scope.id}/invitations",
+            f"/api/projects/{seed_scope.id}/invitations",
             json={"email": invitee.email},
         )
         assert first.status_code == 200, first.text
         second = await client.post(
-            f"/api/scopes/{seed_scope.id}/invitations",
+            f"/api/projects/{seed_scope.id}/invitations",
             json={"email": invitee.email},
         )
         assert second.status_code == 409
@@ -125,8 +125,8 @@ async def test_invite_existing_pending_409(client, db_session, seed_user, seed_s
     finally:
         rows = (
             await db_session.execute(
-                select(ScopeInvitation).where(
-                    ScopeInvitation.invitee_user_id == invitee_id
+                select(ProjectInvitation).where(
+                    ProjectInvitation.invitee_user_id == invitee_id
                 )
             )
         ).scalars().all()
@@ -153,30 +153,30 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_s
     invitee_id = invitee.id
     try:
         created = await client.post(
-            f"/api/scopes/{seed_scope.id}/invitations",
+            f"/api/projects/{seed_scope.id}/invitations",
             json={"email": invitee.email},
         )
         assert created.status_code == 200
         inv_id = created.json()["id"]
 
-        listing = await client.get(f"/api/scopes/{seed_scope.id}/invitations")
+        listing = await client.get(f"/api/projects/{seed_scope.id}/invitations")
         assert listing.status_code == 200
         assert any(it["id"] == inv_id for it in listing.json())
 
         cancel = await client.delete(
-            f"/api/scopes/{seed_scope.id}/invitations/{inv_id}"
+            f"/api/projects/{seed_scope.id}/invitations/{inv_id}"
         )
         assert cancel.status_code == 200
         assert cancel.json()["status"] == "cancelled"
 
-        relist = await client.get(f"/api/scopes/{seed_scope.id}/invitations")
+        relist = await client.get(f"/api/projects/{seed_scope.id}/invitations")
         assert relist.status_code == 200
         assert all(it["id"] != inv_id for it in relist.json())
     finally:
         rows = (
             await db_session.execute(
-                select(ScopeInvitation).where(
-                    ScopeInvitation.invitee_user_id == invitee_id
+                select(ProjectInvitation).where(
+                    ProjectInvitation.invitee_user_id == invitee_id
                 )
             )
         ).scalars().all()
@@ -190,6 +190,6 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_s
 async def test_cancel_unknown_invitation_404(client, seed_user, seed_scope):
     seed_user.name = "Alice"
     r = await client.delete(
-        f"/api/scopes/{seed_scope.id}/invitations/00000000-0000-0000-0000-000000000000"
+        f"/api/projects/{seed_scope.id}/invitations/00000000-0000-0000-0000-000000000000"
     )
     assert r.status_code == 404

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
-from app.models.scope_share_link import ScopeShareLink
+from app.models.project_share_link import ProjectShareLink
 from app.models.user import User
 from app.routes import share_redeem as share_redeem_routes
 from app.services.sharing import generate_share_token, hash_share_token
@@ -44,8 +44,8 @@ async def client_unauth(db_session: AsyncSession) -> AsyncIterator[httpx.AsyncCl
 
 async def _make_share_link(db_session, seed_scope, seed_user) -> str:
     raw = generate_share_token()
-    link = ScopeShareLink(
-        scope_id=seed_scope.id,
+    link = ProjectShareLink(
+        project_id=seed_scope.id,
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         resolved_owner_handle="alice-a3b4",
@@ -71,8 +71,8 @@ async def test_preview_valid_token_returns_summary(
     r = await client_unauth.get(f"/api/share/{raw}/preview")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["scope_id"] == str(seed_scope.id)
-    assert body["scope_name"] == seed_scope.name
+    assert body["project_id"] == str(seed_scope.id)
+    assert body["project_name"] == seed_scope.name
     assert body["owner_display"] in (seed_user.name, seed_user.email)
     assert body["owner_handle"] == "alice-a3b4"
     assert body["vault_locked"] is True
@@ -90,7 +90,7 @@ async def test_preview_does_not_bump_redeem_count(client_unauth, db_session, see
     db_session.expire_all()
     link = (
         await db_session.execute(
-            select(ScopeShareLink).where(ScopeShareLink.token_hash == hash_share_token(raw))
+            select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
         )
     ).scalar_one()
     assert link.redeem_count == 0
@@ -107,7 +107,7 @@ async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, s
     db_session.expire_all()
     link = (
         await db_session.execute(
-            select(ScopeShareLink).where(ScopeShareLink.token_hash == hash_share_token(raw))
+            select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
         )
     ).scalar_one()
     assert link.redeem_count == 2
@@ -131,7 +131,7 @@ async def test_redeem_idempotency_key_dedupes_counter(
     db_session.expire_all()
     link = (
         await db_session.execute(
-            select(ScopeShareLink).where(ScopeShareLink.token_hash == hash_share_token(raw))
+            select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
         )
     ).scalar_one()
     assert link.redeem_count == 1
@@ -229,7 +229,7 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
 
     from sqlalchemy import select
 
-    from app.models.scope_membership import ScopeMembership
+    from app.models.project_membership import ProjectMembership
 
     nonce = _uuid.uuid4().hex[:8]
     sharee = User(clerk_id=f"user_test_bob_{nonce}", email=f"bob_{nonce}@example.com", name="Bob")
@@ -258,7 +258,7 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
             r = await ac.post(f"/api/share/{raw}/upgrade", json={"no_mount": True})
             assert r.status_code == 200, r.text
             body = r.json()
-            assert body["scope_id"] == str(seed_scope.id)
+            assert body["project_id"] == str(seed_scope.id)
             assert body["resolved_owner_handle"] == "alice-a3b4"
             assert "mount_id" not in body  # capability-only
             # Idempotent repeat call returns the same row (and same
@@ -279,7 +279,7 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
         rows = (
             (
                 await fresh.execute(
-                    select(ScopeMembership).where(ScopeMembership.user_id == sharee.id)
+                    select(ProjectMembership).where(ProjectMembership.member_user_id == sharee.id)
                 )
             )
             .scalars()
