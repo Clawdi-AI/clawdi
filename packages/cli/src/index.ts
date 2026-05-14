@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
@@ -34,7 +34,8 @@ Examples:
   $ clawdi skill list --json        Machine-readable skill listing
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
-  $ clawdi run -- npm run deploy    Run a command with vault secrets injected
+  $ clawdi project folder link --project engineering  Use this folder with a Project
+  $ clawdi run -- npm run deploy    Run with this folder's Project vault env
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
@@ -547,19 +548,37 @@ program
 program
 	.command("run")
 	.description("Run a command with vault secrets injected")
+	.option("-p, --project <id-or-slug>", "Use vault env from an explicit Project")
+	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.argument("<command...>", "Command to run")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi run -- npm run deploy\n  $ clawdi run -- python main.py",
+		`
+Examples:
+  $ clawdi project folder link --project engineering
+  $ clawdi run -- npm run deploy
+  ✓ Using Project engineering for vault env injection.
+  ✓ Injected 499 vault secrets
+
+  $ clawdi run --project @alice/engineering -- npm run deploy
+  $ clawdi run --no-project-folder -- python main.py`,
 	)
-	.action(async (args) => {
+	.action(async (args, opts) => {
 		const { run } = await import("./commands/run.js");
-		await run(args);
+		await run(args, opts);
 	});
 
 const projectCmd = program
 	.command("project")
-	.description("Manage projects, people, invites, links, and shared access");
+	.description("Manage projects, people, invites, links, and shared access")
+	.addHelpText(
+		"after",
+		`
+Folder-link workflow:
+  $ clawdi project folder link --project engineering
+  $ clawdi project folder status
+  $ clawdi run -- npm run deploy`,
+	);
 
 projectCmd
 	.command("create <name>")
@@ -599,6 +618,56 @@ projectCmd
 	.action(async (project: string, opts: { json?: boolean }) => {
 		const { projectShowCommand } = await import("./commands/project-show.js");
 		await projectShowCommand(project, opts);
+	});
+
+const projectFolderCmd = projectCmd
+	.command("folder")
+	.description("Link local folders to Projects for automatic vault env selection");
+
+projectFolderCmd
+	.command("link [path]")
+	.description("Use this folder with a Project")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or owner-qualified slug")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi project folder link --project engineering
+  $ clawdi project folder link ~/work/client-a --project @alice/engineering`,
+	)
+	.action(async (path: string | undefined, opts: { project: string }) => {
+		const { projectFolderLinkCommand } = await import("./commands/project-folders.js");
+		await projectFolderLinkCommand(path, opts);
+	});
+
+projectFolderCmd
+	.command("unlink [path]")
+	.description("Stop using this folder with its linked Project")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi project folder unlink
+  $ clawdi project folder unlink ~/work/client-a`,
+	)
+	.action(async (path: string | undefined) => {
+		const { projectFolderUnlinkCommand } = await import("./commands/project-folders.js");
+		await projectFolderUnlinkCommand(path);
+	});
+
+projectFolderCmd
+	.command("status [path]")
+	.description("Show which Project clawdi run will use for a folder")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi project folder status
+  $ clawdi project folder status ~/work/client-a`,
+	)
+	.action(async (path: string | undefined) => {
+		const { projectFolderStatusCommand } = await import("./commands/project-folders.js");
+		await projectFolderStatusCommand(path);
 	});
 
 projectCmd
@@ -761,9 +830,14 @@ inboxCmd
 		[] as string[],
 	)
 	.option(
-		"--bind-as <context|primary>",
-		"Use as Home or attached project with --agent (primary|context; default: context)",
-		"context",
+		"--use-as <home|attached>",
+		"Use with --agent as Home or as an attached Project (default: attached)",
+	)
+	.addOption(
+		new Option(
+			"--bind-as <context|primary>",
+			"Deprecated compatibility alias for --use-as (primary|context)",
+		).hideHelp(),
 	)
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(

@@ -68,6 +68,7 @@ function redeemIdempotencyKey(token: string): string {
 
 interface AcceptOpts {
 	agent?: string[];
+	useAs?: string;
 	bindAs?: string;
 	invite?: string;
 	url?: string;
@@ -132,19 +133,36 @@ function normalizeAgentIds(values?: string[]): string[] {
 async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, unknown>> {
 	const reqBody: Record<string, unknown> = {};
 	const agentIds = normalizeAgentIds(opts.agent);
+	const bindAs = normalizeAcceptBindAs(opts);
 	if (agentIds.length === 0) {
-		if (opts.bindAs && opts.bindAs.toLowerCase() !== "context") {
-			throw new Error("`--bind-as` requires at least one `--agent`.");
+		if (bindAs !== "context") {
+			throw new Error("`--use-as home` requires at least one `--agent`.");
 		}
 		return reqBody;
 	}
-	const bindAs = (opts.bindAs ?? "context").toLowerCase();
 	if (bindAs !== "context" && bindAs !== "primary") {
-		throw new Error("`--bind-as` must be either `context` or `primary`.");
+		throw new Error("`--use-as` must be either `attached` or `home`.");
 	}
 	reqBody.agent_ids = agentIds;
 	reqBody.bind_as = bindAs;
 	return reqBody;
+}
+
+function normalizeAcceptBindAs(opts: AcceptOpts): "context" | "primary" {
+	if (opts.useAs) {
+		const useAs = opts.useAs.toLowerCase();
+		if (useAs === "attached") return "context";
+		if (useAs === "home") return "primary";
+		throw new Error("`--use-as` must be either `attached` or `home`.");
+	}
+
+	if (opts.bindAs) {
+		const bindAs = opts.bindAs.toLowerCase();
+		if (bindAs === "context" || bindAs === "primary") return bindAs;
+		throw new Error("`--bind-as` must be either `context` or `primary`.");
+	}
+
+	return "context";
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -458,8 +476,8 @@ function renderJoinedSuccess(body: JoinedProject, opts: AcceptOpts, projectAlias
 	console.log(chalk.gray("  Role: viewer (read-only)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
-		const bindAs = (opts.bindAs ?? "context").toLowerCase();
-		const useLabel = bindAs === "primary" ? "Home project" : "attached project";
+		const bindAs = normalizeAcceptBindAs(opts);
+		const useLabel = bindAs === "primary" ? "Home Project" : "attached Project";
 		console.log(
 			chalk.gray(
 				`  Attached to ${bound.length} agent${bound.length === 1 ? "" : "s"} as ${useLabel}.`,
