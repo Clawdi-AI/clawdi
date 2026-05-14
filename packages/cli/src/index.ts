@@ -305,7 +305,7 @@ vaultCmd
 	)
 	.option(
 		"-a, --agent <agent-id-or-type>",
-		"Resolve through an agent's primary/context project order",
+		"Resolve through an agent's Home and attached project order",
 	)
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence and skipped matches")
@@ -679,11 +679,11 @@ projectCmd
 const agentCmd = program.command("agent").description("Manage agents");
 const agentProjectsCmd = agentCmd
 	.command("projects")
-	.description("Bind projects to an agent Home and attached contexts");
+	.description("Manage an agent's Home project and attached projects");
 
 agentProjectsCmd
 	.command("list <agent-id>")
-	.description("Show the agent's Home project and context order")
+	.description("Show the agent's Home project and attached project order")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
@@ -701,7 +701,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("add-context <agent-id>")
-	.description("Attach an owned or shared project as agent context")
+	.description("Attach an owned or shared project to an agent")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.option("--priority <n>", "Optional priority (>=1)")
 	.action(async (agentId, opts) => {
@@ -711,7 +711,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("remove-context <agent-id>")
-	.description("Detach a context project from an agent")
+	.description("Detach a project from an agent")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -720,16 +720,16 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("reorder <agent-id>")
-	.description("Reorder attached context projects for an agent")
+	.description("Reorder attached projects for an agent")
 	.option(
-		"--item <binding-id:priority>",
-		"Context binding id and target priority (repeatable)",
+		"--item <attachment-id:priority>",
+		"Attached project id and target priority (repeatable)",
 		collectValues,
 		[] as string[],
 	)
 	.addHelpText(
 		"after",
-		"\nExample:\n  $ clawdi agent projects reorder <agent-id> --item <binding-id>:1 --item <binding-id>:2",
+		"\nExample:\n  $ clawdi agent projects reorder <agent-id> --item <attachment-id>:1 --item <attachment-id>:2",
 	)
 	.action(async (agentId, opts) => {
 		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
@@ -756,13 +756,13 @@ inboxCmd
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(
 		"-a, --agent <agent-id>",
-		"Bind the accepted project to one or more agents (repeat or comma-separate)",
+		"Attach the accepted project to one or more agents (repeat or comma-separate)",
 		collectCsvValues,
 		[] as string[],
 	)
 	.option(
 		"--bind-as <context|primary>",
-		"Binding type used with --agent (default: context)",
+		"Use as Home or attached project with --agent (primary|context; default: context)",
 		"context",
 	)
 	.option("--json", "Emit machine-readable JSON (agent contract)")
@@ -774,9 +774,9 @@ Examples:
     $ clawdi inbox accept https://clawdi.ai/share/abc...
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
-  Accept and bind to an agent:
+  Accept and use with an agent:
     $ clawdi inbox accept --url <link> --agent <agent-id>
-    $ clawdi inbox accept --invite <id> --agent <agent-id> --bind-as context`,
+    $ clawdi inbox accept --invite <id> --agent <agent-id>`,
 	)
 	.action(async (idOrUrl, opts) => {
 		const { inboxAcceptCommand } = await import("./commands/inbox.js");

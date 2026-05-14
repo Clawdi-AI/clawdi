@@ -80,12 +80,14 @@ describe("projectShowCommand", () => {
 		const out = lines.join("\n");
 		expect(out).toContain("Role: viewer");
 		expect(out).toContain("Owner: Alice (@alice-a3b4)");
-		expect(out).toContain("Access: read-only project membership");
-		expect(out).toContain("Bind to an agent:");
+		expect(out).toContain("Access: read-only project access");
+		expect(out).toContain("Resources");
+		expect(out).toContain("Use with agent:");
 		expect(out).toContain(
 			"clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).toContain("Leave: clawdi project leave @alice-a3b4/shared-toolkit");
+		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 	});
 
 	it("prints a JSON project inventory with local skill/vault counts", async () => {

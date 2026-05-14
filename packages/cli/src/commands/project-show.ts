@@ -108,35 +108,35 @@ export async function projectShowCommand(
 
 	const isOwner = project.is_owner !== false;
 	const alias = projectAlias(project);
+	const owner = isOwner
+		? "you"
+		: project.owner_display && project.owner_handle
+			? `${project.owner_display} (@${project.owner_handle})`
+			: project.owner_display || (project.owner_handle ? `@${project.owner_handle}` : "Unknown");
 	console.log(chalk.bold(project.name));
 	console.log(`  Project: ${chalk.cyan(alias)}`);
 	console.log(`  Role: ${isOwner ? "owner" : "viewer"}`);
+	console.log(`  Owner: ${owner}`);
+	console.log(
+		`  Access: ${isOwner ? "edit resources and manage sharing" : "read-only project access"}`,
+	);
 	console.log(`  Type: ${project.kind}`);
 	console.log(`  ID: ${chalk.gray(project.id)}`);
-	if (!isOwner) {
-		const owner =
-			project.owner_display && project.owner_handle
-				? `${project.owner_display} (@${project.owner_handle})`
-				: project.owner_display || (project.owner_handle ? `@${project.owner_handle}` : "Unknown");
-		console.log(`  Owner: ${owner}`);
-	}
+	console.log();
+	console.log(chalk.bold("Resources"));
 	console.log(`  Skills: ${ownSkills.length}`);
-	console.log(`  Vaults: ${ownVaults.length}`);
+	console.log(`  Vault refs: ${ownVaults.length}`);
 	console.log();
 	if (isOwner) {
 		console.log(chalk.bold("Next actions"));
-		console.log(`  Share: ${chalk.cyan(`clawdi project share ${alias}`)}`);
-		console.log(`  People: ${chalk.cyan(`clawdi project members ${alias}`)}`);
+		console.log(`  Manage sharing: ${chalk.cyan(`clawdi project share ${alias}`)}`);
+		console.log(`  People:         ${chalk.cyan(`clawdi project members ${alias}`)}`);
 		console.log(
-			`  Agent home: ${chalk.cyan(`clawdi agent projects set-primary <agent-id> --project ${alias}`)}`,
+			`  Set as Home:    ${chalk.cyan(`clawdi agent projects set-primary <agent-id> --project ${alias}`)}`,
 		);
 	} else {
-		console.log(chalk.bold("Access"));
-		console.log("  Access: read-only project membership");
-		console.log("  Binding: not automatic; attach it to an agent when you want runtime context.");
-		console.log();
 		console.log(chalk.bold("Next actions"));
-		console.log("  Bind to an agent:");
+		console.log("  Use with agent:");
 		console.log(
 			`    ${chalk.cyan(`clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
 		);

@@ -50,10 +50,10 @@ import { formatApiError } from "./vault-conflicts";
  * Owner-side project-sharing surface.
  *
  * Two surfaces in one dialog:
- *   - Links tab: list of share-links with redeem counts + revoke buttons,
- *     plus "Generate new link" CTA that POSTs and returns a fresh URL.
+ *   - People tab: accepted members and owner-side removal.
  *   - Invitations tab: email-based invitations (in-dashboard "you've been
  *     added" entries on the invitee's side, no public token).
+ *   - Links tab: share-links with redeem counts + revoke buttons.
  *
  * Backend endpoints:
  *   GET    /api/projects/{project_id}/share-links
@@ -135,8 +135,8 @@ export function ShareProjectDialog({
 				<DialogHeader>
 					<DialogTitle>Share {projectName}</DialogTitle>
 					<DialogDescription>
-						Invite people or create a link. Everyone joins as a read-only viewer; agent binding is
-						always explicit.
+						Manage people with access, invite by email, or create a share link. Accepting gives
+						project access only; using it with an agent is a separate choice.
 					</DialogDescription>
 				</DialogHeader>
 				{isPersonalProject ? (
@@ -144,8 +144,8 @@ export function ShareProjectDialog({
 						<AlertCircle />
 						<AlertTitle>Personal project sharing needs extra care</AlertTitle>
 						<AlertDescription>
-							Personal projects often mix experiments, one-off vault references, and default
-							context. Prefer sharing a dedicated project boundary for cleaner collaboration.
+							Personal projects often mix experiments and one-off vault references. For cleaner
+							collaboration, consider sharing a dedicated project workspace.
 						</AlertDescription>
 					</Alert>
 				) : null}
@@ -154,7 +154,7 @@ export function ShareProjectDialog({
 					<TabsList className="grid w-full grid-cols-3">
 						<TabsTrigger value="members" className="min-w-0 px-2">
 							<Users className="mr-2 size-3.5" />
-							<span className="truncate">People</span>
+							<span className="truncate">People / Access</span>
 						</TabsTrigger>
 						<TabsTrigger value="invitations" className="min-w-0 px-2">
 							<MailPlus className="mr-2 size-3.5" />
@@ -184,15 +184,15 @@ function PermissionSummary() {
 	return (
 		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2">
 			<div>
-				<div className="font-medium text-foreground">Permission</div>
+				<div className="font-medium text-foreground">Default role</div>
 				<p className="mt-1 text-muted-foreground">
 					Viewers can read project skills and vault reference names. They cannot edit content.
 				</p>
 			</div>
 			<div>
-				<div className="font-medium text-foreground">Agent binding</div>
+				<div className="font-medium text-foreground">Agent use</div>
 				<p className="mt-1 text-muted-foreground">
-					Accepting access does not attach the project to an agent. The recipient chooses that
+					Accepting gives project access only. The recipient can attach the project to an agent
 					later.
 				</p>
 			</div>
@@ -203,9 +203,8 @@ function PermissionSummary() {
 function ShareLinksPanel({ projectId }: { projectId: string }) {
 	const qc = useQueryClient();
 	const [label, setLabel] = useState("");
-	// The just-created link's full URL — surfaced once in a banner
-	// because the server stores only the prefix going forward.
-	// Cleared on next create or on dialog close (panel unmount).
+	// The just-created link's full URL is shown once because the server
+	// stores only the prefix going forward.
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
 
 	const authedFetch = useAuthedFetch();
@@ -272,6 +271,12 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="space-y-3">
+			<div className="space-y-1">
+				<h3 className="text-sm font-semibold">Share links</h3>
+				<p className="text-xs text-muted-foreground">
+					Create a link when you want someone to accept viewer access without a directed invite.
+				</p>
+			</div>
 			<form
 				className="space-y-2 rounded-lg border p-3"
 				onSubmit={(e) => {
@@ -386,16 +391,16 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 				<div className="mt-2 rounded-md border bg-background/60 p-2">
 					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div className="min-w-0">
-							<div className="text-xs font-medium">Agent setup prompt</div>
+							<div className="text-xs font-medium">Use with agent prompt</div>
 							<div className="truncate font-mono text-[11px] text-muted-foreground">
-								Viewer access · explicit agent binding · {link.prefix}
+								Viewer access · attach to an agent later · {link.prefix}
 							</div>
 						</div>
 						<Button
 							variant="outline"
 							size="sm"
 							onClick={() => copyText(agentPrompt, "Agent prompt copied")}
-							aria-label={`Copy agent setup prompt for share link ${link.prefix}`}
+							aria-label={`Copy use with agent prompt for share link ${link.prefix}`}
 						>
 							<Copy className="mr-1.5 size-3.5" />
 							Copy prompt
@@ -557,6 +562,12 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="space-y-3">
+			<div className="space-y-1">
+				<h3 className="text-sm font-semibold">Invite people</h3>
+				<p className="text-xs text-muted-foreground">
+					Send a direct invite to someone who already has a Clawdi account.
+				</p>
+			</div>
 			<form
 				onSubmit={(e) => {
 					e.preventDefault();
@@ -583,8 +594,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				The recipient needs a Clawdi account. They join as a read-only viewer and bind to agents
-				separately.
+				They join as a read-only viewer. Using the project with an agent is a separate step.
 			</p>
 			<Separator />
 			{invites.isLoading ? (
@@ -724,9 +734,12 @@ function MembersPanel({ projectId }: { projectId: string }) {
 	return (
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-				<p className="text-xs text-muted-foreground sm:max-w-sm">
-					People who accepted access. Viewers can read this project until you remove them.
-				</p>
+				<div className="space-y-1">
+					<h3 className="text-sm font-semibold">People with access</h3>
+					<p className="text-xs text-muted-foreground sm:max-w-sm">
+						People who accepted access. Viewers can read this project until you remove them.
+					</p>
+				</div>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
 						<Button

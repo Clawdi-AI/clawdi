@@ -85,7 +85,7 @@ export async function projectInvitesCommand(
 		return;
 	}
 	console.log(chalk.bold(`Pending project invites (${items.length})`));
-	console.log(chalk.gray("  Accepting grants read-only viewer access. Agent binding is separate."));
+	console.log(chalk.gray("  Accepting grants read-only viewer access. Agent use is separate."));
 	for (const inv of items) {
 		console.log(
 			`  ${chalk.bold(inv.invitee_email)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +

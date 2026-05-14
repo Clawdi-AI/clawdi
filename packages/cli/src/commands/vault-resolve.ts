@@ -81,7 +81,9 @@ export async function vaultResolveCommand(
 		} else if (r.status === 409) {
 			const detail = (body as { detail?: { code?: string; message?: string } }).detail;
 			console.error(chalk.red(detail?.message ?? "Vault conflict blocked."));
-			console.error(chalk.gray("Re-run with --allow-conflicts to use the first agent project."));
+			console.error(
+				chalk.gray("Re-run with --allow-conflicts to use the first project in agent order."),
+			);
 		} else {
 			console.error(chalk.red(`vault resolve failed (${r.status}).`));
 		}
@@ -108,10 +110,10 @@ export async function vaultResolveCommand(
 						: entry.reason === "skipped"
 							? chalk.yellow("skipped")
 							: chalk.gray("not found");
-			const binding = entry.binding_type
-				? chalk.gray(` ${entry.binding_type}:${entry.priority}`)
+			const agentUse = entry.binding_type
+				? chalk.gray(` ${formatAgentUse(entry.binding_type)}:${entry.priority}`)
 				: "";
-			console.log(`    ${entry.alias} ${suffix}${binding}`);
+			console.log(`    ${entry.alias} ${suffix}${agentUse}`);
 		}
 	}
 }
@@ -119,4 +121,10 @@ export async function vaultResolveCommand(
 function resolveAgentId(agent: string): string {
 	const localEnvId = getEnvIdByAgent(agent);
 	return localEnvId ?? agent;
+}
+
+function formatAgentUse(value: string): string {
+	if (value === "primary") return "home";
+	if (value === "context") return "attached";
+	return value;
 }

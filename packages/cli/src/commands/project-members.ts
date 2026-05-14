@@ -93,7 +93,7 @@ export async function projectMembersCommand(
 			return;
 		}
 		console.log(`${chalk.green("✓")} Removed ${matches[0].user_email ?? matches[0].user_id}.`);
-		console.log(chalk.gray("  Their agent bindings for this project will stop applying."));
+		console.log(chalk.gray("  Their agents can no longer use this project through that access."));
 		return;
 	}
 
@@ -146,7 +146,7 @@ export async function projectLeaveCommand(
 	}
 	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
 	console.log(
-		chalk.gray("  Project membership removed. Any agent context binding for it stops applying."),
+		chalk.gray("  Project membership removed. Your agents can no longer use this project."),
 	);
 }
 

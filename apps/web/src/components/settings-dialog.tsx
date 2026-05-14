@@ -152,7 +152,7 @@ function GeneralPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Projects — link to the first-class context/binding control surface.
+// Projects — link to shared workspaces and access management.
 // ---------------------------------------------------------------------------
 
 function ProjectsPanel({ onClose }: { onClose: () => void }) {
@@ -160,13 +160,13 @@ function ProjectsPanel({ onClose }: { onClose: () => void }) {
 		<>
 			<PanelHeader
 				title="Projects"
-				description="Projects define the context boundaries that people and agents can share and manage."
+				description="Projects are shared workspaces for people and agents."
 			/>
 			<div className="rounded-lg border p-4">
 				<div className="flex items-start gap-3">
 					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
 					<div className="min-w-0 flex-1 space-y-2">
-						<div className="text-sm font-medium">Manage project access and bindings</div>
+						<div className="text-sm font-medium">Manage project access</div>
 						<p className="text-sm text-muted-foreground">
 							Use the Projects page to review owned projects, shared memberships, share links,
 							invitations, and member access in one place.

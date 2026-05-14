@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runnable no-Docker smoke for the project-sharing + agent-bindings paths.
+# Runnable no-Docker smoke for project sharing and agent workspace paths.
 #
 # This script executes tests that map to the live demo in:
 #
@@ -16,9 +16,9 @@ section() {
   printf "\n== %s ==\n" "$1"
 }
 
-section "Project sharing + agent bindings demo smoke"
+section "Project sharing + agent workspace demo smoke"
 echo "Repository: $ROOT"
-echo "Story: project owner shares -> recipient accepts -> agent binds -> vault provenance -> revoke cleanup"
+echo "Story: project owner shares -> recipient accepts -> agent uses project -> vault provenance -> revoke cleanup"
 
 section "Backend role paths"
 (

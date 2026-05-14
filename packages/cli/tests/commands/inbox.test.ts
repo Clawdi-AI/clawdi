@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe("inboxAcceptCommand", () => {
-	it("prints exact follow-up command when accepting without agent binding", async () => {
+	it("prints exact use-with-agent command when accepting project access", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
@@ -81,10 +81,11 @@ describe("inboxAcceptCommand", () => {
 		}
 
 		const out = lines.join("\n");
-		expect(out).toContain("Joined as viewer");
-		expect(out).toContain("Read-only project access is active.");
+		expect(out).toContain("Accepted project access for @alice-a3b4/shared-toolkit.");
+		expect(out).toContain("Role: viewer (read-only).");
 		expect(out).toContain(
-			"Next: clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
+			"Use with agent: clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
+		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 	});
 });

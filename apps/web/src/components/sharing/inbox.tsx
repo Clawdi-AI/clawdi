@@ -74,10 +74,10 @@ export function Inbox() {
 			refetchMembershipDerived();
 			const bound = result.bound_agent_ids?.length ?? 0;
 			if (bound > 0) {
-				toast.success(`Joined project and bound to ${bound} agent${bound === 1 ? "" : "s"}.`);
+				toast.success(`Joined project and attached it to ${bound} agent${bound === 1 ? "" : "s"}.`);
 				return;
 			}
-			toast.success("Joined project as viewer. Bind it to agents when you're ready.");
+			toast.success("Joined project as viewer. Use it with an agent when you're ready.");
 		},
 		onError: (e) => {
 			toast.error(
@@ -120,7 +120,7 @@ export function Inbox() {
 			<AlertDescription className="space-y-3">
 				<p className="text-xs text-muted-foreground">
 					Accept to gain project access. You join as a <Badge variant="secondary">viewer</Badge>{" "}
-					with read-only access; agent binding is a separate step.
+					with read-only access; using it with an agent is a separate step.
 				</p>
 				<ul className="space-y-2">
 					{items.map((inv, idx) => {

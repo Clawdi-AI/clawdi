@@ -103,17 +103,17 @@ export async function projectShareCommand(
 		),
 	);
 	console.log(chalk.gray("Access: viewer role, read-only project membership."));
-	console.log(chalk.gray("Agent binding is separate and explicit after accept."));
+	console.log(chalk.gray("Using it with an agent is separate and explicit after accept."));
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
 	console.log(`Recipient accepts: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	if (projectSlug) {
 		console.log(
-			`Recipient binds later: ${chalk.cyan(`clawdi agent projects add-context <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
+			`Recipient uses with agent later: ${chalk.cyan(`clawdi agent projects add-context <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
 		);
 	}
 	console.log();
-	console.log(chalk.bold("Agent setup prompt:"));
+	console.log(chalk.bold("Use with agent prompt:"));
 	console.log(buildShareAgentHandoffPrompt(body));
 }

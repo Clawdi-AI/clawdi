@@ -3,14 +3,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowLeft,
+	BookOpen,
+	Bot,
 	ExternalLink,
-	GitBranch,
+	Eye,
 	KeyRound,
 	LogOut,
 	type LucideIcon,
 	Plus,
 	Share2,
 	Sparkles,
+	Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -178,7 +181,7 @@ export default function ProjectDetailPage() {
 
 			<PageHeader
 				title={displayProjectName(project)}
-				description={`${isOwner ? "Owned" : "Shared viewer"} · ${projectKindMeta(project.kind).label} · ${project.slug}`}
+				description={`${isOwner ? "Project workspace" : "Shared workspace"} · ${project.slug}`}
 				actions={
 					<div className="flex items-center gap-2">
 						<ProjectKindBadge kind={project.kind} />
@@ -198,71 +201,87 @@ export default function ProjectDetailPage() {
 				}
 			/>
 
-			<ProjectStatsStrip
+			<OverviewCard
+				project={project}
+				isOwner={isOwner}
 				skillCount={skills.data?.items.length ?? 0}
 				vaultCount={vaults.data?.items.length ?? 0}
 			/>
 
-			{!isOwner ? <SharedReadOnlyNotice project={project} /> : null}
-
 			<div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
 				<div className="space-y-6">
-					<section className="space-y-3">
+					<section className="space-y-5 rounded-lg border bg-card/60 p-4">
 						<ContentHeader
-							title="Skills"
+							title="Content library"
 							description={
 								isOwner
-									? "Reusable instructions stored directly in this project."
-									: "Readable shared instructions. You cannot edit this project's content."
+									? "Skills and vault references saved in this workspace."
+									: "Shared resources you can read from this workspace."
 							}
 						/>
-						{isOwner ? (
-							<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
-						) : null}
-						{skills.isLoading ? (
-							<Skeleton className="h-24 w-full" />
-						) : skills.error ? (
-							<ErrorLine message={errorMessage(skills.error)} />
-						) : skills.data?.items.length ? (
-							<div className="divide-y rounded-lg border">
-								{skills.data.items.map((skill) => (
-									<SkillRow
-										key={`${skill.project_id}:${skill.skill_key}`}
-										skill={skill}
-										ownProjectId={project.id}
-									/>
-								))}
+						<ProjectStatsStrip
+							skillCount={skills.data?.items.length ?? 0}
+							vaultCount={vaults.data?.items.length ?? 0}
+						/>
+						<div className="space-y-5">
+							<div className="space-y-3">
+								<ContentHeader
+									title="Skills"
+									description={
+										isOwner
+											? "Reusable instructions stored in this workspace."
+											: "Readable instructions shared by the owner."
+									}
+								/>
+								{isOwner ? (
+									<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
+								) : null}
+								{skills.isLoading ? (
+									<Skeleton className="h-24 w-full" />
+								) : skills.error ? (
+									<ErrorLine message={errorMessage(skills.error)} />
+								) : skills.data?.items.length ? (
+									<div className="divide-y rounded-lg border bg-background/50">
+										{skills.data.items.map((skill) => (
+											<SkillRow
+												key={`${skill.project_id}:${skill.skill_key}`}
+												skill={skill}
+												ownProjectId={project.id}
+											/>
+										))}
+									</div>
+								) : (
+									<EmptyLine message="No skills are visible in this workspace yet." />
+								)}
 							</div>
-						) : (
-							<EmptyLine message="No skills are visible in this project yet." />
-						)}
-					</section>
 
-					<section className="space-y-3">
-						<ContentHeader
-							title="Vault references"
-							description={
-								isOwner
-									? "Project-owned vault references available to bound agents."
-									: "Read-only vault reference names from the project owner."
-							}
-						/>
-						{isOwner ? (
-							<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
-						) : null}
-						{vaults.isLoading ? (
-							<Skeleton className="h-24 w-full" />
-						) : vaults.error ? (
-							<ErrorLine message={errorMessage(vaults.error)} />
-						) : vaults.data?.items.length ? (
-							<div className="divide-y rounded-lg border">
-								{vaults.data.items.map((vault) => (
-									<VaultRow key={vault.id} vault={vault} ownProjectId={project.id} />
-								))}
+							<div className="space-y-3">
+								<ContentHeader
+									title="Vault references"
+									description={
+										isOwner
+											? "Vault key references saved in this workspace."
+											: "Read-only vault key names shared by the owner."
+									}
+								/>
+								{isOwner ? (
+									<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
+								) : null}
+								{vaults.isLoading ? (
+									<Skeleton className="h-24 w-full" />
+								) : vaults.error ? (
+									<ErrorLine message={errorMessage(vaults.error)} />
+								) : vaults.data?.items.length ? (
+									<div className="divide-y rounded-lg border bg-background/50">
+										{vaults.data.items.map((vault) => (
+											<VaultRow key={vault.id} vault={vault} ownProjectId={project.id} />
+										))}
+									</div>
+								) : (
+									<EmptyLine message="No vault references are visible in this workspace yet." />
+								)}
 							</div>
-						) : (
-							<EmptyLine message="No vault references are visible in this project yet." />
-						)}
+						</div>
 					</section>
 				</div>
 
@@ -282,17 +301,58 @@ export default function ProjectDetailPage() {
 	);
 }
 
-function SharedReadOnlyNotice({ project }: { project: ProjectRow }) {
+function OverviewCard({
+	project,
+	isOwner,
+	skillCount,
+	vaultCount,
+}: {
+	project: ProjectRow;
+	isOwner: boolean;
+	skillCount: number;
+	vaultCount: number;
+}) {
+	const owner = isOwner ? "You" : (project.owner_display ?? project.owner_handle ?? "Unknown");
 	return (
-		<Alert>
-			<GitBranch className="size-4" />
-			<AlertTitle>Viewer access</AlertTitle>
-			<AlertDescription>
-				You can read this project
-				{project.owner_display ? ` from ${project.owner_display}` : ""}. It will not affect any
-				agent until you bind it as an attached context.
-			</AlertDescription>
-		</Alert>
+		<section className="rounded-lg border bg-card/60 p-4">
+			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+				<div className="min-w-0 space-y-3">
+					<div className="flex flex-wrap items-center gap-2">
+						<BookOpen className="size-4 text-muted-foreground" />
+						<h2 className="text-sm font-semibold">Overview</h2>
+						<Badge variant={isOwner ? "outline" : "secondary"}>
+							{isOwner ? "owner" : "viewer"}
+						</Badge>
+						<ProjectKindBadge kind={project.kind} />
+					</div>
+					<div className="grid gap-2 text-sm sm:grid-cols-3">
+						<OverviewField label="Workspace" value={displayProjectName(project)} />
+						<OverviewField label="Owner" value={owner} />
+						<OverviewField label="Access" value={isOwner ? "Edit and share" : "Read-only viewer"} />
+					</div>
+				</div>
+				<div className="grid min-w-52 gap-2 rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
+					<div className="flex items-center justify-between gap-3">
+						<span>Skills</span>
+						<span className="font-semibold text-foreground">{skillCount}</span>
+					</div>
+					<div className="flex items-center justify-between gap-3">
+						<span>Vault refs</span>
+						<span className="font-semibold text-foreground">{vaultCount}</span>
+					</div>
+					<div className="truncate font-mono">{project.slug}</div>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+function OverviewField({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="rounded-md border bg-background/60 px-3 py-2">
+			<div className="text-xs text-muted-foreground">{label}</div>
+			<div className="mt-1 truncate font-medium">{value}</div>
+		</div>
 	);
 }
 
@@ -302,22 +362,22 @@ function OwnerAccessPanel({ project }: { project: ProjectRow }) {
 		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
-					<Share2 className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Collaboration</h2>
+					<Users className="size-4 text-muted-foreground" />
+					<h2 className="text-sm font-semibold">Collaborators and access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Manage people, pending invites, and share links for this project. Shared members join as
-					read-only viewers.
+					Manage people, pending invites, and share links for this workspace. New members join as
+					viewers by default.
 				</p>
 			</div>
 			<div className="grid gap-2 text-xs text-muted-foreground">
 				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
-					<span>Default shared role</span>
+					<span>Default role</span>
 					<Badge variant="secondary">viewer</Badge>
 				</div>
 				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
-					<span>Agent access</span>
-					<span className="font-medium text-foreground">Explicit binding</span>
+					<span>Manage</span>
+					<span className="font-medium text-foreground">People, Invites, Links</span>
 				</div>
 			</div>
 			<ShareProjectDialog
@@ -327,7 +387,7 @@ function OwnerAccessPanel({ project }: { project: ProjectRow }) {
 			>
 				<Button className="w-full" size="sm">
 					<Share2 className="mr-1.5 size-3.5" />
-					Share / manage access
+					Manage sharing
 				</Button>
 			</ShareProjectDialog>
 		</section>
@@ -348,12 +408,12 @@ function SharedAccessPanel({
 		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
-					<GitBranch className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Access</h2>
+					<Eye className="size-4 text-muted-foreground" />
+					<h2 className="text-sm font-semibold">You have viewer access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You are a read-only viewer. Bind this project to an agent when you want its context in
-					runtime resolution.
+					You can read this workspace. Attach this project to an agent when you want it available
+					during a run.
 				</p>
 			</div>
 			<div className="space-y-2 rounded-md border bg-background/60 p-3 text-xs">
@@ -371,8 +431,8 @@ function SharedAccessPanel({
 			</div>
 			<Button asChild size="sm" className="w-full">
 				<Link href="/agents">
-					<GitBranch className="mr-1.5 size-3.5" />
-					Bind to agent
+					<Bot className="mr-1.5 size-3.5" />
+					Use with agent
 				</Link>
 			</Button>
 			<AlertDialog>
@@ -391,8 +451,8 @@ function SharedAccessPanel({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave "{displayProjectName(project)}"?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your read-only membership. Any context binding for this project stops
-							applying to your agents.
+							This removes your read-only membership. Agents will no longer be able to use this
+							project through your account.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -412,9 +472,9 @@ function SharedAccessPanel({
 
 function ProjectStatsStrip({ skillCount, vaultCount }: { skillCount: number; vaultCount: number }) {
 	return (
-		<div className="grid divide-y rounded-lg border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+		<div className="grid divide-y rounded-md bg-muted/20 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
-			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
+			<StatCell icon={KeyRound} label="Vault refs" value={vaultCount} />
 		</div>
 	);
 }
@@ -633,13 +693,13 @@ function projectKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
-			description: "Reusable context for a project, team, or workflow.",
+			description: "Shared workspace for a project, team, or workflow.",
 		};
 	}
 	if (kind === "environment") {
 		return {
 			label: "Environment",
-			description: "Project created by an agent environment.",
+			description: "Workspace created by an agent environment.",
 		};
 	}
 	if (kind === "personal") {

@@ -112,9 +112,7 @@ export async function projectShareLinksCommand(
 		return;
 	}
 	console.log(chalk.bold(`Project share links (${links.length})`));
-	console.log(
-		chalk.gray("  Links grant viewer access after accept. Agent binding stays separate."),
-	);
+	console.log(chalk.gray("  Links grant viewer access after accept. Agent use stays separate."));
 	for (const link of links) {
 		console.log(formatRow(link));
 	}

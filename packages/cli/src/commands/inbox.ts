@@ -454,19 +454,22 @@ async function acceptedProjectAlias(
 }
 
 function renderJoinedSuccess(body: JoinedProject, opts: AcceptOpts, projectAlias: string): void {
-	console.log(
-		`${chalk.green("✓")} Joined as viewer — ${projectAlias} is now available to your account.`,
-	);
-	console.log(chalk.gray("  Read-only project access is active."));
+	console.log(`${chalk.green("✓")} Accepted project access for ${projectAlias}.`);
+	console.log(chalk.gray("  Role: viewer (read-only)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
 		const bindAs = (opts.bindAs ?? "context").toLowerCase();
+		const useLabel = bindAs === "primary" ? "Home project" : "attached project";
 		console.log(
-			chalk.gray(`  Bound to ${bound.length} agent${bound.length === 1 ? "" : "s"} as ${bindAs}.`),
+			chalk.gray(
+				`  Attached to ${bound.length} agent${bound.length === 1 ? "" : "s"} as ${useLabel}.`,
+			),
 		);
 	} else {
 		console.log(
-			chalk.gray(`  Next: clawdi agent projects add-context <agent-id> --project ${projectAlias}`),
+			chalk.gray(
+				`  Use with agent: clawdi agent projects add-context <agent-id> --project ${projectAlias}`,
+			),
 		);
 	}
 }

@@ -30,7 +30,7 @@ import { env } from "@/lib/env";
  *   1. Anonymous preview — call GET /api/share/{token}/preview,
  *      render project name, owner display+handle, skill/vault counts.
  *   2. Sign-in CTA upgrades to a permanent ProjectMembership.
- *   3. Agent bindings are explicit and handled separately after accept.
+ *   3. Agent use is explicit and handled separately after accept.
  */
 
 interface SharePreview {
@@ -182,7 +182,8 @@ export default function SharePage() {
 							<CheckCircle2 />
 							<AlertTitle>You're in.</AlertTitle>
 							<AlertDescription>
-								Added to your projects as viewer access. Agent binding is separate. Redirecting…
+								Added to your projects as viewer access. Using it with an agent is separate.
+								Redirecting…
 							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
@@ -204,14 +205,14 @@ export default function SharePage() {
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">viewer</Badge> — read-only access to
-								skills{data.vault_count > 0 ? " and vault key references" : ""}. Agent bindings are
-								managed separately.
+								skills{data.vault_count > 0 ? " and vault key references" : ""}. You can use it with
+								an agent later.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member — check your dashboard and bind this project to agents
+										You're already a member — check your dashboard and use this project with agents
 										as needed.
 									</AlertDescription>
 								</Alert>

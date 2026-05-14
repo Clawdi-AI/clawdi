@@ -88,7 +88,7 @@ export async function projectListCommand(opts: {
 	}
 
 	if (!opts.sharedWithMe) {
-		console.log(chalk.bold(`Projects you own (${owned.length}):`));
+		console.log(chalk.bold(`My projects (${owned.length}):`));
 		for (const s of owned) {
 			const alias = projectAlias(s);
 			console.log(
@@ -97,6 +97,8 @@ export async function projectListCommand(opts: {
 			if (s.name && s.name !== s.slug) {
 				console.log(`    ${chalk.dim(s.name)}`);
 			}
+			console.log(`    ${chalk.gray("Owner: you · Role: owner")}`);
+			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(`    ${chalk.gray(`Share: clawdi project share ${alias}`)}`);
 		}
 	}
@@ -104,18 +106,18 @@ export async function projectListCommand(opts: {
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
-		console.log(
-			chalk.gray("  Viewer access is read-only. Bind explicitly before an agent uses it."),
-		);
+		console.log(chalk.gray("  Viewer access is read-only. Use with an agent when needed."));
 		for (const s of shared) {
 			const alias = projectAlias(s);
 			console.log(
 				`  ${chalk.magenta(alias.padEnd(24))} ${chalk.gray("viewer")}  ${chalk.gray(s.id.slice(0, 8))}`,
 			);
-			if (s.owner_display) console.log(`    ${chalk.dim(`Owner: ${s.owner_display}`)}`);
-			console.log(`    ${chalk.gray(`Next: clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Bind: clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Owner: ${s.owner_display ?? s.owner_handle ?? "Unknown"} · Role: viewer`)}`,
+			);
+			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
+			console.log(
+				`    ${chalk.gray(`Use with agent: clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}

@@ -32,8 +32,8 @@ afterEach(() => {
 	process.exitCode = undefined;
 });
 
-describe("agent project binding commands", () => {
-	it("prints Home and attached context sections with precedence copy", async () => {
+describe("agent project commands", () => {
+	it("prints Home and attached project sections with order copy", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -41,7 +41,7 @@ describe("agent project binding commands", () => {
 				response: () =>
 					jsonResponse([
 						{
-							id: "binding-primary",
+							id: "attach-primary",
 							agent_id: "agent-1",
 							project_id: "project-1",
 							binding_type: "primary",
@@ -50,7 +50,7 @@ describe("agent project binding commands", () => {
 							created_at: "2026-05-14T00:00:00Z",
 						},
 						{
-							id: "binding-context",
+							id: "attach-shared",
 							agent_id: "agent-1",
 							project_id: "project-2",
 							binding_type: "context",
@@ -97,15 +97,20 @@ describe("agent project binding commands", () => {
 		}
 
 		const out = lines.join("\n");
+		expect(out).toContain("Projects used by agent-1");
 		expect(out).toContain("Home project");
-		expect(out).toContain("Attached context projects (1)");
+		expect(out).toContain("Attached projects (1)");
 		expect(out).toContain("@alice-a3b4/shared-toolkit");
 		expect(out).toContain("viewer");
-		expect(out).toContain("Order matters: Home wins first, then attached contexts in order.");
-		expect(out).toContain("Reorder: clawdi agent projects reorder agent-1 --item <binding-id>:1");
+		expect(out).toContain("Order matters: Home wins first, then attached projects in order.");
+		expect(out).toContain(
+			"Reorder: clawdi agent projects reorder agent-1 --item <attachment-id>:1",
+		);
+		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
+		expect(out).not.toContain("context project");
 	});
 
-	it("lists bindings with project metadata in JSON", async () => {
+	it("lists API rows with project metadata in JSON", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",

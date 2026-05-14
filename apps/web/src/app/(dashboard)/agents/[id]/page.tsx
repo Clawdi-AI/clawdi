@@ -369,7 +369,7 @@ export default function AgentDetailPage() {
 						</TabsContent>
 
 						<TabsContent value="projects" className="mt-0">
-							<ProjectBindingsPanel
+							<AgentWorkspacePanel
 								agentId={id}
 								bindings={projectBindings ?? []}
 								projects={projects ?? []}
@@ -388,7 +388,7 @@ export default function AgentDetailPage() {
 	);
 }
 
-function ProjectBindingsPanel({
+function AgentWorkspacePanel({
 	agentId,
 	bindings,
 	projects,
@@ -448,9 +448,9 @@ function ProjectBindingsPanel({
 			setContextProjectId("");
 			setContextPriority("");
 			onChanged();
-			toast.success("Context project attached");
+			toast.success("Project attached");
 		},
-		onError: (e) => toast.error("Failed to add context project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to attach project", { description: errorMessage(e) }),
 	});
 
 	const removeBinding = useMutation({
@@ -461,10 +461,9 @@ function ProjectBindingsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Context project removed");
+			toast.success("Project detached");
 		},
-		onError: (e) =>
-			toast.error("Failed to remove context project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to detach project", { description: errorMessage(e) }),
 	});
 
 	const reorder = useMutation({
@@ -497,22 +496,26 @@ function ProjectBindingsPanel({
 
 	return (
 		<div className="space-y-4">
+			<div className="space-y-1">
+				<h2 className="text-base font-semibold">Projects used by this agent</h2>
+				<p className="text-xs text-muted-foreground">
+					Home is the default writable workspace. Attached projects add resources according to your
+					access; order affects lookup and provenance.
+				</p>
+			</div>
 			<div className="rounded-lg border bg-card/60 p-4">
 				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
 					<div className="space-y-3">
 						<div className="flex items-center gap-2">
 							<Home className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Home / Primary project</h2>
+							<h2 className="text-sm font-semibold">Home project</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							The Home project is this agent&apos;s default writable context. Shared viewer projects
-							stay attached as context, not Home.
+							The Home project is this agent&apos;s default writable workspace. Shared viewer
+							projects can be attached, but they cannot be Home.
 						</p>
 						{primary ? (
-							<ProjectBindingLine
-								binding={primary}
-								project={projectsById.get(primary.project_id)}
-							/>
+							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
 						) : (
 							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
 								No explicit Home project yet.
@@ -545,11 +548,11 @@ function ProjectBindingsPanel({
 					<div className="space-y-2">
 						<div className="flex items-center gap-2">
 							<Layers className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Attached context projects</h2>
+							<h2 className="text-sm font-semibold">Attached projects</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Context projects are read in order after Home. When vault keys or skills conflict, the
-							first project in the order wins and later matches remain available by provenance.
+							Attached projects are read after Home. When vault keys or skills conflict, the first
+							project in the order wins and later matches remain available by provenance.
 						</p>
 					</div>
 					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_auto]">
@@ -572,7 +575,7 @@ function ProjectBindingsPanel({
 							onClick={() => addContext.mutate()}
 						>
 							<Plus className="size-3.5" />
-							Attach
+							Attach project
 						</Button>
 					</div>
 				</div>
@@ -585,8 +588,8 @@ function ProjectBindingsPanel({
 				</div>
 				{contexts.length === 0 ? (
 					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-						No attached context projects yet. Attach an owned or shared project to extend this
-						agent&apos;s readable context.
+						No attached projects yet. Attach an owned or shared project to make it available to this
+						agent.
 					</div>
 				) : (
 					<div className="divide-y rounded-lg border bg-card/60">
@@ -599,7 +602,7 @@ function ProjectBindingsPanel({
 									<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
 										{index + 1}
 									</div>
-									<ProjectBindingLine
+									<ProjectUseLine
 										binding={binding}
 										project={projectsById.get(binding.project_id)}
 									/>
@@ -610,7 +613,8 @@ function ProjectBindingsPanel({
 										size="icon-sm"
 										disabled={index === 0 || reorder.isPending}
 										onClick={() => moveContext(binding.id, -1)}
-										aria-label="Move context project up"
+										title="Move up"
+										aria-label="Move project up"
 									>
 										<ArrowUp className="size-3.5" />
 									</Button>
@@ -619,7 +623,8 @@ function ProjectBindingsPanel({
 										size="icon-sm"
 										disabled={index === contexts.length - 1 || reorder.isPending}
 										onClick={() => moveContext(binding.id, 1)}
-										aria-label="Move context project down"
+										title="Move down"
+										aria-label="Move project down"
 									>
 										<ArrowDown className="size-3.5" />
 									</Button>
@@ -628,7 +633,8 @@ function ProjectBindingsPanel({
 										size="icon-sm"
 										disabled={removeBinding.isPending && removeBinding.variables === binding.id}
 										onClick={() => removeBinding.mutate(binding.id)}
-										aria-label="Remove context project"
+										title="Detach"
+										aria-label="Detach project"
 									>
 										<Trash2 className="size-3.5 text-destructive" />
 									</Button>
@@ -675,7 +681,7 @@ function projectLabel(project: ProjectRow): string {
 		: project.slug;
 }
 
-function ProjectBindingLine({
+function ProjectUseLine({
 	binding,
 	project,
 }: {
@@ -683,7 +689,7 @@ function ProjectBindingLine({
 	project: ProjectRow | undefined;
 }) {
 	const label = project ? projectLabel(project) : binding.project_id;
-	const bindingLabel = binding.binding_type === "primary" ? "Home" : "Context";
+	const bindingLabel = binding.binding_type === "primary" ? "Home" : "Attached";
 	return (
 		<div className="min-w-0">
 			<div className="flex flex-wrap items-center gap-2">
