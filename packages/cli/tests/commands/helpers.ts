@@ -1,6 +1,40 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+const AGENT_HOME_OVERRIDE_KEYS = [
+	"CLAUDE_CONFIG_DIR",
+	"CODEX_HOME",
+	"HERMES_HOME",
+	"OPENCLAW_STATE_DIR",
+] as const;
+
+type AgentHomeOverrideKey = (typeof AGENT_HOME_OVERRIDE_KEYS)[number];
+
+export type AgentHomeOverrideSnapshot = Partial<Record<AgentHomeOverrideKey, string>>;
+
+/**
+ * Tests that set only `HOME` still need to neutralize agent-specific home
+ * overrides; those env vars take precedence over `HOME` in adapter path
+ * resolution and can leak host state into fixtures.
+ */
+export function snapshotAndClearAgentHomeOverrides(): AgentHomeOverrideSnapshot {
+	const snapshot: AgentHomeOverrideSnapshot = {};
+	for (const key of AGENT_HOME_OVERRIDE_KEYS) {
+		const value = process.env[key];
+		if (value !== undefined) snapshot[key] = value;
+		delete process.env[key];
+	}
+	return snapshot;
+}
+
+export function restoreAgentHomeOverrides(snapshot: AgentHomeOverrideSnapshot): void {
+	for (const key of AGENT_HOME_OVERRIDE_KEYS) {
+		const value = snapshot[key];
+		if (value !== undefined) process.env[key] = value;
+		else delete process.env[key];
+	}
+}
+
 export interface CapturedRequest {
 	url: string;
 	path: string;

@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { push } from "../../src/commands/push";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
+	type AgentHomeOverrideSnapshot,
 	type CapturedRequest,
 	jsonResponse,
 	mockFetch,
 	okEnvironmentProbe,
+	restoreAgentHomeOverrides,
 	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
 } from "./helpers";
 
 /** Narrow the JSON-parsed request body of `/api/sessions/batch`. */
@@ -35,12 +38,14 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 function setup(agent: AgentKey): {
 	sent: ReturnType<typeof mockFetch>["captured"];
 	restore: () => void;
 } {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -50,6 +55,8 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	// `push` sets `process.exitCode = 1` on abort paths (not logged in,
 	// no env). Reset to 0 so subsequent test files start clean —
 	// `bun test` (1.3.13+) inherits the file's final exitCode.

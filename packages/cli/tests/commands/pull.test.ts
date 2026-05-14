@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { pull } from "../../src/commands/pull";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { jsonResponse, mockFetch, okEnvironmentProbe, seedAuthAndEnv } from "./helpers";
+import {
+	type AgentHomeOverrideSnapshot,
+	jsonResponse,
+	mockFetch,
+	okEnvironmentProbe,
+	restoreAgentHomeOverrides,
+	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
+} from "./helpers";
 
 const TEST_PROJECT_ID = "00000000-0000-0000-0000-000000000099";
 
@@ -19,9 +27,11 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 function setup(agent: AgentKey) {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -30,6 +40,8 @@ function setup(agent: AgentKey) {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
