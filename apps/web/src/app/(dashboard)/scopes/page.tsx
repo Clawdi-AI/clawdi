@@ -147,7 +147,7 @@ export default function ScopesPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Scopes"
-				description="Compose the context boundaries your agents and collaborators can read."
+				description="Control which skills and vault references each agent or collaboration can see."
 				actions={
 					<Button
 						variant="outline"
@@ -183,10 +183,10 @@ export default function ScopesPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New manual scope</DialogTitle>
+						<DialogTitle>New project scope</DialogTitle>
 						<DialogDescription>
-							Create a scope for a project, team, or workflow. Default and agent scopes are created
-							automatically.
+							Create a reusable context for a project, team, or workflow. Add skills, vault
+							references, and shared scopes after creation.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -236,7 +236,7 @@ export default function ScopesPage() {
 				<SectionHeader
 					title="Owned scopes"
 					count={ownedScopes.length}
-					description="Scopes you control. Manual scopes are created by you, Default is your account fallback, and Agent belongs to a connected agent."
+					description="Scopes you control. Project scopes are created by you, Default is your account fallback, and Agent scopes belong to connected agents."
 				/>
 				{ownedScopes.length === 0 ? (
 					<EmptyLine message="No owned scopes yet. Connect an agent or create a shareable scope." />
@@ -258,7 +258,7 @@ export default function ScopesPage() {
 				<SectionHeader
 					title="Shared scopes"
 					count={sharedScopes.length}
-					description="Read-only scopes from other people. Use them in one or more owned scopes to make their content available there."
+					description="Read-only scopes from other people. Add them to one or more owned scopes to make their content available there."
 				/>
 				{sharedScopes.length === 0 ? (
 					<EmptyLine message="Accepted shares appear here before or after you use them in an owned scope." />
@@ -374,18 +374,18 @@ function ScopeRelationshipSummary({
 				icon={Link2}
 				label={
 					mounts.length === 0
-						? "Uses no other scopes"
-						: `Uses ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
+						? "Includes no other scopes"
+						: `Includes ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
 				}
 				muted={mounts.length === 0}
 			/>
 			{placements.length > 0 ? (
 				<RelationshipBadge
 					icon={Workflow}
-					label={`Used in ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
+					label={`Added to ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
 				/>
 			) : empty ? null : (
-				<RelationshipBadge icon={Workflow} label="Not used by another scope" muted />
+				<RelationshipBadge icon={Workflow} label="Not added elsewhere" muted />
 			)}
 		</div>
 	);
@@ -401,13 +401,13 @@ function SharedPlacementSummary({
 	if (placements.length === 0) {
 		return (
 			<div className="relative z-20 pointer-events-none">
-				<RelationshipBadge icon={Workflow} label="Not used yet" muted />
+				<RelationshipBadge icon={Workflow} label="Not added yet" muted />
 			</div>
 		);
 	}
 	return (
 		<div className="relative z-20 min-w-0 space-y-1 pointer-events-none">
-			<div className="text-xs font-medium text-muted-foreground">Used in</div>
+			<div className="text-xs font-medium text-muted-foreground">Added to</div>
 			<div className="flex min-w-0 flex-wrap gap-1.5">
 				{placements.slice(0, 3).map((placement) => (
 					<Badge key={placement.id} variant="outline" className="max-w-full font-normal">
@@ -467,8 +467,8 @@ function ScopeKindBadge({ kind }: { kind: string }) {
 function scopeKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
-			label: "Manual",
-			description: "Manual scope for a project, team, or workflow.",
+			label: "Project",
+			description: "Reusable scope for a project, team, or workflow.",
 		};
 	}
 	if (kind === "environment") {
@@ -479,7 +479,7 @@ function scopeKindMeta(kind: string) {
 	}
 	if (kind === "personal") {
 		return {
-			label: "Default",
+			label: "Account",
 			description: "Account default scope.",
 		};
 	}

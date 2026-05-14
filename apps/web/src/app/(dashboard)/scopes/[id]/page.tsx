@@ -189,7 +189,7 @@ export default function ScopeDetailPage() {
 			setSelectedParentId("");
 			setBlockedMount(null);
 			refresh();
-			toast.success("Scope added to the selected scope");
+			toast.success("Shared scope added");
 		},
 		onError: (e, vars) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -319,7 +319,7 @@ export default function ScopeDetailPage() {
 			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<h2 className="text-base font-semibold">Scope composition</h2>
+						<h2 className="text-base font-semibold">What this scope includes</h2>
 						{isOwner ? (
 							<ScopeMountsPanel scopeId={scope.id} showEmpty />
 						) : (
@@ -382,7 +382,7 @@ export default function ScopeDetailPage() {
 					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-3">
 							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Use this shared scope</h2>
+								<h2 className="text-sm font-semibold">Add this shared scope</h2>
 								<p className="text-xs text-muted-foreground">
 									Choose an owned scope where this shared content should become visible.
 								</p>
@@ -411,12 +411,12 @@ export default function ScopeDetailPage() {
 										}}
 									>
 										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Adding..." : "Use in selected scope"}
+										{mountSharedScope.isPending ? "Adding..." : "Add to selected scope"}
 									</Button>
 								</div>
 							) : ownedScopes.length > 0 ? (
 								<Badge variant="outline" className="w-fit">
-									Already used in every owned scope
+									Already added to every owned scope
 								</Badge>
 							) : (
 								<Badge variant="outline" className="w-fit">
@@ -426,7 +426,7 @@ export default function ScopeDetailPage() {
 							{blockedMount ? (
 								<VaultConflictsAlert
 									detail={blockedMount.detail}
-									actionLabel="Use anyway"
+									actionLabel="Add anyway"
 									actionPending={mountSharedScope.isPending}
 									onAction={() =>
 										mountSharedScope.mutate({
@@ -494,8 +494,8 @@ function ScopeStatsStrip({
 				isOwner ? "sm:grid-cols-4" : "sm:grid-cols-3"
 			}`}
 		>
-			{isOwner ? <StatCell icon={Workflow} label="Uses" value={sourceCount} /> : null}
-			<StatCell icon={Box} label={isOwner ? "Used by" : "Used in"} value={placementCount} />
+			{isOwner ? <StatCell icon={Workflow} label="Includes" value={sourceCount} /> : null}
+			<StatCell icon={Box} label="Added to" value={placementCount} />
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
 			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
@@ -533,13 +533,13 @@ function UsedInList({
 		<section className="space-y-2">
 			<div className="flex items-center gap-2 px-1">
 				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Used in owned scopes</h3>
+				<h3 className="font-semibold text-sm">Added to owned scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{placements.length}
 				</Badge>
 			</div>
 			{placements.length === 0 ? (
-				<EmptyLine message="This scope is not used in any owned scope." />
+				<EmptyLine message="This scope has not been added to any owned scope." />
 			) : (
 				<ul className="divide-y rounded-lg border">
 					{placements.map((placement) => {
@@ -580,7 +580,7 @@ function ContentHeader({
 			<div>
 				<h2 className="text-base font-semibold">{title}</h2>
 				<p className="text-sm text-muted-foreground">
-					{direct} direct / {composed} from scopes this scope uses
+					{direct} direct / {composed} from scopes included here
 				</p>
 			</div>
 		</div>
@@ -645,8 +645,8 @@ function ScopeKindBadge({ kind }: { kind: string }) {
 function scopeKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
-			label: "Manual",
-			description: "Manual scope for a project, team, or workflow.",
+			label: "Project",
+			description: "Reusable scope for a project, team, or workflow.",
 		};
 	}
 	if (kind === "environment") {
@@ -657,7 +657,7 @@ function scopeKindMeta(kind: string) {
 	}
 	if (kind === "personal") {
 		return {
-			label: "Default",
+			label: "Account",
 			description: "Account default scope.",
 		};
 	}
