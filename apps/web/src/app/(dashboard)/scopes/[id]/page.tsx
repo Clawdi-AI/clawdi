@@ -189,7 +189,7 @@ export default function ScopeDetailPage() {
 			setSelectedParentId("");
 			setBlockedMount(null);
 			refresh();
-			toast.success("Scope mounted into target scope");
+			toast.success("Scope added to the selected scope");
 		},
 		onError: (e, vars) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -203,7 +203,7 @@ export default function ScopeDetailPage() {
 					return;
 				}
 			}
-			toast.error("Failed to mount scope", {
+			toast.error("Failed to add scope", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -219,7 +219,7 @@ export default function ScopeDetailPage() {
 			toast.success("Left shared scope", {
 				description:
 					body.mounts_removed > 0
-						? `Removed ${body.mounts_removed} mount ${body.mounts_removed === 1 ? "edge" : "edges"}.`
+						? `Removed this scope from ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}.`
 						: "Membership removed.",
 			});
 			router.push("/scopes");
@@ -287,13 +287,17 @@ export default function ScopeDetailPage() {
 			</Button>
 
 			<PageHeader
-				title={scope.name}
-				description={`${isOwner ? "Owned" : "Shared viewer"} ${scope.kind} scope · ${scope.slug}`}
+				title={displayScopeName(scope)}
+				description={`${isOwner ? "Owned" : "Shared viewer"} · ${scopeKindMeta(scope.kind).label} · ${scope.slug}`}
 				actions={
 					<div className="flex items-center gap-2">
 						<ScopeKindBadge kind={scope.kind} />
 						{isOwner ? (
-							<ShareScopeDialog scopeId={scope.id} scopeName={scope.name} scopeKind={scope.kind}>
+							<ShareScopeDialog
+								scopeId={scope.id}
+								scopeName={displayScopeName(scope)}
+								scopeKind={scope.kind}
+							>
 								<Button variant="outline" size="sm">
 									<Share2 className="mr-1.5 size-3.5" />
 									Share
@@ -315,16 +319,16 @@ export default function ScopeDetailPage() {
 			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<h2 className="text-base font-semibold">Composition</h2>
+						<h2 className="text-base font-semibold">Scope composition</h2>
 						{isOwner ? (
 							<ScopeMountsPanel scopeId={scope.id} showEmpty />
 						) : (
 							<div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
 								<UserCheck className="size-4" />
-								<span>Source mounts are owner-managed.</span>
+								<span>The owner controls what this shared scope includes.</span>
 							</div>
 						)}
-						<MountedIntoList placements={placements} ownedScopeById={ownedScopeById} />
+						<UsedInList placements={placements} ownedScopeById={ownedScopeById} />
 					</section>
 
 					<section className="space-y-3">
@@ -378,21 +382,21 @@ export default function ScopeDetailPage() {
 					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-3">
 							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Mount this shared scope</h2>
+								<h2 className="text-sm font-semibold">Use this shared scope</h2>
 								<p className="text-xs text-muted-foreground">
-									Pick an owned scope where this shared content should become visible.
+									Choose an owned scope where this shared content should become visible.
 								</p>
 							</div>
 							{mountTargets.length > 0 ? (
 								<div className="flex flex-col gap-2">
 									<Select value={selectedParentId} onValueChange={setSelectedParentId}>
-										<SelectTrigger aria-label={`Select target scope for ${scope.name}`}>
-											<SelectValue placeholder="Mount into owned scope" />
+										<SelectTrigger aria-label={`Select owned scope for ${displayScopeName(scope)}`}>
+											<SelectValue placeholder="Choose owned scope" />
 										</SelectTrigger>
 										<SelectContent>
 											{mountTargets.map((target) => (
 												<SelectItem key={target.id} value={target.id}>
-													{target.name} ({target.slug})
+													{displayScopeName(target)} ({target.slug})
 												</SelectItem>
 											))}
 										</SelectContent>
@@ -407,12 +411,12 @@ export default function ScopeDetailPage() {
 										}}
 									>
 										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Mounting..." : "Mount into target"}
+										{mountSharedScope.isPending ? "Adding..." : "Use in selected scope"}
 									</Button>
 								</div>
 							) : ownedScopes.length > 0 ? (
 								<Badge variant="outline" className="w-fit">
-									Mounted into every owned scope
+									Already used in every owned scope
 								</Badge>
 							) : (
 								<Badge variant="outline" className="w-fit">
@@ -422,7 +426,7 @@ export default function ScopeDetailPage() {
 							{blockedMount ? (
 								<VaultConflictsAlert
 									detail={blockedMount.detail}
-									actionLabel="Mount anyway"
+									actionLabel="Use anyway"
 									actionPending={mountSharedScope.isPending}
 									onAction={() =>
 										mountSharedScope.mutate({
@@ -446,10 +450,10 @@ export default function ScopeDetailPage() {
 								</AlertDialogTrigger>
 								<AlertDialogContent>
 									<AlertDialogHeader>
-										<AlertDialogTitle>Leave "{scope.name}"?</AlertDialogTitle>
+										<AlertDialogTitle>Leave "{displayScopeName(scope)}"?</AlertDialogTitle>
 										<AlertDialogDescription>
-											This removes your read membership and every mount from your owned scopes. The
-											owner's scope is unchanged.
+											This removes your read membership and removes this scope from every owned
+											scope where you use it. The owner's scope is unchanged.
 										</AlertDialogDescription>
 									</AlertDialogHeader>
 									<AlertDialogFooter>
@@ -490,10 +494,10 @@ function ScopeStatsStrip({
 				isOwner ? "sm:grid-cols-4" : "sm:grid-cols-3"
 			}`}
 		>
-			{isOwner ? <StatCell icon={Workflow} label="Source scopes" value={sourceCount} /> : null}
-			<StatCell icon={Box} label="Mounted into" value={placementCount} />
-			<StatCell icon={Sparkles} label="Visible skills" value={skillCount} />
-			<StatCell icon={KeyRound} label="Visible vaults" value={vaultCount} />
+			{isOwner ? <StatCell icon={Workflow} label="Uses" value={sourceCount} /> : null}
+			<StatCell icon={Box} label={isOwner ? "Used by" : "Used in"} value={placementCount} />
+			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
+			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
 	);
 }
@@ -518,7 +522,7 @@ function StatCell({
 	);
 }
 
-function MountedIntoList({
+function UsedInList({
 	placements,
 	ownedScopeById,
 }: {
@@ -529,13 +533,13 @@ function MountedIntoList({
 		<section className="space-y-2">
 			<div className="flex items-center gap-2 px-1">
 				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Mounted into owned scopes</h3>
+				<h3 className="font-semibold text-sm">Used in owned scopes</h3>
 				<Badge variant="secondary" className="text-xs">
 					{placements.length}
 				</Badge>
 			</div>
 			{placements.length === 0 ? (
-				<EmptyLine message="This scope is not mounted into any owned scope." />
+				<EmptyLine message="This scope is not used in any owned scope." />
 			) : (
 				<ul className="divide-y rounded-lg border">
 					{placements.map((placement) => {
@@ -544,15 +548,12 @@ function MountedIntoList({
 							<li key={placement.id} className="flex items-center justify-between gap-3 p-3">
 								<div className="min-w-0">
 									<div className="truncate text-sm font-medium">
-										{parent?.name ?? "Owned scope"}
+										{formatOptionalScopeName(parent)}
 									</div>
 									<div className="font-mono text-xs text-muted-foreground">{placement.alias}</div>
 								</div>
 								<Button asChild variant="ghost" size="icon-sm">
-									<Link
-										href={`/scopes/${placement.parent_scope_id}`}
-										aria-label="Open parent scope"
-									>
+									<Link href={`/scopes/${placement.parent_scope_id}`} aria-label="Open owned scope">
 										<ExternalLink className="size-3.5" />
 									</Link>
 								</Button>
@@ -579,7 +580,7 @@ function ContentHeader({
 			<div>
 				<h2 className="text-base font-semibold">{title}</h2>
 				<p className="text-sm text-muted-foreground">
-					{direct} direct / {composed} from mounted sources
+					{direct} direct / {composed} from scopes this scope uses
 				</p>
 			</div>
 		</div>
@@ -593,7 +594,7 @@ function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "source"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "composed"}</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
 					{skill.skill_key}
@@ -619,7 +620,7 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "source"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "composed"}</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
 			</div>
@@ -629,16 +630,38 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 }
 
 function ScopeKindBadge({ kind }: { kind: string }) {
-	const label = kind === "workspace" ? "workspace" : kind === "environment" ? "agent" : kind;
+	const meta = scopeKindMeta(kind);
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}
 			className="text-xs"
-			title={`scope kind: ${kind}`}
+			title={meta.description}
 		>
-			{label}
+			{meta.label}
 		</Badge>
 	);
+}
+
+function scopeKindMeta(kind: string) {
+	if (kind === "workspace") {
+		return {
+			label: "Manual",
+			description: "Manual scope for a project, team, or workflow.",
+		};
+	}
+	if (kind === "environment") {
+		return {
+			label: "Agent",
+			description: "Default scope owned by a connected agent.",
+		};
+	}
+	if (kind === "personal") {
+		return {
+			label: "Default",
+			description: "Account default scope.",
+		};
+	}
+	return { label: kind, description: `Scope type: ${kind}` };
 }
 
 function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
@@ -646,6 +669,15 @@ function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
 	const byRank = rank(a.kind) - rank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
+}
+
+function displayScopeName(scope: ScopeRow) {
+	if (scope.kind === "personal" && scope.name.toLowerCase() === "personal") return "Default";
+	return scope.name;
+}
+
+function formatOptionalScopeName(scope: ScopeRow | undefined) {
+	return scope ? displayScopeName(scope) : "Owned scope";
 }
 
 function EmptyLine({ message }: { message: string }) {

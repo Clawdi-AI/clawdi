@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Link2, Plus, Share2, UserCheck, Workflow, X } from "lucide-react";
+import { ArrowRight, Link2, Plus, Share2, UserCheck, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -12,6 +12,13 @@ import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -112,7 +119,7 @@ export default function ScopesPage() {
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["scopes"] });
 			toast.success("Scope created", {
-				description: `${scope.name} is ready for skills, vault references, sharing, and mounts.`,
+				description: `${scope.name} is ready for skills, vault references, sharing, and composition.`,
 			});
 			router.push(`/scopes/${scope.id}`);
 		},
@@ -143,14 +150,12 @@ export default function ScopesPage() {
 				description="Compose the context boundaries your agents and collaborators can read."
 				actions={
 					<Button
-						variant={createOpen ? "secondary" : "outline"}
+						variant="outline"
 						size="sm"
 						onClick={() => {
-							if (!createOpen) {
-								setNewScopeName("");
-								setNewScopeSlug("");
-							}
-							setCreateOpen((open) => !open);
+							setNewScopeName("");
+							setNewScopeSlug("");
+							setCreateOpen(true);
 						}}
 					>
 						<Plus className="size-3.5" />
@@ -166,70 +171,72 @@ export default function ScopesPage() {
 				</Alert>
 			) : null}
 
-			{createOpen ? (
-				<form
-					className="rounded-lg border bg-muted/20 p-3"
-					onSubmit={(event) => {
-						event.preventDefault();
-						if (!newScopeName.trim() || createScope.isPending) return;
-						createScope.mutate();
-					}}
-				>
-					<div className="mb-3 flex items-center justify-between gap-3">
-						<h2 className="font-semibold text-sm">New scope</h2>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							aria-label="Cancel new scope"
-							onClick={() => {
-								setCreateOpen(false);
-								setNewScopeName("");
-								setNewScopeSlug("");
-							}}
-						>
-							<X className="size-4" />
-						</Button>
-					</div>
-					<div className="grid gap-2 md:grid-cols-[minmax(260px,1fr)_240px_max-content] md:items-end">
-						<div className="space-y-1.5">
-							<Label htmlFor="scope-name">Name</Label>
-							<Input
-								id="scope-name"
-								value={newScopeName}
-								maxLength={200}
-								placeholder="Scope name"
-								onChange={(event) => setNewScopeName(event.target.value)}
-							/>
+			<Dialog
+				open={createOpen}
+				onOpenChange={(open) => {
+					setCreateOpen(open);
+					if (!open) {
+						setNewScopeName("");
+						setNewScopeSlug("");
+					}
+				}}
+			>
+				<DialogContent className="sm:max-w-xl">
+					<DialogHeader>
+						<DialogTitle>New manual scope</DialogTitle>
+						<DialogDescription>
+							Create a scope for a project, team, or workflow. Default and agent scopes are created
+							automatically.
+						</DialogDescription>
+					</DialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (!newScopeName.trim() || createScope.isPending) return;
+							createScope.mutate();
+						}}
+					>
+						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+							<div className="space-y-1.5">
+								<Label htmlFor="scope-name">Name</Label>
+								<Input
+									id="scope-name"
+									value={newScopeName}
+									maxLength={200}
+									placeholder="Scope name"
+									onChange={(event) => setNewScopeName(event.target.value)}
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="scope-slug">Slug</Label>
+								<Input
+									id="scope-slug"
+									value={newScopeSlug}
+									maxLength={80}
+									placeholder="auto-generated"
+									onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
+								/>
+							</div>
 						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="scope-slug">Slug</Label>
-							<Input
-								id="scope-slug"
-								value={newScopeSlug}
-								maxLength={80}
-								placeholder="auto-generated"
-								onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
-							/>
+						<div className="flex justify-end gap-2">
+							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!newScopeName.trim() || createScope.isPending}>
+								<Plus className="size-3.5" />
+								{createScope.isPending ? "Creating..." : "Create scope"}
+							</Button>
 						</div>
-						<Button
-							type="submit"
-							size="sm"
-							disabled={!newScopeName.trim() || createScope.isPending}
-							className="w-full md:w-28"
-						>
-							<Plus className="size-3.5" />
-							{createScope.isPending ? "Creating..." : "Create"}
-						</Button>
-					</div>
-				</form>
-			) : null}
+					</form>
+				</DialogContent>
+			</Dialog>
 
 			<section className="space-y-3">
 				<SectionHeader
 					title="Owned scopes"
 					count={ownedScopes.length}
-					description="Scopes you can edit, share, and use as mount targets."
+					description="Scopes you control. Manual scopes are created by you, Default is your account fallback, and Agent belongs to a connected agent."
 				/>
 				{ownedScopes.length === 0 ? (
 					<EmptyLine message="No owned scopes yet. Connect an agent or create a shareable scope." />
@@ -251,10 +258,10 @@ export default function ScopesPage() {
 				<SectionHeader
 					title="Shared scopes"
 					count={sharedScopes.length}
-					description="Read-only scopes accepted from other people. Mount them into owned scopes to compose their contents."
+					description="Read-only scopes from other people. Use them in one or more owned scopes to make their content available there."
 				/>
 				{sharedScopes.length === 0 ? (
-					<EmptyLine message="Accepted shares will appear here before or after you mount them." />
+					<EmptyLine message="Accepted shares appear here before or after you use them in an owned scope." />
 				) : (
 					<div className="divide-y rounded-lg border">
 						{sharedScopes.map((scope) => (
@@ -281,19 +288,20 @@ function OwnedScopeRow({
 	mounts: MountRow[];
 	placements: MountRow[];
 }) {
+	const scopeName = displayScopeName(scope);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/scopes/${scope.id}`}
-				aria-label={`Open ${scope.name}`}
+				aria-label={`Open ${scopeName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
 				<ScopeIdentity scope={scope} />
 				<ScopeRelationshipSummary mounts={mounts} placements={placements} />
 				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
-					<ShareScopeDialog scopeId={scope.id} scopeName={scope.name} scopeKind={scope.kind}>
-						<Button variant="outline" size="sm" aria-label={`Share ${scope.name}`}>
+					<ShareScopeDialog scopeId={scope.id} scopeName={scopeName} scopeKind={scope.kind}>
+						<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
 							<Share2 className="mr-1.5 size-3.5" />
 							Share
 						</Button>
@@ -315,11 +323,12 @@ function SharedScopeRow({
 	ownedScopes: ScopeRow[];
 }) {
 	const ownedScopeById = new Map(ownedScopes.map((s) => [s.id, s]));
+	const scopeName = displayScopeName(scope);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
 				href={`/scopes/${scope.id}`}
-				aria-label={`Open ${scope.name}`}
+				aria-label={`Open ${scopeName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
@@ -337,7 +346,7 @@ function ScopeIdentity({ scope, tone = "owned" }: { scope: ScopeRow; tone?: "own
 	return (
 		<div className="relative z-20 min-w-0 pointer-events-none">
 			<div className="flex flex-wrap items-center gap-2">
-				<h3 className="truncate text-sm font-semibold">{scope.name}</h3>
+				<h3 className="truncate text-sm font-semibold">{displayScopeName(scope)}</h3>
 				{tone === "shared" ? (
 					<Badge variant="secondary">
 						<UserCheck className="size-3.5" />
@@ -365,15 +374,18 @@ function ScopeRelationshipSummary({
 				icon={Link2}
 				label={
 					mounts.length === 0
-						? "No sources"
-						: `${mounts.length} source scope${mounts.length === 1 ? "" : "s"}`
+						? "Uses no other scopes"
+						: `Uses ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
 				}
 				muted={mounts.length === 0}
 			/>
 			{placements.length > 0 ? (
-				<RelationshipBadge icon={Workflow} label={`Mounted into ${placements.length}`} />
+				<RelationshipBadge
+					icon={Workflow}
+					label={`Used in ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
+				/>
 			) : empty ? null : (
-				<RelationshipBadge icon={Workflow} label="Not mounted elsewhere" muted />
+				<RelationshipBadge icon={Workflow} label="Not used by another scope" muted />
 			)}
 		</div>
 	);
@@ -389,19 +401,19 @@ function SharedPlacementSummary({
 	if (placements.length === 0) {
 		return (
 			<div className="relative z-20 pointer-events-none">
-				<RelationshipBadge icon={Workflow} label="Not mounted" muted />
+				<RelationshipBadge icon={Workflow} label="Not used yet" muted />
 			</div>
 		);
 	}
 	return (
 		<div className="relative z-20 min-w-0 space-y-1 pointer-events-none">
-			<div className="text-xs font-medium text-muted-foreground">Mounted into</div>
+			<div className="text-xs font-medium text-muted-foreground">Used in</div>
 			<div className="flex min-w-0 flex-wrap gap-1.5">
 				{placements.slice(0, 3).map((placement) => (
 					<Badge key={placement.id} variant="outline" className="max-w-full font-normal">
 						<Workflow className="size-3.5" />
 						<span className="min-w-0 truncate">
-							{ownedScopeById.get(placement.parent_scope_id)?.name ?? "Owned scope"}
+							{formatOptionalScopeName(ownedScopeById.get(placement.parent_scope_id))}
 						</span>
 						<span className="text-muted-foreground">/</span>
 						<span className="min-w-0 truncate font-mono text-muted-foreground">
@@ -440,16 +452,38 @@ function RelationshipBadge({
 }
 
 function ScopeKindBadge({ kind }: { kind: string }) {
-	const label = kind === "workspace" ? "workspace" : kind === "environment" ? "agent" : kind;
+	const meta = scopeKindMeta(kind);
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}
 			className="text-xs"
-			title={`Scope kind: ${kind}`}
+			title={meta.description}
 		>
-			{label}
+			{meta.label}
 		</Badge>
 	);
+}
+
+function scopeKindMeta(kind: string) {
+	if (kind === "workspace") {
+		return {
+			label: "Manual",
+			description: "Manual scope for a project, team, or workflow.",
+		};
+	}
+	if (kind === "environment") {
+		return {
+			label: "Agent",
+			description: "Default scope owned by a connected agent.",
+		};
+	}
+	if (kind === "personal") {
+		return {
+			label: "Default",
+			description: "Account default scope.",
+		};
+	}
+	return { label: kind, description: `Scope type: ${kind}` };
 }
 
 function SectionHeader({
@@ -491,6 +525,15 @@ function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
 	const byRank = rank(a.kind) - rank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
+}
+
+function displayScopeName(scope: ScopeRow) {
+	if (scope.kind === "personal" && scope.name.toLowerCase() === "personal") return "Default";
+	return scope.name;
+}
+
+function formatOptionalScopeName(scope: ScopeRow | undefined) {
+	return scope ? displayScopeName(scope) : "Owned scope";
 }
 
 function EmptyLine({ message }: { message: string }) {

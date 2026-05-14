@@ -39,11 +39,11 @@ import {
 /**
  * Per-scope mount management panel (Plan §MF.2).
  *
- * Renders the list of ScopeMount edges composed INTO `scopeId`,
- * mirroring `clawdi scope mounts <parent>` on the CLI. Each row
- * carries an Unmount button that calls DELETE /api/scopes/{id}/mounts/{mount_id}.
+ * Renders the list of other scopes this scope uses. The API still
+ * calls these rows ScopeMount edges, but the product surface avoids
+ * that term unless it is describing the underlying CLI/API behavior.
  *
- * Self-hiding when empty so a default-Personal agent (no mounts)
+ * Self-hiding when empty so a default account scope with no composition
  * doesn't show an empty section every time.
  */
 
@@ -140,7 +140,7 @@ export function ScopeMountsPanel({
 			qc.invalidateQueries({ queryKey: ["scope-mounts", scopeId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Scope mounted — shared skills now appear in this target scope.");
+			toast.success("Scope added — its skills now appear here.");
 		},
 		onError: (e, variables) => {
 			if (e instanceof ApiError && e.status === 409) {
@@ -150,7 +150,7 @@ export function ScopeMountsPanel({
 					return;
 				}
 			}
-			toast.error("Failed to mount scope", {
+			toast.error("Failed to add scope", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -169,10 +169,10 @@ export function ScopeMountsPanel({
 			qc.invalidateQueries({ queryKey: ["scope-mounts", scopeId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Mount removed — membership in the source scope is preserved.");
+			toast.success("Scope removed from this composition. Access is preserved.");
 		},
 		onError: (e) => {
-			toast.error("Failed to unmount", {
+			toast.error("Failed to remove scope", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -199,13 +199,13 @@ export function ScopeMountsPanel({
 			<section className="space-y-3">
 				<div className="flex items-center gap-2 px-1">
 					<Workflow className="size-4 text-muted-foreground" />
-					<h3 className="font-semibold text-sm">Source scopes</h3>
+					<h3 className="font-semibold text-sm">Uses</h3>
 					<Badge variant="secondary" className="text-xs">
 						0
 					</Badge>
 				</div>
 				<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-					No source scopes are mounted into this scope yet.
+					This scope does not use any other scopes yet.
 				</div>
 			</section>
 		);
@@ -215,7 +215,7 @@ export function ScopeMountsPanel({
 		<section className="space-y-3">
 			<div className="flex items-center gap-2 px-1">
 				<Workflow className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Source scopes</h3>
+				<h3 className="font-semibold text-sm">Uses</h3>
 				<Badge variant="secondary" className="text-xs">
 					{rows.length}
 				</Badge>
@@ -231,14 +231,14 @@ export function ScopeMountsPanel({
 					>
 						<SelectTrigger
 							className="min-w-0 flex-1 sm:min-w-[220px]"
-							aria-label="Select source scope to mount"
+							aria-label="Select scope to use"
 						>
-							<SelectValue placeholder="Add source scope" />
+							<SelectValue placeholder="Choose scope to use" />
 						</SelectTrigger>
 						<SelectContent>
 							{mountCandidates.map((scope) => (
 								<SelectItem key={scope.id} value={scope.id}>
-									{scope.name} ({scope.slug})
+									{displayScopeName(scope)} ({scope.slug})
 								</SelectItem>
 							))}
 						</SelectContent>
@@ -248,17 +248,17 @@ export function ScopeMountsPanel({
 						className="w-full sm:w-auto"
 						onClick={() => mount.mutate({ sourceId: sourceScopeId })}
 						disabled={!sourceScopeId || mount.isPending}
-						aria-label="Mount selected source scope"
+						aria-label="Add selected scope"
 					>
 						<Plus className="mr-1.5 size-3.5" />
-						{mount.isPending ? "Mounting…" : "Mount source"}
+						{mount.isPending ? "Adding…" : "Add scope"}
 					</Button>
 				</div>
 			) : null}
 			{blockedMount ? (
 				<VaultConflictsAlert
 					detail={blockedMount.detail}
-					actionLabel="Mount anyway"
+					actionLabel="Use anyway"
 					actionPending={mount.isPending}
 					onAction={() =>
 						mount.mutate({
@@ -296,17 +296,17 @@ export function ScopeMountsPanel({
 										size="icon-sm"
 										disabled={unmount.isPending}
 										className="text-muted-foreground hover:text-destructive"
-										aria-label={`Unmount source ${m.alias}`}
+										aria-label={`Remove ${m.alias} from this scope`}
 									>
 										<Trash2 className="size-3.5" />
 									</Button>
 								</AlertDialogTrigger>
 								<AlertDialogContent>
 									<AlertDialogHeader>
-										<AlertDialogTitle>Unmount "{m.alias}"?</AlertDialogTitle>
+										<AlertDialogTitle>Remove "{m.alias}" from this scope?</AlertDialogTitle>
 										<AlertDialogDescription>
-											This removes only the composition edge. Your read access to the source scope
-											stays intact, so you can mount it again later.
+											This removes only the composition. Your read access stays intact, so you can
+											add it again later.
 										</AlertDialogDescription>
 									</AlertDialogHeader>
 									<AlertDialogFooter>
@@ -315,7 +315,7 @@ export function ScopeMountsPanel({
 											onClick={() => unmount.mutate(m.id)}
 											className="bg-destructive text-white hover:bg-destructive/90"
 										>
-											Unmount
+											Remove
 										</AlertDialogAction>
 									</AlertDialogFooter>
 								</AlertDialogContent>
@@ -333,4 +333,9 @@ function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
 	const byRank = rank(a.kind) - rank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
+}
+
+function displayScopeName(scope: ScopeRow) {
+	if (scope.kind === "personal" && scope.name.toLowerCase() === "personal") return "Default";
+	return scope.name;
 }
