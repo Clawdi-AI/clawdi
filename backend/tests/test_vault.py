@@ -125,7 +125,7 @@ async def test_env_bound_key_cannot_mutate_other_owned_project_vault(db_session,
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="env-a",
-        projects=None,
+        scopes=None,
         environment_id=env_a.id,
     )
 

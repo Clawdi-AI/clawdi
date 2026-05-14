@@ -15,7 +15,7 @@ rounds 2 + B + E so they don't regress silently:
 
 - /api/search excludes vault hits for scoped api keys so a
   leaked deploy key (which only carries skills/sessions
-  projects) can't side-channel-read vault metadata.
+  API permissions) can't side-channel-read vault metadata.
 """
 
 from __future__ import annotations
@@ -196,17 +196,17 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
     db_session.add_all([mem_a, mem_b, mem_manual])
     await db_session.commit()
 
-    # Deploy key bound to env-A with memory:read project (the
-    # filter applies regardless of which projects the key carries
+    # Deploy key bound to env-A with memories:read API permission (the
+    # filter applies regardless of which permissions the key carries
     # because the cross-env leak would happen via memories:read,
     # which deploy keys today don't have — but the fix protects
-    # any future project shape).
+    # any future permission shape).
     deploy_key = ApiKey(
         user_id=seed_user.id,
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        projects=["memories:read"],
+        scopes=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -312,7 +312,7 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="paged-deploy",
-        projects=["memories:read"],
+        scopes=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -413,14 +413,14 @@ async def test_unbound_cli_key_can_pin_any_project(
     )
     await db_session.commit()
 
-    # Unbound CLI key — no environment_id, no projects list (full
-    # account access, mirrors `clawdi auth login`).
+    # Unbound CLI key — no environment_id, no explicit API permission
+    # list (full account access, mirrors `clawdi auth login`).
     cli_key = ApiKey(
         user_id=seed_user.id,
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="cli-unbound",
-        projects=None,
+        scopes=None,
         environment_id=None,
     )
     db_session.add(cli_key)
@@ -503,7 +503,7 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="env-a-deploy",
-        projects=None,
+        scopes=None,
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -592,7 +592,7 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        projects=["memories:read"],
+        scopes=["memories:read"],
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)
@@ -655,7 +655,7 @@ async def test_search_excludes_vault_for_scoped_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        projects=["sessions:write", "skills:read", "skills:write"],
+        scopes=["sessions:write", "skills:read", "skills:write"],
         environment_id=env.id,
     )
     db_session.add(deploy_key)
@@ -680,7 +680,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
     """Round-42 P2 regression: `/api/dashboard/stats` and
     `/api/dashboard/contribution` aggregate by `user_id` only —
     no project filter. An env-bound deploy key (full-permission
-    api_key minted with `projects=None` but pinned to
+    api_key minted with `scopes=None` but pinned to
     `environment_id=A`) would otherwise read account-wide
     totals (sessions, message counts, token usage, contribution
     graph, skill/vault/memory counts) for sibling envs B/C/D
@@ -702,7 +702,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
         label="test-deploy",
         # Full permission (default) — but env-bound, so the
         # dashboard's account-wide aggregate must still refuse.
-        projects=None,
+        scopes=None,
         environment_id=env.id,
     )
     db_session.add(deploy_key)
@@ -757,7 +757,7 @@ async def test_project_explicit_upload_403s_bound_key_targeting_other_project(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="env-a-deploy",
-        projects=None,
+        scopes=None,
         environment_id=env_a.id,
     )
     db_session.add(deploy_key)

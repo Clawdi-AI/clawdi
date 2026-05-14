@@ -97,13 +97,13 @@ async def _project_filter_memories(
     binding boundary; we drop those too.
 
     Gate is `_is_env_bound_api_key` (presence of `environment_id`),
-    NOT `_is_scoped_api_key` (presence of explicit `projects` list).
-    Default deploy keys mint with `projects=None` (full capability,
-    matching the "deploy key behaves like user-installed clawdi"
-    policy), so the project-list gate let them bypass the env
-    filter — a leaked env-A deploy key could read env-B's
-    memories. Personal CLI keys and Clerk JWT have no env
-    binding and see everything user-owned.
+    NOT `_is_scoped_api_key` (presence of an explicit API permission
+    list). Default deploy keys mint with `scopes=None` (full
+    capability, matching the "deploy key behaves like user-installed
+    clawdi" policy), so the permission-list gate let them bypass the
+    env filter — a leaked env-A deploy key could read env-B's
+    memories. Personal CLI keys and Clerk JWT have no env binding and
+    see everything user-owned.
     """
     if not _is_env_bound_api_key(auth):
         return items
@@ -399,7 +399,7 @@ async def embed_backfill(
     Env-bound api keys are rejected: this is a maintenance/admin
     operation that touches every memory the user owns, including
     cross-env memories the bound key isn't allowed to read. Pre-fix
-    a leaked env-A deploy key with `projects=None` could call this
+    a leaked env-A deploy key with `scopes=None` could call this
     endpoint and feed every env's content to the embedder as a side
     channel.
     """

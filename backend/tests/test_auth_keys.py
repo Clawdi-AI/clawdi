@@ -115,7 +115,7 @@ async def test_deploy_key_minted_with_full_access_by_default(
     as a key the user mints for their own laptop. The hosted agent
     pod must be able to do everything the user can.
 
-    Without this property the daemon ends up scoped to a 3-token list
+    Without this property the daemon ends up narrowed to a 3-token API permission list
     and silently can't touch vault / memories / settings, which makes
     the "iCloud for AI agents" promise a lie."""
     from tests.conftest import create_env_with_project
@@ -133,7 +133,7 @@ async def test_deploy_key_minted_with_full_access_by_default(
     )
     assert r.status_code == 200, r.text
 
-    # Verify the persisted projects column is NULL (full access),
+    # Verify the persisted scopes column is NULL (full API permission access),
     # not the legacy daemon set.
     from sqlalchemy import select
 
@@ -146,8 +146,9 @@ async def test_deploy_key_minted_with_full_access_by_default(
     )
     assert rows, "minting succeeded but no row found"
     deploy_key = next(k for k in rows if k.environment_id == env.id)
-    assert deploy_key.projects is None, (
-        f"deploy keys must default to full access (projects=None), got {deploy_key.projects!r}"
+    assert deploy_key.scopes is None, (
+        f"deploy keys must default to full API permission access (scopes=None), "
+        f"got {deploy_key.scopes!r}"
     )
 
 
@@ -156,8 +157,8 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
     client: httpx.AsyncClient, db_session, seed_user
 ):
     """The default is full access, but a caller that explicitly passes
-    a narrower project list still gets a narrowed key — the dashboard
-    should be able to opt into narrower keys per use-case."""
+    a narrower API permission list still gets a narrowed key — the
+    dashboard should be able to opt into narrower keys per use-case."""
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
@@ -172,7 +173,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
         json={
             "label": "narrow-pod",
             "environment_id": str(env.id),
-            "projects": ["sessions:write"],
+            "scopes": ["sessions:write"],
         },
     )
     assert r.status_code == 200, r.text
@@ -186,7 +187,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
             select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.environment_id == env.id)
         )
     ).scalar_one()
-    assert deploy_key.projects == ["sessions:write"]
+    assert deploy_key.scopes == ["sessions:write"]
 
 
 @pytest.mark.asyncio

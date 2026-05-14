@@ -118,7 +118,7 @@ async def main(label: str, agent_type: str) -> None:
             db,
             user_id=user.id,
             label=f"e2e-{label}",
-            projects=None,
+            scopes=None,
             environment_id=env.id,
         )
 

@@ -168,7 +168,7 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
         key_prefix=f"clawdi_e{nonce[:3]}",
         label="env-bound",
         environment_id=env.id,
-        projects=["sessions:write"],
+        scopes=["sessions:write"],
     )
     db_session.add(api_key)
     await db_session.commit()

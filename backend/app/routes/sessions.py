@@ -299,7 +299,8 @@ async def list_environments(
     # discover their own env at boot to find its default_project.
     # Auth is enforced via the user_id filter + the env-binding
     # restriction below — a bound key only sees its own env regardless
-    # of project list, and an unbound key is just the user themselves.
+    # of API permission list, and an unbound key is just the user
+    # themselves.
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse]:

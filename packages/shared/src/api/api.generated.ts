@@ -1005,7 +1005,7 @@ export interface paths {
          *     Env-bound api keys are rejected: this is a maintenance/admin
          *     operation that touches every memory the user owns, including
          *     cross-env memories the bound key isn't allowed to read. Pre-fix
-         *     a leaked env-A deploy key with `projects=None` could call this
+         *     a leaked env-A deploy key with `scopes=None` could call this
          *     endpoint and feed every env's content to the embedder as a side
          *     channel.
          */

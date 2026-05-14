@@ -102,7 +102,7 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
 
 @pytest.mark.asyncio
 async def test_admin_mint_default_grants_full_account_access(admin_client, db_session, seed_user):
-    """Mint via admin endpoint with no `projects` field defaults to
+    """Mint via admin endpoint with no `scopes` field defaults to
     full account access — same as user-self-mint via Clerk JWT."""
     from sqlalchemy import select
 
@@ -111,27 +111,27 @@ async def test_admin_mint_default_grants_full_account_access(admin_client, db_se
     r = await admin_client.post(
         "/api/admin/auth/keys",
         headers=_AUTH,
-        json={"target_clerk_id": seed_user.clerk_id, "label": "default-projects"},
+        json={"target_clerk_id": seed_user.clerk_id, "label": "default-scopes"},
     )
     assert r.status_code == 200
 
     minted = (
         await db_session.execute(
-            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "default-projects")
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "default-scopes")
         )
     ).scalar_one()
 
-    # `projects=None` is the full-account-access sentinel; matches user-
-    # self-mint behaviour. Hosted pods need full parity with self-
-    # managed installs (vault reads, memory reads) so the admin path
-    # does not impose a project ceiling.
-    assert minted.projects is None
+    # `scopes=None` is the full-API-permission sentinel; matches
+    # user-self-mint behaviour. Hosted pods need full parity with
+    # self-managed installs (vault reads, memory reads) so the admin
+    # path does not impose a permission ceiling.
+    assert minted.scopes is None
 
 
 @pytest.mark.asyncio
 async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_session, seed_user):
     """Callers can lock the minted key down by passing an explicit
-    project list — useful for ops tooling that doesn't need everything."""
+    API permission list — useful for ops tooling that doesn't need everything."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -142,7 +142,7 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
         json={
             "target_clerk_id": seed_user.clerk_id,
             "label": "narrow-explicit",
-            "projects": ["sessions:write"],
+            "scopes": ["sessions:write"],
         },
     )
     assert r.status_code == 200
@@ -152,14 +152,14 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
             select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "narrow-explicit")
         )
     ).scalar_one()
-    assert minted.projects == ["sessions:write"]
+    assert minted.scopes == ["sessions:write"]
 
 
 @pytest.mark.asyncio
 async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, seed_user):
-    """No allowlist ceiling: callers can mint keys carrying any project
-    they want (vault:resolve, sessions:read, etc.). Trust model is
-    that X-Admin-Key holders are already first-party SaaS callers."""
+    """No allowlist ceiling: callers can mint keys carrying any API
+    permission they want (vault:resolve, sessions:read, etc.). Trust
+    model is that X-Admin-Key holders are already first-party SaaS callers."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -170,7 +170,7 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
         json={
             "target_clerk_id": seed_user.clerk_id,
             "label": "vault-and-read",
-            "projects": ["sessions:read", "vault:resolve"],
+            "scopes": ["sessions:read", "vault:resolve"],
         },
     )
     assert r.status_code == 200
@@ -180,7 +180,7 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
             select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "vault-and-read")
         )
     ).scalar_one()
-    assert minted.projects == ["sessions:read", "vault:resolve"]
+    assert minted.scopes == ["sessions:read", "vault:resolve"]
 
 
 @pytest.mark.asyncio

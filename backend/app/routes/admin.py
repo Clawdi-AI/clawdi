@@ -124,16 +124,17 @@ async def admin_mint_api_key(
                 status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
             ) from e
 
-    # `projects=None` is full account access — same default as user-self-
-    # mint via `POST /api/auth/keys`. Callers may pass a narrower list
-    # to lock the minted key down (e.g. ops tooling that only needs to
-    # push sessions); the route doesn't impose a ceiling.
+    # `scopes=None` is full API permission access — same default as
+    # user-self-mint via `POST /api/auth/keys`. Callers may pass a
+    # narrower permission list to lock the minted key down (e.g. ops
+    # tooling that only needs to push sessions); the route doesn't
+    # impose a ceiling.
     try:
         minted = await mint_api_key(
             db,
             user_id=target.id,
             label=body.label,
-            projects=body.projects,
+            scopes=body.scopes,
             environment_id=env_uuid,
         )
     except ValueError as e:
