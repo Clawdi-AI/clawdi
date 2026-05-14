@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 interface BindingRow {
 	id: string;
@@ -73,7 +73,7 @@ export async function agentProjectsSetPrimaryCommand(
 	opts: { project: string },
 ): Promise<void> {
 	const { apiUrl, apiKey } = requireAuth();
-	const projectId = await resolveScopeId(apiUrl, apiKey, opts.project);
+	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	await authedJson<BindingRow>(
 		apiUrl,
 		apiKey,
@@ -92,7 +92,7 @@ export async function agentProjectsAddContextCommand(
 	opts: { project: string; priority?: string },
 ): Promise<void> {
 	const { apiUrl, apiKey } = requireAuth();
-	const projectId = await resolveScopeId(apiUrl, apiKey, opts.project);
+	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const priority =
 		opts.priority !== undefined && opts.priority !== ""
 			? Number.parseInt(opts.priority, 10)
@@ -115,7 +115,7 @@ export async function agentProjectsRemoveContextCommand(
 	opts: { project: string },
 ): Promise<void> {
 	const { apiUrl, apiKey } = requireAuth();
-	const projectId = await resolveScopeId(apiUrl, apiKey, opts.project);
+	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,

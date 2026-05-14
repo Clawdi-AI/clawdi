@@ -60,8 +60,7 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 /**
  * Raw-fetch helper bound to the current Clerk session. Use when the
  * typed openapi-fetch client doesn't yet cover the endpoint (e.g.
- * /api/scopes/{id}/mounts isn't in the generated paths until codex
- * regenerates) — the typed `useApi()` client is still the default
+ * generated paths are temporarily stale) — the typed `useApi()` client is still the default
  * for everything in the OpenAPI surface.
  *
  * Throws ApiError on non-2xx, mirroring `unwrap()`'s shape so a

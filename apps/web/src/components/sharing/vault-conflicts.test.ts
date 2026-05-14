@@ -7,7 +7,7 @@ describe("vault conflict API details", () => {
 			JSON.stringify({
 				detail: {
 					error: "vault_conflicts_blocked",
-					message: "Source scope has 1 vault key that already exists.",
+					message: "Source project has 1 vault key that already exists.",
 					conflicts: [{ vault_slug: "prod", section: "api", item_name: "TOKEN" }],
 				},
 			}),
@@ -37,7 +37,7 @@ describe("vault conflict API details", () => {
 	});
 
 	test("keeps plain text API errors readable", () => {
-		expect(formatApiError("scope not found")).toBe("scope not found");
-		expect(isVaultConflictDetail("scope not found")).toBe(false);
+		expect(formatApiError("project not found")).toBe("project not found");
+		expect(isVaultConflictDetail("project not found")).toBe(false);
 	});
 });

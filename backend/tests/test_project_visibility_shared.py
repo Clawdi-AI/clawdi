@@ -1,6 +1,6 @@
 """scope_ids_visible_to widens to include shared memberships for
 Clerk JWT + unbound-CLI callers. Env-bound api_keys keep their
-single-scope ceiling regardless of memberships (deploy-key blast
+single-project ceiling regardless of memberships (deploy-key blast
 radius boundary)."""
 
 import uuid
@@ -14,10 +14,10 @@ from app.core.scope import scope_ids_visible_to
 
 @pytest.mark.asyncio
 async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, seed_scope):
-    """Clerk JWT caller sees both owned scopes and scopes they
+    """Clerk JWT caller sees both owned projects and projects they
     joined as a member."""
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
-    from app.models.scope_membership import ScopeMembership
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+    from app.models.project_membership import ProjectMembership
     from app.models.user import User
 
     nonce = uuid.uuid4().hex[:8]
@@ -28,18 +28,18 @@ async def test_clerk_jwt_sees_owned_and_shared_scopes(db_session, seed_user, see
     )
     db_session.add(owner)
     await db_session.commit()
-    shared = Scope(
+    shared = Project(
         user_id=owner.id,
         name="s",
         slug=f"s-{nonce}",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db_session.add(shared)
     await db_session.commit()
     db_session.add(
-        ScopeMembership(
-            scope_id=shared.id,
-            user_id=seed_user.id,
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
             role="viewer",
             joined_via="invite",
             joined_at=datetime.now(UTC),
@@ -66,8 +66,8 @@ async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed
     """Unbound CLI api_key (from `clawdi auth login` device flow,
     no environment_id) behaves like Clerk JWT — full owned+shared."""
     from app.models.api_key import ApiKey
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
-    from app.models.scope_membership import ScopeMembership
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+    from app.models.project_membership import ProjectMembership
     from app.models.user import User
 
     nonce = uuid.uuid4().hex[:8]
@@ -78,18 +78,18 @@ async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed
     )
     db_session.add(owner)
     await db_session.commit()
-    shared = Scope(
+    shared = Project(
         user_id=owner.id,
         name="s2",
         slug=f"s2-{nonce}",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db_session.add(shared)
     await db_session.commit()
     db_session.add(
-        ScopeMembership(
-            scope_id=shared.id,
-            user_id=seed_user.id,
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
             role="viewer",
             joined_via="link",
             joined_at=datetime.now(UTC),
@@ -125,8 +125,8 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
     scopes the user is a member of. The env binding is the blast-
     radius boundary (PR #77)."""
     from app.models.api_key import ApiKey
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
-    from app.models.scope_membership import ScopeMembership
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+    from app.models.project_membership import ProjectMembership
     from app.models.user import User
     from tests.conftest import create_env_with_scope
 
@@ -138,18 +138,18 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
     )
     db_session.add(owner)
     await db_session.commit()
-    shared = Scope(
+    shared = Project(
         user_id=owner.id,
         name="s3",
         slug=f"s3-{nonce}",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db_session.add(shared)
     await db_session.commit()
     db_session.add(
-        ScopeMembership(
-            scope_id=shared.id,
-            user_id=seed_user.id,
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
             role="viewer",
             joined_via="link",
             joined_at=datetime.now(UTC),
@@ -176,7 +176,7 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
     try:
         auth = AuthContext(user=seed_user, api_key=api_key)
         visible = await scope_ids_visible_to(db_session, auth)
-        # Env-bound: ONLY the bound env's default_scope_id.
+        # Env-bound: ONLY the bound env's default project.
         assert visible == [env.default_scope_id]
         assert shared.id not in visible
         assert seed_scope.id not in visible

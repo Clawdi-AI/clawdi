@@ -14,9 +14,9 @@ from sqlalchemy.orm import aliased
 
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
+from app.models.project import Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
-from app.models.scope import Scope
 from app.models.user import User
 from app.schemas.sharing import InvitationResponse, UpgradeBody
 from app.services.agent_bindings import (
@@ -42,10 +42,10 @@ async def list_my_invitations(
     Owner = aliased(User)
     rows = (
         await db.execute(
-            select(ProjectInvitation, Inviter, Scope, Owner)
+            select(ProjectInvitation, Inviter, Project, Owner)
             .outerjoin(Inviter, Inviter.id == ProjectInvitation.invited_by)
-            .join(Scope, Scope.id == ProjectInvitation.project_id)
-            .join(Owner, Owner.id == Scope.user_id)
+            .join(Project, Project.id == ProjectInvitation.project_id)
+            .join(Owner, Owner.id == Project.user_id)
             .where(ProjectInvitation.invitee_user_id == auth.user_id)
             .order_by(ProjectInvitation.created_at.desc())
         )
@@ -84,7 +84,7 @@ async def accept_invitation(
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
 
     project = (
-        await db.execute(select(Scope).where(Scope.id == inv_pre.project_id).with_for_update())
+        await db.execute(select(Project).where(Project.id == inv_pre.project_id).with_for_update())
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")

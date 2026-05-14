@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -215,11 +215,11 @@ async def register_environment(
             import uuid as _uuid
 
             healing_slug = f"env-{_uuid.uuid4().hex[:12]}"
-            healing_scope = Scope(
+            healing_scope = Project(
                 user_id=auth.user_id,
                 name=f"{body.machine_name} ({body.agent_type})",
                 slug=healing_slug,
-                kind=SCOPE_KIND_ENVIRONMENT,
+                kind=PROJECT_KIND_ENVIRONMENT,
                 origin_environment_id=env.id,
             )
             db.add(healing_scope)
@@ -245,11 +245,11 @@ async def register_environment(
     from sqlalchemy.exc import IntegrityError
 
     pending_slug = f"env-{_uuid.uuid4().hex[:12]}"
-    scope = Scope(
+    scope = Project(
         user_id=auth.user_id,
         name=f"{body.machine_name} ({body.agent_type})",
         slug=pending_slug,
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
     db.add(scope)
     try:
@@ -330,7 +330,7 @@ async def get_environment(
 ) -> EnvironmentResponse:
     # Bound api_keys may only fetch their own env. Without this an
     # env-A deploy key could probe sibling envs by id and read their
-    # `default_scope_id` — the same boundary that list_environments
+    # `default_project_id` — the same boundary that list_environments
     # enforces, applied per-row.
     bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id != bound_env:
@@ -364,6 +364,7 @@ def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
         # NOT NULL per schema; the heal path in register_environment
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
+        default_project_id=str(env.default_scope_id),
         default_scope_id=str(env.default_scope_id),
     )
 

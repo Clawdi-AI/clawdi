@@ -11,7 +11,7 @@ import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	adapterForType,
-	fetchScopeIdForEnv,
+	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
@@ -143,12 +143,12 @@ async function pullSkills(
 	const adapter = adapterForType(agentType);
 	if (!adapter) return { pulled: 0, alreadyInSync: 0 };
 
-	// Resolve the target agent's scope upfront. Without this, the
-	// listing below returns every scope's skills and the loop
+	// Resolve the target agent's project upfront. Without this, the
+	// listing below returns every project's skills and the loop
 	// installs sibling-agent skills into this adapter's directory
 	// — `pull --all-agents` on a multi-agent unbound key would
 	// duplicate every codex skill into claude_code's home and
-	// vice versa. The download URL ALSO needs the scope_id so
+	// vice versa. The download URL ALSO needs the project_id so
 	// duplicate-key skills resolve to the right bytes.
 	const envId = getEnvIdByAgent(agentType);
 	if (!envId) {
@@ -157,13 +157,13 @@ async function pullSkills(
 		);
 		return { pulled: 0, alreadyInSync: 0 };
 	}
-	const scopeId = await fetchScopeIdForEnv(api, envId);
+	const projectId = await fetchProjectIdForEnv(api, envId);
 
 	const fetchSpinner = p.spinner();
 	fetchSpinner.start("Fetching skills...");
 	const page = unwrap(
 		await api.GET("/api/skills", {
-			params: { query: { page_size: 200, scope_id: scopeId } },
+			params: { query: { page_size: 200, project_id: projectId } },
 		}),
 	);
 	const cloudSkills: SkillSummary[] = page.items;
@@ -218,12 +218,12 @@ async function pullSkills(
 		}
 
 		try {
-			// Scope-explicit download so a multi-agent account where
-			// the same skill_key exists in two scopes resolves to the
+			// Project-explicit download so a multi-agent account where
+			// the same skill_key exists in two projects resolves to the
 			// right bytes for THIS agent, not whichever was most-
-			// recently-updated across visible scopes.
+			// recently-updated across visible projects.
 			const tarBytes = await api.getBytes(
-				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
 			await adapter.writeSkillArchive(skill.skill_key, tarBytes);
 			skillsLock.skills[skillCacheKey(agentType, skill.skill_key)] = {

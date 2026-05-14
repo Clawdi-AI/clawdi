@@ -16,7 +16,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
+import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -42,7 +42,7 @@ import { errorMessage } from "@/lib/utils";
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
 
-interface ScopeRow {
+interface ProjectRow {
 	id: string;
 	name: string;
 	slug: string;
@@ -53,63 +53,63 @@ interface ScopeRow {
 	is_owner?: boolean;
 }
 
-export default function ScopeDetailPage() {
+export default function ProjectDetailPage() {
 	const params = useParams<{ id: string }>();
-	const scopeId = params.id;
+	const projectId = params.id;
 	const api = useApi();
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
 
-	const scopes = useQuery({
-		queryKey: ["scopes"],
-		queryFn: async (): Promise<ScopeRow[]> => {
+	const projects = useQuery({
+		queryKey: ["projects"],
+		queryFn: async (): Promise<ProjectRow[]> => {
 			const r = await authedFetch("/api/projects");
 			return r.json();
 		},
 	});
 
-	const rows = scopes.data ?? [];
-	const scope = rows.find((s) => s.id === scopeId) ?? null;
-	const isOwner = scope?.is_owner !== false;
+	const rows = projects.data ?? [];
+	const project = rows.find((row) => row.id === projectId) ?? null;
+	const isOwner = project?.is_owner !== false;
 
 	const skills = useQuery({
-		queryKey: ["skills", "project-detail", scopeId],
+		queryKey: ["skills", "project-detail", projectId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/skills", {
-					params: { query: { scope_id: scopeId, page_size: 100 } },
+					params: { query: { project_id: projectId, page_size: 100 } },
 				}),
 			),
-		enabled: !!scope,
+		enabled: !!project,
 	});
 
 	const vaults = useQuery({
-		queryKey: ["vaults", "project-detail", scopeId],
+		queryKey: ["vaults", "project-detail", projectId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/vault", {
-					params: { query: { scope_id: scopeId, page_size: 100 } },
+					params: { query: { project_id: projectId, page_size: 100 } },
 				}),
 			),
-		enabled: !!scope,
+		enabled: !!project,
 	});
 
 	const refresh = () => {
-		qc.invalidateQueries({ queryKey: ["scopes"] });
+		qc.invalidateQueries({ queryKey: ["projects"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 	};
 
-	const leaveSharedScope = useMutation({
+	const leaveSharedProject = useMutation({
 		mutationFn: async (): Promise<{ status: string }> => {
-			const r = await authedFetch(`/api/projects/${scopeId}/leave`, { method: "POST" });
+			const r = await authedFetch(`/api/projects/${projectId}/leave`, { method: "POST" });
 			return r.json();
 		},
 		onSuccess: () => {
 			refresh();
 			toast.success("Left shared project", { description: "Membership removed." });
-			router.push("/scopes");
+			router.push("/projects");
 		},
 		onError: (e) => {
 			toast.error("Failed to leave shared project", {
@@ -118,7 +118,7 @@ export default function ScopeDetailPage() {
 		},
 	});
 
-	if (scopes.isLoading) {
+	if (projects.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<Skeleton className="h-10 w-52" />
@@ -128,28 +128,28 @@ export default function ScopeDetailPage() {
 		);
 	}
 
-	if (scopes.error) {
+	if (projects.error) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<Button asChild variant="ghost" size="sm" className="w-fit">
-					<Link href="/scopes">
+					<Link href="/projects">
 						<ArrowLeft className="mr-1.5 size-4" />
 						Projects
 					</Link>
 				</Button>
 				<Alert variant="destructive">
 					<AlertTitle>Couldn&apos;t load project</AlertTitle>
-					<AlertDescription>{errorMessage(scopes.error)}</AlertDescription>
+					<AlertDescription>{errorMessage(projects.error)}</AlertDescription>
 				</Alert>
 			</div>
 		);
 	}
 
-	if (!scope) {
+	if (!project) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<Button asChild variant="ghost" size="sm" className="w-fit">
-					<Link href="/scopes">
+					<Link href="/projects">
 						<ArrowLeft className="mr-1.5 size-4" />
 						Projects
 					</Link>
@@ -167,35 +167,35 @@ export default function ScopeDetailPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<Button asChild variant="ghost" size="sm" className="w-fit">
-				<Link href="/scopes">
+				<Link href="/projects">
 					<ArrowLeft className="mr-1.5 size-4" />
 					Projects
 				</Link>
 			</Button>
 
 			<PageHeader
-				title={displayScopeName(scope)}
-				description={`${isOwner ? "Owned" : "Shared viewer"} · ${scopeKindMeta(scope.kind).label} · ${scope.slug}`}
+				title={displayProjectName(project)}
+				description={`${isOwner ? "Owned" : "Shared viewer"} · ${projectKindMeta(project.kind).label} · ${project.slug}`}
 				actions={
 					<div className="flex items-center gap-2">
-						<ScopeKindBadge kind={scope.kind} />
+						<ProjectKindBadge kind={project.kind} />
 						{isOwner ? (
-							<ShareScopeDialog
-								scopeId={scope.id}
-								scopeName={displayScopeName(scope)}
-								scopeKind={scope.kind}
+							<ShareProjectDialog
+								projectId={project.id}
+								projectName={displayProjectName(project)}
+								projectKind={project.kind}
 							>
 								<Button variant="outline" size="sm">
 									<Share2 className="mr-1.5 size-3.5" />
 									Share
 								</Button>
-							</ShareScopeDialog>
+							</ShareProjectDialog>
 						) : null}
 					</div>
 				}
 			/>
 
-			<ScopeStatsStrip
+			<ProjectStatsStrip
 				skillCount={skills.data?.items.length ?? 0}
 				vaultCount={vaults.data?.items.length ?? 0}
 			/>
@@ -204,7 +204,9 @@ export default function ScopeDetailPage() {
 				<div className="space-y-6">
 					<section className="space-y-3">
 						<ContentHeader title="Skills" />
-						{isOwner ? <InstallSkillInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
+						{isOwner ? (
+							<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
+						) : null}
 						{skills.isLoading ? (
 							<Skeleton className="h-24 w-full" />
 						) : skills.error ? (
@@ -213,9 +215,9 @@ export default function ScopeDetailPage() {
 							<div className="divide-y rounded-lg border">
 								{skills.data.items.map((skill) => (
 									<SkillRow
-										key={`${skill.scope_id}:${skill.skill_key}`}
+										key={`${skill.project_id}:${skill.skill_key}`}
 										skill={skill}
-										ownScopeId={scope.id}
+										ownProjectId={project.id}
 									/>
 								))}
 							</div>
@@ -226,7 +228,9 @@ export default function ScopeDetailPage() {
 
 					<section className="space-y-3">
 						<ContentHeader title="Vaults" />
-						{isOwner ? <CreateVaultInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
+						{isOwner ? (
+							<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
+						) : null}
 						{vaults.isLoading ? (
 							<Skeleton className="h-24 w-full" />
 						) : vaults.error ? (
@@ -234,7 +238,7 @@ export default function ScopeDetailPage() {
 						) : vaults.data?.items.length ? (
 							<div className="divide-y rounded-lg border">
 								{vaults.data.items.map((vault) => (
-									<VaultRow key={vault.id} vault={vault} ownScopeId={scope.id} />
+									<VaultRow key={vault.id} vault={vault} ownProjectId={project.id} />
 								))}
 							</div>
 						) : (
@@ -258,16 +262,16 @@ export default function ScopeDetailPage() {
 									<Button
 										variant="ghost"
 										size="sm"
-										disabled={leaveSharedScope.isPending}
+										disabled={leaveSharedProject.isPending}
 										className="w-fit text-muted-foreground hover:text-destructive"
 									>
 										<LogOut className="mr-1.5 size-3.5" />
-										{leaveSharedScope.isPending ? "Leaving..." : "Leave project"}
+										{leaveSharedProject.isPending ? "Leaving..." : "Leave project"}
 									</Button>
 								</AlertDialogTrigger>
 								<AlertDialogContent>
 									<AlertDialogHeader>
-										<AlertDialogTitle>Leave "{displayScopeName(scope)}"?</AlertDialogTitle>
+										<AlertDialogTitle>Leave "{displayProjectName(project)}"?</AlertDialogTitle>
 										<AlertDialogDescription>
 											This removes your read membership from the shared project.
 										</AlertDialogDescription>
@@ -275,7 +279,7 @@ export default function ScopeDetailPage() {
 									<AlertDialogFooter>
 										<AlertDialogCancel>Cancel</AlertDialogCancel>
 										<AlertDialogAction
-											onClick={() => leaveSharedScope.mutate()}
+											onClick={() => leaveSharedProject.mutate()}
 											className="bg-destructive text-white hover:bg-destructive/90"
 										>
 											Leave project
@@ -291,7 +295,7 @@ export default function ScopeDetailPage() {
 	);
 }
 
-function ScopeStatsStrip({ skillCount, vaultCount }: { skillCount: number; vaultCount: number }) {
+function ProjectStatsStrip({ skillCount, vaultCount }: { skillCount: number; vaultCount: number }) {
 	return (
 		<div className="grid divide-y rounded-lg border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
@@ -328,11 +332,11 @@ function ContentHeader({ title }: { title: string }) {
 	);
 }
 
-function InstallSkillInScopeForm({
-	scopeId,
+function InstallSkillInProjectForm({
+	projectId,
 	onChanged,
 }: {
-	scopeId: string;
+	projectId: string;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -341,8 +345,8 @@ function InstallSkillInScopeForm({
 	const install = useMutation({
 		mutationFn: async ({ repo, path }: { repo: string; path?: string }) =>
 			unwrap(
-				await api.POST("/api/scopes/{scope_id}/skills/install", {
-					params: { path: { scope_id: scopeId } },
+				await api.POST("/api/projects/{project_id}/skills/install", {
+					params: { path: { project_id: projectId } },
 					body: { repo, path },
 				}),
 			),
@@ -402,11 +406,11 @@ function InstallSkillInScopeForm({
 	);
 }
 
-function CreateVaultInScopeForm({
-	scopeId,
+function CreateVaultInProjectForm({
+	projectId,
 	onChanged,
 }: {
-	scopeId: string;
+	projectId: string;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -415,7 +419,7 @@ function CreateVaultInScopeForm({
 		mutationFn: async (nextSlug: string) =>
 			unwrap(
 				await api.POST("/api/vault", {
-					params: { query: { scope_id: scopeId } },
+					params: { query: { project_id: projectId } },
 					body: { slug: nextSlug, name: nextSlug },
 				}),
 			),
@@ -451,8 +455,8 @@ function CreateVaultInScopeForm({
 	);
 }
 
-function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: string }) {
-	const direct = skill.scope_id === ownScopeId;
+function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: string }) {
+	const direct = skill.project_id === ownProjectId;
 	return (
 		<div className="flex items-center justify-between gap-3 p-3">
 			<div className="min-w-0">
@@ -466,7 +470,7 @@ function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: stri
 			</div>
 			<Button asChild variant="ghost" size="icon-sm">
 				<Link
-					href={`/skills/${encodeURIComponent(skill.skill_key)}?scope=${encodeURIComponent(skill.scope_id ?? ownScopeId)}`}
+					href={`/skills/${encodeURIComponent(skill.skill_key)}?project=${encodeURIComponent(skill.project_id ?? ownProjectId)}`}
 					aria-label={`Open ${skill.name}`}
 				>
 					<ExternalLink className="size-3.5" />
@@ -476,8 +480,8 @@ function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: stri
 	);
 }
 
-function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: string }) {
-	const direct = vault.scope_id === ownScopeId;
+function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: string }) {
+	const direct = vault.project_id === ownProjectId;
 	return (
 		<div className="flex items-center justify-between gap-3 p-3">
 			<div className="min-w-0">
@@ -496,8 +500,8 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 	);
 }
 
-function ScopeKindBadge({ kind }: { kind: string }) {
-	const meta = scopeKindMeta(kind);
+function ProjectKindBadge({ kind }: { kind: string }) {
+	const meta = projectKindMeta(kind);
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}
@@ -509,7 +513,7 @@ function ScopeKindBadge({ kind }: { kind: string }) {
 	);
 }
 
-function scopeKindMeta(kind: string) {
+function projectKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
@@ -531,14 +535,14 @@ function scopeKindMeta(kind: string) {
 	return { label: kind, description: `Project type: ${kind}` };
 }
 
-function displayScopeName(scope: ScopeRow) {
+function displayProjectName(project: ProjectRow) {
 	if (
-		scope.kind === "personal" &&
-		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
+		project.kind === "personal" &&
+		(project.slug === "personal" || ["default", "personal"].includes(project.name.toLowerCase()))
 	) {
 		return "Personal";
 	}
-	return scope.name;
+	return project.name;
 }
 
 function EmptyLine({ message }: { message: string }) {

@@ -25,15 +25,15 @@ from app.routes.inbox import router as inbox_router
 from app.routes.mcp_proxy import router as mcp_proxy_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
+from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
-from app.routes.scopes import router as scopes_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
 from app.routes.sharing import router as sharing_router
+from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
-from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.embedding import LocalEmbedder
@@ -167,9 +167,9 @@ app.include_router(sessions_router)
 # routes/public_sessions.py for the access-check helper.
 app.include_router(public_sessions_router)
 app.include_router(dashboard_router)
-app.include_router(scopes_router)
+app.include_router(projects_router)
 app.include_router(skills_router)
-app.include_router(skills_scope_router)
+app.include_router(skills_project_router)
 app.include_router(sync_router)
 app.include_router(memories_router)
 app.include_router(settings_router)

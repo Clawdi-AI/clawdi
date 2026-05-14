@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.project import Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
-from app.models.scope import Scope
 from app.models.user import User
 from app.schemas.sharing import (
     InvitationCreate,
@@ -48,8 +48,8 @@ async def _assert_project_owner(
     project_id: UUID,
     *,
     for_update: bool = False,
-) -> Scope:
-    stmt = select(Scope).where(Scope.id == project_id)
+) -> Project:
+    stmt = select(Project).where(Project.id == project_id)
     if for_update:
         stmt = stmt.with_for_update()
     result = await db.execute(stmt)
@@ -400,7 +400,9 @@ async def leave_project(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     if project.user_id == auth.user_id:

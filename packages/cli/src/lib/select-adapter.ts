@@ -22,24 +22,26 @@ export function getEnvIdByAgent(agentType: string): string | null {
 /** Ask the cloud which project this caller's next write would land
  * in. Wraps the server-side `resolve_default_write_scope` logic
  * exposed by `GET /api/projects/default` — for an api_key bound to
- * an env, that's the env's `default_scope_id`; for a Clerk JWT
- * (rare in CLI use) it's the most-recently-active env's scope or
+ * an env, that's the env's `default_project_id`; for a Clerk JWT
+ * (rare in CLI use) it's the most-recently-active env's project or
  * Personal as a fallback.
  *
- * Phase-2 scope-explicit URLs (e.g. `/api/scopes/{scope_id}/skills/upload`)
- * need a scope_id in the path. Calling this once at command start
+ * Phase-2 project-explicit URLs (e.g. `/api/projects/{project_id}/skills/upload`)
+ * need a project_id in the path. Calling this once at command start
  * lets the CLI not have to track env_id locally.
  *
- * NOTE: when the caller already knows which env's scope it wants
+ * NOTE: when the caller already knows which env's project it wants
  * (e.g. multi-agent push: each agent has its own envId), prefer
- * `fetchScopeIdForEnv()` below. The default-scope endpoint picks
+ * `fetchProjectIdForEnv()` below. The default-project endpoint picks
  * "most recently active" on unbound keys, which can route a
  * `claude_code` push under the user's `codex` env if codex was
  * touched last — sessions write to envId, skills write to "the
- * other env's scope", and the `claude_code` daemon never sees
+ * other env's project", and the `claude_code` daemon never sees
  * the skills it just pushed.
  */
-export async function fetchDefaultScopeId(api: import("./api-client").ApiClient): Promise<string> {
+export async function fetchDefaultProjectId(
+	api: import("./api-client").ApiClient,
+): Promise<string> {
 	const baseUrl = api.baseUrl;
 	const headers: Record<string, string> = {};
 	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
@@ -50,19 +52,24 @@ export async function fetchDefaultScopeId(api: import("./api-client").ApiClient)
 		return body.project_id;
 	}
 
-	// Backward compat with pre-project route names.
-	const legacyRes = await fetch(`${baseUrl}/api/scopes/default`, { headers });
+	// Backward compat with older response field names.
+	const legacyRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
 	if (!legacyRes.ok) {
 		throw new Error(`Failed to resolve default project: HTTP ${legacyRes.status}`);
 	}
-	const legacyBody = (await legacyRes.json()) as { scope_id: string };
-	return legacyBody.scope_id;
+	const legacyBody = (await legacyRes.json()) as {
+		project_id?: string;
+		scope_id?: string;
+	};
+	if (legacyBody.project_id) return legacyBody.project_id;
+	if (legacyBody.scope_id) return legacyBody.scope_id;
+	throw new Error("Failed to resolve default project: missing project_id in response");
 }
 
-/** Resolve the default_scope_id of a specific env. The caller
+/** Resolve the default project_id of a specific env. The caller
  * already knows which env it wants to write to (via
  * `getEnvIdByAgent(agentType)`); this just round-trips the
- * env detail to read its `default_scope_id`.
+ * env detail to read its `default_project_id`.
  *
  * Use this anywhere the CLI is operating on a known agent: the
  * agent's `envId` is the source of truth, not the auth key's
@@ -72,7 +79,7 @@ export async function fetchDefaultScopeId(api: import("./api-client").ApiClient)
  * envId — the daemon serving that env never reconciles those
  * skills back to disk because the listing is scoped elsewhere.
  */
-export async function fetchScopeIdForEnv(
+export async function fetchProjectIdForEnv(
 	api: import("./api-client").ApiClient,
 	envId: string,
 ): Promise<string> {
@@ -82,7 +89,12 @@ export async function fetchScopeIdForEnv(
 			params: { path: { environment_id: envId } },
 		}),
 	);
-	return env.default_scope_id;
+	const legacy = env as { default_scope_id?: string };
+	const projectId = env.default_project_id ?? legacy.default_scope_id;
+	if (!projectId) {
+		throw new Error(`environment ${envId} has no default project id`);
+	}
+	return projectId;
 }
 
 export function adapterForType(agentType: AgentType): AgentAdapter | null {

@@ -166,7 +166,7 @@ async def test_first_login_creates_user_and_personal_scope(db_session, signing_k
     """
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     clerk_id = f"clerk_first_login_{uuid.uuid4().hex[:12]}"
 
@@ -187,7 +187,10 @@ async def test_first_login_creates_user_and_personal_scope(db_session, signing_k
     # Helper invariant: Personal scope must exist in the same txn.
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == ctx.user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(
+                Project.user_id == ctx.user.id,
+                Project.kind == PROJECT_KIND_PERSONAL,
+            )
         )
     ).scalar_one_or_none()
     assert personal is not None

@@ -32,12 +32,12 @@ import { type ApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
 
-type Section = "general" | "profile" | "scopes" | "api-keys";
+type Section = "general" | "profile" | "projects" | "api-keys";
 
 const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "general", label: "General", icon: Settings },
 	{ id: "profile", label: "Profile", icon: User },
-	{ id: "scopes", label: "Projects", icon: Workflow },
+	{ id: "projects", label: "Projects", icon: Workflow },
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
 
@@ -96,7 +96,7 @@ export function SettingsDialog({
 						<div className="flex flex-col gap-6 px-6 py-6">
 							{section === "general" ? <GeneralPanel /> : null}
 							{section === "profile" ? <ProfilePanel /> : null}
-							{section === "scopes" ? <ScopesPanel onClose={onClose} /> : null}
+							{section === "projects" ? <ProjectsPanel onClose={onClose} /> : null}
 							{section === "api-keys" ? <ApiKeysPanel /> : null}
 						</div>
 					</div>
@@ -152,10 +152,10 @@ function GeneralPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Scopes — link to the first-class context/composition control surface.
+// Projects — link to the first-class context/binding control surface.
 // ---------------------------------------------------------------------------
 
-function ScopesPanel({ onClose }: { onClose: () => void }) {
+function ProjectsPanel({ onClose }: { onClose: () => void }) {
 	return (
 		<>
 			<PanelHeader
@@ -172,7 +172,7 @@ function ScopesPanel({ onClose }: { onClose: () => void }) {
 							invitations, and member access in one place.
 						</p>
 						<Button asChild size="sm" variant="outline">
-							<Link href="/scopes" onClick={onClose}>
+							<Link href="/projects" onClick={onClose}>
 								Open Projects
 							</Link>
 						</Button>

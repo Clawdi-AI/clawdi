@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.scope import Scope as Scope  # noqa: F401 - FK target
+from app.models.project import Project  # noqa: F401 - FK target
 from app.models.user import User as User  # noqa: F401 - FK target
 
 

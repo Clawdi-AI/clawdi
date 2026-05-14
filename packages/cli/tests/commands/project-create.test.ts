@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { scopeCreateCommand } from "../../src/commands/scope-create";
+import { projectCreateCommand } from "../../src/commands/project-create";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -13,7 +13,7 @@ let origApiUrl: string | undefined;
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
-	tmpHome = join(tmpdir(), `clawdi-scope-create-${Date.now()}-${Math.random().toString(36)}`);
+	tmpHome = join(tmpdir(), `clawdi-project-create-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
 	process.env.HOME = tmpHome;
@@ -30,16 +30,16 @@ afterEach(() => {
 	process.exitCode = undefined;
 });
 
-describe("scopeCreateCommand", () => {
-	it("posts a workspace scope and emits agent JSON", async () => {
+describe("projectCreateCommand", () => {
+	it("posts a workspace project and emits agent JSON", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/scopes",
+				path: "/api/projects",
 				response: () =>
 					jsonResponse(
 						{
-							id: "scope-workspace",
+							id: "project-workspace",
 							slug: "client-alpha",
 							name: "Client Alpha",
 							kind: "workspace",
@@ -55,7 +55,7 @@ describe("scopeCreateCommand", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await scopeCreateCommand("Client Alpha", { slug: "Client Alpha", json: true });
+			await projectCreateCommand("Client Alpha", { slug: "Client Alpha", json: true });
 		} finally {
 			console.log = orig;
 			restore();
@@ -63,12 +63,12 @@ describe("scopeCreateCommand", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/scopes",
+			path: "/api/projects",
 			body: { name: "Client Alpha", slug: "client-alpha" },
 		});
 		expect(JSON.parse(out)).toMatchObject({
 			status: "created",
-			scope: { id: "scope-workspace", slug: "client-alpha", kind: "workspace" },
+			project: { id: "project-workspace", slug: "client-alpha", kind: "workspace" },
 		});
 	});
 });

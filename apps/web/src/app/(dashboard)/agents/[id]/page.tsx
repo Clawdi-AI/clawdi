@@ -11,7 +11,6 @@ import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashb
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
 import { sessionColumns } from "@/components/sessions/session-columns";
-import { ScopeMountsPanel } from "@/components/sharing/scope-mounts-panel";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
@@ -68,11 +67,11 @@ export default function AgentDetailPage() {
 		enabled: !!agent,
 	});
 
-	// Skills section: fetch ONLY this env's scope. The earlier
+	// Skills section: fetch ONLY this env's project. The earlier
 	// shape loaded the first 200 account-wide rows and filtered
 	// client-side, which on a multi-agent account with >200
 	// skills could miss this agent's rows entirely if they fell
-	// past page 1 in the global sort. The `scope_id` query
+	// past page 1 in the global sort. The `project_id` query
 	// pushes the filter into the database so the per-page cap
 	// applies within the agent's own inventory.
 	//
@@ -83,9 +82,9 @@ export default function AgentDetailPage() {
 	// page uses; hard cap at 50 pages = 10k skills as a
 	// runaway-listing guard.
 	const SKILLS_PAGE_SIZE = 200;
-	const agentScopeId = agent?.default_scope_id;
+	const agentProjectId = agent?.default_project_id;
 	const { data: skillsData, isLoading: skillsLoading } = useQuery({
-		queryKey: ["skills", agentScopeId, "all-pages"],
+		queryKey: ["skills", agentProjectId, "all-pages"],
 		queryFn: async () => {
 			const items: SkillSummary[] = [];
 			let page = 1;
@@ -97,7 +96,7 @@ export default function AgentDetailPage() {
 							query: {
 								page,
 								page_size: SKILLS_PAGE_SIZE,
-								scope_id: agentScopeId,
+								project_id: agentProjectId,
 							},
 						},
 					}),
@@ -110,24 +109,21 @@ export default function AgentDetailPage() {
 			}
 			return { items, total, page: 1, page_size: SKILLS_PAGE_SIZE };
 		},
-		enabled: !!agentScopeId,
+		enabled: !!agentProjectId,
 	});
 	const skillsForThisEnv = useMemo(() => {
-		// `?scope_id=<agentScopeId>` triggers backend mount-walking
-		// (resolve_for_parent): the returned set is the parent's own
-		// skills UNION every mounted-source scope's skills. We surface
-		// the composed set as-is so other people's skills mounted into
-		// this agent's scope render alongside the owned rows — read-
-		// only treatment lives in skill-columns via `ownedScopeId`.
-		if (!skillsData?.items || !agentScopeId) return undefined;
+		// `?project_id=<agentProjectId>` narrows the listing to the
+		// selected project. Shared-project rows render as read-only via
+		// `ownedProjectId` handling in `skill-columns`.
+		if (!skillsData?.items || !agentProjectId) return undefined;
 		return skillsData.items;
-	}, [skillsData, agentScopeId]);
+	}, [skillsData, agentProjectId]);
 
 	const uninstallSkill = useMutation({
-		mutationFn: async ({ skillKey, scopeId }: { skillKey: string; scopeId: string }) =>
+		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
 			unwrap(
-				await api.DELETE("/api/scopes/{scope_id}/skills/{skill_key}", {
-					params: { path: { scope_id: scopeId, skill_key: skillKey } },
+				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+					params: { path: { project_id: projectId, skill_key: skillKey } },
 				}),
 			),
 		onSuccess: (_data, vars) => {
@@ -142,11 +138,11 @@ export default function AgentDetailPage() {
 	const skillColumns = useMemo(
 		() =>
 			makeSkillColumns(
-				(skillKey, scopeId) => uninstallSkill.mutate({ skillKey, scopeId }),
+				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
 				uninstallSkill.isPending,
-				agentScopeId,
+				agentProjectId,
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending, agentScopeId],
+		[uninstallSkill.mutate, uninstallSkill.isPending, agentProjectId],
 	);
 
 	const sessionTotal = sessionsPage?.total ?? 0;
@@ -316,8 +312,6 @@ export default function AgentDetailPage() {
 							/>
 						</TabsContent>
 					</Tabs>
-
-					{agentScopeId ? <ScopeMountsPanel scopeId={agentScopeId} /> : null}
 				</>
 			) : null}
 		</div>

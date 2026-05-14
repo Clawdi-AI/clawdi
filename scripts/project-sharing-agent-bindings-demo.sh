@@ -21,12 +21,14 @@ section "Project sharing + agent bindings demo smoke"
 echo "Repository: $ROOT"
 echo "Story: share project -> accept access -> bind agent projects -> resolve vault -> manage members"
 
-section "Backend product paths"
+section "Backend project paths"
 (
   cd "$ROOT/backend"
   uv run pytest \
-    tests/test_scope_sharing_e2e.py \
-    tests/test_vault_resolution_mounts.py \
+    tests/test_sharing_create_link.py \
+    tests/test_require_share_token.py \
+    tests/test_project_sharing_models_import.py \
+    tests/test_agent_project_binding_model.py \
     -q
 )
 
@@ -35,9 +37,9 @@ section "CLI user and agent contracts"
   cd "$ROOT/packages/cli"
   bun test \
     tests/commands/auth.test.ts \
-    tests/commands/inbox-and-mount-json.test.ts \
-    tests/commands/scope-members.test.ts \
-    tests/commands/scope-show.test.ts \
+    tests/commands/project-members.test.ts \
+    tests/commands/project-show.test.ts \
+    tests/commands/project-list.test.ts \
     tests/commands/vault-resolve.test.ts
 )
 

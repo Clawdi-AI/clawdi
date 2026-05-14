@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 
-interface ScopeRow {
+interface ProjectRow {
 	id: string;
 	name: string;
 	slug: string;
@@ -40,7 +40,7 @@ function formatDetail(body: unknown): string {
 	return JSON.stringify(detail);
 }
 
-export async function scopeCreateCommand(
+export async function projectCreateCommand(
 	name: string,
 	opts: { slug?: string; json?: boolean } = {},
 ): Promise<void> {
@@ -75,16 +75,16 @@ export async function scopeCreateCommand(
 		throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
 	}
 
-	const scope = (await r.json()) as ScopeRow;
+	const project = (await r.json()) as ProjectRow;
 	if (opts.json) {
-		console.log(JSON.stringify({ status: "created", project: scope }, null, 2));
+		console.log(JSON.stringify({ status: "created", project }, null, 2));
 		return;
 	}
 
 	console.log(
 		chalk.green("✓") +
-			` Created project ${chalk.bold(scope.name)} ` +
-			chalk.gray(`(${scope.slug}, ${scope.id.slice(0, 8)}…)`),
+			` Created project ${chalk.bold(project.name)} ` +
+			chalk.gray(`(${project.slug}, ${project.id.slice(0, 8)}…)`),
 	);
-	console.log(chalk.gray("Share it: ") + chalk.cyan(`clawdi project share ${scope.slug}`));
+	console.log(chalk.gray("Share it: ") + chalk.cyan(`clawdi project share ${project.slug}`));
 }

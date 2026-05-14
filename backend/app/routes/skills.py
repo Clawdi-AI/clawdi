@@ -53,13 +53,13 @@ from app.services.tar_utils import (
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-# Phase-2 router: scope-explicit skill routes. Same handlers as the
-# legacy router; the only difference is where `scope_id` comes from
+# Phase-2 router: project-explicit skill routes. Same handlers as the
+# legacy router; the only difference is where `project_id` comes from
 # (URL path here vs caller-resolved in the legacy router).
 # Mounted in `app/main.py` alongside the legacy router. After all
 # callers migrate, the legacy write paths return 410 (see step 3
 # of phase 2).
-scope_router = APIRouter(prefix="/api/scopes/{scope_id}/skills", tags=["skills"])
+project_router = APIRouter(prefix="/api/projects/{project_id}/skills", tags=["skills"])
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ MAX_SKILL_KEY_LEN = 200
 
 # Terminal path components that conflict with route suffixes on
 # `/api/skills/{skill_key:path}/*` and
-# `/api/scopes/{scope_id}/skills/{skill_key:path}/*`. Starlette
+# `/api/projects/{project_id}/skills/{skill_key:path}/*`. Starlette
 # matches routes in declaration order, so `/skills/team/download`
 # (a key literally named `team/download`) would resolve to the
 # `/{skill_key:path}/download` GET with `skill_key="team"` — the
@@ -291,25 +291,26 @@ async def list_skills(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
     include_content: bool = Query(default=False),
-    scope_id: UUID | None = Query(
+    project_id: UUID | None = Query(
         default=None,
         description=(
-            "Optional explicit scope to list. Without it, results span every "
-            "scope the caller can read (env-bound api_keys see only their env, "
-            "everyone else sees all scopes). The serve daemon passes its env's "
+            "Optional explicit project to list. Without it, results span every "
+            "project the caller can read (env-bound api_keys see only their env, "
+            "everyone else sees all projects). The serve daemon passes its env's "
             "default_scope_id when it boots with an unbound CLI key + an "
-            "explicit --environment-id, so reconcile pulls the right scope "
+            "explicit --environment-id, so reconcile pulls the right project "
             "instead of the most-recently-active one."
         ),
     ),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
 ) -> Paginated[SkillSummaryResponse]:
     # Collection-level ETag short-circuit: when the daemon's
     # last-seen revision matches current, return 304 with no body
     # so the 60s poll cycle costs nothing on quiet accounts.
     #
-    # ETag binds (revision, scope_id query, EFFECTIVE visible
-    # scope set) so a caller's representation changes whenever
+    # ETag binds (revision, project filter, EFFECTIVE visible
+    # project set) so a caller's representation changes whenever
     # any of those does. Round 32 covered (revision, scope_id);
     # this also folds in the visible-scope hash so an
     # env-bound key whose env's `default_scope_id` is reassigned
@@ -318,28 +319,22 @@ async def list_skills(
     # didn't bump (the reassignment lives on
     # `agent_environments`, not `skills`).
     #
-    # Scope-filtered read. JWT auth → all user's scopes
+    # Project-filtered read. JWT auth → all user's projects
     # (dashboard sees full inventory). api_key auth → only the
     # bound env's scope (daemon doesn't see other scopes' skills
-    # it can't write to). When the caller pins `scope_id`,
-    # intersect with what they're allowed to see — a scope_id
+    # it can't write to). When the caller pins `project_id`,
+    # intersect with what they're allowed to see — an ID
     # outside that set yields a deliberately-empty listing.
     revision = await get_skills_revision(db, auth.user_id)
-    if scope_id is not None:
-        # Parent-scoped read: walk mount edges so composed content
-        # surfaces. resolve_for_parent enforces viewer-source
-        # membership re-check (mount can't bypass capability layer).
-        # Empty set means caller can't see the parent at all — same
-        # signal as 404 but rendered as an empty listing here.
+    selected_project_id = project_id or scope_id
+    if selected_project_id is not None:
         from app.core.scope import resolve_for_parent
 
-        visible_scope_ids = list(await resolve_for_parent(db, auth, scope_id))
+        visible_scope_ids = list(await resolve_for_parent(db, auth, selected_project_id))
     else:
-        # Unscoped read: full inventory across owned + shared scopes.
-        # Mount edges are NOT unfolded — caller asked for "everything
-        # I can see", not "everything composed into a specific parent".
+        # Unscoped read: full inventory across owned + shared projects.
         visible_scope_ids = await scope_ids_visible_to(db, auth)
-    scope_tag = str(scope_id) if scope_id is not None else "all"
+    scope_tag = str(selected_project_id) if selected_project_id is not None else "all"
     # Short fingerprint of the visible-scope set (sorted for
     # determinism). 16 hex chars = 64 bits of collision space —
     # one in ~10^19, well past the realistic distinct-set count
@@ -353,7 +348,7 @@ async def list_skills(
 
     # Drop the `Skill.user_id == auth.user_id` filter that was here
     # pre-sharing: that would have blocked viewer members from seeing
-    # skills in scopes they joined as a sharee. Scope-id-in-visible
+    # skills in scopes they joined as a sharee. Project-id-in-visible
     # already gates access correctly; the membership row earned the
     # scope its slot in `visible_scope_ids`.
     base = (
@@ -383,7 +378,7 @@ async def list_skills(
     # Bulk-fetch the scope + machine metadata for the visible
     # skills in one query each (vs N+1). Two indexed lookups
     # against `scopes.id` and `agent_environments.id`.
-    from app.models.scope import Scope
+    from app.models.project import Project
     from app.models.session import AgentEnvironment
 
     scope_ids_in_listing = {s.scope_id for s in skills if s.scope_id is not None}
@@ -391,8 +386,8 @@ async def list_skills(
     if scope_ids_in_listing:
         scope_rows = (
             await db.execute(
-                select(Scope.id, Scope.name, Scope.origin_environment_id).where(
-                    Scope.id.in_(scope_ids_in_listing)
+                select(Project.id, Project.name, Project.origin_environment_id).where(
+                    Project.id.in_(scope_ids_in_listing)
                 )
             )
         ).all()
@@ -455,6 +450,7 @@ async def list_skills(
                 created_at=s.created_at,
                 updated_at=s.updated_at,
                 content=content,
+                project_id=str(s.scope_id) if s.scope_id else None,
                 scope_id=str(s.scope_id) if s.scope_id else None,
                 scope_name=meta["name"] if meta else None,
                 machine_name=meta["machine_name"] if meta else None,
@@ -521,7 +517,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
                 _sanitize_log(e),
             )
 
-    # Scope + machine context. The dashboard editor uses scope_id
+    # Project + machine context. The dashboard editor uses scope_id
     # to build the upload URL; multi-machine users see machine_name
     # in the page caption ("on my-mac") so they're sure which copy
     # they're editing.
@@ -530,12 +526,14 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     machine_name: str | None = None
     environment_id: str | None = None
     if db is not None and skill.scope_id is not None:
-        from app.models.scope import Scope
+        from app.models.project import Project
         from app.models.session import AgentEnvironment
 
         scope_row = (
             await db.execute(
-                select(Scope.name, Scope.origin_environment_id).where(Scope.id == skill.scope_id)
+                select(Project.name, Project.origin_environment_id).where(
+                    Project.id == skill.scope_id
+                )
             )
         ).first()
         if scope_row is not None:
@@ -566,6 +564,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
         created_at=skill.created_at,
         content_hash=skill.content_hash,
         updated_at=skill.updated_at,
+        project_id=scope_id_str,
         scope_id=scope_id_str,
         scope_name=scope_name,
         machine_name=machine_name,
@@ -597,9 +596,9 @@ async def upload_skill_legacy(
     has a deterministic default after the scopes migration:
     env-bound key → its env's scope; unbound key with envs →
     most-recently-active env's scope; zero envs → Personal),
-    then runs the same upload pipeline as the scope-explicit
+    then runs the same upload pipeline as the project-explicit
     route. New CLIs and the dashboard call
-    `POST /api/scopes/{scope_id}/skills/upload` directly.
+    `POST /api/projects/{project_id}/skills/upload` directly.
 
     Asymmetric with `delete_skill_legacy` (which 410s) by design:
     a wrong-scope upload creates a stray row visible in the
@@ -609,9 +608,9 @@ async def upload_skill_legacy(
     scope_id = await resolve_default_write_scope(db, auth)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
-    response.headers["Link"] = '</api/scopes/{scope_id}/skills/upload>; rel="successor-version"'
+    response.headers["Link"] = '</api/projects/{project_id}/skills/upload>; rel="successor-version"'
 
-    # Same chunked-read body bound as the scope-explicit route —
+    # Same chunked-read body bound as the project-explicit route —
     # the global BodySizeLimitMiddleware only catches requests
     # declaring Content-Length, so chunked-transfer clients
     # bypass it.
@@ -649,9 +648,9 @@ async def upload_skill_legacy(
 _MAX_SKILL_TAR_BYTES = 25 * 1024 * 1024
 
 
-@scope_router.post("/upload")
-async def upload_skill_scoped(
-    scope_id: UUID = Path(...),
+@project_router.post("/upload")
+async def upload_skill_project(
+    project_id: UUID = Path(...),
     skill_key: str = Form(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     file: UploadFile = File(...),
     content_hash: str | None = Form(
@@ -663,17 +662,17 @@ async def upload_skill_scoped(
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
-    """Scope-explicit tar.gz skill upload.
+    """Project-explicit tar.gz skill upload.
 
-    The URL carries the target scope; one env binds to one scope,
-    so a daemon's writes always land in its own env's scope. The
+    The URL carries the target project; one env binds to one project,
+    so a daemon's writes always land in its own env's project. The
     dashboard's content editor uses `PUT /skills/{key}/content`
     instead (raw markdown, server-side tar). Both converge on
     `_do_upload_skill`, which serializes via a Postgres advisory
     lock keyed on (user, scope, skill_key); concurrent writes are
     last-write-wins. SSE then fans out to subscribed daemons.
     """
-    await validate_scope_for_caller(db, auth, scope_id)
+    await validate_scope_for_caller(db, auth, project_id)
     # Stream the upload in bounded chunks, refusing once we cross
     # the cap. `await file.read()` would otherwise pull the whole
     # body into memory before any check fires — the global
@@ -698,7 +697,7 @@ async def upload_skill_scoped(
     return await _do_upload_skill(
         db=db,
         auth=auth,
-        scope_id=scope_id,
+        scope_id=project_id,
         skill_key=skill_key,
         data=data,
         content_hash=content_hash,
@@ -711,10 +710,10 @@ async def upload_skill_scoped(
 # `_do_upload_skill` means: same advisory lock, same hash short-
 # circuit, same SSE fan-out — daemons can't tell whether a push
 # came from another machine or from the dashboard.
-@scope_router.put("/{skill_key:path}/content")
+@project_router.put("/{skill_key:path}/content")
 async def update_skill_content(
     payload: SkillContentUpdateRequest,
-    scope_id: UUID = Path(...),
+    project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
@@ -738,7 +737,7 @@ async def update_skill_content(
     the upload short-circuit as `unchanged` (silent edit drop) or
     persist a hash that didn't match the bytes.
     """
-    await validate_scope_for_caller(db, auth, scope_id)
+    await validate_scope_for_caller(db, auth, project_id)
     data, _ = tar_from_content(skill_key, payload.content)
     if len(data) > _MAX_SKILL_TAR_BYTES:
         # `content` is already capped at 200 KB by the schema, so the
@@ -757,7 +756,7 @@ async def update_skill_content(
     return await _do_upload_skill(
         db=db,
         auth=auth,
-        scope_id=scope_id,
+        scope_id=project_id,
         skill_key=skill_key,
         data=data,
         content_hash=None,
@@ -775,7 +774,7 @@ async def _do_upload_skill(
     content_hash: str | None,
     expected_content_hash: str | None = None,
 ) -> SkillUploadResponse:
-    """Core upload logic for `POST /api/scopes/{scope_id}/skills/upload`.
+    """Core upload logic for `POST /api/projects/{project_id}/skills/upload`.
 
     One env = one scope, so a daemon always writes to its own env's
     scope. Single writer means no cross-machine race; no If-Match,
@@ -972,34 +971,34 @@ async def download_skill_legacy(
 ):
     """Phase-1 compat download — multi-scope disambiguation by
     most-recently-updated. Replaced by
-    `/api/scopes/{scope_id}/skills/{skill_key}/download`."""
+    `/api/projects/{project_id}/skills/{skill_key}/download`."""
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_scope_ids, skill_key)
     return await _build_skill_download(skill, skill_key)
 
 
-@scope_router.get("/{skill_key:path}/download")
-async def download_skill_scoped(
-    scope_id: UUID = Path(...),
+@project_router.get("/{skill_key:path}/download")
+async def download_skill_project(
+    project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     auth: AuthContext = Depends(require_scope("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
-    """Phase-2 scope-explicit download — exact (scope_id, skill_key)
+    """Phase-2 project-explicit download — exact (`project_id`, `skill_key`)
     lookup, no disambiguation.
 
     Reads are permitted to viewer members (sharees) — the validator
-    accepts any scope in `scope_ids_visible_to(auth)`, which now
-    includes ScopeMembership rows. The Skill row lookup no longer
+    accepts any project in `scope_ids_visible_to(auth)`, which now
+    includes ProjectMembership rows. The Skill row lookup no longer
     filters by `user_id` since membership-granted reads pull from
     the owner's skills, not the caller's. Write paths (upload,
     delete) still gate on `validate_scope_for_caller`, which stays
     owner-only.
     """
-    await validate_scope_read_for_caller(db, auth, scope_id)
+    await validate_scope_read_for_caller(db, auth, project_id)
     result = await db.execute(
         select(Skill).where(
-            Skill.scope_id == scope_id,
+            Skill.scope_id == project_id,
             Skill.skill_key == skill_key,
             Skill.is_active,
         )
@@ -1025,28 +1024,28 @@ async def get_skill_legacy(
 ) -> SkillDetailResponse:
     """Phase-1 compat detail — multi-scope disambiguation by
     most-recently-updated. Replaced by
-    `/api/scopes/{scope_id}/skills/{skill_key}` in phase 2 for
-    callers that know which scope they want."""
+    `/api/projects/{project_id}/skills/{skill_key}` in phase 2 for
+    callers that know which project they want."""
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_scope_ids, skill_key)
     return await _build_skill_detail(skill, db)
 
 
-@scope_router.get("/{skill_key:path}")
-async def get_skill_scoped(
-    scope_id: UUID = Path(...),
+@project_router.get("/{skill_key:path}")
+async def get_skill_project(
+    project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     auth: AuthContext = Depends(require_scope("skills:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDetailResponse:
-    """Phase-2 scope-explicit detail. Returns exactly the row at
-    `(scope_id, skill_key)` — no multi-scope disambiguation needed
-    because the URL pins the scope."""
-    await validate_scope_for_caller(db, auth, scope_id)
+    """Phase-2 project-explicit detail. Returns exactly the row at
+    (`project_id`, `skill_key`) — no multi-project disambiguation needed
+    because the URL pins the project."""
+    await validate_scope_for_caller(db, auth, project_id)
     result = await db.execute(
         select(Skill).where(
             Skill.user_id == auth.user_id,
-            Skill.scope_id == scope_id,
+            Skill.scope_id == project_id,
             Skill.skill_key == skill_key,
             Skill.is_active,
         )
@@ -1095,7 +1094,7 @@ async def delete_skill_legacy(
     listing now exposes), or 404 with no useful hint when
     their default scope doesn't have that key. The CLI and
     dashboard both migrated to
-    `DELETE /api/scopes/{scope_id}/skills/{skill_key}` and
+    `DELETE /api/projects/{project_id}/skills/{skill_key}` and
     pass the row's own scope_id; force any stale client onto
     that path with 410 instead of guessing.
 
@@ -1110,25 +1109,25 @@ async def delete_skill_legacy(
         detail={
             "code": "scope_explicit_route_required",
             "message": (
-                "Use DELETE /api/scopes/{scope_id}/skills/{skill_key} — "
-                "call GET /api/skills to find the scope_id of the row "
+                "Use DELETE /api/projects/{project_id}/skills/{skill_key} — "
+                "call GET /api/skills to find the project_id of the row "
                 "you want to delete."
             ),
         },
     )
 
 
-@scope_router.delete("/{skill_key:path}")
-async def delete_skill_scoped(
-    scope_id: UUID = Path(...),
+@project_router.delete("/{skill_key:path}")
+async def delete_skill_project(
+    project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
-    """Phase-2 scope-explicit delete — only the named scope's copy
+    """Phase-2 project-explicit delete — only the named project's copy
     is deleted; the same skill_key in other scopes is unaffected."""
-    await validate_scope_for_caller(db, auth, scope_id)
-    return await _do_delete_skill(db=db, auth=auth, scope_id=scope_id, skill_key=skill_key)
+    await validate_scope_for_caller(db, auth, project_id)
+    return await _do_delete_skill(db=db, auth=auth, scope_id=project_id, skill_key=skill_key)
 
 
 async def _do_delete_skill(
@@ -1204,22 +1203,24 @@ async def install_skill_legacy(
     scope_id = await resolve_default_write_scope(db, auth)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
-    response.headers["Link"] = '</api/scopes/{scope_id}/skills/install>; rel="successor-version"'
+    response.headers["Link"] = (
+        '</api/projects/{project_id}/skills/install>; rel="successor-version"'
+    )
     return await _do_install_skill(db=db, auth=auth, scope_id=scope_id, body=body)
 
 
-@scope_router.post("/install")
-async def install_skill_scoped(
+@project_router.post("/install")
+async def install_skill_project(
     body: SkillInstallRequest,
-    scope_id: UUID = Path(...),
+    project_id: UUID = Path(...),
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillInstallResponse:
-    """Phase-2 scope-explicit install — install lands in the
-    URL-named scope. Used by the dashboard install picker
-    (phase 3) and any caller that knows which scope it wants."""
-    await validate_scope_for_caller(db, auth, scope_id)
-    return await _do_install_skill(db=db, auth=auth, scope_id=scope_id, body=body)
+    """Phase-2 project-explicit install — install lands in the
+    URL-named project. Used by the dashboard install picker
+    (phase 3) and any caller that knows which project it wants."""
+    await validate_scope_for_caller(db, auth, project_id)
+    return await _do_install_skill(db=db, auth=auth, scope_id=project_id, body=body)
 
 
 async def _do_install_skill(

@@ -1,7 +1,6 @@
 "use client";
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
-import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -11,7 +10,7 @@ import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import { Inbox } from "@/components/sharing/inbox";
-import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
+import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { AgentTargetPicker } from "@/components/skills/agent-target-picker";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -21,7 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { API_URL, unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
 
@@ -50,7 +49,6 @@ export default function SkillsPage() {
 function SkillsPageInner() {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const { getToken } = useAuth();
 	// `?target=<env_id>` lives in nuqs — shareable, refresh-stable,
 	// and round-trippable from the agent detail page's "Install
 	// skills" deep link. `clearOnDefault` keeps `/skills` clean when
@@ -65,9 +63,9 @@ function SkillsPageInner() {
 	const [customRepo, setCustomRepo] = useState("");
 	const [customRepoError, setCustomRepoError] = useState<string | null>(null);
 
-	const { error: scopeError } = useQuery({
-		queryKey: ["scopes", "default"],
-		queryFn: async () => unwrap(await api.GET("/api/scopes/default")),
+	const { error: defaultProjectError } = useQuery({
+		queryKey: ["projects", "default"],
+		queryFn: async () => unwrap(await api.GET("/api/projects/default")),
 	});
 
 	const { data: envs } = useQuery({
@@ -77,17 +75,17 @@ function SkillsPageInner() {
 
 	const agentCount = envs?.length ?? 0;
 
-	const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
+	const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 	useEffect(() => {
 		if (!hasTargetParam || !envs) return;
 		const env = envs.find((e) => e.id === targetEnvId);
-		if (env?.default_scope_id) setSelectedScopeId(env.default_scope_id);
+		if (env?.default_project_id) setSelectedProjectId(env.default_project_id);
 	}, [hasTargetParam, targetEnvId, envs]);
 
-	const onPickScope = useCallback(
-		(scopeId: string) => {
-			setSelectedScopeId(scopeId);
-			const env = envs?.find((e) => e.default_scope_id === scopeId);
+	const onPickProject = useCallback(
+		(projectId: string) => {
+			setSelectedProjectId(projectId);
+			const env = envs?.find((e) => e.default_project_id === projectId);
 			if (!env) return;
 			void setTargetEnvId(env.id);
 		},
@@ -102,61 +100,61 @@ function SkillsPageInner() {
 		});
 	}, [envs]);
 
-	const defaultAgentScopeId = useMemo(() => {
-		return orderedEnvs.find((env) => env.default_scope_id)?.default_scope_id ?? null;
+	const defaultAgentProjectId = useMemo(() => {
+		return orderedEnvs.find((env) => env.default_project_id)?.default_project_id ?? null;
 	}, [orderedEnvs]);
 
-	// Resolve the target scope synchronously from the optional
+	// Resolve the target project synchronously from the optional
 	// `target` URL param + `envs` so a deep-link `?target=X`
 	// never falls through to
 	// the account-default during the brief render window where
-	// `selectedScopeId` hasn't been populated by its useEffect
+	// `selectedProjectId` hasn't been populated by its useEffect
 	// yet. Pre-fix that window (and stale/deleted target ids
 	// permanently) exposed install/uninstall actions wired to
-	// the WRONG agent's scope.
+	// the WRONG agent's project.
 	//
 	// Resolution order:
 	//   - URL has ?target=X and envs loaded:
-	//       env found → that env's scope
+	//       env found → that env's project
 	//       env not found (stale/deleted) → null (block actions)
 	//   - URL has ?target=X but envs still loading → null
-	//   - No ?target=, picker selection (post-mount) → that scope
-	//   - No ?target=, no picker → most-recent agent scope
+	//   - No ?target=, picker selection (post-mount) → that project
+	//   - No ?target=, no picker → most-recent agent project
 	const targetEnvFromUrl = useMemo(() => {
 		if (!hasTargetParam) return null;
 		if (!envs) return undefined; // still loading
 		return envs.find((e) => e.id === targetEnvId) ?? null; // null = stale id
 	}, [hasTargetParam, targetEnvId, envs]);
 	const isResolvingTarget = targetEnvFromUrl === undefined;
-	const targetScopeId = (() => {
+	const targetProjectId = (() => {
 		if (hasTargetParam) {
 			// URL-driven target: only resolve once envs say
 			// whether it's valid.
 			if (targetEnvFromUrl === undefined) return null; // loading
-			return targetEnvFromUrl?.default_scope_id ?? null; // null = stale
+			return targetEnvFromUrl?.default_project_id ?? null; // null = stale
 		}
 		// No URL target. If the account has zero envs registered,
-		// `defaultScope.scope_id` resolves to Personal — but
+		// the default resolves to Personal — but
 		// installing into Personal is silent harm: a future
-		// connected agent gets its own env scope and won't see
+		// connected agent gets its own env project and won't see
 		// the Personal install. Block installs until an env exists
 		// (envs still loading: `envs === undefined` → null too).
 		if (!envs || envs.length === 0) return null;
-		return selectedScopeId ?? defaultAgentScopeId;
+		return selectedProjectId ?? defaultAgentProjectId;
 	})();
 
-	// Always fetch account-wide. Earlier shape pinned scope_id
+	// Always fetch account-wide. Earlier shape pinned project_id
 	// to the resolved target, but that hid two real cases the
 	// page MUST surface:
-	//   1. Personal-scope skills that pre-dated agent envs.
-	//   2. Orphaned scopes whose origin env was disconnected
-	//      (backend keeps the scope + skills; the env is gone).
-	// Both produce skills with a scope_id that no active env
+	//   1. Personal-project skills that pre-dated agent envs.
+	//   2. Orphaned projects whose origin env was disconnected
+	//      (backend keeps the project + skills; the env is gone).
+	// Both produce skills with a project_id that no active env
 	// references; client-side filtering handles the per-agent
 	// view + a separate orphan section below.
 	//
 	// Walk every page server-side: the backend caps page_size
-	// at 200, so an account with > 200 skills across scopes
+	// at 200, so an account with > 200 skills across projects
 	// would lose page 2+ rows under a single-page fetch. The
 	// loop runs inside the queryFn so React only sees one
 	// completed result; a hard cap of 50 pages (10k skills)
@@ -166,7 +164,7 @@ function SkillsPageInner() {
 		isLoading: skillsLoading,
 		error: skillsError,
 	} = useQuery({
-		queryKey: ["skills", "all-scopes"],
+		queryKey: ["skills", "all-projects"],
 		queryFn: async () => {
 			const PAGE_SIZE = 200;
 			const items: SkillSummary[] = [];
@@ -191,8 +189,8 @@ function SkillsPageInner() {
 		},
 		enabled: !isResolvingTarget,
 	});
-	const isScopeReady = !!targetScopeId;
-	const targetEnv = envs?.find((e) => e.default_scope_id === targetScopeId);
+	const isProjectReady = !!targetProjectId;
+	const targetEnv = envs?.find((e) => e.default_project_id === targetProjectId);
 
 	const targetAgentLabel = useMemo(() => {
 		if (!envs || envs.length === 0 || !targetEnv) return FALLBACK_TARGET_LABEL;
@@ -208,56 +206,25 @@ function SkillsPageInner() {
 	// exist (deleted on another machine, never registered, copy-
 	// pasted from a different account) is a stale deep link.
 	// We MUST NOT show ANY skills in that case — the row's
-	// uninstall button would otherwise wire to whatever scope
+	// uninstall button would otherwise wire to whatever project
 	// the row carries, hitting an arbitrary agent's skill
 	// instead of the one the user thought they were operating
 	// on. Pre-fix the round-46 fallback rendered the account-
 	// wide listing here and the buttons stayed enabled.
 	const isStaleTarget = hasTargetParam && targetEnvFromUrl === null;
 
-	// Set of scope_ids that belong to currently-connected envs.
-	// Anything outside this set is either Personal scope, or an
-	// orphaned scope whose env was disconnected (backend
-	// preserves both the scope and its skills).
-	const envScopeIds = useMemo(
+	// Set of project_ids that belong to currently-connected envs.
+	// Anything outside this set is either Personal project, or an
+	// orphaned project whose env was disconnected (backend
+	// preserves both the project and its skills).
+	const envProjectIds = useMemo(
 		() =>
 			new Set(
 				(envs ?? [])
-					.map((e) => e.default_scope_id)
+					.map((e) => e.default_project_id)
 					.filter((s): s is string => typeof s === "string"),
 			),
 		[envs],
-	);
-
-	// Mounts wired into the active target scope. Backend's
-	// resolve_for_parent walks these on /api/skills?scope_id=<x>,
-	// but /skills fetches account-wide (orphan section depends on
-	// the full listing). We separately fetch the mount edges so
-	// the client-side "skills for this target" filter can include
-	// every mounted-source scope_id alongside the target's own —
-	// otherwise a mounted Alice-scope skill would render in the
-	// "Orphan" section rather than as part of the current agent's
-	// composed view. Endpoint not in the typed client yet, so raw
-	// fetch with the Clerk bearer; refresh whenever target shifts.
-	interface MountRow {
-		source_scope_id: string;
-	}
-	const { data: mountRows } = useQuery<MountRow[]>({
-		queryKey: ["scope-mounts", targetScopeId],
-		queryFn: async () => {
-			if (!targetScopeId) return [];
-			const token = await getToken();
-			const r = await fetch(`${API_URL}/api/scopes/${targetScopeId}/mounts`, {
-				headers: token ? { Authorization: `Bearer ${token}` } : {},
-			});
-			if (!r.ok) return [];
-			return (await r.json()) as MountRow[];
-		},
-		enabled: !!targetScopeId,
-	});
-	const mountSourceIds = useMemo(
-		() => new Set((mountRows ?? []).map((m) => m.source_scope_id)),
-		[mountRows],
 	);
 
 	const skillsForTarget = useMemo(() => {
@@ -265,59 +232,50 @@ function SkillsPageInner() {
 		if (isStaleTarget) return [];
 		// All-skills fallback is ONLY for the "user has zero
 		// connected agents AND zero URL pin" state — where
-		// Personal-scope or orphan-scoped skills (pre-env-
+		// Personal-project or orphan-project skills (pre-env-
 		// deployment leftovers) need a place to live so the
 		// user can still manage them. Pre-fix this branch fired
-		// whenever `targetScopeId` was falsy, including the
-		// brief window while the default-scope query is
+		// whenever `targetProjectId` was falsy, including the
+		// brief window while the default-project query is
 		// resolving AND the permanent state when it errors.
 		// During those states the page would expose every
-		// scope's skills with active uninstall buttons —
-		// uninstalling a row would target whatever scope the
+		// project's skills with active uninstall buttons —
+		// uninstalling a row would target whatever project the
 		// row carries instead of the agent the user thought
 		// they'd selected. Gate strictly on `agentCount === 0`
 		// to avoid that footgun.
-		if (!targetScopeId) {
+		if (!targetProjectId) {
 			// All-skills fallback ONLY when envs have RESOLVED
 			// AND are confirmed empty. Pre-fix `agentCount === 0`
 			// also fired during the loading window when
 			// `envs === undefined` — the skills query could
 			// resolve from cache faster than envs and briefly
-			// expose every scope's rows with row-level uninstall
+			// expose every project's rows with row-level uninstall
 			// buttons. Distinguish "still loading" from
 			// "confirmed empty" before unlocking the fallback.
 			if (envs !== undefined && envs.length === 0) return skillsData.items;
 			// envs still loading OR has agents but the
-			// default-scope hasn't resolved yet (or errored) —
+			// default-project hasn't resolved yet (or errored) —
 			// return undefined so the table shows its loading
 			// skeleton / empty-state instead of a misrouted
 			// action surface.
 			return undefined;
 		}
-		return skillsData.items.filter(
-			(s) => s.scope_id === targetScopeId || (!!s.scope_id && mountSourceIds.has(s.scope_id)),
-		);
-	}, [skillsData, targetScopeId, isStaleTarget, envs, mountSourceIds]);
+		return skillsData.items.filter((s) => s.project_id === targetProjectId);
+	}, [skillsData, targetProjectId, isStaleTarget, envs]);
 
-	// Orphan-scope skills: rows whose scope_id is NOT one of the
-	// currently-connected envs' scopes. Surfaces preserved skills
+	// Orphan-project skills: rows whose project_id is NOT one of the
+	// currently-connected envs' projects. Surfaces preserved skills
 	// from disconnected agents so they remain manageable; without
 	// this they'd disappear entirely whenever the user has any
 	// active env (the picker only shows connected envs, the
-	// scoped query filtered the rest out). Excluded from the
+	// project-filtered query filtered the rest out). Excluded from the
 	// list when the user is viewing the orphan-only "no envs"
-	// state above (`!targetScopeId` already shows everything).
+	// state above (`!targetProjectId` already shows everything).
 	const orphanSkills = useMemo(() => {
-		if (!skillsData?.items || !targetScopeId) return [];
-		// Mounted-source skills are intentionally composed into the
-		// active target — they belong in `skillsForTarget`, not here.
-		// Pre-fix they tripped the `!envScopeIds.has(scope_id)` clause
-		// (mount sources are other users' scopes, never in the local
-		// env set) and rendered as if they were misplaced orphans.
-		return skillsData.items.filter(
-			(s) => !s.scope_id || (!envScopeIds.has(s.scope_id) && !mountSourceIds.has(s.scope_id)),
-		);
-	}, [skillsData, envScopeIds, targetScopeId, mountSourceIds]);
+		if (!skillsData?.items || !targetProjectId) return [];
+		return skillsData.items.filter((s) => !s.project_id || !envProjectIds.has(s.project_id));
+	}, [skillsData, envProjectIds, targetProjectId]);
 
 	const installedKeysOnTarget = useMemo(() => {
 		const items = skillsForTarget;
@@ -326,10 +284,10 @@ function SkillsPageInner() {
 	}, [skillsForTarget]);
 
 	const uninstallSkill = useMutation({
-		mutationFn: async ({ skillKey, scopeId }: { skillKey: string; scopeId: string }) =>
+		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
 			unwrap(
-				await api.DELETE("/api/scopes/{scope_id}/skills/{skill_key}", {
-					params: { path: { scope_id: scopeId, skill_key: skillKey } },
+				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+					params: { path: { project_id: projectId, skill_key: skillKey } },
 				}),
 			),
 		onSuccess: (_data, vars) => {
@@ -344,11 +302,11 @@ function SkillsPageInner() {
 	const skillColumns = useMemo(
 		() =>
 			makeSkillColumns(
-				(skillKey, scopeId) => uninstallSkill.mutate({ skillKey, scopeId }),
+				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
 				uninstallSkill.isPending,
-				targetScopeId,
+				targetProjectId,
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending, targetScopeId],
+		[uninstallSkill.mutate, uninstallSkill.isPending, targetProjectId],
 	);
 
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
@@ -356,10 +314,10 @@ function SkillsPageInner() {
 		setInstalling(key);
 		setInstallError(null);
 		try {
-			if (!targetScopeId) throw new Error("No target agent selected");
+			if (!targetProjectId) throw new Error("No target agent selected");
 			unwrap(
-				await api.POST("/api/scopes/{scope_id}/skills/install", {
-					params: { path: { scope_id: targetScopeId } },
+				await api.POST("/api/projects/{project_id}/skills/install", {
+					params: { path: { project_id: targetProjectId } },
 					body: { repo, path },
 				}),
 			);
@@ -402,22 +360,22 @@ function SkillsPageInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
-				description="Install reusable capabilities on an agent. Shared scopes can add skills from collaborators too."
+				description="Install reusable capabilities on an agent. Shared projects can add skills from collaborators too."
 				actions={
-					targetScopeId ? (
-						<ShareScopeDialog scopeId={targetScopeId} scopeName={targetAgentLabel} />
+					targetProjectId ? (
+						<ShareProjectDialog projectId={targetProjectId} projectName={targetAgentLabel} />
 					) : null
 				}
 			/>
 
 			<Inbox />
 
-			{scopeError ? (
+			{defaultProjectError ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Couldn&apos;t reach your account scope</AlertTitle>
+					<AlertTitle>Couldn&apos;t reach your default project</AlertTitle>
 					<AlertDescription>
-						Install and uninstall are temporarily disabled. {errorMessage(scopeError)}
+						Install and uninstall are temporarily disabled. {errorMessage(defaultProjectError)}
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -439,16 +397,16 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			{/* Scope picker — primary control. Single agent accounts
+			{/* Project picker — primary control. Single agent accounts
 			    skip the picker entirely (one option, no choice to
 			    make); the page just operates on that agent. */}
 			{agentCount >= 2 ? (
 				<AgentTargetPicker
 					envs={envs ?? []}
-					selectedScopeId={targetScopeId}
+					selectedProjectId={targetProjectId}
 					targetEnv={targetEnv}
 					targetAgentLabel={targetAgentLabel}
-					onChange={onPickScope}
+					onChange={onPickProject}
 				/>
 			) : null}
 
@@ -482,7 +440,7 @@ function SkillsPageInner() {
 							? "This link points to an agent that no longer exists. Pick a current agent above to manage its skills."
 							: agentCount === 0
 								? "Connect an agent first to install skills. Open the dashboard to add one."
-								: isScopeReady
+								: isProjectReady
 									? "No skills installed on this agent yet. Install one from the marketplace below."
 									: "Pick an agent to see its skills."
 					}
@@ -530,7 +488,7 @@ function SkillsPageInner() {
 					</div>
 					<Button
 						onClick={handleCustom}
-						disabled={!customRepo.trim() || !!installing || !isScopeReady}
+						disabled={!customRepo.trim() || !!installing || !isProjectReady}
 					>
 						{installing && customRepo ? <Spinner /> : <Plus />}
 						Install
@@ -561,7 +519,7 @@ function SkillsPageInner() {
 												<Sparkles className="size-4 shrink-0 text-primary" />
 												<Link
 													href={`/skills/${encodeURIComponent(skill.skillKey)}${
-														targetScopeId ? `?scope=${encodeURIComponent(targetScopeId)}` : ""
+														targetProjectId ? `?project=${encodeURIComponent(targetProjectId)}` : ""
 													}`}
 													className="truncate text-sm font-medium hover:underline"
 												>
@@ -586,7 +544,7 @@ function SkillsPageInner() {
 												variant="outline"
 												size="sm"
 												onClick={() => installSkill(skill.repo, skill.path)}
-												disabled={isInstalling || !isScopeReady}
+												disabled={isInstalling || !isProjectReady}
 												className="shrink-0"
 											>
 												{isInstalling ? <Spinner /> : <Download />}
@@ -601,14 +559,14 @@ function SkillsPageInner() {
 				</div>
 			</section>
 
-			{/* Orphan-scope skills. Surfaces preserved skills whose
+			{/* Orphan-project skills. Surfaces preserved skills whose
 			    origin agent has been disconnected (backend keeps
-			    the scope + skills; the env is gone). This section
+			    the project + skills; the env is gone). This section
 			    sits after install actions because maintaining old
-			    scopes is secondary to the common "install a skill
+			    projects is secondary to the common "install a skill
 			    on this agent" job. The uninstall column still works
-			    because each row carries its own scope_id and the
-			    DELETE route is scope-explicit. */}
+			    because each row carries its own project_id and the
+			    DELETE route is project-explicit. */}
 			{orphanSkills.length > 0 ? (
 				<section className="space-y-2">
 					<div className="flex items-baseline justify-between gap-3">
@@ -620,7 +578,7 @@ function SkillsPageInner() {
 						</h2>
 					</div>
 					<p className="text-xs text-muted-foreground">
-						These skills are kept from scopes that are not connected to a current agent. You can
+						These skills are kept from projects that are not connected to a current agent. You can
 						still open or uninstall them here.
 					</p>
 					<DataTable

@@ -5,9 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.scope import (
-    Scope as Scope,  # noqa: F401 — register `scopes` table for FK resolution
-)
+from app.models.project import Project  # noqa: F401 — register `scopes` table for FK resolution
 
 
 class Vault(Base, TimestampMixin):
@@ -15,7 +13,7 @@ class Vault(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    # Scope the vault belongs to. Items inherit through the parent
+    # Project the vault belongs to. Items inherit through the parent
     # vault — VaultItem deliberately doesn't carry its own scope_id
     # to avoid the "item says A, vault says B" invalid state. Phase 1
     # backfill assigns existing vaults to the user's Personal scope;

@@ -84,7 +84,7 @@ describe("authLogin pending share upgrade", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/scopes/scope-shared/skills/deploy-helper/download",
+				path: "/api/projects/scope-shared/skills/deploy-helper/download",
 				response: () => new Response(new Uint8Array([1, 2, 3])),
 			},
 		]);
@@ -98,7 +98,7 @@ describe("authLogin pending share upgrade", () => {
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			`POST /api/share/${rawToken}/upgrade`,
 			"GET /api/skills?scope_id=scope-shared&page=1&page_size=200",
-			"GET /api/scopes/scope-shared/skills/deploy-helper/download",
+			"GET /api/projects/scope-shared/skills/deploy-helper/download",
 		]);
 
 		const [token] = listTokens();

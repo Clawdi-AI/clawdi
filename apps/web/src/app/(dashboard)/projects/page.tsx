@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
+import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, useAuthedFetch } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
-interface ScopeRow {
+interface ProjectRow {
 	id: string;
 	name: string;
 	slug: string;
@@ -36,36 +36,36 @@ interface ScopeRow {
 	is_owner?: boolean;
 }
 
-export default function ScopesPage() {
+export default function ProjectsPage() {
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const [newScopeName, setNewScopeName] = useState("");
-	const [newScopeSlug, setNewScopeSlug] = useState("");
+	const [newProjectName, setNewProjectName] = useState("");
+	const [newProjectSlug, setNewProjectSlug] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
 
-	const scopes = useQuery({
-		queryKey: ["scopes"],
-		queryFn: async (): Promise<ScopeRow[]> => {
+	const projects = useQuery({
+		queryKey: ["projects"],
+		queryFn: async (): Promise<ProjectRow[]> => {
 			const r = await authedFetch("/api/projects");
 			return r.json();
 		},
 	});
 
-	const rows = scopes.data ?? [];
-	const ownedScopes = useMemo(
-		() => rows.filter((s) => s.is_owner !== false).sort(compareScopesForProductUse),
+	const rows = projects.data ?? [];
+	const ownedProjects = useMemo(
+		() => rows.filter((s) => s.is_owner !== false).sort(compareProjectsForProductUse),
 		[rows],
 	);
-	const sharedScopes = useMemo(
-		() => rows.filter((s) => s.is_owner === false).sort(compareScopesForProductUse),
+	const sharedProjects = useMemo(
+		() => rows.filter((s) => s.is_owner === false).sort(compareProjectsForProductUse),
 		[rows],
 	);
 
-	const createScope = useMutation({
-		mutationFn: async (): Promise<ScopeRow> => {
-			const payload: { name: string; slug?: string } = { name: newScopeName.trim() };
-			const slug = normalizeSlugInput(newScopeSlug);
+	const createProject = useMutation({
+		mutationFn: async (): Promise<ProjectRow> => {
+			const payload: { name: string; slug?: string } = { name: newProjectName.trim() };
+			const slug = normalizeSlugInput(newProjectSlug);
 			if (slug) payload.slug = slug;
 			const r = await authedFetch("/api/projects", {
 				method: "POST",
@@ -74,15 +74,15 @@ export default function ScopesPage() {
 			});
 			return r.json();
 		},
-		onSuccess: (scope) => {
-			setNewScopeName("");
-			setNewScopeSlug("");
+		onSuccess: (project) => {
+			setNewProjectName("");
+			setNewProjectSlug("");
 			setCreateOpen(false);
-			qc.invalidateQueries({ queryKey: ["scopes"] });
+			qc.invalidateQueries({ queryKey: ["projects"] });
 			toast.success("Project created", {
-				description: `${scope.name} is ready for skills, vault references, and sharing.`,
+				description: `${project.name} is ready for skills, vault references, and sharing.`,
 			});
-			router.push(`/scopes/${scope.id}`);
+			router.push(`/projects/${project.id}`);
 		},
 		onError: (e) => {
 			toast.error("Failed to create project", {
@@ -91,7 +91,7 @@ export default function ScopesPage() {
 		},
 	});
 
-	if (scopes.isLoading) {
+	if (projects.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<PageHeader
@@ -114,8 +114,8 @@ export default function ScopesPage() {
 						variant="outline"
 						size="sm"
 						onClick={() => {
-							setNewScopeName("");
-							setNewScopeSlug("");
+							setNewProjectName("");
+							setNewProjectSlug("");
 							setCreateOpen(true);
 						}}
 					>
@@ -125,10 +125,10 @@ export default function ScopesPage() {
 				}
 			/>
 
-			{scopes.error ? (
+			{projects.error ? (
 				<Alert variant="destructive">
 					<AlertTitle>Couldn&apos;t load projects</AlertTitle>
-					<AlertDescription>{errorMessage(scopes.error)}</AlertDescription>
+					<AlertDescription>{errorMessage(projects.error)}</AlertDescription>
 				</Alert>
 			) : null}
 
@@ -137,8 +137,8 @@ export default function ScopesPage() {
 				onOpenChange={(open) => {
 					setCreateOpen(open);
 					if (!open) {
-						setNewScopeName("");
-						setNewScopeSlug("");
+						setNewProjectName("");
+						setNewProjectSlug("");
 					}
 				}}
 			>
@@ -154,29 +154,29 @@ export default function ScopesPage() {
 						className="space-y-4"
 						onSubmit={(event) => {
 							event.preventDefault();
-							if (!newScopeName.trim() || createScope.isPending) return;
-							createScope.mutate();
+							if (!newProjectName.trim() || createProject.isPending) return;
+							createProject.mutate();
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
 							<div className="space-y-1.5">
-								<Label htmlFor="scope-name">Name</Label>
+								<Label htmlFor="project-name">Name</Label>
 								<Input
-									id="scope-name"
-									value={newScopeName}
+									id="project-name"
+									value={newProjectName}
 									maxLength={200}
 									placeholder="Project name"
-									onChange={(event) => setNewScopeName(event.target.value)}
+									onChange={(event) => setNewProjectName(event.target.value)}
 								/>
 							</div>
 							<div className="space-y-1.5">
-								<Label htmlFor="scope-slug">Slug</Label>
+								<Label htmlFor="project-slug">Slug</Label>
 								<Input
-									id="scope-slug"
-									value={newScopeSlug}
+									id="project-slug"
+									value={newProjectSlug}
 									maxLength={80}
 									placeholder="auto-generated"
-									onChange={(event) => setNewScopeSlug(normalizeSlugDraft(event.target.value))}
+									onChange={(event) => setNewProjectSlug(normalizeSlugDraft(event.target.value))}
 								/>
 							</div>
 						</div>
@@ -184,9 +184,9 @@ export default function ScopesPage() {
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!newScopeName.trim() || createScope.isPending}>
+							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
 								<Plus className="size-3.5" />
-								{createScope.isPending ? "Creating..." : "Create project"}
+								{createProject.isPending ? "Creating..." : "Create project"}
 							</Button>
 						</div>
 					</form>
@@ -196,15 +196,15 @@ export default function ScopesPage() {
 			<section className="space-y-3">
 				<SectionHeader
 					title="Owned projects"
-					count={ownedScopes.length}
+					count={ownedProjects.length}
 					description="Projects you control directly."
 				/>
-				{ownedScopes.length === 0 ? (
+				{ownedProjects.length === 0 ? (
 					<EmptyLine message="No owned projects yet. Connect an agent or create a shareable project." />
 				) : (
 					<div className="divide-y rounded-lg border">
-						{ownedScopes.map((scope) => (
-							<OwnedProjectRow key={scope.id} scope={scope} />
+						{ownedProjects.map((project) => (
+							<OwnedProjectRow key={project.id} project={project} />
 						))}
 					</div>
 				)}
@@ -213,15 +213,15 @@ export default function ScopesPage() {
 			<section className="space-y-3">
 				<SectionHeader
 					title="Shared projects"
-					count={sharedScopes.length}
+					count={sharedProjects.length}
 					description="Projects shared with you by other people."
 				/>
-				{sharedScopes.length === 0 ? (
+				{sharedProjects.length === 0 ? (
 					<EmptyLine message="Accepted shares appear here." />
 				) : (
 					<div className="divide-y rounded-lg border">
-						{sharedScopes.map((scope) => (
-							<SharedProjectRow key={scope.id} scope={scope} />
+						{sharedProjects.map((project) => (
+							<SharedProjectRow key={project.id} project={project} />
 						))}
 					</div>
 				)}
@@ -230,24 +230,28 @@ export default function ScopesPage() {
 	);
 }
 
-function OwnedProjectRow({ scope }: { scope: ScopeRow }) {
-	const scopeName = displayScopeName(scope);
+function OwnedProjectRow({ project }: { project: ProjectRow }) {
+	const projectName = displayProjectName(project);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
-				href={`/scopes/${scope.id}`}
-				aria-label={`Open ${scopeName}`}
+				href={`/projects/${project.id}`}
+				aria-label={`Open ${projectName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-				<ScopeIdentity scope={scope} />
+				<ProjectIdentity project={project} />
 				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
-					<ShareScopeDialog scopeId={scope.id} scopeName={scopeName} scopeKind={scope.kind}>
-						<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
+					<ShareProjectDialog
+						projectId={project.id}
+						projectName={projectName}
+						projectKind={project.kind}
+					>
+						<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 							<Share2 className="mr-1.5 size-3.5" />
 							Share
 						</Button>
-					</ShareScopeDialog>
+					</ShareProjectDialog>
 					<ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 				</div>
 			</div>
@@ -255,18 +259,18 @@ function OwnedProjectRow({ scope }: { scope: ScopeRow }) {
 	);
 }
 
-function SharedProjectRow({ scope }: { scope: ScopeRow }) {
-	const scopeName = displayScopeName(scope);
+function SharedProjectRow({ project }: { project: ProjectRow }) {
+	const projectName = displayProjectName(project);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<Link
-				href={`/scopes/${scope.id}`}
-				aria-label={`Open ${scopeName}`}
+				href={`/projects/${project.id}`}
+				aria-label={`Open ${projectName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<div className="relative z-20 min-w-0 pointer-events-none">
-					<ScopeIdentity scope={scope} tone="shared" />
+					<ProjectIdentity project={project} tone="shared" />
 					<p className="mt-1 text-xs text-muted-foreground">
 						Access granted via sharing. Bind this project to agents explicitly when needed.
 					</p>
@@ -277,26 +281,32 @@ function SharedProjectRow({ scope }: { scope: ScopeRow }) {
 	);
 }
 
-function ScopeIdentity({ scope, tone = "owned" }: { scope: ScopeRow; tone?: "owned" | "shared" }) {
+function ProjectIdentity({
+	project,
+	tone = "owned",
+}: {
+	project: ProjectRow;
+	tone?: "owned" | "shared";
+}) {
 	return (
 		<div className="relative z-20 min-w-0 pointer-events-none">
 			<div className="flex flex-wrap items-center gap-2">
-				<h3 className="truncate text-sm font-semibold">{displayScopeName(scope)}</h3>
+				<h3 className="truncate text-sm font-semibold">{displayProjectName(project)}</h3>
 				{tone === "shared" ? (
 					<Badge variant="secondary">
 						<UserCheck className="size-3.5" />
 						viewer
 					</Badge>
 				) : null}
-				<ScopeKindBadge kind={scope.kind} />
+				<ProjectKindBadge kind={project.kind} />
 			</div>
-			<div className="mt-1 font-mono text-xs text-muted-foreground">{scope.slug}</div>
+			<div className="mt-1 font-mono text-xs text-muted-foreground">{project.slug}</div>
 		</div>
 	);
 }
 
-function ScopeKindBadge({ kind }: { kind: string }) {
-	const meta = scopeKindMeta(kind);
+function ProjectKindBadge({ kind }: { kind: string }) {
+	const meta = projectKindMeta(kind);
 	return (
 		<Badge
 			variant={kind === "personal" ? "outline" : "secondary"}
@@ -308,7 +318,7 @@ function ScopeKindBadge({ kind }: { kind: string }) {
 	);
 }
 
-function scopeKindMeta(kind: string) {
+function projectKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
@@ -364,21 +374,21 @@ function normalizeSlugDraft(value: string) {
 		.replace(/^-+/, "");
 }
 
-function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
+function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {
 	const rank = (kind: string) => (kind === "workspace" ? 0 : kind === "personal" ? 1 : 2);
 	const byRank = rank(a.kind) - rank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
 }
 
-function displayScopeName(scope: ScopeRow) {
+function displayProjectName(project: ProjectRow) {
 	if (
-		scope.kind === "personal" &&
-		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
+		project.kind === "personal" &&
+		(project.slug === "personal" || ["default", "personal"].includes(project.name.toLowerCase()))
 	) {
 		return "Personal";
 	}
-	return scope.name;
+	return project.name;
 }
 
 function EmptyLine({ message }: { message: string }) {

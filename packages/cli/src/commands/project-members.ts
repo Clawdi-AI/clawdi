@@ -2,7 +2,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 interface MemberRow {
 	id: string;
@@ -38,20 +38,24 @@ async function requestJson<T>(url: string, apiKey: string, init: RequestInit = {
 	return r.json() as Promise<T>;
 }
 
-async function fetchMembers(apiUrl: string, apiKey: string, scopeId: string): Promise<MemberRow[]> {
-	return requestJson<MemberRow[]>(`${apiUrl}/api/projects/${scopeId}/members`, apiKey);
+async function fetchMembers(
+	apiUrl: string,
+	apiKey: string,
+	projectId: string,
+): Promise<MemberRow[]> {
+	return requestJson<MemberRow[]>(`${apiUrl}/api/projects/${projectId}/members`, apiKey);
 }
 
-export async function scopeMembersCommand(
-	scopeArg: string,
+export async function projectMembersCommand(
+	projectArg: string,
 	opts: { json?: boolean; remove?: string },
 ): Promise<void> {
 	const ctx = await requireAuth();
 	if (!ctx) return;
 
-	const scopeId = await resolveScopeId(ctx.apiUrl, ctx.apiKey, scopeArg);
+	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
 	if (opts.remove) {
-		const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, scopeId);
+		const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, projectId);
 		const needle = opts.remove.toLowerCase();
 		const matches = members.filter(
 			(m) =>
@@ -70,7 +74,7 @@ export async function scopeMembersCommand(
 			return;
 		}
 		const removed = await requestJson<{ status: string }>(
-			`${ctx.apiUrl}/api/projects/${scopeId}/members/${matches[0].user_id}`,
+			`${ctx.apiUrl}/api/projects/${projectId}/members/${matches[0].user_id}`,
 			ctx.apiKey,
 			{ method: "DELETE" },
 		);
@@ -78,7 +82,7 @@ export async function scopeMembersCommand(
 			console.log(
 				JSON.stringify(
 					{
-						project_id: scopeId,
+						project_id: projectId,
 						removed_user_id: matches[0].user_id,
 						...removed,
 					},
@@ -92,19 +96,19 @@ export async function scopeMembersCommand(
 		return;
 	}
 
-	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, scopeId);
+	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, projectId);
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: scopeId, members }, null, 2));
+		console.log(JSON.stringify({ project_id: projectId, members }, null, 2));
 		return;
 	}
 	if (members.length === 0) {
-		console.log(`No members on ${scopeArg}.`);
+		console.log(`No members on ${projectArg}.`);
 		console.log(
-			chalk.gray(`Invite one: ${chalk.cyan(`clawdi project invite ${scopeArg} --email <addr>`)}`),
+			chalk.gray(`Invite one: ${chalk.cyan(`clawdi project invite ${projectArg} --email <addr>`)}`),
 		);
 		return;
 	}
-	console.log(chalk.bold(`Members on ${scopeArg} (${members.length}):`));
+	console.log(chalk.bold(`Members on ${projectArg} (${members.length}):`));
 	for (const m of members) {
 		const who = m.user_email ?? m.user_display ?? m.user_id;
 		console.log(
@@ -115,45 +119,48 @@ export async function scopeMembersCommand(
 	console.log();
 	console.log(
 		chalk.gray("Remove: ") +
-			chalk.cyan(`clawdi project members ${scopeArg} --remove <email|user_id>`),
+			chalk.cyan(`clawdi project members ${projectArg} --remove <email|user_id>`),
 	);
 }
 
-export async function scopeLeaveCommand(scopeArg: string, opts: { json?: boolean }): Promise<void> {
-	const ctx = await requireAuth();
-	if (!ctx) return;
-
-	const scopeId = await resolveScopeId(ctx.apiUrl, ctx.apiKey, scopeArg);
-	const result = await requestJson<{ status: string }>(
-		`${ctx.apiUrl}/api/projects/${scopeId}/leave`,
-		ctx.apiKey,
-		{ method: "POST" },
-	);
-	if (opts.json) {
-		console.log(JSON.stringify({ project_id: scopeId, ...result }, null, 2));
-		return;
-	}
-	console.log(`${chalk.green("✓")} Left ${scopeArg}.`);
-}
-
-export async function scopeUnshareCommand(
-	scopeArg: string,
+export async function projectLeaveCommand(
+	projectArg: string,
 	opts: { json?: boolean },
 ): Promise<void> {
 	const ctx = await requireAuth();
 	if (!ctx) return;
 
-	const scopeId = await resolveScopeId(ctx.apiUrl, ctx.apiKey, scopeArg);
+	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
+	const result = await requestJson<{ status: string }>(
+		`${ctx.apiUrl}/api/projects/${projectId}/leave`,
+		ctx.apiKey,
+		{ method: "POST" },
+	);
+	if (opts.json) {
+		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
+		return;
+	}
+	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
+}
+
+export async function projectUnshareCommand(
+	projectArg: string,
+	opts: { json?: boolean },
+): Promise<void> {
+	const ctx = await requireAuth();
+	if (!ctx) return;
+
+	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
 	const result = await requestJson<{
 		links_revoked: number;
 		members_removed: number;
 		invitations_cancelled: number;
-	}>(`${ctx.apiUrl}/api/projects/${scopeId}/unshare`, ctx.apiKey, { method: "POST" });
+	}>(`${ctx.apiUrl}/api/projects/${projectId}/unshare`, ctx.apiKey, { method: "POST" });
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: scopeId, ...result }, null, 2));
+		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
 		return;
 	}
-	console.log(`${chalk.green("✓")} Stopped sharing ${scopeArg}.`);
+	console.log(`${chalk.green("✓")} Stopped sharing ${projectArg}.`);
 	console.log(
 		chalk.gray(
 			`  Revoked ${result.links_revoked} link(s), removed ${result.members_removed} member(s), ` +

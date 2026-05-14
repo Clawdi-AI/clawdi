@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-	scopeLeaveCommand,
-	scopeMembersCommand,
-	scopeUnshareCommand,
-} from "../../src/commands/scope-members";
+	projectLeaveCommand,
+	projectMembersCommand,
+	projectUnshareCommand,
+} from "../../src/commands/project-members";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -17,7 +17,7 @@ let origApiUrl: string | undefined;
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
-	tmpHome = join(tmpdir(), `clawdi-scope-members-${Date.now()}-${Math.random().toString(36)}`);
+	tmpHome = join(tmpdir(), `clawdi-project-members-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
 	process.env.HOME = tmpHome;
@@ -33,16 +33,16 @@ afterEach(() => {
 	process.exitCode = undefined;
 });
 
-const scopes = [
+const projects = [
 	{
-		id: "scope-owned",
+		id: "project-owned",
 		slug: "engineering",
 		name: "Engineering",
 		kind: "environment",
 		is_owner: true,
 	},
 	{
-		id: "scope-shared",
+		id: "project-shared",
 		slug: "shared-toolkit",
 		name: "Shared Toolkit",
 		kind: "environment",
@@ -50,12 +50,12 @@ const scopes = [
 	},
 ];
 
-describe("scope member lifecycle commands", () => {
+describe("project member lifecycle commands", () => {
 	it("lists and removes accepted members with JSON output", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/scopes/scope-owned/members",
+				path: "/api/projects/project-owned/members",
 				response: () =>
 					jsonResponse([
 						{
@@ -72,10 +72,10 @@ describe("scope member lifecycle commands", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/scopes/scope-owned/members/user-bob",
-				response: () => jsonResponse({ status: "removed", mounts_removed: 1 }),
+				path: "/api/projects/project-owned/members/user-bob",
+				response: () => jsonResponse({ status: "removed" }),
 			},
-			{ method: "GET", path: "/api/scopes", response: () => jsonResponse(scopes) },
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		let out = "";
@@ -83,32 +83,31 @@ describe("scope member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await scopeMembersCommand("engineering", { remove: "bob@example.test", json: true });
+			await projectMembersCommand("engineering", { remove: "bob@example.test", json: true });
 		} finally {
 			console.log = orig;
 			restore();
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/scopes",
-			"GET /api/scopes/scope-owned/members",
-			"DELETE /api/scopes/scope-owned/members/user-bob",
+			"GET /api/projects",
+			"GET /api/projects/project-owned/members",
+			"DELETE /api/projects/project-owned/members/user-bob",
 		]);
 		expect(JSON.parse(out)).toEqual({
-			scope_id: "scope-owned",
+			project_id: "project-owned",
 			removed_user_id: "user-bob",
 			status: "removed",
-			mounts_removed: 1,
 		});
 	});
 
-	it("leaves a shared scope and reports removed mounts", async () => {
+	it("leaves a shared project", async () => {
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/scopes", response: () => jsonResponse(scopes) },
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/scopes/scope-shared/leave",
-				response: () => jsonResponse({ status: "left", mounts_removed: 2 }),
+				path: "/api/projects/project-shared/leave",
+				response: () => jsonResponse({ status: "left" }),
 			},
 		]);
 		const orig = console.log;
@@ -117,25 +116,24 @@ describe("scope member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await scopeLeaveCommand("shared-toolkit", { json: true });
+			await projectLeaveCommand("shared-toolkit", { json: true });
 		} finally {
 			console.log = orig;
 			restore();
 		}
 
 		expect(JSON.parse(out)).toEqual({
-			scope_id: "scope-shared",
+			project_id: "project-shared",
 			status: "left",
-			mounts_removed: 2,
 		});
 	});
 
-	it("unshares an owned scope", async () => {
+	it("unshares an owned project", async () => {
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/scopes", response: () => jsonResponse(scopes) },
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/scopes/scope-owned/unshare",
+				path: "/api/projects/project-owned/unshare",
 				response: () =>
 					jsonResponse({
 						links_revoked: 1,
@@ -150,14 +148,14 @@ describe("scope member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await scopeUnshareCommand("engineering", { json: true });
+			await projectUnshareCommand("engineering", { json: true });
 		} finally {
 			console.log = orig;
 			restore();
 		}
 
 		expect(JSON.parse(out)).toEqual({
-			scope_id: "scope-owned",
+			project_id: "project-owned",
 			links_revoked: 1,
 			members_removed: 2,
 			invitations_cancelled: 3,

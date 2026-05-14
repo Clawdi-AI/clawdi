@@ -18,10 +18,10 @@ function requireAuth() {
  * pre-existing vault; everything else propagates as a normal ApiError so
  * users see auth/network failures instead of a silent skip.
  */
-async function ensureVault(api: ApiClient, slug: string, name = slug, scopeId?: string) {
+async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?: string) {
 	const created = await api.POST("/api/vault", {
 		body: { slug, name },
-		params: scopeId ? { query: { scope_id: scopeId } } : { query: {} },
+		params: projectId ? { query: { project_id: projectId } } : { query: {} },
 	});
 	// `response` is only populated when the server actually replied — on a
 	// network-level failure `response` is undefined, so optional-chain it
@@ -33,15 +33,15 @@ async function ensureVault(api: ApiClient, slug: string, name = slug, scopeId?: 
 }
 
 /**
- * Resolve the slug → exact scope_id. Round 30 added a 409
+ * Resolve the slug → exact project_id. Round 30 added a 409
  * `ambiguous_vault_slug` whenever a JWT (or unbound) caller can
- * see the same slug under multiple scopes (Personal + env-A, two
+ * see the same slug under multiple projects (Personal + env-A, two
  * envs with collision-named vaults, etc.). Slug-only lookups
  * pre-this-helper would 409 in those cases. We resolve by:
  *   1. Listing visible vaults (cheap — `/api/vault` returns
- *      a single page with scope_id per row).
- *   2. Picking the row whose scope_id matches the caller's
- *      default WRITE scope (`/api/scopes/default`). For
+ *      a single page with project_id per row).
+ *   2. Picking the row whose project_id matches the caller's
+ *      default WRITE scope (`/api/projects/default`). For
  *      env-bound api_keys this is unambiguous (one visible
  *      scope); for JWT/unbound it picks the same scope a
  *      fresh `clawdi vault set` would create the vault in,
@@ -53,11 +53,11 @@ async function ensureVault(api: ApiClient, slug: string, name = slug, scopeId?: 
  *      exist for this caller; downstream calls then surface
  *      the server's 404 to the user.
  */
-async function resolveVaultScopeId(api: ApiClient, slug: string): Promise<string | null> {
+async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<string | null> {
 	const list = unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } }));
 	const candidates = list.items.filter((v) => v.slug === slug);
 	if (candidates.length === 0) return null;
-	if (candidates.length === 1) return candidates[0].scope_id;
+	if (candidates.length === 1) return candidates[0].project_id;
 	const headers: Record<string, string> = {};
 	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
 	const projectRes = await fetch(`${api.baseUrl}/api/projects/default`, { headers });
@@ -66,20 +66,25 @@ async function resolveVaultScopeId(api: ApiClient, slug: string): Promise<string
 		const body = (await projectRes.json()) as { project_id: string };
 		def = body.project_id;
 	} else {
-		// Backward compat with pre-project route names.
-		const legacy = unwrap(await api.GET("/api/scopes/default"));
-		def = legacy.scope_id;
+		// Backward compat with older field names.
+		const legacy = (
+			unwrap(await api.GET("/api/projects/default")) as {
+				project_id?: string;
+				scope_id?: string;
+			}
+		).project_id;
+		def = legacy ?? "";
 	}
-	const inDefault = candidates.find((v) => v.scope_id === def);
-	if (inDefault) return inDefault.scope_id;
+	const inDefault = candidates.find((v) => v.project_id === def);
+	if (inDefault) return inDefault.project_id;
 	// Multiple matches, none in the default scope. Pick the
 	// first deterministically — caller still gets a single
 	// scope, which is better than a 409 for any sane user
 	// flow (and we surface a hint in the diagnostics path).
-	return candidates[0].scope_id;
+	return candidates[0].project_id;
 }
 
-export async function vaultSet(key: string, opts: { scope?: string } = {}) {
+export async function vaultSet(key: string, opts: { project?: string } = {}) {
 	requireAuth();
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
@@ -92,11 +97,11 @@ export async function vaultSet(key: string, opts: { scope?: string } = {}) {
 
 	const api = new ApiClient();
 
-	// Resolve --scope to a concrete UUID up front so both
-	// ensureVault (create) AND the items PUT land in the same scope.
-	let pinnedScopeId: string | undefined;
-	if (opts.scope) {
-		const { resolveScopeId } = await import("../lib/scope-resolver.js");
+	// Resolve --project to a concrete UUID up front so both
+	// ensureVault (create) AND the items PUT land in the same project.
+	let pinnedProjectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getAuth, getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
 		const auth = getAuth();
@@ -104,22 +109,22 @@ export async function vaultSet(key: string, opts: { scope?: string } = {}) {
 			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 			process.exit(1);
 		}
-		pinnedScopeId = await resolveScopeId(cfg.apiUrl, auth.apiKey, opts.scope);
+		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
 	}
 
-	await ensureVault(api, vaultSlug, vaultSlug, pinnedScopeId);
+	await ensureVault(api, vaultSlug, vaultSlug, pinnedProjectId);
 
-	// Pass scope_id so the server's slug → vault lookup
+	// Pass project_id so the server's slug → vault lookup
 	// doesn't 409 on JWT / unbound callers who can see the
-	// same slug under multiple scopes. For env-bound api_keys
-	// this is a no-op — only one scope is visible. `ensureVault`
+	// same slug under multiple projects. For env-bound api_keys
+	// this is a no-op — only one project is visible. `ensureVault`
 	// above just guaranteed at least one match exists.
-	const scope_id = pinnedScopeId ?? (await resolveVaultScopeId(api, vaultSlug));
+	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, vaultSlug));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: scope_id ? { scope_id } : {},
+				query: project_id ? { project_id } : {},
 			},
 			body: { section, fields: { [field]: value } },
 		}),
@@ -139,41 +144,41 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	);
 	const vaults = page.items;
 
-	// Pass each vault's scope_id from the listing so the
+	// Pass each vault's project_id from the listing so the
 	// items lookup never trips the round-30 ambiguity 409.
 	// For env-bound api_keys this is a no-op (single visible
-	// scope); for JWT / unbound it disambiguates a duplicate
-	// slug across scopes deterministically.
-	const fetchItems = (slug: string, scope_id: string) =>
+	// project); for JWT / unbound it disambiguates a duplicate
+	// slug across projects deterministically.
+	const fetchItems = (slug: string, project_id: string) =>
 		api
 			.GET("/api/vault/{slug}/items", {
-				params: { path: { slug }, query: { scope_id } },
+				params: { path: { slug }, query: { project_id } },
 			})
 			.then(unwrap);
 
 	if (opts.json || !process.stdout.isTTY) {
-		// Emit an ARRAY of `{slug, scope_id, name, items}` instead
-		// of a `slug → items` map. Round 30's per-scope vault
+		// Emit an ARRAY of `{slug, project_id, name, items}` instead
+		// of a `slug → items` map. Round 30's per-project vault
 		// uniqueness means a JWT or unbound caller can see the
-		// same slug in two scopes (Personal + env-A); the map
+		// same slug in two projects (Personal + env-A); the map
 		// shape would have the second row silently overwrite the
-		// first under the shared key, dropping one scope's items
+		// first under the shared key, dropping one project's items
 		// entirely. The array shape preserves both rows so
-		// `jq '.[] | select(.scope_id=="…")'` etc still works,
+		// `jq '.[] | select(.project_id=="…")'` etc still works,
 		// and downstream tooling can consistently key on
-		// `(scope_id, slug)` rather than guessing.
+		// `(project_id, slug)` rather than guessing.
 		const out: Array<{
 			slug: string;
-			scope_id: string;
+			project_id: string;
 			name: string;
 			items: Awaited<ReturnType<typeof fetchItems>>;
 		}> = [];
 		for (const v of vaults) {
 			out.push({
 				slug: v.slug,
-				scope_id: v.scope_id,
+				project_id: v.project_id,
 				name: v.name,
-				items: await fetchItems(v.slug, v.scope_id),
+				items: await fetchItems(v.slug, v.project_id),
 			});
 		}
 		console.log(JSON.stringify(out, null, 2));
@@ -192,7 +197,7 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 
 	for (const v of vaults) {
-		const items = await fetchItems(v.slug, v.scope_id);
+		const items = await fetchItems(v.slug, v.project_id);
 		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
 		for (const [section, fields] of Object.entries(items)) {
 			for (const field of fields) {
@@ -206,16 +211,16 @@ export async function vaultList(opts: { json?: boolean } = {}) {
 	}
 }
 
-export async function vaultImport(file: string, opts: { yes?: boolean; scope?: string } = {}) {
+export async function vaultImport(file: string, opts: { yes?: boolean; project?: string } = {}) {
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
 	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
-	let pinnedScopeId: string | undefined;
-	if (opts.scope) {
-		const { resolveScopeId } = await import("../lib/scope-resolver.js");
+	let pinnedProjectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getAuth, getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
 		const auth = getAuth();
@@ -223,10 +228,10 @@ export async function vaultImport(file: string, opts: { yes?: boolean; scope?: s
 			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 			process.exit(1);
 		}
-		pinnedScopeId = await resolveScopeId(cfg.apiUrl, auth.apiKey, opts.scope);
+		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
 	}
 
-	await ensureVault(api, "default", "Default", pinnedScopeId);
+	await ensureVault(api, "default", "Default", pinnedProjectId);
 
 	const fields: Record<string, string> = {};
 	for (const line of lines) {
@@ -261,12 +266,12 @@ export async function vaultImport(file: string, opts: { yes?: boolean; scope?: s
 		}
 	}
 
-	const scope_id = pinnedScopeId ?? (await resolveVaultScopeId(api, "default"));
+	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, "default"));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
 				path: { slug: "default" },
-				query: scope_id ? { scope_id } : {},
+				query: project_id ? { project_id } : {},
 			},
 			body: { section: "", fields },
 		}),

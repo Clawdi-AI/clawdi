@@ -154,11 +154,11 @@ async def test_vault_same_slug_allowed_across_scopes(client, db_session, seed_us
     matches what the route allows: insert two vaults with the same
     slug under two different scope_ids and confirm both persist
     without 409 at the DB layer."""
-    from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+    from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
     from app.models.vault import Vault
 
-    scope_a = Scope(user_id=seed_user.id, name="A", slug="env-a", kind=SCOPE_KIND_ENVIRONMENT)
-    scope_b = Scope(user_id=seed_user.id, name="B", slug="env-b", kind=SCOPE_KIND_ENVIRONMENT)
+    scope_a = Project(user_id=seed_user.id, name="A", slug="env-a", kind=PROJECT_KIND_ENVIRONMENT)
+    scope_b = Project(user_id=seed_user.id, name="B", slug="env-b", kind=PROJECT_KIND_ENVIRONMENT)
     db_session.add_all([scope_a, scope_b])
     await db_session.flush()
 

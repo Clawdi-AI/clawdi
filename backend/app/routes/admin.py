@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
@@ -248,11 +248,11 @@ async def admin_register_environment(
         # interrupted creates) — same logic the user-facing route
         # runs.
         if existing.default_scope_id is None:
-            healing_scope = Scope(
+            healing_scope = Project(
                 user_id=target.id,
                 name=f"{body.machine_name} ({body.agent_type})",
                 slug=f"env-{uuid.uuid4().hex[:12]}",
-                kind=SCOPE_KIND_ENVIRONMENT,
+                kind=PROJECT_KIND_ENVIRONMENT,
                 origin_environment_id=existing.id,
             )
             db.add(healing_scope)
@@ -265,11 +265,11 @@ async def admin_register_environment(
     # exist), then env pointing at the scope, then back-fill
     # scope.origin_environment_id. Mirror of register_environment's
     # mutual-FK insertion order.
-    scope = Scope(
+    scope = Project(
         user_id=target.id,
         name=f"{body.machine_name} ({body.agent_type})",
         slug=f"env-{uuid.uuid4().hex[:12]}",
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
     db.add(scope)
     try:

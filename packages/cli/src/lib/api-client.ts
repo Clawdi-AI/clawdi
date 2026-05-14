@@ -252,7 +252,7 @@ export class ApiClient {
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
 		return this.multipartPost<SkillUploadResponse>(
-			`/api/scopes/${encodeURIComponent(scopeId)}/skills/upload`,
+			`/api/projects/${encodeURIComponent(scopeId)}/skills/upload`,
 			fields,
 			file,
 			filename,

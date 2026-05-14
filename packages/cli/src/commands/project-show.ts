@@ -1,8 +1,8 @@
 import chalk from "chalk";
 import { getAuth, getConfig } from "../lib/config";
-import { listScopes, resolveScopeId } from "../lib/scope-resolver";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
-interface ScopeBrief {
+interface ProjectBrief {
 	id: string;
 	name: string;
 	slug: string;
@@ -14,12 +14,14 @@ interface ScopeBrief {
 }
 
 interface SkillRow {
+	project_id?: string | null;
 	scope_id?: string | null;
 	skill_key: string;
 }
 
 interface VaultRow {
-	scope_id: string;
+	project_id?: string | null;
+	scope_id?: string | null;
 	slug: string;
 	name: string;
 }
@@ -49,8 +51,8 @@ async function fetchAllSkills(apiUrl: string, bearer: string): Promise<SkillRow[
 	return items;
 }
 
-export async function scopeShowCommand(
-	scopeArg: string,
+export async function projectShowCommand(
+	projectArg: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
@@ -61,11 +63,11 @@ export async function scopeShowCommand(
 		return;
 	}
 
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
-	const scopes = (await listScopes(apiUrl, auth.apiKey)) as ScopeBrief[];
-	const scope = scopes.find((s) => s.id === scopeId);
-	if (!scope) {
-		console.error(chalk.red(`No project matches '${scopeArg}'. Try \`clawdi project list\`.`));
+	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const projects = (await listProjects(apiUrl, auth.apiKey)) as ProjectBrief[];
+	const project = projects.find((s) => s.id === projectId);
+	if (!project) {
+		console.error(chalk.red(`No project matches '${projectArg}'. Try \`clawdi project list\`.`));
 		process.exitCode = 1;
 		return;
 	}
@@ -76,36 +78,25 @@ export async function scopeShowCommand(
 			() => ({ items: [] }),
 		),
 	]);
-	const ownSkills = skills.filter((s) => s.scope_id === scopeId);
-	const ownVaults = vaultsPage.items.filter((v) => v.scope_id === scopeId);
+	const ownSkills = skills.filter((s) => (s.project_id ?? s.scope_id) === projectId);
+	const ownVaults = vaultsPage.items.filter((v) => (v.project_id ?? v.scope_id) === projectId);
 
 	const payload = {
 		project: {
-			id: scope.id,
-			slug: scope.slug,
-			name: scope.name,
-			kind: scope.kind,
-			is_owner: scope.is_owner !== false,
-			origin_environment_id: scope.origin_environment_id ?? null,
-			archived_at: scope.archived_at ?? null,
-			created_at: scope.created_at ?? null,
+			id: project.id,
+			slug: project.slug,
+			name: project.name,
+			kind: project.kind,
+			is_owner: project.is_owner !== false,
+			origin_environment_id: project.origin_environment_id ?? null,
+			archived_at: project.archived_at ?? null,
+			created_at: project.created_at ?? null,
 		},
 		skills: {
 			count: ownSkills.length,
 			keys: ownSkills.map((s) => s.skill_key).sort(),
 		},
 		vaults: ownVaults.map((v) => ({ slug: v.slug, name: v.name })),
-		// Backward-compatible alias retained during CLI transition.
-		scope: {
-			id: scope.id,
-			slug: scope.slug,
-			name: scope.name,
-			kind: scope.kind,
-			is_owner: scope.is_owner !== false,
-			origin_environment_id: scope.origin_environment_id ?? null,
-			archived_at: scope.archived_at ?? null,
-			created_at: scope.created_at ?? null,
-		},
 	};
 
 	if (opts.json) {
@@ -113,10 +104,12 @@ export async function scopeShowCommand(
 		return;
 	}
 
-	console.log(chalk.bold(scope.name));
-	console.log(`  slug: ${chalk.cyan(scope.slug)}`);
-	console.log(`  id:   ${chalk.gray(scope.id)}`);
-	console.log(`  kind: ${scope.kind}${scope.is_owner === false ? chalk.gray(" (shared)") : ""}`);
+	console.log(chalk.bold(project.name));
+	console.log(`  slug: ${chalk.cyan(project.slug)}`);
+	console.log(`  id:   ${chalk.gray(project.id)}`);
+	console.log(
+		`  kind: ${project.kind}${project.is_owner === false ? chalk.gray(" (shared)") : ""}`,
+	);
 	console.log(`  skills: ${ownSkills.length}`);
 	console.log(`  vaults: ${ownVaults.length}`);
 }

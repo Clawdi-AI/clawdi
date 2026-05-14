@@ -2,7 +2,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 /**
  * `clawdi project invite <project> --email <addr>` — send an email
@@ -28,7 +28,10 @@ const NOT_REGISTERED_HINT =
 	"No clawdi account found for that email. Send them a share link instead:";
 const AMBIGUOUS_HINT = "Multiple accounts match that email. Send them a share link instead:";
 
-export async function scopeInviteCommand(scopeArg: string, opts: { email: string }): Promise<void> {
+export async function projectInviteCommand(
+	projectArg: string,
+	opts: { email: string },
+): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
@@ -42,8 +45,8 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 		return;
 	}
 
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
-	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/invitations`, {
+	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const r = await fetch(`${apiUrl}/api/projects/${projectId}/invitations`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${auth.apiKey}`,
@@ -61,10 +64,10 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 			console.error(chalk.red(ALREADY_OWNER_HINT));
 		} else if (err === "user_not_found") {
 			console.error(chalk.red(NOT_REGISTERED_HINT));
-			console.error(`  ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
+			console.error(`  ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
 		} else if (err === "ambiguous_email") {
 			console.error(chalk.red(AMBIGUOUS_HINT));
-			console.error(`  ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
+			console.error(`  ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
 		} else if (err === "already_member") {
 			console.error(chalk.yellow("That user is already a member of this project."));
 		} else if (err === "already_invited") {

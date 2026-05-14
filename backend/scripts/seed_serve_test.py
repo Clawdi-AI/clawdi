@@ -37,7 +37,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_PERSONAL, Scope  # noqa: E402
+from app.models.project import SCOPE_KIND_ENVIRONMENT, SCOPE_KIND_PERSONAL, Scope  # noqa: E402
 from app.models.session import AgentEnvironment  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.api_key import mint_api_key  # noqa: E402

@@ -11,7 +11,7 @@ import { sha256Hex } from "../lib/hash";
 import { askMulti, askYesNo, parseModules } from "../lib/prompts";
 import {
 	adapterForType,
-	fetchScopeIdForEnv,
+	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
@@ -557,7 +557,7 @@ async function pushOneAgent(
 				`internal error: skill push without envId for ${agentType}; the early-return guard above should have caught this`,
 			);
 		}
-		const skillScopeId = await fetchScopeIdForEnv(api, envId);
+		const skillScopeId = await fetchProjectIdForEnv(api, envId);
 
 		const skillSpinner = p.spinner();
 		skillSpinner.start(`Hashing ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);

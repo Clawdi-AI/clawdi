@@ -1,4 +1,4 @@
-"""Scope-boundary regression suite.
+"""Project-boundary regression suite.
 
 These tests pin the security/correctness fixes from PR review
 rounds 2 + B + E so they don't regress silently:
@@ -34,7 +34,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.memory import Memory
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
@@ -71,11 +71,11 @@ async def env_without_scope(db_session: AsyncSession, seed_user: User) -> AgentE
     from sqlalchemy import update
 
     pending_slug = f"env-{uuid.uuid4().hex[:12]}"
-    scope = Scope(
+    scope = Project(
         user_id=seed_user.id,
         name="Heal Test (claude_code)",
         slug=pending_slug,
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
     db_session.add(scope)
     await db_session.flush()
@@ -717,7 +717,7 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
     seed_user: User,
 ):
     """Round-r5 P1: a bound env-A deploy key sending
-    `POST /api/scopes/{env_b.default_scope_id}/skills/upload`
+    `POST /api/projects/{env_b.default_scope_id}/skills/upload`
     must 403, not silently accept the write into env-B.
     `validate_scope_for_caller` is the boundary for ALL phase-2
     scope-explicit writes (skills, vault, memory) — without it
@@ -772,7 +772,7 @@ async def test_scope_explicit_upload_403s_bound_key_targeting_other_scope(
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
         resp = await client.post(
-            f"/api/scopes/{env_b.default_scope_id}/skills/upload",
+            f"/api/projects/{env_b.default_scope_id}/skills/upload",
             data={"skill_key": "evil"},
             files={"file": ("evil.tgz", archive, "application/gzip")},
         )

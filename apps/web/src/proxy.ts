@@ -18,7 +18,7 @@ const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 // this entry `/s/{token}.json` would 307 to /sign-in. Share access is
 // gated by the token, not the user's Clerk session.
 //
-// `/share/*` is the public landing page for shared scopes; anonymous
+// `/share/*` is the public landing page for shared projects; anonymous
 // previews + sign-in handoff happen there.
 const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)", "/share/(.*)"];
 

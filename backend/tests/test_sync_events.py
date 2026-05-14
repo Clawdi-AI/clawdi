@@ -197,11 +197,14 @@ async def test_bump_skills_revision_after_commit_broadcasts(
 ):
     """End-to-end: bump_skills_revision queues an event; commit
     flushes it; visible-scope subscribers receive it."""
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == seed_user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(
+                Project.user_id == seed_user.id,
+                Project.kind == PROJECT_KIND_PERSONAL,
+            )
         )
     ).scalar_one()
 

@@ -16,9 +16,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.scope import (
-    Scope as Scope,  # noqa: F401 — register `scopes` table for FK resolution
-)
+from app.models.project import Project  # noqa: F401 — register `scopes` table for FK resolution
 
 
 class AgentEnvironment(Base, TimestampMixin):

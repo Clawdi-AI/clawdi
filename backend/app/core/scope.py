@@ -2,8 +2,8 @@
 env-scoped-skills milestone.
 
 Every write target (skills, vaults) carries a required `scope_id`
-column. Routes that need to resolve the scope from the caller's
-auth context (rather than taking a `/api/scopes/{scope_id}/...`
+column. Routes that need to resolve the project from the caller's
+auth context (rather than taking a `/api/projects/{project_id}/...`
 path parameter) use the helpers below:
 
   * api_key with environment_id binding → that env's
@@ -44,7 +44,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext
-from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment
 
 
@@ -70,9 +70,9 @@ async def _personal_scope_id(db: AsyncSession, user_id: UUID) -> UUID:
     Internal detail stays in logs; client gets a generic message.
     """
     result = await db.execute(
-        select(Scope.id).where(
-            Scope.user_id == user_id,
-            Scope.kind == SCOPE_KIND_PERSONAL,
+        select(Project.id).where(
+            Project.user_id == user_id,
+            Project.kind == PROJECT_KIND_PERSONAL,
         )
     )
     scope_id = result.scalar_one_or_none()
@@ -158,25 +158,25 @@ async def resolve_default_write_scope(
 async def validate_scope_for_caller(
     db: AsyncSession,
     auth: AuthContext,
-    scope_id: UUID,
+    project_id: UUID,
 ) -> UUID:
-    """Validate that the caller may write to the given `scope_id`.
+    """Validate that the caller may write to the given `project_id`.
 
     Used by the phase-2 explicit-scope routes
-    (`/api/scopes/{scope_id}/skills/...`) where the scope is part
+    (`/api/projects/{project_id}/skills/...`) where the project is part
     of the URL rather than auto-resolved from the caller's auth.
 
     Rules:
-      * The scope must exist and belong to the authenticated user.
+      * The project must exist and belong to the authenticated user.
       * If the caller is an api_key bound to a specific environment,
-        the scope must equal that env's `default_scope_id`. A daemon
-        for env A cannot pass `scope_id=B` in the URL and bypass
+        the project must equal that env's `default_scope_id`. A daemon
+        for env A cannot pass `project_id=B` in the URL and bypass
         the bound-env isolation.
       * Clerk JWT (dashboard) callers may target any of their own
-        scopes — same as `scope_ids_visible_to` for reads.
+        projects — same as `scope_ids_visible_to` for reads.
 
-    404 if the scope doesn't belong to the user; 403 if the caller's
-    api_key binding doesn't match the scope.
+    404 if the project doesn't belong to the user; 403 if the caller's
+    api_key binding doesn't match the project.
     """
     # Plain ownership check, no row lock. The earlier `.with_for_update()`
     # locked the entire `scopes` row for the whole request, including
@@ -188,15 +188,15 @@ async def validate_scope_for_caller(
     # write paths (upload, delete) take a `pg_advisory_xact_lock` keyed
     # on `(user, scope, skill_key)` for serialization.
     scope_owner = await db.execute(
-        select(Scope.id).where(
-            Scope.user_id == auth.user_id,
-            Scope.id == scope_id,
+        select(Project.id).where(
+            Project.user_id == auth.user_id,
+            Project.id == project_id,
         )
     )
     if scope_owner.scalar_one_or_none() is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            "scope not found",
+            "project not found",
         )
 
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
@@ -208,73 +208,50 @@ async def validate_scope_for_caller(
             )
         )
         bound_scope = bound_scope_result.scalar_one_or_none()
-        if bound_scope != scope_id:
+        if bound_scope != project_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "api key not bound to this scope",
+                "api key not bound to this project",
             )
 
-    return scope_id
+    return project_id
 
 
 async def resolve_for_parent(
     db: AsyncSession,
     auth: AuthContext,
-    parent_scope_id: UUID,
+    parent_project_id: UUID,
 ) -> set[UUID]:
-    """Return the set of scope IDs whose content composes 'in' the
-    given parent for this viewer:
-      - parent itself (if viewer can see it).
-      - each ScopeMount source pointing at parent, gated by viewer's
-        independent membership in the source.
+    """Resolve a caller-selected project read set.
 
-    The capability re-check is the safety invariant: a mount edge that
-    points at a scope the viewer can't see is silently filtered out.
-    Transitive permission expansion is impossible by construction.
-
-    Used by parent-scoped reads (`?scope_id=<parent>`) on skill and
-    vault listings to walk mount edges. Unscoped reads bypass this
-    and use `scope_ids_visible_to` directly.
+    Composition is enforced at the agent boundary via
+    `agent_project_bindings`, not via project-to-project edges.
+    For project-filtered reads this helper therefore resolves to an
+    exact one-project set when visible.
     """
-    from app.models.scope_mount import ScopeMount
 
     visible = set(await scope_ids_visible_to(db, auth))
-    if parent_scope_id not in visible:
+    if parent_project_id not in visible:
         return set()
 
-    composed: set[UUID] = {parent_scope_id}
-    mount_sources = (
-        (
-            await db.execute(
-                select(ScopeMount.source_scope_id).where(
-                    ScopeMount.parent_scope_id == parent_scope_id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for source_id in mount_sources:
-        if source_id in visible:
-            composed.add(source_id)
-    return composed
+    return {parent_project_id}
 
 
 async def validate_scope_read_for_caller(
     db: AsyncSession,
     auth: AuthContext,
-    scope_id: UUID,
+    project_id: UUID,
 ) -> UUID:
-    """Validate that the caller may READ the given `scope_id`.
+    """Validate that the caller may READ the given `project_id`.
 
     Sister of `validate_scope_for_caller` (write-side, owner-only).
     This one accepts viewer memberships — a sharee with a
-    ScopeMembership row passes here but would be rejected by the
+    ProjectMembership row passes here but would be rejected by the
     write validator. Used by read routes that need to serve shared
     content (skill download, etc.) without granting write access.
 
     Rules:
-      * scope_id must appear in `scope_ids_visible_to(auth)`.
+      * project_id must appear in `scope_ids_visible_to(auth)`.
       * Env-bound api_keys still only see their bound scope (the
         binding is enforced inside scope_ids_visible_to itself).
 
@@ -282,12 +259,12 @@ async def validate_scope_read_for_caller(
     posture as the owner-only validator.
     """
     visible = await scope_ids_visible_to(db, auth)
-    if scope_id not in visible:
+    if project_id not in visible:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            "scope not found",
+            "project not found",
         )
-    return scope_id
+    return project_id
 
 
 async def scope_ids_visible_to(
@@ -335,7 +312,7 @@ async def scope_ids_visible_to(
         # this code path because the kill-switch is meant to
         # neutralize scope-aware routing — sharing piggybacks on
         # that routing, so it's correctly disabled too.
-        result = await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))
+        result = await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
         return list(result.scalars().all())
 
     # Clerk JWT and unbound CLI key: owned scopes UNION scopes the
@@ -345,7 +322,9 @@ async def scope_ids_visible_to(
     from app.models.project_membership import ProjectMembership
 
     owned_ids = list(
-        (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id))).scalars().all()
+        (
+            await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
+        ).scalars().all()
     )
     shared_ids = list(
         (

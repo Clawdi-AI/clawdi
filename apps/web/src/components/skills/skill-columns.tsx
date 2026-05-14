@@ -20,17 +20,17 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // mutation; the column defs only know how to render and which row to
 // pass to the callback.
 //
-// `ownedScopeId` flags rows that originate from a mounted source scope
-// (i.e. `skill.scope_id !== ownedScopeId`). Those rows render with a
+// `ownedProjectId` flags rows that originate from a shared project
+// (i.e. `skill.project_id !== ownedProjectId`). Those rows render with a
 // "shared" badge and a disabled uninstall button — viewer membership
-// is read-only, mirroring the CLI's `scope list` mount-tree behavior.
+// is read-only.
 export function makeSkillColumns(
-	onUninstall: (skillKey: string, scopeId: string) => void,
+	onUninstall: (skillKey: string, projectId: string) => void,
 	uninstallPending: boolean,
-	ownedScopeId?: string | null,
+	ownedProjectId?: string | null,
 ): ColumnDef<SkillSummary>[] {
 	const isShared = (s: SkillSummary): boolean =>
-		!!ownedScopeId && !!s.scope_id && s.scope_id !== ownedScopeId;
+		!!ownedProjectId && !!s.project_id && s.project_id !== ownedProjectId;
 	return [
 		{
 			id: "name",
@@ -39,8 +39,12 @@ export function makeSkillColumns(
 			header: () => <span className="text-sm font-medium">Skill</span>,
 			cell: ({ row }) => {
 				const s = row.original;
-				const href = s.scope_id
-					? `/skills/${encodeURIComponent(s.skill_key)}?scope=${encodeURIComponent(s.scope_id)}`
+				const sourceProjectName =
+					(s as { project_name?: string; scope_name?: string | null }).project_name ??
+					s.scope_name ??
+					null;
+				const href = s.project_id
+					? `/skills/${encodeURIComponent(s.skill_key)}?project=${encodeURIComponent(s.project_id)}`
 					: `/skills/${encodeURIComponent(s.skill_key)}`;
 				const shared = isShared(s);
 				return (
@@ -63,9 +67,9 @@ export function makeSkillColumns(
 										variant="secondary"
 										className="shrink-0"
 										title={
-											s.scope_name
-												? `Mounted from "${s.scope_name}" — read-only`
-												: "Mounted from another scope — read-only"
+											sourceProjectName
+												? `Shared from "${sourceProjectName}" — read-only`
+												: "Shared from another project — read-only"
 										}
 									>
 										shared
@@ -117,28 +121,25 @@ export function makeSkillColumns(
 			header: () => <span className="sr-only">Actions</span>,
 			cell: ({ row }) => {
 				const s = row.original;
-				const scopeId = s.scope_id;
+				const projectId = s.project_id;
 				const shared = isShared(s);
-				// Mounted-source skills are read-only here — the user is a
-				// viewer of the source scope, not its owner. Hide the
-				// uninstall affordance entirely (matches the CLI mental
-				// model: shared content composes in but never mutates from
-				// the consumer's side). Owner-side management still happens
-				// on the source scope's page.
+				// Shared-project skills are read-only here — the user is a
+				// viewer, not the owner. Hide uninstall entirely; owner-side
+				// management still happens in the source project.
 				if (shared) return null;
 				return (
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						disabled={uninstallPending || !scopeId}
+						disabled={uninstallPending || !projectId}
 						onClick={(e) => {
 							e.stopPropagation();
-							if (!scopeId) return;
+							if (!projectId) return;
 							const ok = window.confirm(
 								`Uninstall "${s.name}" from this agent?\n\n` +
 									"Your other agents keep their copies.",
 							);
-							if (ok) onUninstall(s.skill_key, scopeId);
+							if (ok) onUninstall(s.skill_key, projectId);
 						}}
 						className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
 						aria-label={`Uninstall ${s.name}`}

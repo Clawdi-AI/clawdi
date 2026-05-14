@@ -583,7 +583,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/default": {
+    "/api/projects/default": {
         parameters: {
             query?: never;
             header?: never;
@@ -591,18 +591,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Default Scope
-         * @description Return the scope_id where the caller's next write would
-         *     land if they used a legacy non-scoped route. Lets CLI tools
-         *     construct phase-2 `/api/scopes/{scope_id}/...` URLs without
-         *     locally tracking which env they're bound to.
+         * Get Default Project
+         * @description Return the project ID where the caller's next write lands.
          *
          *     Resolution rules match `resolve_default_write_scope`:
-         *       - api_key bound to env → that env's `default_scope_id`
+         *       - api_key bound to env → that env's `default_project_id`
          *       - Clerk JWT or unbound api_key → most-recently-active env's
-         *         scope, falling back to Personal if no envs.
+         *         project, falling back to Personal if no envs.
          */
-        get: operations["get_default_scope_api_scopes_default_get"];
+        get: operations["get_default_project_api_projects_default_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -611,7 +608,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes": {
+    "/api/projects": {
         parameters: {
             query?: never;
             header?: never;
@@ -619,21 +616,21 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Scopes
-         * @description List every scope the caller can read. JWT auth → all of
-         *     the user's scopes. api_key → the bound env's scope only.
+         * List Projects
+         * @description List every project the caller can read. JWT auth -> all of
+         *     the user's visible projects. api_key -> the bound env's project only.
          */
-        get: operations["list_scopes_api_scopes_get"];
+        get: operations["list_projects_api_projects_get"];
         put?: never;
         /**
-         * Create Scope
-         * @description Create an explicit project/team scope owned by the caller.
+         * Create Project
+         * @description Create an explicit project/team container owned by the caller.
          *
-         *     Env-bound deploy keys are rejected: creating shareable scopes is
+         *     Env-bound deploy keys are rejected: creating shareable projects is
          *     an account-level action, not something a hosted agent pod should do
          *     with a leaked environment key.
          */
-        post: operations["create_scope_api_scopes_post"];
+        post: operations["create_project_api_projects_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -673,9 +670,9 @@ export interface paths {
          *     has a deterministic default after the scopes migration:
          *     env-bound key → its env's scope; unbound key with envs →
          *     most-recently-active env's scope; zero envs → Personal),
-         *     then runs the same upload pipeline as the scope-explicit
+         *     then runs the same upload pipeline as the project-explicit
          *     route. New CLIs and the dashboard call
-         *     `POST /api/scopes/{scope_id}/skills/upload` directly.
+         *     `POST /api/projects/{project_id}/skills/upload` directly.
          *
          *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
          *     a wrong-scope upload creates a stray row visible in the
@@ -700,7 +697,7 @@ export interface paths {
          * Download Skill Legacy
          * @description Phase-1 compat download — multi-scope disambiguation by
          *     most-recently-updated. Replaced by
-         *     `/api/scopes/{scope_id}/skills/{skill_key}/download`.
+         *     `/api/projects/{project_id}/skills/{skill_key}/download`.
          */
         get: operations["download_skill_legacy_api_skills__skill_key__download_get"];
         put?: never;
@@ -722,8 +719,8 @@ export interface paths {
          * Get Skill Legacy
          * @description Phase-1 compat detail — multi-scope disambiguation by
          *     most-recently-updated. Replaced by
-         *     `/api/scopes/{scope_id}/skills/{skill_key}` in phase 2 for
-         *     callers that know which scope they want.
+         *     `/api/projects/{project_id}/skills/{skill_key}` in phase 2 for
+         *     callers that know which project they want.
          */
         get: operations["get_skill_legacy_api_skills__skill_key__get"];
         put?: never;
@@ -737,7 +734,7 @@ export interface paths {
          *     listing now exposes), or 404 with no useful hint when
          *     their default scope doesn't have that key. The CLI and
          *     dashboard both migrated to
-         *     `DELETE /api/scopes/{scope_id}/skills/{skill_key}` and
+         *     `DELETE /api/projects/{project_id}/skills/{skill_key}` and
          *     pass the row's own scope_id; force any stale client onto
          *     that path with 410 instead of guessing.
          *
@@ -775,7 +772,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/skills/upload": {
+    "/api/projects/{project_id}/skills/upload": {
         parameters: {
             query?: never;
             header?: never;
@@ -785,25 +782,25 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Upload Skill Scoped
-         * @description Scope-explicit tar.gz skill upload.
+         * Upload Skill Project
+         * @description Project-explicit tar.gz skill upload.
          *
-         *     The URL carries the target scope; one env binds to one scope,
-         *     so a daemon's writes always land in its own env's scope. The
+         *     The URL carries the target project; one env binds to one project,
+         *     so a daemon's writes always land in its own env's project. The
          *     dashboard's content editor uses `PUT /skills/{key}/content`
          *     instead (raw markdown, server-side tar). Both converge on
          *     `_do_upload_skill`, which serializes via a Postgres advisory
          *     lock keyed on (user, scope, skill_key); concurrent writes are
          *     last-write-wins. SSE then fans out to subscribed daemons.
          */
-        post: operations["upload_skill_scoped_api_scopes__scope_id__skills_upload_post"];
+        post: operations["upload_skill_project_api_projects__project_id__skills_upload_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/skills/{skill_key}/content": {
+    "/api/projects/{project_id}/skills/{skill_key}/content": {
         parameters: {
             query?: never;
             header?: never;
@@ -832,7 +829,7 @@ export interface paths {
          *     the upload short-circuit as `unchanged` (silent edit drop) or
          *     persist a hash that didn't match the bytes.
          */
-        put: operations["update_skill_content_api_scopes__scope_id__skills__skill_key__content_put"];
+        put: operations["update_skill_content_api_projects__project_id__skills__skill_key__content_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -840,7 +837,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/skills/{skill_key}/download": {
+    "/api/projects/{project_id}/skills/{skill_key}/download": {
         parameters: {
             query?: never;
             header?: never;
@@ -848,19 +845,19 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download Skill Scoped
-         * @description Phase-2 scope-explicit download — exact (scope_id, skill_key)
+         * Download Skill Project
+         * @description Phase-2 project-explicit download — exact (`project_id`, `skill_key`)
          *     lookup, no disambiguation.
          *
          *     Reads are permitted to viewer members (sharees) — the validator
-         *     accepts any scope in `scope_ids_visible_to(auth)`, which now
-         *     includes ScopeMembership rows. The Skill row lookup no longer
+         *     accepts any project in `scope_ids_visible_to(auth)`, which now
+         *     includes ProjectMembership rows. The Skill row lookup no longer
          *     filters by `user_id` since membership-granted reads pull from
          *     the owner's skills, not the caller's. Write paths (upload,
          *     delete) still gate on `validate_scope_for_caller`, which stays
          *     owner-only.
          */
-        get: operations["download_skill_scoped_api_scopes__scope_id__skills__skill_key__download_get"];
+        get: operations["download_skill_project_api_projects__project_id__skills__skill_key__download_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -869,7 +866,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/skills/{skill_key}": {
+    "/api/projects/{project_id}/skills/{skill_key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -877,26 +874,26 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Skill Scoped
-         * @description Phase-2 scope-explicit detail. Returns exactly the row at
-         *     `(scope_id, skill_key)` — no multi-scope disambiguation needed
-         *     because the URL pins the scope.
+         * Get Skill Project
+         * @description Phase-2 project-explicit detail. Returns exactly the row at
+         *     (`project_id`, `skill_key`) — no multi-project disambiguation needed
+         *     because the URL pins the project.
          */
-        get: operations["get_skill_scoped_api_scopes__scope_id__skills__skill_key__get"];
+        get: operations["get_skill_project_api_projects__project_id__skills__skill_key__get"];
         put?: never;
         post?: never;
         /**
-         * Delete Skill Scoped
-         * @description Phase-2 scope-explicit delete — only the named scope's copy
+         * Delete Skill Project
+         * @description Phase-2 project-explicit delete — only the named project's copy
          *     is deleted; the same skill_key in other scopes is unaffected.
          */
-        delete: operations["delete_skill_scoped_api_scopes__scope_id__skills__skill_key__delete"];
+        delete: operations["delete_skill_project_api_projects__project_id__skills__skill_key__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/skills/install": {
+    "/api/projects/{project_id}/skills/install": {
         parameters: {
             query?: never;
             header?: never;
@@ -906,12 +903,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Install Skill Scoped
-         * @description Phase-2 scope-explicit install — install lands in the
-         *     URL-named scope. Used by the dashboard install picker
-         *     (phase 3) and any caller that knows which scope it wants.
+         * Install Skill Project
+         * @description Phase-2 project-explicit install — install lands in the
+         *     URL-named project. Used by the dashboard install picker
+         *     (phase 3) and any caller that knows which project it wants.
          */
-        post: operations["install_skill_scoped_api_scopes__scope_id__skills_install_post"];
+        post: operations["install_skill_project_api_projects__project_id__skills_install_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1121,7 +1118,7 @@ export interface paths {
          * Resolve Vault
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
-         *     Scope-filtered: an api_key bound to env A only sees vaults in
+         *     Project-filtered: an api_key bound to env A only sees vaults in
          *     that env's scope. Without this filter a leaked daemon key
          *     could decrypt vaults belonging to Personal or to another env.
          */
@@ -1394,15 +1391,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Preview
-         * @description Side-effect-free read of scope metadata for a valid token.
-         *
-         *     The public landing page calls this on every SSR pass + every
-         *     crawler unfurl. Does NOT increment redeem_count so the stat
-         *     accurately measures "people who clicked Accept," not "people
-         *     who saw the link."
-         */
+        /** Preview */
         get: operations["preview_api_share__token__preview_get"];
         put?: never;
         post?: never;
@@ -1421,15 +1410,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Redeem
-         * @description Anonymous accept - bumps redeem_count + stamps last_redeemed_at.
-         *
-         *     Call on explicit user action only (CLI `inbox accept <url>` from
-         *     a logged-out terminal). The web landing page uses /preview for
-         *     page render and /upgrade for the logged-in accept path; only
-         *     the CLI's anonymous flow hits /redeem.
-         */
+        /** Redeem */
         post: operations["redeem_api_share__token__redeem_post"];
         delete?: never;
         options?: never;
@@ -1446,24 +1427,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Upgrade
-         * @description Convert a valid share-token + authed user into a permanent
-         *     ScopeMembership AND a ScopeMount in one transaction.
-         *
-         *     Idempotent on (user, scope) for membership and (parent, source)
-         *     for mount.
-         *
-         *     Mount target resolution:
-         *       - body.parent_scope_id explicit → use it (validated as caller-owned).
-         *       - body.no_mount=True → skip mount, capability only.
-         *       - exactly 1 owned scope → auto-mount silently.
-         *       - 2+ owned scopes → membership commits, mount returns
-         *         409 mount_target_ambiguous with owned_scopes in context.
-         *
-         *     409 already_owner if caller IS the source scope's owner.
-         *     Hosted-pod env-bound api_keys rejected by require_user_auth_unbound.
-         */
+        /** Upgrade */
         post: operations["upgrade_api_share__token__upgrade_post"];
         delete?: never;
         options?: never;
@@ -1471,49 +1435,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/share-links": {
+    "/api/inbox/accept-link": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Share Links
-         * @description List active + revoked share-links for a scope.
-         *
-         *     Returns prefix-only data — the raw token was shown ONCE at create
-         *     time and is unrecoverable. Owners refresh the dialog to see
-         *     redeem counts, last-redeemed timestamps, and revoke individual
-         *     links.
-         *
-         *     Sorted created_at DESC so the freshest link surfaces first.
-         *     Revoked links remain in the listing (with revoked_at populated)
-         *     so the owner can see a history; the client renders them muted.
-         */
-        get: operations["list_share_links_api_scopes__scope_id__share_links_get"];
+        get?: never;
         put?: never;
-        /**
-         * Create Share Link
-         * @description Generate a new share link for a scope.
-         *
-         *     Contract:
-         *     - Raw token is returned ONCE in the create response; server
-         *       stores only the SHA-256 hash + prefix.
-         *     - Gate on owner having `users.name` set. Falling
-         *       back to email local-part would leak PII to recipients.
-         *     - Resolves + freezes `resolved_owner_handle` on the link row so
-         *       every downstream consumer (preview, redeem, upgrade) reads
-         *       the same value — even if the owner later renames themselves.
-         */
-        post: operations["create_share_link_api_scopes__scope_id__share_links_post"];
+        /** Accept Link */
+        post: operations["accept_link_api_inbox_accept_link_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/share-links/{link_id}": {
+    "/api/inbox/accept-invitation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Invitation */
+        post: operations["accept_invitation_api_inbox_accept_invitation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/share-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Share Links */
+        get: operations["list_share_links_api_projects__project_id__share_links_get"];
+        put?: never;
+        /** Create Share Link */
+        post: operations["create_share_link_api_projects__project_id__share_links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/share-links/{link_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1523,71 +1497,32 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Revoke Share Link
-         * @description Soft-revoke a share-link by stamping revoked_at.
-         *
-         *     Idempotent: revoking an already-revoked link returns 200 with
-         *     the same response, doesn't double-stamp.
-         *
-         *     Once revoked, /preview, /redeem, /upgrade all return 410 Gone
-         *     via require_share_token's expiry check. Anonymous tokens already
-         *     accepted on a device stop syncing — the daemon's next reconcile
-         *     sees 410 and prunes the local share-tokens.json entry.
-         *
-         *     Pre-existing ScopeMembership rows (created via /upgrade BEFORE
-         *     revoke) are NOT removed — revoking the LINK doesn't remove
-         *     members who already joined via it. Owner must explicitly call
-         *     DELETE /api/scopes/{id}/members/{user_id} (B.7) for that.
-         */
-        delete: operations["revoke_share_link_api_scopes__scope_id__share_links__link_id__delete"];
+        /** Revoke Share Link */
+        delete: operations["revoke_share_link_api_projects__project_id__share_links__link_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/invitations": {
+    "/api/projects/{project_id}/invitations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Invitations
-         * @description List all pending invitations on this scope, newest first.
-         *
-         *     Accepted/declined invitations roll up into ScopeMembership rows
-         *     on accept and get deleted on decline; this listing therefore
-         *     contains only PENDING invitations from the owner's perspective.
-         */
-        get: operations["list_invitations_api_scopes__scope_id__invitations_get"];
+        /** List Invitations */
+        get: operations["list_invitations_api_projects__project_id__invitations_get"];
         put?: never;
-        /**
-         * Create Invitation
-         * @description Send a pending invitation to a registered clawdi user.
-         *
-         *     Email lookup is case-insensitive. The invitee MUST already have
-         *     an account — for non-users the response instructs the owner to
-         *     send a share-link instead (which works for any email and creates
-         *     a Clerk account via the sign-in handoff).
-         *
-         *     Cases:
-         *       - target == self → 400 already_owner
-         *       - target email not found → 404 user_not_found
-         *       - multiple accounts with that email → 409 ambiguous_email
-         *         (privacy: silently picking one would invite the wrong account)
-         *       - target already a member → 409 already_member
-         *       - target already invited (FK uniqueness) → 409 already_invited
-         */
-        post: operations["create_invitation_api_scopes__scope_id__invitations_post"];
+        /** Create Invitation */
+        post: operations["create_invitation_api_projects__project_id__invitations_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/invitations/{invitation_id}": {
+    "/api/projects/{project_id}/invitations/{invitation_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1597,33 +1532,22 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Cancel Invitation
-         * @description Hard-delete a pending invitation. The invitee loses the
-         *     pending entry on their dashboard next refresh.
-         */
-        delete: operations["cancel_invitation_api_scopes__scope_id__invitations__invitation_id__delete"];
+        /** Cancel Invitation */
+        delete: operations["cancel_invitation_api_projects__project_id__invitations__invitation_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/members": {
+    "/api/projects/{project_id}/members": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Members
-         * @description Owner view of accepted members on a shared scope.
-         *
-         *     Owners are not represented by ScopeMembership rows, so this
-         *     lists sharees only. Pending invitations remain under
-         *     /invitations; revoked links remain under /share-links.
-         */
-        get: operations["list_members_api_scopes__scope_id__members_get"];
+        /** List Members */
+        get: operations["list_members_api_projects__project_id__members_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1632,7 +1556,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/members/{member_user_id}": {
+    "/api/projects/{project_id}/members/{member_user_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1642,21 +1566,14 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Remove Member
-         * @description Owner removes a sharee's access to this scope.
-         *
-         *     This is the access-revocation counterpart to share-link revoke:
-         *     links only block future joins; member removal drops an existing
-         *     user's capability and their mount edges into this source.
-         */
-        delete: operations["remove_member_api_scopes__scope_id__members__member_user_id__delete"];
+        /** Remove Member */
+        delete: operations["remove_member_api_projects__project_id__members__member_user_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/leave": {
+    "/api/projects/{project_id}/leave": {
         parameters: {
             query?: never;
             header?: never;
@@ -1665,22 +1582,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Leave Scope
-         * @description Sharee leaves a scope they previously joined.
-         *
-         *     Owners cannot leave their own scope through this route. Leaving
-         *     removes the membership and every mount edge from the sharee's
-         *     owned parent scopes into this shared source.
-         */
-        post: operations["leave_scope_api_scopes__scope_id__leave_post"];
+        /** Leave Project */
+        post: operations["leave_project_api_projects__project_id__leave_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{scope_id}/unshare": {
+    "/api/projects/{project_id}/unshare": {
         parameters: {
             query?: never;
             header?: never;
@@ -1689,15 +1599,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Unshare Scope
-         * @description Owner fully stops sharing a scope.
-         *
-         *     This is stronger than revoking a link: it revokes all active
-         *     links, cancels pending invitations, removes accepted members,
-         *     and deletes mount edges those members had into this source.
-         */
-        post: operations["unshare_scope_api_scopes__scope_id__unshare_post"];
+        /** Unshare Project */
+        post: operations["unshare_project_api_projects__project_id__unshare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1711,15 +1614,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List My Invitations
-         * @description Return every pending invitation addressed to the current user.
-         *
-         *     Joins the Scope + scope-owner + inviter (often the same user as
-         *     the owner, but not necessarily — a future co-owner might invite
-         *     on the primary's behalf) so the dashboard can render the full
-         *     "X (@x-handle) invited you to 'Scope Y'" string from one query.
-         */
+        /** List My Invitations */
         get: operations["list_my_invitations_api_me_invitations_get"];
         put?: never;
         post?: never;
@@ -1738,19 +1633,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Accept Invitation
-         * @description Turn a pending invitation into a permanent ScopeMembership
-         *     AND a ScopeMount in one transaction.
-         *
-         *     Body shape (UpgradeBody): optional parent_scope_id for the mount,
-         *     optional alias, no_mount flag. If parent_scope_id is omitted and
-         *     the user has 2+ owned scopes, returns 409 mount_target_ambiguous
-         *     after committing the membership.
-         *
-         *     Lock the SCOPE row across the transaction to serialize against
-         *     concurrent unshare / membership-creating endpoints.
-         */
+        /** Accept Invitation */
         post: operations["accept_invitation_api_me_invitations__invitation_id__accept_post"];
         delete?: never;
         options?: never;
@@ -1767,11 +1650,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Decline Invitation
-         * @description Hard-delete the pending invitation. 410 if it's already gone
-         *     or wasn't addressed to this user — same shape as accept.
-         */
+        /** Decline Invitation */
         post: operations["decline_invitation_api_me_invitations__invitation_id__decline_post"];
         delete?: never;
         options?: never;
@@ -1779,35 +1658,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{parent_scope_id}/mounts": {
+    "/api/agents/{agent_id}/project-bindings": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Mounts
-         * @description List mounts on a parent scope (owner only).
-         */
-        get: operations["list_mounts_api_scopes__parent_scope_id__mounts_get"];
+        /** List Project Bindings */
+        get: operations["list_project_bindings_api_agents__agent_id__project_bindings_get"];
         put?: never;
-        /**
-         * Create Mount
-         * @description Mount a source scope into a parent the caller owns.
-         *
-         *     Auth: caller owns parent AND has viewer-or-owner membership in
-         *     source. The capability re-check uses scope_ids_visible_to(auth)
-         *     so the membership graph stays authoritative.
-         */
-        post: operations["create_mount_api_scopes__parent_scope_id__mounts_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/scopes/{parent_scope_id}/mounts/{mount_id}": {
+    "/api/agents/{agent_id}/project-bindings/primary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Primary Project Binding */
+        put: operations["set_primary_project_binding_api_agents__agent_id__project_bindings_primary_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/project-bindings/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Context Project Binding */
+        post: operations["add_context_project_binding_api_agents__agent_id__project_bindings_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/project-bindings/context/reorder": {
         parameters: {
             query?: never;
             header?: never;
@@ -1817,12 +1719,25 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Delete Mount
-         * @description Drop a mount edge. Does NOT touch the underlying membership;
-         *     sharee can `POST /api/scopes/{source}/leave` to drop membership.
-         */
-        delete: operations["delete_mount_api_scopes__parent_scope_id__mounts__mount_id__delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Reorder Context Project Bindings */
+        patch: operations["reorder_context_project_bindings_api_agents__agent_id__project_bindings_context_reorder_patch"];
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/project-bindings/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Project Binding */
+        delete: operations["delete_project_binding_api_agents__agent_id__project_bindings__binding_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1856,6 +1771,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentProjectBindingResponse */
+        AgentProjectBindingResponse: {
+            /** Id */
+            id: string;
+            /** Agent Id */
+            agent_id: string;
+            /** Project Id */
+            project_id: string;
+            /** Binding Type */
+            binding_type: string;
+            /** Priority */
+            priority: number;
+            /** Default Write Enabled */
+            default_write_enabled: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** ApiKeyCreate */
         ApiKeyCreate: {
             /** Label */
@@ -1918,6 +1853,25 @@ export interface components {
              */
             status: "revoked";
         };
+        /** BindingCreate */
+        BindingCreate: {
+            /** Project Id */
+            project_id: string;
+            /** Priority */
+            priority?: number | null;
+        };
+        /** BindingReorderBody */
+        BindingReorderBody: {
+            /** Items */
+            items: components["schemas"]["BindingReorderItem"][];
+        };
+        /** BindingReorderItem */
+        BindingReorderItem: {
+            /** Binding Id */
+            binding_id: string;
+            /** Priority */
+            priority: number;
+        };
         /** Body_upload_session_content_api_sessions__local_session_id__upload_post */
         Body_upload_session_content_api_sessions__local_session_id__upload_post: {
             /** File */
@@ -1932,8 +1886,8 @@ export interface components {
             /** Content Hash */
             content_hash?: string | null;
         };
-        /** Body_upload_skill_scoped_api_scopes__scope_id__skills_upload_post */
-        Body_upload_skill_scoped_api_scopes__scope_id__skills_upload_post: {
+        /** Body_upload_skill_project_api_projects__project_id__skills_upload_post */
+        Body_upload_skill_project_api_projects__project_id__skills_upload_post: {
             /** Skill Key */
             skill_key: string;
             /** File */
@@ -2173,10 +2127,10 @@ export interface components {
             /** Connectors Count */
             connectors_count: number;
         };
-        /** DefaultScopeResponse */
-        DefaultScopeResponse: {
-            /** Scope Id */
-            scope_id: string;
+        /** DefaultProjectResponse */
+        DefaultProjectResponse: {
+            /** Project Id */
+            project_id: string;
         };
         /** DeviceApproveRequest */
         DeviceApproveRequest: {
@@ -2303,8 +2257,10 @@ export interface components {
              * @default false
              */
             sync_enabled: boolean;
+            /** Default Project Id */
+            default_project_id: string;
             /** Default Scope Id */
-            default_scope_id: string;
+            default_scope_id?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2313,7 +2269,7 @@ export interface components {
         };
         /**
          * InvitationCreate
-         * @description Body for POST /api/scopes/{scope_id}/invitations.
+         * @description Body for POST /api/projects/{project_id}/invitations.
          */
         InvitationCreate: {
             /** Email */
@@ -2322,22 +2278,16 @@ export interface components {
         /**
          * InvitationResponse
          * @description Returned by owner and sharee invitation listings.
-         *
-         *     Scope fields (`scope_name`, `scope_kind`, `owner_display`,
-         *     `owner_handle`) are populated unconditionally - the owner-facing
-         *     listing uses them to render alongside the invitee email, and
-         *     the sharee-facing inbox uses them as the primary "what is this
-         *     invitation about?" copy.
          */
         InvitationResponse: {
             /** Id */
             id: string;
-            /** Scope Id */
-            scope_id: string;
-            /** Scope Name */
-            scope_name: string;
-            /** Scope Kind */
-            scope_kind: string;
+            /** Project Id */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
+            /** Project Kind */
+            project_kind: string;
             /** Owner Display */
             owner_display: string;
             /** Owner Handle */
@@ -2356,7 +2306,7 @@ export interface components {
         };
         /**
          * MemberResponse
-         * @description Returned by GET /api/scopes/{scope_id}/members.
+         * @description Returned by GET /api/projects/{project_id}/members.
          */
         MemberResponse: {
             /** Id */
@@ -2432,58 +2382,6 @@ export interface components {
             /** Source Machine Name */
             source_machine_name?: string | null;
         };
-        /**
-         * MountCreate
-         * @description Body for POST /api/scopes/{parent_scope_id}/mounts.
-         */
-        MountCreate: {
-            /** Source Scope Id */
-            source_scope_id: string;
-            /** Alias */
-            alias?: string | null;
-            /**
-             * Mode
-             * @default live
-             */
-            mode: string;
-            /**
-             * Allow Vault Conflicts
-             * @default false
-             */
-            allow_vault_conflicts: boolean;
-        };
-        /**
-         * MountResponse
-         * @description Returned by GET /api/scopes/{id}/mounts and the POST create.
-         *
-         *     Includes denormalized source-scope display fields so the CLI/web
-         *     can render the mount tree without an extra round-trip per row.
-         */
-        MountResponse: {
-            /** Id */
-            id: string;
-            /** Parent Scope Id */
-            parent_scope_id: string;
-            /** Source Scope Id */
-            source_scope_id: string;
-            /** Source Scope Name */
-            source_scope_name: string;
-            /** Source Scope Slug */
-            source_scope_slug: string;
-            /** Source Owner Display */
-            source_owner_display: string;
-            /** Source Owner Handle */
-            source_owner_handle: string;
-            /** Alias */
-            alias: string;
-            /** Mode */
-            mode: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
             /** Items */
@@ -2539,15 +2437,15 @@ export interface components {
             /** Page Size */
             page_size: number;
         };
-        /** ScopeCreate */
-        ScopeCreate: {
+        /** ProjectCreate */
+        ProjectCreate: {
             /** Name */
             name: string;
             /** Slug */
             slug?: string | null;
         };
-        /** ScopeResponse */
-        ScopeResponse: {
+        /** ProjectResponse */
+        ProjectResponse: {
             /** Id */
             id: string;
             /** Name */
@@ -2951,7 +2849,7 @@ export interface components {
         };
         /**
          * ShareLinkCreate
-         * @description Body for POST /api/scopes/{scope_id}/share-links.
+         * @description Body for POST /api/projects/{project_id}/share-links.
          */
         ShareLinkCreate: {
             /** Label */
@@ -2961,12 +2859,7 @@ export interface components {
         };
         /**
          * ShareLinkCreated
-         * @description Returned ONCE on link creation - includes the raw token.
-         *
-         *     Subsequent GETs only return `prefix` (raw token is unrecoverable).
-         *     `owner_handle` is the frozen value stored on the link row that
-         *     every sharee will see; the owner sees their own resolved handle
-         *     in case they want to verify or change their display name first.
+         * @description Returned once on link creation; includes the raw token.
          */
         ShareLinkCreated: {
             /** Id */
@@ -2991,7 +2884,7 @@ export interface components {
         };
         /**
          * ShareLinkResponse
-         * @description Returned by GET /api/scopes/{scope_id}/share-links.
+         * @description Returned by GET /api/projects/{project_id}/share-links.
          */
         ShareLinkResponse: {
             /** Id */
@@ -3016,13 +2909,13 @@ export interface components {
         };
         /**
          * ShareRedeemResponse
-         * @description Returned by POST /api/share/{token}/redeem - anonymous endpoint.
+         * @description Returned by POST /api/share/{token}/redeem.
          */
         ShareRedeemResponse: {
-            /** Scope Id */
-            scope_id: string;
-            /** Scope Name */
-            scope_name: string;
+            /** Project Id */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
             /** Owner Display */
             owner_display: string;
             /** Owner Handle */
@@ -3083,6 +2976,8 @@ export interface components {
             content_hash: string;
             /** Updated At */
             updated_at?: string | null;
+            /** Project Id */
+            project_id?: string | null;
             /** Scope Id */
             scope_id?: string | null;
             /** Scope Name */
@@ -3150,6 +3045,8 @@ export interface components {
             updated_at: string;
             /** Content */
             content?: string | null;
+            /** Project Id */
+            project_id?: string | null;
             /** Scope Id */
             scope_id?: string | null;
             /** Scope Name */
@@ -3196,7 +3093,7 @@ export interface components {
         };
         /**
          * UnshareResponse
-         * @description Returned by POST /api/scopes/{scope_id}/unshare.
+         * @description Returned by POST /api/projects/{project_id}/unshare.
          */
         UnshareResponse: {
             /** Links Revoked */
@@ -3211,25 +3108,17 @@ export interface components {
          * @description Optional body for POST /api/share/{token}/upgrade and
          *     POST /api/me/invitations/{id}/accept.
          *
-         *     Carries the mount target the caller wants. Omitted → server
-         *     picks via the auto-mount target resolution rules (1 owned
-         *     scope → silent; 2+ → 409 mount_target_ambiguous).
+         *     Accepting access does not auto-bind by default. Callers can pass
+         *     explicit `agent_ids` to create context bindings during accept.
          */
         UpgradeBody: {
-            /** Parent Scope Id */
-            parent_scope_id?: string | null;
-            /** Alias */
-            alias?: string | null;
+            /** Agent Ids */
+            agent_ids?: string[] | null;
             /**
-             * No Mount
-             * @default false
+             * Bind As
+             * @default context
              */
-            no_mount: boolean;
-            /**
-             * Allow Vault Conflicts
-             * @default false
-             */
-            allow_vault_conflicts: boolean;
+            bind_as: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -3318,8 +3207,10 @@ export interface components {
             slug: string;
             /** Name */
             name: string;
+            /** Project Id */
+            project_id: string;
             /** Scope Id */
-            scope_id: string;
+            scope_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -4324,7 +4215,7 @@ export interface operations {
             };
         };
     };
-    get_default_scope_api_scopes_default_get: {
+    get_default_project_api_projects_default_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -4339,12 +4230,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DefaultScopeResponse"];
+                    "application/json": components["schemas"]["DefaultProjectResponse"];
                 };
             };
         };
     };
-    list_scopes_api_scopes_get: {
+    list_projects_api_projects_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -4359,12 +4250,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScopeResponse"][];
+                    "application/json": components["schemas"]["ProjectResponse"][];
                 };
             };
         };
     };
-    create_scope_api_scopes_post: {
+    create_project_api_projects_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4373,7 +4264,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ScopeCreate"];
+                "application/json": components["schemas"]["ProjectCreate"];
             };
         };
         responses: {
@@ -4383,7 +4274,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScopeResponse"];
+                    "application/json": components["schemas"]["ProjectResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4405,8 +4296,8 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 include_content?: boolean;
-                /** @description Optional explicit scope to list. Without it, results span every scope the caller can read (env-bound api_keys see only their env, everyone else sees all scopes). The serve daemon passes its env's default_scope_id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right scope instead of the most-recently-active one. */
-                scope_id?: string | null;
+                /** @description Optional explicit project to list. Without it, results span every project the caller can read (env-bound api_keys see only their env, everyone else sees all projects). The serve daemon passes its env's default_scope_id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right project instead of the most-recently-active one. */
+                project_id?: string | null;
             };
             header?: {
                 "If-None-Match"?: string | null;
@@ -4595,18 +4486,18 @@ export interface operations {
             };
         };
     };
-    upload_skill_scoped_api_scopes__scope_id__skills_upload_post: {
+    upload_skill_project_api_projects__project_id__skills_upload_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "multipart/form-data": components["schemas"]["Body_upload_skill_scoped_api_scopes__scope_id__skills_upload_post"];
+                "multipart/form-data": components["schemas"]["Body_upload_skill_project_api_projects__project_id__skills_upload_post"];
             };
         };
         responses: {
@@ -4630,12 +4521,12 @@ export interface operations {
             };
         };
     };
-    update_skill_content_api_scopes__scope_id__skills__skill_key__content_put: {
+    update_skill_content_api_projects__project_id__skills__skill_key__content_put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 skill_key: string;
             };
             cookie?: never;
@@ -4666,12 +4557,12 @@ export interface operations {
             };
         };
     };
-    download_skill_scoped_api_scopes__scope_id__skills__skill_key__download_get: {
+    download_skill_project_api_projects__project_id__skills__skill_key__download_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 skill_key: string;
             };
             cookie?: never;
@@ -4698,12 +4589,12 @@ export interface operations {
             };
         };
     };
-    get_skill_scoped_api_scopes__scope_id__skills__skill_key__get: {
+    get_skill_project_api_projects__project_id__skills__skill_key__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 skill_key: string;
             };
             cookie?: never;
@@ -4730,12 +4621,12 @@ export interface operations {
             };
         };
     };
-    delete_skill_scoped_api_scopes__scope_id__skills__skill_key__delete: {
+    delete_skill_project_api_projects__project_id__skills__skill_key__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 skill_key: string;
             };
             cookie?: never;
@@ -4762,12 +4653,12 @@ export interface operations {
             };
         };
     };
-    install_skill_scoped_api_scopes__scope_id__skills_install_post: {
+    install_skill_project_api_projects__project_id__skills_install_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5058,8 +4949,8 @@ export interface operations {
             query?: {
                 /** @description Filter by slug / name */
                 q?: string | null;
-                /** @description Optional parent scope. When set, include vaults from mounted source scopes. */
-                scope_id?: string | null;
+                /** @description Optional project filter. */
+                project_id?: string | null;
                 page?: number;
                 page_size?: number;
             };
@@ -5092,7 +4983,7 @@ export interface operations {
     create_vault_api_vault_post: {
         parameters: {
             query?: {
-                scope_id?: string | null;
+                project_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -5127,7 +5018,7 @@ export interface operations {
     delete_vault_api_vault__slug__delete: {
         parameters: {
             query?: {
-                scope_id?: string | null;
+                project_id?: string | null;
             };
             header?: never;
             path: {
@@ -5160,7 +5051,7 @@ export interface operations {
     list_vault_sections_api_vault__slug__items_get: {
         parameters: {
             query?: {
-                scope_id?: string | null;
+                project_id?: string | null;
             };
             header?: never;
             path: {
@@ -5193,7 +5084,7 @@ export interface operations {
     upsert_vault_items_api_vault__slug__items_put: {
         parameters: {
             query?: {
-                scope_id?: string | null;
+                project_id?: string | null;
             };
             header?: never;
             path: {
@@ -5230,7 +5121,7 @@ export interface operations {
     delete_vault_items_api_vault__slug__items_delete: {
         parameters: {
             query?: {
-                scope_id?: string | null;
+                project_id?: string | null;
             };
             header?: never;
             path: {
@@ -5268,8 +5159,8 @@ export interface operations {
         parameters: {
             query?: {
                 key?: string | null;
-                /** @description Parent scope for composed resolution. Required for mount precedence. */
-                scope_id?: string | null;
+                /** @description Project to resolve from (default: caller write project). */
+                project_id?: string | null;
                 debug?: boolean;
             };
             header?: never;
@@ -5717,12 +5608,82 @@ export interface operations {
             };
         };
     };
-    list_share_links_api_scopes__scope_id__share_links_get: {
+    accept_link_api_inbox_accept_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invitation_api_inbox_accept_invitation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_share_links_api_projects__project_id__share_links_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5748,12 +5709,12 @@ export interface operations {
             };
         };
     };
-    create_share_link_api_scopes__scope_id__share_links_post: {
+    create_share_link_api_projects__project_id__share_links_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5783,12 +5744,12 @@ export interface operations {
             };
         };
     };
-    revoke_share_link_api_scopes__scope_id__share_links__link_id__delete: {
+    revoke_share_link_api_projects__project_id__share_links__link_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 link_id: string;
             };
             cookie?: never;
@@ -5817,12 +5778,12 @@ export interface operations {
             };
         };
     };
-    list_invitations_api_scopes__scope_id__invitations_get: {
+    list_invitations_api_projects__project_id__invitations_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5848,12 +5809,12 @@ export interface operations {
             };
         };
     };
-    create_invitation_api_scopes__scope_id__invitations_post: {
+    create_invitation_api_projects__project_id__invitations_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5883,12 +5844,12 @@ export interface operations {
             };
         };
     };
-    cancel_invitation_api_scopes__scope_id__invitations__invitation_id__delete: {
+    cancel_invitation_api_projects__project_id__invitations__invitation_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 invitation_id: string;
             };
             cookie?: never;
@@ -5917,12 +5878,12 @@ export interface operations {
             };
         };
     };
-    list_members_api_scopes__scope_id__members_get: {
+    list_members_api_projects__project_id__members_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -5948,12 +5909,12 @@ export interface operations {
             };
         };
     };
-    remove_member_api_scopes__scope_id__members__member_user_id__delete: {
+    remove_member_api_projects__project_id__members__member_user_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
                 member_user_id: string;
             };
             cookie?: never;
@@ -5967,7 +5928,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: number | string;
+                        [key: string]: string;
                     };
                 };
             };
@@ -5982,12 +5943,12 @@ export interface operations {
             };
         };
     };
-    leave_scope_api_scopes__scope_id__leave_post: {
+    leave_project_api_projects__project_id__leave_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -6000,7 +5961,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: number | string;
+                        [key: string]: string;
                     };
                 };
             };
@@ -6015,12 +5976,12 @@ export interface operations {
             };
         };
     };
-    unshare_scope_api_scopes__scope_id__unshare_post: {
+    unshare_project_api_projects__project_id__unshare_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scope_id: string;
+                project_id: string;
             };
             cookie?: never;
         };
@@ -6136,12 +6097,12 @@ export interface operations {
             };
         };
     };
-    list_mounts_api_scopes__parent_scope_id__mounts_get: {
+    list_project_bindings_api_agents__agent_id__project_bindings_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                parent_scope_id: string;
+                agent_id: string;
             };
             cookie?: never;
         };
@@ -6153,7 +6114,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MountResponse"][];
+                    "application/json": components["schemas"]["AgentProjectBindingResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -6167,18 +6128,18 @@ export interface operations {
             };
         };
     };
-    create_mount_api_scopes__parent_scope_id__mounts_post: {
+    set_primary_project_binding_api_agents__agent_id__project_bindings_primary_put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                parent_scope_id: string;
+                agent_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MountCreate"];
+                "application/json": components["schemas"]["BindingCreate"];
             };
         };
         responses: {
@@ -6188,7 +6149,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MountResponse"];
+                    "application/json": components["schemas"]["AgentProjectBindingResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6202,13 +6163,85 @@ export interface operations {
             };
         };
     };
-    delete_mount_api_scopes__parent_scope_id__mounts__mount_id__delete: {
+    add_context_project_binding_api_agents__agent_id__project_bindings_context_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                parent_scope_id: string;
-                mount_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectBindingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_context_project_bindings_api_agents__agent_id__project_bindings_context_reorder_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindingReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_binding_api_agents__agent_id__project_bindings__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                binding_id: string;
             };
             cookie?: never;
         };

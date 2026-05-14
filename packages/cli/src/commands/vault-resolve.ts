@@ -1,17 +1,17 @@
 import chalk from "chalk";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 interface VaultResolveHit {
 	key: string;
 	value: string;
-	source_scope_id: string;
+	source_project_id: string;
 	source_alias: string;
 	vault_slug?: string | null;
 	section?: string;
 	item_name?: string;
 	precedence?: Array<{
-		scope_id: string;
+		project_id: string;
 		alias: string;
 		hit: boolean;
 		reason: "match" | "not-found" | "skipped";
@@ -21,7 +21,7 @@ interface VaultResolveHit {
 
 export async function vaultResolveCommand(
 	key: string,
-	opts: { scope?: string; debug?: boolean; json?: boolean } = {},
+	opts: { project?: string; debug?: boolean; json?: boolean } = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
@@ -34,9 +34,9 @@ export async function vaultResolveCommand(
 	const params = new URLSearchParams({
 		key,
 	});
-	if (opts.scope) {
-		const scopeId = await resolveScopeId(apiUrl, auth.apiKey, opts.scope);
-		params.set("scope_id", scopeId);
+	if (opts.project) {
+		const projectId = await resolveProjectId(apiUrl, auth.apiKey, opts.project);
+		params.set("project_id", projectId);
 	}
 	if (opts.debug) params.set("debug", "true");
 

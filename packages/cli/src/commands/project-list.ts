@@ -1,14 +1,14 @@
 import chalk from "chalk";
 
 import { getAuth, getConfig } from "../lib/config";
-import { listScopes } from "../lib/scope-resolver";
+import { listProjects } from "../lib/project-resolver";
 
 /**
  * `clawdi project list [--json]` — projects visible to the caller.
  * `--json` emits a stable schema for agent consumers.
  */
 
-export async function scopeListCommand(opts: { json?: boolean }): Promise<void> {
+export async function projectListCommand(opts: { json?: boolean }): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
@@ -17,9 +17,9 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 		return;
 	}
 
-	const scopes = await listScopes(apiUrl, auth.apiKey);
-	const owned = scopes.filter((s) => s.is_owner !== false);
-	const shared = scopes.filter((s) => s.is_owner === false);
+	const projects = await listProjects(apiUrl, auth.apiKey);
+	const owned = projects.filter((s) => s.is_owner !== false);
+	const shared = projects.filter((s) => s.is_owner === false);
 
 	if (opts.json) {
 		const ownedProjects = owned.map((s) => ({
@@ -42,9 +42,6 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 					projects: [...ownedProjects, ...sharedProjects],
 					owned_projects: ownedProjects,
 					shared_projects: sharedProjects,
-					// Backward-compatible alias retained for older
-					// machine consumers that still read `scopes`.
-					scopes: ownedProjects,
 				},
 				null,
 				2,
@@ -53,7 +50,7 @@ export async function scopeListCommand(opts: { json?: boolean }): Promise<void> 
 		return;
 	}
 
-	if (scopes.length === 0) {
+	if (projects.length === 0) {
 		console.log("No projects yet.");
 		return;
 	}

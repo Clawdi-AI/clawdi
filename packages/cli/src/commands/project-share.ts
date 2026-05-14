@@ -3,7 +3,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { listScopes, resolveScopeId } from "../lib/scope-resolver";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
 /**
  * `clawdi project share <project> [--label TEXT]` — generate a fresh
@@ -33,8 +33,8 @@ interface ShareLinkCreated {
 	expires_at: string | null;
 }
 
-export async function scopeShareCommand(
-	scopeArg: string | undefined,
+export async function projectShareCommand(
+	projectArg: string | undefined,
 	opts: { label?: string },
 ): Promise<void> {
 	const { apiUrl } = getConfig();
@@ -45,18 +45,18 @@ export async function scopeShareCommand(
 		return;
 	}
 
-	// resolveScopeId(undefined) → user's default write project, the
+	// resolveProjectId(undefined) → user's default write project, the
 	// common "share my current project" case. Pass-through project name /
 	// slug / UUID still works when explicitly given.
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
+	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
 	// Look up the project slug so the success message names which project
 	// we just shared. Critical for the `project share` (no arg) path —
 	// without the slug a multi-project user has no idea whether their
 	// link went to Personal or Engineering. One round trip; cached
 	// by the caller's network stack if they already hit /api/projects
-	// via resolveScopeId moments ago.
-	const scopeSlug = (await listScopes(apiUrl, auth.apiKey)).find((s) => s.id === scopeId)?.slug;
-	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links`, {
+	// via resolveProjectId moments ago.
+	const scopeSlug = (await listProjects(apiUrl, auth.apiKey)).find((s) => s.id === projectId)?.slug;
+	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${auth.apiKey}`,

@@ -47,28 +47,31 @@ function SkillDetailPageInner() {
 	const api = useApi();
 	const queryClient = useQueryClient();
 
-	// `?scope=<scope_id>` is set by the skills list page when the
-	// row knows its scope. Without it, the legacy GET /api/skills/{key}
-	// resolves multi-scope by "most-recently-updated", which means a
+	// `?project=<project_id>` is set by the skills list page when the
+	// row knows its project. Without it, the legacy GET /api/skills/{key}
+	// resolves multi-project by "most-recently-updated", which means a
 	// multi-machine user clicking machine-B's row could load
 	// machine-A's content and silently overwrite the wrong copy on
-	// save. Routing the fetch through the scope-explicit endpoint
-	// when we have the scope_id removes that ambiguity. Falls back
+	// save. Routing the fetch through the project-explicit endpoint
+	// when we have the project_id removes that ambiguity. Falls back
 	// to the legacy endpoint for single-machine accounts (where
 	// there's only one row, so the resolver is unambiguous).
-	const [scopeIdParam] = useQueryState("scope", parseAsString.withDefault(""));
+	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
+	// Hidden compatibility alias for old links (`?scope=<project_id>`).
+	const [legacyScopeIdParam] = useQueryState("scope", parseAsString.withDefault(""));
+	const selectedProjectId = projectIdParam || legacyScopeIdParam;
 
 	const {
 		data: skill,
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["skill", key, scopeIdParam],
+		queryKey: ["skill", key, selectedProjectId],
 		queryFn: async () => {
-			if (scopeIdParam) {
+			if (selectedProjectId) {
 				return unwrap(
-					await api.GET("/api/scopes/{scope_id}/skills/{skill_key}", {
-						params: { path: { scope_id: scopeIdParam, skill_key: key } },
+					await api.GET("/api/projects/{project_id}/skills/{skill_key}", {
+						params: { path: { project_id: selectedProjectId, skill_key: key } },
 					}),
 				);
 			}
@@ -80,34 +83,37 @@ function SkillDetailPageInner() {
 
 	useSetBreadcrumbTitle(skill?.name || (skill ? key : null));
 
-	const { data: defaultScope, error: scopeError } = useQuery({
-		queryKey: ["scopes", "default"],
-		queryFn: async () => unwrap(await api.GET("/api/scopes/default")),
+	const { data: defaultProject, error: projectError } = useQuery({
+		queryKey: ["projects", "default"],
+		queryFn: async () => unwrap(await api.GET("/api/projects/default")),
 	});
-	// Edits land in the skill's own scope when the detail response
+	// Edits land in the skill's own project when the detail response
 	// carries one (multi-machine accounts), falling back to the
-	// caller's default scope (single-machine accounts and legacy
-	// rows). Falling back to defaultScope is also what the delete
+	// caller's default project (single-machine accounts and legacy
+	// rows). Falling back to defaultProject is also what the delete
 	// path does, so the editor stays consistent with uninstall.
-	const targetScopeId = skill?.scope_id ?? defaultScope?.scope_id ?? null;
-	const isScopeReady = !!targetScopeId;
+	const targetProjectId = skill?.project_id ?? defaultProject?.project_id ?? null;
+	const isProjectReady = !!targetProjectId;
 
-	// Mounted-source skills are read-only from this viewer's perspective:
+	// Shared-project skills are read-only from this viewer's perspective:
 	// hide Edit/Uninstall (would 403 from the backend), surface a
-	// "shared" badge with the owner's scope as the source. Re-uses the
+	// "shared" badge with the owner's project as the source. Re-uses the
 	// same is_owner cross-reference pattern as /vault and /skills.
-	const { data: ownedScopes } = useQuery({
-		queryKey: ["scopes"],
-		queryFn: async () => unwrap(await api.GET("/api/scopes")),
+	const { data: ownedProjects } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
 	});
-	const ownedScopeIds = useMemo(
-		() => new Set((ownedScopes ?? []).filter((s) => s.is_owner).map((s) => s.id)),
-		[ownedScopes],
+	const ownedProjectIds = useMemo(
+		() =>
+			new Set(
+				(ownedProjects ?? []).filter((project) => project.is_owner).map((project) => project.id),
+			),
+		[ownedProjects],
 	);
-	// Default to false while scopes are still loading so a brief flash
+	// Default to false while projects are still loading so a brief flash
 	// of the read-only chrome doesn't appear on the user's own skills.
 	const isReadOnly =
-		ownedScopes !== undefined && !!skill?.scope_id && !ownedScopeIds.has(skill.scope_id);
+		ownedProjects !== undefined && !!skill?.project_id && !ownedProjectIds.has(skill.project_id);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -145,7 +151,7 @@ function SkillDetailPageInner() {
 
 	const saveEdit = useMutation({
 		mutationFn: async () => {
-			if (!targetScopeId) throw new Error("No scope available for this skill");
+			if (!targetProjectId) throw new Error("No project available for this skill");
 			// `content_hash` here is an If-Match PRECONDITION — the
 			// hash the editor saw when this page loaded, NOT the
 			// new content's hash. The backend route accepts it as
@@ -158,8 +164,8 @@ function SkillDetailPageInner() {
 			// so passing the loaded hash here doesn't make the
 			// upload short-circuit as "unchanged".
 			return unwrap(
-				await api.PUT("/api/scopes/{scope_id}/skills/{skill_key}/content", {
-					params: { path: { scope_id: targetScopeId, skill_key: key } },
+				await api.PUT("/api/projects/{project_id}/skills/{skill_key}/content", {
+					params: { path: { project_id: targetProjectId, skill_key: key } },
 					body: { content: draft, content_hash: editingHash ?? undefined },
 				}),
 			);
@@ -197,10 +203,10 @@ function SkillDetailPageInner() {
 
 	const uninstall = useMutation({
 		mutationFn: async () => {
-			if (!targetScopeId) throw new Error("Default scope not loaded yet");
+			if (!targetProjectId) throw new Error("Default project not loaded yet");
 			return unwrap(
-				await api.DELETE("/api/scopes/{scope_id}/skills/{skill_key}", {
-					params: { path: { scope_id: targetScopeId, skill_key: key } },
+				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+					params: { path: { project_id: targetProjectId, skill_key: key } },
 				}),
 			);
 		},
@@ -217,14 +223,14 @@ function SkillDetailPageInner() {
 	});
 
 	const onUninstall = () => {
-		if (!isScopeReady) {
-			toast.error("Account scope unavailable — try again in a moment.");
+		if (!isProjectReady) {
+			toast.error("Default project unavailable — try again in a moment.");
 			return;
 		}
 		// Per-agent isolation: this DELETE only removes the skill
-		// from the current scope (one agent's copy). The same
+		// from the current project (one agent's copy). The same
 		// skill_key on other agents stays untouched. Confirm copy
-		// has to make that scope explicit so the user doesn't think
+		// has to make that project explicit so the user doesn't think
 		// they're nuking it everywhere.
 		const where = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
 		const ok = window.confirm(
@@ -235,10 +241,15 @@ function SkillDetailPageInner() {
 		if (ok) uninstall.mutate();
 	};
 
+	const sourceProjectName = skill
+		? ((skill as { project_name?: string; scope_name?: string | null }).project_name ??
+			skill.scope_name ??
+			null)
+		: null;
 	const agentCaption = skill?.machine_name
 		? `on ${skill.machine_name}`
-		: skill?.scope_name
-			? `in ${skill.scope_name}`
+		: sourceProjectName
+			? `in ${sourceProjectName}`
 			: null;
 
 	return (
@@ -260,9 +271,9 @@ function SkillDetailPageInner() {
 									<Badge
 										variant="secondary"
 										title={
-											skill.scope_name
-												? `Mounted from "${skill.scope_name}" — viewer membership is read-only`
-												: "Mounted from another scope — viewer membership is read-only"
+											sourceProjectName
+												? `Shared from "${sourceProjectName}" — viewer membership is read-only`
+												: "Shared from another project — viewer membership is read-only"
 										}
 									>
 										shared · read-only
@@ -273,12 +284,12 @@ function SkillDetailPageInner() {
 											variant="outline"
 											size="sm"
 											onClick={startEdit}
-											disabled={!skill.content || !isScopeReady}
+											disabled={!skill.content || !isProjectReady}
 											title={
 												!skill.content
 													? "No content stored for this skill yet"
-													: scopeError
-														? `Account scope unavailable: ${errorMessage(scopeError)}`
+													: projectError
+														? `Default project unavailable: ${errorMessage(projectError)}`
 														: undefined
 											}
 										>
@@ -289,10 +300,10 @@ function SkillDetailPageInner() {
 											variant="outline"
 											size="sm"
 											onClick={onUninstall}
-											disabled={uninstall.isPending || !isScopeReady}
+											disabled={uninstall.isPending || !isProjectReady}
 											title={
-												scopeError
-													? `Account scope unavailable: ${errorMessage(scopeError)}`
+												projectError
+													? `Default project unavailable: ${errorMessage(projectError)}`
 													: undefined
 											}
 											className="text-destructive hover:text-destructive"

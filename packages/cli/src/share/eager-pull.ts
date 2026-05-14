@@ -61,7 +61,7 @@ export async function pullSharedSkills(
 	// concurrently; per-skill adapter writes also fan out per skill.
 	const dlResults = await Promise.all(
 		active.map(async (skill): Promise<string | null> => {
-			const dlUrl = `${apiUrl}/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
+			const dlUrl = `${apiUrl}/api/projects/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
 			const dl = await fetch(dlUrl, { headers: { Authorization: `Bearer ${bearer}` } });
 			if (!dl.ok) return null;
 			const buf = Buffer.from(await dl.arrayBuffer());

@@ -127,12 +127,12 @@ describe("push — Hermes fixture", () => {
 			// "00000000-...-099"` by default; the upload mock below
 			// pins the URL to that same scope. Push now reads the
 			// scope from the agent's env, not from
-			// `/api/scopes/default`, so multi-agent users land
+			// `/api/projects/default`, so multi-agent users land
 			// under their own env's scope.
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/scopes/${scopeId}/skills/upload`,
+				path: `/api/projects/${scopeId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -141,7 +141,7 @@ describe("push — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		const uploads = captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`);
+		const uploads = captured.filter((c) => c.path === `/api/projects/${scopeId}/skills/upload`);
 		expect(uploads).toHaveLength(1);
 		expect(uploads[0]?.isMultipart).toBe(true);
 	});

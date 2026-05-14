@@ -95,9 +95,9 @@ export const jsonResponse = (data: unknown, status = 200) =>
  * list and all push tests "just work".
  *
  * `default_scope_id` is part of the env shape because the skill upload path
- * reads it via `fetchScopeIdForEnv` to pin uploads to the agent's own scope.
+ * reads it via `fetchProjectIdForEnv` to pin uploads to the agent's own scope.
  * Without it, multi-agent users on an unbound CLI key would see skills land
- * under whichever env was touched last (the `/api/scopes/default` heuristic
+ * under whichever env was touched last (the `/api/projects/default` heuristic
  * we replaced).
  */
 export const okEnvironmentProbe = (

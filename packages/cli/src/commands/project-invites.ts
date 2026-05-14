@@ -2,7 +2,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 /**
  * `clawdi project invites <project> [--cancel <id>]` — owner-side view
@@ -46,8 +46,8 @@ async function authedDelete(apiUrl: string, bearer: string, path: string): Promi
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 }
 
-export async function scopeInvitesCommand(
-	scopeArg: string,
+export async function projectInvitesCommand(
+	projectArg: string,
 	opts: { cancel?: string },
 ): Promise<void> {
 	const { apiUrl } = getConfig();
@@ -58,10 +58,14 @@ export async function scopeInvitesCommand(
 		return;
 	}
 
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
+	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
 
 	if (opts.cancel) {
-		await authedDelete(apiUrl, auth.apiKey, `/api/projects/${scopeId}/invitations/${opts.cancel}`);
+		await authedDelete(
+			apiUrl,
+			auth.apiKey,
+			`/api/projects/${projectId}/invitations/${opts.cancel}`,
+		);
 		console.log(`${chalk.green("✓")} Invitation cancelled.`);
 		return;
 	}
@@ -69,12 +73,12 @@ export async function scopeInvitesCommand(
 	const items = await authedGet<InvitationItem[]>(
 		apiUrl,
 		auth.apiKey,
-		`/api/projects/${scopeId}/invitations`,
+		`/api/projects/${projectId}/invitations`,
 	);
 	if (items.length === 0) {
 		console.log("No invitations on this project.");
 		console.log();
-		console.log(`Send one: ${chalk.cyan(`clawdi project invite ${scopeArg} --email <addr>`)}`);
+		console.log(`Send one: ${chalk.cyan(`clawdi project invite ${projectArg} --email <addr>`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Invitations on this project (${items.length}):`));
@@ -86,6 +90,6 @@ export async function scopeInvitesCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Cancel: ") + chalk.cyan(`clawdi project invites ${scopeArg} --cancel <id>`),
+		chalk.gray("Cancel: ") + chalk.cyan(`clawdi project invites ${projectArg} --cancel <id>`),
 	);
 }

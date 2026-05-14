@@ -5,9 +5,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.scope import (
-    Scope as Scope,  # noqa: F401 — register `scopes` table for FK resolution
-)
+from app.models.project import Project  # noqa: F401 — register `scopes` table for FK resolution
 
 
 class Skill(Base, TimestampMixin):
@@ -15,7 +13,7 @@ class Skill(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    # Scope this skill belongs to. Tenancy boundary stays user_id;
+    # Project this skill belongs to. Tenancy boundary stays user_id;
     # scope_id sub-divides within a user. Phase-1 migration backfills
     # to the most-recently-active env's local scope (multi-env users)
     # or the user's Personal scope (no envs registered).

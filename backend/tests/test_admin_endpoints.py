@@ -201,7 +201,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User
 
     novel_clerk_id = f"user_first_deploy_{uuid.uuid4().hex[:12]}"
@@ -234,7 +234,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     # invariant.
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
     assert personal is not None
@@ -374,7 +374,7 @@ async def test_admin_lazy_create_creates_personal_scope(db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.routes.admin import _resolve_or_create_user
 
     clerk_id = f"clerk_scope_inv_{uuid.uuid4().hex[:12]}"
@@ -382,7 +382,7 @@ async def test_admin_lazy_create_creates_personal_scope(db_session):
 
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
     assert personal is not None, "Personal scope must exist after lazy-create"
@@ -516,7 +516,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User
 
     novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
@@ -538,7 +538,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     # Personal scope created alongside (JWT-path parity).
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
     assert personal is not None

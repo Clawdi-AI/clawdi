@@ -1,4 +1,4 @@
-"""Cross-user scope sharing service-layer helpers.
+"""Cross-user project sharing service-layer helpers.
 
 Owner-handle resolution and share-token generation/verification live
 here; transactional flows that touch multiple tables (unshare,
@@ -11,16 +11,8 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
-from uuid import UUID
 
-from fastapi import HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.scope import Scope
-from app.models.scope_mount import ScopeMount
 from app.models.user import User
-from app.models.vault import Vault, VaultItem
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _TRIM_DASHES = re.compile(r"^-+|-+$")
@@ -45,7 +37,7 @@ def safe_owner_handle(user: User) -> str:
     Write paths (create-share-link, accept-invitation) must raise a
     409 `display_name_required` so the user fixes their profile
     before durable state is created with a meaningless handle. Read
-    paths (listings, displays of mounts the user has already accepted
+    paths (listings for links/invitations already accepted
     months ago — owner since stripped their display name) need
     something to render and can't 409 the whole page; this helper
     returns OWNER_HANDLE_MISSING_SENTINEL instead so the row remains
@@ -60,7 +52,7 @@ def safe_owner_handle(user: User) -> str:
 def safe_owner_display(user: User) -> str:
     """Display name with a stable fallback chain: name → email → user-<hex8>.
 
-    Mirrors the fallback used by every owner-rendering surface (mount
+    Mirrors the fallback used by every owner-rendering surface (project
     listing, invitation row, share-link landing). Centralised so the
     user-<hex8> suffix shape and length stay consistent across them.
     """
@@ -80,7 +72,7 @@ def resolve_owner_handle(user: User) -> str:
 
     The 4-hex-char suffix makes handles globally unique per owner.
     No `existing_handles` parameter - we don't disambiguate per
-    sharee because the handle is frozen on `scope_share_links`
+    sharee because the handle is frozen on `project_share_links`
     at create time, when we don't know the sharee yet.
     """
     if not user.name:
@@ -122,233 +114,6 @@ def hash_share_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
-async def auto_mount_target(
-    db: AsyncSession,
-    user_id: UUID,
-) -> tuple[list[tuple[UUID, str, str]], UUID | None]:
-    """Resolve the mount-target ownership picture for an accepting user.
-
-    Returns `(owned_scopes, auto_target_id_or_None)`:
-      * `owned_scopes`: list of `(scope_id, slug, kind)` tuples ordered
-        by kind then slug. `kind='personal'` sorts first.
-      * `auto_target_id_or_None`:
-        - If exactly 1 owned scope → that scope's id (silent auto-mount).
-        - If 2+ owned scopes → None (caller surfaces 409
-          mount_target_ambiguous).
-        - If 0 owned scopes → None (impossible by construction but
-          treated like ambiguous to be safe).
-
-    Used by /upgrade and /me/invitations/{id}/accept to pick where
-    the auto-mount lands when caller didn't pass parent_scope_id.
-    """
-    rows = (
-        await db.execute(
-            select(Scope.id, Scope.slug, Scope.kind)
-            .where(Scope.user_id == user_id)
-            .order_by(Scope.kind, Scope.slug)
-        )
-    ).all()
-    owned = [(r.id, r.slug, r.kind) for r in rows]
-    if len(owned) == 1:
-        return owned, owned[0][0]
-    return owned, None
-
-
 def token_prefix(raw_token: str) -> str:
     """First 8 chars of the raw token - safe to store + display."""
     return raw_token[:_TOKEN_PREFIX_LEN]
-
-
-async def detect_vault_conflicts(
-    db: AsyncSession,
-    *,
-    parent_scope_id: UUID,
-    source_scope_id: UUID,
-) -> list[dict[str, str]]:
-    """List vault keys that would be shadowed by the parent composition.
-
-    A collision is `(vault.slug, section, item_name)` showing up under the
-    new source and any scope that already has precedence in the parent:
-    the parent itself, plus existing mounted sources. Composed vault
-    resolution is parent-first, then mounted sources by created_at, so a
-    collision on accept-mount would silently hide the new shared value
-    behind an existing value — surface as 409 vault_conflicts_blocked at
-    mount time so the sharee can inspect before committing.
-
-    Empty list = no conflicts; safe to mount. Used by every accept
-    surface that creates a mount (share-link upgrade, invitation
-    accept, explicit `scope mount`).
-    """
-    mounted_source_ids = (
-        (
-            await db.execute(
-                select(ScopeMount.source_scope_id)
-                .where(
-                    ScopeMount.parent_scope_id == parent_scope_id,
-                    ScopeMount.source_scope_id != source_scope_id,
-                )
-                .order_by(ScopeMount.created_at.asc(), ScopeMount.id.asc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    blocking_scope_ids = [parent_scope_id, *mounted_source_ids]
-
-    src_vault = Vault.__table__.alias("v_src")
-    src_item = VaultItem.__table__.alias("vi_src")
-    blocking_vault = Vault.__table__.alias("v_blocking")
-    blocking_item = VaultItem.__table__.alias("vi_blocking")
-
-    stmt = (
-        select(
-            src_vault.c.slug.label("vault_slug"),
-            src_item.c.section.label("section"),
-            src_item.c.item_name.label("item_name"),
-        )
-        .distinct()
-        .select_from(
-            src_item.join(src_vault, src_vault.c.id == src_item.c.vault_id)
-            .join(
-                blocking_vault,
-                blocking_vault.c.slug == src_vault.c.slug,
-            )
-            .join(
-                blocking_item,
-                (blocking_item.c.vault_id == blocking_vault.c.id)
-                & (blocking_item.c.section == src_item.c.section)
-                & (blocking_item.c.item_name == src_item.c.item_name),
-            )
-        )
-        .where(
-            src_vault.c.scope_id == source_scope_id,
-            blocking_vault.c.scope_id.in_(blocking_scope_ids),
-        )
-        .order_by(src_vault.c.slug, src_item.c.section, src_item.c.item_name)
-    )
-    rows = (await db.execute(stmt)).all()
-    return [
-        {"vault_slug": r.vault_slug, "section": r.section, "item_name": r.item_name} for r in rows
-    ]
-
-
-async def assert_no_vault_conflicts(
-    db: AsyncSession,
-    *,
-    parent_scope_id: UUID,
-    source_scope_id: UUID,
-    allow: bool,
-) -> None:
-    """409 vault_conflicts_blocked if accept-time vault collision detected.
-
-    The caller passes `allow` from the body's `allow_vault_conflicts`
-    flag — `True` skips the check entirely (user has consented to
-    the override after inspecting the conflict list from a prior
-    blocked attempt). Commits the session before raising so a
-    membership row flushed by the caller survives the 409 — same
-    posture as resolve_auto_mount_parent.
-    """
-    if allow:
-        return
-    existing_mount = (
-        await db.execute(
-            select(ScopeMount.id).where(
-                ScopeMount.parent_scope_id == parent_scope_id,
-                ScopeMount.source_scope_id == source_scope_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing_mount is not None:
-        return
-    conflicts = await detect_vault_conflicts(
-        db, parent_scope_id=parent_scope_id, source_scope_id=source_scope_id
-    )
-    if not conflicts:
-        return
-    await db.commit()
-    raise HTTPException(
-        status.HTTP_409_CONFLICT,
-        {
-            "error": "vault_conflicts_blocked",
-            "message": (
-                f"Source scope has {len(conflicts)} vault "
-                f"key{'' if len(conflicts) == 1 else 's'} that already "
-                "exist in your parent scope composition. Re-run with "
-                "allow_vault_conflicts=true after inspecting."
-            ),
-            "conflicts": conflicts,
-        },
-    )
-
-
-async def resolve_auto_mount_parent(
-    db: AsyncSession,
-    user_id: UUID,
-    parent_scope_id: str | None,
-    membership_id: UUID,
-) -> UUID:
-    """Pick the parent_scope_id for an auto-mount on accept.
-
-    Encapsulates the validation logic shared by every "accept a shared
-    scope" route (share-link upgrade, email-invitation accept). The
-    caller has already flushed a ScopeMembership row; this helper
-    decides where the auto-mount lands and surfaces the appropriate
-    error status if it can't.
-
-    Returns the resolved parent UUID. On the error paths it commits
-    the session first (so the freshly-flushed membership survives the
-    raise — capability lives even when the mount step couldn't proceed
-    automatically) and then raises HTTPException:
-
-      400 invalid_parent_scope_id     parent_scope_id present but
-                                       isn't a UUID.
-      404 parent_scope_id not found   caller doesn't own the
-                                       requested parent.
-      409 mount_target_ambiguous      no parent_scope_id passed AND
-                                       caller owns 2+ scopes. Payload
-                                       carries owned_scopes + the
-                                       membership_id so the client
-                                       knows capability is in place
-                                       and the mount is what's
-                                       deferred.
-    """
-    if parent_scope_id:
-        try:
-            explicit = UUID(parent_scope_id)
-        except (ValueError, AttributeError) as err:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                {"error": "invalid_parent_scope_id"},
-            ) from err
-        owned_check = (
-            await db.execute(
-                select(Scope).where(
-                    Scope.id == explicit,
-                    Scope.user_id == user_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if owned_check is None:
-            await db.commit()
-            # Same 404 shape used elsewhere so scope IDs aren't enumerable.
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "parent_scope_id not found")
-        return explicit
-
-    owned, auto = await auto_mount_target(db, user_id)
-    if auto is None:
-        # Capability survives — commit membership before surfacing the 409
-        # so the client can mount later by re-running with parent_scope_id.
-        await db.commit()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "error": "mount_target_ambiguous",
-                "message": (
-                    "You have multiple owned scopes. Re-run with "
-                    "parent_scope_id set OR call `clawdi scope mount` after."
-                ),
-                "owned_scopes": [{"id": str(s[0]), "slug": s[1], "kind": s[2]} for s in owned],
-                "membership_id": str(membership_id),
-            },
-        )
-    return auto

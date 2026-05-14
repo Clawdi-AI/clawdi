@@ -43,7 +43,7 @@ export function Inbox() {
 	const refetchMembershipDerived = () => {
 		qc.invalidateQueries({ queryKey: ["me-invitations"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["scopes"] });
+		qc.invalidateQueries({ queryKey: ["projects"] });
 		qc.invalidateQueries({ queryKey: ["agents"] });
 	};
 

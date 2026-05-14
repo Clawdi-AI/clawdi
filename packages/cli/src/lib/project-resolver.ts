@@ -1,7 +1,7 @@
 import { ApiError } from "./api-client";
 
 /**
- * Resolve a user-supplied `<scope>` argument to a backend project UUID.
+ * Resolve a user-supplied `<project>` argument to a backend project UUID.
  *
  * Accepts:
  *   - A full UUID → returned as-is (no round-trip).
@@ -13,15 +13,13 @@ import { ApiError } from "./api-client";
  * Throws on ambiguity (multiple matches) or no match.
  *
  * The caller passes the raw `apiUrl` + bearer instead of an
- * `ApiClient` instance because the sharing endpoints aren't in the
- * typed openapi schema yet (sharing routes land in a future schema
- * regen). Once they're typed, this can switch to ApiClient and
- * drop the manual auth header.
+ * `ApiClient` instance because this helper is also used in early
+ * bootstrap flows before typed clients are available.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface ScopeBrief {
+interface ProjectBrief {
 	id: string;
 	name: string;
 	slug: string;
@@ -29,17 +27,7 @@ interface ScopeBrief {
 	is_owner?: boolean;
 }
 
-async function authedGet<T>(apiUrl: string, bearer: string, path: string): Promise<T> {
-	const r = await fetch(`${apiUrl}${path}`, {
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
-	if (!r.ok) {
-		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	}
-	return r.json() as Promise<T>;
-}
-
-export async function resolveScopeId(
+export async function resolveProjectId(
 	apiUrl: string,
 	bearer: string,
 	input: string | undefined,
@@ -48,20 +36,18 @@ export async function resolveScopeId(
 		const r = await fetch(`${apiUrl}/api/projects/default`, {
 			headers: { Authorization: `Bearer ${bearer}` },
 		});
-		if (r.ok) {
-			const def = (await r.json()) as { project_id: string };
-			return def.project_id;
+		if (!r.ok) {
+			throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 		}
-		// Backward compat with pre-project route names.
-		const def = await authedGet<{ scope_id: string }>(apiUrl, bearer, "/api/scopes/default");
-		return def.scope_id;
+		const def = (await r.json()) as { project_id: string };
+		return def.project_id;
 	}
 	if (UUID_RE.test(input)) return input;
 
-	const scopes = await listScopes(apiUrl, bearer);
+	const projects = await listProjects(apiUrl, bearer);
 	const needle = input.toLowerCase();
-	const slugMatches = scopes.filter((s) => s.slug.toLowerCase() === needle);
-	const nameMatches = scopes.filter((s) => s.name.toLowerCase() === needle);
+	const slugMatches = projects.filter((s) => s.slug.toLowerCase() === needle);
+	const nameMatches = projects.filter((s) => s.name.toLowerCase() === needle);
 	const matches = slugMatches.length > 0 ? slugMatches : nameMatches;
 
 	if (matches.length === 0) {
@@ -78,13 +64,16 @@ export async function resolveScopeId(
 	return matches[0].id;
 }
 
-export async function listScopes(apiUrl: string, bearer: string): Promise<ScopeBrief[]> {
+export async function listProjects(apiUrl: string, bearer: string): Promise<ProjectBrief[]> {
 	const projectResponse = await fetch(`${apiUrl}/api/projects`, {
 		headers: { Authorization: `Bearer ${bearer}` },
 	});
-	if (projectResponse.ok) {
-		return (await projectResponse.json()) as ScopeBrief[];
+	if (!projectResponse.ok) {
+		throw new ApiError({
+			status: projectResponse.status,
+			body: await projectResponse.text(),
+			hint: "",
+		});
 	}
-	// Backward compat with pre-project route names.
-	return authedGet<ScopeBrief[]>(apiUrl, bearer, "/api/scopes");
+	return (await projectResponse.json()) as ProjectBrief[];
 }

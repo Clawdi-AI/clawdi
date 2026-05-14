@@ -180,23 +180,23 @@ $(tail -30 "$LOG_DIR/backend.log")"
 ok "cloud has skill content_hash=${CLOUD_HASH:0:12}..."
 
 bold "6) verifying pull: cloud-side change → local file"
-# Upload a new version via the scope-explicit route — this
+# Upload a new version via the project-explicit route — this
 # simulates a dashboard install / marketplace push while our
 # daemon is alive. The DB write fires SSE through the broker
 # and our daemon receives `skill_changed` on its long-lived
 # stream within ~2s.
-# Read default_scope_id via the public API so the test isn't
+# Read default_project_id via the public API so the test isn't
 # coupled to whichever DB name / port the operator's local
 # postgres uses (the dev DB might be `clawdi_cloud`, `clawdi`,
 # or whatever DATABASE_URL says). The deploy key returned by
-# the seed step already has scope visibility on its bound env.
-SCOPE_RESP_FILE="$LOG_DIR/scope-default.json"
-SCOPE_HTTP=$(curl -s -o "$SCOPE_RESP_FILE" -w '%{http_code}' \
-  "http://127.0.0.1:$TEST_PORT/api/scopes/default" \
+# the seed step already has project visibility on its bound env.
+PROJECT_RESP_FILE="$LOG_DIR/project-default.json"
+PROJECT_HTTP=$(curl -s -o "$PROJECT_RESP_FILE" -w '%{http_code}' \
+  "http://127.0.0.1:$TEST_PORT/api/projects/default" \
   -H "Authorization: Bearer $RAW_KEY")
-[ "$SCOPE_HTTP" = "200" ] || fail "GET /api/scopes/default returned $SCOPE_HTTP — body: $(head -c 400 "$SCOPE_RESP_FILE")"
-SCOPE_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scope_id",""))' "$SCOPE_RESP_FILE" 2>/dev/null)
-[ -n "$SCOPE_ID" ] || fail "GET /api/scopes/default 200 but scope_id missing — body: $(head -c 400 "$SCOPE_RESP_FILE")"
+[ "$PROJECT_HTTP" = "200" ] || fail "GET /api/projects/default returned $PROJECT_HTTP — body: $(head -c 400 "$PROJECT_RESP_FILE")"
+PROJECT_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project_id",""))' "$PROJECT_RESP_FILE" 2>/dev/null)
+[ -n "$PROJECT_ID" ] || fail "GET /api/projects/default 200 but project_id missing — body: $(head -c 400 "$PROJECT_RESP_FILE")"
 
 NEW_BODY="---
 name: e2e-hello
@@ -211,14 +211,14 @@ TAR=$(mktemp)
 # `<skill_key>/`) rejects the upload as "archive root does not
 # match skill_key" because of the spurious `._e2e-hello` entry.
 ( cd "$SCRATCH" && mkdir -p e2e-hello && echo "$NEW_BODY" > e2e-hello/SKILL.md && COPYFILE_DISABLE=1 tar czf "$TAR" e2e-hello && rm -rf e2e-hello )
-UPLOAD_RESP="$LOG_DIR/scope-upload.json"
+UPLOAD_RESP="$LOG_DIR/project-upload.json"
 UPLOAD_HTTP=$(curl -s -o "$UPLOAD_RESP" -w '%{http_code}' \
-  -X POST "http://127.0.0.1:$TEST_PORT/api/scopes/$SCOPE_ID/skills/upload" \
+  -X POST "http://127.0.0.1:$TEST_PORT/api/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
   -F "skill_key=e2e-hello" \
   -F "file=@$TAR")
 rm -f "$TAR"
-[ "$UPLOAD_HTTP" = "200" ] || fail "scope-explicit upload returned $UPLOAD_HTTP — body: $(head -c 400 "$UPLOAD_RESP")"
+[ "$UPLOAD_HTTP" = "200" ] || fail "project-explicit upload returned $UPLOAD_HTTP — body: $(head -c 400 "$UPLOAD_RESP")"
 
 # Daemon should pick up the SSE event within ~2s and rewrite the
 # local SKILL.md. Poll for the new content marker.
@@ -237,10 +237,10 @@ bold "7) verifying delete propagation: server DELETE → local skill removed"
 # Sanity check: the local dir exists right now.
 [ -d "$SKILL_DIR" ] || fail "skill dir vanished before delete test (unexpected)"
 
-# Hit the scope-explicit DELETE. The deploy key has skills:write,
+# Hit the project-explicit DELETE. The deploy key has skills:write,
 # so this works.
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-  -X DELETE "http://127.0.0.1:$TEST_PORT/api/scopes/$SCOPE_ID/skills/e2e-hello" \
+  -X DELETE "http://127.0.0.1:$TEST_PORT/api/projects/$PROJECT_ID/skills/e2e-hello" \
   -H "Authorization: Bearer $RAW_KEY")
 [ "$HTTP_CODE" = "200" ] || fail "delete returned $HTTP_CODE, expected 200"
 

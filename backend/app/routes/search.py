@@ -159,19 +159,19 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
             id=str(s.id),
             title=s.name or s.skill_key,
             subtitle=s.description,
-            # Include the scope so a multi-agent account where the
-            # same `skill_key` exists in two scopes routes the
+            # Include the project so a multi-agent account where the
+            # same `skill_key` exists in two projects routes the
             # palette click to the row that actually matched. The
             # legacy `/skills/{key}` route resolves to "most-
-            # recently-updated across visible scopes", which can
+            # recently-updated across visible projects", which can
             # land the user on agent A's copy of `foo` after they
             # picked agent B's hit — and any subsequent edit lands
-            # under the wrong scope.
+            # under the wrong project.
             # Percent-encode skill_key so nested Hermes keys like
             # `category/foo` don't collapse the dashboard's single
             # `[key]` segment into multiple path parts (would
             # 404 the palette click). `safe=""` quotes `/` too.
-            href=f"/skills/{quote(s.skill_key, safe='')}?scope={s.scope_id}",
+            href=f"/skills/{quote(s.skill_key, safe='')}?project={s.scope_id}",
         )
         for s in rows
     ]

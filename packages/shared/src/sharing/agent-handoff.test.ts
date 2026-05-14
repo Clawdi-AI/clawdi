@@ -41,17 +41,9 @@ describe("buildShareAgentHandoffPrompt", () => {
 			(s) => s.status,
 		);
 
-		expect(statuses).toEqual([
-			"joined",
-			"mount_deferred",
-			"vault_conflicts_blocked",
-			"redeemed",
-			"already_redeemed",
-			"already_owner",
-		]);
-		expect(prompt).toContain("Never invent a mount target");
-		expect(prompt).toContain("Never override vault conflicts");
-		expect(prompt).toContain("clawdi vault resolve <key> --scope <parent-scope> --debug --json");
+		expect(statuses).toEqual(["joined", "redeemed", "already_redeemed", "already_owner"]);
+		expect(prompt).toContain("Never invent project membership or binding outcomes");
+		expect(prompt).toContain("clawdi vault resolve <key> --project <project> --debug --json");
 	});
 
 	test("sanitizes owner-controlled labels before embedding the handoff payload", () => {

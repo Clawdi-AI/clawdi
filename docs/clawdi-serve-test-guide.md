@@ -148,15 +148,15 @@ reflects the new content_hash on refresh.
 
 A dashboard install (or a marketplace push) lands on the cloud
 side. To simulate it from a terminal, push directly through the
-scope-explicit upload route — `SCOPE_ID` is the env's
-`default_scope_id`:
+project-explicit upload route — `PROJECT_ID` is the env's
+`default_project_id`:
 
 ```sh
-SCOPE_ID=$(curl -s -H "Authorization: Bearer $RAW_KEY" \
-  http://localhost:8000/api/scopes/default | jq -r .scope_id)
+PROJECT_ID=$(curl -s -H "Authorization: Bearer $RAW_KEY" \
+  http://localhost:8000/api/projects/default | jq -r .project_id)
 echo "# edited from the dashboard $(date)" >> /tmp/manual-claude/skills/test-skill/SKILL.md
 TAR=$(mktemp); ( cd /tmp/manual-claude/skills && tar czf $TAR test-skill )
-curl -X POST "http://localhost:8000/api/scopes/$SCOPE_ID/skills/upload" \
+curl -X POST "http://localhost:8000/api/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
   -F "skill_key=test-skill" -F "file=@$TAR"
 ```

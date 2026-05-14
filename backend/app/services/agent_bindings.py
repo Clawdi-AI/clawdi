@@ -9,8 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.project import Project
 from app.models.project_membership import ProjectMembership
-from app.models.scope import Scope
 from app.models.session import AgentEnvironment
 
 
@@ -38,8 +38,10 @@ async def assert_project_visible_to_user(
     *,
     user_id: UUID,
     project_id: UUID,
-) -> Scope:
-    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+) -> Project:
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     if project.user_id == user_id:
@@ -63,8 +65,10 @@ async def assert_project_writable_by_user(
     *,
     user_id: UUID,
     project_id: UUID,
-) -> Scope:
-    project = (await db.execute(select(Scope).where(Scope.id == project_id))).scalar_one_or_none()
+) -> Project:
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     if project.user_id != user_id:

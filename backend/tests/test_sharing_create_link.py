@@ -62,7 +62,7 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
     """seed_user posts to another user's scope → 404 (not 403):
     refusing to distinguish 'not yours' from 'doesn't exist' so
     scope IDs aren't enumerable."""
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User
 
     seed_user.name = "Alice"
@@ -75,11 +75,11 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
     db_session.add(other)
     await db_session.commit()
     await db_session.refresh(other)
-    other_scope = Scope(
+    other_scope = Project(
         user_id=other.id,
         name="Other",
         slug=f"other-{other_nonce}",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db_session.add(other_scope)
     await db_session.commit()

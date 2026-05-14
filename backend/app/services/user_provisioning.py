@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -98,11 +98,11 @@ async def lazy_create_user_with_personal_scope(
     # so a partial-unique kind=personal index is the only realistic
     # failure mode. Wrap in try/except so a SQLAlchemy traceback
     # doesn't leak to the client as a raw 500.
-    personal = Scope(
+    personal = Project(
         user_id=new_user.id,
         name="Personal",
         slug="personal",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db.add(personal)
     try:

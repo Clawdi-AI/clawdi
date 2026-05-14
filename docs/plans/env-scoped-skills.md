@@ -36,7 +36,7 @@ This pivot also generalizes: memories, vault items, and possibly session ranges 
 - **Cross-user sharing** (ScopeMembership, invitation, roles, audit log).
 - **Vault encryption rework for shared scopes** (per-member envelope encryption is a separate cryptography milestone).
 - **Memory / Vault scoping migration**. Phase 1 adds `scope_id` columns where needed for the schema to be coherent, but only `Skill` enforces / queries by it. Memory and Vault catch up in later phases.
-- **API path scheme overhaul**. Phase 1 keeps existing `/api/skills/...` paths but adds the route shim that resolves scope server-side. New `/api/scopes/{scope_id}/...` shape ships in phase 2.
+- **API path scheme overhaul**. Phase 1 keeps existing `/api/skills/...` paths but adds the route shim that resolves scope server-side. New `/api/projects/{scope_id}/...` shape ships in phase 2.
 
 ## Schema (final, locked)
 
@@ -215,7 +215,7 @@ All existing vaults go into the user's Personal scope. Vaults are not machine-bo
 ### Phase 1 — schema + migration + minimal route shim (this milestone)
 
 - Alembic migration as above.
-- New `app/models/scope.py`.
+- New `app/models/project.py`.
 - `Skill`, `Vault`, `AgentEnvironment`, `SkillConflict` models gain `scope_id` / `default_scope_id` columns.
 - `_file_key` and `_advisory_lock_key` accept `scope_id` and include it in the path / lock identity.
 - **Env registration becomes scope-aware.** `POST /api/environments` (in `sessions.py`) creates the env's local scope inline and sets `default_scope_id` in the same transaction. Without this, the NOT NULL constraint can't be enforced for new envs.
@@ -237,7 +237,7 @@ All existing vaults go into the user's Personal scope. Vaults are not machine-bo
 
 ### Phase 2 — env-scoped routes + daemon awareness
 
-- New `/api/scopes/{scope_id}/skills/...` routes alongside old ones.
+- New `/api/projects/{scope_id}/skills/...` routes alongside old ones.
 - Daemon reads `agent_environments.default_scope_id` at boot via existing env endpoint, sends new-shape requests.
 - Old `/api/skills/...` paths return a deprecation header but keep working for two weeks, then 410.
 - Conflict UI scoped to specific scope.
@@ -294,7 +294,7 @@ Schema cost: another CHECK kind value. Subscription state lives in a new `scope_
 
 ## Open questions (resolved)
 
-- ~~Path naming `/api/agents/{env_id}/...` vs `/api/scopes/{scope_id}/...`?~~ → `/api/scopes/{scope_id}/...` (phase 2). `/api/agents/{env_id}/...` stays for env-runtime concerns (heartbeat, registration, env info).
+- ~~Path naming `/api/agents/{env_id}/...` vs `/api/projects/{scope_id}/...`?~~ → `/api/projects/{scope_id}/...` (phase 2). `/api/agents/{env_id}/...` stays for env-runtime concerns (heartbeat, registration, env info).
 - ~~Default for marketplace install?~~ → api_key (CLI / daemon): bound env's `default_scope_id`. Clerk JWT (dashboard): single env → that env's default scope. Multi env → most-recently-active env's default scope (auto-pick, matches backfill heuristic; v1 dashboard isn't scope-aware so a picker doesn't exist yet). Zero envs → Personal scope (pre-daemon account fallback). Phase 3 dashboard adds an explicit scope picker, replacing the auto-pick.
 - ~~Old route deprecation window?~~ → Two weeks after phase 2 ships, then 410.
 - ~~Vault collapse into Scope?~~ → No. Vault stays its own concept; `Vault.scope_id` is the integration point.

@@ -39,18 +39,19 @@ export default function VaultPage() {
 	});
 	const vaults = data?.items;
 
-	// Vaults from MOUNTED scopes (other users') need read-only treatment —
+	// Vaults from shared projects (other users') need read-only treatment —
 	// the membership is viewer, so any write would 403. /api/vault returns
 	// them in the same list as owned vaults (the user CAN read them, after
-	// all), so we cross-reference /api/scopes' is_owner to decide which
+	// all), so we cross-reference /api/projects' is_owner to decide which
 	// cards render with write affordances disabled and a "shared" badge.
-	const { data: scopes } = useQuery({
-		queryKey: ["scopes"],
-		queryFn: async () => unwrap(await api.GET("/api/scopes")),
+	const { data: projects } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
 	});
-	const ownedScopeIds = useMemo(
-		() => new Set((scopes ?? []).filter((s) => s.is_owner).map((s) => s.id)),
-		[scopes],
+	const ownedProjectIds = useMemo(
+		() =>
+			new Set((projects ?? []).filter((project) => project.is_owner).map((project) => project.id)),
+		[projects],
 	);
 
 	const createVault = useMutation({
@@ -64,10 +65,10 @@ export default function VaultPage() {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async (vault: { slug: string; scope_id: string }) =>
+		mutationFn: async (vault: { slug: string; project_id: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 				}),
 			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
@@ -130,17 +131,17 @@ export default function VaultPage() {
 			) : vaults?.length ? (
 				<div className="space-y-6">
 					{vaults.map((v) => {
-						// Default to owned while scopes are still loading — avoids a
+						// Default to owned while projects are still loading — avoids a
 						// flash of read-only chrome on the user's own vaults during the
-						// initial render. Worst case: a mounted vault briefly shows
+						// initial render. Worst case: a shared vault briefly shows
 						// add/delete affordances; the backend would 403 if clicked.
-						const isReadOnly = scopes !== undefined && !ownedScopeIds.has(v.scope_id);
+						const isReadOnly = projects !== undefined && !ownedProjectIds.has(v.project_id);
 						return (
 							<VaultCard
 								key={v.id}
 								vault={v}
 								readOnly={isReadOnly}
-								onDelete={() => deleteVault.mutate({ slug: v.slug, scope_id: v.scope_id })}
+								onDelete={() => deleteVault.mutate({ slug: v.slug, project_id: v.project_id })}
 								isDeleting={deleteVault.isPending}
 							/>
 						);
@@ -174,18 +175,18 @@ function VaultCard({
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
 
-	// Cache key includes scope_id so a JWT user with the same slug
-	// in two scopes (Personal + env-A) doesn't share entries.
-	// Without the scope_id in the key the second card would render
+	// Cache key includes project_id so a JWT user with the same slug
+	// in two projects (Personal + env-A) doesn't share entries.
+	// Without the project_id in the key the second card would render
 	// the first's items.
-	const itemsCacheKey = ["vault-items", vault.slug, vault.scope_id] as const;
+	const itemsCacheKey = ["vault-items", vault.slug, vault.project_id] as const;
 
 	const { data: items } = useQuery({
 		queryKey: itemsCacheKey,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 				}),
 			),
 	});
@@ -194,7 +195,7 @@ function VaultCard({
 		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
 			unwrap(
 				await api.PUT("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 					body: { section, fields: { [key]: value } },
 				}),
 			),
@@ -211,7 +212,7 @@ function VaultCard({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 					body: { section, fields: [name] },
 				}),
 			),
@@ -244,7 +245,7 @@ function VaultCard({
 				cell: () => <span className="font-mono text-xs text-muted-foreground">••••••••</span>,
 				size: 120,
 			},
-			// Read-only vaults (mounted from someone else's scope) get no
+			// Read-only vaults (shared from someone else's project) get no
 			// per-row delete column at all — viewer membership can't mutate.
 			...(readOnly
 				? []
@@ -286,7 +287,7 @@ function VaultCard({
 	// doesn't stack a card inside a card.
 	return (
 		<section className="space-y-2">
-			{/* Scope group/header to the heading row only — otherwise the delete
+			{/* Project group/header to the heading row only — otherwise the delete
 			    icon pops in whenever the cursor moves anywhere in the table body
 			    below. */}
 			<div className="group/header flex items-center justify-between gap-2 px-1">
@@ -299,7 +300,7 @@ function VaultCard({
 						<Badge
 							variant="secondary"
 							className="text-xs"
-							title="Mounted from another scope — viewer membership is read-only"
+							title="Shared from another project — viewer membership is read-only"
 						>
 							shared
 						</Badge>

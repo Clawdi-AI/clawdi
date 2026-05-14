@@ -31,15 +31,15 @@ type Env = components["schemas"]["EnvironmentResponse"];
 
 interface AgentTargetPickerProps {
 	envs: Env[];
-	selectedScopeId: string | null;
+	selectedProjectId: string | null;
 	targetEnv: Env | undefined;
 	targetAgentLabel: string;
-	onChange: (scopeId: string) => void;
+	onChange: (projectId: string) => void;
 }
 
 export function AgentTargetPicker({
 	envs,
-	selectedScopeId,
+	selectedProjectId,
 	targetEnv,
 	targetAgentLabel,
 	onChange,
@@ -58,7 +58,7 @@ export function AgentTargetPicker({
 	return (
 		<div className="flex flex-wrap items-center gap-3 text-sm">
 			<span className="text-muted-foreground">Install on</span>
-			<Select value={selectedScopeId ?? undefined} onValueChange={onChange}>
+			<Select value={selectedProjectId ?? undefined} onValueChange={onChange}>
 				<SelectTrigger className="h-9 min-w-[220px] gap-2">
 					{targetEnv ? (
 						<span className="flex items-center gap-2 truncate">
@@ -77,8 +77,8 @@ export function AgentTargetPicker({
 				    far off-screen. */}
 				<SelectContent position="popper" align="start">
 					{ordered.map((env) =>
-						env.default_scope_id ? (
-							<SelectItem key={env.id} value={env.default_scope_id} className="py-2">
+						env.default_project_id ? (
+							<SelectItem key={env.id} value={env.default_project_id} className="py-2">
 								<AgentLabel
 									machineName={env.machine_name}
 									type={env.agent_type}

@@ -105,26 +105,26 @@ interface Member {
 	joined_at: string;
 }
 
-interface ShareScopeDialogProps {
-	scopeId: string;
-	scopeName: string;
-	scopeKind?: string;
+interface ShareProjectDialogProps {
+	projectId: string;
+	projectName: string;
+	projectKind?: string;
 	children?: React.ReactNode;
 }
 
-export function ShareScopeDialog({
-	scopeId,
-	scopeName,
-	scopeKind,
+export function ShareProjectDialog({
+	projectId,
+	projectName,
+	projectKind,
 	children,
-}: ShareScopeDialogProps) {
+}: ShareProjectDialogProps) {
 	const [open, setOpen] = useState(false);
-	const isPersonalScope = scopeKind === "personal";
+	const isPersonalProject = projectKind === "personal";
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				{children ?? (
-					<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
+					<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 						<Share2 className="mr-2 size-4" />
 						Share project
 					</Button>
@@ -132,13 +132,13 @@ export function ShareScopeDialog({
 			</DialogTrigger>
 			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
-					<DialogTitle>Share "{scopeName}"</DialogTitle>
+					<DialogTitle>Share "{projectName}"</DialogTitle>
 					<DialogDescription>
 						Give others read-only membership in this project. Accepting grants project access; agent
 						binding remains a separate explicit step.
 					</DialogDescription>
 				</DialogHeader>
-				{isPersonalScope ? (
+				{isPersonalProject ? (
 					<Alert>
 						<AlertCircle />
 						<AlertTitle>Personal project sharing needs extra care</AlertTitle>
@@ -164,13 +164,13 @@ export function ShareScopeDialog({
 						</TabsTrigger>
 					</TabsList>
 					<TabsContent value="links" className="mt-4">
-						<ShareLinksPanel scopeId={scopeId} />
+						<ShareLinksPanel projectId={projectId} />
 					</TabsContent>
 					<TabsContent value="invitations" className="mt-4">
-						<InvitationsPanel scopeId={scopeId} />
+						<InvitationsPanel projectId={projectId} />
 					</TabsContent>
 					<TabsContent value="members" className="mt-4">
-						<MembersPanel scopeId={scopeId} />
+						<MembersPanel projectId={projectId} />
 					</TabsContent>
 				</Tabs>
 			</DialogContent>
@@ -178,7 +178,7 @@ export function ShareScopeDialog({
 	);
 }
 
-function ShareLinksPanel({ scopeId }: { scopeId: string }) {
+function ShareLinksPanel({ projectId }: { projectId: string }) {
 	const qc = useQueryClient();
 	const [label, setLabel] = useState("");
 	// The just-created link's full URL — surfaced once in a banner
@@ -189,9 +189,9 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	const authedFetch = useAuthedFetch();
 
 	const links = useQuery({
-		queryKey: ["share-links", scopeId],
+		queryKey: ["share-links", projectId],
 		queryFn: async (): Promise<ShareLinkRow[]> => {
-			const r = await authedFetch(`/api/projects/${scopeId}/share-links`);
+			const r = await authedFetch(`/api/projects/${projectId}/share-links`);
 			return r.json();
 		},
 	});
@@ -199,7 +199,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	const create = useMutation({
 		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
 			const trimmedLabel = nextLabel.trim();
-			const r = await authedFetch(`/api/projects/${scopeId}/share-links`, {
+			const r = await authedFetch(`/api/projects/${projectId}/share-links`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ label: trimmedLabel.length > 0 ? trimmedLabel : null }),
@@ -209,7 +209,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 		onSuccess: (body) => {
 			setLabel("");
 			setFreshLink(body);
-			qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
+			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
 			// Best-effort auto-copy. Browsers without the async
 			// clipboard API silently fall through to the manual copy
 			// button in the banner.
@@ -231,12 +231,12 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 
 	const revoke = useMutation({
 		mutationFn: async (linkId: string) => {
-			await authedFetch(`/api/projects/${scopeId}/share-links/${linkId}`, {
+			await authedFetch(`/api/projects/${projectId}/share-links/${linkId}`, {
 				method: "DELETE",
 			});
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
+			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
 			toast.success("Link revoked");
 		},
 		onError: (e) => {
@@ -479,16 +479,16 @@ function LinkRow({
 	);
 }
 
-function InvitationsPanel({ scopeId }: { scopeId: string }) {
+function InvitationsPanel({ projectId }: { projectId: string }) {
 	const qc = useQueryClient();
 	const [email, setEmail] = useState("");
 
 	const authedFetch = useAuthedFetch();
 
 	const invites = useQuery({
-		queryKey: ["invitations", scopeId],
+		queryKey: ["invitations", projectId],
 		queryFn: async (): Promise<Invitation[]> => {
-			const r = await authedFetch(`/api/projects/${scopeId}/invitations`);
+			const r = await authedFetch(`/api/projects/${projectId}/invitations`);
 			const body = (await r.json()) as { items?: Invitation[] } | Invitation[];
 			return Array.isArray(body) ? body : (body.items ?? []);
 		},
@@ -496,7 +496,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 
 	const invite = useMutation({
 		mutationFn: async (inviteEmail: string) => {
-			const r = await authedFetch(`/api/projects/${scopeId}/invitations`, {
+			const r = await authedFetch(`/api/projects/${projectId}/invitations`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ email: inviteEmail }),
@@ -504,7 +504,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 			return r.json();
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
+			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
 			toast.success("Invitation sent");
 		},
@@ -517,12 +517,12 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 
 	const cancel = useMutation({
 		mutationFn: async (invitationId: string) => {
-			await authedFetch(`/api/projects/${scopeId}/invitations/${invitationId}`, {
+			await authedFetch(`/api/projects/${projectId}/invitations/${invitationId}`, {
 				method: "DELETE",
 			});
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
+			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			toast.success("Invitation cancelled");
 		},
 		onError: (e) => {
@@ -639,29 +639,29 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 	);
 }
 
-function MembersPanel({ scopeId }: { scopeId: string }) {
+function MembersPanel({ projectId }: { projectId: string }) {
 	const qc = useQueryClient();
 	const authedFetch = useAuthedFetch();
 
 	const members = useQuery({
-		queryKey: ["project-members", scopeId],
+		queryKey: ["project-members", projectId],
 		queryFn: async (): Promise<Member[]> => {
-			const r = await authedFetch(`/api/projects/${scopeId}/members`);
+			const r = await authedFetch(`/api/projects/${projectId}/members`);
 			return r.json();
 		},
 	});
 
 	const refreshSharingState = () => {
-		qc.invalidateQueries({ queryKey: ["project-members", scopeId] });
-		qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
-		qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
+		qc.invalidateQueries({ queryKey: ["project-members", projectId] });
+		qc.invalidateQueries({ queryKey: ["share-links", projectId] });
+		qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["scopes"] });
+		qc.invalidateQueries({ queryKey: ["projects"] });
 	};
 
 	const remove = useMutation({
 		mutationFn: async (userId: string) => {
-			const r = await authedFetch(`/api/projects/${scopeId}/members/${userId}`, {
+			const r = await authedFetch(`/api/projects/${projectId}/members/${userId}`, {
 				method: "DELETE",
 			});
 			return r.json() as Promise<{ status: string }>;
@@ -678,7 +678,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 
 	const unshare = useMutation({
 		mutationFn: async () => {
-			const r = await authedFetch(`/api/projects/${scopeId}/unshare`, { method: "POST" });
+			const r = await authedFetch(`/api/projects/${projectId}/unshare`, { method: "POST" });
 			return r.json() as Promise<{
 				links_revoked: number;
 				members_removed: number;

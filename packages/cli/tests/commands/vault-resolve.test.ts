@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("vaultResolveCommand", () => {
-	it("resolves unscoped by default without walking mounted sources", async () => {
+	it("resolves from the default project when no explicit project is passed", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
@@ -37,10 +37,15 @@ describe("vaultResolveCommand", () => {
 					jsonResponse({
 						key: "OPENAI_API_KEY",
 						value: "sk-local",
-						source_scope_id: "scope-default",
+						source_project_id: "project-default",
 						source_alias: "scope-default",
 						precedence: [
-							{ scope_id: "scope-default", alias: "scope-default", hit: true, reason: "match" },
+							{
+								project_id: "project-default",
+								alias: "scope-default",
+								hit: true,
+								reason: "match",
+							},
 						],
 					}),
 			},
@@ -59,17 +64,17 @@ describe("vaultResolveCommand", () => {
 
 		expect(captured.length).toBe(1);
 		expect(captured[0].path).toContain("key=OPENAI_API_KEY");
-		expect(captured[0].path).not.toContain("scope_id=");
+		expect(captured[0].path).not.toContain("project_id=");
 		expect(captured[0].path).toContain("debug=true");
 		expect(out).toContain("sk-local");
 	});
 
-	it("resolves through an explicit parent scope and prints debug precedence", async () => {
+	it("resolves through an explicit project and prints debug precedence", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/scopes/default",
-				response: () => jsonResponse({ scope_id: "scope-parent" }),
+				path: "/api/projects/default",
+				response: () => jsonResponse({ project_id: "project-parent" }),
 			},
 			{
 				method: "POST",
@@ -78,11 +83,21 @@ describe("vaultResolveCommand", () => {
 					jsonResponse({
 						key: "OPENAI_API_KEY",
 						value: "sk-test",
-						source_scope_id: "scope-source",
+						source_project_id: "project-source",
 						source_alias: "@alice/engineering",
 						precedence: [
-							{ scope_id: "scope-parent", alias: "personal", hit: false, reason: "not-found" },
-							{ scope_id: "scope-source", alias: "@alice/engineering", hit: true, reason: "match" },
+							{
+								project_id: "project-parent",
+								alias: "personal",
+								hit: false,
+								reason: "not-found",
+							},
+							{
+								project_id: "project-source",
+								alias: "@alice/engineering",
+								hit: true,
+								reason: "match",
+							},
 						],
 					}),
 			},
@@ -93,14 +108,14 @@ describe("vaultResolveCommand", () => {
 			out += `${args.map(String).join(" ")}\n`;
 		};
 		try {
-			await vaultResolveCommand("OPENAI_API_KEY", { scope: "default", debug: true });
+			await vaultResolveCommand("OPENAI_API_KEY", { project: "default", debug: true });
 		} finally {
 			console.log = orig;
 			restore();
 		}
 
 		expect(captured.at(-1)?.path).toContain("key=OPENAI_API_KEY");
-		expect(captured.at(-1)?.path).toContain("scope_id=scope-parent");
+		expect(captured.at(-1)?.path).toContain("project_id=project-parent");
 		expect(captured.at(-1)?.path).toContain("debug=true");
 		expect(out).toContain("sk-test");
 		expect(out).toContain("@alice/engineering");

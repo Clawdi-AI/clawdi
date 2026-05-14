@@ -63,7 +63,7 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
+				path: `/api/projects/${TEST_SCOPE_ID}/skills/demo/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -86,7 +86,7 @@ content
 		// Both list + scoped download should have been called
 		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
 		expect(
-			captured.some((c) => c.path === `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`),
+			captured.some((c) => c.path === `/api/projects/${TEST_SCOPE_ID}/skills/demo/download`),
 		).toBe(true);
 	});
 
@@ -96,7 +96,7 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
+				path: `/api/projects/${TEST_SCOPE_ID}/skills/demo/download`,
 				response: () => jsonResponse({}),
 			},
 			{
@@ -164,7 +164,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -197,7 +197,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -230,7 +230,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_SCOPE_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{

@@ -18,9 +18,9 @@ from app.core.auth import (
     require_user_auth_unbound,
 )
 from app.core.database import get_session
+from app.models.project import Project
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
-from app.models.scope import Scope
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
@@ -130,8 +130,8 @@ def _remember_idempotency(ctx: ShareTokenContext, idempotency_key: str | None) -
 
 async def _resolve_owner_for_link(
     db: AsyncSession, link: ProjectShareLink
-) -> tuple[str, str, User, Scope]:
-    project_result = await db.execute(select(Scope).where(Scope.id == link.project_id))
+) -> tuple[str, str, User, Project]:
+    project_result = await db.execute(select(Project).where(Project.id == link.project_id))
     project = project_result.scalar_one_or_none()
     if project is None:
         raise HTTPException(
@@ -222,7 +222,7 @@ async def upgrade(
 ) -> dict:
     body = body or UpgradeBody()
     project = (
-        await db.execute(select(Scope).where(Scope.id == ctx.project_id).with_for_update())
+        await db.execute(select(Project).where(Project.id == ctx.project_id).with_for_update())
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")

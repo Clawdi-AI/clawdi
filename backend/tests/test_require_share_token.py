@@ -1,5 +1,5 @@
 """require_share_token validates an opaque token from the URL path
-and returns the resolved scope_id + link_id. Used by the public
+and returns the resolved project_id + link_id. Used by the public
 `/api/share/{token}/...` routes."""
 
 import uuid
@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.auth import require_share_token
-from app.models.scope_share_link import ScopeShareLink
+from app.models.project_share_link import ProjectShareLink
 from app.services.sharing import generate_share_token, hash_share_token
 
 
@@ -30,13 +30,13 @@ class _FakeDb:
 
 
 @pytest.mark.asyncio
-async def test_require_share_token_returns_scope_for_valid_token():
+async def test_require_share_token_returns_project_for_valid_token():
     raw = generate_share_token()
-    scope_id = uuid.uuid4()
+    project_id = uuid.uuid4()
     link_id = uuid.uuid4()
-    link = ScopeShareLink(
+    link = ProjectShareLink(
         id=link_id,
-        scope_id=scope_id,
+        project_id=project_id,
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         created_by=uuid.uuid4(),
@@ -45,7 +45,7 @@ async def test_require_share_token_returns_scope_for_valid_token():
     )
 
     result = await require_share_token(token=raw, db=_FakeDb(link))
-    assert result.scope_id == scope_id
+    assert result.project_id == project_id
     assert result.link_id == link_id
 
 
@@ -59,9 +59,9 @@ async def test_require_share_token_rejects_unknown():
 @pytest.mark.asyncio
 async def test_require_share_token_rejects_revoked():
     raw = generate_share_token()
-    link = ScopeShareLink(
+    link = ProjectShareLink(
         id=uuid.uuid4(),
-        scope_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         created_by=uuid.uuid4(),
@@ -78,9 +78,9 @@ async def test_require_share_token_rejects_revoked():
 @pytest.mark.asyncio
 async def test_require_share_token_rejects_expired():
     raw = generate_share_token()
-    link = ScopeShareLink(
+    link = ProjectShareLink(
         id=uuid.uuid4(),
-        scope_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         created_by=uuid.uuid4(),

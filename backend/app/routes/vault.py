@@ -8,8 +8,7 @@ from app.core.auth import AuthContext, require_user_auth, require_user_cli
 from app.core.database import get_session
 from app.core.query_utils import like_needle
 from app.core.scope import resolve_default_write_scope, resolve_for_parent, scope_ids_visible_to
-from app.models.scope import Scope
-from app.models.scope_mount import ScopeMount
+from app.models.project import Project
 from app.models.vault import Vault, VaultItem
 from app.schemas.common import Paginated
 from app.schemas.vault import (
@@ -37,14 +36,15 @@ async def list_vaults(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, description="Filter by slug / name"),
-    scope_id: UUID | None = Query(
+    project_id: UUID | None = Query(
         default=None,
-        description="Optional parent scope. When set, include vaults from mounted source scopes.",
+        description="Optional project filter.",
     ),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
 ) -> Paginated[VaultResponse]:
-    # Scope-filter: api_key bound to env A must not see vaults in
+    # Project-filter: api_key bound to env A must not see vaults in
     # env B's scope or in Personal. JWT + unbound CLI see every scope
     # they own AND every shared-scope membership they hold.
     #
@@ -54,8 +54,9 @@ async def list_vaults(
     # Plaintext resolution (`/api/vault/resolve`) keeps the
     # Clerk-auth-only gate so a leaked anonymous share-token can't
     # exfiltrate secrets.
-    if scope_id is not None:
-        visible_scope_ids = list(await resolve_for_parent(db, auth, scope_id))
+    selected_project_id = project_id or scope_id
+    if selected_project_id is not None:
+        visible_scope_ids = list(await resolve_for_parent(db, auth, selected_project_id))
     else:
         visible_scope_ids = await scope_ids_visible_to(db, auth)
     base = (
@@ -82,6 +83,7 @@ async def list_vaults(
                 id=str(v.id),
                 slug=v.slug,
                 name=v.name,
+                project_id=str(v.scope_id),
                 scope_id=str(v.scope_id),
                 created_at=v.created_at,
             )
@@ -96,7 +98,8 @@ async def list_vaults(
 @router.post("")
 async def create_vault(
     body: VaultCreate,
-    scope_id: UUID | None = Query(default=None),
+    project_id: UUID | None = Query(default=None),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCreatedResponse:
@@ -110,12 +113,13 @@ async def create_vault(
     # (write access — the unwidened owner-only validator), so a
     # sharee viewer can't sneak vault items into someone else's
     # scope via the explicit path.
-    if scope_id is not None:
+    selected_project_id = project_id or scope_id
+    if selected_project_id is not None:
         from app.core.scope import validate_scope_for_caller
 
-        await validate_scope_for_caller(db, auth, scope_id)
+        await validate_scope_for_caller(db, auth, selected_project_id)
     else:
-        scope_id = await resolve_default_write_scope(db, auth)
+        selected_project_id = await resolve_default_write_scope(db, auth)
 
     # Slug uniqueness is per (user_id, scope_id, slug) — different
     # scopes can hold the same slug. Pre-flight check is per scope
@@ -123,7 +127,7 @@ async def create_vault(
     existing_result = await db.execute(
         select(Vault).where(
             Vault.user_id == auth.user_id,
-            Vault.scope_id == scope_id,
+            Vault.scope_id == selected_project_id,
             Vault.slug == body.slug,
         )
     )
@@ -133,14 +137,14 @@ async def create_vault(
             status.HTTP_409_CONFLICT,
             detail={
                 "code": "vault_slug_conflict",
-                "message": f"Vault '{body.slug}' already exists in this scope",
-                "scope_id": str(scope_id),
+                "message": f"Vault '{body.slug}' already exists in this project",
+                "project_id": str(selected_project_id),
             },
         )
 
     vault = Vault(
         user_id=auth.user_id,
-        scope_id=scope_id,
+        scope_id=selected_project_id,
         slug=body.slug,
         name=body.name,
     )
@@ -153,7 +157,8 @@ async def create_vault(
 @router.delete("/{slug}")
 async def delete_vault(
     slug: str,
-    scope_id: UUID | None = Query(default=None),
+    project_id: UUID | None = Query(default=None),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultDeleteResponse:
@@ -163,7 +168,7 @@ async def delete_vault(
     # in multiple scopes (Personal + env-A); without it, a multi-
     # match raises 409 ambiguous_vault_slug rather than silently
     # picking the most-recently-updated.
-    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
     await db.delete(vault)
     await db.commit()
     return VaultDeleteResponse(status="deleted")
@@ -175,11 +180,12 @@ async def delete_vault(
 @router.get("/{slug}/items")
 async def list_vault_sections(
     slug: str,
-    scope_id: UUID | None = Query(default=None),
+    project_id: UUID | None = Query(default=None),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultSectionsResponse:
-    vault = await _get_vault(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault(auth, slug, db, project_id=project_id or scope_id)
     result = await db.execute(
         select(VaultItem.section, VaultItem.item_name)
         .where(VaultItem.vault_id == vault.id)
@@ -206,11 +212,12 @@ async def _load_items_by_name(db: AsyncSession, vault_id, section: str) -> dict[
 async def upsert_vault_items(
     slug: str,
     body: VaultItemUpsert,
-    scope_id: UUID | None = Query(default=None),
+    project_id: UUID | None = Query(default=None),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
-    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
@@ -238,11 +245,12 @@ async def upsert_vault_items(
 async def delete_vault_items(
     slug: str,
     body: VaultItemDelete,
-    scope_id: UUID | None = Query(default=None),
+    project_id: UUID | None = Query(default=None),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, scope_id=scope_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id or scope_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name in body.fields:
@@ -261,106 +269,62 @@ def _env_key(section: str, item_name: str) -> str:
     return f"{section}_{item_name}".upper() if section else item_name.upper()
 
 
-async def _composition_precedence(
+async def _project_precedence(
     db: AsyncSession,
     auth: AuthContext,
-    parent_scope_id: UUID,
+    project_id: UUID,
 ) -> list[dict]:
-    """Return parent first, then readable mounted sources by created_at.
-
-    This is the vault-specific ordered version of `resolve_for_parent`.
-    Skill listings only need a set; vault resolution needs deterministic
-    precedence so `--debug` can show exactly why a value won.
-    """
+    """Return a one-project precedence chain for vault resolution."""
     visible = set(await scope_ids_visible_to(db, auth))
-    if parent_scope_id not in visible:
+    if project_id not in visible:
         return []
 
-    parent = (
-        await db.execute(select(Scope).where(Scope.id == parent_scope_id))
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
-    if parent is None:
+    if project is None:
         return []
 
-    entries: list[dict] = [
+    return [
         {
-            "scope_id": parent.id,
-            "alias": parent.slug,
-            "display": parent.name,
-            "mounted_at": None,
+            "project_id": project.id,
+            "alias": project.slug,
+            "display": project.name,
         }
     ]
-    rows = (
-        await db.execute(
-            select(ScopeMount, Scope)
-            .join(Scope, Scope.id == ScopeMount.source_scope_id)
-            .where(ScopeMount.parent_scope_id == parent_scope_id)
-            .order_by(ScopeMount.created_at.asc(), ScopeMount.id.asc())
-        )
-    ).all()
-    for mount, source in rows:
-        if mount.source_scope_id not in visible:
-            continue
-        entries.append(
-            {
-                "scope_id": mount.source_scope_id,
-                "alias": mount.alias,
-                "display": source.name,
-                "mounted_at": mount.created_at,
-            }
-        )
-    return entries
 
 
 @router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
 async def resolve_vault(
     key: str | None = Query(default=None),
-    scope_id: UUID | None = Query(
+    project_id: UUID | None = Query(
         default=None,
-        description="Parent scope for composed resolution. Required for mount precedence.",
+        description="Project to resolve from (default: caller write project).",
     ),
+    scope_id: UUID | None = Query(default=None, include_in_schema=False),
     debug: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
-    Scope-filtered: an api_key bound to env A only sees vaults in
+    Project-filtered: an api_key bound to env A only sees vaults in
     that env's scope. Without this filter a leaked daemon key
     could decrypt vaults belonging to Personal or to another env.
     """
-    if scope_id is None:
-        # Unscoped CLI resolution intentionally uses exactly one
-        # write-default scope. Mounted/shared scopes are only included
-        # when the caller passes an explicit parent scope_id, which
-        # prevents accidental fan-out of another owner's plaintext
-        # secrets into a sharee's process environment.
-        default_scope_id = await resolve_default_write_scope(db, auth)
-        effective_scope_ids = [default_scope_id]
-    else:
-        ordered = await _composition_precedence(db, auth, scope_id)
-        if not ordered:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "scope not found")
-        effective_scope_ids = [entry["scope_id"] for entry in ordered]
+    selected_project_id = project_id or scope_id or await resolve_default_write_scope(db, auth)
+    ordered = await _project_precedence(db, auth, selected_project_id)
+    if not ordered:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    effective_project_ids = [entry["project_id"] for entry in ordered]
 
     if key is not None:
-        if scope_id is None:
-            ordered = [
-                {
-                    "scope_id": sid,
-                    "alias": str(sid),
-                    "display": str(sid),
-                    "mounted_at": None,
-                }
-                for sid in effective_scope_ids
-            ]
-
         wanted = key.upper()
         precedence: list[dict] = []
         winner: dict | None = None
         for entry in ordered:
             vaults = (
-                (await db.execute(select(Vault).where(Vault.scope_id == entry["scope_id"])))
+                (await db.execute(select(Vault).where(Vault.scope_id == entry["project_id"])))
                 .scalars()
                 .all()
             )
@@ -381,13 +345,11 @@ async def resolve_vault(
                     break
 
             entry_debug = {
-                "scope_id": str(entry["scope_id"]),
+                "project_id": str(entry["project_id"]),
                 "alias": entry["alias"],
                 "hit": hit_item is not None,
                 "reason": "match" if hit_item is not None and winner is None else "not-found",
             }
-            if entry["mounted_at"] is not None:
-                entry_debug["mounted_at"] = entry["mounted_at"].isoformat()
             if hit_item is not None and winner is not None:
                 entry_debug["reason"] = "skipped"
             precedence.append(entry_debug)
@@ -395,7 +357,7 @@ async def resolve_vault(
             if hit_item is not None and winner is None:
                 winner = {
                     "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
-                    "source_scope_id": str(entry["scope_id"]),
+                    "source_project_id": str(entry["project_id"]),
                     "source_alias": entry["alias"],
                     "vault_slug": hit_vault.slug if hit_vault else None,
                     "section": hit_item.section,
@@ -415,7 +377,7 @@ async def resolve_vault(
 
     result = await db.execute(
         select(Vault).where(
-            Vault.scope_id.in_(effective_scope_ids),
+            Vault.scope_id.in_(effective_project_ids),
         )
     )
     vaults = result.scalars().all()
@@ -436,7 +398,7 @@ async def _get_vault_write(
     slug: str,
     db: AsyncSession,
     *,
-    scope_id: UUID | None = None,
+    project_id: UUID | None = None,
 ) -> Vault:
     """Fetch a vault for mutation, restricted to caller-owned scopes.
 
@@ -449,7 +411,7 @@ async def _get_vault_write(
         owned_scope_ids = [await resolve_default_write_scope(db, auth)]
     else:
         owned_scope_ids = (
-            (await db.execute(select(Scope.id).where(Scope.user_id == auth.user_id)))
+            (await db.execute(select(Project.id).where(Project.user_id == auth.user_id)))
             .scalars()
             .all()
         )
@@ -457,10 +419,10 @@ async def _get_vault_write(
         Vault.scope_id.in_(owned_scope_ids),
         Vault.slug == slug,
     )
-    if scope_id is not None:
-        if scope_id not in owned_scope_ids:
+    if project_id is not None:
+        if project_id not in owned_scope_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = base_q.where(Vault.scope_id == scope_id)
+        base_q = base_q.where(Vault.scope_id == project_id)
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -470,10 +432,10 @@ async def _get_vault_write(
             detail={
                 "code": "ambiguous_vault_slug",
                 "message": (
-                    f"Vault '{slug}' exists in multiple owned scopes; "
-                    "specify scope_id query param to disambiguate."
+                    f"Vault '{slug}' exists in multiple owned projects; "
+                    "specify project_id query param to disambiguate."
                 ),
-                "scope_ids": [str(r.scope_id) for r in rows],
+                "project_ids": [str(r.scope_id) for r in rows],
             },
         )
     return rows[0]
@@ -484,60 +446,59 @@ async def _get_vault(
     slug: str,
     db: AsyncSession,
     *,
-    scope_id: UUID | None = None,
+    project_id: UUID | None = None,
 ) -> Vault:
-    """Fetch a vault by slug, scope-filtered to what the caller can
-    see. api_key bound to env A → only vaults in that env's scope.
-    JWT → any scope the user owns. Without the filter, a daemon
-    key could read items in another scope's vault by guessing the
+    """Fetch a vault by slug, project-filtered to what the caller can
+    see. api_key bound to env A -> only vaults in that env's project.
+    JWT -> any project the user can see. Without the filter, a daemon
+    key could read items in another project's vault by guessing the
     slug.
 
     Disambiguation:
-      - `scope_id` explicit: must be visible to caller; exact match.
-      - Single match in visible scopes: returned.
-      - Multiple matches AND no `scope_id`: 409 ambiguous_vault_slug.
+      - `project_id` explicit: must be visible to caller; exact match.
+      - Single match in visible projects: returned.
+      - Multiple matches AND no explicit project: 409 ambiguous_vault_slug.
 
-    Bound api_keys only see one scope, so the multi-match path can
+    Bound api_keys only see one project, so the multi-match path can
     only fire for JWT or unbound CLI callers. Previously the code
     silently picked the most-recently-updated row, which let a
-    dashboard mutation land in the WRONG scope's vault when a JWT
-    user happened to hold the same slug in two scopes — items
-    listing could read or mutate items in the older scope.
+    dashboard mutation land in the wrong project's vault when a JWT
+    user happened to hold the same slug in two projects.
     """
     # No `Vault.user_id == auth.user_id` filter — visibility comes
     # from scope_ids_visible_to which already accounts for owned +
-    # shared-membership scopes. Sharee viewers need to read vault
-    # metadata for scopes they joined; plaintext resolution is a
+    # shared-membership projects. Sharee viewers need to read vault
+    # metadata for projects they joined; plaintext resolution is a
     # separate endpoint with its own auth contract.
     visible_scope_ids = await scope_ids_visible_to(db, auth)
     base_q = select(Vault).where(
         Vault.scope_id.in_(visible_scope_ids),
         Vault.slug == slug,
     )
-    if scope_id is not None:
-        # Caller pinned a scope. If it's outside their visibility
+    if project_id is not None:
+        # Caller pinned a project. If it's outside their visibility
         # we report 404 (same as if the vault didn't exist) rather
-        # than leaking that the scope ID is real but inaccessible.
-        if scope_id not in visible_scope_ids:
+        # than leaking that the project ID is real but inaccessible.
+        if project_id not in visible_scope_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = base_q.where(Vault.scope_id == scope_id)
+        base_q = base_q.where(Vault.scope_id == project_id)
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
     if len(rows) > 1:
-        # Ambiguous slug across multiple visible scopes. Refuse
+        # Ambiguous slug across multiple visible projects. Refuse
         # rather than pick one — the dashboard or CLI must pass
-        # `scope_id` to disambiguate. The error body lists the
-        # candidate scope_ids so the client can prompt the user.
+        # `project_id` to disambiguate. The error body lists the
+        # candidate project IDs so the client can prompt the user.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
                 "code": "ambiguous_vault_slug",
                 "message": (
-                    f"Vault '{slug}' exists in multiple scopes; "
-                    "specify scope_id query param to disambiguate."
+                    f"Vault '{slug}' exists in multiple projects; "
+                    "specify project_id query param to disambiguate."
                 ),
-                "scope_ids": [str(r.scope_id) for r in rows],
+                "project_ids": [str(r.scope_id) for r in rows],
             },
         )
     return rows[0]

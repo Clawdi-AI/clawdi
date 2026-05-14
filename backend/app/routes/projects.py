@@ -1,15 +1,6 @@
-"""Project metadata routes — list a user's projects and pick the
-default. Skill / vault / memory scope-explicit operations live
-on their own routers (e.g. `/api/scopes/{scope_id}/skills/...`)
-so the routing tree stays organised by entity type.
+"""Project metadata routes.
 
-CLI commands hitting phase-2 scope-explicit URLs need to know
-*which* project to address. The api_key is bound to an env on the
-server side, but the daemon-started CLI doesn't know its own
-env's default_scope_id without a round-trip. `/api/projects/default`
-exposes the same logic `resolve_default_write_scope` runs
-server-side as an HTTP read so any caller can ask "where would
-my next write land?" without local env tracking.
+List the caller's projects and resolve the default write project.
 """
 
 from __future__ import annotations
@@ -26,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_user_auth_unbound
 from app.core.database import get_session
 from app.core.scope import resolve_default_write_scope, scope_ids_visible_to
-from app.models.scope import SCOPE_KIND_WORKSPACE, Scope
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -76,18 +67,18 @@ class ProjectCreate(BaseModel):
         return value
 
 
-def _scope_response(scope: Scope, caller_user_id) -> ProjectResponse:
+def _project_response(project: Project, caller_user_id) -> ProjectResponse:
     return ProjectResponse(
-        id=str(scope.id),
-        name=scope.name,
-        slug=scope.slug,
-        kind=scope.kind,
+        id=str(project.id),
+        name=project.name,
+        slug=project.slug,
+        kind=project.kind,
         origin_environment_id=(
-            str(scope.origin_environment_id) if scope.origin_environment_id else None
+            str(project.origin_environment_id) if project.origin_environment_id else None
         ),
-        archived_at=scope.archived_at,
-        created_at=scope.created_at,
-        is_owner=scope.user_id == caller_user_id,
+        archived_at=project.archived_at,
+        created_at=project.created_at,
+        is_owner=project.user_id == caller_user_id,
     )
 
 
@@ -105,7 +96,7 @@ async def _unique_slug(
     allow_suffix: bool = True,
 ) -> str:
     base = preferred[:80].strip("-") or "project"
-    result = await db.execute(select(Scope.slug).where(Scope.user_id == user_id))
+    result = await db.execute(select(Project.slug).where(Project.user_id == user_id))
     existing = set(result.scalars().all())
     if base not in existing:
         return base
@@ -121,22 +112,19 @@ async def _unique_slug(
 
 
 @router.get("/default", response_model=DefaultProjectResponse)
-async def get_default_scope(
+async def get_default_project(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> DefaultProjectResponse:
-    """Return the project_id where the caller's next write would
-    land if they used a legacy non-scoped route. Lets CLI tools
-    construct phase-2 `/api/scopes/{scope_id}/...` URLs without
-    locally tracking which env they're bound to.
+    """Return the project ID where the caller's next write lands.
 
     Resolution rules match `resolve_default_write_scope`:
-      - api_key bound to env → that env's `default_scope_id`
+      - api_key bound to env → that env's `default_project_id`
       - Clerk JWT or unbound api_key → most-recently-active env's
-        scope, falling back to Personal if no envs.
+        project, falling back to Personal if no envs.
     """
-    scope_id = await resolve_default_write_scope(db, auth)
-    return DefaultProjectResponse(project_id=str(scope_id))
+    project_id = await resolve_default_write_scope(db, auth)
+    return DefaultProjectResponse(project_id=str(project_id))
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -145,9 +133,9 @@ async def create_project(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ProjectResponse:
-    """Create an explicit project/team scope owned by the caller.
+    """Create an explicit project/team container owned by the caller.
 
-    Env-bound deploy keys are rejected: creating shareable scopes is
+    Env-bound deploy keys are rejected: creating shareable projects is
     an account-level action, not something a hosted agent pod should do
     with a leaked environment key.
     """
@@ -159,13 +147,13 @@ async def create_project(
         body.slug or _slugify(body.name),
         allow_suffix=not explicit_slug,
     )
-    scope = Scope(
+    project = Project(
         user_id=user_id,
         name=body.name,
         slug=slug,
-        kind=SCOPE_KIND_WORKSPACE,
+        kind=PROJECT_KIND_WORKSPACE,
     )
-    db.add(scope)
+    db.add(project)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -174,8 +162,8 @@ async def create_project(
             status.HTTP_409_CONFLICT,
             "A project with this slug already exists",
         ) from exc
-    await db.refresh(scope)
-    return _scope_response(scope, user_id)
+    await db.refresh(project)
+    return _project_response(project, user_id)
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -190,8 +178,8 @@ async def list_projects(
     if not visible_scope_ids:
         return []
     result = await db.execute(
-        select(Scope).where(Scope.id.in_(visible_scope_ids)).order_by(Scope.created_at.desc())
+        select(Project).where(Project.id.in_(visible_scope_ids)).order_by(Project.created_at.desc())
     )
     rows = result.scalars().all()
     caller_user_id = auth.user_id
-    return [_scope_response(s, caller_user_id) for s in rows]
+    return [_project_response(p, caller_user_id) for p in rows]

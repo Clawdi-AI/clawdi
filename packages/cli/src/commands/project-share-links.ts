@@ -2,7 +2,7 @@ import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
-import { resolveScopeId } from "../lib/scope-resolver";
+import { resolveProjectId } from "../lib/project-resolver";
 
 /**
  * `clawdi project share-links <project> [--revoke <id|prefix>]`
@@ -30,9 +30,9 @@ interface ShareLinkRow {
 async function fetchLinks(
 	apiUrl: string,
 	bearer: string,
-	scopeId: string,
+	projectId: string,
 ): Promise<ShareLinkRow[]> {
-	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links`, {
+	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
 		headers: { Authorization: `Bearer ${bearer}` },
 	});
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
@@ -54,8 +54,8 @@ function formatRow(link: ShareLinkRow): string {
 	);
 }
 
-export async function scopeShareLinksCommand(
-	scopeArg: string,
+export async function projectShareLinksCommand(
+	projectArg: string,
 	opts: { revoke?: string },
 ): Promise<void> {
 	const { apiUrl } = getConfig();
@@ -66,14 +66,14 @@ export async function scopeShareLinksCommand(
 		return;
 	}
 
-	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
+	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
 
 	if (opts.revoke) {
 		// Resolve the link-id from a prefix shorthand if necessary.
 		let linkId = opts.revoke;
 		const looksLikeUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(linkId);
 		if (!looksLikeUUID) {
-			const all = await fetchLinks(apiUrl, auth.apiKey, scopeId);
+			const all = await fetchLinks(apiUrl, auth.apiKey, projectId);
 			const matches = all.filter((l) => l.prefix.startsWith(linkId));
 			if (matches.length === 0) {
 				console.error(chalk.red(`No link starts with prefix '${linkId}'.`));
@@ -89,7 +89,7 @@ export async function scopeShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links/${linkId}`, {
+		const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links/${linkId}`, {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${auth.apiKey}` },
 		});
@@ -103,11 +103,11 @@ export async function scopeShareLinksCommand(
 		return;
 	}
 
-	const links = await fetchLinks(apiUrl, auth.apiKey, scopeId);
+	const links = await fetchLinks(apiUrl, auth.apiKey, projectId);
 	if (links.length === 0) {
 		console.log("No share links on this project yet.");
 		console.log();
-		console.log(`Generate one: ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
+		console.log(`Generate one: ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Share links (${links.length}):`));
@@ -116,6 +116,7 @@ export async function scopeShareLinksCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Revoke: ") + chalk.cyan(`clawdi project share-links ${scopeArg} --revoke <prefix>`),
+		chalk.gray("Revoke: ") +
+			chalk.cyan(`clawdi project share-links ${projectArg} --revoke <prefix>`),
 	);
 }

@@ -275,24 +275,24 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		state_dir: stateDir,
 	});
 
-	// Fetch this env's default_scope_id at boot. The daemon writes
-	// to `/api/scopes/{scope_id}/skills/upload`, so we need the
-	// scope_id before any upload can run. Throw on missing so the
-	// supervisor restarts — without a scope_id we can't tell which
+	// Fetch this env's default_project_id at boot. The daemon writes
+	// to `/api/projects/{project_id}/skills/upload`, so we need the
+	// project_id before any upload can run. Throw on missing so the
+	// supervisor restarts — without a project_id we can't tell which
 	// SSE events belong to us.
-	const fetchDefaultScopeId = async (): Promise<string> => {
+	const fetchDefaultProjectId = async (): Promise<string> => {
 		const envInfo = unwrap(
 			await api.GET("/api/environments/{environment_id}", {
 				params: { path: { environment_id: opts.environmentId } },
 			}),
 		);
-		const scopeId = envInfo.default_scope_id;
-		if (!scopeId) {
-			throw new Error(`environment ${opts.environmentId} has no default_scope_id; cannot upload`);
+		const projectId = envInfo.default_project_id;
+		if (!projectId) {
+			throw new Error(`environment ${opts.environmentId} has no default_project_id; cannot upload`);
 		}
-		return scopeId;
+		return projectId;
 	};
-	// Boot-time auth-failure handling: `fetchDefaultScopeId()`
+	// Boot-time auth-failure handling: `fetchDefaultProjectId()`
 	// throws ApiError on 401/403 if the daemon was started with a
 	// revoked / forbidden key. Pre-fix this bubbled up as a
 	// generic fatal — `serve()` set process.exitCode=1, which
@@ -307,7 +307,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// at boot".)
 	let defaultScopeId: string;
 	try {
-		defaultScopeId = await fetchDefaultScopeId();
+		defaultScopeId = await fetchDefaultProjectId();
 	} catch (e) {
 		if (isAuthFailure(e)) {
 			log.error("engine.auth_failed", { origin: "boot_scope_fetch" });
@@ -423,7 +423,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			await sleep(HEARTBEAT_INTERVAL_MS, abort);
 			if (abort.aborted) return;
 			try {
-				const fresh = await fetchDefaultScopeId();
+				const fresh = await fetchDefaultProjectId();
 				if (fresh !== defaultScopeId) {
 					log.info("engine.scope_changed", { from: defaultScopeId, to: fresh });
 					defaultScopeId = fresh;
@@ -1458,7 +1458,7 @@ async function listAllCloudSkills(
 			headerInit["If-None-Match"] = knownEtag;
 		}
 		const res = await api.GET("/api/skills", {
-			params: { query: { page, page_size: PAGE_SIZE, scope_id: scopeId } },
+			params: { query: { page, page_size: PAGE_SIZE, project_id: scopeId } },
 			headers: headerInit,
 		});
 		// ETag header carries the user's `skills_revision` counter
@@ -1620,7 +1620,7 @@ async function initialSync(
 			// Diverged. The single-writer model (one env = one
 			// daemon writing this scope) is broken in two ways
 			// the dashboard introduced:
-			//   - Dashboard editor writes via /api/scopes/.../content
+			//   - Dashboard editor writes via /api/projects/.../content
 			//   - CLI commands (`clawdi skill add`, `clawdi push`)
 			//     write while the daemon is offline
 			// So divergence at boot can mean LOCAL is newer
@@ -1892,7 +1892,7 @@ async function reconcileFromCloud(
 			// scope's bytes on a multi-agent unbound key. See
 			// `pullSkill()` doc for the duplicate-skill_key case.
 			const tarBytes = await api.getBytes(
-				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+				`/api/projects/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
 			await opts.adapter.writeSkillArchive(skill.skill_key, tarBytes);
 			lastPushedHash.set(skill.skill_key, skill.content_hash);
@@ -2091,7 +2091,7 @@ async function pullSkill(
 	scopeId: string,
 ): Promise<void> {
 	const tarBytes = await api.getBytes(
-		`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skillKey)}/download`,
+		`/api/projects/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skillKey)}/download`,
 	);
 	await opts.adapter.writeSkillArchive(skillKey, tarBytes);
 	// Recompute the on-disk hash so the watcher's next tick
