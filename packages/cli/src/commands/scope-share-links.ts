@@ -5,9 +5,9 @@ import { getAuth, getConfig } from "../lib/config";
 import { resolveScopeId } from "../lib/scope-resolver";
 
 /**
- * `clawdi scope share-links <scope> [--revoke <id|prefix>]`
+ * `clawdi project share-links <project> [--revoke <id|prefix>]`
  *
- * Default = list all links on the scope, freshest first, with
+ * Default = list all links on the project, freshest first, with
  * revoke status + redeem counts + last-used timestamps.
  *
  * `--revoke <id-or-prefix>`: soft-revoke that link. Idempotent on
@@ -32,7 +32,7 @@ async function fetchLinks(
 	bearer: string,
 	scopeId: string,
 ): Promise<ShareLinkRow[]> {
-	const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/share-links`, {
+	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links`, {
 		headers: { Authorization: `Bearer ${bearer}` },
 	});
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
@@ -89,12 +89,12 @@ export async function scopeShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/share-links/${linkId}`, {
+		const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links/${linkId}`, {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${auth.apiKey}` },
 		});
 		if (r.status === 404) {
-			console.error(chalk.red("Link not found on that scope."));
+			console.error(chalk.red("Link not found on that project."));
 			process.exitCode = 1;
 			return;
 		}
@@ -105,9 +105,9 @@ export async function scopeShareLinksCommand(
 
 	const links = await fetchLinks(apiUrl, auth.apiKey, scopeId);
 	if (links.length === 0) {
-		console.log("No share links on this scope yet.");
+		console.log("No share links on this project yet.");
 		console.log();
-		console.log(`Generate one: ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
+		console.log(`Generate one: ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Share links (${links.length}):`));
@@ -116,6 +116,6 @@ export async function scopeShareLinksCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Revoke: ") + chalk.cyan(`clawdi scope share-links ${scopeArg} --revoke <prefix>`),
+		chalk.gray("Revoke: ") + chalk.cyan(`clawdi project share-links ${scopeArg} --revoke <prefix>`),
 	);
 }

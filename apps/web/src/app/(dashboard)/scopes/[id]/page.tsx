@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowLeft,
-	Box,
 	ExternalLink,
 	KeyRound,
 	LogOut,
@@ -11,24 +10,14 @@ import {
 	Plus,
 	Share2,
 	Sparkles,
-	Trash2,
-	UserCheck,
-	Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import { ScopeMountsPanel } from "@/components/sharing/scope-mounts-panel";
 import { ShareScopeDialog } from "@/components/sharing/share-scope-dialog";
-import {
-	formatApiError,
-	isVaultConflictDetail,
-	parseApiDetail,
-	type VaultConflictDetail,
-	VaultConflictsAlert,
-} from "@/components/sharing/vault-conflicts";
+import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -44,13 +33,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
@@ -71,19 +53,6 @@ interface ScopeRow {
 	is_owner?: boolean;
 }
 
-interface MountRow {
-	id: string;
-	parent_scope_id: string;
-	source_scope_id: string;
-	source_scope_name: string;
-	source_scope_slug: string;
-	source_owner_display: string;
-	source_owner_handle: string;
-	alias: string;
-	mode: string;
-	created_at: string;
-}
-
 export default function ScopeDetailPage() {
 	const params = useParams<{ id: string }>();
 	const scopeId = params.id;
@@ -91,54 +60,21 @@ export default function ScopeDetailPage() {
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const [selectedParentId, setSelectedParentId] = useState("");
-	const [blockedMount, setBlockedMount] = useState<{
-		sourceScopeId: string;
-		parentScopeId: string;
-		detail: VaultConflictDetail;
-	} | null>(null);
 
 	const scopes = useQuery({
 		queryKey: ["scopes"],
 		queryFn: async (): Promise<ScopeRow[]> => {
-			const r = await authedFetch("/api/scopes");
+			const r = await authedFetch("/api/projects");
 			return r.json();
 		},
 	});
 
 	const rows = scopes.data ?? [];
 	const scope = rows.find((s) => s.id === scopeId) ?? null;
-	const ownedScopes = useMemo(
-		() => rows.filter((s) => s.is_owner !== false).sort(compareScopesForProductUse),
-		[rows],
-	);
 	const isOwner = scope?.is_owner !== false;
 
-	const allOwnedMounts = useQuery({
-		queryKey: ["scope-mounts", "all-owned", ownedScopes.map((s) => s.id).join(",")],
-		queryFn: async (): Promise<Record<string, MountRow[]>> => {
-			const pairs = await Promise.all(
-				ownedScopes.map(async (owned): Promise<[string, MountRow[]]> => {
-					const r = await authedFetch(`/api/scopes/${owned.id}/mounts`);
-					return [owned.id, (await r.json()) as MountRow[]];
-				}),
-			);
-			return Object.fromEntries(pairs);
-		},
-		enabled: ownedScopes.length > 0,
-	});
-
-	const mountRows = Object.values(allOwnedMounts.data ?? {}).flat();
-	const placements = mountRows.filter((m) => m.source_scope_id === scopeId);
-	const parentSourceMounts = allOwnedMounts.data?.[scopeId] ?? [];
-	const alreadyMountedParentIds = new Set(placements.map((p) => p.parent_scope_id));
-	const mountTargets = ownedScopes.filter(
-		(s) => s.id !== scopeId && !alreadyMountedParentIds.has(s.id),
-	);
-	const ownedScopeById = new Map(ownedScopes.map((s) => [s.id, s]));
-
 	const skills = useQuery({
-		queryKey: ["skills", "scope-detail", scopeId],
+		queryKey: ["skills", "project-detail", scopeId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/skills", {
@@ -149,7 +85,7 @@ export default function ScopeDetailPage() {
 	});
 
 	const vaults = useQuery({
-		queryKey: ["vaults", "scope-detail", scopeId],
+		queryKey: ["vaults", "project-detail", scopeId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/vault", {
@@ -159,95 +95,24 @@ export default function ScopeDetailPage() {
 		enabled: !!scope,
 	});
 
-	const directSkills = (skills.data?.items ?? []).filter((item) => item.scope_id === scopeId);
-	const composedSkills = (skills.data?.items ?? []).filter((item) => item.scope_id !== scopeId);
-	const directVaults = (vaults.data?.items ?? []).filter((item) => item.scope_id === scopeId);
-	const composedVaults = (vaults.data?.items ?? []).filter((item) => item.scope_id !== scopeId);
-
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["scopes"] });
-		qc.invalidateQueries({ queryKey: ["scope-mounts"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 	};
 
-	const mountSharedScope = useMutation({
-		mutationFn: async ({
-			parentScopeId,
-			allowVaultConflicts = false,
-		}: {
-			parentScopeId: string;
-			allowVaultConflicts?: boolean;
-		}) => {
-			await authedFetch(`/api/scopes/${parentScopeId}/mounts`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					source_scope_id: scopeId,
-					allow_vault_conflicts: allowVaultConflicts,
-				}),
-			});
-		},
-		onSuccess: () => {
-			setSelectedParentId("");
-			setBlockedMount(null);
-			refresh();
-			toast.success("Scope is now used there");
-		},
-		onError: (e, vars) => {
-			if (e instanceof ApiError && e.status === 409) {
-				const detail = parseApiDetail(e.detail);
-				if (isVaultConflictDetail(detail)) {
-					setBlockedMount({
-						sourceScopeId: scopeId,
-						parentScopeId: vars.parentScopeId,
-						detail,
-					});
-					return;
-				}
-			}
-			toast.error("Failed to add scope", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
-			});
-		},
-	});
-
-	const removePlacement = useMutation({
-		mutationFn: async (placement: MountRow) => {
-			await authedFetch(`/api/scopes/${placement.parent_scope_id}/mounts/${placement.id}`, {
-				method: "DELETE",
-			});
-		},
-		onSuccess: (_data, placement) => {
-			refresh();
-			toast.success(
-				`Stopped using this scope in ${formatOptionalScopeName(ownedScopeById.get(placement.parent_scope_id))}.`,
-			);
-		},
-		onError: (e) => {
-			toast.error("Failed to stop using scope", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
-			});
-		},
-	});
-
 	const leaveSharedScope = useMutation({
-		mutationFn: async (): Promise<{ status: string; mounts_removed: number }> => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/leave`, { method: "POST" });
+		mutationFn: async (): Promise<{ status: string }> => {
+			const r = await authedFetch(`/api/projects/${scopeId}/leave`, { method: "POST" });
 			return r.json();
 		},
-		onSuccess: (body) => {
+		onSuccess: () => {
 			refresh();
-			toast.success("Left shared scope", {
-				description:
-					body.mounts_removed > 0
-						? `Stopped using this scope in ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}.`
-						: "Membership removed.",
-			});
+			toast.success("Left shared project", { description: "Membership removed." });
 			router.push("/scopes");
 		},
 		onError: (e) => {
-			toast.error("Failed to leave shared scope", {
+			toast.error("Failed to leave shared project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -269,11 +134,11 @@ export default function ScopeDetailPage() {
 				<Button asChild variant="ghost" size="sm" className="w-fit">
 					<Link href="/scopes">
 						<ArrowLeft className="mr-1.5 size-4" />
-						Scopes
+						Projects
 					</Link>
 				</Button>
 				<Alert variant="destructive">
-					<AlertTitle>Couldn&apos;t load scope</AlertTitle>
+					<AlertTitle>Couldn&apos;t load project</AlertTitle>
 					<AlertDescription>{errorMessage(scopes.error)}</AlertDescription>
 				</Alert>
 			</div>
@@ -286,13 +151,13 @@ export default function ScopeDetailPage() {
 				<Button asChild variant="ghost" size="sm" className="w-fit">
 					<Link href="/scopes">
 						<ArrowLeft className="mr-1.5 size-4" />
-						Scopes
+						Projects
 					</Link>
 				</Button>
 				<Alert>
-					<AlertTitle>Scope not found</AlertTitle>
+					<AlertTitle>Project not found</AlertTitle>
 					<AlertDescription>
-						This scope may have been removed, or your account no longer has access.
+						This project may have been removed, or your account no longer has access.
 					</AlertDescription>
 				</Alert>
 			</div>
@@ -304,7 +169,7 @@ export default function ScopeDetailPage() {
 			<Button asChild variant="ghost" size="sm" className="w-fit">
 				<Link href="/scopes">
 					<ArrowLeft className="mr-1.5 size-4" />
-					Scopes
+					Projects
 				</Link>
 			</Button>
 
@@ -331,9 +196,6 @@ export default function ScopeDetailPage() {
 			/>
 
 			<ScopeStatsStrip
-				isOwner={isOwner}
-				sourceCount={parentSourceMounts.length}
-				placementCount={placements.length}
 				skillCount={skills.data?.items.length ?? 0}
 				vaultCount={vaults.data?.items.length ?? 0}
 			/>
@@ -341,30 +203,7 @@ export default function ScopeDetailPage() {
 			<div className={isOwner ? "space-y-6" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]"}>
 				<div className="space-y-6">
 					<section className="space-y-3">
-						<h2 className="text-base font-semibold">Scope composition</h2>
-						{isOwner ? (
-							<ScopeMountsPanel scopeId={scope.id} showEmpty />
-						) : (
-							<div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
-								<UserCheck className="size-4" />
-								<span>The owner controls which other scopes this shared scope uses.</span>
-							</div>
-						)}
-						<UsedInList
-							placements={placements}
-							ownedScopeById={ownedScopeById}
-							onRemove={(placement) => removePlacement.mutate(placement)}
-							removingId={removePlacement.variables?.id ?? null}
-							isRemoving={removePlacement.isPending}
-						/>
-					</section>
-
-					<section className="space-y-3">
-						<ContentHeader
-							title="Skills"
-							direct={directSkills.length}
-							composed={composedSkills.length}
-						/>
+						<ContentHeader title="Skills" />
 						{isOwner ? <InstallSkillInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
 						{skills.isLoading ? (
 							<Skeleton className="h-24 w-full" />
@@ -381,16 +220,12 @@ export default function ScopeDetailPage() {
 								))}
 							</div>
 						) : (
-							<EmptyLine message="No skills are visible through this scope yet." />
+							<EmptyLine message="No skills are visible in this project yet." />
 						)}
 					</section>
 
 					<section className="space-y-3">
-						<ContentHeader
-							title="Vaults"
-							direct={directVaults.length}
-							composed={composedVaults.length}
-						/>
+						<ContentHeader title="Vaults" />
 						{isOwner ? <CreateVaultInScopeForm scopeId={scope.id} onChanged={refresh} /> : null}
 						{vaults.isLoading ? (
 							<Skeleton className="h-24 w-full" />
@@ -403,7 +238,7 @@ export default function ScopeDetailPage() {
 								))}
 							</div>
 						) : (
-							<EmptyLine message="No vault references are visible through this scope yet." />
+							<EmptyLine message="No vault references are visible in this project yet." />
 						)}
 					</section>
 				</div>
@@ -412,60 +247,12 @@ export default function ScopeDetailPage() {
 					<aside className="space-y-4">
 						<section className="space-y-3 rounded-lg border p-3">
 							<div className="space-y-1">
-								<h2 className="text-sm font-semibold">Use this shared scope</h2>
+								<h2 className="text-sm font-semibold">Project Access Granted</h2>
 								<p className="text-xs text-muted-foreground">
-									Choose an owned scope where this shared content should be available.
+									You can read this shared project. Bind it to one or more agents from the agents
+									page when you want runtime access.
 								</p>
 							</div>
-							{mountTargets.length > 0 ? (
-								<div className="flex flex-col gap-2">
-									<Select value={selectedParentId} onValueChange={setSelectedParentId}>
-										<SelectTrigger aria-label={`Select owned scope for ${displayScopeName(scope)}`}>
-											<SelectValue placeholder="Choose where to use it" />
-										</SelectTrigger>
-										<SelectContent>
-											{mountTargets.map((target) => (
-												<SelectItem key={target.id} value={target.id}>
-													{displayScopeName(target)} ({target.slug})
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-									<Button
-										size="sm"
-										disabled={!selectedParentId || mountSharedScope.isPending}
-										onClick={() => {
-											if (selectedParentId) {
-												mountSharedScope.mutate({ parentScopeId: selectedParentId });
-											}
-										}}
-									>
-										<Plus className="mr-1.5 size-3.5" />
-										{mountSharedScope.isPending ? "Using..." : "Use in selected scope"}
-									</Button>
-								</div>
-							) : ownedScopes.length > 0 ? (
-								<Badge variant="outline" className="w-fit">
-									Already used in every owned scope
-								</Badge>
-							) : (
-								<Badge variant="outline" className="w-fit">
-									No owned scope available
-								</Badge>
-							)}
-							{blockedMount ? (
-								<VaultConflictsAlert
-									detail={blockedMount.detail}
-									actionLabel="Use anyway"
-									actionPending={mountSharedScope.isPending}
-									onAction={() =>
-										mountSharedScope.mutate({
-											parentScopeId: blockedMount.parentScopeId,
-											allowVaultConflicts: true,
-										})
-									}
-								/>
-							) : null}
 							<AlertDialog>
 								<AlertDialogTrigger asChild>
 									<Button
@@ -475,15 +262,14 @@ export default function ScopeDetailPage() {
 										className="w-fit text-muted-foreground hover:text-destructive"
 									>
 										<LogOut className="mr-1.5 size-3.5" />
-										{leaveSharedScope.isPending ? "Leaving..." : "Leave scope"}
+										{leaveSharedScope.isPending ? "Leaving..." : "Leave project"}
 									</Button>
 								</AlertDialogTrigger>
 								<AlertDialogContent>
 									<AlertDialogHeader>
 										<AlertDialogTitle>Leave "{displayScopeName(scope)}"?</AlertDialogTitle>
 										<AlertDialogDescription>
-											This removes your read membership and stops using this scope in every owned
-											scope. The owner's scope is unchanged.
+											This removes your read membership from the shared project.
 										</AlertDialogDescription>
 									</AlertDialogHeader>
 									<AlertDialogFooter>
@@ -492,7 +278,7 @@ export default function ScopeDetailPage() {
 											onClick={() => leaveSharedScope.mutate()}
 											className="bg-destructive text-white hover:bg-destructive/90"
 										>
-											Leave scope
+											Leave project
 										</AlertDialogAction>
 									</AlertDialogFooter>
 								</AlertDialogContent>
@@ -505,27 +291,9 @@ export default function ScopeDetailPage() {
 	);
 }
 
-function ScopeStatsStrip({
-	isOwner,
-	sourceCount,
-	placementCount,
-	skillCount,
-	vaultCount,
-}: {
-	isOwner: boolean;
-	sourceCount: number;
-	placementCount: number;
-	skillCount: number;
-	vaultCount: number;
-}) {
+function ScopeStatsStrip({ skillCount, vaultCount }: { skillCount: number; vaultCount: number }) {
 	return (
-		<div
-			className={`grid divide-y rounded-lg border sm:divide-x sm:divide-y-0 ${
-				isOwner ? "sm:grid-cols-4" : "sm:grid-cols-3"
-			}`}
-		>
-			{isOwner ? <StatCell icon={Workflow} label="Uses" value={sourceCount} /> : null}
-			<StatCell icon={Box} label="Used in" value={placementCount} />
+		<div className="grid divide-y rounded-lg border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
 			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
@@ -552,113 +320,10 @@ function StatCell({
 	);
 }
 
-function UsedInList({
-	placements,
-	ownedScopeById,
-	onRemove,
-	removingId,
-	isRemoving,
-}: {
-	placements: MountRow[];
-	ownedScopeById: Map<string, ScopeRow>;
-	onRemove: (placement: MountRow) => void;
-	removingId: string | null;
-	isRemoving: boolean;
-}) {
-	return (
-		<section className="space-y-2">
-			<div className="flex items-center gap-2 px-1">
-				<Box className="size-4 text-muted-foreground" />
-				<h3 className="font-semibold text-sm">Used in owned scopes</h3>
-				<Badge variant="secondary" className="text-xs">
-					{placements.length}
-				</Badge>
-			</div>
-			{placements.length === 0 ? (
-				<EmptyLine message="This scope is not used in any owned scope." />
-			) : (
-				<ul className="divide-y rounded-lg border">
-					{placements.map((placement) => {
-						const parent = ownedScopeById.get(placement.parent_scope_id);
-						return (
-							<li key={placement.id} className="flex items-center justify-between gap-3 p-3">
-								<div className="min-w-0">
-									<div className="truncate text-sm font-medium">
-										{formatOptionalScopeName(parent)}
-									</div>
-									<div className="font-mono text-xs text-muted-foreground">{placement.alias}</div>
-								</div>
-								<div className="flex shrink-0 items-center gap-1">
-									<Button asChild variant="ghost" size="icon-sm">
-										<Link
-											href={`/scopes/${placement.parent_scope_id}`}
-											aria-label="Open owned scope"
-										>
-											<ExternalLink className="size-3.5" />
-										</Link>
-									</Button>
-									<AlertDialog>
-										<AlertDialogTrigger asChild>
-											<Button
-												variant="ghost"
-												size="sm"
-												disabled={isRemoving}
-												className="text-muted-foreground hover:text-destructive"
-												aria-label={`Stop using this scope in ${formatOptionalScopeName(parent)}`}
-											>
-												<Trash2 className="mr-1.5 size-3.5" />
-												Stop using
-											</Button>
-										</AlertDialogTrigger>
-										<AlertDialogContent>
-											<AlertDialogHeader>
-												<AlertDialogTitle>
-													Stop using this scope in "{formatOptionalScopeName(parent)}"?
-												</AlertDialogTitle>
-												<AlertDialogDescription>
-													This only removes it from that owned scope. Your read access to this
-													shared scope stays intact.
-												</AlertDialogDescription>
-											</AlertDialogHeader>
-											<AlertDialogFooter>
-												<AlertDialogCancel>Cancel</AlertDialogCancel>
-												<AlertDialogAction
-													onClick={() => onRemove(placement)}
-													disabled={removingId === placement.id}
-													className="bg-destructive text-white hover:bg-destructive/90"
-												>
-													Stop using
-												</AlertDialogAction>
-											</AlertDialogFooter>
-										</AlertDialogContent>
-									</AlertDialog>
-								</div>
-							</li>
-						);
-					})}
-				</ul>
-			)}
-		</section>
-	);
-}
-
-function ContentHeader({
-	title,
-	direct,
-	composed,
-}: {
-	title: string;
-	direct: number;
-	composed: number;
-}) {
+function ContentHeader({ title }: { title: string }) {
 	return (
 		<div className="flex items-center justify-between gap-3">
-			<div>
-				<h2 className="text-base font-semibold">{title}</h2>
-				<p className="text-sm text-muted-foreground">
-					{direct} direct / {composed} from scopes used here
-				</p>
-			</div>
+			<h2 className="text-base font-semibold">{title}</h2>
 		</div>
 	);
 }
@@ -685,7 +350,7 @@ function InstallSkillInScopeForm({
 			setRepoInput("");
 			setError(null);
 			onChanged();
-			toast.success("Skill installed in this scope");
+			toast.success("Skill installed in this project");
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -757,7 +422,7 @@ function CreateVaultInScopeForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault created in this scope");
+			toast.success("Vault created in this project");
 		},
 		onError: (e) => toast.error("Failed to create vault", { description: errorMessage(e) }),
 	});
@@ -770,7 +435,7 @@ function CreateVaultInScopeForm({
 				onKeyDown={(e) => {
 					if (e.key === "Enter" && slug) create.mutate(slug);
 				}}
-				placeholder="New vault name for this scope"
+				placeholder="New vault name for this project"
 				className="min-w-0 flex-1"
 			/>
 			<Button
@@ -793,11 +458,10 @@ function SkillRow({ skill, ownScopeId }: { skill: SkillSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "composed"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "linked"}</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
 					{skill.skill_key}
-					{skill.scope_name && !direct ? ` · from ${skill.scope_name}` : ""}
 				</div>
 			</div>
 			<Button asChild variant="ghost" size="icon-sm">
@@ -819,11 +483,15 @@ function VaultRow({ vault, ownScopeId }: { vault: VaultSummary; ownScopeId: stri
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "composed"}</Badge>
+					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "linked"}</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
 			</div>
-			<KeyRound className="size-4 text-muted-foreground" />
+			<Button asChild variant="ghost" size="icon-sm">
+				<Link href="/vault" aria-label="Open vault page">
+					<ExternalLink className="size-3.5" />
+				</Link>
+			</Button>
 		</div>
 	);
 }
@@ -845,29 +513,22 @@ function scopeKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
-			description: "Reusable scope for a project, team, or workflow.",
+			description: "Reusable context for a project, team, or workflow.",
 		};
 	}
 	if (kind === "environment") {
 		return {
-			label: "Agent",
-			description: "Default scope owned by a connected agent.",
+			label: "Environment",
+			description: "Project created by an agent environment.",
 		};
 	}
 	if (kind === "personal") {
 		return {
-			label: "Account",
-			description: "Account-wide fallback.",
+			label: "Personal",
+			description: "Personal default project.",
 		};
 	}
-	return { label: kind, description: `Scope type: ${kind}` };
-}
-
-function compareScopesForProductUse(a: ScopeRow, b: ScopeRow) {
-	const rank = (kind: string) => (kind === "workspace" ? 0 : kind === "personal" ? 1 : 2);
-	const byRank = rank(a.kind) - rank(b.kind);
-	if (byRank !== 0) return byRank;
-	return a.name.localeCompare(b.name);
+	return { label: kind, description: `Project type: ${kind}` };
 }
 
 function displayScopeName(scope: ScopeRow) {
@@ -875,13 +536,9 @@ function displayScopeName(scope: ScopeRow) {
 		scope.kind === "personal" &&
 		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
 	) {
-		return "Account";
+		return "Personal";
 	}
 	return scope.name;
-}
-
-function formatOptionalScopeName(scope: ScopeRow | undefined) {
-	return scope ? displayScopeName(scope) : "Owned scope";
 }
 
 function EmptyLine({ message }: { message: string }) {
@@ -894,9 +551,8 @@ function EmptyLine({ message }: { message: string }) {
 
 function ErrorLine({ message }: { message: string }) {
 	return (
-		<Alert variant="destructive">
-			<AlertTitle>Couldn&apos;t load content</AlertTitle>
-			<AlertDescription>{message}</AlertDescription>
-		</Alert>
+		<div className="rounded-lg border border-dashed border-destructive/40 px-4 py-4 text-sm text-destructive">
+			{message}
+		</div>
 	);
 }

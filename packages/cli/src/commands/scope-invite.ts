@@ -5,10 +5,10 @@ import { getAuth, getConfig } from "../lib/config";
 import { resolveScopeId } from "../lib/scope-resolver";
 
 /**
- * `clawdi scope invite <scope> --email <addr>` — send an email-
- * scoped invitation. Recipient MUST already have a clawdi account
+ * `clawdi project invite <project> --email <addr>` — send an email
+ * invitation on a project. Recipient MUST already have a clawdi account
  * (email lookup); for unregistered emails the CLI suggests using
- * `clawdi scope share` to send a public link instead.
+ * `clawdi project share` to send a public link instead.
  *
  * The invitation surfaces in the invitee's `clawdi inbox` and the
  * web dashboard's banner on /skills.
@@ -16,8 +16,8 @@ import { resolveScopeId } from "../lib/scope-resolver";
 
 interface InvitationResponse {
 	id: string;
-	scope_id: string;
-	scope_name: string;
+	project_id: string;
+	project_name: string;
 	invitee_email: string;
 	owner_handle: string;
 	created_at: string;
@@ -43,7 +43,7 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 	}
 
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
-	const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/invitations`, {
+	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/invitations`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${auth.apiKey}`,
@@ -61,12 +61,12 @@ export async function scopeInviteCommand(scopeArg: string, opts: { email: string
 			console.error(chalk.red(ALREADY_OWNER_HINT));
 		} else if (err === "user_not_found") {
 			console.error(chalk.red(NOT_REGISTERED_HINT));
-			console.error(`  ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
+			console.error(`  ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
 		} else if (err === "ambiguous_email") {
 			console.error(chalk.red(AMBIGUOUS_HINT));
-			console.error(`  ${chalk.cyan(`clawdi scope share ${scopeArg}`)}`);
+			console.error(`  ${chalk.cyan(`clawdi project share ${scopeArg}`)}`);
 		} else if (err === "already_member") {
-			console.error(chalk.yellow("That user is already a member of this scope."));
+			console.error(chalk.yellow("That user is already a member of this project."));
 		} else if (err === "already_invited") {
 			console.error(chalk.yellow("That user already has a pending invitation. Cancel it first."));
 		} else if (err === "display_name_required") {

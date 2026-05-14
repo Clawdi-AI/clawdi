@@ -1,18 +1,17 @@
 /**
- * `clawdi inbox ...` — incoming shares awaiting my action.
+ * `clawdi inbox ...` — incoming project shares awaiting my action.
  *
  *   inbox                          # list pending invitations
  *   inbox accept <id-or-url> ...   # accept invitation OR redeem URL
  *   inbox decline <id>             # decline pending invitation
  *   inbox forget <id-or-alias>     # local-only: drop redeemed token
  *
- * User-facing flow: docs/scenarios/scope-sharing-demo.md
+ * User-facing flow: docs/scenarios/project-sharing-agent-bindings-demo.md
  */
 
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 
-import * as p from "@clack/prompts";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
@@ -29,8 +28,6 @@ const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
  *   <https://…>      → https://…
  *   "https://…"      → https://…
  *   https://…,       → https://…
- *
- * Keep URL pastes from chat / Markdown usable for agents and humans.
  */
 function normalizeAcceptArg(raw: string): string {
 	let s = raw.trim();
@@ -42,11 +39,6 @@ function normalizeAcceptArg(raw: string): string {
 	return s;
 }
 
-/** Detect what shape a polymorphic accept argument has so the
- * dispatcher can route it (or surface the right error). The
- * anonymous-mode and authed-mode branches both run the same
- * detection on the positional argument; extracting it keeps the
- * "what does this string look like?" rule in one place. */
 function detectAcceptArgShape(normalized: string): "uuid" | "url" | "raw_token" | "unknown" {
 	if (UUID_RE.test(normalized)) return "uuid";
 	if (RAW_TOKEN_RE.test(normalized)) return "raw_token";
@@ -74,28 +66,26 @@ function redeemIdempotencyKey(token: string): string {
 }
 
 interface AcceptOpts {
-	into?: string;
-	alias?: string;
-	noMount?: boolean;
-	allowVaultConflicts?: boolean;
+	agent?: string[];
+	bindAs?: string;
 	invite?: string;
 	url?: string;
 	json?: boolean;
 }
 
 interface ShareUpgradeResponse {
-	scope_id: string;
-	resolved_owner_handle: string;
 	membership_id: string;
-	mount_id?: string;
-	mount_alias?: string;
-	mount_parent_scope_id?: string;
-	skill_count?: number;
+	project_id: string;
+	role: string;
+	joined_via: string;
+	joined_at: string;
+	resolved_owner_handle: string;
+	bound_agent_ids?: string[];
 }
 
 interface SharePreview {
-	scope_id: string;
-	scope_name: string;
+	project_id: string;
+	project_name: string;
 	owner_display: string;
 	owner_handle: string;
 	skill_count: number;
@@ -104,8 +94,8 @@ interface SharePreview {
 
 interface InvitationItem {
 	id: string;
-	scope_id: string;
-	scope_name: string;
+	project_id: string;
+	project_name: string;
 	owner_display: string;
 	owner_handle: string;
 	created_at: string;
@@ -113,14 +103,41 @@ interface InvitationItem {
 
 interface InvitationAcceptResponse {
 	id: string;
-	scope_id: string;
+	project_id: string;
 	role: string;
 	joined_via: string;
 	joined_at: string;
 	resolved_owner_handle: string;
-	mount_id?: string;
-	mount_alias?: string;
-	mount_parent_scope_id?: string;
+	bound_agent_ids?: string[];
+}
+
+function normalizeAgentIds(values?: string[]): string[] {
+	const out: string[] = [];
+	for (const raw of values ?? []) {
+		for (const piece of raw.split(",")) {
+			const trimmed = piece.trim();
+			if (trimmed.length > 0) out.push(trimmed);
+		}
+	}
+	return [...new Set(out)];
+}
+
+async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, unknown>> {
+	const reqBody: Record<string, unknown> = {};
+	const agentIds = normalizeAgentIds(opts.agent);
+	if (agentIds.length === 0) {
+		if (opts.bindAs && opts.bindAs.toLowerCase() !== "context") {
+			throw new Error("`--bind-as` requires at least one `--agent`.");
+		}
+		return reqBody;
+	}
+	const bindAs = (opts.bindAs ?? "context").toLowerCase();
+	if (bindAs !== "context" && bindAs !== "primary") {
+		throw new Error("`--bind-as` must be either `context` or `primary`.");
+	}
+	reqBody.agent_ids = agentIds;
+	reqBody.bind_as = bindAs;
+	return reqBody;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -131,16 +148,12 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 
-	// Anonymous: server invitations require auth, but locally-redeemed
-	// share-tokens (anonymous redeem path) live in ~/.clawdi/share-tokens.json
-	// and ARE this device's inbox of un-claimed shares. Surface them so
-	// the user can see what they redeemed before logging in.
+	// Anonymous mode: server invitations require auth, but locally
+	// redeemed share-tokens live in ~/.clawdi/share-tokens.json.
 	if (!auth?.apiKey) {
 		const tokens = listTokens().filter((t) => !t.upgraded_at);
 		if (opts.json) {
-			// Redact the raw token — it's the bearer credential for the
-			// scope and stdout / agent logs are not 0600. Consumers that
-			// need the raw value can read ~/.clawdi/share-tokens.json directly.
+			// Redact the raw token because it is a bearer credential.
 			const redacted = tokens.map(({ token: _omit, ...rest }) => rest);
 			console.log(JSON.stringify({ invitations: [], local_share_tokens: redacted }, null, 2));
 			return;
@@ -160,7 +173,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 			console.log(
 				`  ${chalk.bold(t.scope_name)}  ${chalk.gray(`— from ${t.owner_display} (@${t.owner_handle})`)}`,
 			);
-			console.log(chalk.gray(`    scope_id: ${t.scope_id}`));
+			console.log(chalk.gray(`    project_id: ${t.scope_id}`));
 		}
 		console.log();
 		console.log(
@@ -191,7 +204,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	console.log(chalk.bold(`Pending invitations (${items.length}):`));
 	for (const inv of items) {
 		console.log(
-			`  ${chalk.bold(inv.scope_name)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +
+			`  ${chalk.bold(inv.project_name)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +
 				`\n    from ${inv.owner_display} ${chalk.gray(`@${inv.owner_handle}`)}` +
 				chalk.gray(` · ${new Date(inv.created_at).toLocaleDateString()}`),
 		);
@@ -226,9 +239,6 @@ export async function inboxAcceptCommand(
 			process.exitCode = 1;
 			return;
 		}
-		// Friendlier error when the arg is shaped like an invitation UUID:
-		// these REQUIRE auth, so direct the user at `auth login` rather than
-		// letting the URL parser fail with "Not a valid share link".
 		const normalized = opts.url ?? normalizeAcceptArg(posArg ?? "");
 		if (detectAcceptArgShape(normalized) === "uuid" && !opts.url) {
 			console.error(
@@ -244,7 +254,6 @@ export async function inboxAcceptCommand(
 		return;
 	}
 
-	// Logged in — pick the shape.
 	if (opts.invite) {
 		await acceptInvitation(apiUrl, auth.apiKey, opts.invite, opts);
 		return;
@@ -310,10 +319,10 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 // inbox forget — local-only cleanup
 // ────────────────────────────────────────────────────────────────
 
-export function inboxForgetCommand(scopeIdOrAlias: string): void {
-	const token = findToken(scopeIdOrAlias);
+export function inboxForgetCommand(projectIdOrAlias: string): void {
+	const token = findToken(projectIdOrAlias);
 	if (!token) {
-		console.error(chalk.red(`No local share-token entry found for '${scopeIdOrAlias}'.`));
+		console.error(chalk.red(`No local share-token entry found for '${projectIdOrAlias}'.`));
 		console.error(
 			chalk.gray("Run `clawdi inbox` (signed-out) to list local share-tokens on this device."),
 		);
@@ -321,8 +330,6 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 		return;
 	}
 
-	// Best-effort skill folder cleanup (only the anonymous-pulled
-	// content paths under each adapter's getSharedSkillPath).
 	const skillKeys = token.last_seen_skill_keys ?? [];
 	let removed = 0;
 	for (const entry of allAdapterEntries()) {
@@ -333,7 +340,7 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 				rmSync(path, { recursive: true, force: true });
 				removed++;
 			} catch {
-				// Best-effort
+				// Best effort
 			}
 		}
 	}
@@ -346,7 +353,7 @@ export function inboxForgetCommand(scopeIdOrAlias: string): void {
 	console.log(
 		chalk.gray(
 			"  This is a LOCAL operation only. Server-side membership (if any) " +
-				"is unchanged — `clawdi scope leave <scope>` drops that.",
+				"is unchanged — `clawdi project leave <project>` drops that.",
 		),
 	);
 }
@@ -392,8 +399,8 @@ async function acceptAnonymousUrl(
 	const body = (await r.json()) as SharePreview;
 
 	const record: ShareToken = {
-		scope_id: body.scope_id,
-		scope_name: body.scope_name,
+		scope_id: body.project_id,
+		scope_name: body.project_name,
 		owner_display: body.owner_display,
 		owner_handle: body.owner_handle,
 		token,
@@ -406,7 +413,7 @@ async function acceptAnonymousUrl(
 	}
 	console.log(
 		chalk.green("✓") +
-			` Accepted "${chalk.bold(body.scope_name)}" from ${body.owner_display} (@${body.owner_handle}).`,
+			` Accepted "${chalk.bold(body.project_name)}" from ${body.owner_display} (@${body.owner_handle}).`,
 	);
 	console.log(
 		chalk.gray(
@@ -418,128 +425,43 @@ async function acceptAnonymousUrl(
 	console.log(
 		chalk.gray(
 			"Token saved to ~/.clawdi/share-tokens.json (0600). " +
-				"Run `clawdi auth login` to convert to a permanent mount.",
+				"Run `clawdi auth login` to convert to a permanent project membership.",
 		),
 	);
 }
 
-/** Build the JSON body shared by both /upgrade and /accept routes
- * from the CLI's AcceptOpts. Resolves `--into` to a UUID up-front
- * so the caller doesn't need to. */
-async function buildAcceptRequestBody(
-	apiUrl: string,
-	bearer: string,
-	opts: AcceptOpts,
-): Promise<Record<string, unknown>> {
-	const reqBody: Record<string, unknown> = {};
-	if (opts.into) reqBody.parent_scope_id = await resolveScopeArg(apiUrl, bearer, opts.into);
-	if (opts.alias) reqBody.alias = opts.alias;
-	if (opts.noMount) reqBody.no_mount = true;
-	if (opts.allowVaultConflicts) reqBody.allow_vault_conflicts = true;
-	return reqBody;
-}
-
-/** Render the 409 vault_conflicts_blocked block — same shape across
- * URL and invitation accept paths. The caller sets process.exitCode
- * = 5 so agent wrappers can branch on the specific failure. */
-function renderVaultConflicts(detail: Record<string, unknown>, retryHint: string): void {
-	const conflicts = (detail.conflicts ?? []) as Array<{
-		vault_slug: string;
-		section: string;
-		item_name: string;
-	}>;
-	console.error(chalk.red("⚠ Vault conflict — accept blocked."));
-	console.error(
-		chalk.gray(
-			"  The source scope has vault key(s) that already exist in the parent composition.\n" +
-				"  The shared values would be present but skipped while existing values keep priority.\n" +
-				"    - rename / remove the conflicting keys on either side, OR\n" +
-				"    - re-run with --allow-vault-conflicts to keep both (existing values keep priority).",
-		),
-	);
-	for (const c of conflicts) {
-		const sec = c.section ? `${c.section}/` : "";
-		console.error(chalk.gray(`    · ${c.vault_slug}/${sec}${c.item_name}`));
-	}
-	console.error();
-	console.error(chalk.gray(`  ${retryHint}`));
-}
-
-/** Render the 409 mount_target_ambiguous block. `retryHint` is the
- * caller-specific "how to mount later" line (URL re-accept vs
- * invitation re-accept) shown after the owned-scopes list. */
-function renderMountAmbiguous(detail: Record<string, unknown>, retryHint: string): void {
-	console.log(`${chalk.green("✓")} Joined as viewer (membership saved).`);
-	console.log(chalk.yellow("⚠ Mount deferred — you have 2+ owned scopes."));
-	console.log(chalk.gray("  Pick a parent for the mount:"));
-	const owned = (detail.owned_scopes ?? []) as Array<{ slug: string; kind: string }>;
-	for (const s of owned) console.log(chalk.gray(`    - ${s.slug}  (${s.kind})`));
-	console.log();
-	console.log(chalk.gray(`  ${retryHint}`));
-	console.log(chalk.gray(`  Or: clawdi scope mount <source-slug> --into <parent-slug>`));
-}
-
-/** Interactive prompt for mount_target_ambiguous — used only in TTY
- * mode. Returns the picked parent scope id, or null if the user
- * cancelled (Ctrl+C). The caller falls back to the non-interactive
- * renderer if the picker returned null OR we're piped / non-TTY in
- * the first place — agents and CI must NEVER block on stdin. */
-async function pickMountParentInteractive(detail: Record<string, unknown>): Promise<string | null> {
-	if (!process.stdout.isTTY || !process.stdin.isTTY) return null;
-	const owned = (detail.owned_scopes ?? []) as Array<{
-		id: string;
-		slug: string;
-		kind: string;
-	}>;
-	if (owned.length === 0) return null;
-
-	console.log();
-	console.log(`${chalk.green("✓")} Joined as viewer (membership saved).`);
-	console.log(chalk.yellow("⚠ Mount deferred — pick a parent to compose this scope into:"));
-	const picked = await p.select({
-		message: "Mount into which of your scopes?",
-		options: owned.map((s) => ({
-			value: s.id,
-			label: `${s.slug}  ${chalk.gray(`(${s.kind})`)}`,
-		})),
-	});
-	if (p.isCancel(picked)) return null;
-	return picked as string;
-}
-
-/** Print the "Joined — Mounted as @x/y" success block. `noMountHint`
- * controls whether the `--no-mount: capability only` line renders
- * (only applies on the share-URL upgrade path, where `--no-mount`
- * actually makes sense as a flag the user can pass). */
 function renderJoinedSuccess(
-	body: { resolved_owner_handle: string; mount_alias?: string },
-	noMountHint: boolean,
+	body: { resolved_owner_handle: string; bound_agent_ids?: string[] },
+	opts: AcceptOpts,
 ): void {
 	console.log(
 		chalk.green("✓") +
-			` Joined as viewer — @${body.resolved_owner_handle}'s scope is available to your account.`,
+			` Joined as viewer — @${body.resolved_owner_handle}'s project is now available to your account.`,
 	);
-	if (body.mount_alias) {
+	const bound = body.bound_agent_ids ?? [];
+	if (bound.length > 0) {
+		const bindAs = (opts.bindAs ?? "context").toLowerCase();
 		console.log(
-			chalk.gray("  Mounted as ") + chalk.bold(body.mount_alias) + chalk.gray(" into your scope."),
+			chalk.gray(`  Bound to ${bound.length} agent${bound.length === 1 ? "" : "s"} as ${bindAs}.`),
 		);
-	} else if (noMountHint) {
-		console.log(chalk.gray("  (--no-mount: capability only, no mount edge.)"));
+	} else {
+		console.log(
+			chalk.gray(
+				"  No agent bindings changed. Bind explicitly with `clawdi agent projects ...` when ready.",
+			),
+		);
 	}
 }
 
-/** Run the eager pull and print "Pulled N skills…". `verboseError`
- * controls whether a pull failure prints a "Run `clawdi pull` later
- * to retry" hint (matches the original per-path behavior). */
 async function eagerPullAndReport(
 	apiUrl: string,
 	bearer: string,
-	scopeId: string,
+	projectId: string,
 	ownerHandle: string,
 	verboseError: boolean,
 	report = true,
 ): Promise<number> {
-	const written = await pullSharedSkills(apiUrl, bearer, scopeId, ownerHandle).catch((e) => {
+	const written = await pullSharedSkills(apiUrl, bearer, projectId, ownerHandle).catch((e) => {
 		if (verboseError && report) {
 			console.log(
 				chalk.yellow(
@@ -565,7 +487,7 @@ async function acceptUrl(
 	opts: AcceptOpts,
 ): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
-	const reqBody = await buildAcceptRequestBody(apiUrl, bearer, opts);
+	const reqBody = await buildAcceptRequestBody(opts);
 
 	const r = await fetch(`${apiUrl}/api/share/${token}/upgrade`, {
 		method: "POST",
@@ -575,43 +497,12 @@ async function acceptUrl(
 
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
-		if (detail.error === "mount_target_ambiguous") {
-			const picked = opts.json ? null : await pickMountParentInteractive(detail);
-			if (picked) {
-				await acceptUrl(apiUrl, bearer, urlOrToken, { ...opts, into: picked });
-				return;
-			}
-			if (opts.json) {
-				console.log(JSON.stringify({ status: "mount_deferred", detail }, null, 2));
-				process.exitCode = 4;
-				return;
-			}
-			renderMountAmbiguous(
-				detail,
-				`${chalk.cyan("clawdi inbox accept <same-url> --into <slug>")} → re-run to mount`,
-			);
-			process.exitCode = 4;
-			return;
-		}
-		if (detail.error === "vault_conflicts_blocked") {
-			if (opts.json) {
-				console.log(JSON.stringify({ status: "vault_conflicts_blocked", detail }, null, 2));
-				process.exitCode = 5;
-				return;
-			}
-			renderVaultConflicts(
-				detail,
-				`${chalk.cyan("clawdi inbox accept <same-url> --allow-vault-conflicts")} → override`,
-			);
-			process.exitCode = 5;
-			return;
-		}
 		if (detail.error === "already_owner") {
 			if (opts.json) {
 				console.log(JSON.stringify({ status: "already_owner" }, null, 2));
 				return;
 			}
-			console.log(chalk.yellow("This is your own scope — nothing to accept."));
+			console.log(chalk.yellow("This is your own project — nothing to accept."));
 			return;
 		}
 		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
@@ -624,7 +515,7 @@ async function acceptUrl(
 	const pulled = await eagerPullAndReport(
 		apiUrl,
 		bearer,
-		body.scope_id,
+		body.project_id,
 		body.resolved_owner_handle,
 		true,
 		!opts.json,
@@ -633,7 +524,7 @@ async function acceptUrl(
 		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
 		return;
 	}
-	renderJoinedSuccess(body, !!opts.noMount);
+	renderJoinedSuccess(body, opts);
 }
 
 async function acceptInvitation(
@@ -642,7 +533,7 @@ async function acceptInvitation(
 	invitationId: string,
 	opts: AcceptOpts,
 ): Promise<void> {
-	const reqBody = await buildAcceptRequestBody(apiUrl, bearer, opts);
+	const reqBody = await buildAcceptRequestBody(opts);
 
 	const r = await fetch(`${apiUrl}/api/me/invitations/${invitationId}/accept`, {
 		method: "POST",
@@ -650,35 +541,6 @@ async function acceptInvitation(
 		body: JSON.stringify(reqBody),
 	});
 
-	if (r.status === 409) {
-		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
-		if (detail.error === "mount_target_ambiguous") {
-			const picked = opts.json ? null : await pickMountParentInteractive(detail);
-			if (picked) {
-				await acceptInvitation(apiUrl, bearer, invitationId, { ...opts, into: picked });
-				return;
-			}
-			if (opts.json) {
-				console.log(JSON.stringify({ status: "mount_deferred", detail }, null, 2));
-				process.exitCode = 4;
-				return;
-			}
-			renderMountAmbiguous(detail, "Re-run with --into <slug> to mount.");
-			process.exitCode = 4;
-			return;
-		}
-		if (detail.error === "vault_conflicts_blocked") {
-			if (opts.json) {
-				console.log(JSON.stringify({ status: "vault_conflicts_blocked", detail }, null, 2));
-				process.exitCode = 5;
-				return;
-			}
-			renderVaultConflicts(detail, "Re-run with --allow-vault-conflicts to override.");
-			process.exitCode = 5;
-			return;
-		}
-		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
-	}
 	if (r.status === 410) {
 		console.error(chalk.red("This invitation was revoked or already accepted."));
 		process.exitCode = 1;
@@ -690,7 +552,7 @@ async function acceptInvitation(
 	const pulled = await eagerPullAndReport(
 		apiUrl,
 		bearer,
-		body.scope_id,
+		body.project_id,
 		body.resolved_owner_handle,
 		false,
 		!opts.json,
@@ -699,30 +561,5 @@ async function acceptInvitation(
 		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
 		return;
 	}
-	renderJoinedSuccess(body, false);
-}
-
-// ────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────
-
-async function resolveScopeArg(apiUrl: string, bearer: string, raw: string): Promise<string> {
-	// Resolve a UUID / slug / human-name to a UUID via /api/scopes.
-	if (UUID_RE.test(raw)) return raw;
-	const r = await fetch(`${apiUrl}/api/scopes`, {
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	const scopes = (await r.json()) as Array<{ id: string; slug: string; name: string }>;
-	const lower = raw.toLowerCase();
-	const slug = scopes.filter((s) => s.slug.toLowerCase() === lower);
-	const name = scopes.filter((s) => s.name.toLowerCase() === lower);
-	const matches = slug.length > 0 ? slug : name;
-	if (matches.length === 0) {
-		throw new Error(`No scope matches '${raw}'. Try \`clawdi scope list\`.`);
-	}
-	if (matches.length > 1) {
-		throw new Error(`'${raw}' matches ${matches.length} scopes; pass the UUID.`);
-	}
-	return matches[0].id;
+	renderJoinedSuccess(body, opts);
 }

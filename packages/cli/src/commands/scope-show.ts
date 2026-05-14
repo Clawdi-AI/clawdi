@@ -13,18 +13,6 @@ interface ScopeBrief {
 	is_owner?: boolean;
 }
 
-interface MountRow {
-	id: string;
-	parent_scope_id: string;
-	source_scope_id: string;
-	source_scope_name: string;
-	source_scope_slug: string;
-	source_owner_display: string;
-	source_owner_handle: string;
-	alias: string;
-	mode: string;
-}
-
 interface SkillRow {
 	scope_id?: string | null;
 	skill_key: string;
@@ -77,13 +65,12 @@ export async function scopeShowCommand(
 	const scopes = (await listScopes(apiUrl, auth.apiKey)) as ScopeBrief[];
 	const scope = scopes.find((s) => s.id === scopeId);
 	if (!scope) {
-		console.error(chalk.red(`No scope matches '${scopeArg}'. Try \`clawdi scope list\`.`));
+		console.error(chalk.red(`No project matches '${scopeArg}'. Try \`clawdi project list\`.`));
 		process.exitCode = 1;
 		return;
 	}
 
-	const [mounts, skills, vaultsPage] = await Promise.all([
-		authedJson<MountRow[]>(apiUrl, auth.apiKey, `/api/scopes/${scopeId}/mounts`).catch(() => []),
+	const [skills, vaultsPage] = await Promise.all([
 		fetchAllSkills(apiUrl, auth.apiKey).catch(() => []),
 		authedJson<{ items: VaultRow[] }>(apiUrl, auth.apiKey, "/api/vault?page_size=200").catch(
 			() => ({ items: [] }),
@@ -93,7 +80,7 @@ export async function scopeShowCommand(
 	const ownVaults = vaultsPage.items.filter((v) => v.scope_id === scopeId);
 
 	const payload = {
-		scope: {
+		project: {
 			id: scope.id,
 			slug: scope.slug,
 			name: scope.name,
@@ -108,7 +95,17 @@ export async function scopeShowCommand(
 			keys: ownSkills.map((s) => s.skill_key).sort(),
 		},
 		vaults: ownVaults.map((v) => ({ slug: v.slug, name: v.name })),
-		mounts,
+		// Backward-compatible alias retained during CLI transition.
+		scope: {
+			id: scope.id,
+			slug: scope.slug,
+			name: scope.name,
+			kind: scope.kind,
+			is_owner: scope.is_owner !== false,
+			origin_environment_id: scope.origin_environment_id ?? null,
+			archived_at: scope.archived_at ?? null,
+			created_at: scope.created_at ?? null,
+		},
 	};
 
 	if (opts.json) {
@@ -122,13 +119,4 @@ export async function scopeShowCommand(
 	console.log(`  kind: ${scope.kind}${scope.is_owner === false ? chalk.gray(" (shared)") : ""}`);
 	console.log(`  skills: ${ownSkills.length}`);
 	console.log(`  vaults: ${ownVaults.length}`);
-	if (mounts.length > 0) {
-		console.log("  mounts:");
-		for (const m of mounts) {
-			console.log(
-				`    ${chalk.bold(m.alias)} ${chalk.gray("←")} ${m.source_owner_display} ` +
-					chalk.gray(`@${m.source_owner_handle}/${m.source_scope_slug}`),
-			);
-		}
-	}
 }

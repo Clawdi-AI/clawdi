@@ -6,6 +6,14 @@ import { getCliVersion } from "./lib/version.js";
 
 const program = new Command();
 
+function collectCsvValues(value: string, prev: string[] = []): string[] {
+	const values = value
+		.split(",")
+		.map((part) => part.trim())
+		.filter((part) => part.length > 0);
+	return prev.concat(values);
+}
+
 program
 	.name("clawdi")
 	.description("iCloud for AI Agents — share sessions, skills, vault across agents")
@@ -233,7 +241,10 @@ const vaultCmd = program.command("vault").description("Manage secrets");
 vaultCmd
 	.command("set <key>")
 	.description("Store a secret (prompted for value)")
-	.option("-s, --scope <id-or-slug>", "Target a specific scope (default: your default-write scope)")
+	.option(
+		"-s, --scope <id-or-slug>",
+		"Target a specific project (default: your default-write project)",
+	)
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set DEPLOY_KEY --scope engineering",
@@ -256,7 +267,10 @@ vaultCmd
 	.command("import <file>")
 	.description("Import from .env file")
 	.option("-y, --yes", "Skip the confirmation prompt (for CI / scripted imports)")
-	.option("-s, --scope <id-or-slug>", "Target a specific scope (default: your default-write scope)")
+	.option(
+		"-s, --scope <id-or-slug>",
+		"Target a specific project (default: your default-write project)",
+	)
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi vault import .env.production\n  $ clawdi vault import .env.staging --scope engineering --yes",
@@ -269,13 +283,13 @@ vaultCmd
 vaultCmd
 	.command("resolve <key>")
 	.description("Resolve one vault key")
-	.option("-s, --scope <scope>", "Parent scope to resolve from; enables mounted-source precedence")
-	.option("--debug", "Show scope precedence and skipped matches")
+	.option("-s, --scope <scope>", "Project to resolve from (default: your default-write project)")
+	.option("--debug", "Show project precedence and skipped matches")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
-			"  $ clawdi vault resolve OPENAI_API_KEY                       # default-write scope only\n" +
+			"  $ clawdi vault resolve OPENAI_API_KEY                       # default-write project\n" +
 			"  $ clawdi vault resolve OPENAI_API_KEY --scope personal --debug",
 	)
 	.action(async (key, opts) => {
@@ -302,16 +316,16 @@ skillCmd
 	.description("Upload a skill directory or single .md file")
 	.option(
 		"-a, --agent <type>",
-		"Upload to a specific agent's scope (claude_code, codex, hermes, openclaw)",
+		"Upload to a specific agent's primary project (claude_code, codex, hermes, openclaw)",
 	)
 	.option(
 		"-s, --scope <id-or-slug>",
-		"Upload to an explicit scope (UUID, slug, or name). Mutex with --agent.",
+		"Upload to an explicit project (UUID, slug, or name). Mutex with --agent.",
 	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill                       # default-write scope\n  $ clawdi skill add ./my-skill --scope engineering    # explicit scope\n  $ clawdi skill add ./my-skill --agent codex          # an agent's env-scope",
+		"\nExamples:\n  $ clawdi skill add ./my-skill                       # default-write project\n  $ clawdi skill add ./my-skill --scope engineering    # explicit project\n  $ clawdi skill add ./my-skill --agent codex          # an agent's primary project",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -342,7 +356,7 @@ skillCmd
 	.description("Remove a skill from the cloud")
 	.option(
 		"-a, --agent <type>",
-		"Remove from a specific agent's scope (claude_code, codex, hermes, openclaw)",
+		"Remove from a specific agent's primary project (claude_code, codex, hermes, openclaw)",
 	)
 	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
@@ -504,58 +518,170 @@ program
 		await run(args);
 	});
 
-const scopeCmd = program
-	.command("scope")
-	.description("Manage your scopes — create, list, share, invite, mount");
+const projectCmd = program.command("project").description("Manage your projects and sharing");
 
-scopeCmd
+projectCmd
 	.command("create <name>")
-	.description("Create a project/team scope")
+	.description("Create a project")
 	.option("--slug <slug>", "Optional stable slug (lowercase letters, numbers, hyphens)")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
-			'  $ clawdi scope create "Engineering toolkit"\n' +
-			'  $ clawdi scope create "Client Alpha" --slug client-alpha --json',
+			'  $ clawdi project create "Engineering toolkit"\n' +
+			'  $ clawdi project create "Client Alpha" --slug client-alpha --json',
 	)
-	.action(async (name, opts) => {
+	.action(async (name: string, opts: { slug?: string; json?: boolean }) => {
+		const { scopeCreateCommand } = await import("./commands/scope-create.js");
+		await scopeCreateCommand(name, opts);
+	});
+
+projectCmd
+	.command("list")
+	.description("List projects you can access")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (opts: { json?: boolean }) => {
+		const { scopeListCommand } = await import("./commands/scope-list.js");
+		await scopeListCommand(opts);
+	});
+
+projectCmd
+	.command("show <project>")
+	.description("Show project metadata and owned content counts")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (scope: string, opts: { json?: boolean }) => {
+		const { scopeShowCommand } = await import("./commands/scope-show.js");
+		await scopeShowCommand(scope, opts);
+	});
+
+projectCmd
+	.command("share [project]")
+	.description("Generate a share link. Defaults to your write project when [project] is omitted.")
+	.option("-l, --label <text>", "Optional label shown in the share-links list")
+	.action(async (scope: string | undefined, opts: { label?: string }) => {
+		const { scopeShareCommand } = await import("./commands/scope-share.js");
+		await scopeShareCommand(scope, opts);
+	});
+
+projectCmd
+	.command("share-links <project>")
+	.description("List or revoke share links on a project")
+	.option("--revoke <id-or-prefix>", "Revoke a specific link")
+	.action(async (scope: string, opts: { revoke?: string }) => {
+		const { scopeShareLinksCommand } = await import("./commands/scope-share-links.js");
+		await scopeShareLinksCommand(scope, opts);
+	});
+
+projectCmd
+	.command("invite <project>")
+	.description("Send an email invitation to a registered clawdi user")
+	.requiredOption("-e, --email <addr>", "Email address to invite")
+	.action(async (scope: string, opts: { email: string }) => {
+		const { scopeInviteCommand } = await import("./commands/scope-invite.js");
+		await scopeInviteCommand(scope, opts);
+	});
+
+projectCmd
+	.command("invites <project>")
+	.description("List pending invitations on a project you own.")
+	.option("--cancel <id>", "Cancel one of the pending invitations on this project")
+	.addHelpText(
+		"after",
+		"\n  Sharee side (listing / accepting / declining invitations addressed to you)\n" +
+			"  lives under `clawdi inbox`.",
+	)
+	.action(async (scope: string, opts: { cancel?: string }) => {
+		const { scopeInvitesCommand } = await import("./commands/scope-invites.js");
+		await scopeInvitesCommand(scope, opts);
+	});
+
+projectCmd
+	.command("members <project>")
+	.description("List or remove accepted members on a project you own")
+	.option("--remove <email-or-user-id>", "Remove one accepted member")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi project members engineering --remove bob@example.com",
+	)
+	.action(async (scope: string, opts: { remove?: string; json?: boolean }) => {
+		const { scopeMembersCommand } = await import("./commands/scope-members.js");
+		await scopeMembersCommand(scope, opts);
+	});
+
+projectCmd
+	.command("leave <project>")
+	.description("Leave a shared project")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering")
+	.action(async (scope: string, opts: { json?: boolean }) => {
+		const { scopeLeaveCommand } = await import("./commands/scope-members.js");
+		await scopeLeaveCommand(scope, opts);
+	});
+
+projectCmd
+	.command("unshare <project>")
+	.description("Owner: revoke links, cancel invitations, and remove all members")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText("after", "\nExample:\n  $ clawdi project unshare engineering")
+	.action(async (scope: string, opts: { json?: boolean }) => {
+		const { scopeUnshareCommand } = await import("./commands/scope-members.js");
+		await scopeUnshareCommand(scope, opts);
+	});
+
+const scopeCmd = program
+	.command("scope", { hidden: true })
+	.description("Compatibility alias for project commands")
+	.showHelpAfterError();
+
+scopeCmd
+	.command("create <name>")
+	.description("Create a project")
+	.option("--slug <slug>", "Optional stable slug (lowercase letters, numbers, hyphens)")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			'  $ clawdi project create "Engineering toolkit"\n' +
+			'  $ clawdi project create "Client Alpha" --slug client-alpha --json',
+	)
+	.action(async (name: string, opts: { slug?: string; json?: boolean }) => {
 		const { scopeCreateCommand } = await import("./commands/scope-create.js");
 		await scopeCreateCommand(name, opts);
 	});
 
 scopeCmd
 	.command("list")
-	.description("List owned scopes + nested mount tree")
+	.description("List projects you can access")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.action(async (opts) => {
+	.action(async (opts: { json?: boolean }) => {
 		const { scopeListCommand } = await import("./commands/scope-list.js");
 		await scopeListCommand(opts);
 	});
 
 scopeCmd
 	.command("show <scope>")
-	.description("Show scope metadata, parent-owned content counts, and mount tree")
+	.description("Show project metadata and owned content counts")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.action(async (scope, opts) => {
+	.action(async (scope: string, opts: { json?: boolean }) => {
 		const { scopeShowCommand } = await import("./commands/scope-show.js");
 		await scopeShowCommand(scope, opts);
 	});
 
 scopeCmd
 	.command("share [scope]")
-	.description("Generate a share link. Defaults to your write scope when [scope] is omitted.")
+	.description("Generate a share link. Defaults to your write project when [project] is omitted.")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
-	.action(async (scope, opts) => {
+	.action(async (scope: string | undefined, opts: { label?: string }) => {
 		const { scopeShareCommand } = await import("./commands/scope-share.js");
 		await scopeShareCommand(scope, opts);
 	});
 
 scopeCmd
 	.command("share-links <scope>")
-	.description("List or revoke share links on a scope")
+	.description("List or revoke share links on a project")
 	.option("--revoke <id-or-prefix>", "Revoke a specific link")
-	.action(async (scope, opts) => {
+	.action(async (scope: string, opts: { revoke?: string }) => {
 		const { scopeShareLinksCommand } = await import("./commands/scope-share-links.js");
 		await scopeShareLinksCommand(scope, opts);
 	});
@@ -564,42 +690,45 @@ scopeCmd
 	.command("invite <scope>")
 	.description("Send an email invitation to a registered clawdi user")
 	.requiredOption("-e, --email <addr>", "Email address to invite")
-	.action(async (scope, opts) => {
+	.action(async (scope: string, opts: { email: string }) => {
 		const { scopeInviteCommand } = await import("./commands/scope-invite.js");
 		await scopeInviteCommand(scope, opts);
 	});
 
 scopeCmd
 	.command("invites <scope>")
-	.description("List pending invitations on a scope you own.")
-	.option("--cancel <id>", "Cancel one of the pending invitations on this scope")
+	.description("List pending invitations on a project you own.")
+	.option("--cancel <id>", "Cancel one of the pending invitations on this project")
 	.addHelpText(
 		"after",
 		"\n  Sharee side (listing / accepting / declining invitations addressed to you)\n" +
 			"  lives under `clawdi inbox`.",
 	)
-	.action(async (scope, opts) => {
+	.action(async (scope: string, opts: { cancel?: string }) => {
 		const { scopeInvitesCommand } = await import("./commands/scope-invites.js");
 		await scopeInvitesCommand(scope, opts);
 	});
 
 scopeCmd
 	.command("members <scope>")
-	.description("List or remove accepted members on a scope you own")
+	.description("List or remove accepted members on a project you own")
 	.option("--remove <email-or-user-id>", "Remove one accepted member")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi scope members engineering --remove bob@example.com")
-	.action(async (scope, opts) => {
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi project members engineering --remove bob@example.com",
+	)
+	.action(async (scope: string, opts: { remove?: string; json?: boolean }) => {
 		const { scopeMembersCommand } = await import("./commands/scope-members.js");
 		await scopeMembersCommand(scope, opts);
 	});
 
 scopeCmd
 	.command("leave <scope>")
-	.description("Leave a shared scope and remove its mount edges from your owned scopes")
+	.description("Leave a shared project")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi scope leave @alice-cdbf/engineering")
-	.action(async (scope, opts) => {
+	.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering")
+	.action(async (scope: string, opts: { json?: boolean }) => {
 		const { scopeLeaveCommand } = await import("./commands/scope-members.js");
 		await scopeLeaveCommand(scope, opts);
 	});
@@ -608,52 +737,87 @@ scopeCmd
 	.command("unshare <scope>")
 	.description("Owner: revoke links, cancel invitations, and remove all members")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi scope unshare engineering")
-	.action(async (scope, opts) => {
+	.addHelpText("after", "\nExample:\n  $ clawdi project unshare engineering")
+	.action(async (scope: string, opts: { json?: boolean }) => {
 		const { scopeUnshareCommand } = await import("./commands/scope-members.js");
 		await scopeUnshareCommand(scope, opts);
 	});
 
 scopeCmd
-	.command("mounts <parent>")
-	.description("List scopes mounted into <parent>")
+	.command("mounts <parent>", { hidden: true })
+	.description("Deprecated compatibility command")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi scope mounts personal")
-	.action(async (parent, opts) => {
+	.action(async (parent: string, opts: { json?: boolean }) => {
 		const { scopeMountsCommand } = await import("./commands/scope-mount.js");
 		await scopeMountsCommand(parent, opts);
 	});
 
 scopeCmd
-	.command("mount <source>")
-	.description("Mount a scope you have access to into a scope you own")
-	.requiredOption("-i, --into <parent>", "Parent scope (UUID, slug, or name)")
-	.option("-a, --alias <name>", "Override the mount alias (default: @<owner>/<source-slug>)")
+	.command("mount <source>", { hidden: true })
+	.description("Deprecated compatibility command")
+	.requiredOption("-i, --into <parent>", "Deprecated target identifier")
+	.option("-a, --alias <name>", "Deprecated alias override")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.option(
-		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — existing composed values keep priority",
-	)
-	.addHelpText(
-		"after",
-		"\nExample:\n" +
-			"  $ clawdi scope mount engineering --into personal\n\n" +
-			"For share URLs use `clawdi inbox accept <url>` instead — that joins AND\n" +
-			"mounts in one step.",
-	)
-	.action(async (source, opts) => {
-		const { scopeMountCommand } = await import("./commands/scope-mount.js");
-		await scopeMountCommand(source, opts);
-	});
+	.option("--allow-vault-conflicts", "Deprecated compatibility flag")
+	.action(
+		async (
+			source: string,
+			opts: { into: string; alias?: string; json?: boolean; allowVaultConflicts?: boolean },
+		) => {
+			const { scopeMountCommand } = await import("./commands/scope-mount.js");
+			await scopeMountCommand(source, opts);
+		},
+	);
 
 scopeCmd
-	.command("unmount <parent> <alias-or-id>")
-	.description("Drop a mount edge. Membership in the source scope is preserved.")
+	.command("unmount <parent> <alias-or-id>", { hidden: true })
+	.description("Deprecated compatibility command")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi scope unmount personal @alice-cdbf/engineering")
-	.action(async (parent, aliasOrId, opts) => {
+	.action(async (parent: string, aliasOrId: string, opts: { json?: boolean }) => {
 		const { scopeUnmountCommand } = await import("./commands/scope-mount.js");
 		await scopeUnmountCommand(parent, aliasOrId, opts);
+	});
+
+const agentCmd = program.command("agent").description("Manage agents");
+const agentProjectsCmd = agentCmd
+	.command("projects")
+	.description("Manage project bindings for an agent");
+
+agentProjectsCmd
+	.command("list <agent-id>")
+	.description("List project bindings for an agent")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.action(async (agentId, opts) => {
+		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsListCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("set-primary <agent-id>")
+	.description("Set the agent's primary project")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.action(async (agentId, opts) => {
+		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsSetPrimaryCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("add-context <agent-id>")
+	.description("Add a context project binding to an agent")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.option("--priority <n>", "Optional priority (>=1)")
+	.action(async (agentId, opts) => {
+		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsAddContextCommand(agentId, opts);
+	});
+
+agentProjectsCmd
+	.command("remove-context <agent-id>")
+	.description("Remove a context project binding from an agent")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.action(async (agentId, opts) => {
+		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
+		await agentProjectsRemoveContextCommand(agentId, opts);
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -674,14 +838,18 @@ inboxCmd
 	.description("Accept an invitation OR redeem a share URL")
 	.option("--invite <id>", "Explicit invitation UUID (bypass shape detection)")
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
-	.option("-i, --into <scope>", "Mount target (UUID, slug, or name). Default: auto.")
-	.option("-a, --alias <name>", "Override the mount alias")
-	.option("--no-mount", "Capability only — skip the mount edge")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option(
-		"--allow-vault-conflicts",
-		"Override 409 vault_conflicts_blocked — existing composed values keep priority",
+		"-a, --agent <agent-id>",
+		"Bind the accepted project to one or more agents (repeat or comma-separate)",
+		collectCsvValues,
+		[] as string[],
 	)
+	.option(
+		"--bind-as <context|primary>",
+		"Binding type used with --agent (default: context)",
+		"context",
+	)
+	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",
 		`
@@ -691,8 +859,8 @@ Examples:
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
   Agent-blessed (explicit):
-    $ clawdi inbox accept --url <link> --into engineering
-    $ clawdi inbox accept --invite <id> --into engineering`,
+    $ clawdi inbox accept --url <link> --agent <agent-id>
+    $ clawdi inbox accept --invite <id> --agent <agent-id> --bind-as context`,
 	)
 	.action(async (idOrUrl, opts) => {
 		const { inboxAcceptCommand } = await import("./commands/inbox.js");
@@ -708,11 +876,11 @@ inboxCmd
 	});
 
 inboxCmd
-	.command("forget <scope-id-or-alias>")
+	.command("forget <project-id-or-alias>")
 	.description("Local-only: drop a redeemed share-token entry + cached files")
-	.action(async (scopeId) => {
+	.action(async (projectId) => {
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
-		inboxForgetCommand(scopeId);
+		inboxForgetCommand(projectId);
 	});
 
 // Auto-update tick: prints any "✓ Updated to v…" notice from a previous

@@ -6,20 +6,20 @@ import { getAuth, getConfig } from "../lib/config";
 import { listScopes, resolveScopeId } from "../lib/scope-resolver";
 
 /**
- * `clawdi scope share <scope> [--label TEXT]` — generate a fresh
+ * `clawdi project share <project> [--label TEXT]` — generate a fresh
  * share link. Prints the full URL ONCE; server stores only the
  * SHA-256 hash + prefix going forward.
  *
  * Default behavior matches the web "Generate link" button:
  *   - Token + URL printed inline (the user can pipe / scroll-back).
- *   - The prefix is what subsequent `clawdi scope share-links`
+ *   - The prefix is what subsequent `clawdi project share-links`
  *     listings show; the full token is unrecoverable.
  *
  * Errors:
  *   - 409 display_name_required → reminds to run a profile update
  *     (`clawdi auth status` doesn't yet support set-name; web is
  *     the path of least resistance for now).
- *   - 404 → scope not yours / doesn't exist.
+ *   - 404 → project not yours / doesn't exist.
  */
 
 interface ShareLinkCreated {
@@ -45,18 +45,18 @@ export async function scopeShareCommand(
 		return;
 	}
 
-	// resolveScopeId(undefined) → user's default write scope, the
-	// common "share my current scope" case. Pass-through scope name /
+	// resolveScopeId(undefined) → user's default write project, the
+	// common "share my current project" case. Pass-through project name /
 	// slug / UUID still works when explicitly given.
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
-	// Look up the scope slug so the success message names which scope
-	// we just shared. Critical for the `scope share` (no arg) path —
-	// without the slug a multi-scope user has no idea whether their
+	// Look up the project slug so the success message names which project
+	// we just shared. Critical for the `project share` (no arg) path —
+	// without the slug a multi-project user has no idea whether their
 	// link went to Personal or Engineering. One round trip; cached
-	// by the caller's network stack if they already hit /api/scopes
+	// by the caller's network stack if they already hit /api/projects
 	// via resolveScopeId moments ago.
 	const scopeSlug = (await listScopes(apiUrl, auth.apiKey)).find((s) => s.id === scopeId)?.slug;
-	const r = await fetch(`${apiUrl}/api/scopes/${scopeId}/share-links`, {
+	const r = await fetch(`${apiUrl}/api/projects/${scopeId}/share-links`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${auth.apiKey}`,

@@ -14,51 +14,28 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
 import { toast } from "sonner";
-import {
-	isVaultConflictDetail,
-	type VaultConflictDetail,
-	VaultConflictsAlert,
-} from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { env } from "@/lib/env";
 
 /**
- * Public share-link landing page.
+ * Public project-share landing page.
  *
  * Flow:
- *   1. Anonymous preview — call GET /api/share/{token} unauthenticated,
- *      render scope name, owner display+handle, skill/vault counts.
- *   2. Two CTAs:
- *      - "Sign in to join" → upgrades to a permanent ScopeMembership
- *        (the dashboard then lists this scope alongside the user's own).
- *      - "Copy CLI command" → `clawdi inbox accept <url>`, for users who
- *        prefer the anonymous-then-upgrade path on the CLI.
- *   3. Already signed in → POST /api/share/{token}/upgrade and redirect
- *      to /skills (or /vault if vault-only).
- *
- * Auth handling:
- *   - Preview endpoint is anonymous.
- *   - Upgrade endpoint is Clerk-authenticated.
- *   - Vault content is NEVER previewed here; only counts.
+ *   1. Anonymous preview — call GET /api/share/{token}/preview,
+ *      render project name, owner display+handle, skill/vault counts.
+ *   2. Sign-in CTA upgrades to a permanent ProjectMembership.
+ *   3. Agent bindings are explicit and handled separately after accept.
  */
 
 interface SharePreview {
-	scope_id: string;
-	scope_name: string;
+	project_id: string;
+	project_name: string;
 	owner_display: string;
 	owner_handle: string;
 	skill_count: number;
@@ -67,49 +44,23 @@ interface SharePreview {
 }
 
 interface ShareUpgradeResponse {
-	scope_id: string;
+	membership_id: string;
+	project_id: string;
+	role: string;
+	joined_via: string;
+	joined_at: string;
 	resolved_owner_handle: string;
-	membership_id: string;
+	bound_agent_ids?: string[];
 }
-
-interface MountTarget {
-	id: string;
-	slug: string;
-	kind: string;
-}
-
-interface MountDeferredDetail {
-	error: "mount_target_ambiguous";
-	message?: string;
-	owned_scopes: MountTarget[];
-	membership_id: string;
-}
-
-// The /upgrade endpoint commits membership server-side even when it
-// can't pick an auto-mount target (user owns 2+ scopes → 409
-// mount_target_ambiguous). From the user's POV this is "joined,
-// mount deferred" — distinct from real failures like revoked or
-// not-found. The mutation's return type discriminates them so the
-// onSuccess branch can show the right message without treating a
-// genuine accept as an error.
-type UpgradeResult =
-	| { kind: "joined"; data: ShareUpgradeResponse }
-	| { kind: "mount_deferred"; detail: MountDeferredDetail };
 
 const API_URL = env.NEXT_PUBLIC_API_URL;
 
 function buildLandingUrl(token: string): string {
-	// Use window.location so the copy-CLI command points to wherever this
-	// page is actually being served from — same-origin, no env coupling.
 	if (typeof window === "undefined") return `/share/${token}`;
 	return `${window.location.origin}/share/${token}`;
 }
 
 async function fetchPreview(token: string): Promise<SharePreview> {
-	// Preview is side-effect free:
-	// does NOT increment redeem_count. The /redeem POST is reserved for
-	// explicit-accept CTA, which on the web is the upgrade button below
-	// (logged-in path skips redeem entirely → straight to membership).
 	const r = await fetch(`${API_URL}/api/share/${token}/preview`, {
 		method: "GET",
 	});
@@ -119,57 +70,29 @@ async function fetchPreview(token: string): Promise<SharePreview> {
 	return r.json();
 }
 
-async function upgradeShare(
-	token: string,
-	bearer: string,
-	allowVaultConflicts: boolean,
-	parentScopeId?: string,
-): Promise<UpgradeResult> {
+async function upgradeShare(token: string, bearer: string): Promise<ShareUpgradeResponse> {
 	const r = await fetch(`${API_URL}/api/share/${token}/upgrade`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
-		body: JSON.stringify({
-			allow_vault_conflicts: allowVaultConflicts,
-			...(parentScopeId ? { parent_scope_id: parentScopeId } : {}),
-		}),
+		body: JSON.stringify({}),
 	});
 	if (r.status === 404) throw new ShareError("not_found");
 	if (r.status === 410) throw new ShareError("revoked");
 	if (r.status === 409) {
-		const body = (await r.json().catch(() => ({}))) as {
-			detail?: { error?: string } | VaultConflictDetail | MountDeferredDetail;
-		};
-		const detailError = body?.detail?.error;
-		if (detailError === "already_owner") throw new ShareError("already_owner");
-		if (isVaultConflictDetail(body?.detail)) {
-			throw new ShareError("vault_conflicts", r.status, body.detail);
-		}
-		// Membership IS created — only the auto-mount step deferred.
-		// Treat as success (user joined) and surface the mount-defer
-		// state to the UI. Without this branch, the multi-scope happy
-		// path looked like a generic "already_member" error.
-		if (detailError === "mount_target_ambiguous") {
-			return { kind: "mount_deferred", detail: body.detail as MountDeferredDetail };
-		}
+		const body = (await r.json().catch(() => ({}))) as { detail?: { error?: string } };
+		if (body?.detail?.error === "already_owner") throw new ShareError("already_owner");
 		throw new ShareError("already_member");
 	}
 	if (!r.ok) throw new ShareError("unknown", r.status);
-	return { kind: "joined", data: await r.json() };
+	return r.json();
 }
 
-type ShareErrorCode =
-	| "not_found"
-	| "revoked"
-	| "already_member"
-	| "already_owner"
-	| "vault_conflicts"
-	| "unknown";
+type ShareErrorCode = "not_found" | "revoked" | "already_member" | "already_owner" | "unknown";
 
 class ShareError extends Error {
 	constructor(
 		public code: ShareErrorCode,
 		public status?: number,
-		public detail?: VaultConflictDetail,
 	) {
 		super(code);
 	}
@@ -181,8 +104,6 @@ export default function SharePage() {
 	const router = useRouter();
 	const { isSignedIn, getToken } = useAuth();
 	const { user } = useUser();
-	const [vaultConflict, setVaultConflict] = useState<VaultConflictDetail | null>(null);
-	const [parentScopeId, setParentScopeId] = useState("");
 
 	const preview = useQuery({
 		queryKey: ["share-preview", token],
@@ -191,32 +112,14 @@ export default function SharePage() {
 	});
 
 	const upgrade = useMutation({
-		mutationFn: async ({
-			allowVaultConflicts = false,
-			parentScopeId: nextParentScopeId,
-		}: {
-			allowVaultConflicts?: boolean;
-			parentScopeId?: string;
-		} = {}) => {
+		mutationFn: async () => {
 			const bearer = await getToken();
 			if (!bearer) throw new ShareError("unknown");
-			return upgradeShare(token, bearer, allowVaultConflicts, nextParentScopeId);
+			return upgradeShare(token, bearer);
 		},
-		onSuccess: (result) => {
-			setVaultConflict(null);
-			// Mount-deferred users stay on this page so they can read the
-			// "pick a parent" hint we render below; auto-redirecting them
-			// would dump them on /skills with no explanation of why the
-			// new scope isn't composed yet. The clean-success path is
-			// where the redirect lives.
-			if (result.kind === "mount_deferred") return;
+		onSuccess: () => {
 			const hasSkills = (preview.data?.skill_count ?? 0) > 0;
 			router.push(hasSkills ? "/skills" : "/vault");
-		},
-		onError: (error) => {
-			if (error instanceof ShareError && error.code === "vault_conflicts" && error.detail) {
-				setVaultConflict(error.detail);
-			}
 		},
 	});
 
@@ -245,9 +148,9 @@ export default function SharePage() {
 				<CardHeader>
 					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
 						<Sparkles className="size-4" />
-						You've been invited to a shared scope
+						You've been invited to a shared project
 					</div>
-					<CardTitle className="mt-2 text-2xl">{data.scope_name}</CardTitle>
+					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
 					<p className="text-sm text-muted-foreground">
 						Shared by <span className="font-medium text-foreground">{data.owner_display}</span>{" "}
 						<span className="text-xs font-mono">@{data.owner_handle}</span>
@@ -272,63 +175,45 @@ export default function SharePage() {
 
 					<Separator />
 
-					{upgrade.isSuccess && upgrade.data?.kind === "mount_deferred" ? (
-						<MountDeferredPanel
-							scopeName={data.scope_name}
-							detail={upgrade.data.detail}
-							parentScopeId={parentScopeId}
-							onParentScopeIdChange={setParentScopeId}
-							isPending={upgrade.isPending}
-							onMount={() => upgrade.mutate({ parentScopeId })}
-						/>
-					) : upgrade.isSuccess ? (
+					{upgrade.isSuccess ? (
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>You're in.</AlertTitle>
 							<AlertDescription>
-								Added to your scopes as read-only access — you'll see {data.owner_display}'s skills
-								alongside your own. Redirecting…
+								Added to your projects as viewer access. Agent binding is separate. Redirecting…
 							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your own scope.</AlertTitle>
+							<AlertTitle>This is your own project.</AlertTitle>
 							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
 						<div className="space-y-3">
 							<Button
-								onClick={() => upgrade.mutate({})}
+								onClick={() => upgrade.mutate()}
 								disabled={upgrade.isPending}
 								className="w-full"
 								size="lg"
 							>
 								<CheckCircle2 className="mr-2 size-4" />
-								{upgrade.isPending ? "Joining…" : "Accept and add to my dashboard"}
+								{upgrade.isPending ? "Joining…" : "Accept project access"}
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">viewer</Badge> — read-only access to
-								skills{data.vault_count > 0 ? " and vault key references" : ""}.{" "}
-								{data.owner_display} keeps full control.
+								skills{data.vault_count > 0 ? " and vault key references" : ""}. Agent bindings are
+								managed separately.
 							</p>
-							{vaultConflict ? (
-								<VaultConflictsAlert
-									detail={vaultConflict}
-									actionLabel="Accept anyway"
-									actionPending={upgrade.isPending}
-									onAction={() => upgrade.mutate({ allowVaultConflicts: true, parentScopeId })}
-								/>
-							) : null}
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member — check your dashboard.
+										You're already a member — check your dashboard and bind this project to agents
+										as needed.
 									</AlertDescription>
 								</Alert>
-							) : upgrade.error instanceof ShareError &&
-								upgrade.error.code === "vault_conflicts" ? null : upgrade.error ? (
+							) : upgrade.error ? (
 								<Alert variant="destructive">
 									<AlertCircle />
 									<AlertDescription>
@@ -361,7 +246,7 @@ export default function SharePage() {
 				</CardContent>
 			</Card>
 			<p className="text-center text-xs text-muted-foreground">
-				Shared scopes never grant write access. The owner can revoke this link anytime.
+				Shared projects never grant write access. The owner can revoke this link anytime.
 			</p>
 		</Shell>
 	);
@@ -389,52 +274,6 @@ function ContentTile({
 			<div className="mt-2 text-2xl font-semibold">{count}</div>
 			<div className="text-xs text-muted-foreground">{hint}</div>
 		</div>
-	);
-}
-
-function MountDeferredPanel({
-	scopeName,
-	detail,
-	parentScopeId,
-	onParentScopeIdChange,
-	isPending,
-	onMount,
-}: {
-	scopeName: string;
-	detail: MountDeferredDetail;
-	parentScopeId: string;
-	onParentScopeIdChange: (value: string) => void;
-	isPending: boolean;
-	onMount: () => void;
-}) {
-	return (
-		<Alert>
-			<CheckCircle2 />
-			<AlertTitle>You're in — use it where you need it.</AlertTitle>
-			<AlertDescription className="space-y-3">
-				<p>
-					Joined as a viewer of "{scopeName}". Use it in one owned scope now; you can use the same
-					shared scope in more owned scopes later.
-				</p>
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-					<Select value={parentScopeId} onValueChange={onParentScopeIdChange}>
-						<SelectTrigger className="min-w-0 flex-1">
-							<SelectValue placeholder="Choose where to use it" />
-						</SelectTrigger>
-						<SelectContent>
-							{detail.owned_scopes.map((scope) => (
-								<SelectItem key={scope.id} value={scope.id}>
-									{scope.slug} ({scope.kind})
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-					<Button size="sm" disabled={!parentScopeId || isPending} onClick={onMount}>
-						{isPending ? "Using…" : "Use here"}
-					</Button>
-				</div>
-			</AlertDescription>
-		</Alert>
 	);
 }
 
@@ -499,9 +338,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "already_member":
 			return "Already a member";
 		case "already_owner":
-			return "That's your own scope";
-		case "vault_conflicts":
-			return "Vault key conflict";
+			return "That's your own project";
 		default:
 			return "Couldn't load this share";
 	}
@@ -516,9 +353,7 @@ function describeError(code: ShareErrorCode): string {
 		case "already_member":
 			return "You already accepted this share — find it on your dashboard.";
 		case "already_owner":
-			return "You own this scope — nothing to accept.";
-		case "vault_conflicts":
-			return "Some vault key names already exist in the target scope's current composition.";
+			return "You own this project — nothing to accept.";
 		default:
 			return "Please try again. If the problem persists, ping the owner.";
 	}

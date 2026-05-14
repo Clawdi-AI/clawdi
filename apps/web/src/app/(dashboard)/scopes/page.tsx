@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Link2, Plus, Share2, UserCheck, Workflow } from "lucide-react";
+import { ArrowRight, Plus, Share2, UserCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, useAuthedFetch } from "@/lib/api";
-import { cn, errorMessage } from "@/lib/utils";
+import { errorMessage } from "@/lib/utils";
 
 interface ScopeRow {
 	id: string;
@@ -34,19 +34,6 @@ interface ScopeRow {
 	archived_at: string | null;
 	created_at: string;
 	is_owner?: boolean;
-}
-
-interface MountRow {
-	id: string;
-	parent_scope_id: string;
-	source_scope_id: string;
-	source_scope_name: string;
-	source_scope_slug: string;
-	source_owner_display: string;
-	source_owner_handle: string;
-	alias: string;
-	mode: string;
-	created_at: string;
 }
 
 export default function ScopesPage() {
@@ -60,7 +47,7 @@ export default function ScopesPage() {
 	const scopes = useQuery({
 		queryKey: ["scopes"],
 		queryFn: async (): Promise<ScopeRow[]> => {
-			const r = await authedFetch("/api/scopes");
+			const r = await authedFetch("/api/projects");
 			return r.json();
 		},
 	});
@@ -75,38 +62,12 @@ export default function ScopesPage() {
 		[rows],
 	);
 
-	const mounts = useQuery({
-		queryKey: ["scope-mounts", "all-owned", ownedScopes.map((s) => s.id).join(",")],
-		queryFn: async (): Promise<Record<string, MountRow[]>> => {
-			const pairs = await Promise.all(
-				ownedScopes.map(async (scope): Promise<[string, MountRow[]]> => {
-					const r = await authedFetch(`/api/scopes/${scope.id}/mounts`);
-					return [scope.id, (await r.json()) as MountRow[]];
-				}),
-			);
-			return Object.fromEntries(pairs);
-		},
-		enabled: ownedScopes.length > 0,
-	});
-
-	const mountsByParent = mounts.data ?? {};
-	const mountRows = Object.values(mountsByParent).flat();
-	const mountedBySource = useMemo(() => {
-		const map = new Map<string, MountRow[]>();
-		for (const mount of mountRows) {
-			const existing = map.get(mount.source_scope_id) ?? [];
-			existing.push(mount);
-			map.set(mount.source_scope_id, existing);
-		}
-		return map;
-	}, [mountRows]);
-
 	const createScope = useMutation({
 		mutationFn: async (): Promise<ScopeRow> => {
 			const payload: { name: string; slug?: string } = { name: newScopeName.trim() };
 			const slug = normalizeSlugInput(newScopeSlug);
 			if (slug) payload.slug = slug;
-			const r = await authedFetch("/api/scopes", {
+			const r = await authedFetch("/api/projects", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(payload),
@@ -118,13 +79,13 @@ export default function ScopesPage() {
 			setNewScopeSlug("");
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["scopes"] });
-			toast.success("Scope created", {
-				description: `${scope.name} is ready for skills, vault references, sharing, and composition.`,
+			toast.success("Project created", {
+				description: `${scope.name} is ready for skills, vault references, and sharing.`,
 			});
 			router.push(`/scopes/${scope.id}`);
 		},
 		onError: (e) => {
-			toast.error("Failed to create scope", {
+			toast.error("Failed to create project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -134,8 +95,8 @@ export default function ScopesPage() {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<PageHeader
-					title="Scopes"
-					description="Manage the context boundaries your people and agents can compose."
+					title="Projects"
+					description="Manage the context boundaries your people and agents can share."
 				/>
 				<Skeleton className="h-36 w-full" />
 				<Skeleton className="h-48 w-full" />
@@ -146,8 +107,8 @@ export default function ScopesPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
-				title="Scopes"
-				description="Control which skills and vault references each agent or collaboration can see."
+				title="Projects"
+				description="Control which skills and vault references each collaboration can access."
 				actions={
 					<Button
 						variant="outline"
@@ -159,14 +120,14 @@ export default function ScopesPage() {
 						}}
 					>
 						<Plus className="size-3.5" />
-						New scope
+						New project
 					</Button>
 				}
 			/>
 
 			{scopes.error ? (
 				<Alert variant="destructive">
-					<AlertTitle>Couldn&apos;t load scopes</AlertTitle>
+					<AlertTitle>Couldn&apos;t load projects</AlertTitle>
 					<AlertDescription>{errorMessage(scopes.error)}</AlertDescription>
 				</Alert>
 			) : null}
@@ -183,10 +144,10 @@ export default function ScopesPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New project scope</DialogTitle>
+						<DialogTitle>New project</DialogTitle>
 						<DialogDescription>
 							Create a reusable context for a project, team, or workflow. Add skills, vault
-							references, and shared scopes after creation.
+							references, and sharing settings after creation.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -204,7 +165,7 @@ export default function ScopesPage() {
 									id="scope-name"
 									value={newScopeName}
 									maxLength={200}
-									placeholder="Scope name"
+									placeholder="Project name"
 									onChange={(event) => setNewScopeName(event.target.value)}
 								/>
 							</div>
@@ -225,7 +186,7 @@ export default function ScopesPage() {
 							</Button>
 							<Button type="submit" disabled={!newScopeName.trim() || createScope.isPending}>
 								<Plus className="size-3.5" />
-								{createScope.isPending ? "Creating..." : "Create scope"}
+								{createScope.isPending ? "Creating..." : "Create project"}
 							</Button>
 						</div>
 					</form>
@@ -234,21 +195,16 @@ export default function ScopesPage() {
 
 			<section className="space-y-3">
 				<SectionHeader
-					title="Owned scopes"
+					title="Owned projects"
 					count={ownedScopes.length}
-					description="Scopes you control. Project scopes are created by you, Account is your account-wide fallback, and Agent scopes belong to connected agents."
+					description="Projects you control directly."
 				/>
 				{ownedScopes.length === 0 ? (
-					<EmptyLine message="No owned scopes yet. Connect an agent or create a shareable scope." />
+					<EmptyLine message="No owned projects yet. Connect an agent or create a shareable project." />
 				) : (
 					<div className="divide-y rounded-lg border">
 						{ownedScopes.map((scope) => (
-							<OwnedScopeRow
-								key={scope.id}
-								scope={scope}
-								mounts={mountsByParent[scope.id] ?? []}
-								placements={mountedBySource.get(scope.id) ?? []}
-							/>
+							<OwnedProjectRow key={scope.id} scope={scope} />
 						))}
 					</div>
 				)}
@@ -256,21 +212,16 @@ export default function ScopesPage() {
 
 			<section className="space-y-3">
 				<SectionHeader
-					title="Shared scopes"
+					title="Shared projects"
 					count={sharedScopes.length}
-					description="Read-only scopes from other people. Use them in one or more owned scopes to make their content available there."
+					description="Projects shared with you by other people."
 				/>
 				{sharedScopes.length === 0 ? (
-					<EmptyLine message="Accepted shares appear here before or after you use them in an owned scope." />
+					<EmptyLine message="Accepted shares appear here." />
 				) : (
 					<div className="divide-y rounded-lg border">
 						{sharedScopes.map((scope) => (
-							<SharedScopeRow
-								key={scope.id}
-								scope={scope}
-								placements={mountedBySource.get(scope.id) ?? []}
-								ownedScopes={ownedScopes}
-							/>
+							<SharedProjectRow key={scope.id} scope={scope} />
 						))}
 					</div>
 				)}
@@ -279,15 +230,7 @@ export default function ScopesPage() {
 	);
 }
 
-function OwnedScopeRow({
-	scope,
-	mounts,
-	placements,
-}: {
-	scope: ScopeRow;
-	mounts: MountRow[];
-	placements: MountRow[];
-}) {
+function OwnedProjectRow({ scope }: { scope: ScopeRow }) {
 	const scopeName = displayScopeName(scope);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
@@ -296,9 +239,8 @@ function OwnedScopeRow({
 				aria-label={`Open ${scopeName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
-			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
+			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<ScopeIdentity scope={scope} />
-				<ScopeRelationshipSummary mounts={mounts} placements={placements} />
 				<div className="relative z-20 flex shrink-0 items-center justify-between gap-1 md:justify-end">
 					<ShareScopeDialog scopeId={scope.id} scopeName={scopeName} scopeKind={scope.kind}>
 						<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
@@ -313,16 +255,7 @@ function OwnedScopeRow({
 	);
 }
 
-function SharedScopeRow({
-	scope,
-	placements,
-	ownedScopes,
-}: {
-	scope: ScopeRow;
-	placements: MountRow[];
-	ownedScopes: ScopeRow[];
-}) {
-	const ownedScopeById = new Map(ownedScopes.map((s) => [s.id, s]));
+function SharedProjectRow({ scope }: { scope: ScopeRow }) {
 	const scopeName = displayScopeName(scope);
 	return (
 		<div className="group relative px-3 py-3 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
@@ -331,11 +264,13 @@ function SharedScopeRow({
 				aria-label={`Open ${scopeName}`}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			/>
-			<div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)_auto] md:items-center">
+			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<div className="relative z-20 min-w-0 pointer-events-none">
 					<ScopeIdentity scope={scope} tone="shared" />
+					<p className="mt-1 text-xs text-muted-foreground">
+						Access granted via sharing. Bind this project to agents explicitly when needed.
+					</p>
 				</div>
-				<SharedPlacementSummary placements={placements} ownedScopeById={ownedScopeById} />
 				<ArrowRight className="relative z-20 size-4 justify-self-end text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 			</div>
 		</div>
@@ -360,97 +295,6 @@ function ScopeIdentity({ scope, tone = "owned" }: { scope: ScopeRow; tone?: "own
 	);
 }
 
-function ScopeRelationshipSummary({
-	mounts,
-	placements,
-}: {
-	mounts: MountRow[];
-	placements: MountRow[];
-}) {
-	const empty = mounts.length === 0 && placements.length === 0;
-	return (
-		<div className="relative z-20 flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground pointer-events-none">
-			<RelationshipBadge
-				icon={Link2}
-				label={
-					mounts.length === 0
-						? "Uses no other scopes"
-						: `Uses ${mounts.length} scope${mounts.length === 1 ? "" : "s"}`
-				}
-				muted={mounts.length === 0}
-			/>
-			{placements.length > 0 ? (
-				<RelationshipBadge
-					icon={Workflow}
-					label={`Used in ${placements.length} scope${placements.length === 1 ? "" : "s"}`}
-				/>
-			) : empty ? null : (
-				<RelationshipBadge icon={Workflow} label="Not used elsewhere" muted />
-			)}
-		</div>
-	);
-}
-
-function SharedPlacementSummary({
-	placements,
-	ownedScopeById,
-}: {
-	placements: MountRow[];
-	ownedScopeById: Map<string, ScopeRow>;
-}) {
-	if (placements.length === 0) {
-		return (
-			<div className="relative z-20 pointer-events-none">
-				<RelationshipBadge icon={Workflow} label="Not used yet" muted />
-			</div>
-		);
-	}
-	return (
-		<div className="relative z-20 min-w-0 space-y-1 pointer-events-none">
-			<div className="text-xs font-medium text-muted-foreground">Used in</div>
-			<div className="flex min-w-0 flex-wrap gap-1.5">
-				{placements.slice(0, 3).map((placement) => (
-					<Badge key={placement.id} variant="outline" className="max-w-full font-normal">
-						<Workflow className="size-3.5" />
-						<span className="min-w-0 truncate">
-							{formatOptionalScopeName(ownedScopeById.get(placement.parent_scope_id))}
-						</span>
-						<span className="text-muted-foreground">/</span>
-						<span className="min-w-0 truncate font-mono text-muted-foreground">
-							{placement.alias}
-						</span>
-					</Badge>
-				))}
-				{placements.length > 3 ? (
-					<Badge variant="secondary" className="font-normal">
-						+{placements.length - 3}
-					</Badge>
-				) : null}
-			</div>
-		</div>
-	);
-}
-
-function RelationshipBadge({
-	icon: Icon,
-	label,
-	muted = false,
-}: {
-	icon: typeof Link2;
-	label: string;
-	muted?: boolean;
-}) {
-	return (
-		<Badge
-			variant="outline"
-			className={cn("font-normal", muted && "border-dashed text-muted-foreground")}
-		>
-			<Icon className="size-3.5" />
-			{label}
-		</Badge>
-	);
-}
-
 function ScopeKindBadge({ kind }: { kind: string }) {
 	const meta = scopeKindMeta(kind);
 	return (
@@ -468,22 +312,22 @@ function scopeKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
-			description: "Reusable scope for a project, team, or workflow.",
+			description: "Reusable context for a project, team, or workflow.",
 		};
 	}
 	if (kind === "environment") {
 		return {
-			label: "Agent",
-			description: "Default scope owned by a connected agent.",
+			label: "Environment",
+			description: "Project created by an agent environment.",
 		};
 	}
 	if (kind === "personal") {
 		return {
-			label: "Account",
-			description: "Account-wide fallback.",
+			label: "Personal",
+			description: "Personal default project.",
 		};
 	}
-	return { label: kind, description: `Scope type: ${kind}` };
+	return { label: kind, description: `Project type: ${kind}` };
 }
 
 function SectionHeader({
@@ -532,13 +376,9 @@ function displayScopeName(scope: ScopeRow) {
 		scope.kind === "personal" &&
 		(scope.slug === "personal" || ["default", "personal"].includes(scope.name.toLowerCase()))
 	) {
-		return "Account";
+		return "Personal";
 	}
 	return scope.name;
-}
-
-function formatOptionalScopeName(scope: ScopeRow | undefined) {
-	return scope ? displayScopeName(scope) : "Owned scope";
 }
 
 function EmptyLine({ message }: { message: string }) {

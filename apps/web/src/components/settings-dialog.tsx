@@ -37,7 +37,7 @@ type Section = "general" | "profile" | "scopes" | "api-keys";
 const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "general", label: "General", icon: Settings },
 	{ id: "profile", label: "Profile", icon: User },
-	{ id: "scopes", label: "Scopes", icon: Workflow },
+	{ id: "scopes", label: "Projects", icon: Workflow },
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
 
@@ -159,21 +159,21 @@ function ScopesPanel({ onClose }: { onClose: () => void }) {
 	return (
 		<>
 			<PanelHeader
-				title="Scopes"
-				description="Scopes define the context boundaries that people and agents can share, mount, and revoke."
+				title="Projects"
+				description="Projects define the context boundaries that people and agents can share and manage."
 			/>
 			<div className="rounded-lg border p-4">
 				<div className="flex items-start gap-3">
 					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
 					<div className="min-w-0 flex-1 space-y-2">
-						<div className="text-sm font-medium">Manage scope access and composition</div>
+						<div className="text-sm font-medium">Manage project access and bindings</div>
 						<p className="text-sm text-muted-foreground">
-							Use the Scopes page to review owned scopes, shared memberships, mount placements,
-							share links, invitations, and member access in one place.
+							Use the Projects page to review owned projects, shared memberships, share links,
+							invitations, and member access in one place.
 						</p>
 						<Button asChild size="sm" variant="outline">
 							<Link href="/scopes" onClick={onClose}>
-								Open Scopes
+								Open Projects
 							</Link>
 						</Button>
 					</div>

@@ -58,7 +58,18 @@ async function resolveVaultScopeId(api: ApiClient, slug: string): Promise<string
 	const candidates = list.items.filter((v) => v.slug === slug);
 	if (candidates.length === 0) return null;
 	if (candidates.length === 1) return candidates[0].scope_id;
-	const def = unwrap(await api.GET("/api/scopes/default")).scope_id;
+	const headers: Record<string, string> = {};
+	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
+	const projectRes = await fetch(`${api.baseUrl}/api/projects/default`, { headers });
+	let def: string;
+	if (projectRes.ok) {
+		const body = (await projectRes.json()) as { project_id: string };
+		def = body.project_id;
+	} else {
+		// Backward compat with pre-project route names.
+		const legacy = unwrap(await api.GET("/api/scopes/default"));
+		def = legacy.scope_id;
+	}
 	const inDefault = candidates.find((v) => v.scope_id === def);
 	if (inDefault) return inDefault.scope_id;
 	// Multiple matches, none in the default scope. Pick the

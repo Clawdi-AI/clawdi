@@ -5,10 +5,10 @@ import { getAuth, getConfig } from "../lib/config";
 import { resolveScopeId } from "../lib/scope-resolver";
 
 /**
- * `clawdi scope invites <scope> [--cancel <id>]` — owner-side view
- * of pending invitations on a scope you own.
+ * `clawdi project invites <project> [--cancel <id>]` — owner-side view
+ * of pending invitations on a project you own.
  *
- *   default → list pending invitations on the scope
+ *   default → list pending invitations on the project
  *   --cancel <id> → cancel one of them
  *
  * The sharee-side `--accept` / `--decline` flags that lived here in v1
@@ -19,9 +19,9 @@ import { resolveScopeId } from "../lib/scope-resolver";
 
 interface InvitationItem {
 	id: string;
-	scope_id: string;
-	scope_name: string;
-	scope_kind: string;
+	project_id: string;
+	project_name: string;
+	project_kind: string;
 	owner_display: string;
 	owner_handle: string;
 	invitee_email: string;
@@ -61,7 +61,7 @@ export async function scopeInvitesCommand(
 	const scopeId = await resolveScopeId(apiUrl, auth.apiKey, scopeArg);
 
 	if (opts.cancel) {
-		await authedDelete(apiUrl, auth.apiKey, `/api/scopes/${scopeId}/invitations/${opts.cancel}`);
+		await authedDelete(apiUrl, auth.apiKey, `/api/projects/${scopeId}/invitations/${opts.cancel}`);
 		console.log(`${chalk.green("✓")} Invitation cancelled.`);
 		return;
 	}
@@ -69,15 +69,15 @@ export async function scopeInvitesCommand(
 	const items = await authedGet<InvitationItem[]>(
 		apiUrl,
 		auth.apiKey,
-		`/api/scopes/${scopeId}/invitations`,
+		`/api/projects/${scopeId}/invitations`,
 	);
 	if (items.length === 0) {
-		console.log("No invitations on this scope.");
+		console.log("No invitations on this project.");
 		console.log();
-		console.log(`Send one: ${chalk.cyan(`clawdi scope invite ${scopeArg} --email <addr>`)}`);
+		console.log(`Send one: ${chalk.cyan(`clawdi project invite ${scopeArg} --email <addr>`)}`);
 		return;
 	}
-	console.log(chalk.bold(`Invitations on this scope (${items.length}):`));
+	console.log(chalk.bold(`Invitations on this project (${items.length}):`));
 	for (const inv of items) {
 		console.log(
 			`  ${chalk.bold(inv.invitee_email)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +
@@ -86,6 +86,6 @@ export async function scopeInvitesCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Cancel: ") + chalk.cyan(`clawdi scope invites ${scopeArg} --cancel <id>`),
+		chalk.gray("Cancel: ") + chalk.cyan(`clawdi project invites ${scopeArg} --cancel <id>`),
 	);
 }

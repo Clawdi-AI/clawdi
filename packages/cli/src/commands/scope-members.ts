@@ -39,7 +39,7 @@ async function requestJson<T>(url: string, apiKey: string, init: RequestInit = {
 }
 
 async function fetchMembers(apiUrl: string, apiKey: string, scopeId: string): Promise<MemberRow[]> {
-	return requestJson<MemberRow[]>(`${apiUrl}/api/scopes/${scopeId}/members`, apiKey);
+	return requestJson<MemberRow[]>(`${apiUrl}/api/projects/${scopeId}/members`, apiKey);
 }
 
 export async function scopeMembersCommand(
@@ -69,8 +69,8 @@ export async function scopeMembersCommand(
 			process.exitCode = 1;
 			return;
 		}
-		const removed = await requestJson<{ status: string; mounts_removed: number }>(
-			`${ctx.apiUrl}/api/scopes/${scopeId}/members/${matches[0].user_id}`,
+		const removed = await requestJson<{ status: string }>(
+			`${ctx.apiUrl}/api/projects/${scopeId}/members/${matches[0].user_id}`,
 			ctx.apiKey,
 			{ method: "DELETE" },
 		);
@@ -78,7 +78,7 @@ export async function scopeMembersCommand(
 			console.log(
 				JSON.stringify(
 					{
-						scope_id: scopeId,
+						project_id: scopeId,
 						removed_user_id: matches[0].user_id,
 						...removed,
 					},
@@ -89,21 +89,18 @@ export async function scopeMembersCommand(
 			return;
 		}
 		console.log(`${chalk.green("✓")} Removed ${matches[0].user_email ?? matches[0].user_id}.`);
-		if (removed.mounts_removed > 0) {
-			console.log(chalk.gray(`  Removed ${removed.mounts_removed} mount edge(s).`));
-		}
 		return;
 	}
 
 	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, scopeId);
 	if (opts.json) {
-		console.log(JSON.stringify({ scope_id: scopeId, members }, null, 2));
+		console.log(JSON.stringify({ project_id: scopeId, members }, null, 2));
 		return;
 	}
 	if (members.length === 0) {
 		console.log(`No members on ${scopeArg}.`);
 		console.log(
-			chalk.gray(`Invite one: ${chalk.cyan(`clawdi scope invite ${scopeArg} --email <addr>`)}`),
+			chalk.gray(`Invite one: ${chalk.cyan(`clawdi project invite ${scopeArg} --email <addr>`)}`),
 		);
 		return;
 	}
@@ -118,7 +115,7 @@ export async function scopeMembersCommand(
 	console.log();
 	console.log(
 		chalk.gray("Remove: ") +
-			chalk.cyan(`clawdi scope members ${scopeArg} --remove <email|user_id>`),
+			chalk.cyan(`clawdi project members ${scopeArg} --remove <email|user_id>`),
 	);
 }
 
@@ -127,19 +124,16 @@ export async function scopeLeaveCommand(scopeArg: string, opts: { json?: boolean
 	if (!ctx) return;
 
 	const scopeId = await resolveScopeId(ctx.apiUrl, ctx.apiKey, scopeArg);
-	const result = await requestJson<{ status: string; mounts_removed: number }>(
-		`${ctx.apiUrl}/api/scopes/${scopeId}/leave`,
+	const result = await requestJson<{ status: string }>(
+		`${ctx.apiUrl}/api/projects/${scopeId}/leave`,
 		ctx.apiKey,
 		{ method: "POST" },
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ scope_id: scopeId, ...result }, null, 2));
+		console.log(JSON.stringify({ project_id: scopeId, ...result }, null, 2));
 		return;
 	}
 	console.log(`${chalk.green("✓")} Left ${scopeArg}.`);
-	if (result.mounts_removed > 0) {
-		console.log(chalk.gray(`  Removed ${result.mounts_removed} mount edge(s).`));
-	}
 }
 
 export async function scopeUnshareCommand(
@@ -154,9 +148,9 @@ export async function scopeUnshareCommand(
 		links_revoked: number;
 		members_removed: number;
 		invitations_cancelled: number;
-	}>(`${ctx.apiUrl}/api/scopes/${scopeId}/unshare`, ctx.apiKey, { method: "POST" });
+	}>(`${ctx.apiUrl}/api/projects/${scopeId}/unshare`, ctx.apiKey, { method: "POST" });
 	if (opts.json) {
-		console.log(JSON.stringify({ scope_id: scopeId, ...result }, null, 2));
+		console.log(JSON.stringify({ project_id: scopeId, ...result }, null, 2));
 		return;
 	}
 	console.log(`${chalk.green("✓")} Stopped sharing ${scopeArg}.`);

@@ -19,9 +19,9 @@ export function getEnvIdByAgent(agentType: string): string | null {
 	return JSON.parse(readFileSync(envPath, "utf-8")).id;
 }
 
-/** Ask the cloud which scope this caller's next write would land
+/** Ask the cloud which project this caller's next write would land
  * in. Wraps the server-side `resolve_default_write_scope` logic
- * exposed by `GET /api/scopes/default` — for an api_key bound to
+ * exposed by `GET /api/projects/default` — for an api_key bound to
  * an env, that's the env's `default_scope_id`; for a Clerk JWT
  * (rare in CLI use) it's the most-recently-active env's scope or
  * Personal as a fallback.
@@ -40,9 +40,23 @@ export function getEnvIdByAgent(agentType: string): string | null {
  * the skills it just pushed.
  */
 export async function fetchDefaultScopeId(api: import("./api-client").ApiClient): Promise<string> {
-	const { unwrap } = await import("./api-client");
-	const res = unwrap(await api.GET("/api/scopes/default"));
-	return res.scope_id;
+	const baseUrl = api.baseUrl;
+	const headers: Record<string, string> = {};
+	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
+
+	const projectRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
+	if (projectRes.ok) {
+		const body = (await projectRes.json()) as { project_id: string };
+		return body.project_id;
+	}
+
+	// Backward compat with pre-project route names.
+	const legacyRes = await fetch(`${baseUrl}/api/scopes/default`, { headers });
+	if (!legacyRes.ok) {
+		throw new Error(`Failed to resolve default project: HTTP ${legacyRes.status}`);
+	}
+	const legacyBody = (await legacyRes.json()) as { scope_id: string };
+	return legacyBody.scope_id;
 }
 
 /** Resolve the default_scope_id of a specific env. The caller

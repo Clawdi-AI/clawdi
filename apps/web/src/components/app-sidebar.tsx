@@ -59,7 +59,7 @@ const DeployTrigger = IS_HOSTED
 const navItems = [
 	{ href: "/", label: "Overview", icon: LayoutDashboard },
 	{ href: "/sessions", label: "Sessions", icon: MessageSquare },
-	{ href: "/scopes", label: "Scopes", icon: Workflow },
+	{ href: "/scopes", label: "Projects", icon: Workflow },
 	{ href: "/memories", label: "Memories", icon: Brain },
 	{ href: "/skills", label: "Skills", icon: Sparkles },
 	{ href: "/vault", label: "Vault", icon: Key },

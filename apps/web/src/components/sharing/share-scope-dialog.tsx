@@ -46,7 +46,7 @@ import { errorMessage } from "@/lib/utils";
 import { formatApiError } from "./vault-conflicts";
 
 /**
- * Owner-side scope-sharing surface.
+ * Owner-side project-sharing surface.
  *
  * Two surfaces in one dialog:
  *   - Links tab: list of share-links with redeem counts + revoke buttons,
@@ -55,12 +55,12 @@ import { formatApiError } from "./vault-conflicts";
  *     added" entries on the invitee's side, no public token).
  *
  * Backend endpoints:
- *   GET    /api/scopes/{scope_id}/share-links
- *   POST   /api/scopes/{scope_id}/share-links
- *   DELETE /api/scopes/{scope_id}/share-links/{link_id}
- *   GET    /api/scopes/{scope_id}/invitations
- *   POST   /api/scopes/{scope_id}/invitations
- *   DELETE /api/scopes/{scope_id}/invitations/{invitation_id}
+ *   GET    /api/projects/{project_id}/share-links
+ *   POST   /api/projects/{project_id}/share-links
+ *   DELETE /api/projects/{project_id}/share-links/{link_id}
+ *   GET    /api/projects/{project_id}/invitations
+ *   POST   /api/projects/{project_id}/invitations
+ *   DELETE /api/projects/{project_id}/invitations/{invitation_id}
  *
  * Schemas swap to typed openapi-fetch once codex regenerates them.
  */
@@ -126,7 +126,7 @@ export function ShareScopeDialog({
 				{children ?? (
 					<Button variant="outline" size="sm" aria-label={`Share ${scopeName}`}>
 						<Share2 className="mr-2 size-4" />
-						Share scope
+						Share project
 					</Button>
 				)}
 			</DialogTrigger>
@@ -134,18 +134,17 @@ export function ShareScopeDialog({
 				<DialogHeader>
 					<DialogTitle>Share "{scopeName}"</DialogTitle>
 					<DialogDescription>
-						Give others read-only membership in this scope. They decide which of their owned scopes
-						should use it, and they cannot edit your scope.
+						Give others read-only membership in this project. Accepting grants project access; agent
+						binding remains a separate explicit step.
 					</DialogDescription>
 				</DialogHeader>
 				{isPersonalScope ? (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Account scope sharing needs extra care</AlertTitle>
+						<AlertTitle>Personal project sharing needs extra care</AlertTitle>
 						<AlertDescription>
-							Account scopes often mix experiments, one-off vault references, and default context.
-							Prefer sharing an agent or project scope when you want a cleaner collaboration
-							boundary.
+							Personal projects often mix experiments, one-off vault references, and default
+							context. Prefer sharing a dedicated project boundary for cleaner collaboration.
 						</AlertDescription>
 					</Alert>
 				) : null}
@@ -192,7 +191,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	const links = useQuery({
 		queryKey: ["share-links", scopeId],
 		queryFn: async (): Promise<ShareLinkRow[]> => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/share-links`);
+			const r = await authedFetch(`/api/projects/${scopeId}/share-links`);
 			return r.json();
 		},
 	});
@@ -200,7 +199,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 	const create = useMutation({
 		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
 			const trimmedLabel = nextLabel.trim();
-			const r = await authedFetch(`/api/scopes/${scopeId}/share-links`, {
+			const r = await authedFetch(`/api/projects/${scopeId}/share-links`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ label: trimmedLabel.length > 0 ? trimmedLabel : null }),
@@ -232,7 +231,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 
 	const revoke = useMutation({
 		mutationFn: async (linkId: string) => {
-			await authedFetch(`/api/scopes/${scopeId}/share-links/${linkId}`, {
+			await authedFetch(`/api/projects/${scopeId}/share-links/${linkId}`, {
 				method: "DELETE",
 			});
 		},
@@ -280,7 +279,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 
 			<div className="flex items-center justify-between gap-2">
 				<p className="text-xs text-muted-foreground">
-					Anyone with a share link can preview the scope and accept it. Revoke anytime.
+					Anyone with a share link can preview the project and accept it. Revoke anytime.
 				</p>
 				<Badge variant="secondary" className="text-xs">
 					{visibleLinks.filter((link) => link.revoked_at === null).length} active
@@ -303,7 +302,7 @@ function ShareLinksPanel({ scopeId }: { scopeId: string }) {
 					}
 				/>
 			) : visibleLinks.length === 0 ? (
-				<EmptyHint message="No share links yet. Generate one to start sharing this scope." />
+				<EmptyHint message="No share links yet. Generate one to start sharing this project." />
 			) : (
 				<ul className="space-y-2">
 					{visibleLinks.map((link) => (
@@ -489,7 +488,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 	const invites = useQuery({
 		queryKey: ["invitations", scopeId],
 		queryFn: async (): Promise<Invitation[]> => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/invitations`);
+			const r = await authedFetch(`/api/projects/${scopeId}/invitations`);
 			const body = (await r.json()) as { items?: Invitation[] } | Invitation[];
 			return Array.isArray(body) ? body : (body.items ?? []);
 		},
@@ -497,7 +496,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 
 	const invite = useMutation({
 		mutationFn: async (inviteEmail: string) => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/invitations`, {
+			const r = await authedFetch(`/api/projects/${scopeId}/invitations`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ email: inviteEmail }),
@@ -518,7 +517,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 
 	const cancel = useMutation({
 		mutationFn: async (invitationId: string) => {
-			await authedFetch(`/api/scopes/${scopeId}/invitations/${invitationId}`, {
+			await authedFetch(`/api/projects/${scopeId}/invitations/${invitationId}`, {
 				method: "DELETE",
 			});
 		},
@@ -557,7 +556,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 					type="submit"
 					size="sm"
 					disabled={!looksLikeEmail || invite.isPending}
-					aria-label="Invite email to scope"
+					aria-label="Invite email to project"
 				>
 					{invite.isPending ? "Sending…" : "Invite"}
 				</Button>
@@ -573,7 +572,7 @@ function InvitationsPanel({ scopeId }: { scopeId: string }) {
 					variant="destructive"
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
-							? "Email invitations are unavailable for this scope."
+							? "Email invitations are unavailable for this project."
 							: invites.error instanceof ApiError
 								? formatApiError(invites.error.detail)
 								: errorMessage(invites.error)
@@ -645,36 +644,31 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 	const authedFetch = useAuthedFetch();
 
 	const members = useQuery({
-		queryKey: ["scope-members", scopeId],
+		queryKey: ["project-members", scopeId],
 		queryFn: async (): Promise<Member[]> => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/members`);
+			const r = await authedFetch(`/api/projects/${scopeId}/members`);
 			return r.json();
 		},
 	});
 
 	const refreshSharingState = () => {
-		qc.invalidateQueries({ queryKey: ["scope-members", scopeId] });
+		qc.invalidateQueries({ queryKey: ["project-members", scopeId] });
 		qc.invalidateQueries({ queryKey: ["share-links", scopeId] });
 		qc.invalidateQueries({ queryKey: ["invitations", scopeId] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
 		qc.invalidateQueries({ queryKey: ["scopes"] });
-		qc.invalidateQueries({ queryKey: ["scope-mounts"] });
 	};
 
 	const remove = useMutation({
 		mutationFn: async (userId: string) => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/members/${userId}`, {
+			const r = await authedFetch(`/api/projects/${scopeId}/members/${userId}`, {
 				method: "DELETE",
 			});
-			return r.json() as Promise<{ mounts_removed: number }>;
+			return r.json() as Promise<{ status: string }>;
 		},
-		onSuccess: (body) => {
+		onSuccess: () => {
 			refreshSharingState();
-			toast.success(
-				body.mounts_removed > 0
-					? `Member removed — stopped using this scope in ${body.mounts_removed} owned scope${body.mounts_removed === 1 ? "" : "s"}`
-					: "Member removed",
-			);
+			toast.success("Member removed");
 		},
 		onError: (e) =>
 			toast.error("Failed to remove member", {
@@ -684,7 +678,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 
 	const unshare = useMutation({
 		mutationFn: async () => {
-			const r = await authedFetch(`/api/scopes/${scopeId}/unshare`, { method: "POST" });
+			const r = await authedFetch(`/api/projects/${scopeId}/unshare`, { method: "POST" });
 			return r.json() as Promise<{
 				links_revoked: number;
 				members_removed: number;
@@ -709,8 +703,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<p className="text-xs text-muted-foreground sm:max-w-sm">
-					Accepted viewers with permanent access. Removing a member also stops using this scope in
-					their owned scopes.
+					Accepted viewers with permanent access to this project.
 				</p>
 				<AlertDialog>
 					<AlertDialogTrigger asChild>
@@ -718,17 +711,17 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 							variant="destructive"
 							size="sm"
 							disabled={unshare.isPending}
-							aria-label="Stop all sharing for this scope"
+							aria-label="Stop all sharing for this project"
 						>
 							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
 						</Button>
 					</AlertDialogTrigger>
 					<AlertDialogContent>
 						<AlertDialogHeader>
-							<AlertDialogTitle>Stop sharing this scope?</AlertDialogTitle>
+							<AlertDialogTitle>Stop sharing this project?</AlertDialogTitle>
 							<AlertDialogDescription>
-								This revokes active links, cancels pending invitations, removes accepted members,
-								and stops using this scope in their owned scopes.
+								This revokes active links, cancels pending invitations, and removes accepted
+								members.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
@@ -792,8 +785,7 @@ function MembersPanel({ scopeId }: { scopeId: string }) {
 										<AlertDialogHeader>
 											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
 											<AlertDialogDescription>
-												{label} will lose access to this scope. Any owned scopes using it stop using
-												it with the membership.
+												{label} will lose access to this project.
 											</AlertDialogDescription>
 										</AlertDialogHeader>
 										<AlertDialogFooter>

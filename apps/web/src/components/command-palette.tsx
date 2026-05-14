@@ -30,7 +30,7 @@ import { useDebouncedValue } from "@/lib/use-debounced";
 const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
 	{ label: "Overview", href: "/", icon: LayoutDashboard },
 	{ label: "Sessions", href: "/sessions", icon: MessageSquare },
-	{ label: "Scopes", href: "/scopes", icon: Workflow },
+	{ label: "Projects", href: "/scopes", icon: Workflow },
 	{ label: "Memories", href: "/memories", icon: Brain },
 	{ label: "Skills", href: "/skills", icon: Sparkles },
 	{ label: "Vault", href: "/vault", icon: Key },

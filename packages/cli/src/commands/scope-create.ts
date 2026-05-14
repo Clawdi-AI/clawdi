@@ -56,7 +56,7 @@ export async function scopeCreateCommand(
 	const slug = normalizeSlugInput(opts.slug);
 	if (slug) payload.slug = slug;
 
-	const r = await fetch(`${apiUrl}/api/scopes`, {
+	const r = await fetch(`${apiUrl}/api/projects`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${auth.apiKey}`,
@@ -68,7 +68,7 @@ export async function scopeCreateCommand(
 	if (!r.ok) {
 		const body = await r.json().catch(async () => await r.text());
 		if (r.status === 400 || r.status === 403 || r.status === 409 || r.status === 422) {
-			console.error(chalk.red(`Failed to create scope: ${formatDetail(body)}`));
+			console.error(chalk.red(`Failed to create project: ${formatDetail(body)}`));
 			process.exitCode = 1;
 			return;
 		}
@@ -77,18 +77,14 @@ export async function scopeCreateCommand(
 
 	const scope = (await r.json()) as ScopeRow;
 	if (opts.json) {
-		console.log(JSON.stringify({ status: "created", scope }, null, 2));
+		console.log(JSON.stringify({ status: "created", project: scope }, null, 2));
 		return;
 	}
 
 	console.log(
 		chalk.green("✓") +
-			` Created scope ${chalk.bold(scope.name)} ` +
+			` Created project ${chalk.bold(scope.name)} ` +
 			chalk.gray(`(${scope.slug}, ${scope.id.slice(0, 8)}…)`),
 	);
-	console.log(chalk.gray("Share it: ") + chalk.cyan(`clawdi scope share ${scope.slug}`));
-	console.log(
-		chalk.gray("Mount another scope into it: ") +
-			chalk.cyan(`clawdi scope mount <source> --into ${scope.slug}`),
-	);
+	console.log(chalk.gray("Share it: ") + chalk.cyan(`clawdi project share ${scope.slug}`));
 }
