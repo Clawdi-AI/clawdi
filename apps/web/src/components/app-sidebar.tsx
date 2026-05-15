@@ -7,6 +7,7 @@ import {
 	ChevronsUpDown,
 	CircleHelp,
 	CirclePlus,
+	ExternalLink,
 	Key,
 	LayoutDashboard,
 	Mail,
@@ -63,6 +64,20 @@ const navItems = [
 	{ href: "/vault", label: "Vault", icon: Key },
 	{ href: "/connectors", label: "Connectors", icon: Plug },
 ];
+
+function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			fill="currentColor"
+			aria-hidden="true"
+			className={className}
+			{...props}
+		>
+			<path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.757-1.333-1.757-1.09-.745.083-.729.083-.729 1.205.085 1.84 1.237 1.84 1.237 1.07 1.835 2.807 1.305 3.492.997.108-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.382 1.235-3.222-.123-.303-.535-1.523.118-3.176 0 0 1.008-.322 3.3 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.29-1.552 3.296-1.23 3.296-1.23.655 1.653.243 2.873.12 3.176.77.84 1.233 1.912 1.233 3.222 0 4.61-2.805 5.625-5.475 5.922.43.372.823 1.103.823 2.222 0 1.605-.015 2.898-.015 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
+		</svg>
+	);
+}
 
 export function AppSidebar() {
 	const pathname = usePathname();
@@ -148,6 +163,19 @@ export function AppSidebar() {
 								{/* `DeployTrigger` is `null` in OSS builds — the dynamic import is
 								    only constructed when `IS_HOSTED` is true (see top of file). */}
 								{DeployTrigger ? <DeployTrigger /> : null}
+								<SidebarMenuItem>
+									<SidebarMenuButton asChild tooltip="GitHub">
+										<a
+											href="https://github.com/Clawdi-AI/clawdi"
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<GitHubIcon />
+											<span>GitHub</span>
+											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+										</a>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
 								<SidebarMenuItem>
 									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
 										<Settings />

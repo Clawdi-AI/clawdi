@@ -147,12 +147,12 @@ async function fetchFirstMessages(
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
 	const { id } = await params;
 	if (!UUID_RE.test(id)) {
-		return { title: "Shared session", robots: { index: false, follow: false } };
+		return sharedSessionFallbackMetadata();
 	}
 	const token = await getOptionalToken();
 	const result = await fetchShare(id, token);
 	if (result.kind !== "ok") {
-		return { title: "Shared session", robots: { index: false, follow: false } };
+		return sharedSessionFallbackMetadata();
 	}
 	const share = result.share;
 	const title = share.summary || `Clawdi session ${share.id.slice(0, 8)}`;
@@ -163,6 +163,18 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 		robots: { index: false, follow: false },
 		openGraph: { title, description: share.summary || undefined },
 		twitter: { card: "summary", title, description: share.summary || undefined },
+	};
+}
+
+function sharedSessionFallbackMetadata(): Metadata {
+	const title = "Shared session";
+	const description = "A shared Clawdi session";
+	return {
+		title,
+		description,
+		robots: { index: false, follow: false },
+		openGraph: { title, description },
+		twitter: { card: "summary", title, description },
 	};
 }
 
