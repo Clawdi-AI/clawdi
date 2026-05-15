@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
+import { safeTruncate } from "../lib/sanitize";
 import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -208,11 +209,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				if (role === "user" && !firstUserMessage) {
 					const c = msg?.content;
 					if (typeof c === "string") {
-						firstUserMessage = c.slice(0, 200);
+						firstUserMessage = safeTruncate(c, 200);
 					} else if (Array.isArray(c)) {
 						const textBlock = c.find((b) => b.type === "text" && b.text);
 						if (textBlock?.text) {
-							firstUserMessage = textBlock.text.slice(0, 200);
+							firstUserMessage = safeTruncate(textBlock.text, 200);
 						}
 					}
 				}

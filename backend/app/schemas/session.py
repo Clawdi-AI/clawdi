@@ -5,6 +5,18 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+# Lone UTF-16 surrogates (U+D800..U+DFFF) are valid Python `str`
+# but cannot be encoded as UTF-8, so asyncpg rejects the bound
+# parameter and 500s the whole batch. The CLI used to truncate
+# `summary` with JS `.slice` (UTF-16 code units), which split an
+# emoji's surrogate pair and left a lone high surrogate at the
+# cut. The CLI now truncates by codepoint, but a stuck daemon
+# retried the bad payload ~34k times in prod before we shipped
+# the fix — strip on ingest so one bad record can't take the
+# batch down again.
+_LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
 # local_session_id flows straight into a file-store key
 # (`sessions/{user_id}/{local_session_id}.json`). Restrict to a safe charset
 # so a malicious client can't smuggle `/` or `..` and escape their own tenant
@@ -57,6 +69,13 @@ class SessionCreate(BaseModel):
     # Optional so old clients that don't compute hashes still get inserted;
     # legacy rows with NULL hash are always treated as "needs content".
     content_hash: str | None = None
+
+    @field_validator("summary", mode="after")
+    @classmethod
+    def _strip_summary_surrogates(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _LONE_SURROGATE_RE.sub("", v)
 
     @field_validator("started_at", "ended_at", "last_activity_at", mode="after")
     @classmethod

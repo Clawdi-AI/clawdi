@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
+import { safeTruncate } from "../lib/sanitize";
 import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -158,7 +159,7 @@ export class HermesAdapter implements AgentAdapter {
 				let summary = row.title;
 				if (!summary || summary === "New Chat" || summary.startsWith("New Chat #")) {
 					const firstUser = messages.find((m) => m.role === "user");
-					summary = firstUser?.content.slice(0, 200) ?? null;
+					summary = firstUser ? safeTruncate(firstUser.content, 200) : null;
 				}
 
 				if (messages.length === 0) continue;
