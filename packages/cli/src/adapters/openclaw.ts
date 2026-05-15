@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { safeTruncate } from "../lib/sanitize";
 import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -268,12 +269,12 @@ export class OpenClawAdapter implements AgentAdapter {
 
 				const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
 
+				const firstUserContent = messages.find((m) => m.role === "user")?.content;
 				const summary =
 					entry.displayName ??
 					entry.subject ??
 					entry.label ??
-					messages.find((m) => m.role === "user")?.content.slice(0, 200) ??
-					null;
+					(firstUserContent === undefined ? null : safeTruncate(firstUserContent, 200));
 
 				sessions.push({
 					localSessionId: sessionId,

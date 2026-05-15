@@ -1,5 +1,6 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { safeTruncate } from "../lib/sanitize";
 import { extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -211,7 +212,7 @@ export class CodexAdapter implements AgentAdapter {
 			const firstRealUser = messages.find(
 				(m) => m.role === "user" && !m.content.startsWith("<environment_context>"),
 			);
-			const summary = firstRealUser?.content.slice(0, 200) ?? null;
+			const summary = firstRealUser ? safeTruncate(firstRealUser.content, 200) : null;
 
 			sessions.push({
 				localSessionId: sessionId,

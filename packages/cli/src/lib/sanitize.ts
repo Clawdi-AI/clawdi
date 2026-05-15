@@ -48,6 +48,21 @@ export function sanitizeMetadata(str: string): string {
 }
 
 /**
+ * Truncate `str` to at most `n` Unicode codepoints.
+ *
+ * `String#slice` operates on UTF-16 code units and can cut between the
+ * halves of an emoji's surrogate pair, leaving a lone surrogate that
+ * isn't valid UTF-8 — PostgreSQL/asyncpg then rejects the row. Spreading
+ * via `[...str]` iterates by codepoint so the cut always lands on a
+ * valid boundary.
+ */
+export function safeTruncate(str: string, n: number): string {
+	const codepoints = [...str];
+	if (codepoints.length <= n) return str;
+	return codepoints.slice(0, n).join("");
+}
+
+/**
  * Sanitize a subpath to prevent path traversal.
  * Throws if any segment is literally "..".
  */
