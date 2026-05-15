@@ -3,12 +3,12 @@ import { resolve as resolvePath } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter, RawSession, RawSkill } from "../adapters/base";
-import { adapterRegistry } from "../adapters/registry";
+import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { sha256Hex } from "../lib/hash";
-import { askMulti, askYesNo, parseModules } from "../lib/prompts";
+import { parseModules } from "../lib/prompts";
 import {
 	adapterForType,
 	fetchScopeIdForEnv,
@@ -31,15 +31,11 @@ import {
 } from "../lib/skills-lock";
 import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
 import { tarSkillDir } from "../lib/tar";
-import { isInteractive } from "../lib/tty";
 
 const RESETUP_HINT =
 	"This machine's environment is no longer registered. Run `clawdi setup` again.";
 
-const UP_MODULES = [
-	{ value: "sessions", label: "Sessions", hint: "agent conversation history" },
-	{ value: "skills", label: "Skills", hint: "skill directories as tar.gz" },
-];
+const UP_MODULES = ["sessions", "skills"] as const;
 
 interface PushOpts {
 	modules?: string;
@@ -49,17 +45,42 @@ interface PushOpts {
 	allAgents?: boolean;
 	dryRun?: boolean;
 	agent?: string;
-	yes?: boolean;
 }
 
-interface AgentPushResult {
-	sessionsCacheSkipped: number;
+/** What `uploadOneAgent` actually pushed for a single agent. */
+interface AgentUploadResult {
 	sessionsCreated: number;
 	sessionsUpdated: number;
 	sessionsUnchanged: number;
 	contentUploaded: number;
-	skillsCacheSkipped: number;
 	skillsPushed: number;
+}
+
+/**
+ * What `scanOneAgent` found for a single agent: the sessions and skills
+ * staged for upload. Splitting scan from upload lets `push` show a
+ * combined, per-agent summary across every target agent and ask for ONE
+ * confirmation — instead of confirming each agent before the next is even
+ * scanned (which made a multi-agent `clawdi push` look like it had only
+ * picked the first agent).
+ */
+interface AgentScanResult {
+	agentType: AgentType;
+	envId: string | null;
+	sessions: RawSession[];
+	skills: RawSkill[];
+	sessionsCacheSkipped: number;
+	skillsCacheSkipped: number;
+	/** Per-agent advisories (hermes filter notice, first-run hint,
+	 * exclusion summary) — collected during the scan and rendered
+	 * under the agent in the unified summary instead of being printed
+	 * mid-scan, so the scan reads as one operation across all agents. */
+	notes: string[];
+}
+
+/** Whether a scan turned up anything to actually upload. */
+function scanHasWork(scan: AgentScanResult): boolean {
+	return scan.sessions.length > 0 || scan.skills.length > 0;
 }
 
 export async function push(opts: PushOpts) {
@@ -81,6 +102,14 @@ export async function push(opts: PushOpts) {
 		return;
 	}
 
+	// `--all` widens every axis it can. Explicit narrowing flags
+	// (--agent, --modules, --project, --exclude-project) still win
+	// per-axis — `--all --agent codex` means "all modules, all
+	// projects, but only codex".
+	if (opts.all && !opts.agent && !opts.allAgents) {
+		opts.allAgents = true;
+	}
+
 	const targetTypes = await resolveTargetAgentTypes(opts.agent, !!opts.allAgents);
 	if (targetTypes.length === 0) {
 		p.outro(chalk.red("Aborted."));
@@ -88,31 +117,99 @@ export async function push(opts: PushOpts) {
 		return;
 	}
 
-	let modules: string[];
-	if (opts.modules) {
-		const parsed = parseModules(opts.modules, UP_MODULES);
-		if (!parsed) return;
-		modules = parsed;
-	} else {
-		const picked = await askMulti("Modules to upload:", UP_MODULES);
-		if (!picked) {
-			p.outro(chalk.gray("Cancelled."));
-			return;
-		}
-		modules = picked;
-	}
-	if (modules.length === 0) {
-		p.outro(chalk.gray("Nothing to push."));
-		return;
-	}
-
-	if (targetTypes.length > 1) {
-		p.log.info(`Targets: ${targetTypes.map((t) => adapterRegistry[t].displayName).join(", ")}`);
-	}
+	// Module default: when --modules is omitted, take every module.
+	// `parseModules(undefined, …)` already returns the full list — no
+	// multi-select prompt to block an agent harness on.
+	const modules = parseModules(opts.modules, UP_MODULES);
+	if (!modules) return;
 
 	const moduleState = readModuleState();
 	const sessionsLock = readSessionsLock();
 	const skillsLock = readSkillsLock();
+
+	// Project scope is agent-independent (derived only from flags), so
+	// resolve it once and report it once — not per agent.
+	const projectFilter = opts.project ?? (opts.all ? undefined : process.cwd());
+	if (modules.includes("sessions")) {
+		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
+		p.log.info(chalk.gray(`Scanning ${scope}`));
+	}
+
+	// Scan every agent first — one spinner, one combined summary — so a
+	// multi-agent push reads as a single scan, not a per-agent block
+	// sequence that looks like only the first agent was picked.
+	const scanSpinner = p.spinner();
+	scanSpinner.start(
+		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
+	);
+	const scans: AgentScanResult[] = [];
+	let scanError: string | null = null;
+	try {
+		for (const agentType of targetTypes) {
+			const adapter = adapterForType(agentType);
+			if (!adapter) continue;
+			const scan = await scanOneAgent(
+				adapter,
+				modules,
+				opts,
+				projectFilter,
+				sessionsLock,
+				skillsLock,
+			);
+			if ("error" in scan) {
+				scanError = scan.error;
+				break;
+			}
+			scans.push(scan);
+		}
+	} catch (e) {
+		// A genuine throw (adapter scan / skill hashing failed) — stop the
+		// spinner before the error bubbles to `handleError`.
+		scanSpinner.stop("Scan failed.");
+		throw e;
+	}
+	scanSpinner.stop(scanError ? "Scan failed." : "Scan complete.");
+
+	if (scanError) {
+		// Scan phase mutates no caches — nothing to persist.
+		p.log.error(scanError);
+		p.outro(chalk.red("Aborted."));
+		process.exitCode = 1;
+		return;
+	}
+
+	// Combined per-agent summary: every target agent, its counts, and
+	// any advisories — visible in full before the confirmation.
+	for (const scan of scans) {
+		const name = adapterRegistry[scan.agentType].displayName;
+		const bits: string[] = [];
+		if (modules.includes("sessions")) {
+			const sync = scan.sessionsCacheSkipped > 0 ? ` (${scan.sessionsCacheSkipped} in sync)` : "";
+			bits.push(`${scan.sessions.length} session${scan.sessions.length === 1 ? "" : "s"}${sync}`);
+		}
+		if (modules.includes("skills")) {
+			const sync = scan.skillsCacheSkipped > 0 ? ` (${scan.skillsCacheSkipped} in sync)` : "";
+			bits.push(`${scan.skills.length} skill${scan.skills.length === 1 ? "" : "s"}${sync}`);
+		}
+		p.log.message(`${chalk.bold(name)} — ${bits.join(", ")} to upload`);
+		for (const note of scan.notes) {
+			p.log.message(chalk.gray(`  ${note}`));
+		}
+	}
+
+	const toUpload = scans.filter(scanHasWork);
+
+	if (opts.dryRun) {
+		p.outro(
+			chalk.gray(
+				toUpload.length > 0
+					? "Dry run complete."
+					: "Dry run — nothing to push, everything already in sync.",
+			),
+		);
+		return;
+	}
+
 	const totals = {
 		cacheSkipped: 0,
 		created: 0,
@@ -123,52 +220,39 @@ export async function push(opts: PushOpts) {
 		skills: 0,
 	};
 	let aborted = false;
-
-	for (const agentType of targetTypes) {
-		const adapter = adapterForType(agentType);
-		if (!adapter) continue;
-		if (targetTypes.length > 1) {
-			p.log.step(chalk.bold(`▶ ${adapterRegistry[agentType].displayName}`));
+	for (const scan of scans) {
+		// Cache-skip counts are scan facts — fold them in regardless of
+		// whether this agent goes on to upload anything.
+		totals.cacheSkipped += scan.sessionsCacheSkipped;
+		totals.skillsCacheSkipped += scan.skillsCacheSkipped;
+		if (!scanHasWork(scan)) continue;
+		// Header only when more than one agent actually uploads — a
+		// lone upload block needs no disambiguating label.
+		if (toUpload.length > 1) {
+			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
 		}
-		const result = await pushOneAgent(
-			adapter,
-			modules,
-			opts,
-			moduleState,
-			sessionsLock,
-			skillsLock,
-		);
+		const result = await uploadOneAgent(scan, moduleState, sessionsLock, skillsLock);
 		if (result === "aborted") {
 			aborted = true;
 			break;
 		}
-		if (result === "skipped") continue;
-		totals.cacheSkipped += result.sessionsCacheSkipped;
 		totals.created += result.sessionsCreated;
 		totals.updated += result.sessionsUpdated;
 		totals.unchanged += result.sessionsUnchanged;
 		totals.content += result.contentUploaded;
-		totals.skillsCacheSkipped += result.skillsCacheSkipped;
 		totals.skills += result.skillsPushed;
 	}
 
-	if (!opts.dryRun) {
-		writeModuleState(moduleState);
-		// Persist content-hash caches once per push command, even if the
-		// loop aborted partway — entries we mutated for successful agents
-		// are still valid and would otherwise be lost on the next push.
-		writeSessionsLock(sessionsLock);
-		writeSkillsLock(skillsLock);
-	}
+	writeModuleState(moduleState);
+	// Persist content-hash caches once per push command, even if the
+	// loop aborted partway — entries we mutated for successful agents
+	// are still valid and would otherwise be lost on the next push.
+	writeSessionsLock(sessionsLock);
+	writeSkillsLock(skillsLock);
 
 	if (aborted) {
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
-		return;
-	}
-
-	if (opts.dryRun) {
-		p.outro(chalk.gray("Dry run complete."));
 		return;
 	}
 
@@ -193,22 +277,32 @@ export async function push(opts: PushOpts) {
 	p.outro(chalk.green(`✓ Push complete — ${parts.join(", ")}`));
 }
 
-async function pushOneAgent(
+/**
+ * Scan one agent's local data and stage what would be uploaded. Prints
+ * nothing and mutates nothing (no cache writes, no network writes —
+ * only reads the sessions-lock to diff). Advisories go into the
+ * returned `notes` so the caller can render one combined summary
+ * across every agent. Returns `{ error }` on an unrecoverable env
+ * problem so the caller can surface it after stopping the scan spinner.
+ */
+async function scanOneAgent(
 	adapter: AgentAdapter,
 	modules: string[],
 	opts: PushOpts,
-	moduleState: ModuleState,
+	projectFilter: string | undefined,
 	sessionsLock: SessionsLock,
 	skillsLock: SkillsLock,
-): Promise<AgentPushResult | "aborted" | "skipped"> {
+): Promise<AgentScanResult | { error: string }> {
 	const agentType = adapter.agentType;
 	const envId = getEnvIdByAgent(agentType);
+	// True when `projectFilter` came from the cwd default rather than an
+	// explicit --project — drives whether "--all" is a useful hint.
+	const usedCwdDefault = !opts.all && !opts.project;
 
 	if (!opts.dryRun && !envId) {
-		p.log.error(
-			`No environment registered for ${adapterRegistry[agentType].displayName}. Run \`clawdi setup\` first.`,
-		);
-		return "aborted";
+		return {
+			error: `No environment registered for ${adapterRegistry[agentType].displayName}. Run \`clawdi setup\` first.`,
+		};
 	}
 
 	// Probe the cached env_id before doing any local work. The CLI keeps a
@@ -225,61 +319,51 @@ async function pushOneAgent(
 			});
 			if (res.error || !res.data) {
 				const status = res.response?.status ?? 0;
-				if (status === 404) {
-					p.log.error(RESETUP_HINT);
-					return "aborted";
-				}
+				if (status === 404) return { error: RESETUP_HINT };
 				// Anything else (401, network, 5xx) — let the actual upload bubble
 				// up the proper error; don't double-report here.
 			}
 		} catch (e) {
-			if (e instanceof ApiError && e.status === 404) {
-				p.log.error(RESETUP_HINT);
-				return "aborted";
-			}
+			if (e instanceof ApiError && e.status === 404) return { error: RESETUP_HINT };
 			// Same reasoning as above — fall through and let upload surface it.
 		}
 	}
 
-	// Project filter: explicit --all wins, then explicit --project, else cwd.
-	const usedCwdDefault = !opts.all && !opts.project;
-	const projectFilter = opts.all ? undefined : (opts.project ?? process.cwd());
-
+	const notes: string[] = [];
 	const excludeSet = new Set<string>(
 		(opts.excludeProject ?? []).map((path) => normalizeProject(path)),
 	);
 
-	if (modules.includes("sessions")) {
-		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
-		p.log.info(chalk.gray(`Scanning ${scope}`));
-	}
-
 	if (agentType === "hermes" && modules.includes("sessions") && projectFilter !== undefined) {
-		p.log.warn("Hermes does not support project filtering; pushing all sessions.");
-		p.log.info("Use --all to suppress this notice.");
+		// `--all` (alone) clears projectFilter, so suggesting it only
+		// helps when the filter came from the cwd default.
+		notes.push(
+			usedCwdDefault
+				? "Hermes ignores project filters — pushing all sessions. Use --all to suppress."
+				: "Hermes ignores project filters — pushing all sessions.",
+		);
 	}
 
 	let sessions: RawSession[] = [];
-	let skills: RawSkill[] = [];
-	let dedupedCount = 0;
-
-	const scanSpinner = p.spinner();
-	scanSpinner.start("Scanning local data...");
+	const skills: RawSkill[] = [];
+	let skillsCacheSkipped = 0;
 	if (modules.includes("sessions")) {
-		const result = await adapter.collectSessions({ projectFilter });
-		sessions = result.sessions;
-		dedupedCount = result.dedupedCount;
+		// `collectSessions` also reports a `dedupedCount` (resume chains it
+		// collapsed). That's internal housekeeping — not actionable and not
+		// perceptible to the user — so it isn't surfaced.
+		sessions = (await adapter.collectSessions({ projectFilter })).sessions;
 	}
 	if (modules.includes("skills")) {
-		skills = await adapter.collectSkills();
+		// Hash each skill's file tree and diff against the skills-lock here,
+		// in the scan — the same per-entity cache check sessions get below —
+		// so the summary's skill count reflects what will actually upload.
+		for (const skill of await adapter.collectSkills()) {
+			skill.contentHash = await computeSkillFolderHash(skill.directoryPath);
+			const cached = skillsLock.skills[skillCacheKey(agentType, skill.skillKey)]?.hash;
+			if (cached === skill.contentHash) skillsCacheSkipped++;
+			else skills.push(skill);
+		}
 	}
-	const dedupeNote =
-		dedupedCount > 0
-			? ` (deduped ${dedupedCount} resume chain${dedupedCount === 1 ? "" : "s"})`
-			: "";
-	scanSpinner.stop(
-		`Scanned ${sessions.length} session${sessions.length === 1 ? "" : "s"}${dedupeNote}, ${skills.length} skill${skills.length === 1 ? "" : "s"}`,
-	);
 
 	// Fingerprint each session's content. The server's batch endpoint
 	// compares this against the stored `content_hash` to decide whether
@@ -305,15 +389,13 @@ async function pushOneAgent(
 		});
 		const removed = before - sessions.length;
 		if (removed > 0) {
-			p.log.info(
-				chalk.gray(
-					`Excluded ${removed} session${removed === 1 ? "" : "s"} from ${matchedExcludes.size} project${matchedExcludes.size === 1 ? "" : "s"}`,
-				),
+			notes.push(
+				`Excluded ${removed} session${removed === 1 ? "" : "s"} from ${matchedExcludes.size} project${matchedExcludes.size === 1 ? "" : "s"}.`,
 			);
 		}
 		for (const requested of excludeSet) {
 			if (!matchedExcludes.has(requested)) {
-				p.log.warn(`--exclude-project ${requested} did not match any local sessions; ignoring`);
+				notes.push(`--exclude-project ${requested} matched no local sessions; ignored.`);
 			}
 		}
 	}
@@ -332,77 +414,44 @@ async function pushOneAgent(
 		sessionsCacheSkipped = before - sessions.length;
 	}
 
-	if (modules.includes("sessions")) {
-		const tail = sessionsCacheSkipped > 0 ? ` (${sessionsCacheSkipped} already in sync)` : "";
-		p.log.message(chalk.gray(`Sessions: ${sessions.length} to upload${tail}`));
-		if (sessions.length === 0 && sessionsCacheSkipped === 0) {
-			// Nothing scanned at all — guide first-run cwd-default users.
-			const isFirstRun = !Object.keys(sessionsLock.sessions).some((k) =>
-				k.startsWith(`${agentType}:`),
+	// Guidance when nothing matched at all.
+	if (modules.includes("sessions") && sessions.length === 0 && sessionsCacheSkipped === 0) {
+		const isFirstRun = !Object.keys(sessionsLock.sessions).some((k) =>
+			k.startsWith(`${agentType}:`),
+		);
+		if (excludeSet.size > 0) {
+			notes.push("Nothing left to push after exclusions.");
+		} else if (usedCwdDefault && isFirstRun) {
+			notes.push(
+				`No sessions in ${process.cwd()} — looks like a first run. Use --all to scan every project.`,
 			);
-			if (usedCwdDefault && isFirstRun && !isInteractive()) {
-				p.log.info(
-					chalk.gray(
-						`No sessions matched in ${process.cwd()}. This looks like a first run — re-run with --all to scan every project, or pass --project <abs-path> if your sessions live elsewhere.`,
-					),
-				);
-			} else if (projectFilter) {
-				p.log.info(
-					chalk.gray(
-						"No sessions matched. Try --all to scan every project, or pass --project <abs-path> for a different scope.",
-					),
-				);
-			}
+		} else if (projectFilter) {
+			// Don't suggest --all if the user already passed it (explicit
+			// --project alongside --all): --all wouldn't widen anything,
+			// the project just didn't match.
+			notes.push(
+				opts.all
+					? "No sessions matched that project — check the --project path."
+					: "No sessions matched. Use --all to scan every project, or --project <abs-path>.",
+			);
 		}
-	}
-	if (modules.includes("skills")) {
-		p.log.message(chalk.gray(`Skills:   ${skills.length} to upload`));
 	}
 
-	if (sessions.length === 0 && skills.length === 0) {
-		if (sessionsCacheSkipped > 0) {
-			// Cache covered everything. Surface the count to the top-level
-			// totals so the user sees a non-zero "skipped (cache)" number.
-			return {
-				sessionsCacheSkipped,
-				sessionsCreated: 0,
-				sessionsUpdated: 0,
-				sessionsUnchanged: 0,
-				contentUploaded: 0,
-				skillsCacheSkipped: 0,
-				skillsPushed: 0,
-			};
-		}
-		if (excludeSet.size > 0 && modules.includes("sessions")) {
-			p.log.message(chalk.gray("Nothing left to push after exclusions."));
-		}
-		return "skipped";
-	}
+	return { agentType, envId, sessions, skills, sessionsCacheSkipped, skillsCacheSkipped, notes };
+}
 
-	if (opts.dryRun) {
-		// Dry-run reports the local scan size — we can't know which sessions
-		// the server already has without actually hitting the batch endpoint.
-		return {
-			sessionsCacheSkipped,
-			sessionsCreated: sessions.length,
-			sessionsUpdated: 0,
-			sessionsUnchanged: 0,
-			contentUploaded: sessions.length,
-			skillsCacheSkipped: 0,
-			skillsPushed: skills.length,
-		};
-	}
-
-	// `--yes` skips the confirmation. `askYesNo` already returns true in
-	// non-interactive contexts (CI / agent), so explicit `--yes` is mostly
-	// a no-op in those, but keeps the skill's command line self-documenting.
-	if (!opts.yes) {
-		const ok = await askYesNo("Proceed with upload?");
-		if (!ok) {
-			p.log.info(chalk.gray("Cancelled."));
-			return "skipped";
-		}
-	}
+/**
+ * Upload one agent's scanned data. Mutates `moduleState` and both lock
+ * caches as uploads land. Returns "aborted" if the server reports the
+ * environment vanished mid-batch.
+ */
+async function uploadOneAgent(
+	scan: AgentScanResult,
+	moduleState: ModuleState,
+	sessionsLock: SessionsLock,
+	skillsLock: SkillsLock,
+): Promise<AgentUploadResult | "aborted"> {
+	const { agentType, envId, sessions, skills } = scan;
 
 	if (!envId) {
 		p.log.error("Environment id missing — rerun `clawdi setup`.");
@@ -541,46 +590,26 @@ async function pushOneAgent(
 		moduleState[`sessions:${agentType}`] = { lastActivityAt: new Date().toISOString() };
 	}
 
-	let skillsCacheSkipped = 0;
 	if (skills.length > 0) {
-		// Phase-2: skill upload uses scope-explicit URLs. Resolve
-		// THIS agent's env's default_scope_id directly — not the
-		// auth key's "most recently active env" heuristic. With a
-		// multi-agent setup on an unbound CLI key, the latter would
-		// route a `claude_code` push under whichever env was
-		// touched last (often `codex` from the previous push),
-		// while sessions still wrote correctly to `envId`. The
-		// `claude_code` daemon would never see these skills because
-		// its reconcile listing is scoped to its own env.
-		if (!envId) {
-			throw new Error(
-				`internal error: skill push without envId for ${agentType}; the early-return guard above should have caught this`,
-			);
-		}
+		// Skill upload uses scope-explicit URLs. Resolve THIS agent's
+		// env's default_scope_id directly — not the auth key's "most
+		// recently active env" heuristic. With a multi-agent setup on
+		// an unbound CLI key, the latter would route a `claude_code`
+		// push under whichever env was touched last (often `codex`
+		// from the previous push), while sessions still wrote
+		// correctly to `envId`. The `claude_code` daemon would never
+		// see these skills because its reconcile listing is scoped to
+		// its own env.
 		const skillScopeId = await fetchScopeIdForEnv(api, envId);
 
+		// `skills` is already the to-upload set — the scan phase hashed
+		// every skill and dropped the ones already in sync.
 		const skillSpinner = p.spinner();
-		skillSpinner.start(`Hashing ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
+		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
 		const skipped: { key: string; reason: string }[] = [];
 		try {
 			for (const skill of skills) {
-				// Compute the file-tree hash first. Cheap (no tar build) — if
-				// it matches the cache, we skip the whole upload path.
-				// Cache key is partitioned by `(agentType, skillKey)`: in
-				// multi-agent push, agent A and agent B can have the same
-				// `foo` content under different scopes; a flat skill_key
-				// cache would say "B already in sync" the moment A pushed,
-				// leaving B's scope missing the skill.
-				const computedHash = await computeSkillFolderHash(skill.directoryPath);
-				const cacheK = skillCacheKey(agentType, skill.skillKey);
-				if (skillsLock.skills[cacheK]?.hash === computedHash) {
-					skillsCacheSkipped++;
-					skillSpinner.message(
-						`Hashing skills (${pushed + skipped.length + skillsCacheSkipped}/${skills.length})...`,
-					);
-					continue;
-				}
 				// Pass skill_key so nested Hermes layouts archive
 				// entries under `category/foo/...` (matching the
 				// cloud key), not just `foo/...` which would
@@ -592,10 +621,19 @@ async function pushOneAgent(
 						skill.skillKey,
 						tarBytes,
 						`${skill.skillKey}.tar.gz`,
-						computedHash,
+						skill.contentHash,
 					);
 					pushed++;
-					skillsLock.skills[cacheK] = { hash: computedHash };
+					// Cache key is partitioned by `(agentType, skillKey)`: in
+					// multi-agent push, agent A and agent B can have the same
+					// `foo` content under different scopes; a flat skill_key
+					// cache would say "B already in sync" the moment A pushed,
+					// leaving B's scope missing the skill.
+					if (skill.contentHash) {
+						skillsLock.skills[skillCacheKey(agentType, skill.skillKey)] = {
+							hash: skill.contentHash,
+						};
+					}
 				} catch (e) {
 					// 413 = upstream (Cloudflare / nginx) refused the body. Almost
 					// always a single oversized skill; skip it and keep going so
@@ -616,14 +654,9 @@ async function pushOneAgent(
 					const mb = (tarBytes.length / 1024 / 1024).toFixed(1);
 					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
 				}
-				skillSpinner.message(
-					`Uploading skills (${pushed + skipped.length + skillsCacheSkipped}/${skills.length})...`,
-				);
+				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);
 			}
 			const summary = [`Pushed ${pushed} skill${pushed === 1 ? "" : "s"}`];
-			if (skillsCacheSkipped > 0) {
-				summary.push(`${skillsCacheSkipped} already in sync`);
-			}
 			if (skipped.length > 0) {
 				summary.push(`skipped ${skipped.length} (too large)`);
 			}
@@ -640,12 +673,10 @@ async function pushOneAgent(
 	}
 
 	return {
-		sessionsCacheSkipped,
 		sessionsCreated,
 		sessionsUpdated,
 		sessionsUnchanged,
 		contentUploaded,
-		skillsCacheSkipped,
 		skillsPushed,
 	};
 }

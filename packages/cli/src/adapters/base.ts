@@ -64,6 +64,9 @@ export interface RawSkill {
 	filePath: string;
 	directoryPath: string;
 	isDirectory: boolean;
+	// Set by `push` during the scan phase — the skill folder hash used to
+	// diff against the skills-lock. Adapters do not populate this.
+	contentHash?: string;
 }
 
 export interface AgentAdapter {

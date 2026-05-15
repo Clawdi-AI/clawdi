@@ -56,20 +56,26 @@ export async function askOne<T extends string>(
 	return result;
 }
 
+/**
+ * Resolve a `--modules` value against the allowed module names. Returns
+ * the full list when `input` is undefined, the parsed subset otherwise,
+ * or `null` on an unknown name (after printing the reason). Never
+ * returns an empty array.
+ */
 export function parseModules(
 	input: string | undefined,
-	available: Array<{ value: string }>,
+	available: readonly string[],
 ): string[] | null {
-	if (!input) return available.map((o) => o.value);
+	if (!input) return [...available];
 	const chosen = input
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
-	const valid = new Set(available.map((o) => o.value));
+	const valid = new Set(available);
 	const invalid = chosen.filter((c) => !valid.has(c));
 	if (invalid.length > 0) {
 		console.log(chalk.red(`Unknown module(s): ${invalid.join(", ")}`));
-		console.log(chalk.gray(`  Valid: ${available.map((o) => o.value).join(", ")}`));
+		console.log(chalk.gray(`  Valid: ${available.join(", ")}`));
 		return null;
 	}
 	if (chosen.length === 0) return null;

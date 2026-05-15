@@ -169,40 +169,6 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 	console.log(chalk.green(`✓ clawdi v${latest} installed.`));
 }
 
-/**
- * Non-blocking background check used at the end of commands.
- * Returns quickly on cache hit, fires a background fetch otherwise.
- */
-export async function maybeNotifyOutdated(): Promise<void> {
-	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
-	if (!process.stdout.isTTY) return;
-
-	const current = getCliVersion();
-	const cached = readCache();
-	const now = Date.now();
-
-	if (cached?.latest && now - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) {
-		if (isNewer(cached.latest, current)) {
-			console.log();
-			console.log(
-				chalk.gray(
-					`  (v${cached.latest} available — run \`clawdi update\` or \`npm i -g clawdi\`)`,
-				),
-			);
-		}
-		return;
-	}
-
-	// Cache stale — refresh in the background; don't block caller.
-	fetchLatest()
-		.then((latest) => {
-			if (latest) writeCache(latest);
-		})
-		.catch(() => {
-			// best-effort
-		});
-}
-
 const LAST_VERSION_FILE = "last-version";
 
 function lastVersionPath(): string {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { maybeAutoUpdate, maybeNotifyOutdated, update } from "../../src/commands/update";
+import { maybeAutoUpdate, update } from "../../src/commands/update";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -106,48 +106,6 @@ describe("update --json", () => {
 		const result = JSON.parse(captured) as { latest: string | null; upgradeAvailable: boolean };
 		expect(result.latest).toBeNull();
 		expect(result.upgradeAvailable).toBe(false);
-	});
-});
-
-describe("maybeNotifyOutdated", () => {
-	it("short-circuits when CLAWDI_NO_UPDATE_CHECK is set", async () => {
-		process.env.CLAWDI_NO_UPDATE_CHECK = "1";
-		const { captured, restore } = mockFetch([]);
-		try {
-			await maybeNotifyOutdated();
-		} finally {
-			restore();
-		}
-		expect(captured).toHaveLength(0);
-	});
-
-	it("short-circuits when stdout is not a TTY", async () => {
-		// In `bun test` stdout.isTTY is typically undefined/false anyway
-		const { captured, restore } = mockFetch([]);
-		try {
-			await maybeNotifyOutdated();
-		} finally {
-			restore();
-		}
-		expect(captured).toHaveLength(0);
-	});
-
-	it("reads from the cache when it is fresh and upgrade is available", async () => {
-		// Force TTY semantics false anyway; this test exercises the cache-read path
-		// indirectly by verifying no fetch fires. In non-TTY env the function
-		// returns early regardless — the important contract is 'no network'.
-		const cachePath = join(tmpHome, ".clawdi", "update.json");
-		writeFileSync(
-			cachePath,
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
-		);
-		const { captured, restore } = mockFetch([]);
-		try {
-			await maybeNotifyOutdated();
-		} finally {
-			restore();
-		}
-		expect(captured).toHaveLength(0);
 	});
 });
 

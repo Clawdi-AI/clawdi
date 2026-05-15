@@ -5,13 +5,10 @@ import type { AgentAdapter } from "../adapters/base";
 import {
 	AGENT_TYPES,
 	type AgentType,
-	adapterRegistry,
 	allAdapterEntries,
 	getAdapterEntry,
 } from "../adapters/registry";
 import { getClawdiDir } from "./config";
-import { askOne } from "./prompts";
-import { isInteractive } from "./tty";
 
 export function getEnvIdByAgent(agentType: string): string | null {
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
@@ -88,11 +85,15 @@ export function listRegisteredAgentTypes(): AgentType[] {
 }
 
 /**
- * Resolve the agent adapter to operate on. Prints a specific error message
- * to stdout before returning null so callers can simply abort — distinguishing
- * "no agents found" from "ambiguous, can't pick without a prompt" is critical
- * in non-interactive contexts (CI, AI agents, piped stdout) where the user
- * sees a misleading "no supported agent" message if we collapse the cases.
+ * Resolve a SINGLE agent adapter to operate on. Prints a specific error
+ * message before returning null so callers can simply abort. Never
+ * prompts — an ambiguous machine (multiple registered, or multiple
+ * detected but none registered) aborts with instructions, identically
+ * in TTY and non-TTY, so agent harnesses never stall on a picker.
+ *
+ * Multi-agent commands (`push`, `pull`, `session list`) should call
+ * `resolveTargetAgentTypes` instead — it defaults an ambiguous machine
+ * to "all registered agents" rather than aborting.
  */
 export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 	// 1. Explicit --agent wins.
@@ -114,18 +115,16 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 1 && registered[0]) return adapterForType(registered[0]);
 	if (registered.length > 1) {
-		if (!isInteractive()) {
-			console.log(chalk.red("Multiple agents are registered on this machine."));
-			console.log(
-				chalk.gray(`Pass --agent <type> to choose one. Registered: ${registered.join(", ")}`),
-			);
-			return null;
-		}
-		const picked = await askOne<AgentType>(
-			"Multiple agents registered. Select one:",
-			registered.map((t) => ({ value: t, label: adapterRegistry[t].displayName })),
+		// Multi-agent ambiguity is handled by `resolveTargetAgentTypes`
+		// (it defaults to all registered agents). Single-target callers
+		// via this path have no good "pick all" semantics, so keep the
+		// abort here — but match TTY and non-TTY so agent harnesses get
+		// the same message regardless of how they're run.
+		console.log(chalk.red("Multiple agents are registered on this machine."));
+		console.log(
+			chalk.gray(`Pass --agent <type> to choose one. Registered: ${registered.join(", ")}`),
 		);
-		return picked ? adapterForType(picked) : null;
+		return null;
 	}
 
 	// 3. Fall back to detection.
@@ -141,20 +140,19 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
 		return null;
 	}
 	if (detected.length === 1 && detected[0]) return detected[0];
-	if (!isInteractive()) {
-		const types = detected.map((a) => a.agentType);
-		console.log(chalk.red("Multiple agents detected on this machine."));
-		console.log(chalk.gray(`Pass --agent <type> to choose one. Detected: ${types.join(", ")}`));
-		return null;
-	}
-	const picked = await askOne<AgentType>(
-		"Multiple agents detected. Select one:",
-		detected.map((a) => ({
-			value: a.agentType,
-			label: adapterRegistry[a.agentType].displayName,
-		})),
+	// Multiple detected but none registered: this is a one-time
+	// "which agent gets paired with my Clawdi account?" decision the
+	// user must make via `clawdi setup`, not something to prompt for
+	// at push/pull time. Same abort message in TTY and non-TTY so
+	// agent harnesses see the path forward instead of a stalled prompt.
+	const types = detected.map((a) => a.agentType);
+	console.log(chalk.red("Multiple agents detected on this machine."));
+	console.log(
+		chalk.gray(
+			`Run \`clawdi setup\` to register one, or pass --agent <type>. Detected: ${types.join(", ")}`,
+		),
 	);
-	return picked ? adapterForType(picked) : null;
+	return null;
 }
 
 /**
@@ -168,7 +166,8 @@ export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | n
  *   --all-agents          → every type with a file under ~/.clawdi/environments/
  *   --agent <type>        → exactly that one (validated)
  *   neither, single match → the single registered/detected adapter (via selectAdapter)
- *   neither, ambiguous    → null in non-interactive contexts; prompt otherwise
+ *   neither, multi match  → every registered agent (the flagless default)
+ *   neither, none usable  → empty array (selectAdapter printed the reason)
  */
 export async function resolveTargetAgentTypes(
 	agentOpt: string | undefined,
@@ -187,6 +186,22 @@ export async function resolveTargetAgentTypes(
 			return [];
 		}
 		return registered;
+	}
+
+	// No --agent and no --all-agents: with multiple registered, default
+	// to all of them. Today's behavior was to prompt in TTY (blocking
+	// agent harnesses) or abort in CI; the new default matches the "do
+	// the obvious thing" intent of a flagless invocation and keeps
+	// all-agents users from having to type --all-agents every time.
+	// Callers render their own per-agent output (push's combined scan
+	// summary, pull's per-agent steps), so no notice is printed here.
+	// Single-registered users hit the standard selectAdapter path below
+	// and see no change.
+	if (!agentOpt) {
+		const registered = listRegisteredAgentTypes();
+		if (registered.length > 1) {
+			return registered;
+		}
 	}
 
 	const adapter = await selectAdapter(agentOpt);

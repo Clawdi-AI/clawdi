@@ -7,7 +7,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
-import { askMulti, askYesNo, parseModules } from "../lib/prompts";
+import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	adapterForType,
@@ -22,17 +22,45 @@ import {
 	writeSkillsLock,
 } from "../lib/skills-lock";
 
-const DOWN_MODULES = [
-	{ value: "skills", label: "Skills", hint: "pull skill archives to agent directories" },
-	{ value: "sessions", label: "Sessions", hint: "mirror cloud sessions to ~/.clawdi/sessions/" },
-];
+const DOWN_MODULES = ["skills", "sessions"] as const;
 
 interface PullOpts {
 	modules?: string;
 	dryRun?: boolean;
 	agent?: string;
 	allAgents?: boolean;
-	yes?: boolean;
+	all?: boolean;
+}
+
+/**
+ * What `scanOneAgent` found for a single agent: the skills and sessions
+ * staged for download. Splitting scan from download lets `pull` show a
+ * combined, per-agent summary across every target agent and ask for ONE
+ * confirmation — the same shape as `clawdi push`.
+ */
+interface AgentPullScan {
+	agentType: AgentType;
+	/** Scope to download skills from; null when skills aren't being
+	 * pulled or the agent has no registered environment. */
+	skillScopeId: string | null;
+	skills: SkillSummary[];
+	skillsInSync: number;
+	sessions: { remote: SessionListItem; reason: "new" | "updated" }[];
+	sessionsUnchanged: number;
+	/** Per-agent advisories rendered under the agent in the summary. */
+	notes: string[];
+}
+
+/** What `downloadOneAgent` actually pulled for a single agent. */
+interface AgentPullResult {
+	skillsPulled: number;
+	sessionsNew: number;
+	sessionsUpdated: number;
+}
+
+/** Whether a scan turned up anything to actually download. */
+function scanHasWork(scan: AgentPullScan): boolean {
+	return scan.skills.length > 0 || scan.sessions.length > 0;
 }
 
 export async function pull(opts: PullOpts) {
@@ -45,6 +73,13 @@ export async function pull(opts: PullOpts) {
 		return;
 	}
 
+	// `--all` widens every axis it can. Pull only has modules + agents
+	// (no project axis); explicit narrowing via --agent or --modules
+	// still wins.
+	if (opts.all && !opts.agent && !opts.allAgents) {
+		opts.allAgents = true;
+	}
+
 	const targetTypes = await resolveTargetAgentTypes(opts.agent, !!opts.allAgents);
 	if (targetTypes.length === 0) {
 		p.outro(chalk.red("Aborted."));
@@ -52,74 +87,97 @@ export async function pull(opts: PullOpts) {
 		return;
 	}
 
-	let modules: string[];
-	if (opts.modules) {
-		const parsed = parseModules(opts.modules, DOWN_MODULES);
-		if (!parsed) return;
-		modules = parsed;
-	} else {
-		const picked = await askMulti("Modules to download:", DOWN_MODULES);
-		if (!picked) {
-			p.outro(chalk.gray("Cancelled."));
-			return;
+	// Module default: when --modules is omitted, take every module —
+	// no multi-select prompt to block an agent harness on.
+	const modules = parseModules(opts.modules, DOWN_MODULES);
+	if (!modules) return;
+
+	const api = new ApiClient();
+	// Read once before the loop, mutate as downloads land, persist once at
+	// the end. Lost work on partial failure is safe — re-running a pull is
+	// idempotent (the cloud diff just kicks in again).
+	const skillsLock = modules.includes("skills") ? readSkillsLock() : null;
+
+	// Scan every agent first — one spinner, one combined summary — so a
+	// multi-agent pull reads as a single scan, matching `clawdi push`.
+	const scanSpinner = p.spinner();
+	scanSpinner.start(
+		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
+	);
+	const scans: AgentPullScan[] = [];
+	try {
+		for (const agentType of targetTypes) {
+			scans.push(await scanOneAgent(api, agentType, modules, skillsLock));
 		}
-		modules = picked;
+	} catch (e) {
+		scanSpinner.stop("Scan failed.");
+		throw e;
 	}
-	if (modules.length === 0) {
-		p.outro(chalk.gray("Nothing to download."));
-		return;
+	scanSpinner.stop("Scan complete.");
+
+	// Combined per-agent summary, visible in full before the confirmation.
+	for (const scan of scans) {
+		const name = adapterRegistry[scan.agentType].displayName;
+		const bits: string[] = [];
+		if (modules.includes("skills")) {
+			const sync = scan.skillsInSync > 0 ? ` (${scan.skillsInSync} in sync)` : "";
+			bits.push(`${scan.skills.length} skill${scan.skills.length === 1 ? "" : "s"}${sync}`);
+		}
+		if (modules.includes("sessions")) {
+			const sync = scan.sessionsUnchanged > 0 ? ` (${scan.sessionsUnchanged} unchanged)` : "";
+			bits.push(`${scan.sessions.length} session${scan.sessions.length === 1 ? "" : "s"}${sync}`);
+		}
+		p.log.message(`${chalk.bold(name)} — ${bits.join(", ")} to download`);
+		for (const note of scan.notes) {
+			p.log.message(chalk.gray(`  ${note}`));
+		}
 	}
 
-	if (targetTypes.length > 1) {
-		p.log.info(`Targets: ${targetTypes.map((t) => adapterRegistry[t].displayName).join(", ")}`);
+	const toDownload = scans.filter(scanHasWork);
+
+	if (opts.dryRun) {
+		p.outro(
+			chalk.gray(
+				toDownload.length > 0
+					? "Dry run complete."
+					: "Dry run — nothing to pull, everything already in sync.",
+			),
+		);
+		return;
 	}
 
 	const totals = {
 		skills: 0,
-		skillsAlreadyInSync: 0,
+		skillsInSync: 0,
 		sessionsNew: 0,
 		sessionsUpdated: 0,
 		sessionsUnchanged: 0,
 	};
-	const api = new ApiClient();
-	// Read once before the loop, mutate as we go, persist once at the end —
-	// matches the push-side pattern. Lost work on partial failure is safe
-	// (re-running a pull is idempotent: cloud diff just kicks in again).
-	const skillsLock = modules.includes("skills") ? readSkillsLock() : null;
-
-	for (const agentType of targetTypes) {
-		if (targetTypes.length > 1) {
-			p.log.step(chalk.bold(`▶ ${adapterRegistry[agentType].displayName}`));
+	for (const scan of scans) {
+		// "In sync" / "unchanged" are scan facts — fold them in regardless
+		// of whether this agent goes on to download anything.
+		totals.skillsInSync += scan.skillsInSync;
+		totals.sessionsUnchanged += scan.sessionsUnchanged;
+		if (!scanHasWork(scan)) continue;
+		// Header only when more than one agent actually downloads.
+		if (toDownload.length > 1) {
+			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
 		}
-
-		if (modules.includes("skills") && skillsLock) {
-			const counts = await pullSkills(api, agentType, opts, skillsLock);
-			totals.skills += counts.pulled;
-			totals.skillsAlreadyInSync += counts.alreadyInSync;
-		}
-
-		if (modules.includes("sessions")) {
-			const counts = await pullSessions(api, agentType, opts);
-			totals.sessionsNew += counts.fresh;
-			totals.sessionsUpdated += counts.updated;
-			totals.sessionsUnchanged += counts.unchanged;
-		}
+		const result = await downloadOneAgent(api, scan, skillsLock);
+		totals.skills += result.skillsPulled;
+		totals.sessionsNew += result.sessionsNew;
+		totals.sessionsUpdated += result.sessionsUpdated;
 	}
 
-	if (!opts.dryRun && skillsLock) writeSkillsLock(skillsLock);
-
-	if (opts.dryRun) {
-		p.outro(chalk.gray("Dry run complete."));
-		return;
-	}
+	if (skillsLock) writeSkillsLock(skillsLock);
 
 	const parts: string[] = [];
 	if (modules.includes("skills")) {
-		const skillsLabel =
-			totals.skillsAlreadyInSync > 0
-				? `${totals.skills} skill${totals.skills === 1 ? "" : "s"} downloaded, ${totals.skillsAlreadyInSync} already in sync`
-				: `${totals.skills} skill${totals.skills === 1 ? "" : "s"}`;
-		parts.push(skillsLabel);
+		parts.push(
+			totals.skillsInSync > 0
+				? `${totals.skills} skill${totals.skills === 1 ? "" : "s"} downloaded, ${totals.skillsInSync} already in sync`
+				: `${totals.skills} skill${totals.skills === 1 ? "" : "s"}`,
+		);
 	}
 	if (modules.includes("sessions")) {
 		parts.push(
@@ -129,114 +187,153 @@ export async function pull(opts: PullOpts) {
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
 }
 
-interface SkillPullCounts {
-	pulled: number;
-	alreadyInSync: number;
-}
-
-async function pullSkills(
+/**
+ * Scan one agent against the cloud and stage what would be downloaded.
+ * Prints nothing — advisories go into `notes` for the combined summary.
+ * Does network reads (skill listing, session paging) but writes nothing.
+ */
+async function scanOneAgent(
 	api: ApiClient,
 	agentType: AgentType,
-	opts: PullOpts,
-	skillsLock: SkillsLock,
-): Promise<SkillPullCounts> {
-	const adapter = adapterForType(agentType);
-	if (!adapter) return { pulled: 0, alreadyInSync: 0 };
+	modules: string[],
+	skillsLock: SkillsLock | null,
+): Promise<AgentPullScan> {
+	const notes: string[] = [];
+	let skillScopeId: string | null = null;
+	const skills: SkillSummary[] = [];
+	let skillsInSync = 0;
 
-	// Resolve the target agent's scope upfront. Without this, the
-	// listing below returns every scope's skills and the loop
-	// installs sibling-agent skills into this adapter's directory
-	// — `pull --all-agents` on a multi-agent unbound key would
-	// duplicate every codex skill into claude_code's home and
-	// vice versa. The download URL ALSO needs the scope_id so
-	// duplicate-key skills resolve to the right bytes.
-	const envId = getEnvIdByAgent(agentType);
-	if (!envId) {
-		p.log.warn(
-			`No environment registered for ${adapterRegistry[agentType].displayName}; skip. Run \`clawdi setup\` first.`,
-		);
-		return { pulled: 0, alreadyInSync: 0 };
-	}
-	const scopeId = await fetchScopeIdForEnv(api, envId);
-
-	const fetchSpinner = p.spinner();
-	fetchSpinner.start("Fetching skills...");
-	const page = unwrap(
-		await api.GET("/api/skills", {
-			params: { query: { page_size: 200, scope_id: scopeId } },
-		}),
-	);
-	const cloudSkills: SkillSummary[] = page.items;
-	fetchSpinner.stop(
-		`Found ${cloudSkills.length} skill${cloudSkills.length === 1 ? "" : "s"} in cloud`,
-	);
-
-	if (cloudSkills.length === 0) return { pulled: 0, alreadyInSync: 0 };
-
-	// Diff: a skill is "in sync" iff its cloud `content_hash` matches our
-	// cached hash AND we have a local file for it. The local-file check
-	// catches the case where the user wiped `~/.claude/skills/` but kept
-	// the lock file — we'd otherwise silently skip and never restore.
-	const toDownload: SkillSummary[] = [];
-	let alreadyInSync = 0;
-	for (const skill of cloudSkills) {
-		// Cache key partitioned by `(agentType, skill_key)` so a multi-
-		// agent pull doesn't share state across agents — each agent's
-		// scope is independent.
-		const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
-		const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
-		if (cached && cached === skill.content_hash && localExists) {
-			alreadyInSync++;
-			continue;
-		}
-		toDownload.push(skill);
-	}
-
-	const newCount = toDownload.filter((s) => !existsSync(adapter.getSkillPath(s.skill_key))).length;
-	const updatedCount = toDownload.length - newCount;
-	p.log.message(
-		chalk.gray(`${newCount} new, ${updatedCount} updated, ${alreadyInSync} already in sync`),
-	);
-
-	if (opts.dryRun || toDownload.length === 0) return { pulled: 0, alreadyInSync };
-
-	if (!opts.yes) {
-		const ok = await askYesNo("Proceed with skill download?");
-		if (!ok) return { pulled: 0, alreadyInSync };
-	}
-
-	let pulled = 0;
-	for (const skill of toDownload) {
-		const safeKey = sanitizeMetadata(skill.skill_key);
-		const dest = adapter.getSkillPath(skill.skill_key);
-		if (existsSync(dest) && !opts.yes) {
-			const overwrite = await askYesNo(`${safeKey} already exists. Overwrite?`, false);
-			if (!overwrite) {
-				p.log.info(`${safeKey} skipped`);
-				continue;
+	if (modules.includes("skills") && skillsLock) {
+		const adapter = adapterForType(agentType);
+		const envId = getEnvIdByAgent(agentType);
+		if (adapter && !envId) {
+			// Sessions still pull fine (they query by agent type), but
+			// skills need the env's scope — skip them with a notice.
+			notes.push("No environment registered — skipping skills. Run `clawdi setup`.");
+		} else if (adapter && envId) {
+			// Resolve THIS agent's scope so a multi-agent account doesn't
+			// install sibling-agent skills into this adapter's directory.
+			skillScopeId = await fetchScopeIdForEnv(api, envId);
+			const page = unwrap(
+				await api.GET("/api/skills", {
+					params: { query: { page_size: 200, scope_id: skillScopeId } },
+				}),
+			);
+			for (const skill of page.items) {
+				// A skill is "in sync" iff its cloud content_hash matches
+				// our cached hash AND a local file exists — the local
+				// check restores skills the user wiped but kept the lock.
+				const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
+				const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
+				if (cached && cached === skill.content_hash && localExists) skillsInSync++;
+				else skills.push(skill);
 			}
 		}
+	}
 
-		try {
-			// Scope-explicit download so a multi-agent account where
-			// the same skill_key exists in two scopes resolves to the
-			// right bytes for THIS agent, not whichever was most-
-			// recently-updated across visible scopes.
-			const tarBytes = await api.getBytes(
-				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
-			);
-			await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-			skillsLock.skills[skillCacheKey(agentType, skill.skill_key)] = {
-				hash: skill.content_hash,
-			};
-			const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
-			p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
-			pulled++;
-		} catch (e) {
-			p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
+	const sessions: { remote: SessionListItem; reason: "new" | "updated" }[] = [];
+	let sessionsUnchanged = 0;
+	if (modules.includes("sessions")) {
+		const mirrorDir = sessionMirrorDir(agentType);
+		for (const remote of await fetchCloudSessions(api, agentType)) {
+			const sidecar = readSidecar(mirrorDir, remote.local_session_id);
+			if (!sidecar) {
+				sessions.push({ remote, reason: "new" });
+			} else if (!remote.content_hash || sidecar.content_hash !== remote.content_hash) {
+				// Null/missing remote hash → must download (legacy rows
+				// pre-dating the column have nothing to compare).
+				sessions.push({ remote, reason: "updated" });
+			} else {
+				sessionsUnchanged++;
+			}
 		}
 	}
-	return { pulled, alreadyInSync };
+
+	return { agentType, skillScopeId, skills, skillsInSync, sessions, sessionsUnchanged, notes };
+}
+
+/** Download one agent's scanned skills + sessions. Mutates `skillsLock`. */
+async function downloadOneAgent(
+	api: ApiClient,
+	scan: AgentPullScan,
+	skillsLock: SkillsLock | null,
+): Promise<AgentPullResult> {
+	let skillsPulled = 0;
+	if (scan.skills.length > 0 && scan.skillScopeId && skillsLock) {
+		const adapter = adapterForType(scan.agentType);
+		if (adapter) {
+			for (const skill of scan.skills) {
+				const safeKey = sanitizeMetadata(skill.skill_key);
+				try {
+					// Scope-explicit download so a duplicate skill_key across
+					// two scopes resolves to the right bytes for THIS agent.
+					const tarBytes = await api.getBytes(
+						`/api/scopes/${encodeURIComponent(scan.skillScopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+					);
+					await adapter.writeSkillArchive(skill.skill_key, tarBytes);
+					skillsLock.skills[skillCacheKey(scan.agentType, skill.skill_key)] = {
+						hash: skill.content_hash,
+					};
+					const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
+					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
+					skillsPulled++;
+				} catch (e) {
+					p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
+				}
+			}
+		}
+	}
+
+	let sessionsNew = 0;
+	let sessionsUpdated = 0;
+	if (scan.sessions.length > 0) {
+		const mirrorDir = sessionMirrorDir(scan.agentType);
+		mkdirSync(mirrorDir, { recursive: true });
+		const dlSpinner = p.spinner();
+		dlSpinner.start(`Downloading content (0/${scan.sessions.length})...`);
+		let failed = 0;
+		for (const { remote, reason } of scan.sessions) {
+			try {
+				const body = await api.getSessionContent(remote.id);
+				writeMirrorAtomic(mirrorDir, remote, body);
+				if (reason === "new") sessionsNew++;
+				else sessionsUpdated++;
+				dlSpinner.message(
+					`Downloading content (${sessionsNew + sessionsUpdated}/${scan.sessions.length})...`,
+				);
+			} catch (e) {
+				failed++;
+				p.log.warn(`${remote.local_session_id} failed: ${errMessage(e)}`);
+			}
+		}
+		const done = sessionsNew + sessionsUpdated;
+		dlSpinner.stop(
+			failed > 0
+				? `Downloaded ${done}, ${failed} failed`
+				: `Downloaded ${done} session${done === 1 ? "" : "s"}`,
+		);
+	}
+
+	return { skillsPulled, sessionsNew, sessionsUpdated };
+}
+
+/** Page through every cloud session for one agent. */
+async function fetchCloudSessions(
+	api: ApiClient,
+	agentType: AgentType,
+): Promise<SessionListItem[]> {
+	const all: SessionListItem[] = [];
+	const pageSize = 200;
+	for (let page = 1; ; page++) {
+		const result = unwrap(
+			await api.GET("/api/sessions", {
+				params: { query: { agent: agentType, page, page_size: pageSize } },
+			}),
+		);
+		all.push(...result.items);
+		if (result.items.length < pageSize) break;
+	}
+	return all;
 }
 
 interface SessionMirrorMeta {
@@ -251,105 +348,6 @@ interface SessionMirrorMeta {
 	model: string | null;
 	summary: string | null;
 	content_hash: string | null;
-}
-
-interface SessionPullCounts {
-	fresh: number;
-	updated: number;
-	unchanged: number;
-}
-
-async function pullSessions(
-	api: ApiClient,
-	agentType: AgentType,
-	opts: PullOpts,
-): Promise<SessionPullCounts> {
-	// Page through every session for this agent. Server side already sorts
-	// by started_at desc; order doesn't matter for our diff anyway.
-	const cloudSessions: SessionListItem[] = [];
-	const fetchSpinner = p.spinner();
-	fetchSpinner.start(`Fetching ${adapterRegistry[agentType].displayName} sessions...`);
-	let page = 1;
-	const pageSize = 200;
-	for (;;) {
-		const result = unwrap(
-			await api.GET("/api/sessions", {
-				params: { query: { agent: agentType, page, page_size: pageSize } },
-			}),
-		);
-		cloudSessions.push(...result.items);
-		if (result.items.length < pageSize) break;
-		page++;
-	}
-	fetchSpinner.stop(
-		`Found ${cloudSessions.length} session${cloudSessions.length === 1 ? "" : "s"} in cloud`,
-	);
-
-	const mirrorDir = sessionMirrorDir(agentType);
-
-	const toDownload: { remote: SessionListItem; reason: "new" | "updated" }[] = [];
-	let unchanged = 0;
-	for (const remote of cloudSessions) {
-		const sidecar = readSidecar(mirrorDir, remote.local_session_id);
-		if (!sidecar) {
-			toDownload.push({ remote, reason: "new" });
-			continue;
-		}
-		// Treat null/missing remote hash as "must download" — legacy rows
-		// pre-dating the column have no way to compare.
-		if (!remote.content_hash || sidecar.content_hash !== remote.content_hash) {
-			toDownload.push({ remote, reason: "updated" });
-			continue;
-		}
-		unchanged++;
-	}
-
-	const fresh = toDownload.filter((d) => d.reason === "new").length;
-	const updated = toDownload.length - fresh;
-	p.log.message(chalk.gray(`${fresh} new, ${updated} updated, ${unchanged} unchanged`));
-
-	if (opts.dryRun || toDownload.length === 0) {
-		return { fresh, updated, unchanged };
-	}
-
-	if (!opts.yes) {
-		const ok = await askYesNo(
-			`Download ${toDownload.length} session${toDownload.length === 1 ? "" : "s"}?`,
-		);
-		if (!ok) {
-			// Cancelled — report only what's actually in sync. The pending
-			// downloads stay pending; counting them as "unchanged" would lie.
-			return { fresh: 0, updated: 0, unchanged };
-		}
-	}
-
-	mkdirSync(mirrorDir, { recursive: true });
-
-	const dlSpinner = p.spinner();
-	dlSpinner.start(`Downloading content (0/${toDownload.length})...`);
-	let freshDone = 0;
-	let updatedDone = 0;
-	let failed = 0;
-	for (const { remote, reason } of toDownload) {
-		try {
-			const body = await api.getSessionContent(remote.id);
-			writeMirrorAtomic(mirrorDir, remote, body);
-			if (reason === "new") freshDone++;
-			else updatedDone++;
-			dlSpinner.message(`Downloading content (${freshDone + updatedDone}/${toDownload.length})...`);
-		} catch (e) {
-			failed++;
-			p.log.warn(`${remote.local_session_id} failed: ${errMessage(e)}`);
-		}
-	}
-	const done = freshDone + updatedDone;
-	dlSpinner.stop(
-		failed > 0
-			? `Downloaded ${done}, ${failed} failed`
-			: `Downloaded ${done} session${done === 1 ? "" : "s"}`,
-	);
-
-	return { fresh: freshDone, updated: updatedDone, unchanged };
 }
 
 function sessionMirrorDir(agentType: AgentType): string {
