@@ -17,8 +17,8 @@ Examples:
   $ clawdi auth login               Authenticate with Clawdi Cloud
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
-  $ clawdi push --modules sessions --all-agents --all  Upload everything
-  $ clawdi pull                     Download cloud skills to registered agents
+  $ clawdi push --all --yes         Upload everything (every agent, project, module) without prompts
+  $ clawdi pull --all --yes         Download everything from the cloud without prompts
   $ clawdi skill list --json        Machine-readable skill listing
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
@@ -166,28 +166,35 @@ Examples:
 program
 	.command("push")
 	.description("Push local data (sessions, skills) to the cloud")
-	.option("--modules <modules>", "Comma-separated: sessions,skills")
-	.option("--project <path>", "Push a specific project's data (default: current directory)")
+	.option(
+		"--modules <modules>",
+		"Narrow to specific modules (comma-separated: sessions,skills). Default: all.",
+	)
+	.option("--project <path>", "Narrow to one project's data (default: current directory)")
 	.option(
 		"--exclude-project <path>",
 		"Exclude a project path (repeatable, mutex with --project)",
 		(value: string, prev: string[] = []) => prev.concat(value),
 		[] as string[],
 	)
-	.option("--all", "Push data from all projects")
-	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
-	.option("--all-agents", "Push from every registered agent on this machine")
+	.option(
+		"--all",
+		"Push everything: every module, every registered agent, every project (each axis still narrowable via --modules / --agent / --project)",
+	)
+	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
+	.option("--all-agents", "Push from every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview without uploading")
 	.option("-y, --yes", "Skip the upload confirmation prompt")
 	.addHelpText(
 		"after",
 		`
 Examples:
-  $ clawdi push
-  $ clawdi push --modules skills
+  $ clawdi push --all --yes                Push everything, no prompts (canonical agent invocation)
+  $ clawdi push                            Push cwd project for the registered agent (or all of them if multiple)
+  $ clawdi push --modules skills           Push only skills (cwd project, registered agent(s))
   $ clawdi push --agent claude_code --dry-run
-  $ clawdi push --modules sessions --all-agents --all --yes
-  $ clawdi push --modules sessions --all-agents --all --exclude-project ~/scratch --yes`,
+  $ clawdi push --all --project ~/foo      Push every module / every agent for one specific project
+  $ clawdi push --all --exclude-project ~/scratch --yes`,
 	)
 	.action(async (opts) => {
 		const { push } = await import("./commands/push.js");
@@ -199,17 +206,28 @@ program
 	.description(
 		"Pull cloud data — `skills` writes archives to agent dirs; `sessions` mirrors to ~/.clawdi/sessions/",
 	)
-	.option("--modules <modules>", "Comma-separated: skills,sessions")
-	.option("--agent <type>", "Target agent (claude_code, codex, hermes, openclaw)")
-	.option("--all-agents", "Pull for every registered agent on this machine")
-	.option("--dry-run", "Preview without downloading")
+	.option(
+		"--modules <modules>",
+		"Narrow to specific modules (comma-separated: skills,sessions). Default: all.",
+	)
+	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
+	.option(
+		"--all",
+		"Pull everything: every module, every registered agent (still narrowable via --modules / --agent)",
+	)
+	.option("--all-agents", "Pull for every registered agent on this machine (implied by --all)")
+	.option(
+		"--dry-run",
+		"Preview without downloading. Use to check which skills will be overwritten locally.",
+	)
 	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",
 		`
 Examples:
-  $ clawdi pull
-  $ clawdi pull --modules sessions --all-agents --yes
+  $ clawdi pull --all --yes              Pull everything, no prompts (canonical agent invocation)
+  $ clawdi pull                          Pull for the registered agent (or all of them if multiple)
+  $ clawdi pull --modules sessions --yes
   $ clawdi pull --agent claude_code --dry-run`,
 	)
 	.action(async (opts) => {
@@ -295,7 +313,6 @@ skillCmd
 	.command("install <repo>")
 	.description("Install a skill from GitHub (owner/repo or owner/repo/path)")
 	.option("-a, --agent <type>", "Install to a single agent (claude_code, codex, hermes, openclaw)")
-	.option("-l, --list", "List skills in the repo without installing (planned)")
 	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",

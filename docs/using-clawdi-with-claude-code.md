@@ -224,18 +224,18 @@ Proceed with upload? [Y/n] y
 ✓ Sync complete
 ```
 
-Only sessions from the current project are pushed by default (uses `cwd` at invocation time). To sync everything:
+Only sessions from the current project are pushed by default (uses `cwd` at invocation time). To sync everything — every module, every registered agent, every project — pass `--all` (and `--yes` if you don't want the confirmation prompt):
 
 ```bash
-$ clawdi push --all
+$ clawdi push --all --yes
 ```
 
-Other useful flags:
+Each axis can still be narrowed back down with the corresponding flag:
 
 ```bash
 $ clawdi push --modules sessions      # only sessions, skip skills
-$ clawdi push --since 2026-04-01      # manual cursor
-$ clawdi push --agent claude_code     # skip the agent picker on multi-agent machines
+$ clawdi push --agent claude_code     # only this agent (multi-agent machines)
+$ clawdi push --all --project ~/foo   # every module / every agent, but only this project
 $ clawdi push --dry-run               # preview, no uploads
 ```
 
@@ -293,17 +293,13 @@ If you also have Codex / Hermes / OpenClaw installed on this machine:
 $ clawdi setup                   # auto-detects and asks to register each one
 ```
 
-Any memory you add from Claude Code is visible from every other agent you've registered, and vice-versa. `clawdi push` then prompts you to pick which agent's sessions/skills to push:
+Any memory you add from Claude Code is visible from every other agent you've registered, and vice-versa. `clawdi push` on a multi-agent machine targets every registered agent by default and prints a one-line notice so you know:
 
 ```
-Multiple agents registered. Select one:
-  [1] Claude Code
-  [2] Codex
-  [3] Hermes
-Choice: 1
+Targets: claude_code, codex, hermes (use --agent to narrow)
 ```
 
-Or skip the prompt with `--agent`:
+Narrow to one agent with `--agent`:
 
 ```bash
 $ clawdi push --agent codex

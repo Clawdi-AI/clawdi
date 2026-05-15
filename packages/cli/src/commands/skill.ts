@@ -246,7 +246,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 
 export async function skillInstall(
 	repoInput: string,
-	opts: { agent?: string; list?: boolean; yes?: boolean } = {},
+	opts: { agent?: string; yes?: boolean } = {},
 ) {
 	requireAuth();
 
@@ -267,18 +267,6 @@ export async function skillInstall(
 
 	const repo = `${parsed.owner}/${parsed.repo}`;
 	const path = parsed.path;
-
-	// --list mode: we don't have a backend endpoint that merely lists; the install
-	// endpoint actually performs the install. Until a dedicated list endpoint
-	// exists, surface this clearly rather than silently installing.
-	if (opts.list) {
-		console.log(
-			chalk.yellow(
-				"--list is not supported yet. The backend installs in a single call; a preview endpoint is planned.",
-			),
-		);
-		process.exit(2);
-	}
 
 	console.log(chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
 

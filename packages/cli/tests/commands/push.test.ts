@@ -146,6 +146,34 @@ describe("push — Hermes fixture", () => {
 		expect(uploads[0]?.isMultipart).toBe(true);
 	});
 
+	it("a skill already in the skills-lock is skipped on the next push", async () => {
+		setup("hermes");
+		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: `/api/scopes/${scopeId}/skills/upload`,
+				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
+			},
+		]);
+		const uploadCount = () =>
+			captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`).length;
+		try {
+			// First push computes the skill's folder hash, uploads it, and
+			// records the hash in the skills-lock.
+			await push({ agent: "hermes", modules: "skills", all: true });
+			expect(uploadCount()).toBe(1);
+
+			// Second push: the skill is unchanged, so the scan-phase hash
+			// matches the skills-lock entry — it must NOT upload again.
+			await push({ agent: "hermes", modules: "skills", all: true });
+			expect(uploadCount()).toBe(1);
+		} finally {
+			restore();
+		}
+	});
+
 	it("corrupt state.json is tolerated (warning, not crash)", async () => {
 		setup("hermes");
 		writeFileSync(join(tmpHome, ".clawdi", "state.json"), "{ not valid json");
@@ -338,5 +366,128 @@ describe("push — preflight checks", () => {
 		}
 		expect(captured).toHaveLength(0);
 		expect(process.exitCode).toBe(1);
+	});
+});
+
+describe("push — --all flag fan-out", () => {
+	it("--all + explicit --agent narrows to that agent (explicit wins)", async () => {
+		setup("claude-code");
+		// Seed a second env so the only way "claude_code" gets selected
+		// is if the explicit --agent flag overrides --all's broadening.
+		writeFileSync(
+			join(tmpHome, ".clawdi", "environments", "codex.json"),
+			JSON.stringify({ id: "env-codex", agentType: "codex" }),
+		);
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/api/sessions/batch",
+				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
+			},
+		]);
+		try {
+			await push({ agent: "claude_code", modules: "sessions", all: true, yes: true });
+		} finally {
+			restore();
+		}
+		// One batch call with the claude_code session — codex was NOT
+		// pulled in despite --all, because --agent narrowed.
+		const batches = captured.filter((c) => c.path === "/api/sessions/batch");
+		expect(batches).toHaveLength(1);
+		const sessions = batchSessions(batches[0]);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.local_session_id).toBe("11111111-2222-3333-4444-555555555555");
+	});
+
+	it("--all + --project narrows project (silent-precedence bug fix)", async () => {
+		setup("claude-code");
+		const { captured, restore } = mockFetch([okEnvironmentProbe()]);
+		try {
+			// Project that no fixture session lives in. Old behavior:
+			// --all silently overrode --project and the lone fixture
+			// session got uploaded anyway. New behavior: --project
+			// narrows to a non-matching path, batch gets zero sessions,
+			// no upload.
+			await push({
+				agent: "claude_code",
+				modules: "sessions",
+				all: true,
+				project: "/Users/no-such-project",
+				yes: true,
+			});
+		} finally {
+			restore();
+		}
+		expect(captured.find((c) => c.path === "/api/sessions/batch")).toBeUndefined();
+	});
+
+	it("--all alone reaches all axes for a single registered agent", async () => {
+		setup("claude-code");
+		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/api/sessions/batch",
+				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
+			},
+			{
+				method: "POST",
+				path: `/api/scopes/${scopeId}/skills/upload`,
+				response: () => jsonResponse({ skill_key: "demo", version: 1, file_count: 1 }),
+			},
+		]);
+		try {
+			// No --modules, no --agent, no --project — just --all + --yes.
+			// Should reach both modules: the fixture session via batch,
+			// and the fixture skills via the skills/upload endpoint.
+			await push({ all: true, yes: true });
+		} finally {
+			restore();
+		}
+		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		expect(batch).toBeDefined();
+		expect(batchSessions(batch)).toHaveLength(1);
+		// Skill axis was also exercised — proves --all defaults modules
+		// to the full set when --modules isn't passed.
+		const skillUploads = captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`);
+		expect(skillUploads.length).toBeGreaterThan(0);
+	});
+
+	it("multi-agent push scans every agent then uploads (scan/upload split)", async () => {
+		setup("claude-code");
+		// Two registered agents. The claude-code fixture only has
+		// claude_code session data; codex has an env file but no
+		// session dir — it scans empty. The push must still iterate
+		// both agents (scan phase) and upload the one with data,
+		// without the codex empty-scan aborting the run.
+		writeFileSync(
+			join(tmpHome, ".clawdi", "environments", "codex.json"),
+			JSON.stringify({ id: "env-codex", agentType: "codex" }),
+		);
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe("env-test"),
+			okEnvironmentProbe("env-codex"),
+			{
+				method: "POST",
+				path: "/api/sessions/batch",
+				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
+			},
+		]);
+		try {
+			await push({ modules: "sessions", all: true, yes: true });
+		} finally {
+			restore();
+		}
+		// Both env probes happened — proof the scan phase visited both
+		// agents before any upload.
+		expect(captured.some((c) => c.path === "/api/environments/env-test")).toBe(true);
+		expect(captured.some((c) => c.path === "/api/environments/env-codex")).toBe(true);
+		// claude_code's session uploaded; codex contributed nothing but
+		// didn't abort the run.
+		const batches = captured.filter((c) => c.path === "/api/sessions/batch");
+		expect(batches).toHaveLength(1);
+		expect(batchSessions(batches[0])).toHaveLength(1);
 	});
 });
