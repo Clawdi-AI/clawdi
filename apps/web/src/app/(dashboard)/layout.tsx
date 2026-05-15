@@ -1,9 +1,15 @@
+import { pageMetadata } from "@/app/page-metadata";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
+
+export const metadata = pageMetadata(
+	"Overview",
+	"Monitor connected agents, recent activity, onboarding, and Clawdi resources.",
+);
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
 // SidebarInset. Below that width the constraint is inert; above it (27"/4K
