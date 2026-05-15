@@ -21,33 +21,33 @@ import { ApiError, useAuthedFetch } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
-	COLLABORATION_INBOX_QUERY_KEY,
-	COLLABORATION_MEMBERSHIP_QUERY_KEYS,
-	type CollaborationInvitation,
-	getAcceptedInvitationToastCopy,
-	getCollaborationInboxEmptyCopy,
-	getCollaborationInboxTitle,
-	getCollaborationInboxTriggerLabel,
-	getInvitationAccessCopy,
-	getPendingInvitationCount,
-} from "./collaboration-inbox.logic";
-import { formatApiError } from "./vault-conflicts";
+	getAcceptedProjectInvitationToastCopy,
+	getNotificationCenterEmptyCopy,
+	getNotificationCenterTitle,
+	getNotificationCenterTriggerLabel,
+	getPendingNotificationCount,
+	getProjectInvitationAccessCopy,
+	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
+	NOTIFICATION_CENTER_QUERY_KEY,
+	type ProjectInvitationNotification,
+} from "./notification-center.logic";
+import { formatApiError } from "./sharing/vault-conflicts";
 
-export function CollaborationInbox() {
+export function NotificationCenter() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const authedFetch = useAuthedFetch();
 	const [open, setOpen] = useState(false);
 
 	function refetchMembershipDerived() {
-		for (const queryKey of COLLABORATION_MEMBERSHIP_QUERY_KEYS) {
+		for (const queryKey of NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS) {
 			queryClient.invalidateQueries({ queryKey });
 		}
 	}
 
 	const invitations = useQuery({
-		queryKey: COLLABORATION_INBOX_QUERY_KEY,
-		queryFn: async (): Promise<CollaborationInvitation[]> => {
+		queryKey: NOTIFICATION_CENTER_QUERY_KEY,
+		queryFn: async (): Promise<ProjectInvitationNotification[]> => {
 			const response = await authedFetch("/api/me/invitations");
 			return response.json();
 		},
@@ -70,7 +70,7 @@ export function CollaborationInbox() {
 		},
 		onSuccess: (result, variables) => {
 			refetchMembershipDerived();
-			const copy = getAcceptedInvitationToastCopy(variables.projectName);
+			const copy = getAcceptedProjectInvitationToastCopy(variables.projectName);
 			toast.success(copy.title, {
 				description: copy.description,
 				action: {
@@ -106,8 +106,8 @@ export function CollaborationInbox() {
 	});
 
 	const items = invitations.data ?? [];
-	const count = getPendingInvitationCount(items);
-	const triggerLabel = getCollaborationInboxTriggerLabel(count);
+	const count = getPendingNotificationCount(items);
+	const triggerLabel = getNotificationCenterTriggerLabel(count);
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -131,13 +131,13 @@ export function CollaborationInbox() {
 			<PopoverContent align="end" className="w-[min(calc(100vw-2rem),26rem)] p-0">
 				<PopoverHeader className="px-4 py-3">
 					<div className="flex items-center justify-between gap-3">
-						<PopoverTitle>{getCollaborationInboxTitle(count)}</PopoverTitle>
+						<PopoverTitle>{getNotificationCenterTitle(count)}</PopoverTitle>
 						{count > 0 ? <Badge variant="secondary">{count} pending</Badge> : null}
 					</div>
-					<PopoverDescription>{getInvitationAccessCopy()}</PopoverDescription>
+					<PopoverDescription>{getProjectInvitationAccessCopy()}</PopoverDescription>
 				</PopoverHeader>
 				<Separator />
-				<InboxContent
+				<NotificationCenterContent
 					invitations={items}
 					isLoading={invitations.isLoading}
 					error={invitations.error}
@@ -154,7 +154,7 @@ export function CollaborationInbox() {
 	);
 }
 
-function InboxContent({
+function NotificationCenterContent({
 	invitations,
 	isLoading,
 	error,
@@ -164,12 +164,12 @@ function InboxContent({
 	acceptingId,
 	decliningId,
 }: {
-	invitations: CollaborationInvitation[];
+	invitations: ProjectInvitationNotification[];
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
-	acceptInvitation: (invitation: CollaborationInvitation) => void;
-	declineInvitation: (invitation: CollaborationInvitation) => void;
+	acceptInvitation: (invitation: ProjectInvitationNotification) => void;
+	declineInvitation: (invitation: ProjectInvitationNotification) => void;
 	acceptingId?: string;
 	decliningId?: string;
 }) {
@@ -197,7 +197,7 @@ function InboxContent({
 	}
 
 	if (invitations.length === 0) {
-		const empty = getCollaborationInboxEmptyCopy();
+		const empty = getNotificationCenterEmptyCopy();
 		return (
 			<div className="flex items-start gap-3 px-4 py-5">
 				<div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">

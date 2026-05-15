@@ -1,5 +1,5 @@
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
-import { CollaborationInbox } from "@/components/sharing/collaboration-inbox";
+import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
@@ -17,7 +17,7 @@ export function SiteHeader() {
 				<div className="min-w-0 flex-1">
 					<AppBreadcrumb />
 				</div>
-				<CollaborationInbox />
+				<NotificationCenter />
 			</div>
 		</header>
 	);
