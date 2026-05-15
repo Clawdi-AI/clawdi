@@ -76,6 +76,7 @@ describe("agent project commands", () => {
 		expect(code).toBe(0);
 		expect(stdout).toContain("--order <n>");
 		expect(stdout).toContain("attached Project order");
+		expect(stdout).toContain("UUID, slug, name, or @owner/slug");
 		expect(stdout).not.toContain("--priority");
 		expect(stdout).not.toContain("context");
 	});
@@ -152,7 +153,8 @@ describe("agent project commands", () => {
 		expect(out).toContain(
 			"Order matters: Home Project wins first, then attached Projects in order.",
 		);
-		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item <attachment-id>:1");
+		expect(out).toContain("attachment-id=attach-shared");
+		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item attach-shared:1");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context project");
 	});

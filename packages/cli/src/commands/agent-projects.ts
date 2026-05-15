@@ -128,7 +128,7 @@ export async function agentProjectsListCommand(
 	console.log();
 	console.log(
 		chalk.gray("Move:   ") +
-			chalk.cyan(`clawdi agent projects move ${agentId} --item <attachment-id>:1`),
+			chalk.cyan(`clawdi agent projects move ${agentId} --item ${contexts[0].id}:1`),
 	);
 	console.log(
 		chalk.gray("Detach:  ") +
@@ -256,7 +256,7 @@ function formatBindingProject(row: BindingRow, projectsById: Map<string, Project
 	return (
 		`${chalk.cyan(alias)} ${chalk.gray(ownership)}${name} ` +
 		chalk.gray(
-			`attachment=${row.id.slice(0, 8)}… project=${row.project_id.slice(0, 8)} order=${row.priority}`,
+			`attachment-id=${row.id} project=${row.project_id.slice(0, 8)}… order=${row.priority}`,
 		)
 	);
 }

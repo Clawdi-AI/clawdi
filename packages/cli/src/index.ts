@@ -762,7 +762,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("set-home <agent-id>")
 	.description("Set the agent's owned Home Project")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsSetPrimaryCommand(agentId, opts);
@@ -771,7 +771,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("set-primary <agent-id>", { hidden: true })
 	.description("Compatibility alias for set-home")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsSetPrimaryCommand(agentId, opts);
@@ -780,7 +780,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("attach <agent-id>")
 	.description("Attach an owned or shared Project to an agent")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.option("--order <n>", "Optional attached Project order (>=1)")
 	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
 	.action(async (agentId, opts) => {
@@ -791,7 +791,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("add-context <agent-id>", { hidden: true })
 	.description("Compatibility alias for attach")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.option("--order <n>", "Optional attached Project order (>=1)")
 	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
 	.action(async (agentId, opts) => {
@@ -802,7 +802,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("detach <agent-id>")
 	.description("Detach a Project from an agent")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsRemoveContextCommand(agentId, opts);
@@ -811,7 +811,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("remove-context <agent-id>", { hidden: true })
 	.description("Compatibility alias for detach")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or name")
+	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsRemoveContextCommand(agentId, opts);

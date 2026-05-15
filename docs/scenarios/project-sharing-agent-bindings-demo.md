@@ -334,11 +334,14 @@ Expected:
 
 ## Verification
 
-Run the no-Docker smoke:
+Run the local demo smoke after starting the dev Postgres service:
 
 ```bash
+docker compose up -d postgres
 bash scripts/project-sharing-agent-bindings-demo.sh
 ```
+
+The script preflights `uv`, `bun`, and the database endpoint before running backend/CLI checks, so demo setup failures are reported without a pytest traceback.
 
 For full PR verification, also run:
 
