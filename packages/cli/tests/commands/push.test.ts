@@ -387,7 +387,7 @@ describe("push — --all flag fan-out", () => {
 			},
 		]);
 		try {
-			await push({ agent: "claude_code", modules: "sessions", all: true, yes: true });
+			await push({ agent: "claude_code", modules: "sessions", all: true });
 		} finally {
 			restore();
 		}
@@ -414,7 +414,6 @@ describe("push — --all flag fan-out", () => {
 				modules: "sessions",
 				all: true,
 				project: "/Users/no-such-project",
-				yes: true,
 			});
 		} finally {
 			restore();
@@ -439,10 +438,10 @@ describe("push — --all flag fan-out", () => {
 			},
 		]);
 		try {
-			// No --modules, no --agent, no --project — just --all + --yes.
+			// No --modules, no --agent, no --project — just --all.
 			// Should reach both modules: the fixture session via batch,
 			// and the fixture skills via the skills/upload endpoint.
-			await push({ all: true, yes: true });
+			await push({ all: true });
 		} finally {
 			restore();
 		}
@@ -476,7 +475,7 @@ describe("push — --all flag fan-out", () => {
 			},
 		]);
 		try {
-			await push({ modules: "sessions", all: true, yes: true });
+			await push({ modules: "sessions", all: true });
 		} finally {
 			restore();
 		}

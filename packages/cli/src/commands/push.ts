@@ -8,7 +8,7 @@ import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { sha256Hex } from "../lib/hash";
-import { askYesNo, parseModules } from "../lib/prompts";
+import { parseModules } from "../lib/prompts";
 import {
 	adapterForType,
 	fetchScopeIdForEnv,
@@ -45,7 +45,6 @@ interface PushOpts {
 	allAgents?: boolean;
 	dryRun?: boolean;
 	agent?: string;
-	yes?: boolean;
 }
 
 /** What `uploadOneAgent` actually pushed for a single agent. */
@@ -209,15 +208,6 @@ export async function push(opts: PushOpts) {
 			),
 		);
 		return;
-	}
-
-	// One confirmation covering every agent, after the full summary.
-	if (toUpload.length > 0 && !opts.yes) {
-		const ok = await askYesNo("Proceed with upload?");
-		if (!ok) {
-			p.outro(chalk.gray("Cancelled."));
-			return;
-		}
 	}
 
 	const totals = {

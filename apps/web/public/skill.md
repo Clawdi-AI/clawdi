@@ -70,7 +70,7 @@ clawdi session list --all-agents --all --limit 10000 --json
 
 `--limit 10000` is important — the default is 100, which would silently truncate any user with more sessions and you'd aggregate from a partial set.
 
-If this fails (network error, no agents registered, etc.), tell the user *"I couldn't list your local sessions — going ahead with the default upload, let me know if you want to stop."* and skip to running `clawdi push --modules sessions --all-agents --all --yes`. Don't halt onboarding for this.
+If this fails (network error, no agents registered, etc.), tell the user *"I couldn't list your local sessions — going ahead with the default upload, let me know if you want to stop."* and skip to running `clawdi push --modules sessions --all-agents --all`. Don't halt onboarding for this.
 
 If the JSON is empty (`[]`), tell the user *"No sessions found on this machine — nothing to sync. Run `clawdi push` later if you start using one of the supported agents."* and continue to the next step. Skip the upload entirely.
 
@@ -112,11 +112,11 @@ The user references real project names from the summary you just showed them. Ma
 
 | User says | Command |
 | --- | --- |
-| "y" / "yes" / "ok" / "all" | `clawdi push --modules sessions --all-agents --all --yes` |
-| "skip client-acme" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --yes` |
-| "skip client-acme and scratch" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --exclude-project ~/scratch --yes` |
-| "only Claude Code" | `clawdi push --modules sessions --agent claude_code --all --yes` |
-| "only ~/work/clawdi-cloud" | `clawdi push --modules sessions --all-agents --project ~/work/clawdi-cloud --yes` |
+| "y" / "yes" / "ok" / "all" | `clawdi push --modules sessions --all-agents --all` |
+| "skip client-acme" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme` |
+| "skip client-acme and scratch" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --exclude-project ~/scratch` |
+| "only Claude Code" | `clawdi push --modules sessions --agent claude_code --all` |
+| "only ~/work/clawdi-cloud" | `clawdi push --modules sessions --all-agents --project ~/work/clawdi-cloud` |
 | "n" / "no" / "skip" / "not now" | (skip — tell them *"Run `clawdi push --modules sessions --all-agents --all` whenever you want to sync."* and continue) |
 
 Resolve `~` to an absolute path before passing to the CLI.
@@ -158,7 +158,7 @@ clawdi serve --agent claude_code
 If the user has authored custom skills under `~/.claude/skills/`, `~/.codex/skills/`, etc., back them up to the cloud:
 
 ```bash
-clawdi push --modules skills --all-agents --yes
+clawdi push --modules skills --all-agents
 ```
 
 Most users have zero or a handful of authored skills — no preview needed (unlike sessions, skills are deliberately created and don't have privacy concerns). The bundled `clawdi` skill that `clawdi setup` installs is automatically excluded. Re-running this is a no-op for unchanged skills.
@@ -166,7 +166,7 @@ Most users have zero or a handful of authored skills — no preview needed (unli
 If the user is on a new machine and already has skills in their Clawdi Cloud account, pull them down:
 
 ```bash
-clawdi pull --modules skills --all-agents --yes
+clawdi pull --modules skills --all-agents
 ```
 
 This installs cloud skills into every registered agent's home directory. Like push, it's idempotent — running again is a no-op when nothing's new.
@@ -241,12 +241,12 @@ After this their account has:
 
 ```bash
 rm -f ~/.clawdi/sessions-lock.json
-clawdi push --modules sessions --all-agents --all --yes
+clawdi push --modules sessions --all-agents --all
 ```
 
 **`clawdi auth complete` keeps saying "Still waiting for approval".** The user hasn't clicked approve yet. Re-running is safe within the 10-minute window. If it expired, restart from `clawdi auth login`.
 
-**Older CLI doesn't recognize `--all-agents`.** Loop manually over the agents that registered in setup: `clawdi push --modules sessions --agent claude_code --all --yes`, then `--agent codex`, and so on.
+**Older CLI doesn't recognize `--all-agents`.** Loop manually over the agents that registered in setup: `clawdi push --modules sessions --agent claude_code --all`, then `--agent codex`, and so on.
 
 **Older CLI doesn't recognize `--exclude-project`.** Tell the user to upgrade (`bun add -g clawdi` again) or accept the limitation — without it, only positive selection (`--project`) works.
 

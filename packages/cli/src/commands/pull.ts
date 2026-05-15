@@ -7,7 +7,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
-import { askYesNo, parseModules } from "../lib/prompts";
+import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	adapterForType,
@@ -30,7 +30,6 @@ interface PullOpts {
 	agent?: string;
 	allAgents?: boolean;
 	all?: boolean;
-	yes?: boolean;
 }
 
 /**
@@ -145,15 +144,6 @@ export async function pull(opts: PullOpts) {
 			),
 		);
 		return;
-	}
-
-	// One confirmation covering every agent, after the full summary.
-	if (toDownload.length > 0 && !opts.yes) {
-		const ok = await askYesNo("Proceed with download?");
-		if (!ok) {
-			p.outro(chalk.gray("Cancelled."));
-			return;
-		}
 	}
 
 	const totals = {

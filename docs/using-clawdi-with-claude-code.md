@@ -224,10 +224,10 @@ Proceed with upload? [Y/n] y
 ✓ Sync complete
 ```
 
-Only sessions from the current project are pushed by default (uses `cwd` at invocation time). To sync everything — every module, every registered agent, every project — pass `--all` (and `--yes` if you don't want the confirmation prompt):
+Only sessions from the current project are pushed by default (uses `cwd` at invocation time). To sync everything — every module, every registered agent, every project — pass `--all`:
 
 ```bash
-$ clawdi push --all --yes
+$ clawdi push --all
 ```
 
 Each axis can still be narrowed back down with the corresponding flag:

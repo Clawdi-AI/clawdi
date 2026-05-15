@@ -17,8 +17,8 @@ Examples:
   $ clawdi auth login               Authenticate with Clawdi Cloud
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
-  $ clawdi push --all --yes         Upload everything (every agent, project, module) without prompts
-  $ clawdi pull --all --yes         Download everything from the cloud without prompts
+  $ clawdi push --all               Upload everything (every agent, project, module)
+  $ clawdi pull --all               Download everything from the cloud
   $ clawdi skill list --json        Machine-readable skill listing
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
@@ -184,17 +184,16 @@ program
 	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
 	.option("--all-agents", "Push from every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview without uploading")
-	.option("-y, --yes", "Skip the upload confirmation prompt")
 	.addHelpText(
 		"after",
 		`
 Examples:
-  $ clawdi push --all --yes                Push everything, no prompts (canonical agent invocation)
+  $ clawdi push --all                      Push everything (every agent, project, module)
   $ clawdi push                            Push cwd project for the registered agent (or all of them if multiple)
   $ clawdi push --modules skills           Push only skills (cwd project, registered agent(s))
   $ clawdi push --agent claude_code --dry-run
   $ clawdi push --all --project ~/foo      Push every module / every agent for one specific project
-  $ clawdi push --all --exclude-project ~/scratch --yes`,
+  $ clawdi push --all --exclude-project ~/scratch`,
 	)
 	.action(async (opts) => {
 		const { push } = await import("./commands/push.js");
@@ -220,14 +219,13 @@ program
 		"--dry-run",
 		"Preview without downloading. Use to check which skills will be overwritten locally.",
 	)
-	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",
 		`
 Examples:
-  $ clawdi pull --all --yes              Pull everything, no prompts (canonical agent invocation)
+  $ clawdi pull --all                    Pull everything (every agent, every module)
   $ clawdi pull                          Pull for the registered agent (or all of them if multiple)
-  $ clawdi pull --modules sessions --yes
+  $ clawdi pull --modules sessions
   $ clawdi pull --agent claude_code --dry-run`,
 	)
 	.action(async (opts) => {
