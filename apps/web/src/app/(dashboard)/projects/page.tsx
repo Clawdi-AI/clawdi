@@ -5,7 +5,6 @@ import {
 	ArrowRight,
 	Bot,
 	FolderOpen,
-	Inbox,
 	type LucideIcon,
 	Plus,
 	Share2,
@@ -248,15 +247,7 @@ export default function ProjectsPage() {
 				{sharedProjects.length === 0 ? (
 					<EmptyLine
 						title="No shared projects yet"
-						message="Accepted invites and share links appear here with viewer access. Using them with an agent is your choice."
-						action={
-							<Button asChild size="sm" variant="outline">
-								<Link href="/">
-									<Inbox className="size-3.5" />
-									Check inbox
-								</Link>
-							</Button>
-						}
+						message="Accepted invites and share links appear here with viewer access. Pending collaboration invites are available from the inbox in the top bar; using a shared Project with an agent is your choice."
 					/>
 				) : (
 					<div className="divide-y rounded-lg border bg-card/60">

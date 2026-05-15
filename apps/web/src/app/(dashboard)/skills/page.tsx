@@ -9,7 +9,6 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
-import { Inbox } from "@/components/sharing/inbox";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { AgentTargetPicker } from "@/components/skills/agent-target-picker";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
@@ -367,8 +366,6 @@ function SkillsPageInner() {
 					) : null
 				}
 			/>
-
-			<Inbox />
 
 			{defaultProjectError ? (
 				<Alert variant="destructive">
