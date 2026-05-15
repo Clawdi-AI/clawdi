@@ -486,7 +486,7 @@ function renderJoinedSuccess(body: JoinedProject, opts: AcceptOpts, projectAlias
 	} else {
 		console.log(
 			chalk.gray(
-				`  Use with agent: clawdi agent projects add-context <agent-id> --project ${projectAlias}`,
+				`  Use with agent: clawdi agent projects attach <agent-id> --project ${projectAlias}`,
 			),
 		);
 	}

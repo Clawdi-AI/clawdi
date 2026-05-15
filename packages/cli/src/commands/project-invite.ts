@@ -87,7 +87,5 @@ export async function projectInviteCommand(
 	console.log(chalk.gray("  They will join as a read-only viewer after accepting."));
 	console.log(chalk.gray("  Using it with an agent is separate; after accept they can run:"));
 	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
-	console.log(
-		`  ${chalk.cyan("clawdi agent projects add-context <agent-id> --project <project>")}`,
-	);
+	console.log(`  ${chalk.cyan("clawdi agent projects attach <agent-id> --project <project>")}`);
 }

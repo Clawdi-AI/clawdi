@@ -132,14 +132,12 @@ export async function projectShowCommand(
 		console.log(`  Manage sharing: ${chalk.cyan(`clawdi project share ${alias}`)}`);
 		console.log(`  People:         ${chalk.cyan(`clawdi project members ${alias}`)}`);
 		console.log(
-			`  Set as Home:    ${chalk.cyan(`clawdi agent projects set-primary <agent-id> --project ${alias}`)}`,
+			`  Set as Home:    ${chalk.cyan(`clawdi agent projects set-home <agent-id> --project ${alias}`)}`,
 		);
 	} else {
 		console.log(chalk.bold("Next actions"));
 		console.log("  Use with agent:");
-		console.log(
-			`    ${chalk.cyan(`clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
-		);
+		console.log(`    ${chalk.cyan(`clawdi agent projects attach <agent-id> --project ${alias}`)}`);
 		console.log(`  Leave: ${chalk.cyan(`clawdi project leave ${alias}`)}`);
 	}
 }

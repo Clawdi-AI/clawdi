@@ -117,7 +117,7 @@ export async function projectListCommand(opts: {
 			);
 			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Use with agent: clawdi agent projects add-context <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Use with agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}

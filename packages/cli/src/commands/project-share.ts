@@ -110,7 +110,7 @@ export async function projectShareCommand(
 	console.log(`Recipient accepts: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	if (projectSlug) {
 		console.log(
-			`Recipient uses with agent later: ${chalk.cyan(`clawdi agent projects add-context <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
+			`Recipient uses with agent later: ${chalk.cyan(`clawdi agent projects attach <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
 		);
 	}
 	console.log();

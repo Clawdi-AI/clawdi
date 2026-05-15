@@ -84,7 +84,7 @@ describe("projectShowCommand", () => {
 		expect(out).toContain("Resources");
 		expect(out).toContain("Use with agent:");
 		expect(out).toContain(
-			"clawdi agent projects add-context <agent-id> --project @alice-a3b4/shared-toolkit",
+			"clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).toContain("Leave: clawdi project leave @alice-a3b4/shared-toolkit");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);

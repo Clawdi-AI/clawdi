@@ -122,9 +122,15 @@ section "CLI user and agent contracts"
   "$BUN_BIN" test \
     tests/commands/agent-projects.test.ts \
     tests/commands/auth.test.ts \
+    tests/commands/inbox.test.ts \
+    tests/commands/project-create.test.ts \
     tests/commands/project-list.test.ts \
     tests/commands/project-members.test.ts \
     tests/commands/project-show.test.ts \
+    tests/commands/project-folders.test.ts \
+    tests/commands/run.test.ts \
+    tests/commands/pull.test.ts \
+    tests/commands/push.test.ts \
     tests/commands/vault-resolve.test.ts
 )
 
