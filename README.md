@@ -1,7 +1,7 @@
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
-  <strong>The best home for all your AI agents — environments, sessions, memory, skills, cron jobs, and app connections.</strong>
+  <strong>The best home for all your AI agents — Projects, sessions, memory, skills, cron jobs, and app connections.</strong>
 </p>
 
 <p align="center">
@@ -78,6 +78,7 @@ Clawdi is the shared layer underneath:
 
 - **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
 - **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
+- **Project sharing** — Share read-only Project access, accept it from the CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side and inject them only when running a command.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
@@ -114,9 +115,9 @@ The first is autonomy. Agents should work without you at the keyboard.
 - Remote control for agents on any of your machines.
 - Automatic memory built from session history.
 
-The second is making Clawdi multi-player. Today every Clawdi belongs to one person. That's the wrong shape for teams.
+The second is making Clawdi multi-player. Project sharing now covers read-only Project access in the CLI/backend; dashboard surfaces and richer team roles come next.
 
-- Shared memory, skills, and connections, with access controls.
+- Shared memory, skills, and connections, with broader access controls.
 - An agent-to-agent channel for handoff and ask-for-help.
 - Task tracking that every connected agent can use.
 
@@ -228,6 +229,10 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi pull` | Download cloud skills into registered agents |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
+| `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
+| `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
+| `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
+| `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
 | `clawdi vault set/list/import` | Manage encrypted secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |
 | `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |

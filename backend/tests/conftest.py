@@ -125,6 +125,7 @@ async def create_env_with_project(
     await db_session.refresh(env)
     return env
 
+
 @pytest_asyncio.fixture
 async def seed_user(db_session: AsyncSession) -> User:
     """A throwaway user row scoped to one test, cleaned up in teardown.

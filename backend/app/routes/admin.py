@@ -210,7 +210,7 @@ async def admin_register_environment(
 
     Migration tooling needs to seed env_id for legacy deployments
     where no per-user Clerk JWT is in project. The user-facing
-    `POST /api/environments` requires a Clerk-authed or env-bound
+    `POST /api/environments` requires a Clerk-authed or Agent environment
     api_key request; this admin variant is gated by the shared
     `X-Admin-Key` header instead.
 

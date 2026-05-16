@@ -1,7 +1,6 @@
 import chalk from "chalk";
-import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
-import { listProjects, resolveProjectId } from "../lib/project-resolver";
+import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
+import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 
 interface BindingRow {
 	id: string;
@@ -11,44 +10,6 @@ interface BindingRow {
 	priority: number;
 	default_write_enabled: boolean;
 	created_at: string;
-}
-
-interface ProjectBrief {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
-
-function requireAuth(): { apiUrl: string; apiKey: string } {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		throw new Error("Not signed in. Run `clawdi auth login` first.");
-	}
-	return { apiUrl, apiKey: auth.apiKey };
-}
-
-async function authedJson<T>(
-	apiUrl: string,
-	apiKey: string,
-	path: string,
-	init: RequestInit = {},
-): Promise<T> {
-	const r = await fetch(`${apiUrl}${path}`, {
-		...init,
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			...(init.headers ?? {}),
-		},
-	});
-	if (!r.ok) {
-		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	}
-	return r.json() as Promise<T>;
 }
 
 function parseOrder(raw: string, errorMessage: string): number {
@@ -69,7 +30,7 @@ export async function agentProjectsListCommand(
 	agentId: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,
@@ -131,27 +92,15 @@ export async function agentProjectsListCommand(
 	);
 }
 
-export async function agentProjectsSetPrimaryCommand(
-	agentId: string,
-	opts: { project: string },
-): Promise<void> {
-	void agentId;
-	void opts;
-	throw new Error(
-		"Agent Project is fixed. Use `clawdi agent projects attach` to add read-only Projects.",
-	);
-}
-
 export async function agentProjectsAddContextCommand(
 	agentId: string,
-	opts: { project: string; order?: string; priority?: string },
+	opts: { project: string; order?: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
-	const order = opts.order ?? opts.priority;
 	let priority: number | undefined;
-	if (order !== undefined) {
-		priority = parseOrder(order, "--order <order> must be an integer >= 1.");
+	if (opts.order !== undefined) {
+		priority = parseOrder(opts.order, "--order <order> must be an integer >= 1.");
 	}
 	await authedJson<BindingRow>(
 		apiUrl,
@@ -171,7 +120,7 @@ export async function agentProjectsRemoveContextCommand(
 	agentId: string,
 	opts: { project: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
@@ -205,7 +154,7 @@ export async function agentProjectsReorderCommand(
 	agentId: string,
 	opts: { item?: string[] },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const itemError = "--item must use <id>:<order> with order >= 1.";
 	const items = (opts.item ?? []).map((raw) => {
 		const parts = raw.split(":");
@@ -242,11 +191,4 @@ function formatBindingProject(row: BindingRow, projectsById: Map<string, Project
 			? `id=${row.id} project=${row.project_id.slice(0, 8)}... order=${row.priority}`
 			: `project=${row.project_id.slice(0, 8)}...`;
 	return `${chalk.cyan(alias)} ${chalk.gray(ownership)}${name} ${chalk.gray(meta)}`;
-}
-
-function projectAlias(project: ProjectBrief): string {
-	if (project.is_owner === false && project.owner_handle) {
-		return `@${project.owner_handle}/${project.slug}`;
-	}
-	return project.slug;
 }

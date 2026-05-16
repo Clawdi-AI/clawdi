@@ -1,5 +1,5 @@
 """project_ids_visible_to widens to include shared memberships for
-Clerk JWT + unbound-CLI callers. Env-bound api_keys keep their
+Clerk JWT + unbound-CLI callers. Agent API keys keep their
 single-project ceiling regardless of memberships (deploy-key blast
 radius boundary)."""
 
@@ -62,7 +62,7 @@ async def test_clerk_jwt_sees_owned_and_shared_projects(db_session, seed_user, s
 
 
 @pytest.mark.asyncio
-async def test_sharee_can_read_shared_project_skill_detail_and_search(
+async def test_recipient_can_read_shared_project_skill_detail_and_search(
     client,
     db_session,
     seed_user,
@@ -151,13 +151,13 @@ async def test_sharee_can_read_shared_project_skill_detail_and_search(
 
 
 @pytest.mark.asyncio
-async def test_sharee_viewer_cannot_write_shared_project_resources(
+async def test_recipient_viewer_cannot_write_shared_project_resources(
     client,
     db_session,
     seed_user,
 ):
     """Viewer membership expands read visibility only. It must never
-    make shared-project skills/vaults writable by the sharee."""
+    make shared-project skills/vaults writable by the recipient."""
     from sqlalchemy import select
 
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
@@ -218,12 +218,12 @@ async def test_sharee_viewer_cannot_write_shared_project_resources(
 
     try:
         tar_bytes, _ = tar_from_content(
-            f"sharee-skill-{nonce}",
+            f"recipient-skill-{nonce}",
             "---\nname: denied\n---\n# Denied\n",
         )
         upload = await client.post(
             f"/api/projects/{shared.id}/skills/upload",
-            data={"skill_key": f"sharee-skill-{nonce}"},
+            data={"skill_key": f"recipient-skill-{nonce}"},
             files={"file": ("denied.tar.gz", tar_bytes, "application/gzip")},
         )
         assert upload.status_code == 404, upload.text
@@ -239,7 +239,7 @@ async def test_sharee_viewer_cannot_write_shared_project_resources(
 
         create_vault = await client.post(
             f"/api/vault?project_id={shared.id}",
-            json={"slug": f"sharee-vault-{nonce}", "name": "Denied"},
+            json={"slug": f"recipient-vault-{nonce}", "name": "Denied"},
         )
         assert create_vault.status_code == 404, create_vault.text
 
@@ -278,13 +278,13 @@ async def test_sharee_viewer_cannot_write_shared_project_resources(
 
 
 @pytest.mark.asyncio
-async def test_sharee_skill_list_etag_changes_when_owner_updates_shared_project(
+async def test_recipient_skill_list_etag_changes_when_owner_updates_shared_project(
     client,
     db_session,
     seed_user,
 ):
     """Shared-project conditional GETs must invalidate on the owner's
-    skill revision, not only on the sharee's own user revision."""
+    skill revision, not only on the recipient's own user revision."""
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.project_membership import ProjectMembership
     from app.models.skill import Skill
@@ -463,7 +463,7 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
         user_id=seed_user.id,
         key_hash=("e" + nonce + "x" * (64 - len(nonce) - 1)),
         key_prefix=f"clawdi_e{nonce[:3]}",
-        label="env-bound",
+        label="agent-environment",
         environment_id=env.id,
         scopes=["sessions:write"],
     )
@@ -473,7 +473,7 @@ async def test_env_bound_api_key_does_not_see_shared(db_session, seed_user, seed
     try:
         auth = AuthContext(user=seed_user, api_key=api_key)
         visible = await project_ids_visible_to(db_session, auth)
-        # Env-bound: ONLY the bound env's default project.
+        # Agent API key: ONLY the Agent Project.
         assert visible == [env.default_project_id]
         assert shared.id not in visible
         assert seed_project.id not in visible

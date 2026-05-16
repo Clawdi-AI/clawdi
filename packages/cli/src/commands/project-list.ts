@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { getAuth, getConfig } from "../lib/config";
+import { projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects } from "../lib/project-resolver";
 
 /**
@@ -13,20 +13,16 @@ export async function projectListCommand(opts: {
 	sharedWithMe?: boolean;
 	owned?: boolean;
 }): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 	if (opts.sharedWithMe && opts.owned) {
 		console.error(chalk.red("Pass either --shared-with-me or --owned, not both."));
 		process.exitCode = 1;
 		return;
 	}
 
-	const projects = await listProjects(apiUrl, auth.apiKey);
+	const projects = await listProjects(apiUrl, apiKey);
 	const owned = projects.filter((s) => s.is_owner !== false);
 	const shared = projects.filter((s) => s.is_owner === false);
 	const visibleProjects = opts.sharedWithMe ? shared : opts.owned ? owned : projects;
@@ -106,7 +102,7 @@ export async function projectListCommand(opts: {
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
-		console.log(chalk.gray("  Viewer access is read-only. Use with an agent when needed."));
+		console.log(chalk.gray("  Viewer access is read-only. Attach to an Agent when needed."));
 		for (const s of shared) {
 			const alias = projectAlias(s);
 			console.log(
@@ -117,19 +113,8 @@ export async function projectListCommand(opts: {
 			);
 			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Use with agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Attach to Agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}
-}
-
-function projectAlias(project: {
-	slug: string;
-	is_owner?: boolean;
-	owner_handle?: string | null;
-}): string {
-	if (project.is_owner === false && project.owner_handle) {
-		return `@${project.owner_handle}/${project.slug}`;
-	}
-	return project.slug;
 }

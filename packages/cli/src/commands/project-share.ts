@@ -2,7 +2,7 @@ import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
 /**
@@ -37,31 +37,25 @@ export async function projectShareCommand(
 	projectArg: string | undefined,
 	opts: { label?: string },
 ): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 
 	// resolveProjectId(undefined) → user's default write project, the
 	// common "share my current project" case. Pass-through project name /
 	// slug / UUID still works when explicitly given.
-	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 	// Look up the project slug so the success message names which project
 	// we just shared. Critical for the `project share` (no arg) path —
 	// without the slug a multi-project user has no idea whether their
 	// link went to Personal or Engineering. One round trip; cached
 	// by the caller's network stack if they already hit /api/projects
 	// via resolveProjectId moments ago.
-	const projectSlug = (await listProjects(apiUrl, auth.apiKey)).find(
-		(s) => s.id === projectId,
-	)?.slug;
+	const projectSlug = (await listProjects(apiUrl, apiKey)).find((s) => s.id === projectId)?.slug;
 	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${auth.apiKey}`,
+			Authorization: `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ label: opts.label ?? null }),
@@ -103,17 +97,17 @@ export async function projectShareCommand(
 		),
 	);
 	console.log(chalk.gray("Access: viewer role, read-only project membership."));
-	console.log(chalk.gray("Using it with an agent is separate and explicit after accept."));
+	console.log(chalk.gray("Attaching it to an Agent is separate and explicit after accept."));
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
 	console.log(`Recipient accepts: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	if (projectSlug) {
 		console.log(
-			`Recipient uses with agent later: ${chalk.cyan(`clawdi agent projects attach <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
+			`Recipient attaches to Agent later: ${chalk.cyan(`clawdi agent projects attach <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
 		);
 	}
 	console.log();
-	console.log(chalk.bold("Use with agent prompt:"));
+	console.log(chalk.bold("Attach to Agent prompt:"));
 	console.log(buildShareAgentHandoffPrompt(body));
 }

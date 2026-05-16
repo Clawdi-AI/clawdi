@@ -234,16 +234,20 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
     from app.models.project_membership import ProjectMembership
 
     nonce = _uuid.uuid4().hex[:8]
-    sharee = User(clerk_id=f"user_test_bob_{nonce}", email=f"bob_{nonce}@example.com", name="Bob")
-    db_session.add(sharee)
+    recipient = User(
+        clerk_id=f"user_test_bob_{nonce}",
+        email=f"bob_{nonce}@example.com",
+        name="Bob",
+    )
+    db_session.add(recipient)
     await db_session.commit()
-    await db_session.refresh(sharee)
+    await db_session.refresh(recipient)
 
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
         yield db_session
 
     async def _override_get_auth() -> AuthContext:
-        return AuthContext(user=sharee)
+        return AuthContext(user=recipient)
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
@@ -251,13 +255,7 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             raw = await _make_share_link(db_session, seed_project, seed_user)
-            # Use no_mount=True since this test user was created
-            # inline without a Personal project. Auto-mount target
-            # resolution would 409 mount_target_ambiguous otherwise
-            # (owned=[]). Real users have a Personal project
-            # auto-created at signup; capability-only path is the
-            # right shape to verify here.
-            r = await ac.post(f"/api/share/{raw}/upgrade", json={"no_mount": True})
+            r = await ac.post(f"/api/share/{raw}/upgrade")
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["project_id"] == str(seed_project.id)
@@ -265,7 +263,7 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
             assert "mount_id" not in body  # capability-only
             # Idempotent repeat call returns the same row (and same
             # membership_id, not a fresh one).
-            r2 = await ac.post(f"/api/share/{raw}/upgrade", json={"no_mount": True})
+            r2 = await ac.post(f"/api/share/{raw}/upgrade")
             assert r2.status_code == 200
             assert r2.json()["membership_id"] == body["membership_id"]
     finally:
@@ -281,7 +279,9 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
         rows = (
             (
                 await fresh.execute(
-                    select(ProjectMembership).where(ProjectMembership.member_user_id == sharee.id)
+                    select(ProjectMembership).where(
+                        ProjectMembership.member_user_id == recipient.id
+                    )
                 )
             )
             .scalars()

@@ -139,9 +139,9 @@ async def get_default_project(
     """Return the project ID where the caller's next write lands.
 
     Resolution rules match `resolve_default_write_project`:
-      - api_key bound to env → that env's `default_project_id`
-      - Clerk JWT or unbound api_key → most-recently-active env's
-        project, falling back to Personal if no envs.
+      - Agent API key → that Agent Project id
+      - Clerk JWT or unbound api_key → most-recently-active Agent Project,
+        falling back to Personal if no Agents are registered.
     """
     project_id = await resolve_default_write_project(db, auth)
     return DefaultProjectResponse(project_id=str(project_id))
@@ -155,9 +155,9 @@ async def create_project(
 ) -> ProjectResponse:
     """Create an explicit project/team container owned by the caller.
 
-    Env-bound deploy keys are rejected: creating shareable projects is
+    Agent API keys are rejected: creating shareable Projects is
     an account-level action, not something a hosted agent pod should do
-    with a leaked environment key.
+    with a leaked key.
     """
     user_id = auth.user_id
     explicit_slug = body.slug is not None
@@ -192,7 +192,7 @@ async def list_projects(
     db: AsyncSession = Depends(get_session),
 ) -> list[ProjectResponse]:
     """List every project the caller can read. JWT auth -> all of
-    the user's visible projects. api_key -> the bound env's project only.
+    the user's visible projects. Agent API key -> that Agent Project only.
     """
     visible_project_ids = await project_ids_visible_to(db, auth)
     if not visible_project_ids:

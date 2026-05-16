@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("projectCreateCommand", () => {
-	it("posts a workspace project and emits agent JSON", async () => {
+	it("posts a user-created Project and emits agent JSON", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",

@@ -149,7 +149,7 @@ async def events(
         initial_visible,
         max_per_user=PER_USER_CONNECTION_CAP,
         api_key_id=auth.api_key.id if auth.api_key is not None else None,
-        # Per-key cap only applies to env-bound deploy keys. Unbound
+        # Per-key cap only applies to Agent API keys. Unbound
         # CLI keys are user-level (one key shared across N daemons
         # via `clawdi serve install --all`), so the per-key cap of 2
         # would silently 429 the third local agent on a multi-agent

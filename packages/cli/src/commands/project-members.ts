@@ -1,7 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
 interface MemberRow {
@@ -15,42 +14,19 @@ interface MemberRow {
 	resolved_owner_handle: string;
 }
 
-async function requireAuth(): Promise<{ apiUrl: string; apiKey: string } | null> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return null;
-	}
-	return { apiUrl, apiKey: auth.apiKey };
-}
-
-async function requestJson<T>(url: string, apiKey: string, init: RequestInit = {}): Promise<T> {
-	const r = await fetch(url, {
-		...init,
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			...(init.headers ?? {}),
-		},
-	});
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	return r.json() as Promise<T>;
-}
-
 async function fetchMembers(
 	apiUrl: string,
 	apiKey: string,
 	projectId: string,
 ): Promise<MemberRow[]> {
-	return requestJson<MemberRow[]>(`${apiUrl}/api/projects/${projectId}/members`, apiKey);
+	return authedJson<MemberRow[]>(apiUrl, apiKey, `/api/projects/${projectId}/members`);
 }
 
 export async function projectMembersCommand(
 	projectArg: string,
 	opts: { json?: boolean; remove?: string },
 ): Promise<void> {
-	const ctx = await requireAuth();
+	const ctx = projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
@@ -73,9 +49,10 @@ export async function projectMembersCommand(
 			process.exitCode = 1;
 			return;
 		}
-		const removed = await requestJson<{ status: string }>(
-			`${ctx.apiUrl}/api/projects/${projectId}/members/${matches[0].user_id}`,
+		const removed = await authedJson<{ status: string }>(
+			ctx.apiUrl,
 			ctx.apiKey,
+			`/api/projects/${projectId}/members/${matches[0].user_id}`,
 			{ method: "DELETE" },
 		);
 		if (opts.json) {
@@ -131,13 +108,14 @@ export async function projectLeaveCommand(
 	projectArg: string,
 	opts: { json?: boolean },
 ): Promise<void> {
-	const ctx = await requireAuth();
+	const ctx = projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
-	const result = await requestJson<{ status: string }>(
-		`${ctx.apiUrl}/api/projects/${projectId}/leave`,
+	const result = await authedJson<{ status: string }>(
+		ctx.apiUrl,
 		ctx.apiKey,
+		`/api/projects/${projectId}/leave`,
 		{ method: "POST" },
 	);
 	if (opts.json) {
@@ -154,15 +132,15 @@ export async function projectUnshareCommand(
 	projectArg: string,
 	opts: { json?: boolean },
 ): Promise<void> {
-	const ctx = await requireAuth();
+	const ctx = projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
-	const result = await requestJson<{
+	const result = await authedJson<{
 		links_revoked: number;
 		members_removed: number;
 		invitations_cancelled: number;
-	}>(`${ctx.apiUrl}/api/projects/${projectId}/unshare`, ctx.apiKey, { method: "POST" });
+	}>(ctx.apiUrl, ctx.apiKey, `/api/projects/${projectId}/unshare`, { method: "POST" });
 	if (opts.json) {
 		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
 		return;

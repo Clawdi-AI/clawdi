@@ -14,6 +14,7 @@ from app.models.user import User as User  # noqa: F401 - FK target
 
 class ProjectMembership(Base, TimestampMixin):
     __tablename__ = "project_memberships"
+    __mapper_args__ = {"confirm_deleted_rows": False}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(

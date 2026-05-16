@@ -1,4 +1,4 @@
-"""End-to-end role-path coverage for project sharing + agent bindings."""
+"""End-to-end role-path coverage for project sharing + Agent Project use."""
 
 import uuid
 from collections.abc import AsyncIterator
@@ -116,21 +116,17 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
 
     try:
         link_response = await client.post(
-            "/api/inbox/accept-link",
+            f"/api/share/{raw}/upgrade",
             json={
-                "url": f"https://cloud.clawdi.ai/share/{raw}",
                 "agent_ids": [str(env.id)],
-                "bind_as": "context",
+                "use_as": "attached",
             },
         )
         assert link_response.status_code == 200, link_response.text
         assert link_response.json()["project_id"] == str(link_project.id)
         assert link_response.json()["bound_agent_ids"] == [str(env.id)]
 
-        invite_response = await client.post(
-            "/api/inbox/accept-invitation",
-            json={"invitation_id": str(invitation_id)},
-        )
+        invite_response = await client.post(f"/api/me/invitations/{invitation_id}/accept")
         assert invite_response.status_code == 200, invite_response.text
         assert invite_response.json()["project_id"] == str(invite_project.id)
 
@@ -183,34 +179,8 @@ async def test_agent_binding_list_materializes_default_primary_and_blocks_delete
     assert rows[0]["binding_type"] == "primary"
     assert rows[0]["project_id"] == str(env.default_project_id)
 
-    delete_primary = await client.delete(
-        f"/api/agents/{env.id}/project-bindings/{rows[0]['id']}"
-    )
+    delete_primary = await client.delete(f"/api/agents/{env.id}/project-bindings/{rows[0]['id']}")
     assert delete_primary.status_code == 400
-
-
-async def test_agent_primary_project_cannot_be_changed(client, db_session, seed_user):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"fixed-home-{uuid.uuid4().hex[:8]}",
-        machine_name="atlas",
-    )
-    workspace = Project(
-        user_id=seed_user.id,
-        name="Workspace",
-        slug=f"workspace-{uuid.uuid4().hex[:8]}",
-        kind=PROJECT_KIND_WORKSPACE,
-    )
-    db_session.add(workspace)
-    await db_session.commit()
-
-    response = await client.put(
-        f"/api/agents/{env.id}/project-bindings/primary",
-        json={"project_id": str(workspace.id)},
-    )
-    assert response.status_code == 400
-    assert "fixed" in response.text
 
 
 async def test_agent_binding_list_restores_default_primary_and_demotes_stale_primary(
@@ -253,7 +223,110 @@ async def test_agent_binding_list_restores_default_primary_and_demotes_stale_pri
     assert str(workspace.id) in {row["project_id"] for row in context_rows}
 
 
-async def test_sharee_leave_removes_agent_context_binding(client, db_session, seed_user):
+async def test_agent_binding_attach_repairs_stale_primary_before_returning_context(
+    client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"attach-stale-primary-{uuid.uuid4().hex[:8]}",
+        machine_name="atlas",
+    )
+    workspace = Project(
+        user_id=seed_user.id,
+        name="Old Primary",
+        slug=f"old-primary-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(workspace)
+    await db_session.flush()
+    db_session.add(
+        AgentProjectBinding(
+            agent_id=env.id,
+            project_id=workspace.id,
+            binding_type="primary",
+            priority=0,
+            default_write_enabled=True,
+            created_by_user_id=seed_user.id,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/agents/{env.id}/project-bindings/context",
+        json={"project_id": str(workspace.id)},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["project_id"] == str(workspace.id)
+    assert body["binding_type"] == "context"
+    assert body["default_write_enabled"] is False
+
+    rows = (
+        (
+            await db_session.execute(
+                select(AgentProjectBinding).where(AgentProjectBinding.agent_id == env.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    primary_rows = [row for row in rows if row.binding_type == "primary"]
+    assert [row.project_id for row in primary_rows] == [env.default_project_id]
+
+
+async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
+    client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-stale-primary-{uuid.uuid4().hex[:8]}",
+        machine_name="atlas",
+    )
+    workspace = Project(
+        user_id=seed_user.id,
+        name="Detached Primary",
+        slug=f"detached-primary-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(workspace)
+    await db_session.flush()
+    stale = AgentProjectBinding(
+        agent_id=env.id,
+        project_id=workspace.id,
+        binding_type="primary",
+        priority=0,
+        default_write_enabled=True,
+        created_by_user_id=seed_user.id,
+    )
+    db_session.add(stale)
+    await db_session.flush()
+    stale_id = stale.id
+    await db_session.commit()
+
+    response = await client.delete(f"/api/agents/{env.id}/project-bindings/{stale_id}")
+    assert response.status_code == 200, response.text
+
+    rows = (
+        (
+            await db_session.execute(
+                select(AgentProjectBinding).where(AgentProjectBinding.agent_id == env.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert all(row.project_id != workspace.id for row in rows)
+    primary_rows = [row for row in rows if row.binding_type == "primary"]
+    assert [row.project_id for row in primary_rows] == [env.default_project_id]
+
+
+async def test_recipient_leave_removes_attached_agent_project(client, db_session, seed_user):
     owner, shared_project = await _owner_with_project(db_session)
     db_session.add(
         ProjectMembership(
@@ -304,11 +377,11 @@ async def test_sharee_leave_removes_agent_context_binding(client, db_session, se
 
 async def test_owner_unshare_removes_member_agent_context_binding(db_session, seed_user):
     owner, shared_project = await _owner_with_project(db_session)
-    sharee = seed_user
+    recipient = seed_user
     db_session.add(
         ProjectMembership(
             project_id=shared_project.id,
-            member_user_id=sharee.id,
+            member_user_id=recipient.id,
             role="viewer",
             joined_via="invite",
             joined_at=datetime.now(UTC),
@@ -317,7 +390,7 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
     )
     env = await create_env_with_project(
         db_session,
-        user_id=sharee.id,
+        user_id=recipient.id,
         machine_id=f"unshare-{uuid.uuid4().hex[:8]}",
         machine_name="forge",
     )
@@ -328,7 +401,7 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
             binding_type="context",
             priority=1,
             default_write_enabled=False,
-            created_by_user_id=sharee.id,
+            created_by_user_id=recipient.id,
         )
     )
     await db_session.commit()
@@ -397,7 +470,8 @@ async def test_context_reorder_can_swap_priorities(client, db_session, seed_user
         .scalars()
         .all()
     )
-    assert {str(row.id): row.priority for row in rows} == {
+    context_rows = [row for row in rows if row.binding_type == "context"]
+    assert {str(row.id): row.priority for row in context_rows} == {
         str(bindings[0].id): 2,
         str(bindings[1].id): 1,
     }
@@ -465,8 +539,7 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
     assert "value" not in blocked.json()["detail"]
 
     allowed = await cli_client.post(
-        f"/api/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}"
-        "&allow_conflicts=true&debug=true"
+        f"/api/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}&allow_conflicts=true&debug=true"
     )
     assert allowed.status_code == 200, allowed.text
     body = allowed.json()

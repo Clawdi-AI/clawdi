@@ -2,7 +2,7 @@
 
 Owner-handle resolution and share-token generation/verification live
 here; transactional flows that touch multiple tables (unshare,
-accept-invitation, redeem-token-and-upgrade) also live here so the
+accept invitation, redeem share token) also live here so the
 route handlers stay thin.
 """
 
@@ -11,7 +11,13 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+from datetime import UTC, datetime
+from uuid import UUID
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.project_membership import ProjectMembership
 from app.models.user import User
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
@@ -34,7 +40,7 @@ OWNER_HANDLE_MISSING_SENTINEL = "owner-display-name-missing"
 def safe_owner_handle(user: User) -> str:
     """resolve_owner_handle with a stable fallback for read paths.
 
-    Write paths (create-share-link, accept-invitation) must raise a
+    Write paths (create share link, accept invitation) must raise a
     409 `display_name_required` so the user fixes their profile
     before durable state is created with a meaningless handle. Read
     paths (listings for links/invitations already accepted
@@ -117,3 +123,35 @@ def hash_share_token(raw_token: str) -> str:
 def token_prefix(raw_token: str) -> str:
     """First 8 chars of the raw token - safe to store + display."""
     return raw_token[:_TOKEN_PREFIX_LEN]
+
+
+async def ensure_viewer_membership(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    member_user_id: UUID,
+    joined_via: str,
+    resolved_owner_handle: str,
+) -> ProjectMembership:
+    existing = (
+        await db.execute(
+            select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.member_user_id == member_user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    membership = ProjectMembership(
+        project_id=project_id,
+        member_user_id=member_user_id,
+        role="viewer",
+        joined_via=joined_via,
+        joined_at=datetime.now(UTC),
+        resolved_owner_handle=resolved_owner_handle,
+    )
+    db.add(membership)
+    await db.flush()
+    return membership

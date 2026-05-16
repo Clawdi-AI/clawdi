@@ -1,7 +1,7 @@
 import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 
 interface ProjectRow {
 	id: string;
@@ -44,13 +44,9 @@ export async function projectCreateCommand(
 	name: string,
 	opts: { slug?: string; json?: boolean } = {},
 ): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 
 	const payload: { name: string; slug?: string } = { name };
 	const slug = normalizeSlugInput(opts.slug);
@@ -59,7 +55,7 @@ export async function projectCreateCommand(
 	const r = await fetch(`${apiUrl}/api/projects`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${auth.apiKey}`,
+			Authorization: `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(payload),

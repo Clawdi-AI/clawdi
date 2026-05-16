@@ -36,15 +36,15 @@ def test_invitation_create_validates_email_shape():
     assert parsed.email == "alice@example.com"
 
 
-def test_upgrade_body_validates_bind_as_and_agent_ids():
+def test_upgrade_body_validates_use_as_and_agent_ids():
     from app.schemas.sharing import UpgradeBody
 
-    parsed = UpgradeBody.model_validate({"agent_ids": ["a", "b"], "bind_as": "context"})
-    assert parsed.bind_as == "context"
+    parsed = UpgradeBody.model_validate({"agent_ids": ["a", "b"], "use_as": "attached"})
+    assert parsed.use_as == "attached"
     assert parsed.agent_ids == ["a", "b"]
 
     with pytest.raises(ValidationError):
-        UpgradeBody.model_validate({"bind_as": "invalid"})
+        UpgradeBody.model_validate({"use_as": "invalid"})
 
     with pytest.raises(ValidationError):
-        UpgradeBody.model_validate({"bind_as": "primary"})
+        UpgradeBody.model_validate({"use_as": "home"})

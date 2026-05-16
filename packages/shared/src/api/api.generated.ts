@@ -595,9 +595,9 @@ export interface paths {
          * @description Return the project ID where the caller's next write lands.
          *
          *     Resolution rules match `resolve_default_write_project`:
-         *       - api_key bound to env → that env's `default_project_id`
-         *       - Clerk JWT or unbound api_key → most-recently-active env's
-         *         project, falling back to Personal if no envs.
+         *       - Agent API key → that Agent Project id
+         *       - Clerk JWT or unbound api_key → most-recently-active Agent Project,
+         *         falling back to Personal if no Agents are registered.
          */
         get: operations["get_default_project_api_projects_default_get"];
         put?: never;
@@ -618,7 +618,7 @@ export interface paths {
         /**
          * List Projects
          * @description List every project the caller can read. JWT auth -> all of
-         *     the user's visible projects. api_key -> the bound env's project only.
+         *     the user's visible projects. Agent API key -> that Agent Project only.
          */
         get: operations["list_projects_api_projects_get"];
         put?: never;
@@ -626,11 +626,31 @@ export interface paths {
          * Create Project
          * @description Create an explicit project/team container owned by the caller.
          *
-         *     Env-bound deploy keys are rejected: creating shareable projects is
+         *     Agent API keys are rejected: creating shareable Projects is
          *     an account-level action, not something a hosted agent pod should do
-         *     with a leaked environment key.
+         *     with a leaked key.
          */
         post: operations["create_project_api_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Project
+         * @description Show one project if it is visible to the caller.
+         */
+        get: operations["get_project_api_projects__project_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -668,8 +688,8 @@ export interface paths {
          * @description Back-compat shim for pre-PR-66 CLI binaries. Resolves the
          *     target project via `resolve_default_write_project` (every user
          *     has a deterministic default after the projects migration:
-         *     env-bound key → its env's project; unbound key with envs →
-         *     most-recently-active env's project; zero envs → Personal),
+         *     Agent API key → its Agent Project; unbound key with Agents →
+         *     most-recently-active Agent Project; zero Agents → Personal),
          *     then runs the same upload pipeline as the project-explicit
          *     route. New CLIs and the dashboard call
          *     `POST /api/projects/{project_id}/skills/upload` directly.
@@ -785,8 +805,8 @@ export interface paths {
          * Upload Skill Project
          * @description Project-explicit tar.gz skill upload.
          *
-         *     The URL carries the target project; one env binds to one project,
-         *     so a daemon's writes always land in its own env's project. The
+         *     The URL carries the target Project; one Agent writes to one Agent Project,
+         *     so daemon writes always land in the expected Project. The
          *     dashboard's content editor uses `PUT /skills/{key}/content`
          *     instead (raw markdown, server-side tar). Both converge on
          *     `_do_upload_skill`, which serializes via a Postgres advisory
@@ -878,6 +898,10 @@ export interface paths {
          * @description Phase-2 project-explicit detail. Returns exactly the row at
          *     (`project_id`, `skill_key`) — no multi-project disambiguation needed
          *     because the URL pins the project.
+         *
+         *     Like download, detail is a read path: viewer members may read
+         *     shared-project skill metadata/content, while write paths stay
+         *     owner-only via `validate_project_for_caller`.
          */
         get: operations["get_skill_project_api_projects__project_id__skills__skill_key__get"];
         put?: never;
@@ -1002,11 +1026,11 @@ export interface paths {
          *     With `force=true`, re-embeds rows that already have embeddings too
          *     (useful after changing the embedding model).
          *
-         *     Env-bound api keys are rejected: this is a maintenance/admin
+         *     Agent API keys are rejected: this is a maintenance/admin
          *     operation that touches every memory the user owns, including
-         *     cross-env memories the bound key isn't allowed to read. Pre-fix
-         *     a leaked env-A deploy key with `scopes=None` could call this
-         *     endpoint and feed every env's content to the embedder as a side
+         *     cross-Agent memories the bound key isn't allowed to read. Pre-fix
+         *     a leaked Agent A deploy key with `scopes=None` could call this
+         *     endpoint and feed every Agent's content to the embedder as a side
          *     channel.
          */
         post: operations["embed_backfill_api_memories_embed_backfill_post"];
@@ -1118,9 +1142,9 @@ export interface paths {
          * Resolve Vault
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
-         *     Project-filtered: an api_key bound to env A only sees vaults in
-         *     that env's project. Without this filter a leaked daemon key
-         *     could decrypt vaults belonging to Personal or to another env.
+         *     Project-filtered: an Agent API key only sees vaults in its
+         *     Agent Project. Without this filter a leaked daemon key could decrypt
+         *     vaults belonging to Personal or another Agent.
          */
         post: operations["resolve_vault_api_vault_resolve_post"];
         delete?: never;
@@ -1363,7 +1387,7 @@ export interface paths {
         };
         /**
          * Global Search
-         * @description Fan out to each entity searcher and concat results.
+         * @description Run each entity searcher and concat results.
          *
          *     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
          *     4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
@@ -1373,7 +1397,9 @@ export interface paths {
          *
          *     A single failing source (e.g. the memory provider briefly unavailable)
          *     degrades to partial results rather than failing the whole request —
-         *     palette UX beats strict all-or-nothing consistency here.
+         *     palette UX beats strict all-or-nothing consistency here. The queries run
+         *     sequentially because SQLAlchemy AsyncSession is not safe for concurrent
+         *     operations on the same request-scoped session.
          */
         get: operations["global_search_api_search_get"];
         put?: never;
@@ -1429,40 +1455,6 @@ export interface paths {
         put?: never;
         /** Upgrade */
         post: operations["upgrade_api_share__token__upgrade_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/inbox/accept-link": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Accept Link */
-        post: operations["accept_link_api_inbox_accept_link_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/inbox/accept-invitation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Accept Invitation */
-        post: operations["accept_invitation_api_inbox_accept_invitation_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1668,23 +1660,6 @@ export interface paths {
         /** List Project Bindings */
         get: operations["list_project_bindings_api_agents__agent_id__project_bindings_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agents/{agent_id}/project-bindings/primary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Set Primary Project Binding */
-        put: operations["set_primary_project_binding_api_agents__agent_id__project_bindings_primary_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2266,6 +2241,29 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * InvitationAcceptResponse
+         * @description Returned after a directed project invitation is accepted.
+         */
+        InvitationAcceptResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Role */
+            role: string;
+            /** Joined Via */
+            joined_via: string;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            joined_at: string;
+            /** Resolved Owner Handle */
+            resolved_owner_handle: string;
+            /** Bound Agent Ids */
+            bound_agent_ids: string[];
+        };
+        /**
          * InvitationCreate
          * @description Body for POST /api/projects/{project_id}/invitations.
          */
@@ -2466,6 +2464,10 @@ export interface components {
              * @default true
              */
             is_owner: boolean;
+            /** Owner Display */
+            owner_display?: string | null;
+            /** Owner Handle */
+            owner_handle?: string | null;
         };
         /** SearchHit */
         SearchHit: {
@@ -2925,6 +2927,29 @@ export interface components {
             /** Vault Locked */
             vault_locked: boolean;
         };
+        /**
+         * ShareUpgradeResponse
+         * @description Returned after a share link becomes a permanent membership.
+         */
+        ShareUpgradeResponse: {
+            /** Membership Id */
+            membership_id: string;
+            /** Project Id */
+            project_id: string;
+            /** Role */
+            role: string;
+            /** Joined Via */
+            joined_via: string;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            joined_at: string;
+            /** Resolved Owner Handle */
+            resolved_owner_handle: string;
+            /** Bound Agent Ids */
+            bound_agent_ids: string[];
+        };
         /** SkillContentUpdateRequest */
         SkillContentUpdateRequest: {
             /** Content */
@@ -3096,6 +3121,11 @@ export interface components {
             members_removed: number;
             /** Invitations Cancelled */
             invitations_cancelled: number;
+            /**
+             * Agent Bindings Removed
+             * @default 0
+             */
+            agent_bindings_removed: number;
         };
         /**
          * UpgradeBody
@@ -3103,16 +3133,17 @@ export interface components {
          *     POST /api/me/invitations/{id}/accept.
          *
          *     Accepting access does not auto-bind by default. Callers can pass
-         *     explicit `agent_ids` to create context bindings during accept.
+         *     explicit `agent_ids` to attach the accepted Project for reads.
          */
         UpgradeBody: {
             /** Agent Ids */
             agent_ids?: string[] | null;
             /**
-             * Bind As
-             * @default context
+             * Use As
+             * @default attached
+             * @constant
              */
-            bind_as: string;
+            use_as: "attached";
         };
         /** ValidationError */
         ValidationError: {
@@ -4280,6 +4311,37 @@ export interface operations {
             };
         };
     };
+    get_project_api_projects__project_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_skills_api_skills_get: {
         parameters: {
             query?: {
@@ -4288,7 +4350,7 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 include_content?: boolean;
-                /** @description Optional explicit project to list. Without it, results span every project the caller can read (env-bound api_keys see only their env, everyone else sees all projects). The serve daemon passes its env's default_project_id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right project instead of the most-recently-active one. */
+                /** @description Optional explicit project to list. Without it, results span every project the caller can read (Agent API keys see only their Agent Project, everyone else sees all projects). The serve daemon passes its Agent Project id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right Project instead of the most-recently-active one. */
                 project_id?: string | null;
             };
             header?: {
@@ -5153,6 +5215,10 @@ export interface operations {
                 key?: string | null;
                 /** @description Project to resolve from (default: caller write project). */
                 project_id?: string | null;
+                /** @description Resolve through an Agent Project and attached Project order. */
+                agent_id?: string | null;
+                /** @description Allow first-match wins when attached Projects contain the same key. */
+                allow_conflicts?: boolean;
                 debug?: boolean;
             };
             header?: never;
@@ -5584,79 +5650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_link_api_inbox_accept_link_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpgradeBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_invitation_api_inbox_accept_invitation_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpgradeBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ShareUpgradeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5920,7 +5914,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: string | number;
                     };
                 };
             };
@@ -5953,7 +5947,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: string | number;
                     };
                 };
             };
@@ -6040,9 +6034,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InvitationAcceptResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6107,41 +6099,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentProjectBindingResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_primary_project_binding_api_agents__agent_id__project_bindings_primary_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BindingCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentProjectBindingResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1,6 +1,7 @@
 """Pydantic models for cross-user project sharing and binding flows."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -110,6 +111,30 @@ class ShareRedeemResponse(BaseModel):
     vault_locked: bool
 
 
+class ShareUpgradeResponse(BaseModel):
+    """Returned after a share link becomes a permanent membership."""
+
+    membership_id: str
+    project_id: str
+    role: str
+    joined_via: str
+    joined_at: datetime
+    resolved_owner_handle: str
+    bound_agent_ids: list[str]
+
+
+class InvitationAcceptResponse(BaseModel):
+    """Returned after a directed project invitation is accepted."""
+
+    id: str
+    project_id: str
+    role: str
+    joined_via: str
+    joined_at: datetime
+    resolved_owner_handle: str
+    bound_agent_ids: list[str]
+
+
 class SharedProjectResponse(BaseModel):
     """An entry in GET /api/me/projects when listing shared projects."""
 
@@ -133,27 +158,7 @@ class UpgradeBody(BaseModel):
     """
 
     agent_ids: list[str] | None = None
-    bind_as: str = "context"
-
-    @field_validator("bind_as")
-    @classmethod
-    def _validate_bind_as(cls, value: str) -> str:
-        if value != "context":
-            raise ValueError("Only attached Projects are supported; Agent Project is fixed")
-        return value
-
-
-class InboxAcceptLinkBody(UpgradeBody):
-    """Body for POST /api/inbox/accept-link."""
-
-    token: str | None = None
-    url: str | None = None
-
-
-class InboxAcceptInvitationBody(UpgradeBody):
-    """Body for POST /api/inbox/accept-invitation."""
-
-    invitation_id: str
+    use_as: Literal["attached"] = "attached"
 
 
 class BindingCreate(BaseModel):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runnable local smoke for project sharing and agent workspace paths.
+# Runnable local smoke for project sharing and Agent Project paths.
 #
 # This script executes tests that map to the live demo in:
 #
@@ -93,7 +93,7 @@ preflight() {
   fi
 }
 
-section "Project sharing + agent workspace demo smoke"
+section "Project sharing + Agent Project demo smoke"
 echo "Repository: $ROOT"
 echo "Story: project owner shares -> recipient accepts -> agent uses project -> vault provenance -> revoke cleanup"
 

@@ -98,23 +98,6 @@ async def list_project_bindings(
     return [_to_response(row) for row in rows]
 
 
-@router.put(
-    "/{agent_id}/project-bindings/primary",
-    response_model=AgentProjectBindingResponse,
-)
-async def set_primary_project_binding(
-    agent_id: UUID,
-    body: BindingCreate,
-    auth: AuthContext = Depends(require_user_auth_unbound),
-    db: AsyncSession = Depends(get_session),
-) -> AgentProjectBindingResponse:
-    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
-    raise HTTPException(
-        status.HTTP_400_BAD_REQUEST,
-        "Agent Project is fixed",
-    )
-
-
 @router.post(
     "/{agent_id}/project-bindings/context",
     response_model=AgentProjectBindingResponse,
@@ -126,6 +109,11 @@ async def add_context_project_binding(
     db: AsyncSession = Depends(get_session),
 ) -> AgentProjectBindingResponse:
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    await ensure_agent_primary_binding(
+        db,
+        agent=agent,
+        created_by_user_id=auth.user_id,
+    )
     try:
         project_id = UUID(body.project_id)
     except ValueError as err:
@@ -172,7 +160,12 @@ async def reorder_context_project_bindings(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    await ensure_agent_primary_binding(
+        db,
+        agent=agent,
+        created_by_user_id=auth.user_id,
+    )
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
@@ -235,7 +228,12 @@ async def delete_project_binding(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    await ensure_agent_primary_binding(
+        db,
+        agent=agent,
+        created_by_user_id=auth.user_id,
+    )
     binding = (
         await db.execute(
             select(AgentProjectBinding).where(

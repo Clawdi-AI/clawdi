@@ -1,7 +1,7 @@
 import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
 /**
@@ -32,24 +32,20 @@ export async function projectInviteCommand(
 	projectArg: string,
 	opts: { email: string },
 ): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 	if (!opts.email || !/^\S+@\S+\.\S+$/.test(opts.email)) {
 		console.error(chalk.red("--email must be a valid email address."));
 		process.exitCode = 1;
 		return;
 	}
 
-	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 	const r = await fetch(`${apiUrl}/api/projects/${projectId}/invitations`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${auth.apiKey}`,
+			Authorization: `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ email: opts.email }),
@@ -85,7 +81,7 @@ export async function projectInviteCommand(
 	const body = (await r.json()) as InvitationResponse;
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
 	console.log(chalk.gray("  They will join as a read-only viewer after accepting."));
-	console.log(chalk.gray("  Using it with an agent is separate; after accept they can run:"));
+	console.log(chalk.gray("  Attaching it to an Agent is separate; after accept they can run:"));
 	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
 	console.log(`  ${chalk.cyan("clawdi agent projects attach <agent-id> --project <project>")}`);
 }

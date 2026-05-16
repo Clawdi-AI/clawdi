@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command, Option } from "commander";
+import { Command } from "commander";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
@@ -771,40 +771,10 @@ agentProjectsCmd
 	});
 
 agentProjectsCmd
-	.command("set-home <agent-id>", { hidden: true })
-	.description("Deprecated: Agent Project is fixed")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.action(async (agentId, opts) => {
-		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
-		await agentProjectsSetPrimaryCommand(agentId, opts);
-	});
-
-agentProjectsCmd
-	.command("set-primary <agent-id>", { hidden: true })
-	.description("Deprecated: Agent Project is fixed")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.action(async (agentId, opts) => {
-		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
-		await agentProjectsSetPrimaryCommand(agentId, opts);
-	});
-
-agentProjectsCmd
 	.command("attach <agent-id>")
 	.description("Attach a Project for reads")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.option("--order <n>", "Read order (>=1)")
-	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
-	.action(async (agentId, opts) => {
-		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
-		await agentProjectsAddContextCommand(agentId, opts);
-	});
-
-agentProjectsCmd
-	.command("add-context <agent-id>", { hidden: true })
-	.description("Compatibility alias for attach")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.option("--order <n>", "Read order (>=1)")
-	.addOption(new Option("--priority <n>", "Deprecated compatibility alias for --order").hideHelp())
 	.action(async (agentId, opts) => {
 		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsAddContextCommand(agentId, opts);
@@ -813,15 +783,6 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("detach <agent-id>")
 	.description("Detach a Project")
-	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.action(async (agentId, opts) => {
-		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
-		await agentProjectsRemoveContextCommand(agentId, opts);
-	});
-
-agentProjectsCmd
-	.command("remove-context <agent-id>", { hidden: true })
-	.description("Compatibility alias for detach")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -840,20 +801,6 @@ agentProjectsCmd
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi agent projects move <agent-id> --item <id>:1 --item <id>:2",
-	)
-	.action(async (agentId, opts) => {
-		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
-		await agentProjectsReorderCommand(agentId, opts);
-	});
-
-agentProjectsCmd
-	.command("reorder <agent-id>", { hidden: true })
-	.description("Compatibility alias for move")
-	.option(
-		"--item <id:order>",
-		"Attachment id and target order (repeatable)",
-		collectValues,
-		[] as string[],
 	)
 	.action(async (agentId, opts) => {
 		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
@@ -885,12 +832,6 @@ inboxCmd
 		[] as string[],
 	)
 	.option("--use-as <attached>", "Attach to --agent (default: attached)")
-	.addOption(
-		new Option(
-			"--bind-as <value>",
-			"Deprecated compatibility alias for --use-as attached",
-		).hideHelp(),
-	)
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",
@@ -900,7 +841,7 @@ Examples:
     $ clawdi inbox accept https://clawdi.ai/share/abc...
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
-  Accept and use with an agent:
+  Accept and attach to Agent:
     $ clawdi inbox accept --url <link> --agent <agent-id>
     $ clawdi inbox accept --invite <id> --agent <agent-id>`,
 	)

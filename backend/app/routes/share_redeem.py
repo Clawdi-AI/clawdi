@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from threading import Lock
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import func, select, update
@@ -19,18 +18,13 @@ from app.core.auth import (
 )
 from app.core.database import get_session
 from app.models.project import Project
-from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
-from app.schemas.sharing import ShareRedeemResponse, UpgradeBody
-from app.services.agent_bindings import (
-    assert_project_visible_to_user,
-    ensure_context_binding,
-    get_owned_agent_or_404,
-)
-from app.services.sharing import safe_owner_display
+from app.schemas.sharing import ShareRedeemResponse, ShareUpgradeResponse, UpgradeBody
+from app.services.agent_bindings import attach_project_to_owned_agents
+from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +205,7 @@ async def redeem(
     return payload
 
 
-@router.post("/{token}/upgrade")
+@router.post("/{token}/upgrade", response_model=ShareUpgradeResponse)
 async def upgrade(
     body: UpgradeBody | None = None,
     ctx: ShareTokenContext = Depends(require_share_token),
@@ -248,48 +242,20 @@ async def upgrade_share_token(
     if link.expires_at is not None and link.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_410_GONE, "share link has expired")
 
-    existing = (
-        await db.execute(
-            select(ProjectMembership).where(
-                ProjectMembership.project_id == ctx.project_id,
-                ProjectMembership.member_user_id == auth.user_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        membership = existing
-    else:
-        membership = ProjectMembership(
-            project_id=ctx.project_id,
-            member_user_id=auth.user_id,
-            role="viewer",
-            joined_via="link",
-            joined_at=datetime.now(UTC),
-            resolved_owner_handle=link.resolved_owner_handle,
-        )
-        db.add(membership)
-        await db.flush()
+    membership = await ensure_viewer_membership(
+        db,
+        project_id=ctx.project_id,
+        member_user_id=auth.user_id,
+        joined_via="link",
+        resolved_owner_handle=link.resolved_owner_handle,
+    )
 
-    bound_agent_ids: list[str] = []
-    if body.agent_ids:
-        for raw_agent_id in body.agent_ids:
-            try:
-                agent_id = UUID(raw_agent_id)
-            except ValueError as err:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid agent id") from err
-            await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
-            await assert_project_visible_to_user(
-                db,
-                user_id=auth.user_id,
-                project_id=ctx.project_id,
-            )
-            await ensure_context_binding(
-                db,
-                agent_id=agent_id,
-                project_id=ctx.project_id,
-                created_by_user_id=auth.user_id,
-            )
-            bound_agent_ids.append(str(agent_id))
+    bound_agent_ids = await attach_project_to_owned_agents(
+        db,
+        user_id=auth.user_id,
+        project_id=ctx.project_id,
+        raw_agent_ids=body.agent_ids,
+    )
 
     await db.commit()
     logger.info(

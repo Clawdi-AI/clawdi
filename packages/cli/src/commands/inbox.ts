@@ -69,7 +69,6 @@ function redeemIdempotencyKey(token: string): string {
 interface AcceptOpts {
 	agent?: string[];
 	useAs?: string;
-	bindAs?: string;
 	invite?: string;
 	url?: string;
 	json?: boolean;
@@ -133,37 +132,29 @@ function normalizeAgentIds(values?: string[]): string[] {
 async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, unknown>> {
 	const reqBody: Record<string, unknown> = {};
 	const agentIds = normalizeAgentIds(opts.agent);
-	const bindAs = normalizeAcceptBindAs(opts);
 	if (agentIds.length === 0) {
+		if (opts.useAs) {
+			throw new Error("Pass --agent before choosing how to attach the Project.");
+		}
 		return reqBody;
 	}
+	const useAs = normalizeAcceptMode(opts);
 	reqBody.agent_ids = agentIds;
-	reqBody.bind_as = bindAs;
+	reqBody.use_as = useAs;
 	return reqBody;
 }
 
-function normalizeAcceptBindAs(opts: AcceptOpts): "context" {
+function normalizeAcceptMode(opts: AcceptOpts): "attached" {
 	if (opts.useAs) {
 		const useAs = opts.useAs.toLowerCase();
-		if (useAs === "attached") return "context";
+		if (useAs === "attached") return "attached";
 		if (useAs === "home") {
 			throw new Error("`--use-as home` is no longer supported. Agent Project is fixed.");
 		}
 		throw new Error("`--use-as` must be `attached`.");
 	}
 
-	if (opts.bindAs) {
-		const bindAs = opts.bindAs.toLowerCase();
-		if (bindAs === "context") return bindAs;
-		if (bindAs === "primary") {
-			throw new Error(
-				"`--bind-as primary` is no longer supported. Agent Project is fixed; use `--use-as attached`.",
-			);
-		}
-		throw new Error("`--bind-as` is deprecated; use `--use-as attached`.");
-	}
-
-	return "context";
+	return "attached";
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -255,6 +246,16 @@ export async function inboxAcceptCommand(
 	const auth = getAuth();
 	if (!auth?.apiKey) {
 		// Anonymous: only URL path makes sense (invitations require auth).
+		if (normalizeAgentIds(opts.agent).length > 0 || opts.useAs) {
+			console.error(
+				chalk.red(
+					"Sign in before attaching an accepted Project to an Agent. " +
+						"Run `clawdi auth login`, then re-run with --agent.",
+				),
+			);
+			process.exitCode = 1;
+			return;
+		}
 		if (!posArg && !opts.url) {
 			console.error(
 				chalk.red(
@@ -477,11 +478,11 @@ function renderJoinedSuccess(body: JoinedProject, _opts: AcceptOpts, projectAlia
 	console.log(chalk.gray("  Role: viewer (read-only)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
-		console.log(chalk.gray(`  Attached to ${bound.length} agent${bound.length === 1 ? "" : "s"}.`));
+		console.log(chalk.gray(`  Attached to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
 			chalk.gray(
-				`  Use with agent: clawdi agent projects attach <agent-id> --project ${projectAlias}`,
+				`  Attach to Agent: clawdi agent projects attach <agent-id> --project ${projectAlias}`,
 			),
 		);
 	}

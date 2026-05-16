@@ -1,15 +1,15 @@
-# Project + Agent Bindings Design
+# Project + Agent Project Design
 
-**Status:** draft for PR #88 pre-implementation alignment  
-**Last updated:** 2026-05-14  
+**Status:** CLI/backend ship-state for PR #88; web surfaces are split out
+**Last updated:** 2026-05-16
 **Owner:** product + platform
 
 ## Summary
 
-This document replaces legacy graph-era terminology with a simpler model:
+This document defines the shipped Project + Agent Project model:
 
 - `Project` is the collaboration and data ownership boundary.
-- `Agent` is the runtime boundary that reads from one or more projects.
+- `Agent` is the runtime boundary that reads from one or more Projects.
 - Every Agent has one fixed Agent Project and zero or more attachments.
 - Local project-folder links are CLI-only selection helpers for
   `clawdi run`; they do not compose Projects or change which Projects an
@@ -21,7 +21,7 @@ when an agent runs.
 ## Goals
 
 1. Use `Project + Agent` as the only user-facing model.
-2. Remove legacy boundary terminology from product and docs.
+2. Keep old boundary terminology out of product and docs.
 3. Ensure each Agent has one fixed Agent Project for default reads/writes.
 4. Support one Agent using multiple Projects in v1:
    one Agent Project plus zero or more attached Projects.
@@ -44,10 +44,9 @@ when an agent runs.
 2. No implicit write fan-out across multiple projects.
 3. No automatic conflict override during vault/key collisions.
 4. No cloud Project composition through local folder links.
-5. No test implementation changes in this planning step.
-6. No backend/CLI/web runtime implementation in this planning step.
-
-## User Model
+5. No editor role in v1. Shared recipients are viewer-only.
+6. No dashboard implementation in this PR. Web surfaces consume the same
+   API contracts in a separate PR.
 
 ## Core Objects
 
@@ -55,17 +54,16 @@ when an agent runs.
   - Contains skills, vault metadata/content, and future memory/session
     data.
   - Is owned by one account and may be shared with other accounts.
-  - May be a Personal, environment, or workspace Project.
+  - May be a Personal, Agent, or user-created Project.
 - `Agent`
   - Represents one runnable assistant identity or agent endpoint.
   - Has one fixed Agent Project and ordered attachments.
 - `Agent Project Use`
   - Exactly one Project is the user-facing Agent Project.
-  - The Agent Project is fixed to the Agent environment.
+  - The Agent Project is fixed to that Agent.
   - Zero or more Projects are user-facing attachments.
   - Attachments have explicit order.
-  - Internal API/JSON names may still use `primary`, `context`, and
-    `priority` during compatibility rollout.
+  - Internal API/JSON names use `primary`, `context`, and `priority`.
 - `Project Folder Link`
   - Local CLI configuration that maps a filesystem folder to a visible
     Project for operator convenience.
@@ -83,11 +81,10 @@ when an agent runs.
 - Folder link answers: "When I run from this local folder, which
   Project should the CLI use for vault env injection?"
 
-## Data Model Proposal
+## Data Model
 
-The names below are proposed storage/API names. User-facing surfaces use
-Agent Project, attached Project, and order, with compatibility layers for
-existing internal names where needed.
+The names below are the shipped storage/API names. User-facing surfaces
+use Agent Project, attached Project, and order.
 
 ## Entities
 
@@ -102,22 +99,27 @@ existing internal names where needed.
    - `id`
    - `project_id`
    - `member_user_id`
-   - `role` (`owner`, `editor`, `viewer`)
-   - `accepted_at`, `revoked_at`
+   - `role` (`viewer` in v1)
+   - `joined_via` (`invite`, `link`)
+   - `joined_at`
+   - `resolved_owner_handle`
 3. `project_share_links`
    - `id`
    - `project_id`
    - `token_hash`
+   - `token_prefix`
    - `created_by_user_id`
    - `expires_at`, `revoked_at`
+   - `redeem_count`, `last_redeemed_at`
 4. `project_invitations`
    - `id`
    - `project_id`
    - `email`
-   - `role`
+   - v1 role is implicitly viewer
    - `invited_by_user_id`
-   - `accepted_at`, `revoked_at`
+   - `resolved_owner_handle`
 5. `agents`
+   - Internally backed by `agent_environments`
    - `id`
    - `owner_user_id`
    - `name`
@@ -135,13 +137,13 @@ existing internal names where needed.
 
 ## Constraints
 
-1. One Agent Project binding per agent:
+1. One internal Agent Project row per Agent:
    unique partial index on `agent_id` where `binding_type='primary'`.
 2. No duplicate Project attachment for the same Agent:
    unique on `(agent_id, project_id)`.
 3. Attached Project order uniqueness:
    unique on `(agent_id, binding_type, priority)`.
-4. The primary binding must point at the agent's own
+4. The internal primary row must point at the Agent's own
    `default_project_id`; users cannot switch it to another Project.
 5. Attached Project may be read-only (`viewer`) and must never be default
    write target.
@@ -149,7 +151,7 @@ existing internal names where needed.
 
 ## Runtime and Vault Resolution Rules
 
-## Binding Boundary
+## Agent Use Boundary
 
 - Runtime composition is computed at agent boundary only.
 - Reads = Agent Project + ordered attachments.
@@ -159,14 +161,14 @@ existing internal names where needed.
 
 1. Agent Project first.
 2. Attached Projects in explicit order.
-3. If key appears in multiple attached Projects at the same order, treat
-   as conflict.
+3. If a key appears in more than one Project in the Agent order, treat it
+   as a conflict unless the caller explicitly allows first-match wins.
 
 ## Conflict Handling
 
 - Default behavior: block on conflict and return structured error.
 - Explicit override path: caller may pass an allow flag.
-- Every resolve response includes provenance:
+- Debug and conflict responses include provenance:
   - winning project id/name
   - skipped candidates
   - reason (`precedence`, `role_read_only`, `conflict_blocked`)
@@ -182,7 +184,7 @@ existing internal names where needed.
 ## CLI Vault Env Selection
 
 `clawdi run` can select a Project for vault env injection without
-changing Project membership or Agent bindings:
+changing Project membership or Agent Project use:
 
 1. `clawdi run --project <project> -- <cmd>` uses the explicit Project.
 2. Without `--project`, `clawdi run -- <cmd>` may use a linked folder's
@@ -231,7 +233,7 @@ Current adapter research from `packages/cli/src/adapters/*`:
      as a channel/origin tag, not a filesystem cwd.
    - Current adapter behavior: ignores `projectFilter` and reports
      `projectPath: null`.
-   - Design implication: Hermes needs an explicit Clawdi-side binding or
+   - Design implication: Hermes needs an explicit Clawdi-side attachment or
      operator-selected Project; native session storage cannot infer a
      folder Project.
 
@@ -256,45 +258,58 @@ Implementation direction:
   behavior. Agent-native project hints may improve UX suggestions, but
   must not silently attach Projects to Agents.
 
-## API Changes (Proposed)
+## API Surface
 
 ## Projects and Sharing
 
-1. `POST /api/projects`
-2. `GET /api/projects`
-3. `GET /api/projects/{project_id}`
-4. `POST /api/projects/{project_id}/share-links`
-5. `POST /api/projects/{project_id}/invitations`
-6. `GET /api/projects/{project_id}/members`
-7. `DELETE /api/projects/{project_id}/members/{member_id}`
-8. `POST /api/projects/{project_id}/unshare`
+1. `GET /api/projects/default`
+2. `POST /api/projects`
+3. `GET /api/projects`
+4. `GET /api/projects/{project_id}`
+5. `POST /api/projects/{project_id}/share-links`
+6. `GET /api/projects/{project_id}/share-links`
+7. `DELETE /api/projects/{project_id}/share-links/{link_id}`
+8. `POST /api/projects/{project_id}/invitations`
+9. `GET /api/projects/{project_id}/invitations`
+10. `DELETE /api/projects/{project_id}/invitations/{invitation_id}`
+11. `GET /api/projects/{project_id}/members`
+12. `DELETE /api/projects/{project_id}/members/{member_user_id}`
+13. `POST /api/projects/{project_id}/leave`
+14. `POST /api/projects/{project_id}/unshare`
 
 ## Inbox / Accept
 
-1. `POST /api/inbox/accept-link`
-2. `POST /api/inbox/accept-invitation`
-
+1. `GET /api/share/{token}/preview`
+2. `POST /api/share/{token}/redeem`
+3. `POST /api/share/{token}/upgrade`
+4. `GET /api/me/invitations`
+5. `POST /api/me/invitations/{invitation_id}/accept`
+6. `POST /api/me/invitations/{invitation_id}/decline`
 Accept responses return membership state and Agent-use suggestion status,
 but do not attach the Project to any Agent unless requested with explicit
 agent ids.
 
-## Agent Bindings
+## Agent Project APIs
 
 1. `GET /api/agents/{agent_id}/project-bindings`
 2. `POST /api/agents/{agent_id}/project-bindings/context`
 3. `PATCH /api/agents/{agent_id}/project-bindings/context/reorder`
 4. `DELETE /api/agents/{agent_id}/project-bindings/{binding_id}`
 
-The legacy primary endpoint remains a guard; Agent Project changes are rejected.
+There is no endpoint for changing the Agent Project. It is fixed to the Agent's
+own Project.
 
 ## Vault Resolve / Write
 
-1. `POST /api/agents/{agent_id}/vault/resolve`
-2. `POST /api/agents/{agent_id}/vault/write`
+1. `POST /api/vault/resolve?key=<KEY>&project_id=<project_id>`
+2. `POST /api/vault/resolve?key=<KEY>&agent_id=<agent_id>`
+3. `POST /api/vault/resolve?agent_id=<agent_id>`
+4. Existing `/api/vault` CRUD routes accept explicit `project_id`
+   where needed and keep plaintext resolution CLI/API-key-only.
 
-These endpoints enforce agent-boundary composition and return provenance.
+These endpoints enforce Agent Project composition and return provenance.
 
-## CLI Changes (Proposed)
+## CLI Surface
 
 ## Command Families
 
@@ -326,9 +341,10 @@ clawdi project folder unlink
 ## JSON Contracts
 
 - Keep machine-readable statuses for automation:
-  - `binding_target_ambiguous`
   - `vault_conflicts_blocked`
-  - `accepted_membership_pending_binding`
+  - `already_owner`
+  - `display_name_required`
+  - `already_invited`
 
 ## Deferred Web PR
 
@@ -340,7 +356,7 @@ the contracts below without changing the core Project model.
    project-centric wording.
 2. Project detail page includes sharing lifecycle surfaces:
    links, invitations, members, revoke/remove/unshare.
-3. Inbox acceptance confirms project access and next-step bind options.
+3. Inbox acceptance confirms Project access and next-step attach options.
 4. Agent detail page includes:
    read-only Agent Project,
    attached Project list with explicit order,
@@ -358,26 +374,22 @@ terminology without ambiguity.
 2. Use `Project access + Agent use` for collaboration + runtime composition.
 3. Use `Agent Project` for the default-write Project.
 4. Use `attached Project` and `order` for additional Agent read sources.
-5. Keep `primary`, `context`, and `priority` in API/JSON/backcompat internals only.
-6. Keep legacy graph terminology out of user-facing docs and UI copy.
+5. Keep `primary`, `context`, and `priority` in API/JSON internals only.
+6. Keep old graph terminology out of user-facing docs and UI copy.
 
 ## Data/Behavior Migration Strategy
 
-1. Keep existing stored relationships functional during transition with
-   compatibility shims.
-2. Map each existing share relationship to project membership.
-3. Map each existing composition edge to an Agent attached Project.
-4. Derive one Agent Project per Agent from current default write
+1. Map each existing share relationship to project membership.
+2. Map each existing composition edge to an Agent attached Project.
+3. Derive one Agent Project per Agent from current default write
    behavior.
-5. Create a Personal Project only when needed as fallback for
+4. Create a Personal Project only when needed as fallback for
    users lacking a suitable existing project.
-6. Maintain backwards-compatible read endpoints during rollout with
-   deprecation headers.
 
 ## Security Model
 
 1. Authorization checks:
-   project membership gates project access; agent ownership gates binding
+   Project membership gates Project access; Agent ownership gates Agent Project
    edits.
 2. Write restrictions:
    default writes to the Agent Project; explicit writes require role
@@ -385,38 +397,26 @@ terminology without ambiguity.
 3. Read restrictions:
    attached Project data is readable only through explicit Agent use.
 4. Revocation guarantees:
-   removing member or unsharing removes downstream agent bindings created
+   removing member or unsharing removes downstream Agent attachments created
    via that access unless policy marks them explicitly retained.
 5. Auditability:
-   log sharing, acceptance, binding edits, conflict overrides, and
+   log sharing, acceptance, Agent attachment edits, conflict overrides, and
    unshare actions.
 
-## Implementation Phases
+## Ship-State Checklist
 
-1. Phase 0: Docs and terminology lock
-   - Land this design doc and scenario rewrite.
-   - Freeze user-facing vocabulary to `Project + Agent`.
-2. Phase 1: Schema and compatibility layer
-   - Introduce project and agent binding entities.
-   - Add compatibility mapping from existing legacy naming.
-3. Phase 2: Sharing lifecycle endpoints
-   - Links, invitations, inbox acceptance, members management, unshare.
-4. Phase 3: Agent binding runtime
-   - Agent/attached Project CLI backed by primary/context APIs.
-   - Vault resolution precedence and conflict blocking.
-5. Phase 4: CLI rename completion; web follows in split PR
-   - Remove legacy CLI labels and deprecated command aliases.
-   - Keep migration diagnostics and docs references for one release.
-   - Land dashboard copy/navigation changes separately.
-6. Phase 5: Cleanup
-   - Delete compatibility shims and stale wording from internal-only
-     comments where safe.
+1. Schema changes are in the PR migration.
+2. Sharing lifecycle endpoints cover links, invitations, inbox
+   acceptance, members, leave, and unshare.
+3. Agent Project runtime covers fixed Agent Project, attached Projects,
+   reorder, detach, stale attachment cleanup, and vault conflict safety.
+4. CLI copy uses Project / Agent Project / attachment terminology.
+5. Dashboard copy and dedicated pages stay in the split web PR.
+6. Internal names such as `environment_id`, `binding_type`, `primary`,
+   `context`, and `priority` remain implementation details.
 
-## Open Questions
+## Follow-Up Questions
 
 1. Should explicit conflict allow be one-time per command, or persisted
-   per agent binding pair?
-2. When Project access is revoked, should the system hard-delete affected
-   attached Projects or soft-disable them for diagnostics?
-3. Should folder links grow a Project group/profile model with one primary
-   Project and ordered attached Projects for local `clawdi run`?
+   per Agent attachment pair?
+2. When should viewer-only Project sharing grow editor roles?

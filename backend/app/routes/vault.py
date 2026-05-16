@@ -49,8 +49,8 @@ async def list_vaults(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
 ) -> Paginated[VaultResponse]:
-    # Project-filter: api_key bound to env A must not see vaults in
-    # env B's project or in Personal. JWT + unbound CLI see every project
+    # Project-filter: an Agent API key for Agent A must not see vaults in
+    # Agent B's project or in Personal. JWT + unbound CLI see every project
     # they own AND every shared-project membership they hold.
     #
     # Dropped the `Vault.user_id == auth.user_id` filter that was
@@ -165,9 +165,9 @@ async def delete_vault(
     db: AsyncSession = Depends(get_session),
 ) -> VaultDeleteResponse:
     # Reuse the project-filtered vault lookup so a daemon key bound
-    # to env A can't delete a vault that lives in env B's project.
+    # to Agent A can't delete a vault that lives in Agent B's project.
     # `project_id` disambiguates when a JWT user has the same slug
-    # in multiple projects (Personal + env-A); without it, a multi-
+    # in multiple projects (Personal + Agent A); without it, a multi-
     # match raises 409 ambiguous_vault_slug rather than silently
     # picking the most-recently-updated.
     vault = await _get_vault_write(auth, slug, db, project_id=project_id)
@@ -392,11 +392,11 @@ async def resolve_vault(
     ),
     agent_id: UUID | None = Query(
         default=None,
-        description="Resolve through an agent's primary/context project order.",
+        description="Resolve through an Agent Project and attached Project order.",
     ),
     allow_conflicts: bool = Query(
         default=False,
-        description="Allow first-match wins when agent-bound projects contain the same key.",
+        description="Allow first-match wins when attached Projects contain the same key.",
     ),
     debug: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_cli),
@@ -404,9 +404,9 @@ async def resolve_vault(
 ) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
-    Project-filtered: an api_key bound to env A only sees vaults in
-    that env's project. Without this filter a leaked daemon key
-    could decrypt vaults belonging to Personal or to another env.
+    Project-filtered: an Agent API key only sees vaults in its
+    Agent Project. Without this filter a leaked daemon key could decrypt
+    vaults belonging to Personal or another Agent.
     """
     if project_id is not None and agent_id is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")
@@ -483,8 +483,8 @@ async def resolve_vault(
                     "code": "vault_conflicts_blocked",
                     "key": key,
                     "message": (
-                        "Vault key exists in multiple agent-bound projects; "
-                        "pass allow_conflicts=true to use the first project in agent order."
+                        "Vault key exists in multiple attached Projects; "
+                        "pass allow_conflicts=true to use the first Project in Agent order."
                     ),
                     "winner": {
                         "source_project_id": winner["source_project_id"],
@@ -551,8 +551,8 @@ async def resolve_vault(
                 detail={
                     "code": "vault_conflicts_blocked",
                     "message": (
-                        "Vault keys conflict across agent-bound projects; "
-                        "pass allow_conflicts=true to use the first project in agent order."
+                        "Vault keys conflict across attached Projects; "
+                        "pass allow_conflicts=true to use the first Project in Agent order."
                     ),
                     "conflicts": conflicts,
                 },
@@ -591,7 +591,7 @@ async def _get_vault_write(
     Shared memberships can read vault metadata, but they never grant
     mutation rights. Write paths therefore use an owner-only project
     inventory instead of `_get_vault`'s visibility set, while still
-    preserving env-bound api_key blast-radius limits.
+    preserving Agent API key blast-radius limits.
     """
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         owned_project_ids = [await resolve_default_write_project(db, auth)]
@@ -635,9 +635,9 @@ async def _get_vault(
     project_id: UUID | None = None,
 ) -> Vault:
     """Fetch a vault by slug, project-filtered to what the caller can
-    see. api_key bound to env A -> only vaults in that env's project.
-    JWT -> any project the user can see. Without the filter, a daemon
-    key could read items in another project's vault by guessing the
+    see. Agent API key -> only vaults in its Agent Project.
+    JWT -> any Project the user can see. Without the filter, a daemon
+    key could read items in another Project's vault by guessing the
     slug.
 
     Disambiguation:

@@ -448,7 +448,7 @@ async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
 def _is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
     "narrow capability" and rejected from user-only routes. Today
-    that's just deploy keys (env-bound, narrow scopes), but the
+    that's just Agent API keys with narrow scopes, but the
     check is on the scope list rather than `environment_id` so a
     future scoped Personal key — minted with explicit scopes but
     no env binding — slips into the same protective bucket
@@ -478,12 +478,12 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     surface is intended for the user themselves (their laptop
     CLI, the dashboard).
 
-    Agent-environment deploy keys with `scopes=None` (the default for
+    Agent environment deploy keys with `scopes=None` (the default for
     keys minted via `POST /api/auth/keys` with `environment_id`
     set) PASS this gate by explicit policy: a hosted agent pod
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
-    boundary for agent-environment keys is enforced inside the route's
+    boundary for Agent API keys is enforced inside the route's
     own `project_ids_visible_to` / `_project_filter_*` calls, not
     here.
 
@@ -512,15 +512,14 @@ async def require_user_auth_unbound(
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "sharing operations require user-level auth "
-            "(env-bound deploy keys cannot manage sharing)",
+            "sharing operations require user-level auth (Agent API keys cannot manage sharing)",
         )
     return auth
 
 
 async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """CLI auth only (rejects Clerk JWT — no plaintext to web)
-    and rejects narrowly-scoped api_keys. Env-bound deploy keys
+    and rejects narrowly-scoped api_keys. Agent API keys
     pass by the same "behaves like user-installed clawdi" policy
     as `require_user_auth` — `clawdi run` from a hosted agent pod
     must resolve vault plaintext for the env it's bound to.

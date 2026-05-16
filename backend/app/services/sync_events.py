@@ -125,7 +125,7 @@ async def try_subscribe(
     can update its `visible_project_ids` field as the user's project
     view changes.
 
-    Per-key cap defends against a leaked DEPLOY KEY (env-bound)
+    Per-key cap defends against a leaked Agent API key
     opening all `max_per_user` slots. `max_per_key` defaults to 2
     (one daemon + one debug session). Bypasses:
       - Clerk JWT (api_key_id=None)

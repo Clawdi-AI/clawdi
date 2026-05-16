@@ -7,7 +7,6 @@ import {
 	agentProjectsAddContextCommand,
 	agentProjectsListCommand,
 	agentProjectsReorderCommand,
-	agentProjectsSetPrimaryCommand,
 } from "../../src/commands/agent-projects";
 import { jsonResponse, mockFetch } from "./helpers";
 
@@ -37,7 +36,7 @@ afterEach(() => {
 });
 
 describe("agent project commands", () => {
-	it("shows friendly agent project verbs in help and hides compatibility verbs", async () => {
+	it("shows friendly agent project verbs in help and hides removed verbs", async () => {
 		const proc = Bun.spawn([bunExe, srcEntry, "agent", "projects", "--help"], {
 			stdout: "pipe",
 			stderr: "pipe",
@@ -156,12 +155,6 @@ describe("agent project commands", () => {
 		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item attach-shared:1");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context project");
-	});
-
-	it("rejects set-home locally because the Agent Project is fixed", async () => {
-		await expect(
-			agentProjectsSetPrimaryCommand("agent-1", { project: "engineering" }),
-		).rejects.toThrow(/fixed/);
 	});
 
 	it("lists API rows with project metadata in JSON", async () => {

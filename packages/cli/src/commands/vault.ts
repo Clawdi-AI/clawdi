@@ -42,7 +42,7 @@ async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?
  *      a single page with project_id per row).
  *   2. Picking the row whose project_id matches the caller's
  *      default WRITE project (`/api/projects/default`). For
- *      env-bound api_keys this is unambiguous (one visible
+ *      Agent API keys this is unambiguous (one visible
  *      project); for JWT/unbound it picks the same project a
  *      fresh `clawdi vault set` would create the vault in,
  *      keeping CLI behavior consistent across read+write.
@@ -114,7 +114,7 @@ export async function vaultSet(key: string, opts: { project?: string } = {}) {
 
 	// Pass project_id so the server's slug → vault lookup
 	// doesn't 409 on JWT / unbound callers who can see the
-	// same slug under multiple projects. For env-bound api_keys
+	// same slug under multiple projects. For Agent API keys
 	// this is a no-op — only one project is visible. `ensureVault`
 	// above just guaranteed at least one match exists.
 	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, vaultSlug));
@@ -162,7 +162,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 
 	// Pass each vault's project_id from the listing so the
 	// items lookup never trips the round-30 ambiguity 409.
-	// For env-bound api_keys this is a no-op (single visible
+	// For Agent API keys this is a no-op (single visible
 	// project); for JWT / unbound it disambiguates a duplicate
 	// slug across projects deterministically.
 	const fetchItems = (slug: string, project_id: string) =>

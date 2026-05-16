@@ -86,10 +86,10 @@ async def delete_project_bindings_for_users(
     project_id: UUID,
     user_ids: list[UUID],
 ) -> int:
-    """Delete agent bindings that let specific users use a project.
+    """Delete Agent attachments that let specific users use a Project.
 
     Membership removal and project unsharing both remove the recipient's
-    future access. Agent bindings are derived runtime use, so they must
+    future access. Agent attachments are derived runtime use, so they must
     disappear with the membership instead of leaving stale context rows on
     the recipient's agents.
     """
@@ -159,6 +159,36 @@ async def ensure_context_binding(
     return binding
 
 
+async def attach_project_to_owned_agents(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    raw_agent_ids: list[str] | None,
+) -> list[str]:
+    """Attach a visible Project to the caller's Agents for read-time use."""
+    bound_agent_ids: list[str] = []
+    for raw_agent_id in raw_agent_ids or []:
+        try:
+            agent_id = UUID(raw_agent_id)
+        except ValueError as err:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid agent id") from err
+        await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+        await assert_project_visible_to_user(
+            db,
+            user_id=user_id,
+            project_id=project_id,
+        )
+        await ensure_context_binding(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+            created_by_user_id=user_id,
+        )
+        bound_agent_ids.append(str(agent_id))
+    return bound_agent_ids
+
+
 async def ensure_agent_primary_binding(
     db: AsyncSession,
     *,
@@ -202,84 +232,6 @@ async def ensure_agent_primary_binding(
         default_binding.priority = 0
         default_binding.default_write_enabled = True
         return default_binding
-
-    binding = AgentProjectBinding(
-        agent_id=agent_id,
-        project_id=project_id,
-        binding_type="primary",
-        priority=0,
-        default_write_enabled=True,
-        created_by_user_id=created_by_user_id,
-    )
-    db.add(binding)
-    await db.flush()
-    return binding
-
-
-async def set_primary_binding(
-    db: AsyncSession,
-    *,
-    agent_id: UUID,
-    project_id: UUID,
-    created_by_user_id: UUID,
-) -> AgentProjectBinding:
-    """Compatibility wrapper for older imports.
-
-    New code should call `ensure_agent_primary_binding` after loading the
-    owned agent. The primary Project is fixed to the Agent Project.
-    """
-    agent = (
-        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
-    ).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
-    if agent.default_project_id != project_id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Agent Project is fixed",
-        )
-    return await ensure_agent_primary_binding(
-        db,
-        agent=agent,
-        created_by_user_id=created_by_user_id,
-    )
-
-
-async def _legacy_set_primary_binding(
-    db: AsyncSession,
-    *,
-    agent_id: UUID,
-    project_id: UUID,
-    created_by_user_id: UUID,
-) -> AgentProjectBinding:
-    existing = (
-        await db.execute(
-            select(AgentProjectBinding).where(
-                AgentProjectBinding.agent_id == agent_id,
-                AgentProjectBinding.project_id == project_id,
-            )
-        )
-    ).scalar_one_or_none()
-
-    # Demote current primary if switching projects.
-    current_primary = (
-        await db.execute(
-            select(AgentProjectBinding).where(
-                AgentProjectBinding.agent_id == agent_id,
-                AgentProjectBinding.binding_type == "primary",
-            )
-        )
-    ).scalar_one_or_none()
-    if current_primary is not None and current_primary.project_id != project_id:
-        current_primary.binding_type = "context"
-        current_primary.default_write_enabled = False
-        current_primary.priority = await _next_context_priority(db, agent_id=agent_id)
-
-    if existing is not None:
-        existing.binding_type = "primary"
-        existing.priority = 0
-        existing.default_write_enabled = True
-        return existing
 
     binding = AgentProjectBinding(
         agent_id=agent_id,

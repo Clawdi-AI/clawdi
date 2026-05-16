@@ -1,4 +1,4 @@
-"""require_user_auth_unbound rejects env-bound deploy keys while
+"""require_user_auth_unbound rejects Agent API keys while
 accepting Clerk JWT and unbound CLI api_keys."""
 
 import uuid
@@ -46,13 +46,13 @@ async def test_unbound_api_key_passes():
 
 
 @pytest.mark.asyncio
-async def test_env_bound_api_key_rejected():
+async def test_agent_environment_api_key_rejected():
     seed_user = _user()
     key = ApiKey(
         user_id=seed_user.id,
         key_hash="h" * 64,
         key_prefix="clawdi_e",
-        label="env-bound",
+        label="agent-environment",
         environment_id=uuid.uuid4(),
         scopes=None,
     )
@@ -60,4 +60,4 @@ async def test_env_bound_api_key_rejected():
     with pytest.raises(HTTPException) as exc:
         await require_user_auth_unbound(auth=auth)
     assert exc.value.status_code == 403
-    assert "env-bound" in str(exc.value.detail)
+    assert "Agent API keys" in str(exc.value.detail)

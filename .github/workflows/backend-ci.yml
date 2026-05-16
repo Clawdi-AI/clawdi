@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "packages/shared/src/api/api.generated.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
   push:
     branches: [main]
     paths:
       - "backend/**"
+      - "packages/shared/src/api/api.generated.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
 
 permissions:
@@ -36,6 +44,10 @@ jobs:
               - "backend/pyproject.toml"
               - "backend/uv.lock"
               - "backend/alembic.ini"
+              - "packages/shared/src/api/api.generated.ts"
+              - "package.json"
+              - "bun.lock"
+              - ".github/actions/setup-bun-ci/**"
             test:
               - "backend/app/**"
               - "backend/tests/**"
@@ -58,13 +70,16 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.3.13"
       - run: uv sync --frozen --no-install-project
       - name: Ruff lint
-        run: uv run ruff check app
+        run: uv run ruff check app scripts
       - name: Ruff format (check-only)
-        run: uv run ruff format --check app
+        run: uv run ruff format --check app scripts
       - name: Byte-compile sanity check
-        run: uv run python -m compileall -q app
+        run: uv run python -m compileall -q app scripts
       # Catch "import declared in code but not in deps" drift.
       # The same class of bug that let `from mem0 import …` ship
       # for months without `mem0ai` ever being declared, surfacing
@@ -74,6 +89,8 @@ jobs:
       # and flags drift. Config in `pyproject.toml [tool.deptry]`.
       - name: Dependency drift check
         run: uv run deptry app
+      - name: Generated OpenAPI client is current
+        run: uv run python scripts/check_generated_api.py
 
   test:
     needs: changes
@@ -118,5 +135,9 @@ jobs:
             -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
       - name: Run migrations
         run: uv run alembic upgrade head
+      - name: Project-sharing migration downgrade/upgrade round trip
+        run: |
+          uv run alembic downgrade 62bdb2921f5f
+          uv run alembic upgrade head
       - name: Pytest
         run: uv run pytest -q

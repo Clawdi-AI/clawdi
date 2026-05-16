@@ -1,4 +1,4 @@
-"""Sharee-facing /api/me/* routes for project invitations."""
+"""Recipient-facing /api/me/* routes for project invitations."""
 
 import uuid
 from collections.abc import AsyncIterator
@@ -300,13 +300,13 @@ async def test_decline_invitation_deletes_without_membership(client, db_session,
 
 
 @pytest.mark.asyncio
-async def test_env_bound_key_cannot_list_or_decline_invitations(db_session, seed_user):
+async def test_agent_environment_key_cannot_list_or_decline_invitations(db_session, seed_user):
     owner, project, invitation_id = await _seed_owner_and_invite(db_session, seed_user)
     api_key = ApiKey(
         user_id=seed_user.id,
         key_hash="h" * 64,
         key_prefix="clawdi_e",
-        label="env-bound",
+        label="agent-environment",
         environment_id=uuid.uuid4(),
         scopes=None,
     )

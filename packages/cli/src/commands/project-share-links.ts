@@ -1,7 +1,7 @@
 import chalk from "chalk";
 
 import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
 /**
@@ -32,11 +32,7 @@ async function fetchLinks(
 	bearer: string,
 	projectId: string,
 ): Promise<ShareLinkRow[]> {
-	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	return r.json();
+	return authedJson<ShareLinkRow[]>(apiUrl, bearer, `/api/projects/${projectId}/share-links`);
 }
 
 function formatRow(link: ShareLinkRow): string {
@@ -58,22 +54,18 @@ export async function projectShareLinksCommand(
 	projectArg: string,
 	opts: { revoke?: string },
 ): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 
-	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 
 	if (opts.revoke) {
 		// Resolve the link-id from a prefix shorthand if necessary.
 		let linkId = opts.revoke;
 		const looksLikeUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(linkId);
 		if (!looksLikeUUID) {
-			const all = await fetchLinks(apiUrl, auth.apiKey, projectId);
+			const all = await fetchLinks(apiUrl, apiKey, projectId);
 			const matches = all.filter((l) => l.prefix.startsWith(linkId));
 			if (matches.length === 0) {
 				console.error(chalk.red(`No link starts with prefix '${linkId}'.`));
@@ -91,7 +83,7 @@ export async function projectShareLinksCommand(
 		}
 		const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links/${linkId}`, {
 			method: "DELETE",
-			headers: { Authorization: `Bearer ${auth.apiKey}` },
+			headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (r.status === 404) {
 			console.error(chalk.red("Link not found on that project."));
@@ -104,7 +96,7 @@ export async function projectShareLinksCommand(
 		return;
 	}
 
-	const links = await fetchLinks(apiUrl, auth.apiKey, projectId);
+	const links = await fetchLinks(apiUrl, apiKey, projectId);
 	if (links.length === 0) {
 		console.log("No share links on this project yet.");
 		console.log();

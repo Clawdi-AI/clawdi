@@ -23,7 +23,7 @@
 ## Personas
 
 - Alice owns project `engineering`.
-- Bob receives viewer access and uses `engineering` with agent `atlas`.
+- Bob receives viewer access and uses `engineering` with Agent `atlas`.
 - Carol accepts an invitation, then declines a later one.
 - Dana operates multiple agents and changes attachment order.
 - Evan is removed during cleanup.
@@ -49,16 +49,16 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Project owner | Invite/list/cancel invitations | `clawdi project invite`, `invites --cancel` | Share dialog |
 | Project owner | List/remove people | `clawdi project members --remove` | Project detail / Share dialog |
 | Project owner | Stop all sharing | `clawdi project unshare` | Share dialog |
-| Recipient | Preview share link | `clawdi inbox accept <url>` | `/share/<token>` landing |
+| Recipient | Preview or accept share link | `/api/share/<token>/preview`, `clawdi inbox accept <url>` | `/share/<token>` landing |
 | Recipient | List/accept/decline invitations | `clawdi inbox`, `accept`, `decline` | Inbox banner |
 | Recipient | List accessible projects | `clawdi project list --shared-with-me` | Projects list |
 | Recipient | Leave shared project | `clawdi project leave @owner/project` | Project detail |
-| Recipient | Use accepted project with an agent | `clawdi inbox accept --agent`, `agent projects attach` | Agent detail Projects tab |
+| Recipient | Attach accepted Project to Agent | `clawdi inbox accept --agent`, `agent projects attach` | Agent detail Projects tab |
 | Agent operator | View the Agent Project and attached Projects | `clawdi agent projects list` | Agent detail Projects tab |
 | Agent operator | Attach/detach/move projects | `attach`, `detach`, `move` | Agent detail Projects tab |
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
-| Security | Agent environment keys cannot manage sharing | sharing routes reject agent environment keys | API guard display |
+| Security | Agent API keys cannot manage sharing | sharing routes reject Agent API keys | API guard display |
 | Security | Plaintext vault values stay CLI/API-key only | web/JWT cannot call `vault resolve` | API guard display |
 | Revoke/conflict | Conflict block/allow and access cleanup | `vault resolve --agent`, unshare/leave/remove | Error copy / stale attachment cleanup |
 
@@ -70,8 +70,8 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Recipient human | Accept, decline, or leave shared Project access, then decide whether an Agent should use it. | `clawdi inbox accept`, `decline`, `project leave`, optional `inbox accept --agent` or later `agent projects attach`; dashboard equivalent in web PR. | Accepting without an explicit Agent leaves all Agents unchanged; viewer access cannot become the Agent Project. |
 | Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `attach`, `detach`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; attachments are ordered read sources. |
 | Local operator human using `clawdi run` | Run a local command with vault env from an explicit or linked Project. | CLI only; `clawdi run --project`, `clawdi project folder link/status/unlink`, `clawdi run --no-project-folder`. | Folder links are local selection hints for `run`; they do not grant membership, change cloud state, or attach Projects to Agents. |
-| Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent-bound APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by explicit order; conflicts block by default and include provenance without leaking plaintext. |
-| Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes or disables affected attached Projects while preserving owner data and rejecting sharing changes from agent environment keys. |
+| Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent Project APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by explicit order; conflicts block by default and include provenance without leaking plaintext. |
+| Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes affected attached Projects while preserving owner data and rejecting sharing changes from Agent API keys. |
 
 ## Flow 1: Owner Creates And Shares
 
@@ -113,12 +113,12 @@ Expected:
 - Skills and vault key names are readable; writes stay disabled.
 - Human CLI output names the exact follow-up command:
   `clawdi agent projects attach <agent-id> --project @alice/engineering`.
-- No agent attachment is created unless Bob passes `--agent`.
+- No Project is attached to an Agent unless Bob passes `--agent`.
 
 Web PR follow-up: `/share/<token>` should preview the same Project
 access and route accepted users to Project detail / Agent use actions.
 
-## Flow 3: Recipient Accepts And Uses With An Agent
+## Flow 3: Recipient Accepts And Attaches To Agent
 
 Bob can accept and attach the project to an agent in one CLI step, or accept first and attach later.
 
@@ -231,7 +231,7 @@ Expected:
 - The operator must already have Project access; linking does not grant membership.
 - `clawdi run --project` uses the explicit Project instead of the linked folder.
 - `clawdi run --no-project-folder` ignores linked folders and uses run behavior without local folder selection.
-- The Agent Project and attached Projects do not change. Use `clawdi agent projects ...` when an Agent should use the Project during agent-bound resolution.
+- The Agent Project and attached Projects do not change. Use `clawdi agent projects ...` when an Agent should use the Project during Agent Project resolution.
 
 ## Flow 7: Vault Provenance And Conflicts
 
@@ -262,7 +262,7 @@ Expected:
 Security branch:
 
 - Web/JWT auth cannot call `vault resolve`.
-- Env-bound deploy keys cannot manage sharing or invitations.
+- Agent API keys cannot manage sharing or invitations.
 - Plaintext vault resolution remains CLI/API-key only.
 
 ## Flow 8: Skills, Pull, And Push Project Flags
@@ -330,11 +330,13 @@ bash scripts/project-sharing-agent-bindings-demo.sh
 
 The script preflights `pdm`, `bun`, and the database endpoint before running backend/CLI checks, so demo setup failures are reported without a pytest traceback.
 
-For full PR verification, also run:
+For full CLI/backend PR verification, also run:
 
 ```bash
 bun run check
-bun run typecheck
+bunx turbo typecheck --filter=clawdi
+cd packages/cli && bun test
 cd backend && pdm run ruff check app tests scripts
-cd backend && pdm run python -c "import app.main; print('import ok')"
+cd backend && pdm run pytest -q
+scripts/serve-e2e.sh
 ```

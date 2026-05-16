@@ -48,7 +48,7 @@ class SkillSummaryResponse(BaseModel):
     # per-machine grouped list, target the project-explicit URLs
     # (delete / re-upload) without a separate fetch, and show
     # which machine owns the skill. `machine_name` is null for
-    # skills in the user's Personal project (no env-bound origin).
+    # skills in the user's Personal project (no Agent environment origin).
     project_id: str | None = None
     project_name: str | None = None
     machine_name: str | None = None

@@ -38,11 +38,54 @@ afterEach(() => {
 	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
 	else delete process.env.CLAWDI_API_URL;
 	rmSync(tmpHome, { recursive: true, force: true });
-	process.exitCode = undefined;
+	process.exitCode = 0;
 });
 
 describe("inboxAcceptCommand", () => {
-	it("maps --use-as attached to backend bind_as=context", async () => {
+	it("rejects signed-out --agent before redeeming a share URL", async () => {
+		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
+		const orig = console.error;
+		const errors: string[] = [];
+		console.error = (...args: unknown[]) => {
+			errors.push(args.map(String).join(" "));
+		};
+		try {
+			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {
+				agent: ["agent-1"],
+			});
+		} finally {
+			console.error = orig;
+		}
+
+		const exitCode = process.exitCode;
+		process.exitCode = 0;
+		expect(exitCode).toBe(1);
+		expect(errors.join("\n")).toContain("Sign in before attaching an accepted Project to an Agent");
+	});
+
+	it("rejects attachment mode without --agent before posting", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/me/invitations/invite-mode/accept",
+				response: () => jsonResponse({}),
+			},
+		]);
+		try {
+			await expect(
+				inboxAcceptCommand(undefined, {
+					invite: "invite-mode",
+					useAs: "attached",
+				}),
+			).rejects.toThrow(/Pass --agent/);
+		} finally {
+			restore();
+		}
+
+		expect(captured).toEqual([]);
+	});
+
+	it("sends --use-as attached using project language", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
@@ -80,7 +123,7 @@ describe("inboxAcceptCommand", () => {
 
 		expect(captured[0].body).toEqual({
 			agent_ids: ["agent-1"],
-			bind_as: "context",
+			use_as: "attached",
 		});
 	});
 
@@ -107,61 +150,7 @@ describe("inboxAcceptCommand", () => {
 		expect(captured).toEqual([]);
 	});
 
-	it("keeps deprecated --bind-as=context compatibility and rejects primary", async () => {
-		for (const [bindAs, expected] of [["context", "context"]] as const) {
-			const inviteId = `invite-${bindAs}`;
-			const { captured, restore } = mockFetch([
-				{
-					method: "POST",
-					path: `/api/me/invitations/${inviteId}/accept`,
-					response: () =>
-						jsonResponse({
-							id: `membership-${bindAs}`,
-							project_id: "uuid-project-shared",
-							role: "viewer",
-							joined_via: "invitation",
-							joined_at: "2026-05-14T00:00:00Z",
-							resolved_owner_handle: "alice-a3b4",
-							bound_agent_ids: ["agent-1"],
-						}),
-				},
-				{
-					method: "GET",
-					path: "/api/skills",
-					response: () => jsonResponse({ items: [] }),
-				},
-			]);
-			const orig = console.log;
-			console.log = () => {};
-			try {
-				await inboxAcceptCommand(undefined, {
-					invite: inviteId,
-					agent: ["agent-1"],
-					bindAs,
-					json: true,
-				});
-			} finally {
-				console.log = orig;
-				restore();
-			}
-
-			expect(captured[0].body).toEqual({
-				agent_ids: ["agent-1"],
-				bind_as: expected,
-			});
-		}
-
-		await expect(
-			inboxAcceptCommand(undefined, {
-				invite: "invite-primary",
-				agent: ["agent-1"],
-				bindAs: "primary",
-				json: true,
-			}),
-		).rejects.toThrow(/fixed/);
-	});
-
-	it("prints exact use-with-agent command when accepting project access", async () => {
+	it("prints exact Attach to Agent command when accepting project access", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
@@ -213,7 +202,7 @@ describe("inboxAcceptCommand", () => {
 		expect(out).toContain("Accepted project access for @alice-a3b4/shared-toolkit.");
 		expect(out).toContain("Role: viewer (read-only).");
 		expect(out).toContain(
-			"Use with agent: clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
+			"Attach to Agent: clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 	});

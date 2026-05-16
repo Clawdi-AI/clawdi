@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -173,17 +174,13 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
         user_id=seed_user.id,
         environment_id=env_a.id,
         local_session_id="sa",
-        started_at=__import__("datetime")
-        .datetime.utcnow()
-        .replace(tzinfo=__import__("datetime").timezone.utc),
+        started_at=datetime.now(UTC),
     )
     sess_b = Session(
         user_id=seed_user.id,
         environment_id=env_b.id,
         local_session_id="sb",
-        started_at=__import__("datetime")
-        .datetime.utcnow()
-        .replace(tzinfo=__import__("datetime").timezone.utc),
+        started_at=datetime.now(UTC),
     )
     db_session.add_all([sess_a, sess_b])
     await db_session.flush()
@@ -679,7 +676,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
 ):
     """Round-42 P2 regression: `/api/dashboard/stats` and
     `/api/dashboard/contribution` aggregate by `user_id` only —
-    no project filter. An env-bound deploy key (full-permission
+    no project filter. An Agent API key (full-permission
     api_key minted with `scopes=None` but pinned to
     `environment_id=A`) would otherwise read account-wide
     totals (sessions, message counts, token usage, contribution
@@ -700,7 +697,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
         key_hash=uuid.uuid4().hex,
         key_prefix="clawdi_test",
         label="test-deploy",
-        # Full permission (default) — but env-bound, so the
+        # Full permission (default) — but tied to one Agent, so the
         # dashboard's account-wide aggregate must still refuse.
         scopes=None,
         environment_id=env.id,

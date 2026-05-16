@@ -527,11 +527,11 @@ async def batch_create_sessions(
             created=0, updated=0, unchanged=0, needs_content=[], rejected=[]
         )
 
-    # Env-bound deploy-keys must NOT be able to write sessions
+    # Agent API keys must NOT be able to write sessions
     # under a different env_id, even one the same user owns. The
-    # whole point of the env binding is to bound the blast radius
+    # whole point of the Agent boundary is to bound the blast radius
     # of a leaked deploy-key — without this check, a key from
-    # pod A could land sessions on pod B's environment and the
+    # Agent A could land sessions on Agent B's environment and the
     # dashboard would attribute them to the wrong machine.
     # `sync_heartbeat` already enforces the same invariant; we
     # were inconsistent here.
@@ -767,7 +767,7 @@ async def batch_create_sessions(
         },
         # Refuse cross-env rebinds at the conflict step itself. The
         # pre-fetch FOR UPDATE check above guards the case where the
-        # row already exists, but two agent-environment keys racing on a
+        # row already exists, but two Agent API keys racing on a
         # never-before-seen `local_session_id` BOTH pass the pre-
         # check (no row to lock). The first INSERT wins; the second
         # falls through to ON CONFLICT and would otherwise overwrite

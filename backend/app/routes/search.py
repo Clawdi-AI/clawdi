@@ -103,16 +103,16 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
     # Same overfetch trick the direct `/api/memories?q=` path uses
     # for scoped keys: provider.search returns top-N ranked across
     # ALL of the user's memories, then `_project_filter_memories`
-    # drops out-of-env rows. Asking for only TYPE_LIMIT hits when
-    # other envs rank ahead truncated the in-env hits to nothing.
+    # drops out-of-Agent rows. Asking for only TYPE_LIMIT hits when
+    # other Agents rank ahead truncated the in-Agent hits to nothing.
     # Overfetch by 10x then re-cap to TYPE_LIMIT after the filter
     # so the response shape stays predictable.
     fetch_limit = max(TYPE_LIMIT * 10, 100) if _is_env_bound_api_key(auth) else TYPE_LIMIT
     rows = await provider.search(str(auth.user_id), query, limit=fetch_limit)
-    # Apply the same env-project filter the direct /api/memories route
-    # uses. Without this, a scoped env-bound key with `memories:read`
-    # could read memories from other envs (or manual memories with
-    # no env attribution) via the search palette — a side-channel
+    # Apply the same Agent Project filter the direct /api/memories route
+    # uses. Without this, a scoped Agent API key with `memories:read`
+    # could read memories from other Agents (or manual memories with
+    # no Agent attribution) via the search palette — a side-channel
     # around _project_filter_memories. Imported lazily to avoid a
     # circular import between search.py and memories.py.
     from app.routes.memories import _project_filter_memories

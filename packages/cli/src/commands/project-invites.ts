@@ -1,7 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
 /**
@@ -30,50 +29,31 @@ interface InvitationItem {
 	created_at: string;
 }
 
-async function authedGet<T>(apiUrl: string, bearer: string, path: string): Promise<T> {
-	const r = await fetch(`${apiUrl}${path}`, {
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	return r.json() as Promise<T>;
-}
-
-async function authedDelete(apiUrl: string, bearer: string, path: string): Promise<void> {
-	const r = await fetch(`${apiUrl}${path}`, {
-		method: "DELETE",
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-}
-
 export async function projectInvitesCommand(
 	projectArg: string,
 	opts: { cancel?: string },
 ): Promise<void> {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const ctx = projectAuthOrExit();
+	if (!ctx) return;
+	const { apiUrl, apiKey } = ctx;
 
-	const projectId = await resolveProjectId(apiUrl, auth.apiKey, projectArg);
+	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 
 	if (opts.cancel) {
-		await authedDelete(
+		await authedJson<{ status: string }>(
 			apiUrl,
-			auth.apiKey,
+			apiKey,
 			`/api/projects/${projectId}/invitations/${opts.cancel}`,
+			{ method: "DELETE" },
 		);
 		console.log(`${chalk.green("✓")} Invitation cancelled.`);
 		console.log(chalk.gray("  The recipient will no longer see it in their inbox."));
 		return;
 	}
 
-	const items = await authedGet<InvitationItem[]>(
+	const items = await authedJson<InvitationItem[]>(
 		apiUrl,
-		auth.apiKey,
+		apiKey,
 		`/api/projects/${projectId}/invitations`,
 	);
 	if (items.length === 0) {

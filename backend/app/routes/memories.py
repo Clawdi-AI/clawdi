@@ -89,8 +89,8 @@ router = APIRouter(prefix="/api/memories", tags=["memories"])
 async def _project_filter_memories(
     db: AsyncSession, auth: AuthContext, items: list[dict]
 ) -> list[dict]:
-    """For env-bound api keys (deploy keys), drop memories whose
-    source session lives in an env outside the key's binding.
+    """For Agent API keys, drop memories whose
+    source session lives outside that Agent's boundary.
 
     Manual memories (`source_session_id is None`) have no env
     attribution and would otherwise leak across a deploy key's
@@ -101,7 +101,7 @@ async def _project_filter_memories(
     list). Default deploy keys mint with `scopes=None` (full
     capability, matching the "deploy key behaves like user-installed
     clawdi" policy), so the permission-list gate let them bypass the
-    env filter — a leaked env-A deploy key could read env-B's
+    env filter — a leaked Agent A key could read Agent B's
     memories. Personal CLI keys and Clerk JWT have no env binding and
     see everything user-owned.
     """
@@ -164,10 +164,10 @@ async def list_memories(
         # relevance-ordered results doesn't map cleanly to offset — mirror
         # Linear/Notion and return one page worth with total = len(hits).
         #
-        # Env-bound key + ranked search has a truncation hazard: if other
-        # envs' memories outrank the bound env's, asking for `page_size`
-        # hits then post-filtering can leave us with zero results even
-        # when the bound env has matching memories. Overfetch by a wide
+        # Agent API key + ranked search has a truncation hazard: if
+        # other Agents' memories outrank the bound Agent's, asking for
+        # `page_size` hits then post-filtering can leave us with zero results
+        # even when the bound Agent has matching memories. Overfetch by a wide
         # margin so the post-filter has plausible coverage. We can't
         # push the env filter into the provider call generally — Mem0
         # has no project axis — so this is the cleanest "good enough"
@@ -195,11 +195,11 @@ async def list_memories(
             page_size=page_size,
         )
 
-    # Env-bound key path: page DIRECTLY against the env-filtered query
+    # Agent API key path: page DIRECTLY against the Agent-filtered query
     # rather than paging the full Memory set + post-filtering. The
     # post-filter approach was a real pagination bug — page 1 might
-    # be 23 out-of-env memories + 2 env-A memories, returning
-    # `[2 items], total=2` even though the user has 200 env-A
+    # be 23 out-of-Agent memories + 2 Agent A memories, returning
+    # `[2 items], total=2` even though the user has 200 Agent A
     # memories on later pages. Client thinks "that's all" and
     # never fetches page 2.
     #
@@ -257,7 +257,7 @@ async def list_memories(
     # Fallback path for scoped key + non-Builtin provider (Mem0 today).
     # Same env filter the deleted-pre-fix unscoped path used to apply.
     # Pagination total is `len(rows)` after filter — not perfect, but
-    # the alternative is leaking cross-env memories to a deploy key.
+    # the alternative is leaking cross-Agent memories to a deploy key.
     # If Mem0 grows project-awareness later, push the filter into the
     # provider call instead of post-filtering.
     if _is_env_bound_api_key(auth):
@@ -294,8 +294,8 @@ async def get_memory(
     payload = memory_to_dict(memory)
     await _attach_source_machines(db, auth, [payload])
     # Apply the same project filter as list_memories: a deploy key
-    # bound to env-A can read its own memories by ID but is 404'd
-    # on memories whose source session lives in env-B (or manual
+    # bound to Agent A can read its own memories by ID but is 404'd
+    # on memories whose source session lives in Agent B (or manual
     # adds with no env attribution). Without this guard a deploy
     # key with memories:read could enumerate IDs and read the
     # entire user's memory store.
@@ -311,18 +311,18 @@ async def create_memory(
     auth: AuthContext = Depends(require_scope("memories:write")),
     db: AsyncSession = Depends(get_session),
 ) -> MemoryCreatedResponse:
-    # Refuse env-bound scoped keys: the memory created here would
+    # Refuse Agent API keys: the memory created here would
     # have no `source_session_id`, so `_project_filter_memories`
     # would drop it on every read by the same key — the row
     # exists but is invisible to its creator (and visible to
     # unscoped/JWT callers, which is the wrong direction for a
     # scoped key's blast radius). Memories that should be visible
-    # to env-A's deploy key need to be created via a session
-    # write under env-A; surface that intent explicitly.
+    # to Agent A's deploy key need to be created via a session
+    # write under Agent A; surface that intent explicitly.
     if _is_env_bound_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Env-bound api keys cannot create manual memories. "
+            "Agent API keys cannot create manual memories. "
             "Memories without a source session aren't visible to scoped reads.",
         )
     provider = await get_memory_provider(str(auth.user_id), db)
@@ -344,8 +344,8 @@ async def delete_memory(
     db: AsyncSession = Depends(get_session),
 ) -> MemoryDeleteResponse:
     # Same project guard as the read path: a scoped api_key bound
-    # to env-A must not be able to delete a memory sourced from
-    # env-B. The pre-delete check is gated on the resolved
+    # to Agent A must not be able to delete a memory sourced from
+    # Agent B. The pre-delete check is gated on the resolved
     # provider being the Builtin store: Mem0 memories live in
     # Mem0's cloud, not the PG `memories` table. Pre-fix this
     # path always queried PG, which 404'd every Mem0-backed
@@ -396,17 +396,17 @@ async def embed_backfill(
     With `force=true`, re-embeds rows that already have embeddings too
     (useful after changing the embedding model).
 
-    Env-bound api keys are rejected: this is a maintenance/admin
+    Agent API keys are rejected: this is a maintenance/admin
     operation that touches every memory the user owns, including
-    cross-env memories the bound key isn't allowed to read. Pre-fix
-    a leaked env-A deploy key with `scopes=None` could call this
-    endpoint and feed every env's content to the embedder as a side
+    cross-Agent memories the bound key isn't allowed to read. Pre-fix
+    a leaked Agent A deploy key with `scopes=None` could call this
+    endpoint and feed every Agent's content to the embedder as a side
     channel.
     """
     if _is_env_bound_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Embed backfill is a user-level maintenance op; env-bound api keys cannot run it.",
+            "Embed backfill is a user-level maintenance op; Agent API keys cannot run it.",
         )
     embedder = resolve_embedder()
     if embedder is None:

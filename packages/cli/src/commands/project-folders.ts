@@ -1,40 +1,21 @@
 import chalk from "chalk";
-import { getAuth, getConfig } from "../lib/config";
+import { projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import {
 	findProjectFolderLink,
 	normalizeFolderPath,
 	removeProjectFolderLink,
 	setProjectFolderLink,
 } from "../lib/project-folders";
-import { listProjects, resolveProjectId } from "../lib/project-resolver";
-
-interface ProjectBrief {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
-
-function requireAuth(): { apiUrl: string; apiKey: string } {
-	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		throw new Error("Not signed in. Run `clawdi auth login` first.");
-	}
-	return { apiUrl, apiKey: auth.apiKey };
-}
+import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 
 export async function projectFolderLinkCommand(
 	folderPath: string | undefined,
 	opts: { project: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const project = await findVisibleProject(apiUrl, apiKey, projectId, opts.project);
-	const label = projectLabel(project);
+	const label = projectAlias(project);
 	const link = setProjectFolderLink(folderPath, {
 		project_id: project.id,
 		project_label: label,
@@ -92,7 +73,7 @@ export async function projectFolderStatusCommand(folderPath: string | undefined)
 
 	const fallback = await fetchDefaultProject().catch(() => null);
 	if (fallback) {
-		console.log(`  Project: ${chalk.cyan(projectLabel(fallback))}`);
+		console.log(`  Project: ${chalk.cyan(projectAlias(fallback))}`);
 		if (fallback.name && fallback.name !== fallback.slug) {
 			console.log(chalk.gray(`  Project name: ${fallback.name}`));
 		}
@@ -118,7 +99,7 @@ async function findVisibleProject(
 }
 
 async function fetchDefaultProject(): Promise<ProjectBrief | null> {
-	const { apiUrl, apiKey } = requireAuth();
+	const { apiUrl, apiKey } = requireProjectAuth();
 	const r = await fetch(`${apiUrl}/api/projects/default`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
@@ -126,11 +107,4 @@ async function fetchDefaultProject(): Promise<ProjectBrief | null> {
 	const body = (await r.json()) as { project_id: string };
 	const projects = await listProjects(apiUrl, apiKey).catch(() => []);
 	return projects.find((item) => item.id === body.project_id) ?? null;
-}
-
-function projectLabel(project: ProjectBrief): string {
-	if (project.is_owner === false && project.owner_handle) {
-		return `@${project.owner_handle}/${project.slug}`;
-	}
-	return project.slug;
 }

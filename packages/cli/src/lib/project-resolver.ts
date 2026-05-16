@@ -19,7 +19,7 @@ import { ApiError } from "./api-client";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface ProjectBrief {
+export interface ProjectBrief {
 	id: string;
 	name: string;
 	slug: string;

@@ -295,11 +295,11 @@ async def list_skills(
         default=None,
         description=(
             "Optional explicit project to list. Without it, results span every "
-            "project the caller can read (env-bound api_keys see only their env, "
-            "everyone else sees all projects). The serve daemon passes its env's "
-            "default_project_id when it boots with an unbound CLI key + an "
-            "explicit --environment-id, so reconcile pulls the right project "
-            "instead of the most-recently-active one."
+            "project the caller can read (Agent API keys see only "
+            "their Agent Project, everyone else sees all projects). The serve "
+            "daemon passes its Agent Project id when it boots with an unbound "
+            "CLI key + an explicit --environment-id, so reconcile pulls the "
+            "right Project instead of the most-recently-active one."
         ),
     ),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
@@ -315,15 +315,15 @@ async def list_skills(
     # owner writes bump the owner's `skills_revision`, not the
     # recipient's. Round 32 covered (revision, project_id); this also
     # folds in the visible-project hash so an
-    # env-bound key whose env's `default_project_id` is reassigned
-    # to a different project gets a new ETag — and a 200 with the
+    # Agent API key whose `default_project_id` is reassigned
+    # to a different Project gets a new ETag — and a 200 with the
     # new effective listing — even though `skills_revision`
     # didn't bump (the reassignment lives on
     # `agent_environments`, not `skills`).
     #
     # Project-filtered read. JWT auth → all user's projects
     # (dashboard sees full inventory). api_key auth → only the
-    # bound env's project (daemon doesn't see other projects' skills
+    # bound Agent Project (daemon doesn't see other projects' skills
     # it can't write to). When the caller pins `project_id`,
     # intersect with what they're allowed to see — an ID
     # outside that set yields a deliberately-empty listing.
@@ -628,8 +628,8 @@ async def upload_skill_legacy(
     """Back-compat shim for pre-PR-66 CLI binaries. Resolves the
     target project via `resolve_default_write_project` (every user
     has a deterministic default after the projects migration:
-    env-bound key → its env's project; unbound key with envs →
-    most-recently-active env's project; zero envs → Personal),
+    Agent API key → its Agent Project; unbound key with Agents →
+    most-recently-active Agent Project; zero Agents → Personal),
     then runs the same upload pipeline as the project-explicit
     route. New CLIs and the dashboard call
     `POST /api/projects/{project_id}/skills/upload` directly.
@@ -698,8 +698,8 @@ async def upload_skill_project(
 ) -> SkillUploadResponse:
     """Project-explicit tar.gz skill upload.
 
-    The URL carries the target project; one env binds to one project,
-    so a daemon's writes always land in its own env's project. The
+    The URL carries the target Project; one Agent writes to one Agent Project,
+    so daemon writes always land in the expected Project. The
     dashboard's content editor uses `PUT /skills/{key}/content`
     instead (raw markdown, server-side tar). Both converge on
     `_do_upload_skill`, which serializes via a Postgres advisory
@@ -810,8 +810,8 @@ async def _do_upload_skill(
 ) -> SkillUploadResponse:
     """Core upload logic for `POST /api/projects/{project_id}/skills/upload`.
 
-    One env = one project, so a daemon always writes to its own env's
-    project. Single writer means no cross-machine race; no If-Match,
+    One Agent writes to one Agent Project, so daemon writes always land
+    in the expected Project. Single writer means no cross-machine race; no If-Match,
     no conflict stash. The pre-fetch / hash short-circuit below
     still saves an R2/S3 PUT and avoids cosmetic version+1 bumps
     on byte-identical re-uploads.

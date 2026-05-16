@@ -1,8 +1,13 @@
-"""project constraint-name normalization
+"""preserve project-sharing migration graph continuity
 
 Revision ID: f4d7b3c8a9e1
 Revises: b8e4d1c6f23a
 Create Date: 2026-05-14 08:20:00.000000
+
+This revision existed on earlier iterations of the project-sharing PR.
+Keep it as an intentional no-op so databases that already applied it can
+continue to run Alembic commands after the schema work was consolidated
+into b8e4d1c6f23a_project_sharing.py.
 """
 
 from collections.abc import Sequence
@@ -14,9 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # The consolidated migration chain now creates project-named
-    # constraints/indexes directly, so this revision is intentionally
-    # a no-op while preserving migration graph continuity.
     pass
 
 

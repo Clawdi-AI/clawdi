@@ -5,8 +5,8 @@ column. Routes that need to resolve the project from the caller's
 auth context (rather than taking a `/api/projects/{project_id}/...`
 path parameter) use the helpers below:
 
-  * api_key with environment_id binding → that env's
-    `default_project_id`. Always defined; no ambiguity.
+  * api_key with environment_id → that Agent Project id. Always
+    defined; no ambiguity.
   * Clerk JWT, single env owned by user → that env's
     `default_project_id`. The "I have one machine" common case.
   * Clerk JWT, multiple envs → the most-recently-active env's
@@ -23,17 +23,11 @@ inventory across every project — different helper
 (`project_ids_visible_to`) returns the list of projects the caller
 can read.
 
-The runtime kill-switch `PROJECT_ROUTING_ENABLED` (env var, default
-true) lets ops disable project-aware behavior without rolling back
-the migration: when off, writes go to whichever project is
-convenient (still NOT NULL, but caller doesn't have to wire
-through a picker).
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -43,18 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext
 from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment
-
-
-def project_routing_enabled() -> bool:
-    """Read the runtime kill switch. Default ON (`true`). When the
-    env var is `false` / `0` / `off`, project resolution falls back
-    to the user's Personal project unconditionally — preserves
-    correctness (every row still gets a project_id) while taking
-    the new routing logic out of the hot path.
-    """
-    raw = os.environ.get("PROJECT_ROUTING_ENABLED", "true").strip().lower()
-    return raw not in ("false", "0", "off", "no")
-
 
 _log = logging.getLogger(__name__)
 
@@ -92,22 +74,14 @@ async def resolve_default_write_project(
     """Pick the project a write from `auth` should land in.
 
     Order:
-      1. Kill switch off → Personal.
-      2. api_key bound to an env → that env's default_project_id.
-      3. Clerk JWT or unbound api_key → most-recently-active env's
+      1. api_key bound to an Agent environment → that Agent Project id.
+      2. Clerk JWT or unbound api_key → most-recently-active env's
          default_project_id, OR Personal if user has no envs.
 
     Returns a project_id that the caller can immediately use as the
     `project_id` column value on insert. Always returns a value
     (never None) — callers can treat the column as required.
     """
-    # Env-bound api_key path FIRST, ahead of the kill switch.
-    # PROJECT_ROUTING_ENABLED=false is meant to ramp project routing
-    # off for free-tier Clerk JWT users in case of migration
-    # issues — it MUST NOT route a deploy key into the Personal
-    # project, because that would let a key bound to env-A read /
-    # write user-wide Personal data. The kill switch falls
-    # through ONLY for unbound auth contexts below.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         bound_env_id = auth.api_key.environment_id
         result = await db.execute(
@@ -126,9 +100,6 @@ async def resolve_default_write_project(
                 "bound environment not found",
             )
         return project_id
-
-    if not project_routing_enabled():
-        return await _personal_project_id(db, auth.user_id)
 
     # Clerk JWT path (or unbound api_key, rare): pick most-recently-
     # active env's default_project_id. Same SQL the migration uses for
@@ -165,10 +136,9 @@ async def validate_project_for_caller(
 
     Rules:
       * The project must exist and belong to the authenticated user.
-      * If the caller is an api_key bound to a specific environment,
-        the project must equal that env's `default_project_id`. A daemon
-        for env A cannot pass `project_id=B` in the URL and bypass
-        the bound-env isolation.
+      * If the caller is an api_key bound to a specific Agent environment,
+        the project must equal that Agent Project id. A daemon for Agent A
+        cannot pass `project_id=B` in the URL and bypass isolation.
       * Clerk JWT (dashboard) callers may target any of their own
         projects — same as `project_ids_visible_to` for reads.
 
@@ -249,8 +219,8 @@ async def validate_project_read_for_caller(
 
     Rules:
       * project_id must appear in `project_ids_visible_to(auth)`.
-      * Env-bound api_keys still only see their bound project (the
-        binding is enforced inside project_ids_visible_to itself).
+      * Agent API keys still only see their Agent Project
+        (enforced inside project_ids_visible_to itself).
 
     404 if not in the visible set — same "don't leak existence"
     posture as the owner-only validator.
@@ -276,8 +246,8 @@ async def project_ids_visible_to(
         would query Personal but most data lives in env-local
         projects after backfill, producing a day-1 empty-list
         regression.
-      * api_key bound to env → only the bound env's
-        `default_project_id` (daemons get their own project's data,
+      * api_key bound to an Agent environment → only that Agent Project
+        (daemons get their own Project's data,
         nothing else). This is the deploy-key blast radius
         boundary — a leaked key from env A must not gain
         visibility into env B's data ever.
@@ -291,26 +261,15 @@ async def project_ids_visible_to(
         when its project wasn't the default, since the daemon's
         explicit `?project_id=...` listing intersected to empty.
     """
-    # Bound api_keys are ALWAYS restricted to their bound project —
-    # check this first, before the kill-switch fallback. The kill
-    # switch turns off project-aware routing, but it must NEVER
-    # disable the env-binding boundary on a deploy key.
+    # Bound api_keys are ALWAYS restricted to their bound project.
     #
-    # Env-bound api_keys ALSO never see shared projects via membership:
-    # the env binding is the blast-radius boundary (PR #77). A leaked
+    # Agent API keys ALSO never see shared Projects via membership:
+    # the Agent boundary is the blast-radius boundary (PR #77). A leaked
     # hosted-pod key must not gain visibility into projects the user
     # later joined as a recipient.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         env_project = await resolve_default_write_project(db, auth)
         return [env_project]
-
-    if not project_routing_enabled():
-        # Kill-switch path: owned projects only. Memberships are off
-        # this code path because the kill-switch is meant to
-        # neutralize project-aware routing — sharing piggybacks on
-        # that routing, so it's correctly disabled too.
-        result = await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
-        return list(result.scalars().all())
 
     # Clerk JWT and unbound CLI key: owned projects UNION projects the
     # user joined as a viewer member. Two separate queries (one

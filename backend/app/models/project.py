@@ -36,7 +36,7 @@ class Project(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(80), nullable=False)
 
     # Kind separates auto-managed project types (personal, environment)
-    # from user-created workspace projects. New kinds get added by
+    # from user-created Projects. New kinds get added by
     # replacing the CHECK constraint.
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
 

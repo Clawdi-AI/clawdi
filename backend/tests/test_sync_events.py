@@ -237,7 +237,7 @@ async def test_bump_skills_revision_broadcasts_to_project_members(
     db_session: AsyncSession,
     seed_user: User,
 ):
-    """Owner writes to a shared project must wake sharee subscribers
+    """Owner writes to a shared project must wake recipient subscribers
     too; otherwise shared skills only converge on slow polling."""
     from datetime import UTC, datetime
 
@@ -273,7 +273,7 @@ async def test_bump_skills_revision_broadcasts_to_project_members(
     await db_session.commit()
 
     owner_queue = sync_events.subscribe(owner.id, frozenset({project.id}))
-    sharee_queue = sync_events.subscribe(seed_user.id, frozenset({project.id}))
+    recipient_queue = sync_events.subscribe(seed_user.id, frozenset({project.id}))
     try:
         new_rev = await sync_events.bump_skills_revision(
             db_session,
@@ -283,19 +283,19 @@ async def test_bump_skills_revision_broadcasts_to_project_members(
         )
         await asyncio.sleep(0)
         assert owner_queue.empty()
-        assert sharee_queue.empty()
+        assert recipient_queue.empty()
         await db_session.commit()
         await asyncio.sleep(0)
 
         owner_event = owner_queue.get_nowait()
-        sharee_event = sharee_queue.get_nowait()
+        recipient_event = recipient_queue.get_nowait()
         assert owner_event["skill_key"] == "shared-skill"
-        assert sharee_event["skill_key"] == "shared-skill"
+        assert recipient_event["skill_key"] == "shared-skill"
         assert owner_event["skills_revision"] == new_rev
-        assert sharee_event["skills_revision"] == new_rev
+        assert recipient_event["skills_revision"] == new_rev
     finally:
         sync_events.unsubscribe(owner.id, owner_queue)
-        sync_events.unsubscribe(seed_user.id, sharee_queue)
+        sync_events.unsubscribe(seed_user.id, recipient_queue)
         await db_session.delete(project)
         await db_session.delete(owner)
         await db_session.commit()
@@ -331,7 +331,7 @@ async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
        client open unbounded SSE streams against a single user
        and exhaust process memory.
 
-    2. Per-key cap (env-bound deploy keys only): an env-bound
+    2. Per-key cap (Agent API keys only): a bound
        `api_key_id` may hold at most `max_per_key` simultaneous
        subscribers — a leaked deploy key can't fan out to the
        per-user limit. Unbound keys (multi-agent personal

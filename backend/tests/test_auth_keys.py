@@ -111,7 +111,7 @@ async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
 async def test_deploy_key_minted_with_full_access_by_default(
     client: httpx.AsyncClient, db_session, seed_user
 ):
-    """A deploy key (env-bound) defaults to FULL account access — same
+    """An Agent API key defaults to FULL account access — same
     as a key the user mints for their own laptop. The hosted agent
     pod must be able to do everything the user can.
 
