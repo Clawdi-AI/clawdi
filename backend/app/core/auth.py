@@ -478,12 +478,12 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     surface is intended for the user themselves (their laptop
     CLI, the dashboard).
 
-    Env-bound deploy keys with `scopes=None` (the default for
+    Agent-environment deploy keys with `scopes=None` (the default for
     keys minted via `POST /api/auth/keys` with `environment_id`
     set) PASS this gate by explicit policy: a hosted agent pod
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
-    boundary for env-bound keys is enforced inside the route's
+    boundary for agent-environment keys is enforced inside the route's
     own `project_ids_visible_to` / `_project_filter_*` calls, not
     here.
 

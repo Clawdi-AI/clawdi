@@ -106,7 +106,7 @@ export async function agentProjectsListCommand(
 	if (primary) {
 		console.log(`  ${formatBindingProject(primary, projectsById)}`);
 	} else {
-		console.log("  No Agent Project binding yet.");
+		console.log("  No Agent Project yet.");
 	}
 	console.log();
 	console.log(chalk.bold(`Attached Projects (${contexts.length})`));
@@ -137,7 +137,9 @@ export async function agentProjectsSetPrimaryCommand(
 ): Promise<void> {
 	void agentId;
 	void opts;
-	throw new Error("Agent Project is fixed. Use `clawdi agent projects attach`.");
+	throw new Error(
+		"Agent Project is fixed. Use `clawdi agent projects attach` to add read-only Projects.",
+	);
 }
 
 export async function agentProjectsAddContextCommand(
@@ -185,7 +187,7 @@ export async function agentProjectsRemoveContextCommand(
 		return;
 	}
 	if (matches.length > 1) {
-		console.error(chalk.red("Multiple matches. Detach by id."));
+		console.error(chalk.red("Multiple matches. Detach by attachment id."));
 		process.exitCode = 1;
 		return;
 	}

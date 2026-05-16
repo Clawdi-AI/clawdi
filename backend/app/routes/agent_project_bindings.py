@@ -151,7 +151,7 @@ async def add_context_project_binding(
         if priority_conflict is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "context priority is already in use",
+                "attachment order is already in use",
             )
     binding = await ensure_context_binding(
         db,
@@ -176,7 +176,7 @@ async def reorder_context_project_bindings(
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate priority")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate attachment order")
 
     current_context_rows = (
         (
@@ -200,9 +200,9 @@ async def reorder_context_project_bindings(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid binding_id") from err
         binding = current_by_id.get(binding_id)
         if binding is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "binding not found")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project attachment not found")
         if item.priority < 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "context priority must be >= 1")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "attachment order must be >= 1")
         requested.append((binding, item.priority))
 
     requested_ids = {binding.id for binding, _priority in requested}
@@ -211,7 +211,7 @@ async def reorder_context_project_bindings(
         if binding.id not in requested_ids and binding.priority in requested_priorities:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "context priority is already in use",
+                "attachment order is already in use",
             )
 
     if requested:
@@ -245,7 +245,7 @@ async def delete_project_binding(
         )
     ).scalar_one_or_none()
     if binding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "binding not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project attachment not found")
     if binding.binding_type == "primary":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

@@ -767,7 +767,7 @@ async def batch_create_sessions(
         },
         # Refuse cross-env rebinds at the conflict step itself. The
         # pre-fetch FOR UPDATE check above guards the case where the
-        # row already exists, but two env-bound keys racing on a
+        # row already exists, but two agent-environment keys racing on a
         # never-before-seen `local_session_id` BOTH pass the pre-
         # check (no row to lock). The first INSERT wins; the second
         # falls through to ON CONFLICT and would otherwise overwrite

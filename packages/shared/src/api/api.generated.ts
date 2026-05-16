@@ -849,7 +849,7 @@ export interface paths {
          * @description Phase-2 project-explicit download — exact (`project_id`, `skill_key`)
          *     lookup, no disambiguation.
          *
-         *     Reads are permitted to viewer members (sharees) — the validator
+         *     Reads are permitted to viewer members (recipients) — the validator
          *     accepts any project in `project_ids_visible_to(auth)`, which now
          *     includes ProjectMembership rows. The Skill row lookup no longer
          *     filters by `user_id` since membership-granted reads pull from
@@ -2275,7 +2275,7 @@ export interface components {
         };
         /**
          * InvitationResponse
-         * @description Returned by owner and sharee invitation listings.
+         * @description Returned by owner and recipient invitation listings.
          */
         InvitationResponse: {
             /** Id */

@@ -242,7 +242,7 @@ async def validate_project_read_for_caller(
     """Validate that the caller may READ the given `project_id`.
 
     Sister of `validate_project_for_caller` (write-side, owner-only).
-    This one accepts viewer memberships — a sharee with a
+    This one accepts viewer memberships — a recipient with a
     ProjectMembership row passes here but would be rejected by the
     write validator. Used by read routes that need to serve shared
     content (skill download, etc.) without granting write access.
@@ -299,7 +299,7 @@ async def project_ids_visible_to(
     # Env-bound api_keys ALSO never see shared projects via membership:
     # the env binding is the blast-radius boundary (PR #77). A leaked
     # hosted-pod key must not gain visibility into projects the user
-    # later joined as a sharee.
+    # later joined as a recipient.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         env_project = await resolve_default_write_project(db, auth)
         return [env_project]

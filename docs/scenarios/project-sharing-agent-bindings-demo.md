@@ -1,11 +1,11 @@
-# Project Sharing + Agent Workspace Demo
+# Project Sharing + Agent Project Demo
 
 **Date:** 2026-05-14  
-**Status:** Ship-state walkthrough for Project collaboration and agent workspace use.
+**Status:** Ship-state walkthrough for Project collaboration and Agent Project use.
 
 ## Product Model
 
-- Project is a shared workspace/library object with resources, membership, and access controls.
+- Project is a shared library object with resources, membership, and access controls.
 - Project resources include skills and vault key names. Secret values are never shown in this demo.
 - Agent has one fixed Agent Project for default writes.
 - Agent can attach multiple Projects for reads during runs.
@@ -38,7 +38,7 @@ This PR's demo surface is CLI + backend. Dashboard pages are deferred
 to the separate web PR. Folder links are CLI-only local preferences:
 
 - CLI: `project`, `project folder`, `inbox`, `agent projects`, `run`, `vault`, `skill`, `push`, and `pull` commands.
-- API: project, sharing, inbox, agent-project binding, skill, and vault routes.
+- API: project, sharing, inbox, Agent Project, skill, and vault routes.
 
 ## Role Matrix
 
@@ -58,7 +58,7 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Agent operator | Attach/detach/move projects | `attach`, `detach`, `move` | Agent detail Projects tab |
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
-| Security | Env-bound keys cannot manage sharing | sharing routes reject env-bound keys | API guard display |
+| Security | Agent environment keys cannot manage sharing | sharing routes reject agent environment keys | API guard display |
 | Security | Plaintext vault values stay CLI/API-key only | web/JWT cannot call `vault resolve` | API guard display |
 | Revoke/conflict | Conflict block/allow and access cleanup | `vault resolve --agent`, unshare/leave/remove | Error copy / stale attachment cleanup |
 
@@ -71,11 +71,11 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `attach`, `detach`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; attachments are ordered read sources. |
 | Local operator human using `clawdi run` | Run a local command with vault env from an explicit or linked Project. | CLI only; `clawdi run --project`, `clawdi project folder link/status/unlink`, `clawdi run --no-project-folder`. | Folder links are local selection hints for `run`; they do not grant membership, change cloud state, or attach Projects to Agents. |
 | Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent-bound APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by explicit order; conflicts block by default and include provenance without leaking plaintext. |
-| Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes or disables affected attached Projects while preserving owner data and rejecting sharing changes from env-bound keys. |
+| Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes or disables affected attached Projects while preserving owner data and rejecting sharing changes from agent environment keys. |
 
 ## Flow 1: Owner Creates And Shares
 
-Alice creates or opens an owned project, adds workspace resources, and shares it.
+Alice creates or opens an owned project, adds Project resources, and shares it.
 
 ```bash
 clawdi project create "Engineering" --slug engineering

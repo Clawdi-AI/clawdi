@@ -114,7 +114,7 @@ async def create_vault(
     #
     # When `project_id` IS passed, validate it belongs to the caller
     # (write access — the unwidened owner-only validator), so a
-    # sharee viewer can't sneak vault items into someone else's
+    # recipient viewer can't sneak vault items into someone else's
     # project via the explicit path.
     selected_project_id = project_id
     if selected_project_id is not None:
@@ -653,7 +653,7 @@ async def _get_vault(
     """
     # No `Vault.user_id == auth.user_id` filter — visibility comes
     # from project_ids_visible_to which already accounts for owned +
-    # shared-membership projects. Sharee viewers need to read vault
+    # shared-membership projects. Recipients need to read vault
     # metadata for projects they joined; plaintext resolution is a
     # separate endpoint with its own auth contract.
     visible_project_ids = await project_ids_visible_to(db, auth)

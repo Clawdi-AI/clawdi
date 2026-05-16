@@ -100,7 +100,7 @@ export interface AgentAdapter {
 	/** Returns the on-disk path where a SHARED-PROJECT skill should
 	 * land. The owner-handle (resolved server-side, frozen at link
 	 * create for each shared owner) is appended with `__` separator so
-	 * the same key from different owners coexists with the sharee's
+	 * the same key from different owners coexists with the recipient's
 	 * own key.
 	 *
 	 * Example for Claude Code:
@@ -130,7 +130,7 @@ export interface AgentAdapter {
 	 * the top entry to `<key>__<ownerHandle>`.
 	 *
 	 * Called by `clawdi inbox accept` after a successful upgrade or
-	 * redeem so the sharee's agent immediately sees the shared
+	 * redeem so the recipient's agent immediately sees the shared
 	 * skill folder without waiting for a daemon reconcile cycle. */
 	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
 	/** Remove a skill from the agent's local skills directory.

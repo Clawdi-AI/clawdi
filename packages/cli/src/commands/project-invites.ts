@@ -11,10 +11,10 @@ import { resolveProjectId } from "../lib/project-resolver";
  *   default → list pending invitations on the project
  *   --cancel <id> → cancel one of them
  *
- * The sharee-side `--accept` / `--decline` flags that lived here in v1
+ * The recipient-side `--accept` / `--decline` flags that lived here in v1
  * are gone — `clawdi inbox accept` / `clawdi inbox decline` is the
- * canonical sharee surface (publishes the same backend endpoints).
- * Sharee-side listing also lives under `clawdi inbox`.
+ * canonical recipient surface (publishes the same backend endpoints).
+ * Recipient-side listing also lives under `clawdi inbox`.
  */
 
 interface InvitationItem {

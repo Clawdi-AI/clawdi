@@ -156,9 +156,11 @@ function normalizeAcceptBindAs(opts: AcceptOpts): "context" {
 		const bindAs = opts.bindAs.toLowerCase();
 		if (bindAs === "context") return bindAs;
 		if (bindAs === "primary") {
-			throw new Error("`--bind-as primary` is no longer supported. Agent Project is fixed.");
+			throw new Error(
+				"`--bind-as primary` is no longer supported. Agent Project is fixed; use `--use-as attached`.",
+			);
 		}
-		throw new Error("`--bind-as` must be `context`.");
+		throw new Error("`--bind-as` is deprecated; use `--use-as attached`.");
 	}
 
 	return "context";

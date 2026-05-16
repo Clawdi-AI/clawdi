@@ -28,7 +28,7 @@ class ProjectMembership(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    # v1 sharees are viewer-only. Keep editor reserved for follow-up.
+    # v1 recipients are viewer-only. Keep editor reserved for follow-up.
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     joined_via: Mapped[str] = mapped_column(String(32), nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

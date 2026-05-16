@@ -58,7 +58,7 @@ class InvitationCreate(BaseModel):
 
 
 class InvitationResponse(BaseModel):
-    """Returned by owner and sharee invitation listings."""
+    """Returned by owner and recipient invitation listings."""
 
     id: str
     project_id: str
@@ -139,7 +139,7 @@ class UpgradeBody(BaseModel):
     @classmethod
     def _validate_bind_as(cls, value: str) -> str:
         if value != "context":
-            raise ValueError("bind_as must be 'context'; Agent Project is fixed")
+            raise ValueError("Only attached Projects are supported; Agent Project is fixed")
         return value
 
 

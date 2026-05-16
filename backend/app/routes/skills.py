@@ -313,7 +313,7 @@ async def list_skills(
     # caller's representation changes whenever any of those does.
     # The owner-revision component is required for shared projects:
     # owner writes bump the owner's `skills_revision`, not the
-    # sharee's. Round 32 covered (revision, project_id); this also
+    # recipient's. Round 32 covered (revision, project_id); this also
     # folds in the visible-project hash so an
     # env-bound key whose env's `default_project_id` is reassigned
     # to a different project gets a new ETag — and a 200 with the
@@ -354,7 +354,7 @@ async def list_skills(
 
     # Drop the `Skill.user_id == auth.user_id` filter that was here
     # pre-sharing: that would have blocked viewer members from seeing
-    # skills in projects they joined as a sharee. Project-id-in-visible
+    # skills in projects they joined as recipients. Project-id-in-visible
     # already gates access correctly; the membership row earned the
     # project its slot in `visible_project_ids`.
     base = (
@@ -512,7 +512,7 @@ async def _visible_skills_revision_fingerprint(
     the caller's visible project set.
 
     `users.skills_revision` is bumped on the owner account when a skill
-    changes. For shared projects, the sharee's own revision does not
+    changes. For shared projects, the recipient's own revision does not
     move, so an ETag based only on `auth.user_id` would incorrectly 304
     after the owner updated shared content. Hashing the visible projects'
     owner revisions keeps conditional GETs correct without adding a new
@@ -1021,7 +1021,7 @@ async def download_skill_project(
     """Phase-2 project-explicit download — exact (`project_id`, `skill_key`)
     lookup, no disambiguation.
 
-    Reads are permitted to viewer members (sharees) — the validator
+    Reads are permitted to viewer members (recipients) — the validator
     accepts any project in `project_ids_visible_to(auth)`, which now
     includes ProjectMembership rows. The Skill row lookup no longer
     filters by `user_id` since membership-granted reads pull from

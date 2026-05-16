@@ -42,7 +42,7 @@ describe("buildShareAgentHandoffPrompt", () => {
 		);
 
 		expect(statuses).toEqual(["joined", "redeemed", "already_redeemed", "already_owner"]);
-		expect(prompt).toContain("Never invent project access or agent attachment outcomes");
+		expect(prompt).toContain("Never invent Project access or attached Project outcomes");
 		expect(prompt).toContain("clawdi vault resolve <key> --project <project> --debug --json");
 	});
 

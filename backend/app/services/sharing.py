@@ -72,8 +72,8 @@ def resolve_owner_handle(user: User) -> str:
 
     The 4-hex-char suffix makes handles globally unique per owner.
     No `existing_handles` parameter - we don't disambiguate per
-    sharee because the handle is frozen on `project_share_links`
-    at create time, when we don't know the sharee yet.
+    recipient because the handle is frozen on `project_share_links`
+    at create time, when we don't know the recipient yet.
     """
     if not user.name:
         raise ValueError(

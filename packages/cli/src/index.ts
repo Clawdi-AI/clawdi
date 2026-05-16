@@ -714,7 +714,7 @@ projectCmd
 	.option("--cancel <id>", "Cancel one of the pending invitations on this project")
 	.addHelpText(
 		"after",
-		"\n  Sharee side (listing / accepting / declining invitations addressed to you)\n" +
+		"\n  Recipient side (listing / accepting / declining invitations addressed to you)\n" +
 			"  lives under `clawdi inbox`.",
 	)
 	.action(async (project: string, opts: { cancel?: string }) => {
@@ -781,7 +781,7 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("set-primary <agent-id>", { hidden: true })
-	.description("Compatibility alias for set-home")
+	.description("Deprecated: Agent Project is fixed")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsSetPrimaryCommand } = await import("./commands/agent-projects.js");
@@ -887,8 +887,8 @@ inboxCmd
 	.option("--use-as <attached>", "Attach to --agent (default: attached)")
 	.addOption(
 		new Option(
-			"--bind-as <context|primary>",
-			"Deprecated compatibility alias for --use-as (context only)",
+			"--bind-as <value>",
+			"Deprecated compatibility alias for --use-as attached",
 		).hideHelp(),
 	)
 	.option("--json", "Emit machine-readable JSON (agent contract)")

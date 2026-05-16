@@ -75,7 +75,7 @@ async def assert_project_writable_by_user(
     if project.user_id != user_id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "primary project must be owned by the caller",
+            "Agent Project must be owned by the caller",
         )
     return project
 
@@ -88,10 +88,10 @@ async def delete_project_bindings_for_users(
 ) -> int:
     """Delete agent bindings that let specific users use a project.
 
-    Membership removal and project unsharing both remove the sharee's
+    Membership removal and project unsharing both remove the recipient's
     future access. Agent bindings are derived runtime use, so they must
     disappear with the membership instead of leaving stale context rows on
-    the sharee's agents.
+    the recipient's agents.
     """
     if not user_ids:
         return 0
@@ -144,7 +144,7 @@ async def ensure_context_binding(
     if priority is None:
         priority = await _next_context_priority(db, agent_id=agent_id)
     if priority < 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "context priority must be >= 1")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "attachment order must be >= 1")
 
     binding = AgentProjectBinding(
         agent_id=agent_id,
