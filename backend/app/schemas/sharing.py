@@ -45,9 +45,12 @@ class InvitationCreate(BaseModel):
 
     email: str
 
-    @field_validator("email")
+    @field_validator("email", mode="before")
     @classmethod
-    def _validate_email_shape(cls, value: str) -> str:
+    def _validate_email_shape(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("invalid email address")
+        value = value.strip().lower()
         local, separator, domain = value.partition("@")
         if not separator or not local or "." not in domain or domain.endswith("."):
             raise ValueError("invalid email address")

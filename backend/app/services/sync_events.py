@@ -15,9 +15,10 @@ Single owner of two intertwined concerns:
    to `GET /api/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
    `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
-   skills_revision}` event to every connection of that user that
-   has visibility into the event's `project_id`. SSE is the primary
-   path for instant propagation; 60s reconcile is the safety net.
+   skills_revision}` event to every connection of that user, and
+   every accepted project member, that has visibility into the
+   event's `project_id`. SSE is the primary path for instant
+   propagation; 60s reconcile is the safety net.
 
 Server-side project filter: every subscribe call carries the
 caller's `visible_project_ids` (computed via
@@ -27,8 +28,10 @@ in env B's project, even with the daemon's client-side filter
 removed. Without this server-side gate, a deploy key could
 observe `skill_key` and `project_id` for every change in the user's
 account — a metadata leak even if the daemon would never act on
-the event. The daemon retains a defense-in-depth client-side
-filter on receipt.
+the event. Shared-project member fan-out still goes through this
+filter, so membership removal stops future events as soon as the
+subscriber's refreshed visibility drops the project. The daemon
+retains a defense-in-depth client-side filter on receipt.
 
 Broadcast-after-commit is enforced via SQLAlchemy's
 `after_commit` event hook: `bump_skills_revision` registers an
@@ -63,6 +66,7 @@ from sqlalchemy import event, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.project_membership import ProjectMembership
 from app.models.user import User
 
 log = logging.getLogger(__name__)
@@ -269,7 +273,20 @@ async def bump_skills_revision(
     }
     if content_hash is not None:
         payload["content_hash"] = content_hash
-    _queue_for_commit(db, user_id, payload)
+    member_rows = (
+        (
+            await db.execute(
+                select(ProjectMembership.member_user_id).where(
+                    ProjectMembership.project_id == project_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    target_user_ids = {user_id, *member_rows}
+    for target_user_id in target_user_ids:
+        _queue_for_commit(db, target_user_id, payload)
     return new_revision
 
 

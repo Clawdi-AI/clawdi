@@ -1,13 +1,12 @@
 """Global search across all entities — powers the Cmd+K palette.
 
-Fires one query per type in parallel and returns top N of each. Results are
-shaped for direct rendering (title/subtitle/href/type) so the frontend just
-iterates groups and renders icons per type.
+Runs one query per type and returns top N of each. Results are shaped for
+direct rendering (title/subtitle/href/type) so the frontend just iterates
+groups and renders icons per type.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Literal
 from urllib.parse import quote
@@ -212,7 +211,7 @@ async def global_search(
     db: AsyncSession = Depends(get_session),
     q: str = Query(..., min_length=1, max_length=200),
 ) -> SearchResponse:
-    """Fan out to each entity searcher and concat results.
+    """Run each entity searcher and concat results.
 
     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
     4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
@@ -222,7 +221,9 @@ async def global_search(
 
     A single failing source (e.g. the memory provider briefly unavailable)
     degrades to partial results rather than failing the whole request —
-    palette UX beats strict all-or-nothing consistency here.
+    palette UX beats strict all-or-nothing consistency here. The queries run
+    sequentially because SQLAlchemy AsyncSession is not safe for concurrent
+    operations on the same request-scoped session.
     """
     # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are
@@ -236,32 +237,28 @@ async def global_search(
     # we limit it to user JWT and wide-access personal CLI keys
     # (mirrors `require_user_auth` semantics on the direct vault
     # routes).
-    coros: list = []
-    labels: list[str] = []
+    jobs = []
     if _has_scope(auth, "skills:read"):
-        coros.append(_search_skills(db, auth, q))
-        labels.append("skills")
+        jobs.append(("skills", _search_skills))
     if not _is_scoped_api_key(auth):
-        coros.append(_search_vaults(db, auth, q))
-        labels.append("vaults")
+        jobs.append(("vaults", _search_vaults))
     if _has_scope(auth, "sessions:read"):
-        coros.insert(0, _search_sessions(db, auth, q))
-        labels.insert(0, "sessions")
+        jobs.insert(0, ("sessions", _search_sessions))
     if _has_scope(auth, "memories:read"):
         # Insert memories right after sessions if present, otherwise first.
-        idx = 1 if "sessions" in labels else 0
-        coros.insert(idx, _search_memories(db, auth, q))
-        labels.insert(idx, "memories")
-    results = await asyncio.gather(*coros, return_exceptions=True)
+        idx = 1 if any(label == "sessions" for label, _fn in jobs) else 0
+        jobs.insert(idx, ("memories", _search_memories))
     hits: list[SearchHit] = []
-    for source, r in zip(labels, results):
-        if isinstance(r, BaseException):
+    for source, searcher in jobs:
+        try:
+            r = await searcher(db, auth, q)
+        except Exception as exc:
             log.warning(
                 "search source %s failed for user %s: %s",
                 source,
                 auth.user_id,
-                r,
-                exc_info=r,
+                exc,
+                exc_info=exc,
             )
             continue
         hits.extend(r)

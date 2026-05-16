@@ -101,6 +101,11 @@ async def accept_invitation_for_user(
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
+    if project.user_id == auth.user_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={"error": "already_owner"},
+        )
 
     inv = (
         await db.execute(select(ProjectInvitation).where(ProjectInvitation.id == invitation_id))

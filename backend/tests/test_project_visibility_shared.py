@@ -151,6 +151,214 @@ async def test_sharee_can_read_shared_project_skill_detail_and_search(
 
 
 @pytest.mark.asyncio
+async def test_sharee_viewer_cannot_write_shared_project_resources(
+    client,
+    db_session,
+    seed_user,
+):
+    """Viewer membership expands read visibility only. It must never
+    make shared-project skills/vaults writable by the sharee."""
+    from sqlalchemy import select
+
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.skill import Skill
+    from app.models.user import User
+    from app.models.vault import Vault
+    from app.services.tar_utils import tar_from_content
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"wo_{nonce}",
+        email=f"wo_{nonce}@test.dev",
+        name="Write Owner",
+    )
+    db_session.add(owner)
+    await db_session.commit()
+
+    shared = Project(
+        user_id=owner.id,
+        name="shared write boundary",
+        slug=f"shared-write-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"wo-{nonce}",
+        )
+    )
+    db_session.add(
+        Skill(
+            user_id=owner.id,
+            project_id=shared.id,
+            skill_key=f"owner-skill-{nonce}",
+            name="Owner Skill",
+            description="owner-only write boundary",
+            content_hash="e" * 64,
+            file_count=1,
+            is_active=True,
+        )
+    )
+    db_session.add(
+        Vault(
+            user_id=owner.id,
+            project_id=shared.id,
+            slug=f"owner-vault-{nonce}",
+            name="Owner Vault",
+        )
+    )
+    await db_session.commit()
+
+    try:
+        tar_bytes, _ = tar_from_content(
+            f"sharee-skill-{nonce}",
+            "---\nname: denied\n---\n# Denied\n",
+        )
+        upload = await client.post(
+            f"/api/projects/{shared.id}/skills/upload",
+            data={"skill_key": f"sharee-skill-{nonce}"},
+            files={"file": ("denied.tar.gz", tar_bytes, "application/gzip")},
+        )
+        assert upload.status_code == 404, upload.text
+
+        edit = await client.put(
+            f"/api/projects/{shared.id}/skills/owner-skill-{nonce}/content",
+            json={"content": "---\nname: denied\n---\n# Denied\n"},
+        )
+        assert edit.status_code == 404, edit.text
+
+        delete_skill = await client.delete(f"/api/projects/{shared.id}/skills/owner-skill-{nonce}")
+        assert delete_skill.status_code == 404, delete_skill.text
+
+        create_vault = await client.post(
+            f"/api/vault?project_id={shared.id}",
+            json={"slug": f"sharee-vault-{nonce}", "name": "Denied"},
+        )
+        assert create_vault.status_code == 404, create_vault.text
+
+        upsert_vault = await client.put(
+            f"/api/vault/owner-vault-{nonce}/items?project_id={shared.id}",
+            json={"section": "", "fields": {"TOKEN": "denied"}},
+        )
+        assert upsert_vault.status_code == 404, upsert_vault.text
+
+        delete_vault = await client.delete(f"/api/vault/owner-vault-{nonce}?project_id={shared.id}")
+        assert delete_vault.status_code == 404, delete_vault.text
+
+        leaked_skill = (
+            await db_session.execute(
+                select(Skill).where(
+                    Skill.project_id == shared.id,
+                    Skill.user_id == seed_user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        assert leaked_skill is None
+
+        leaked_vault = (
+            await db_session.execute(
+                select(Vault).where(
+                    Vault.project_id == shared.id,
+                    Vault.user_id == seed_user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        assert leaked_vault is None
+    finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_sharee_skill_list_etag_changes_when_owner_updates_shared_project(
+    client,
+    db_session,
+    seed_user,
+):
+    """Shared-project conditional GETs must invalidate on the owner's
+    skill revision, not only on the sharee's own user revision."""
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.skill import Skill
+    from app.models.user import User
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"etag_owner_{nonce}",
+        email=f"etag_owner_{nonce}@test.dev",
+        name="ETag Owner",
+    )
+    db_session.add(owner)
+    await db_session.commit()
+
+    shared = Project(
+        user_id=owner.id,
+        name="shared etag",
+        slug=f"shared-etag-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"etag-owner-{nonce}",
+        )
+    )
+    skill = Skill(
+        user_id=owner.id,
+        project_id=shared.id,
+        skill_key=f"etag-skill-{nonce}",
+        name="Shared ETag Skill",
+        description="etag boundary",
+        content_hash="f" * 64,
+        file_count=1,
+        is_active=True,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+
+    try:
+        first = await client.get(f"/api/skills?project_id={shared.id}")
+        assert first.status_code == 200, first.text
+        etag = first.headers.get("ETag")
+        assert etag
+
+        cached = await client.get(
+            f"/api/skills?project_id={shared.id}",
+            headers={"If-None-Match": etag},
+        )
+        assert cached.status_code == 304, cached.text
+
+        skill.content_hash = "1" * 64
+        owner.skills_revision = int(owner.skills_revision or 0) + 1
+        await db_session.commit()
+
+        refreshed = await client.get(
+            f"/api/skills?project_id={shared.id}",
+            headers={"If-None-Match": etag},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.headers.get("ETag") != etag
+    finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_unbound_cli_key_sees_owned_and_shared(db_session, seed_user, seed_project):
     """Unbound CLI api_key (from `clawdi auth login` device flow,
     no environment_id) behaves like Clerk JWT — full owned+shared."""

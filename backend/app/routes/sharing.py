@@ -199,7 +199,7 @@ async def create_invitation(
 ) -> InvitationResponse:
     project = await _assert_project_owner(db, auth, project_id)
     display, handle = _owner_view(auth)
-    target_email = body.email.lower()
+    target_email = body.email
 
     if auth.user.email and auth.user.email.lower() == target_email:
         raise HTTPException(

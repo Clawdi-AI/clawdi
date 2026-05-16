@@ -18,9 +18,7 @@ from app.models.project_invitation import ProjectInvitation
 
 
 @pytest.mark.asyncio
-async def test_invite_existing_user_creates_invitation(
-    client, db_session, seed_user, seed_project
-):
+async def test_invite_existing_user_creates_invitation(client, db_session, seed_user, seed_project):
     """Owner invites a registered user → 200 with response body
     carrying the project+owner+invitee context the recipient's
     dashboard renders."""
@@ -57,12 +55,51 @@ async def test_invite_existing_user_creates_invitation(
         # CASCADE delete: invitation FK → invitee user.
         # Delete invitation first to avoid orphan-row checks.
         rows = (
-            await db_session.execute(
-                select(ProjectInvitation).where(
-                    ProjectInvitation.invitee_user_id == invitee_id
+            (
+                await db_session.execute(
+                    select(ProjectInvitation).where(ProjectInvitation.invitee_user_id == invitee_id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
+        for inv in rows:
+            await db_session.delete(inv)
+        await db_session.delete(invitee)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_invite_email_is_trimmed_and_lowercased(client, db_session, seed_user, seed_project):
+    from app.models.user import User
+
+    seed_user.name = "Alice"
+    nonce = uuid.uuid4().hex[:8]
+    invitee = User(
+        clerk_id=f"trim_{nonce}",
+        email=f"trim_{nonce}@test.dev",
+        name="Trimmed",
+    )
+    db_session.add(invitee)
+    await db_session.commit()
+    invitee_id = invitee.id
+    try:
+        response = await client.post(
+            f"/api/projects/{seed_project.id}/invitations",
+            json={"email": f"  {invitee.email.upper()}  "},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["invitee_email"] == invitee.email
+    finally:
+        rows = (
+            (
+                await db_session.execute(
+                    select(ProjectInvitation).where(ProjectInvitation.invitee_user_id == invitee_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         for inv in rows:
             await db_session.delete(inv)
         await db_session.delete(invitee)
@@ -124,12 +161,14 @@ async def test_invite_existing_pending_409(client, db_session, seed_user, seed_p
         assert second.json()["detail"]["error"] == "already_invited"
     finally:
         rows = (
-            await db_session.execute(
-                select(ProjectInvitation).where(
-                    ProjectInvitation.invitee_user_id == invitee_id
+            (
+                await db_session.execute(
+                    select(ProjectInvitation).where(ProjectInvitation.invitee_user_id == invitee_id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for inv in rows:
             await db_session.delete(inv)
         await db_session.delete(invitee)
@@ -163,9 +202,7 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_p
         assert listing.status_code == 200
         assert any(it["id"] == inv_id for it in listing.json())
 
-        cancel = await client.delete(
-            f"/api/projects/{seed_project.id}/invitations/{inv_id}"
-        )
+        cancel = await client.delete(f"/api/projects/{seed_project.id}/invitations/{inv_id}")
         assert cancel.status_code == 200
         assert cancel.json()["status"] == "cancelled"
 
@@ -174,12 +211,14 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_p
         assert all(it["id"] != inv_id for it in relist.json())
     finally:
         rows = (
-            await db_session.execute(
-                select(ProjectInvitation).where(
-                    ProjectInvitation.invitee_user_id == invitee_id
+            (
+                await db_session.execute(
+                    select(ProjectInvitation).where(ProjectInvitation.invitee_user_id == invitee_id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for inv in rows:
             await db_session.delete(inv)
         await db_session.delete(invitee)

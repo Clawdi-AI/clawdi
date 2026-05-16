@@ -233,6 +233,75 @@ async def test_bump_skills_revision_after_commit_broadcasts(
 
 
 @pytest.mark.asyncio
+async def test_bump_skills_revision_broadcasts_to_project_members(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    """Owner writes to a shared project must wake sharee subscribers
+    too; otherwise shared skills only converge on slow polling."""
+    from datetime import UTC, datetime
+
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"sync_owner_{nonce}",
+        email=f"sync_owner_{nonce}@test.dev",
+        name="Sync Owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    project = Project(
+        user_id=owner.id,
+        name="Shared Sync",
+        slug=f"shared-sync-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=project.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"sync-owner-{nonce}",
+        )
+    )
+    await db_session.commit()
+
+    owner_queue = sync_events.subscribe(owner.id, frozenset({project.id}))
+    sharee_queue = sync_events.subscribe(seed_user.id, frozenset({project.id}))
+    try:
+        new_rev = await sync_events.bump_skills_revision(
+            db_session,
+            owner.id,
+            skill_key="shared-skill",
+            project_id=project.id,
+        )
+        await asyncio.sleep(0)
+        assert owner_queue.empty()
+        assert sharee_queue.empty()
+        await db_session.commit()
+        await asyncio.sleep(0)
+
+        owner_event = owner_queue.get_nowait()
+        sharee_event = sharee_queue.get_nowait()
+        assert owner_event["skill_key"] == "shared-skill"
+        assert sharee_event["skill_key"] == "shared-skill"
+        assert owner_event["skills_revision"] == new_rev
+        assert sharee_event["skills_revision"] == new_rev
+    finally:
+        sync_events.unsubscribe(owner.id, owner_queue)
+        sync_events.unsubscribe(seed_user.id, sharee_queue)
+        await db_session.delete(project)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_pending_events_cleared_on_rollback_hook(db_session: AsyncSession):
     """Direct test of the rollback hook: events queued on the
     session's `info` dict must be dropped if the rollback hook

@@ -308,10 +308,13 @@ async def list_skills(
     # last-seen revision matches current, return 304 with no body
     # so the 60s poll cycle costs nothing on quiet accounts.
     #
-    # ETag binds (revision, project filter, EFFECTIVE visible
-    # project set) so a caller's representation changes whenever
-    # any of those does. Round 32 covered (revision, project_id);
-    # this also folds in the visible-project hash so an
+    # ETag binds (caller revision, project filter, EFFECTIVE
+    # visible project set, and visible owners' revisions) so a
+    # caller's representation changes whenever any of those does.
+    # The owner-revision component is required for shared projects:
+    # owner writes bump the owner's `skills_revision`, not the
+    # sharee's. Round 32 covered (revision, project_id); this also
+    # folds in the visible-project hash so an
     # env-bound key whose env's `default_project_id` is reassigned
     # to a different project gets a new ETag — and a 200 with the
     # new effective listing — even though `skills_revision`
@@ -341,7 +344,11 @@ async def list_skills(
     visible_fingerprint = hashlib.sha256(
         ":".join(sorted(str(s) for s in visible_project_ids)).encode()
     ).hexdigest()[:16]
-    etag = f'"{revision}:{project_tag}:{visible_fingerprint}"'
+    visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
+        db,
+        visible_project_ids,
+    )
+    etag = f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
     if if_none_match is not None and if_none_match.strip() == etag:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
 
@@ -495,6 +502,37 @@ async def _resolve_legacy_skill(
     if not skill:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
     return skill
+
+
+async def _visible_skills_revision_fingerprint(
+    db: AsyncSession,
+    visible_project_ids: list,
+) -> str:
+    """Fingerprint skill revisions for every owner represented in
+    the caller's visible project set.
+
+    `users.skills_revision` is bumped on the owner account when a skill
+    changes. For shared projects, the sharee's own revision does not
+    move, so an ETag based only on `auth.user_id` would incorrectly 304
+    after the owner updated shared content. Hashing the visible projects'
+    owner revisions keeps conditional GETs correct without adding a new
+    project-level revision table in this PR.
+    """
+    if not visible_project_ids:
+        return "none"
+
+    from app.models.project import Project
+    from app.models.user import User
+
+    rows = (
+        await db.execute(
+            select(Project.user_id, User.skills_revision)
+            .join(User, User.id == Project.user_id)
+            .where(Project.id.in_(visible_project_ids))
+        )
+    ).all()
+    parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in rows)
+    return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
 
 
 async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:

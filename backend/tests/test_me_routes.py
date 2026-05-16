@@ -195,6 +195,56 @@ async def test_accept_invitation_creates_membership(client, db_session, seed_use
 
 
 @pytest.mark.asyncio
+async def test_accept_invitation_rejects_owner_self_invite(client, db_session, seed_user):
+    """Create route blocks self-invites, but accept still needs a
+    service-layer guard for stale/manual rows."""
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+
+    project = Project(
+        user_id=seed_user.id,
+        name="Self Invite Boundary",
+        slug=f"self-invite-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    invitation = ProjectInvitation(
+        project_id=project.id,
+        invitee_user_id=seed_user.id,
+        invitee_email=seed_user.email.lower() if seed_user.email else "seed@test.dev",
+        invited_by=seed_user.id,
+        resolved_owner_handle="self-owner",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    try:
+        response = await client.post(f"/api/me/invitations/{invitation.id}/accept")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["error"] == "already_owner"
+        membership = (
+            await db_session.execute(
+                select(ProjectMembership).where(
+                    ProjectMembership.project_id == project.id,
+                    ProjectMembership.member_user_id == seed_user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        assert membership is None
+    finally:
+        leftover = (
+            await db_session.execute(
+                select(ProjectInvitation).where(ProjectInvitation.id == invitation.id)
+            )
+        ).scalar_one_or_none()
+        if leftover is not None:
+            await db_session.delete(leftover)
+        await db_session.delete(project)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_accept_invitation_uses_frozen_owner_handle(client, db_session, seed_user):
     owner, project, invitation_id = await _seed_owner_and_invite(db_session, seed_user)
     frozen_handle = resolve_owner_handle(owner)
