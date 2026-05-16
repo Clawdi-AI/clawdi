@@ -190,6 +190,7 @@ function SessionsListInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Sessions"
+				description="Activity history from connected agents. Reusable resources are managed through Projects."
 				actions={
 					data ? (
 						<Badge variant="secondary">
@@ -270,7 +271,7 @@ function SessionsListInner() {
 													: params.sort,
 									});
 								}}
-								placeholder="Search summary, project, ID…"
+								placeholder="Search summary, local folder, ID…"
 							>
 								{agentOptions.length > 0 ? (
 									<DataTableFacetedFilter

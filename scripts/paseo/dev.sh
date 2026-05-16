@@ -37,6 +37,16 @@ export PUBLIC_API_URL="$API_URL"
 export WEB_ORIGIN="$WEB_URL"
 export CORS_ORIGINS
 export NEXT_PUBLIC_API_URL="$API_URL"
+export NEXT_PUBLIC_CLAWDI_HOSTED="${NEXT_PUBLIC_CLAWDI_HOSTED:-}"
+export NEXT_PUBLIC_DEPLOY_API_URL="${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}"
+if [ "${DEV_AUTH_BYPASS:-}" = "true" ]; then
+  export DEV_AUTH_TOKEN="${DEV_AUTH_TOKEN:-dev-bypass}"
+  export DEV_AUTH_CLERK_ID="${DEV_AUTH_CLERK_ID:-dev_browser}"
+  export DEV_AUTH_EMAIL="${DEV_AUTH_EMAIL:-dev@clawdi.local}"
+  export DEV_AUTH_NAME="${DEV_AUTH_NAME:-Dev User}"
+  export NEXT_PUBLIC_DEV_AUTH_BYPASS="${NEXT_PUBLIC_DEV_AUTH_BYPASS:-true}"
+  export NEXT_PUBLIC_DEV_AUTH_TOKEN="${NEXT_PUBLIC_DEV_AUTH_TOKEN:-$DEV_AUTH_TOKEN}"
+fi
 
 docker compose up -d --wait postgres
 run_backend_migrations
@@ -57,13 +67,23 @@ trap 'cleanup; exit 143' TERM
 
 (
   cd apps/web
-  NEXT_PUBLIC_API_URL="$API_URL" bun run dev -- --hostname "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
+  NEXT_PUBLIC_API_URL="$API_URL" \
+    NEXT_PUBLIC_CLAWDI_HOSTED="$NEXT_PUBLIC_CLAWDI_HOSTED" \
+    NEXT_PUBLIC_DEPLOY_API_URL="$NEXT_PUBLIC_DEPLOY_API_URL" \
+    NEXT_PUBLIC_DEV_AUTH_BYPASS="${NEXT_PUBLIC_DEV_AUTH_BYPASS:-}" \
+    NEXT_PUBLIC_DEV_AUTH_TOKEN="${NEXT_PUBLIC_DEV_AUTH_TOKEN:-}" \
+    bun run dev -- --hostname "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
 ) &
 pids+=("$!")
 
 (
   cd backend
   DATABASE_URL="$DATABASE_URL" \
+    DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-}" \
+    DEV_AUTH_TOKEN="${DEV_AUTH_TOKEN:-}" \
+    DEV_AUTH_CLERK_ID="${DEV_AUTH_CLERK_ID:-}" \
+    DEV_AUTH_EMAIL="${DEV_AUTH_EMAIL:-}" \
+    DEV_AUTH_NAME="${DEV_AUTH_NAME:-}" \
     DEBUG=true \
     PUBLIC_API_URL="$API_URL" \
     WEB_ORIGIN="$WEB_URL" \

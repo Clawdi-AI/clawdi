@@ -1,6 +1,5 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
@@ -27,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
+import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import {
 	cn,
@@ -39,7 +39,7 @@ import {
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const api = useApi();
-	const { user } = useUser();
+	const { user } = useCurrentUser();
 
 	const { data: session, isLoading: isSessionLoading } = useQuery({
 		queryKey: ["session", id],

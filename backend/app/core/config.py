@@ -100,6 +100,16 @@ class Settings(BaseSettings):
     # is bounded by that snapshot's contents.
     enable_snapshot_email_rebind: bool = False
 
+    # Local browser-dev bypass. When true AND `environment == "development"`,
+    # the backend accepts `Authorization: Bearer <dev_auth_token>` as a
+    # dashboard user for quick Playwright/manual UI testing without Clerk.
+    # Keep this false in every deployed environment.
+    dev_auth_bypass: bool = False
+    dev_auth_token: str = "dev-bypass"
+    dev_auth_clerk_id: str = "dev_browser"
+    dev_auth_email: str = "dev@clawdi.local"
+    dev_auth_name: str = "Dev User"
+
     vault_encryption_key: str = ""
     encryption_key: str = ""  # For JWT signing (MCP proxy tokens)
 

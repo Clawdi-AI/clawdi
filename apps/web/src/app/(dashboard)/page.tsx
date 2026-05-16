@@ -57,6 +57,11 @@ export default function DashboardPage() {
 		queryFn: async () => unwrap(await api.GET("/api/dashboard/stats")),
 	});
 
+	const { data: projects, isLoading: projectsLoading } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
+	});
+
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
@@ -195,7 +200,11 @@ export default function DashboardPage() {
 					) : hasAgents ? (
 						<OnboardingCard />
 					) : null}
-					<ResourcesCard stats={stats} />
+					<ResourcesCard
+						stats={stats}
+						projectCount={projects?.length}
+						projectCountLoading={projectsLoading}
+					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>

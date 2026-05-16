@@ -1,6 +1,5 @@
 "use client";
 
-import { useClerk, useUser } from "@clerk/nextjs";
 import { LogOut, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -14,6 +13,7 @@ import {
 	DropdownMenuSubContent,
 	DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useAuthActions, useCurrentUser } from "@/lib/auth-client";
 
 /**
  * Shared dropdown body for the signed-in user menu: identity header +
@@ -27,8 +27,8 @@ import {
  * header (below the avatar in the top-right corner).
  */
 export function UserMenuItems() {
-	const { signOut } = useClerk();
-	const { user } = useUser();
+	const { signOut } = useAuthActions();
+	const { user } = useCurrentUser();
 	const { theme, setTheme } = useTheme();
 
 	return (

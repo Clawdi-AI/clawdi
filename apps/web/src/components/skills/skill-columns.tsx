@@ -19,9 +19,34 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // `makeSkillColumns` takes an uninstall handler so the caller owns the
 // mutation; the column defs only know how to render and which row to
 // pass to the callback.
+//
+// `writableProjectIds` is the ownership boundary. A skill can live
+// outside the currently selected agent project and still be writable
+// when it belongs to the user (for example, preserved skills from a
+// disconnected agent). Viewer memberships render read-only.
+export type SkillProjectAccess = "writable" | "read-only" | "unknown";
+
+export interface SkillColumnOptions {
+	currentProjectId?: string | null;
+	writableProjectIds?: ReadonlySet<string> | null;
+}
+
+export function resolveSkillProjectAccess(
+	skill: Pick<SkillSummary, "project_id">,
+	options: SkillColumnOptions = {},
+): SkillProjectAccess {
+	if (!skill.project_id) return "unknown";
+	if (options.writableProjectIds) {
+		return options.writableProjectIds.has(skill.project_id) ? "writable" : "read-only";
+	}
+	if (options.currentProjectId && skill.project_id === options.currentProjectId) return "writable";
+	return "unknown";
+}
+
 export function makeSkillColumns(
 	onUninstall: (skillKey: string, projectId: string) => void,
 	uninstallPending: boolean,
+	options: SkillColumnOptions = {},
 ): ColumnDef<SkillSummary>[] {
 	return [
 		{
@@ -31,9 +56,11 @@ export function makeSkillColumns(
 			header: () => <span className="text-sm font-medium">Skill</span>,
 			cell: ({ row }) => {
 				const s = row.original;
+				const sourceProjectName = s.project_name ?? null;
 				const href = s.project_id
 					? `/skills/${encodeURIComponent(s.skill_key)}?project=${encodeURIComponent(s.project_id)}`
 					: `/skills/${encodeURIComponent(s.skill_key)}`;
+				const access = resolveSkillProjectAccess(s, options);
 				return (
 					<div className="flex items-start gap-2">
 						<Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
@@ -49,6 +76,19 @@ export function makeSkillColumns(
 								<Badge variant="outline" className="shrink-0">
 									v{s.version}
 								</Badge>
+								{access === "read-only" ? (
+									<Badge
+										variant="secondary"
+										className="shrink-0"
+										title={
+											sourceProjectName
+												? `Shared from "${sourceProjectName}" — read-only`
+												: "Shared from another project — read-only"
+										}
+									>
+										shared
+									</Badge>
+								) : null}
 							</div>
 							{s.description ? (
 								<p className="line-clamp-1 text-xs text-muted-foreground">{s.description}</p>
@@ -96,6 +136,11 @@ export function makeSkillColumns(
 			cell: ({ row }) => {
 				const s = row.original;
 				const projectId = s.project_id;
+				const access = resolveSkillProjectAccess(s, options);
+				// Shared-project skills are read-only here — the user is a
+				// viewer, not the owner. Hide uninstall entirely; owner-side
+				// management still happens in the source project.
+				if (access !== "writable") return null;
 				return (
 					<Button
 						variant="ghost"

@@ -4,13 +4,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, FileText, Laptop, Pencil, Save, Tag, Trash2, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
+import { isProjectOwner } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -56,18 +58,19 @@ function SkillDetailPageInner() {
 	// to the legacy endpoint for single-machine accounts (where
 	// there's only one row, so the resolver is unambiguous).
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
+	const selectedProjectId = projectIdParam;
 
 	const {
 		data: skill,
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["skill", key, projectIdParam],
+		queryKey: ["skill", key, selectedProjectId],
 		queryFn: async () => {
-			if (projectIdParam) {
+			if (selectedProjectId) {
 				return unwrap(
 					await api.GET("/api/projects/{project_id}/skills/{skill_key}", {
-						params: { path: { project_id: projectIdParam, skill_key: key } },
+						params: { path: { project_id: selectedProjectId, skill_key: key } },
 					}),
 				);
 			}
@@ -90,6 +93,27 @@ function SkillDetailPageInner() {
 	// path does, so the editor stays consistent with uninstall.
 	const targetProjectId = skill?.project_id ?? defaultProject?.project_id ?? null;
 	const isProjectReady = !!targetProjectId;
+
+	// Shared-project skills are read-only from this viewer's perspective:
+	// hide Edit/Uninstall (would 403 from the backend), surface a
+	// "shared" badge with the owner's project as the source. Re-uses the
+	// same is_owner cross-reference pattern as /vault and /skills.
+	const { data: ownedProjects } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
+	});
+	const ownedProjectIds = useMemo(
+		() =>
+			new Set(
+				(ownedProjects ?? [])
+					.filter((project) => isProjectOwner(project))
+					.map((project) => project.id),
+			),
+		[ownedProjects],
+	);
+	const ownershipKnown = !skill?.project_id || ownedProjects !== undefined;
+	const isReadOnly =
+		ownershipKnown && !!skill?.project_id && !ownedProjectIds.has(skill.project_id);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -199,8 +223,12 @@ function SkillDetailPageInner() {
 	});
 
 	const onUninstall = () => {
-		if (!isProjectReady) {
-			toast.error("Account project unavailable — try again in a moment.");
+		if (!isProjectReady || !ownershipKnown) {
+			toast.error("Project access unavailable — try again in a moment.");
+			return;
+		}
+		if (isReadOnly) {
+			toast.error("Shared skills are read-only.");
 			return;
 		}
 		// Per-agent isolation: this DELETE only removes the skill
@@ -217,10 +245,11 @@ function SkillDetailPageInner() {
 		if (ok) uninstall.mutate();
 	};
 
+	const sourceProjectName = skill?.project_name ?? null;
 	const agentCaption = skill?.machine_name
 		? `on ${skill.machine_name}`
-		: skill?.project_name
-			? `in ${skill.project_name}`
+		: sourceProjectName
+			? `in ${sourceProjectName}`
 			: null;
 
 	return (
@@ -238,7 +267,18 @@ function SkillDetailPageInner() {
 						<div className="flex items-start justify-between gap-3">
 							<DetailTitle className="truncate">{skill.name}</DetailTitle>
 							<div className="flex shrink-0 gap-2">
-								{!isEditing ? (
+								{!ownershipKnown ? null : isReadOnly ? (
+									<Badge
+										variant="secondary"
+										title={
+											sourceProjectName
+												? `Shared from "${sourceProjectName}" — viewer membership is read-only`
+												: "Shared from another project — viewer membership is read-only"
+										}
+									>
+										shared · read-only
+									</Badge>
+								) : !isEditing ? (
 									<>
 										<Button
 											variant="outline"
@@ -249,7 +289,7 @@ function SkillDetailPageInner() {
 												!skill.content
 													? "No content stored for this skill yet"
 													: projectError
-														? `Account project unavailable: ${errorMessage(projectError)}`
+														? `Default project unavailable: ${errorMessage(projectError)}`
 														: undefined
 											}
 										>
@@ -263,7 +303,7 @@ function SkillDetailPageInner() {
 											disabled={uninstall.isPending || !isProjectReady}
 											title={
 												projectError
-													? `Account project unavailable: ${errorMessage(projectError)}`
+													? `Default project unavailable: ${errorMessage(projectError)}`
 													: undefined
 											}
 											className="text-destructive hover:text-destructive"

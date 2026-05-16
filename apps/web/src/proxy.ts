@@ -1,6 +1,9 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { type NextRequest, NextResponse } from "next/server";
 
 const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
+const isDevAuthBypass =
+	process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true" && process.env.NODE_ENV !== "production";
 
 // Protection is "everything not on this list". A positive-allowlist for
 // protected routes would default new pages to PUBLIC if someone forgets
@@ -17,7 +20,10 @@ const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 // but explicitly carves `.json` *out* of the `.js` exclusion, so without
 // this entry `/s/{token}.json` would 307 to /sign-in. Share access is
 // gated by the token, not the user's Clerk session.
-const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)"];
+//
+// `/share/*` is the public landing page for shared projects; anonymous
+// previews + sign-in handoff happen there.
+const publicRoutes = ["/sign-in(.*)", "/sign-up(.*)", "/skill.md", "/s/(.*)", "/share/(.*)"];
 
 if (isHostedBuild) {
 	// PostHog first-party proxy path is hosted-only.
@@ -31,7 +37,7 @@ const isPublicRoute = createRouteMatcher(publicRoutes);
 // page at <instance>.accounts.dev/sign-in, not our in-app /sign-in.
 // Middleware runs outside the React tree, so ClerkProvider props don't
 // reach it; the config lives on the middleware call itself.
-export default clerkMiddleware(
+const protectedMiddleware = clerkMiddleware(
 	async (auth, request) => {
 		if (!isPublicRoute(request)) {
 			await auth.protect();
@@ -39,6 +45,13 @@ export default clerkMiddleware(
 	},
 	{ signInUrl: "/sign-in", signUpUrl: "/sign-up" },
 );
+
+// Local-only browser testing: backend still validates DEV_AUTH_BYPASS and
+// refuses non-development environments. This prevents Clerk middleware from
+// refreshing a session token before the dashboard can use the dev bearer token.
+const devAuthBypassMiddleware = (_request: NextRequest) => NextResponse.next();
+
+export default isDevAuthBypass ? devAuthBypassMiddleware : protectedMiddleware;
 
 export const config = {
 	matcher: [

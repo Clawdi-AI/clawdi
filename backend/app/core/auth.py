@@ -77,6 +77,39 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     return AuthContext(user=user, api_key=api_key)
 
 
+async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | None:
+    if not settings.dev_auth_bypass:
+        return None
+    if token != settings.dev_auth_token:
+        return None
+    if settings.environment != "development":
+        logger.error(
+            "dev_auth_bypass refused outside development environment=%s",
+            settings.environment,
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "dev auth bypass is only available in development",
+        )
+
+    clerk_id = settings.dev_auth_clerk_id
+    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        user = await lazy_create_user_with_personal_project(
+            db,
+            clerk_id=clerk_id,
+            email=settings.dev_auth_email,
+            name=settings.dev_auth_name,
+            avatar_url=None,
+            race_loser_status=status.HTTP_401_UNAUTHORIZED,
+        )
+        await db.commit()
+        await db.refresh(user)
+        logger.info("dev_auth_user_created clerk_id=%s user_id=%s", clerk_id, user.id)
+    return AuthContext(user=user)
+
+
 async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
     """Look up a Clerk user's verified primary email via the Backend API.
 
@@ -316,6 +349,10 @@ async def get_auth(
 ) -> AuthContext:
     token = credentials.credentials
 
+    ctx = await _auth_via_dev_bypass(token, db)
+    if ctx:
+        return ctx
+
     # Try ApiKey first (fast path, prefix check)
     ctx = await _auth_via_api_key(token, db)
     if ctx:
@@ -348,7 +385,9 @@ async def get_auth_short_session(
 
     token = credentials.credentials
     async with async_session_factory() as db:
-        ctx = await _auth_via_api_key(token, db)
+        ctx = await _auth_via_dev_bypass(token, db)
+        if not ctx:
+            ctx = await _auth_via_api_key(token, db)
         if not ctx:
             ctx = await _auth_via_clerk_jwt(token, db)
     if not ctx:

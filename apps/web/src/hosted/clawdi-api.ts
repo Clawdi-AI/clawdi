@@ -1,9 +1,9 @@
 "use client";
 
 import { type DeployPaths, extractApiDetail } from "@clawdi/shared/api";
-import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
 /**
@@ -29,7 +29,7 @@ export class ClawdiApiError extends Error {
 }
 
 export function useClawdiApi() {
-	const { getToken } = useAuth();
+	const { getToken } = useAuthToken();
 	return useMemo(() => {
 		const client = createClient<DeployPaths>({ baseUrl: CLAWDI_API_URL });
 		client.use({

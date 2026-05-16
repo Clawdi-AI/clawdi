@@ -1,18 +1,38 @@
 "use client";
 
-import { useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	buildHostedPersonProperties,
 	resolveHostedAuthIdentityAction,
 } from "@/components/providers/analytics-provider.logic";
+import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 
 const loadHostedPostHog = IS_HOSTED ? () => import("@/hosted/posthog") : null;
 
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
-	const { isSignedIn, userId } = useAuth();
-	const { user, isLoaded: isUserLoaded } = useUser();
+	return (
+		<>
+			{children}
+			{loadHostedPostHog ? <HostedAnalyticsClient /> : null}
+		</>
+	);
+}
+
+function HostedAnalyticsClient() {
+	const [mounted, setMounted] = useState(false);
+
+	useEffect(() => {
+		setMounted(true);
+	}, []);
+
+	if (!mounted) return null;
+	return <HostedAnalyticsIdentity />;
+}
+
+function HostedAnalyticsIdentity() {
+	const { isSignedIn, userId } = useDashboardAuth();
+	const { user, isLoaded: isUserLoaded } = useCurrentUser();
 	const identifiedUserIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
@@ -60,5 +80,5 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 		});
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
 
-	return <>{children}</>;
+	return null;
 }

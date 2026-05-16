@@ -120,6 +120,7 @@ export default function MemoriesPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Memories"
+				description="Account-wide context agents can recall. Project-managed resources live under Projects."
 				actions={
 					<>
 						{data ? (
