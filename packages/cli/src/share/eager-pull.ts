@@ -23,6 +23,7 @@
  */
 
 import { allAdapterEntries } from "../adapters/registry";
+import { isValidSkillKey } from "../lib/skill-key";
 import { addToken, listTokens } from "./tokens";
 
 interface SkillSummary {
@@ -53,7 +54,7 @@ export async function pullSharedSkills(
 		page += 1;
 		if (page > 50) break;
 	}
-	const active = items.filter((s) => s.is_active !== false);
+	const active = items.filter((s) => s.is_active !== false && isValidSkillKey(s.skill_key));
 	if (active.length === 0) return 0;
 	const adapters = allAdapterEntries().map((e) => e.create());
 

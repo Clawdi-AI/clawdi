@@ -103,4 +103,58 @@ describe("authLogin pending share upgrade", () => {
 		expect(token.upgraded_at).toBeString();
 		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
 	});
+
+	it("skips invalid server skill keys during eager pull", async () => {
+		addToken({
+			project_id: "project-shared",
+			project_name: "Team Toolkit",
+			owner_display: "Alice",
+			owner_handle: "alice-example",
+			token: rawToken,
+			redeemed_at: "2026-05-12T10:00:00Z",
+		});
+
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: `/api/share/${rawToken}/upgrade`,
+				response: () =>
+					jsonResponse({
+						project_id: "project-shared",
+						resolved_owner_handle: "alice-example",
+						membership_id: "membership-1",
+					}),
+			},
+			{
+				method: "GET",
+				path: "/api/skills",
+				response: () =>
+					jsonResponse({
+						items: [
+							{ project_id: "project-shared", skill_key: "deploy-helper", is_active: true },
+							{ project_id: "project-shared", skill_key: "../escape", is_active: true },
+						],
+					}),
+			},
+			{
+				method: "GET",
+				path: "/api/projects/project-shared/skills/deploy-helper/download",
+				response: () => new Response(new Uint8Array([1, 2, 3])),
+			},
+		]);
+
+		try {
+			await authLogin();
+		} finally {
+			restore();
+		}
+
+		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
+			`POST /api/share/${rawToken}/upgrade`,
+			"GET /api/skills?project_id=project-shared&page=1&page_size=200",
+			"GET /api/projects/project-shared/skills/deploy-helper/download",
+		]);
+		const [token] = listTokens();
+		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
+	});
 });

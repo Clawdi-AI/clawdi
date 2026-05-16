@@ -28,6 +28,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 
@@ -134,12 +135,7 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 		// scrubs the file. Allows Hermes-style nested keys
 		// (`category/foo`, up to 4 components) so a queued
 		// Hermes push survives a daemon restart.
-		if (
-			!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}){0,3}$/.test(
-				r.skill_key,
-			)
-		)
-			return false;
+		if (!isValidSkillKey(r.skill_key)) return false;
 		// Legacy queue items written by an older binary may not
 		// carry `project_id`. Accept them — the drain loop stamps
 		// the current project before upload, so legacy work doesn't

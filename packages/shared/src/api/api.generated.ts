@@ -1142,9 +1142,9 @@ export interface paths {
          * Resolve Vault
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
-         *     Project-filtered: an Agent API key only sees vaults in its
-         *     Agent Project. Without this filter a leaked daemon key could decrypt
-         *     vaults belonging to Personal or another Agent.
+         *     Plaintext is owner-only. Shared project memberships widen metadata/read
+         *     surfaces, but never decrypt another user's vault values. A bound Agent API
+         *     key is further capped to its default-write project.
          */
         post: operations["resolve_vault_api_vault_resolve_post"];
         delete?: never;

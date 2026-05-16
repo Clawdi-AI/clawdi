@@ -6,7 +6,15 @@ bindings ordered by `priority`.
 
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,7 +38,7 @@ class AgentProjectBinding(Base, TimestampMixin):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
-    binding_type: Mapped[str] = mapped_column(nullable=False)
+    binding_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # Primary uses priority 0. Context rows use explicit order values.
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     default_write_enabled: Mapped[bool] = mapped_column(

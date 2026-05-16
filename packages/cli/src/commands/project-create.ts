@@ -40,6 +40,16 @@ function formatDetail(body: unknown): string {
 	return JSON.stringify(detail);
 }
 
+async function parseErrorBody(r: Response): Promise<unknown> {
+	const text = await r.text();
+	if (!text) return "";
+	try {
+		return JSON.parse(text);
+	} catch {
+		return text;
+	}
+}
+
 export async function projectCreateCommand(
 	name: string,
 	opts: { slug?: string; json?: boolean } = {},
@@ -62,7 +72,7 @@ export async function projectCreateCommand(
 	});
 
 	if (!r.ok) {
-		const body = await r.json().catch(async () => await r.text());
+		const body = await parseErrorBody(r);
 		if (r.status === 400 || r.status === 403 || r.status === 409 || r.status === 422) {
 			console.error(chalk.red(`Failed to create project: ${formatDetail(body)}`));
 			process.exitCode = 1;

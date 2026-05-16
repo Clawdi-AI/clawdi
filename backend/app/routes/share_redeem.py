@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from threading import Lock
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -19,6 +18,7 @@ from app.core.auth import (
 from app.core.database import get_session
 from app.models.project import Project
 from app.models.project_share_link import ProjectShareLink
+from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem
@@ -32,14 +32,7 @@ router = APIRouter(prefix="/api/share", tags=["share-redeem"])
 
 _REDEEM_RATE_WINDOW = timedelta(minutes=1)
 _REDEEM_RATE_LIMIT = 30
-_REDEEM_RATE_MAX_BUCKETS = 2048
-_REDEEM_RATE_PRUNE_INTERVAL = timedelta(minutes=1)
 _REDEEM_IDEMPOTENCY_TTL = timedelta(hours=24)
-_REDEEM_IDEMPOTENCY_MAX = 2048
-_redeem_rate_lock = Lock()
-_redeem_rate: dict[str, list[datetime]] = {}
-_redeem_rate_last_prune_at: datetime | None = None
-_redeem_idempotency_seen: dict[str, datetime] = {}
 
 
 def _client_ip(request: Request) -> str:
@@ -49,75 +42,79 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _check_redeem_rate_limit(request: Request, ctx: ShareTokenContext) -> None:
-    now = datetime.now(UTC)
-    cutoff = now - _REDEEM_RATE_WINDOW
-    bucket = f"{_client_ip(request)}:{ctx.link_id}"
-    global _redeem_rate_last_prune_at
-    with _redeem_rate_lock:
-        should_prune = (
-            _redeem_rate_last_prune_at is None
-            or now - _redeem_rate_last_prune_at >= _REDEEM_RATE_PRUNE_INTERVAL
-        )
-        if should_prune:
-            for existing_bucket, existing_timestamps in list(_redeem_rate.items()):
-                fresh = [ts for ts in existing_timestamps if ts >= cutoff]
-                if fresh:
-                    _redeem_rate[existing_bucket] = fresh
-                else:
-                    _redeem_rate.pop(existing_bucket, None)
-            _redeem_rate_last_prune_at = now
+async def _register_redeem_attempt(
+    db: AsyncSession,
+    request: Request,
+    ctx: ShareTokenContext,
+    idempotency_key: str | None,
+) -> bool:
+    """Record a redeem attempt.
 
-        timestamps = [ts for ts in _redeem_rate.get(bucket, []) if ts >= cutoff]
-        if len(timestamps) >= _REDEEM_RATE_LIMIT:
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                "share redeem rate limit exceeded",
-                headers={"Retry-After": str(int(_REDEEM_RATE_WINDOW.total_seconds()))},
-            )
-        if bucket not in _redeem_rate and len(_redeem_rate) >= _REDEEM_RATE_MAX_BUCKETS:
-            oldest = min(
-                _redeem_rate,
-                key=lambda key: (
-                    max(_redeem_rate[key])
-                    if _redeem_rate[key]
-                    else datetime.min.replace(tzinfo=UTC)
-                ),
-            )
-            _redeem_rate.pop(oldest, None)
-        timestamps.append(now)
-        _redeem_rate[bucket] = timestamps
-
-
-def _idempotency_seen(ctx: ShareTokenContext, idempotency_key: str | None) -> bool:
-    if idempotency_key is None:
-        return False
-    if len(idempotency_key) > 200:
+    Returns False when the same Idempotency-Key was already processed. The
+    caller should return the normal payload without bumping redeem_count.
+    """
+    if idempotency_key is not None and len(idempotency_key) > 200:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Idempotency-Key too long")
 
     now = datetime.now(UTC)
-    cutoff = now - _REDEEM_IDEMPOTENCY_TTL
-    cache_key = f"{ctx.link_id}:{idempotency_key}"
-    with _redeem_rate_lock:
-        stale = [key for key, ts in _redeem_idempotency_seen.items() if ts < cutoff]
-        for key in stale:
-            _redeem_idempotency_seen.pop(key, None)
-        if cache_key in _redeem_idempotency_seen:
-            _redeem_idempotency_seen[cache_key] = now
-            return True
-    return False
+    idempotency_cutoff = now - _REDEEM_IDEMPOTENCY_TTL
+    rate_cutoff = now - _REDEEM_RATE_WINDOW
+    client_key = _client_ip(request)[:128]
 
+    link = (
+        await db.execute(
+            select(ProjectShareLink).where(ProjectShareLink.id == ctx.link_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status.HTTP_410_GONE, "share link no longer exists")
+    if link.revoked_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "share link has been revoked")
+    if link.expires_at is not None and link.expires_at < now:
+        raise HTTPException(status.HTTP_410_GONE, "share link has expired")
 
-def _remember_idempotency(ctx: ShareTokenContext, idempotency_key: str | None) -> None:
-    if idempotency_key is None:
-        return
-    now = datetime.now(UTC)
-    cache_key = f"{ctx.link_id}:{idempotency_key}"
-    with _redeem_rate_lock:
-        if len(_redeem_idempotency_seen) >= _REDEEM_IDEMPOTENCY_MAX:
-            oldest = min(_redeem_idempotency_seen, key=_redeem_idempotency_seen.__getitem__)
-            _redeem_idempotency_seen.pop(oldest, None)
-        _redeem_idempotency_seen[cache_key] = now
+    await db.execute(
+        delete(ShareRedeemAttempt).where(ShareRedeemAttempt.created_at < idempotency_cutoff)
+    )
+
+    if idempotency_key is not None:
+        existing = (
+            await db.execute(
+                select(ShareRedeemAttempt.id).where(
+                    ShareRedeemAttempt.link_id == ctx.link_id,
+                    ShareRedeemAttempt.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return False
+
+    db.add(
+        ShareRedeemAttempt(
+            link_id=ctx.link_id,
+            client_key=client_key,
+            idempotency_key=idempotency_key,
+        )
+    )
+    await db.flush()
+
+    recent_count = (
+        await db.execute(
+            select(func.count(ShareRedeemAttempt.id)).where(
+                ShareRedeemAttempt.link_id == ctx.link_id,
+                ShareRedeemAttempt.client_key == client_key,
+                ShareRedeemAttempt.created_at >= rate_cutoff,
+            )
+        )
+    ).scalar_one()
+    if recent_count > _REDEEM_RATE_LIMIT:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "share redeem rate limit exceeded",
+            headers={"Retry-After": str(int(_REDEEM_RATE_WINDOW.total_seconds()))},
+        )
+
+    return True
 
 
 async def _resolve_owner_for_link(
@@ -188,9 +185,9 @@ async def redeem(
     db: AsyncSession = Depends(get_session),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> ShareRedeemResponse:
-    if _idempotency_seen(ctx, idempotency_key):
+    should_count = await _register_redeem_attempt(db, request, ctx, idempotency_key)
+    if not should_count:
         return await _build_redeem_payload(ctx, db)
-    _check_redeem_rate_limit(request, ctx)
     await db.execute(
         update(ProjectShareLink)
         .where(ProjectShareLink.id == ctx.link_id)
@@ -201,7 +198,6 @@ async def redeem(
     )
     payload = await _build_redeem_payload(ctx, db)
     await db.commit()
-    _remember_idempotency(ctx, idempotency_key)
     return payload
 
 

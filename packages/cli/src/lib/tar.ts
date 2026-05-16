@@ -1,6 +1,7 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as tar from "tar";
+import { assertValidSkillKey } from "./skill-key";
 
 /**
  * Directories that should never end up inside an uploaded skill tarball.
@@ -97,6 +98,7 @@ export async function extractSharedSkillTarGz(
 	targetDir: string,
 	bytes: Buffer,
 ): Promise<void> {
+	assertValidSkillKey(skillKey);
 	const { dirname, basename } = await import("node:path");
 	const { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } = await import("node:fs");
 	const parent = dirname(targetDir);

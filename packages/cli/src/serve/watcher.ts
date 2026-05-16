@@ -26,6 +26,7 @@
 import { type Dirent, type Stats, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -39,20 +40,6 @@ class RecursiveWatchUnsupportedError extends Error {
 		super(message);
 		this.name = "RecursiveWatchUnsupportedError";
 	}
-}
-
-// Mirror of the backend's per-component SKILL_KEY_PATTERN shape.
-// Top-level child dirs under `~/.claude/skills/` are filtered
-// with a single-component match — the watcher only enumerates
-// the direct children of the skills root, never the nested
-// Hermes layout. The wider "nested path" form lives on the
-// backend; the watcher's job here is to reject dotfiles like
-// `.system`, `.cache`, `.git` that aren't real skills. Without
-// this filter, every dotfile produces an
-// `engine.queue_drop_permanent` error log on every reconcile.
-const SKILL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
-function isValidSkillKey(name: string): boolean {
-	return SKILL_KEY_RE.test(name);
 }
 
 interface Opts {

@@ -32,7 +32,6 @@ class ProjectShareLink(Base, TimestampMixin):
         index=True,
     )
     resolved_owner_handle: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     redeem_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

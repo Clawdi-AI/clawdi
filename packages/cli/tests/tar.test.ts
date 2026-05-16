@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
-import { tarSkillDir } from "../src/lib/tar";
+import { extractSharedSkillTarGz, tarSingleFile, tarSkillDir } from "../src/lib/tar";
 
 function buildSkill(layout: Record<string, string>): { path: string; cleanup: () => void } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-tar-test-"));
@@ -124,6 +124,18 @@ describe("tarSkillDir filter", () => {
 			expect(entries).toContain("dist/handler.ts");
 		} finally {
 			cleanup();
+		}
+	});
+
+	it("rejects unsafe shared skill keys before extracting to disk", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-shared-extract-test-"));
+		try {
+			const bytes = await tarSingleFile("safe-skill", "# safe");
+			await expect(
+				extractSharedSkillTarGz("../escape", join(root, "target"), bytes),
+			).rejects.toThrow("Invalid skill_key");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 

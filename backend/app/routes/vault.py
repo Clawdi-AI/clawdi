@@ -268,14 +268,37 @@ def _env_key(section: str, item_name: str) -> str:
     return f"{section}_{item_name}".upper() if section else item_name.upper()
 
 
+async def _plaintext_project_ids(db: AsyncSession, auth: AuthContext) -> list[UUID]:
+    """Projects whose vault plaintext may be resolved by this CLI caller.
+
+    Shared memberships intentionally do not participate here. Shared project
+    viewers may see vault metadata/key names through read APIs, but plaintext
+    resolution is owner-only.
+    """
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        return [await resolve_default_write_project(db, auth)]
+
+    return list(
+        (
+            await db.execute(
+                select(Project.id).where(
+                    Project.user_id == auth.user_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def _project_precedence(
     db: AsyncSession,
     auth: AuthContext,
     project_id: UUID,
 ) -> list[dict]:
     """Return a one-project precedence chain for vault resolution."""
-    visible = set(await project_ids_visible_to(db, auth))
-    if project_id not in visible:
+    allowed = set(await _plaintext_project_ids(db, auth))
+    if project_id not in allowed:
         return []
 
     project = (
@@ -310,7 +333,7 @@ async def _agent_project_precedence(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "api key bound to a different agent")
 
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
-    visible = set(await project_ids_visible_to(db, auth))
+    allowed = set(await _plaintext_project_ids(db, auth))
     rows = (
         await db.execute(
             select(AgentProjectBinding, Project)
@@ -327,7 +350,7 @@ async def _agent_project_precedence(
     entries: list[dict] = []
     has_primary = False
     for binding, project in rows:
-        if project.id not in visible:
+        if project.id not in allowed:
             continue
         binding_type = binding.binding_type
         if binding.binding_type == "primary" and project.id != agent.default_project_id:
@@ -344,7 +367,7 @@ async def _agent_project_precedence(
             }
         )
 
-    if not has_primary and agent.default_project_id in visible:
+    if not has_primary and agent.default_project_id in allowed:
         project = (
             await db.execute(select(Project).where(Project.id == agent.default_project_id))
         ).scalar_one_or_none()
@@ -404,9 +427,9 @@ async def resolve_vault(
 ) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
-    Project-filtered: an Agent API key only sees vaults in its
-    Agent Project. Without this filter a leaked daemon key could decrypt
-    vaults belonging to Personal or another Agent.
+    Plaintext is owner-only. Shared project memberships widen metadata/read
+    surfaces, but never decrypt another user's vault values. A bound Agent API
+    key is further capped to its default-write project.
     """
     if project_id is not None and agent_id is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")

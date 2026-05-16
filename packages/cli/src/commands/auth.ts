@@ -121,7 +121,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					const body = (await r.json().catch(() => ({}))) as {
 						detail?: { error?: string };
 					};
-					if (body?.detail?.error === ["mount", "target", "ambiguous"].join("_")) {
+					if (body?.detail?.error === "mount_target_ambiguous") {
 						return {
 							kind: "fail",
 							name: t.project_name,

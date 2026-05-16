@@ -6,20 +6,20 @@ route, and respond with the right shapes + status codes.
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.project_share_link import ProjectShareLink
+from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.user import User
-from app.routes import share_redeem as share_redeem_routes
 from app.services.sharing import generate_share_token, hash_share_token
 
 
@@ -84,8 +84,6 @@ async def test_preview_valid_token_returns_summary(
 async def test_preview_does_not_bump_redeem_count(
     client_unauth, db_session, seed_user, seed_project
 ):
-    from sqlalchemy import select
-
     raw = await _make_share_link(db_session, seed_project, seed_user)
     await client_unauth.get(f"/api/share/{raw}/preview")
     await client_unauth.get(f"/api/share/{raw}/preview")
@@ -101,8 +99,6 @@ async def test_preview_does_not_bump_redeem_count(
 
 @pytest.mark.asyncio
 async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, seed_project):
-    from sqlalchemy import select
-
     raw = await _make_share_link(db_session, seed_project, seed_user)
     await client_unauth.post(f"/api/share/{raw}/redeem")
     await client_unauth.post(f"/api/share/{raw}/redeem")
@@ -120,9 +116,6 @@ async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, s
 async def test_redeem_idempotency_key_dedupes_counter(
     client_unauth, db_session, seed_user, seed_project
 ):
-    from sqlalchemy import select
-
-    share_redeem_routes._redeem_idempotency_seen.clear()
     raw = await _make_share_link(db_session, seed_project, seed_user)
     headers = {"Idempotency-Key": "retry-1"}
     first = await client_unauth.post(f"/api/share/{raw}/redeem", headers=headers)
@@ -143,7 +136,8 @@ async def test_redeem_idempotency_key_dedupes_counter(
 async def test_redeem_rate_limit_blocks_valid_token_flood(
     client_unauth, db_session, monkeypatch, seed_user, seed_project
 ):
-    share_redeem_routes._redeem_rate.clear()
+    from app.routes import share_redeem as share_redeem_routes
+
     monkeypatch.setattr(share_redeem_routes, "_REDEEM_RATE_LIMIT", 2)
     raw = await _make_share_link(db_session, seed_project, seed_user)
 
@@ -154,47 +148,38 @@ async def test_redeem_rate_limit_blocks_valid_token_flood(
     assert blocked.headers["retry-after"]
 
 
-def test_redeem_rate_limit_prunes_stale_and_bounds_buckets(monkeypatch):
-    share_redeem_routes._redeem_rate.clear()
-    monkeypatch.setattr(share_redeem_routes, "_REDEEM_RATE_MAX_BUCKETS", 2)
-
-    now = datetime.now(UTC)
-    monkeypatch.setattr(
-        share_redeem_routes,
-        "_redeem_rate_last_prune_at",
-        now - timedelta(minutes=2),
+@pytest.mark.asyncio
+async def test_redeem_attempts_are_persistent_and_prune_stale(
+    client_unauth, db_session, seed_user, seed_project
+):
+    raw = await _make_share_link(db_session, seed_project, seed_user)
+    link = (
+        await db_session.execute(
+            select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
+        )
+    ).scalar_one()
+    stale = ShareRedeemAttempt(
+        link_id=link.id,
+        client_key="127.0.0.1",
+        created_at=datetime.now(UTC) - timedelta(days=2),
     )
-    share_redeem_routes._redeem_rate.update(
-        {
-            "stale": [now - timedelta(minutes=5)],
-            "oldest": [now - timedelta(seconds=50)],
-            "newest": [now - timedelta(seconds=10)],
-        }
+    db_session.add(stale)
+    await db_session.commit()
+
+    r = await client_unauth.post(f"/api/share/{raw}/redeem")
+    assert r.status_code == 200, r.text
+
+    attempts = (
+        (
+            await db_session.execute(
+                select(ShareRedeemAttempt).where(ShareRedeemAttempt.link_id == link.id)
+            )
+        )
+        .scalars()
+        .all()
     )
-    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
-    ctx = SimpleNamespace(link_id="fresh-link")
-
-    share_redeem_routes._check_redeem_rate_limit(request, ctx)
-
-    assert "stale" not in share_redeem_routes._redeem_rate
-    assert "oldest" not in share_redeem_routes._redeem_rate
-    assert "127.0.0.1:fresh-link" in share_redeem_routes._redeem_rate
-    assert len(share_redeem_routes._redeem_rate) <= 2
-
-
-def test_redeem_rate_limit_prune_is_time_gated(monkeypatch):
-    share_redeem_routes._redeem_rate.clear()
-
-    now = datetime.now(UTC)
-    monkeypatch.setattr(share_redeem_routes, "_redeem_rate_last_prune_at", now)
-    share_redeem_routes._redeem_rate["stale-other"] = [now - timedelta(minutes=5)]
-    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
-    ctx = SimpleNamespace(link_id="fresh-link")
-
-    share_redeem_routes._check_redeem_rate_limit(request, ctx)
-
-    assert "stale-other" in share_redeem_routes._redeem_rate
-    assert "127.0.0.1:fresh-link" in share_redeem_routes._redeem_rate
+    assert stale.id not in {attempt.id for attempt in attempts}
+    assert len(attempts) == 1
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ beforeEach(() => {
 	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_API_URL = "http://api.test";
-	process.exitCode = undefined;
+	process.exitCode = 0;
 });
 
 afterEach(() => {
@@ -27,7 +27,7 @@ afterEach(() => {
 	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
 	else delete process.env.CLAWDI_API_URL;
 	rmSync(tmpHome, { recursive: true, force: true });
-	process.exitCode = undefined;
+	process.exitCode = 0;
 });
 
 describe("projectCreateCommand", () => {
@@ -70,5 +70,35 @@ describe("projectCreateCommand", () => {
 			status: "created",
 			project: { id: "project-workspace", slug: "client-alpha", kind: "workspace" },
 		});
+	});
+
+	it("formats non-JSON validation errors without reading the body twice", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/projects",
+				response: () =>
+					new Response("slug already exists", {
+						status: 409,
+						headers: { "content-type": "text/plain" },
+					}),
+			},
+		]);
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err = args.map(String).join(" ");
+		};
+		try {
+			await projectCreateCommand("Client Alpha");
+		} finally {
+			console.error = origError;
+			restore();
+		}
+
+		const observedExitCode = process.exitCode;
+		process.exitCode = 0;
+		expect(observedExitCode).toBe(1);
+		expect(err).toContain("slug already exists");
 	});
 });

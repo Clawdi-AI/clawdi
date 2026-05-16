@@ -1,9 +1,8 @@
 """Outstanding email-based invitation to a shared project."""
 
 import uuid
-from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,7 +36,6 @@ class ProjectInvitation(Base, TimestampMixin):
         index=True,
     )
     resolved_owner_handle: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         UniqueConstraint(

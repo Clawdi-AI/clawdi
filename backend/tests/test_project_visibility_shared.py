@@ -278,6 +278,102 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
 
 
 @pytest.mark.asyncio
+async def test_recipient_cli_cannot_resolve_shared_project_vault_plaintext(
+    cli_client,
+    db_session,
+    seed_user,
+):
+    """Unbound CLI keys may read shared metadata, but not owner plaintext."""
+    from app.models.agent_project_binding import AgentProjectBinding
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.user import User
+    from app.models.vault import Vault, VaultItem
+    from app.services.vault_crypto import encrypt
+    from tests.conftest import create_env_with_project
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"vo_{nonce}",
+        email=f"vo_{nonce}@test.dev",
+        name="Vault Owner",
+    )
+    db_session.add(owner)
+    await db_session.commit()
+
+    shared = Project(
+        user_id=owner.id,
+        name="shared vault boundary",
+        slug=f"shared-vault-boundary-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"vo-{nonce}",
+        )
+    )
+    vault = Vault(
+        user_id=owner.id,
+        project_id=shared.id,
+        slug=f"owner-secret-{nonce}",
+        name="Owner Secret",
+    )
+    db_session.add(vault)
+    await db_session.flush()
+    ciphertext, nonce_bytes = encrypt("owner-secret-value")
+    db_session.add(
+        VaultItem(
+            vault_id=vault.id,
+            section="",
+            item_name="TOKEN",
+            encrypted_value=ciphertext,
+            nonce=nonce_bytes,
+        )
+    )
+    await db_session.commit()
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"viewer-{nonce}",
+        machine_name="Viewer Agent",
+    )
+    db_session.add(
+        AgentProjectBinding(
+            agent_id=env.id,
+            project_id=shared.id,
+            binding_type="context",
+            priority=1,
+            default_write_enabled=False,
+            created_by_user_id=seed_user.id,
+        )
+    )
+    await db_session.commit()
+
+    try:
+        explicit = await cli_client.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
+        assert explicit.status_code == 404, explicit.text
+
+        attached_key = await cli_client.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
+        assert attached_key.status_code == 404, attached_key.text
+
+        attached_env = await cli_client.post(f"/api/vault/resolve?agent_id={env.id}")
+        assert attached_env.status_code == 200, attached_env.text
+        assert "TOKEN" not in attached_env.json()
+    finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_recipient_skill_list_etag_changes_when_owner_updates_shared_project(
     client,
     db_session,
