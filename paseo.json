@@ -1,0 +1,68 @@
+{
+	"worktree": {
+		"setup": [
+			"command -v bun >/dev/null || { echo 'bun is required. Install Bun >= 1.3 before creating a Paseo worktree.'; exit 1; }",
+			"command -v uv >/dev/null || { echo 'uv is required for backend dependencies.'; exit 1; }",
+			"bun install --frozen-lockfile",
+			"cd backend && uv sync --all-groups",
+			"if [ -f \"$PASEO_SOURCE_CHECKOUT_PATH/apps/web/.env.local\" ]; then cp \"$PASEO_SOURCE_CHECKOUT_PATH/apps/web/.env.local\" apps/web/.env.local; elif [ -f \"$PASEO_SOURCE_CHECKOUT_PATH/apps/web/.env\" ]; then cp \"$PASEO_SOURCE_CHECKOUT_PATH/apps/web/.env\" apps/web/.env.local; elif [ -f apps/web/.env.example ]; then cp apps/web/.env.example apps/web/.env.local; fi",
+			"if [ -f \"$PASEO_SOURCE_CHECKOUT_PATH/backend/.env\" ]; then cp \"$PASEO_SOURCE_CHECKOUT_PATH/backend/.env\" backend/.env; elif [ -f backend/.env.example ]; then cp backend/.env.example backend/.env; fi",
+			"python3 - <<'PY'\nfrom pathlib import Path\nimport os\npath = Path('backend/.env')\nif path.exists():\n    lines = path.read_text().splitlines()\n    changed = False\n    for key in ('VAULT_ENCRYPTION_KEY', 'ENCRYPTION_KEY'):\n        if any(line.startswith(f'{key}=') and line.split('=', 1)[1].strip() for line in lines):\n            continue\n        token = os.urandom(32).hex()\n        for i, line in enumerate(lines):\n            if line.startswith(f'{key}='):\n                lines[i] = f'{key}={token}'\n                changed = True\n                break\n        else:\n            lines.append(f'{key}={token}')\n            changed = True\n    if changed:\n        path.write_text('\\n'.join(lines) + '\\n')\nPY"
+		],
+		"teardown": [
+			"rm -rf .turbo apps/web/.next apps/web/next-env.d.ts packages/cli/dist backend/.pytest_cache backend/.ruff_cache backend/.venv .pytest_cache"
+		]
+	},
+	"scripts": {
+		"web": {
+			"type": "service",
+			"command": "cd apps/web && NEXT_PUBLIC_API_URL=\"${PASEO_SERVICE_API_URL:-http://localhost:8000}\" bun run dev -- --hostname \"${HOST:-127.0.0.1}\" --port \"$PASEO_PORT\""
+		},
+		"api": {
+			"type": "service",
+			"command": "cd backend && DEBUG=true PUBLIC_API_URL=\"$PASEO_URL\" WEB_ORIGIN=\"${PASEO_SERVICE_WEB_URL:-http://localhost:3000}\" CORS_ORIGINS=\"[\\\"${PASEO_SERVICE_WEB_URL:-http://localhost:3000}\\\"]\" uv run uvicorn app.main:app --reload --host \"${HOST:-127.0.0.1}\" --port \"$PASEO_PORT\""
+		},
+		"install": {
+			"command": "bun install --frozen-lockfile && cd backend && uv sync --all-groups"
+		},
+		"infra:up": {
+			"command": "docker compose up -d postgres"
+		},
+		"infra:down": {
+			"command": "docker compose down"
+		},
+		"migrate": {
+			"command": "cd backend && uv run alembic upgrade head"
+		},
+		"generate-api": {
+			"command": "API_URL=\"${API_URL:-http://localhost:8000}\"; bun x openapi-typescript \"$API_URL/openapi.json\" -o packages/shared/src/api/api.generated.ts"
+		},
+		"typecheck": {
+			"command": "bun run typecheck"
+		},
+		"test": {
+			"command": "bun run test && cd backend && uv run pytest -q"
+		},
+		"check": {
+			"command": "bun run check && cd backend && uv run ruff check ."
+		},
+		"lint": {
+			"command": "bun run lint && cd backend && uv run ruff check ."
+		},
+		"build": {
+			"command": "bun run build"
+		},
+		"backend:test": {
+			"command": "cd backend && uv run pytest -q"
+		},
+		"backend:lint": {
+			"command": "cd backend && uv run ruff check ."
+		},
+		"cli:test": {
+			"command": "cd packages/cli && bun test"
+		},
+		"cli:build": {
+			"command": "cd packages/cli && bun run build:dev"
+		}
+	}
+}
