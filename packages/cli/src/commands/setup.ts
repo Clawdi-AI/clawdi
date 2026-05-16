@@ -204,6 +204,9 @@ async function registerMcpServer(agentType: AgentType) {
 	});
 
 	try {
+		// `--scope user` is Claude Code CLI terminology: register MCP
+		// at user level (not project-local). This is unrelated to
+		// Clawdi Project data boundaries.
 		execSync(`claude mcp add-json clawdi '${mcpConfig}' --scope user`, {
 			stdio: "pipe",
 		});

@@ -6,7 +6,7 @@ controls that the backend can't honor (e.g. the `Mem0` memory
 provider option when the `[mem0]` extra isn't installed).
 
 Auth: any logged-in user (Clerk JWT). Capabilities are
-deployment-wide, not per-user, so we don't need scope checks —
+deployment-wide, not per-user, so we don't need permission checks —
 but we do require auth so unauth probes can't fingerprint the
 deployment.
 

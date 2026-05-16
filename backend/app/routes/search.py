@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
 from app.core.database import get_session
+from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
-from app.core.scope import scope_ids_visible_to
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault
@@ -103,22 +103,22 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
     provider = await get_memory_provider(str(auth.user_id), db)
     # Same overfetch trick the direct `/api/memories?q=` path uses
     # for scoped keys: provider.search returns top-N ranked across
-    # ALL of the user's memories, then `_scope_filter_memories`
+    # ALL of the user's memories, then `_project_filter_memories`
     # drops out-of-env rows. Asking for only TYPE_LIMIT hits when
     # other envs rank ahead truncated the in-env hits to nothing.
     # Overfetch by 10x then re-cap to TYPE_LIMIT after the filter
     # so the response shape stays predictable.
     fetch_limit = max(TYPE_LIMIT * 10, 100) if _is_env_bound_api_key(auth) else TYPE_LIMIT
     rows = await provider.search(str(auth.user_id), query, limit=fetch_limit)
-    # Apply the same env-scope filter the direct /api/memories route
+    # Apply the same env-project filter the direct /api/memories route
     # uses. Without this, a scoped env-bound key with `memories:read`
     # could read memories from other envs (or manual memories with
     # no env attribution) via the search palette — a side-channel
-    # around _scope_filter_memories. Imported lazily to avoid a
+    # around _project_filter_memories. Imported lazily to avoid a
     # circular import between search.py and memories.py.
-    from app.routes.memories import _scope_filter_memories
+    from app.routes.memories import _project_filter_memories
 
-    rows = await _scope_filter_memories(db, auth, list(rows))
+    rows = await _project_filter_memories(db, auth, list(rows))
     rows = rows[:TYPE_LIMIT]
     return [
         SearchHit(
@@ -134,13 +134,12 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
 
 async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
+    visible_project_ids = await project_ids_visible_to(db, auth)
     stmt = (
         select(Skill)
         .where(
-            Skill.user_id == auth.user_id,
             Skill.is_active,
-            Skill.scope_id.in_(visible_scope_ids),
+            Skill.project_id.in_(visible_project_ids),
         )
         .where(
             or_(
@@ -159,19 +158,19 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
             id=str(s.id),
             title=s.name or s.skill_key,
             subtitle=s.description,
-            # Include the scope so a multi-agent account where the
-            # same `skill_key` exists in two scopes routes the
+            # Include the project so a multi-agent account where the
+            # same `skill_key` exists in two projects routes the
             # palette click to the row that actually matched. The
             # legacy `/skills/{key}` route resolves to "most-
-            # recently-updated across visible scopes", which can
+            # recently-updated across visible projects", which can
             # land the user on agent A's copy of `foo` after they
             # picked agent B's hit — and any subsequent edit lands
-            # under the wrong scope.
+            # under the wrong project.
             # Percent-encode skill_key so nested Hermes keys like
             # `category/foo` don't collapse the dashboard's single
             # `[key]` segment into multiple path parts (would
             # 404 the palette click). `safe=""` quotes `/` too.
-            href=f"/skills/{quote(s.skill_key, safe='')}?scope={s.scope_id}",
+            href=f"/skills/{quote(s.skill_key, safe='')}?project={s.project_id}",
         )
         for s in rows
     ]
@@ -179,12 +178,11 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
 
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
-    visible_scope_ids = await scope_ids_visible_to(db, auth)
+    visible_project_ids = await project_ids_visible_to(db, auth)
     stmt = (
         select(Vault)
         .where(
-            Vault.user_id == auth.user_id,
-            Vault.scope_id.in_(visible_scope_ids),
+            Vault.project_id.in_(visible_project_ids),
         )
         .where(
             or_(
@@ -226,12 +224,13 @@ async def global_search(
     degrades to partial results rather than failing the whole request —
     palette UX beats strict all-or-nothing consistency here.
     """
-    # Each subsource enforces the same scope boundary the direct
+    # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are
-    # gated by the caller's scope list so a narrowly-scoped api_key
-    # (e.g. one the dashboard mints with `scopes=["sessions:write"]`)
+    # gated by the caller's API-permission list so a narrowly-scoped
+    # api_key (e.g. one the dashboard mints with
+    # `scopes=["sessions:write"]`)
     # can't use global search as a side-channel to read resources
-    # its scope list doesn't cover. Deploy keys default to full
+    # its permission list doesn't cover. Deploy keys default to full
     # access and pass all gates — same as a self-installed clawdi.
     # Vault is the most sensitive: items can hold credentials, so
     # we limit it to user JWT and wide-access personal CLI keys

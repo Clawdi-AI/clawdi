@@ -9,6 +9,17 @@ let tmpHome: string;
 let origHome: string | undefined;
 let origNoCheck: string | undefined;
 
+async function withStdoutTty<T>(fn: () => Promise<T>): Promise<T> {
+	const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+	Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+	try {
+		return await fn();
+	} finally {
+		if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
+		else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+	}
+}
+
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origNoCheck = process.env.CLAWDI_NO_UPDATE_CHECK;
@@ -140,7 +151,7 @@ describe("maybeAutoUpdate", () => {
 		};
 		const { restore } = mockFetch([]);
 		try {
-			await maybeAutoUpdate();
+			await withStdoutTty(() => maybeAutoUpdate());
 		} finally {
 			console.log = orig;
 			restore();
@@ -149,7 +160,28 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).toContain("(was v0.0.1)");
 	});
 
-	it("respects CLAWDI_NO_AUTO_UPDATE — no spawn, no notice", async () => {
+	it("keeps post-update notice out of non-TTY stdout", async () => {
+		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
+
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured += `${args.map(String).join(" ")}\n`;
+		};
+		const { restore } = mockFetch([]);
+		try {
+			await maybeAutoUpdate();
+		} finally {
+			console.log = orig;
+			restore();
+		}
+		expect(captured).not.toContain("Updated clawdi to");
+		expect(readFileSync(join(tmpHome, ".clawdi", "last-version"), "utf-8").trim()).not.toBe(
+			"0.0.1",
+		);
+	});
+
+	it("respects CLAWDI_NO_AUTO_UPDATE — no spawn, human notice still allowed", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
 		process.env.CLAWDI_NO_AUTO_UPDATE = "1";
 		const orig = console.log;
@@ -159,7 +191,7 @@ describe("maybeAutoUpdate", () => {
 		};
 		const { captured: fetches, restore } = mockFetch([]);
 		try {
-			await maybeAutoUpdate();
+			await withStdoutTty(() => maybeAutoUpdate());
 		} finally {
 			console.log = orig;
 			delete process.env.CLAWDI_NO_AUTO_UPDATE;
@@ -182,11 +214,6 @@ describe("maybeAutoUpdate", () => {
 			join(tmpHome, ".clawdi", "update.json"),
 			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
 		);
-		// `bun test` runs in a non-TTY context, which the early-return guard
-		// (correctly) treats as CI and skips. Force TTY for this test only so
-		// we exercise the major-bump branch.
-		const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-		Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
 		const orig = console.log;
 		let captured = "";
 		console.log = (...args: unknown[]) => {
@@ -194,12 +221,10 @@ describe("maybeAutoUpdate", () => {
 		};
 		const { restore } = mockFetch([]);
 		try {
-			await maybeAutoUpdate();
+			await withStdoutTty(() => maybeAutoUpdate());
 		} finally {
 			console.log = orig;
 			restore();
-			if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
-			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
 		}
 		// Hint about manual upgrade, NOT the in-background spawn line.
 		expect(captured).toContain("Major release v999.0.0");

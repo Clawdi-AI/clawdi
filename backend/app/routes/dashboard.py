@@ -14,7 +14,7 @@ from app.schemas.dashboard import ContributionDayResponse, DashboardStatsRespons
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
-# These endpoints aggregate by `user_id` across every scope/env
+# These endpoints aggregate by `user_id` across every project/env
 # the user owns. An env-bound deploy key (full-permission api_key
 # minted with `scopes=None` but pinned to `environment_id=A`)
 # would otherwise read account-wide totals — sessions, message

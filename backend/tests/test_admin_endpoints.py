@@ -28,7 +28,7 @@ _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 async def admin_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncClient]:
     """Client that does NOT inject auth — admin endpoints test the
     `X-Admin-Key` header gate directly. Sets settings.admin_api_key
-    to a known value for the test scope and restores it in teardown
+    to a known value for the test project and restores it in teardown
     even if the transport / context-manager raises before yield."""
 
     async def _override_get_session():
@@ -42,7 +42,7 @@ async def admin_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncClient
     # against a raise from `ASGITransport(app=app)` or the
     # AsyncClient context manager itself — without it a setup
     # failure here would silently contaminate every subsequent
-    # test in the same process with the test-scope admin secret.
+    # test in the same process with the test-project admin secret.
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -121,17 +121,17 @@ async def test_admin_mint_default_grants_full_account_access(admin_client, db_se
         )
     ).scalar_one()
 
-    # `scopes=None` is the full-account-access sentinel; matches user-
-    # self-mint behaviour. Hosted pods need full parity with self-
-    # managed installs (vault reads, memory reads) so the admin path
-    # does not impose a scope ceiling.
+    # `scopes=None` is the full-API-permission sentinel; matches
+    # user-self-mint behaviour. Hosted pods need full parity with
+    # self-managed installs (vault reads, memory reads) so the admin
+    # path does not impose a permission ceiling.
     assert minted.scopes is None
 
 
 @pytest.mark.asyncio
 async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_session, seed_user):
     """Callers can lock the minted key down by passing an explicit
-    scope list — useful for ops tooling that doesn't need everything."""
+    API permission list — useful for ops tooling that doesn't need everything."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -157,9 +157,9 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
 
 @pytest.mark.asyncio
 async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, seed_user):
-    """No allowlist ceiling: callers can mint keys carrying any scope
-    they want (vault:resolve, sessions:read, etc.). Trust model is
-    that X-Admin-Key holders are already first-party SaaS callers."""
+    """No allowlist ceiling: callers can mint keys carrying any API
+    permission they want (vault:resolve, sessions:read, etc.). Trust
+    model is that X-Admin-Key holders are already first-party SaaS callers."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
@@ -188,7 +188,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """First-time deploy path: a user who's never visited cloud-api
     directly (no row yet) clicks Deploy on the upstream SaaS
     dashboard. SaaS calls admin mint with their Clerk id. cloud-api
-    lazy-creates the user row + Personal scope, then mints normally —
+    lazy-creates the user row + Personal project, then mints normally —
     same identity the user gets when they later sign in directly.
 
     Without this, the most common SaaS-side entry path silently
@@ -201,7 +201,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User
 
     novel_clerk_id = f"user_first_deploy_{uuid.uuid4().hex[:12]}"
@@ -229,12 +229,12 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     assert user.email is None
     assert user.name is None
 
-    # Personal scope was created in the same transaction. Downstream
+    # Personal project was created in the same transaction. Downstream
     # resolvers assume it exists; this matches the JWT path's
     # invariant.
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
     assert personal is not None
@@ -299,7 +299,7 @@ async def test_admin_mint_lazy_create_handles_race(db_session):
     # Make `db.flush()` raise IntegrityError exactly once — the
     # path the loser takes when its INSERT trips the unique
     # constraint. Real flush() is restored after the first call so
-    # any later flush (Personal scope insert, etc.) works normally.
+    # any later flush (Personal project insert, etc.) works normally.
     real_flush = db_session.flush
     flush_calls = {"count": 0}
 
@@ -365,8 +365,8 @@ async def test_admin_mint_lazy_create_500s_when_winner_disappears(db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_lazy_create_creates_personal_scope(db_session):
-    """The lazy-create transaction MUST create a Personal scope
+async def test_admin_lazy_create_creates_personal_project(db_session):
+    """The lazy-create transaction MUST create a Personal project
     alongside the User row. Downstream resolvers (sessions, skills,
     memories) all assume every user has one and 500 without it.
     JWT path enforces the same invariant; admin path must too."""
@@ -374,18 +374,18 @@ async def test_admin_lazy_create_creates_personal_scope(db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.routes.admin import _resolve_or_create_user
 
-    clerk_id = f"clerk_scope_inv_{uuid.uuid4().hex[:12]}"
+    clerk_id = f"clerk_project_inv_{uuid.uuid4().hex[:12]}"
     user = await _resolve_or_create_user(db_session, clerk_id)
 
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
-    assert personal is not None, "Personal scope must exist after lazy-create"
+    assert personal is not None, "Personal project must exist after lazy-create"
     assert personal.slug == "personal"
 
 
@@ -450,10 +450,10 @@ async def test_admin_revoke_unknown_key(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_creates_with_scope(admin_client, db_session, seed_user):
+async def test_admin_register_env_creates_with_project(admin_client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
-    default scope, matching the user-facing register_environment
-    contract. Migration tooling depends on default_scope_id being
+    default project, matching the user-facing register_environment
+    contract. Migration tooling depends on default_project_id being
     set so the daemon can upload."""
     from sqlalchemy import select
 
@@ -477,7 +477,7 @@ async def test_admin_register_env_creates_with_scope(admin_client, db_session, s
     ).scalar_one()
     assert env.user_id == seed_user.id
     assert env.machine_id == "migrate-machine-1"
-    assert env.default_scope_id is not None  # heal logic ran
+    assert env.default_project_id is not None  # heal logic ran
 
 
 @pytest.mark.asyncio
@@ -516,7 +516,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
 
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User
 
     novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
@@ -535,10 +535,10 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     user = (
         await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
     ).scalar_one()
-    # Personal scope created alongside (JWT-path parity).
+    # Personal project created alongside (JWT-path parity).
     personal = (
         await db_session.execute(
-            select(Scope).where(Scope.user_id == user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+            select(Project).where(Project.user_id == user.id, Project.kind == PROJECT_KIND_PERSONAL)
         )
     ).scalar_one_or_none()
     assert personal is not None
@@ -561,13 +561,13 @@ async def test_admin_mint_rejects_cross_tenant_environment_id(admin_client, db_s
     import uuid as _uuid
 
     from app.models.user import User
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
     other = User(clerk_id=f"other_admin_{_uuid.uuid4().hex[:8]}", email="o@x.dev", name="O")
     db_session.add(other)
     await db_session.commit()
     await db_session.refresh(other)
-    other_env = await create_env_with_scope(
+    other_env = await create_env_with_project(
         db_session,
         user_id=other.id,
         machine_id="m-other-admin",

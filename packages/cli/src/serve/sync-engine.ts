@@ -9,30 +9,30 @@
  *   - drainQueue       — flush queued skill_push items to the cloud
  *   - reconcile        — 60s sweep: catches anything SSE missed
  *                        (replica restart, transient disconnect)
- *   - scope-refresh    — periodic re-fetch of the env's default_scope_id
- *                        so a runtime scope reassignment converges
+ *   - project-refresh    — periodic re-fetch of the env's default_project_id
+ *                        so a runtime project reassignment converges
  *   - heartbeat        — periodic POST to /api/agents/{env}/sync-heartbeat
  *
  * Single-writer model: the daemon (and any CLI command run on
  * the same machine) is the only content writer for its env's
- * scope. Dashboard is read-only for skill *content* but can
+ * project. Dashboard is read-only for skill *content* but can
  * install new skills (marketplace) and delete existing ones —
  * both originate as cloud writes that propagate to the machine
  * via SSE within ~2s, with the 60s reconcile loop as the safety
  * net for missed events. No If-Match, no conflict resolution UI:
- * with one content writer per scope there is nothing to merge.
+ * with one content writer per project there is nothing to merge.
  *
  * Push side:
  *   1. Watcher fires for skill_key X
  *   2. Hash X's local content; if same as last-pushed, skip
- *   3. Enqueue skill_push{key=X, scope_id, new=hash}
- *   4. drainQueue picks it up, tars + uploads to scope-explicit URL
+ *   3. Enqueue skill_push{key=X, project_id, new=hash}
+ *   4. drainQueue picks it up, tars + uploads to project-explicit URL
  *   5. 200: mark done, update last-pushed cache
  *   6. 4xx: drop with a warn. 5xx / network: bump attempts and
  *      leave in queue with backoff.
  *
  * Pull side (SSE primary, reconcile fallback):
- *   1. SSE event arrives for skill_key X (scope filter applied
+ *   1. SSE event arrives for skill_key X (project filter applied
  *      server-side; daemon-side filter is defense-in-depth).
  *      `skill_changed` → download + writeSkillArchive.
  *      `skill_deleted` → removeLocalSkill.
@@ -104,7 +104,7 @@ interface EngineOpts {
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// Pass the engine's abort signal so any in-flight HTTP call
-	// (heartbeat, scope refresh, skill download, etc.) unwinds
+	// (heartbeat, project refresh, skill download, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
 	// instead of running its own per-request timeout to
 	// completion.
@@ -213,8 +213,8 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const cloudObservedKeys = new Set<string>();
 	let lastSeenRevision: number | null = null;
 	// Full ETag string from the last successful /api/skills
-	// response. Includes the scope_id (e.g. `"42:abc-uuid"`) so a
-	// scope reassignment forces the next listing to round-trip
+	// response. Includes the project_id (e.g. `"42:abc-uuid"`) so a
+	// project reassignment forces the next listing to round-trip
 	// rather than collide on revision alone. We replay the raw
 	// string in `If-None-Match` instead of constructing it from
 	// `lastSeenRevision`, since the server's format is opaque to
@@ -236,7 +236,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// session lock). `inFlightSessionHash` is a touch-storm guard
 	// for the watcher: once a hash is enqueued we suppress re-
 	// enqueue of the same hash on subsequent ticks, but we DO
-	// remove the in-flight entry on drop / evict / scope-mismatch
+	// remove the in-flight entry on drop / evict / project-mismatch
 	// so the next watcher tick re-enqueues fresh.
 	//
 	// Pre-split the code stamped `lastPushedSessionHash` at enqueue
@@ -275,24 +275,24 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		state_dir: stateDir,
 	});
 
-	// Fetch this env's default_scope_id at boot. The daemon writes
-	// to `/api/scopes/{scope_id}/skills/upload`, so we need the
-	// scope_id before any upload can run. Throw on missing so the
-	// supervisor restarts — without a scope_id we can't tell which
+	// Fetch this env's default_project_id at boot. The daemon writes
+	// to `/api/projects/{project_id}/skills/upload`, so we need the
+	// project_id before any upload can run. Throw on missing so the
+	// supervisor restarts — without a project_id we can't tell which
 	// SSE events belong to us.
-	const fetchDefaultScopeId = async (): Promise<string> => {
+	const fetchDefaultProjectId = async (): Promise<string> => {
 		const envInfo = unwrap(
 			await api.GET("/api/environments/{environment_id}", {
 				params: { path: { environment_id: opts.environmentId } },
 			}),
 		);
-		const scopeId = envInfo.default_scope_id;
-		if (!scopeId) {
-			throw new Error(`environment ${opts.environmentId} has no default_scope_id; cannot upload`);
+		const projectId = envInfo.default_project_id;
+		if (!projectId) {
+			throw new Error(`environment ${opts.environmentId} has no default_project_id; cannot upload`);
 		}
-		return scopeId;
+		return projectId;
 	};
-	// Boot-time auth-failure handling: `fetchDefaultScopeId()`
+	// Boot-time auth-failure handling: `fetchDefaultProjectId()`
 	// throws ApiError on 401/403 if the daemon was started with a
 	// revoked / forbidden key. Pre-fix this bubbled up as a
 	// generic fatal — `serve()` set process.exitCode=1, which
@@ -302,15 +302,15 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// with code 2 so systemd stops respawning + log the canonical
 	// `engine.auth_failed` event so /api/health and operators see
 	// a clean reason. (No best-effort heartbeat from this point
-	// because the daemon hasn't established its scope/queue state
+	// because the daemon hasn't established its project/queue state
 	// yet — there's nothing meaningful to report beyond "auth dead
 	// at boot".)
-	let defaultScopeId: string;
+	let defaultProjectId: string;
 	try {
-		defaultScopeId = await fetchDefaultScopeId();
+		defaultProjectId = await fetchDefaultProjectId();
 	} catch (e) {
 		if (isAuthFailure(e)) {
-			log.error("engine.auth_failed", { origin: "boot_scope_fetch" });
+			log.error("engine.auth_failed", { origin: "boot_project_fetch" });
 			process.exitCode = 2;
 			// Same launchd self-unload as the main auth-failure
 			// handler below — boot-time auth failure also needs
@@ -329,7 +329,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 		throw e;
 	}
-	log.info("engine.scope_resolved", { default_scope_id: defaultScopeId });
+	log.info("engine.project_resolved", { default_project_id: defaultProjectId });
 
 	// Single auth-failure exit path. SSE consumer wires this directly
 	// via `onAuthFailure`; pull-side catches (SSE skill_changed handler
@@ -407,29 +407,29 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		opts.abortController.abort();
 	};
 
-	// Periodically re-fetch the env's default_scope_id so a
+	// Periodically re-fetch the env's default_project_id so a
 	// runtime reassignment (rare in v1's 1:1 model, but possible
-	// after multi-scope-per-env ships) converges within one
+	// after multi-project-per-env ships) converges within one
 	// heartbeat cycle. Without refresh, the daemon would keep
 	// the boot-time value forever and silently drop SSE events
-	// for the new scope. Transient fetch errors keep the
+	// for the new project. Transient fetch errors keep the
 	// last-known-good value but escalate to error-level logging
-	// after STALE_SCOPE_THRESHOLD consecutive failures so a
-	// long-running scope-filter outage shows up in metrics.
-	const STALE_SCOPE_THRESHOLD = 3;
-	const refreshDefaultScopeIdLoop = async (abort: AbortSignal): Promise<void> => {
+	// after STALE_PROJECT_THRESHOLD consecutive failures so a
+	// long-running project-filter outage shows up in metrics.
+	const STALE_PROJECT_THRESHOLD = 3;
+	const refreshDefaultProjectIdLoop = async (abort: AbortSignal): Promise<void> => {
 		let consecutiveFailures = 0;
 		while (!abort.aborted) {
 			await sleep(HEARTBEAT_INTERVAL_MS, abort);
 			if (abort.aborted) return;
 			try {
-				const fresh = await fetchDefaultScopeId();
-				if (fresh !== defaultScopeId) {
-					log.info("engine.scope_changed", { from: defaultScopeId, to: fresh });
-					defaultScopeId = fresh;
-					// Cached ETag was bound to the OLD scope; sending it
-					// after the scope flip would always miss anyway
-					// (server now bakes scope_id into the tag), but
+				const fresh = await fetchDefaultProjectId();
+				if (fresh !== defaultProjectId) {
+					log.info("engine.project_changed", { from: defaultProjectId, to: fresh });
+					defaultProjectId = fresh;
+					// Cached ETag was bound to the OLD project; sending it
+					// after the project flip would always miss anyway
+					// (server now bakes project_id into the tag), but
 					// clearing here saves the wasted round-trip and
 					// makes the intent explicit. lastSeenRevision can
 					// stay — the server's revision counter is account-
@@ -437,9 +437,9 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					lastListingEtag = null;
 					// Re-scan local skills against `lastPushedHash` so
 					// any pending divergence (including queue items the
-					// drain dropped after a scope change) gets re-
-					// enqueued under the new scope. Without this, an
-					// edit captured under scope A that was dropped
+					// drain dropped after a project change) gets re-
+					// enqueued under the new project. Without this, an
+					// edit captured under project A that was dropped
 					// during a brief A→B→A reassignment would sit
 					// unsynced until the user touched the file again.
 					await rescanLocalSkillsForChanges(
@@ -449,7 +449,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 						pullsInFlight,
 						() => fresh,
 					).catch((e) => {
-						log.warn("engine.scope_change_rescan_failed", {
+						log.warn("engine.project_change_rescan_failed", {
 							error: toErrorMessage(e),
 						});
 					});
@@ -457,19 +457,19 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				consecutiveFailures = 0;
 			} catch (e) {
 				if (isAuthFailure(e)) {
-					triggerAuthFailureAbort("scope_refresh");
+					triggerAuthFailureAbort("project_refresh");
 					return;
 				}
 				consecutiveFailures += 1;
 				const fields = {
 					error: toErrorMessage(e),
 					consecutive_failures: consecutiveFailures,
-					stale_scope_id: defaultScopeId,
+					stale_project_id: defaultProjectId,
 				};
-				if (consecutiveFailures >= STALE_SCOPE_THRESHOLD) {
-					log.error("engine.scope_filter_stale", fields);
+				if (consecutiveFailures >= STALE_PROJECT_THRESHOLD) {
+					log.error("engine.project_filter_stale", fields);
 				} else {
-					log.warn("engine.scope_filter_refresh_failed", fields);
+					log.warn("engine.project_filter_refresh_failed", fields);
 				}
 			}
 		}
@@ -499,7 +499,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			lastPushedHash,
 			cloudObservedKeys,
 			pullsInFlight,
-			defaultScopeId,
+			defaultProjectId,
 			(rev) => {
 				lastSeenRevision = rev;
 			},
@@ -528,7 +528,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// rm and extract), not user edits.
 			return;
 		}
-		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultScopeId).catch(
+		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultProjectId).catch(
 			(e) => {
 				log.warn("engine.enqueue_failed", { skill_key: skillKey, error: toErrorMessage(e) });
 			},
@@ -536,29 +536,29 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	};
 
 	// Pull side: SSE event → fetch + writeSkillArchive (or rm).
-	// Server-side broker already filters events to scopes the
-	// caller has visibility into; the per-event scope check below
+	// Server-side broker already filters events to projects the
+	// caller has visibility into; the per-event project check below
 	// is defense-in-depth in case a future broker bug fans out
 	// without filtering.
 	const onServerEvent = async (event: ServerEvent) => {
-		if (event.scope_id !== defaultScopeId) {
-			log.debug("engine.sse_event_other_scope", {
+		if (event.project_id !== defaultProjectId) {
+			log.debug("engine.sse_event_other_project", {
 				type: event.type,
 				skill_key: event.skill_key,
-				event_scope: event.scope_id,
-				my_scope: defaultScopeId,
+				event_project_id: event.project_id,
+				my_project_id: defaultProjectId,
 			});
 			// Do NOT advance `lastSeenRevision` here. For unbound
 			// multi-agent CLI keys the SSE stream interleaves events
-			// across sibling scopes; advancing on a sibling event
+			// across sibling projects; advancing on a sibling event
 			// would let the next reconcile send `If-None-Match:
 			// <sibling-rev>` and get 304 even if WE missed an
-			// earlier event for our own scope (e.g. brief SSE
+			// earlier event for our own project (e.g. brief SSE
 			// disconnect). The reconcile would then never pull the
 			// missed change, and the safety-net poll silently
 			// misses it. `lastSeenRevision` represents
 			// "highest revision we've fully reconciled FOR OUR
-			// SCOPE"; sibling events don't grant that.
+			// PROJECT"; sibling events don't grant that.
 			return;
 		}
 		log.info("engine.sse_event", { type: event.type, skill_key: event.skill_key });
@@ -618,7 +618,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		addInFlight(pullsInFlight, event.skill_key);
 		let pulled = false;
 		try {
-			await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultScopeId);
+			await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultProjectId);
 			// Track the SSE-pulled skill in cloudObservedKeys so the
 			// reconcile sweep can later remove it if its delete event
 			// is missed. Without this, an SSE-installed skill that
@@ -748,7 +748,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			lastPushedHash,
 			lastPushedSessionHash,
 			inFlightSessionHash,
-			() => defaultScopeId,
+			() => defaultProjectId,
 			(err) => {
 				lastSyncError = err;
 			},
@@ -761,7 +761,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			cloudObservedKeys,
 			pullsInFlight,
 			opts.abort,
-			() => defaultScopeId,
+			() => defaultProjectId,
 			() => lastListingEtag,
 			(rev) => {
 				lastSeenRevision = rev;
@@ -775,7 +775,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
-		refreshDefaultScopeIdLoop(opts.abort),
+		refreshDefaultProjectIdLoop(opts.abort),
 		// Safety-net periodic sessions rescan. After a 4xx drop we
 		// clear inFlightSessionHash, but the watcher only fires on
 		// fs change — if the file isn't rewritten the session
@@ -807,7 +807,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					queue,
 					lastPushedHash,
 					pullsInFlight,
-					() => defaultScopeId,
+					() => defaultProjectId,
 				).catch((e) => {
 					log.warn("engine.skills_rescan_failed", { error: toErrorMessage(e) });
 				});
@@ -823,7 +823,7 @@ async function enqueueIfChanged(
 	queue: RetryQueue,
 	lastPushedHash: Map<string, string>,
 	skillKey: string,
-	getScopeId: () => string,
+	getProjectId: () => string,
 ): Promise<void> {
 	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
 	let hash: string;
@@ -842,17 +842,17 @@ async function enqueueIfChanged(
 		log.debug("engine.skill_unchanged", { skill_key: skillKey });
 		return;
 	}
-	// Stamp the current scope_id on the queue item. If the daemon's
-	// default_scope_id changes between enqueue and drain (rare in
-	// v1, but possible when multi-scope-per-env arrives), we drop
+	// Stamp the current project_id on the queue item. If the daemon's
+	// default_project_id changes between enqueue and drain (rare in
+	// v1, but possible when multi-project-per-env arrives), we drop
 	// the stamped item rather than upload it under a different
-	// scope. Without the stamp, a queue carrying writes under
-	// scope A would silently get redirected to scope B on
+	// project. Without the stamp, a queue carrying writes under
+	// project A would silently get redirected to project B on
 	// reassignment.
 	const version = queue.enqueue({
 		kind: "skill_push",
 		skill_key: skillKey,
-		scope_id: getScopeId(),
+		project_id: getProjectId(),
 		new_hash: hash,
 		enqueued_at: new Date().toISOString(),
 		attempts: 0,
@@ -941,7 +941,7 @@ async function drainQueueLoop(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	getScopeId: () => string,
+	getProjectId: () => string,
 	setLastError: (err: string | null) => void,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
@@ -987,7 +987,7 @@ async function drainQueueLoop(
 				lastPushedHash,
 				lastPushedSessionHash,
 				inFlightSessionHash,
-				getScopeId(),
+				getProjectId(),
 			);
 			setLastError(null);
 		} catch (e) {
@@ -1128,30 +1128,30 @@ async function processQueueItem(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	scopeId: string,
+	projectId: string,
 ): Promise<void> {
 	if (item.kind === "skill_push") {
-		// Legacy items (no scope_id stamp) inherit the current
-		// scope — they were enqueued by an older binary that
-		// didn't track scope. Items with a stamped scope that
-		// no longer matches the daemon's current scope are
-		// dropped: uploading to the old scope would land bytes
-		// nobody is looking at, and uploading to the new scope
+		// Legacy items (no project_id stamp) inherit the current
+		// project — they were enqueued by an older binary that
+		// didn't track project. Items with a stamped project that
+		// no longer matches the daemon's current project are
+		// dropped: uploading to the old project would land bytes
+		// nobody is looking at, and uploading to the new project
 		// is wrong because the local content corresponds to
-		// whatever the user edited under the OLD scope's view.
+		// whatever the user edited under the OLD project's view.
 		// `rescanLocalSkillsForChanges` (called from
-		// refreshDefaultScopeIdLoop on scope change) re-enqueues
-		// any pending divergence under the new scope.
-		if (item.scope_id !== undefined && item.scope_id !== scopeId) {
-			log.warn("engine.queue_scope_mismatch_dropped", {
+		// refreshDefaultProjectIdLoop on project change) re-enqueues
+		// any pending divergence under the new project.
+		if (item.project_id !== undefined && item.project_id !== projectId) {
+			log.warn("engine.queue_project_mismatch_dropped", {
 				skill_key: item.skill_key,
-				stamped_scope: item.scope_id,
-				current_scope: scopeId,
+				stamped_project_id: item.project_id,
+				current_project_id: projectId,
 			});
 			queue.markDoneIfVersion(item);
 			return;
 		}
-		await uploadSkillFromQueue(opts, api, item, lastPushedHash, scopeId);
+		await uploadSkillFromQueue(opts, api, item, lastPushedHash, projectId);
 		// markDoneIfVersion — if a newer version of the same
 		// skill_key was enqueued while we were uploading, leave
 		// it in the queue so the next drain picks it up. The
@@ -1332,7 +1332,7 @@ async function uploadSkillFromQueue(
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
-	scopeId: string,
+	projectId: string,
 ): Promise<void> {
 	const dir = join(opts.adapter.getSkillsRootDir(), item.skill_key);
 	// Recompute the hash from the live directory at upload time
@@ -1379,7 +1379,7 @@ async function uploadSkillFromQueue(
 	// else moved it.
 	const hashBeforeUpload = lastPushedHash.get(item.skill_key);
 	const result = await api.uploadSkill(
-		scopeId,
+		projectId,
 		item.skill_key,
 		tarBytes,
 		`${item.skill_key}.tar.gz`,
@@ -1423,7 +1423,7 @@ async function uploadSkillFromQueue(
  * partial listing). */
 async function listAllCloudSkills(
 	api: ApiClient,
-	scopeId: string,
+	projectId: string,
 	knownEtag?: string | null,
 ): Promise<{
 	skills: SkillSummary[];
@@ -1440,29 +1440,29 @@ async function listAllCloudSkills(
 	let revision: number | null = null;
 	let etag: string | null = null;
 	while (true) {
-		// Pin reads to the env's scope so a daemon booted with an
+		// Pin reads to the env's project so a daemon booted with an
 		// unbound CLI key + an explicit `--environment-id` doesn't
 		// pull skills from whichever env the backend defaults to
 		// (most-recently-active for unbound keys). Without the
-		// scope_id pin, reconcile would fan out to every scope the
+		// project_id pin, reconcile would fan out to every project the
 		// caller can read and write them under the wrong env.
 		//
 		// Conditional GET: replay the previous response's full
-		// ETag (server's format is `"<rev>:<scope>"`) so a scope
+		// ETag (server's format is `"<rev>:<project>"`) so a project
 		// reassignment naturally invalidates the tag — pre-fix the
 		// client constructed `"<rev>"` itself, which would 304 on
-		// a different scope at the same revision and silently skip
-		// pulling the new scope's skills.
+		// a different project at the same revision and silently skip
+		// pulling the new project's skills.
 		const headerInit: Record<string, string> = {};
 		if (page === 1 && knownEtag) {
 			headerInit["If-None-Match"] = knownEtag;
 		}
 		const res = await api.GET("/api/skills", {
-			params: { query: { page, page_size: PAGE_SIZE, scope_id: scopeId } },
+			params: { query: { page, page_size: PAGE_SIZE, project_id: projectId } },
 			headers: headerInit,
 		});
 		// ETag header carries the user's `skills_revision` counter
-		// followed by the requested scope tag, e.g. `"42:abc-uuid"`.
+		// followed by the requested project tag, e.g. `"42:abc-uuid"`.
 		// We track:
 		//   - `revision` (numeric prefix, for heartbeat
 		//     `last_revision_seen`)
@@ -1540,7 +1540,7 @@ async function initialSync(
 	lastPushedHash: Map<string, string>,
 	cloudObservedKeys: Set<string>,
 	pullsInFlight: Map<string, number>,
-	scopeId: string,
+	projectId: string,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
 ): Promise<void> {
@@ -1581,7 +1581,7 @@ async function initialSync(
 		revision,
 		etag,
 		complete: cloudComplete,
-	} = await listAllCloudSkills(api, scopeId);
+	} = await listAllCloudSkills(api, projectId);
 	for (const s of cloudSkills) cloudObservedKeys.add(s.skill_key);
 	const cloudByKey = new Map(cloudSkills.map((s) => [s.skill_key, s]));
 
@@ -1606,7 +1606,7 @@ async function initialSync(
 			// can't regress.
 			addInFlight(pullsInFlight, key);
 			try {
-				await pullSkill(opts, api, key, lastPushedHash, scopeId);
+				await pullSkill(opts, api, key, lastPushedHash, projectId);
 			} catch (e) {
 				allApplied = false;
 				log.warn("engine.boot_pull_failed", {
@@ -1618,9 +1618,9 @@ async function initialSync(
 			}
 		} else if (localHash !== cloud.content_hash) {
 			// Diverged. The single-writer model (one env = one
-			// daemon writing this scope) is broken in two ways
+			// daemon writing this project) is broken in two ways
 			// the dashboard introduced:
-			//   - Dashboard editor writes via /api/scopes/.../content
+			//   - Dashboard editor writes via /api/projects/.../content
 			//   - CLI commands (`clawdi skill add`, `clawdi push`)
 			//     write while the daemon is offline
 			// So divergence at boot can mean LOCAL is newer
@@ -1646,7 +1646,7 @@ async function initialSync(
 				const version = queue.enqueue({
 					kind: "skill_push",
 					skill_key: key,
-					scope_id: scopeId,
+					project_id: projectId,
 					new_hash: localHash,
 					enqueued_at: new Date().toISOString(),
 					attempts: 0,
@@ -1664,7 +1664,7 @@ async function initialSync(
 				// intermediate empty state.
 				addInFlight(pullsInFlight, key);
 				try {
-					await pullSkill(opts, api, key, lastPushedHash, scopeId);
+					await pullSkill(opts, api, key, lastPushedHash, projectId);
 					log.info("engine.boot_pull_diverged", {
 						skill_key: key,
 						local: localHash,
@@ -1763,7 +1763,7 @@ async function initialSync(
 		const version = queue.enqueue({
 			kind: "skill_push",
 			skill_key: key,
-			scope_id: scopeId,
+			project_id: projectId,
 			new_hash: localHash,
 			enqueued_at: new Date().toISOString(),
 			attempts: 0,
@@ -1772,7 +1772,7 @@ async function initialSync(
 	}
 
 	// Only acknowledge the cloud's revision (and cache the
-	// scope-bound ETag) if every per-skill pull / remove above
+	// project-bound ETag) if every per-skill pull / remove above
 	// succeeded. Partial failure leaves both stale so the next
 	// reconcile listing isn't 304'd, and the failed item is
 	// retried on the next pass instead of silently dropped until
@@ -1796,7 +1796,7 @@ async function reconcileLoop(
 	cloudObservedKeys: Set<string>,
 	pullsInFlight: Map<string, number>,
 	abort: AbortSignal,
-	getScopeId: () => string,
+	getProjectId: () => string,
 	getKnownEtag: () => string | null,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
@@ -1812,7 +1812,7 @@ async function reconcileLoop(
 				lastPushedHash,
 				cloudObservedKeys,
 				pullsInFlight,
-				getScopeId(),
+				getProjectId(),
 				getKnownEtag(),
 				setRevision,
 				setEtag,
@@ -1838,7 +1838,7 @@ async function reconcileFromCloud(
 	lastPushedHash: Map<string, string>,
 	cloudObservedKeys: Set<string>,
 	pullsInFlight: Map<string, number>,
-	scopeId: string,
+	projectId: string,
 	knownEtag: string | null,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
@@ -1846,7 +1846,7 @@ async function reconcileFromCloud(
 ): Promise<void> {
 	const { skills, complete, revision, etag, notModified } = await listAllCloudSkills(
 		api,
-		scopeId,
+		projectId,
 		knownEtag,
 	);
 	if (notModified) {
@@ -1888,11 +1888,11 @@ async function reconcileFromCloud(
 		}
 		addInFlight(pullsInFlight, skill.skill_key);
 		try {
-			// Scope-explicit so the daemon doesn't pull a sibling
-			// scope's bytes on a multi-agent unbound key. See
+			// Project-explicit so the daemon doesn't pull a sibling
+			// project's bytes on a multi-agent unbound key. See
 			// `pullSkill()` doc for the duplicate-skill_key case.
 			const tarBytes = await api.getBytes(
-				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
 			await opts.adapter.writeSkillArchive(skill.skill_key, tarBytes);
 			lastPushedHash.set(skill.skill_key, skill.content_hash);
@@ -1985,9 +1985,9 @@ async function reconcileFromCloud(
 
 /** Re-scan every local skill directory and re-enqueue any whose
  * current content hash disagrees with `lastPushedHash`. Called
- * when the daemon's scope changes — the previous queue's
- * scope-stamped items got dropped at drain time, so the user's
- * pending edits need to ride a fresh enqueue under the new scope.
+ * when the daemon's project changes — the previous queue's
+ * project-stamped items got dropped at drain time, so the user's
+ * pending edits need to ride a fresh enqueue under the new project.
  * Idempotent: skills already in sync produce no enqueue.
  *
  * `pullsInFlight` is the SAME guard the watcher uses. While a
@@ -2003,7 +2003,7 @@ async function rescanLocalSkillsForChanges(
 	queue: RetryQueue,
 	lastPushedHash: Map<string, string>,
 	pullsInFlight: Map<string, number>,
-	getScopeId: () => string,
+	getProjectId: () => string,
 ): Promise<void> {
 	const localKeys = await opts.adapter.listSkillKeys();
 	for (const key of localKeys) {
@@ -2011,7 +2011,7 @@ async function rescanLocalSkillsForChanges(
 			log.debug("engine.rescan_skipped_in_flight", { skill_key: key });
 			continue;
 		}
-		await enqueueIfChanged(opts, queue, lastPushedHash, key, getScopeId).catch((e) => {
+		await enqueueIfChanged(opts, queue, lastPushedHash, key, getProjectId).catch((e) => {
 			log.warn("engine.rescan_enqueue_failed", { skill_key: key, error: toErrorMessage(e) });
 		});
 	}
@@ -2077,21 +2077,21 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
 /** Pull a single skill. Used by both boot initialSync, runtime
  * SSE `skill_changed` handler, and reconcile fallback.
  *
- * Scope-explicit by design: an unbound CLI key on a multi-agent
- * account can have the same `skill_key` in two different scopes,
- * and the legacy unscoped download endpoint resolves "most-
- * recently-updated across visible scopes" — that can plant
+ * Project-explicit by design: an unbound CLI key on a multi-agent
+ * account can have the same `skill_key` in two different projects,
+ * and the legacy account-wide download endpoint resolves "most-
+ * recently-updated across visible projects" — that can plant
  * agent A's bytes on agent B's local disk. Always pin to the
- * env's resolved `scopeId`. */
+ * env's resolved `projectId`. */
 async function pullSkill(
 	opts: EngineOpts,
 	api: ApiClient,
 	skillKey: string,
 	lastPushedHash: Map<string, string>,
-	scopeId: string,
+	projectId: string,
 ): Promise<void> {
 	const tarBytes = await api.getBytes(
-		`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(skillKey)}/download`,
+		`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}/download`,
 	);
 	await opts.adapter.writeSkillArchive(skillKey, tarBytes);
 	// Recompute the on-disk hash so the watcher's next tick

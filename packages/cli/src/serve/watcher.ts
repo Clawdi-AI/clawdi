@@ -187,7 +187,7 @@ async function watchEvents(opts: Opts): Promise<void> {
 			// `references/foo.md` — the parent dir's mtime doesn't
 			// bump on a nested file write, no event fires, no rescan
 			// catches up because the skill rescan path only fires on
-			// scope changes.
+			// project changes.
 			throw new RecursiveWatchUnsupportedError(toErrorMessage(e));
 		}
 	};

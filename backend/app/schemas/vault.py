@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, RootModel
 
@@ -23,12 +23,9 @@ class VaultResponse(BaseModel):
     id: str
     slug: str
     name: str
-    # Scope this vault lives in. Required by the dashboard so a JWT
-    # user with the same slug in two scopes (e.g. Personal + env-A)
-    # can disambiguate when issuing slug-keyed sub-requests
-    # (`/api/vault/{slug}/items?scope_id=...`). Without this, a
-    # dashboard mutation could land in the wrong scope's vault.
-    scope_id: str
+    # Project this vault lives in. Required by clients so duplicate
+    # slugs can be disambiguated on follow-up reads/writes.
+    project_id: str
     created_at: datetime
 
 
@@ -54,5 +51,5 @@ class VaultItemsDeleteResponse(BaseModel):
     status: Literal["deleted"]
 
 
-class VaultResolveResponse(RootModel[dict[str, str]]):
+class VaultResolveResponse(RootModel[dict[str, Any]]):
     pass

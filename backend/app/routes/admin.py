@@ -1,7 +1,7 @@
 """Admin endpoints — gated by `X-Admin-Key` shared secret.
 
 Used by upstream-SaaS batch tooling and ops-side scripts that don't
-have a per-user Clerk JWT in scope (e.g. catching up legacy
+have a per-user Clerk JWT available (e.g. catching up legacy
 deployments that pre-date live sync, account-deletion webhooks, fleet
 revocation). Disabled by default — `settings.admin_api_key` must be
 set to a strong secret to enable.
@@ -39,14 +39,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
-from app.services.user_provisioning import lazy_create_user_with_personal_scope
+from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     """Resolve a user by clerk_id, lazy-creating the row + Personal
-    scope if needed.
+    project if needed.
 
     The lazy-create exists for the common SaaS-deploy entry path
     where a user clicks Deploy on clawdi.ai before ever signing
@@ -73,7 +73,7 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     Trust model: `clerk_id` here is value the SaaS already
     authenticated against the user's Clerk session — the shared
     `X-Admin-Key` gate trusts first-party server-to-server callers.
-    Email/name are unknown (no JWT in scope); the row starts with
+    Email/name are unknown (no JWT available); the row starts with
     `email=None` and the JWT path backfills on first direct sign-in.
 
     Race-loser status is 500 (not 401): admin callers are
@@ -85,7 +85,7 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     if target is not None:
         return target
 
-    user = await lazy_create_user_with_personal_scope(
+    user = await lazy_create_user_with_personal_project(
         db,
         clerk_id=clerk_id,
         email=None,
@@ -124,10 +124,11 @@ async def admin_mint_api_key(
                 status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
             ) from e
 
-    # `scopes=None` is full account access — same default as user-self-
-    # mint via `POST /api/auth/keys`. Callers may pass a narrower list
-    # to lock the minted key down (e.g. ops tooling that only needs to
-    # push sessions); the route doesn't impose a ceiling.
+    # `scopes=None` is full API permission access — same default as
+    # user-self-mint via `POST /api/auth/keys`. Callers may pass a
+    # narrower permission list to lock the minted key down (e.g. ops
+    # tooling that only needs to push sessions); the route doesn't
+    # impose a ceiling.
     try:
         minted = await mint_api_key(
             db,
@@ -208,7 +209,7 @@ async def admin_register_environment(
     """Register an AgentEnvironment row on behalf of a target user.
 
     Migration tooling needs to seed env_id for legacy deployments
-    where no per-user Clerk JWT is in scope. The user-facing
+    where no per-user Clerk JWT is in project. The user-facing
     `POST /api/environments` requires a Clerk-authed or env-bound
     api_key request; this admin variant is gated by the shared
     `X-Admin-Key` header instead.
@@ -227,7 +228,7 @@ async def admin_register_environment(
     # FOR UPDATE row-locks the env so concurrent admin-registers
     # for the same (user, machine) serialize through the heal
     # branch — without this both writers would see
-    # default_scope_id IS NULL and create competing scopes.
+    # default_project_id IS NULL and create competing projects.
     existing = (
         await db.execute(
             select(AgentEnvironment)
@@ -244,34 +245,34 @@ async def admin_register_environment(
         existing.machine_name = body.machine_name
         existing.agent_version = body.agent_version
         existing.last_seen_at = datetime.now(UTC)
-        # Heal envs missing default_scope_id (older rows or
+        # Heal envs missing default_project_id (older rows or
         # interrupted creates) — same logic the user-facing route
         # runs.
-        if existing.default_scope_id is None:
-            healing_scope = Scope(
+        if existing.default_project_id is None:
+            healing_project = Project(
                 user_id=target.id,
                 name=f"{body.machine_name} ({body.agent_type})",
                 slug=f"env-{uuid.uuid4().hex[:12]}",
-                kind=SCOPE_KIND_ENVIRONMENT,
+                kind=PROJECT_KIND_ENVIRONMENT,
                 origin_environment_id=existing.id,
             )
-            db.add(healing_scope)
+            db.add(healing_project)
             await db.flush()
-            existing.default_scope_id = healing_scope.id
+            existing.default_project_id = healing_project.id
         await db.commit()
         return EnvironmentCreatedResponse(id=str(existing.id))
 
-    # Create scope first (no origin_environment_id yet — env doesn't
-    # exist), then env pointing at the scope, then back-fill
-    # scope.origin_environment_id. Mirror of register_environment's
+    # Create project first (no origin_environment_id yet — env doesn't
+    # exist), then env pointing at the project, then back-fill
+    # project.origin_environment_id. Mirror of register_environment's
     # mutual-FK insertion order.
-    scope = Scope(
+    project = Project(
         user_id=target.id,
         name=f"{body.machine_name} ({body.agent_type})",
         slug=f"env-{uuid.uuid4().hex[:12]}",
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
-    db.add(scope)
+    db.add(project)
     try:
         await db.flush()
         env = AgentEnvironment(
@@ -282,11 +283,11 @@ async def admin_register_environment(
             agent_version=body.agent_version,
             os=body.os_name,
             last_seen_at=datetime.now(UTC),
-            default_scope_id=scope.id,
+            default_project_id=project.id,
         )
         db.add(env)
         await db.flush()
-        scope.origin_environment_id = env.id
+        project.origin_environment_id = env.id
         await db.commit()
         await db.refresh(env)
     except IntegrityError:

@@ -34,7 +34,7 @@ describe("RetryQueue", () => {
 		const a = new RetryQueue({ agentType: "claude_code" });
 		a.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -57,7 +57,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -65,7 +65,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
 			enqueued_at: "2026-01-01T00:00:01Z",
@@ -82,7 +82,7 @@ describe("RetryQueue", () => {
 		for (const k of ["a", "b", "c"]) {
 			q.enqueue({
 				kind: "skill_push",
-				scope_id: "test-scope",
+				project_id: "test-project",
 				skill_key: k,
 				new_hash: `${k}-h`,
 				enqueued_at: "2026-01-01T00:00:00Z",
@@ -98,7 +98,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -117,7 +117,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -128,7 +128,7 @@ describe("RetryQueue", () => {
 		// While the drain is "uploading", the watcher fires again.
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
 			enqueued_at: "2026-01-01T00:00:01Z",
@@ -146,7 +146,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -178,7 +178,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -206,12 +206,12 @@ describe("RetryQueue", () => {
 		expect(reloaded.depth).toBe(1);
 	});
 
-	it("loads legacy skill_push items written without scope_id", () => {
-		// Pre-scope-stamp daemon binaries persisted skill_push items
-		// without a `scope_id` field. After upgrade, those items
+	it("loads legacy skill_push items written without project_id", () => {
+		// Pre-project-stamp daemon binaries persisted skill_push items
+		// without a `project_id` field. After upgrade, those items
 		// must NOT silently disappear — `isQueueItem` accepts the
 		// missing field, and the drain loop stamps the current
-		// scope before upload. Without this back-compat, a daemon
+		// project before upload. Without this back-compat, a daemon
 		// upgrading mid-flight would lose every queued offline edit.
 		const path = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code", "queue.jsonl");
 		const dir = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code");
@@ -223,7 +223,7 @@ describe("RetryQueue", () => {
 			enqueued_at: "2026-01-01T00:00:00Z",
 			attempts: 0,
 			version: 1,
-			// no scope_id field
+			// no project_id field
 		});
 		writeFileSync(path, `${legacy}\n`);
 
@@ -232,7 +232,7 @@ describe("RetryQueue", () => {
 		expect(q.depth).toBe(1);
 		const item = q.peek();
 		expect(item?.kind).toBe("skill_push");
-		expect(item && "scope_id" in item ? item.scope_id : undefined).toBeUndefined();
+		expect(item && "project_id" in item ? item.project_id : undefined).toBeUndefined();
 		// Sanity: the skill_key survived load.
 		expect(item && "skill_key" in item ? item.skill_key : undefined).toBe("legacy-x");
 	});
@@ -253,7 +253,7 @@ describe("RetryQueue", () => {
 				kind: "skill_push",
 				skill_key: ".system",
 				new_hash: "h-bad",
-				scope_id: "s",
+				project_id: "s",
 				enqueued_at: "2026-01-01T00:00:00Z",
 				attempts: 0,
 				version: 1,
@@ -262,7 +262,7 @@ describe("RetryQueue", () => {
 				kind: "skill_push",
 				skill_key: "legit-skill",
 				new_hash: "h-good",
-				scope_id: "s",
+				project_id: "s",
 				enqueued_at: "2026-01-01T00:00:00Z",
 				attempts: 0,
 				version: 2,
@@ -304,7 +304,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "alpha",
 			new_hash: "ha",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -312,7 +312,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "beta",
 			new_hash: "hb",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -380,7 +380,7 @@ describe("RetryQueue", () => {
 			kind: "skill_push",
 			skill_key: "legacy-key",
 			new_hash: "h-legacy",
-			scope_id: "s",
+			project_id: "s",
 			enqueued_at: "2026-01-01T00:00:00Z",
 			attempts: 0,
 			// no version field
@@ -398,7 +398,7 @@ describe("RetryQueue", () => {
 		// legacy-stamp doesn't collide with a fresh enqueue.
 		const v = q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "fresh-key",
 			new_hash: "h-fresh",
 			enqueued_at: "2026-01-02T00:00:00Z",

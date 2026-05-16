@@ -7,11 +7,12 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	adapterForType,
-	fetchScopeIdForEnv,
+	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
@@ -26,10 +27,12 @@ const DOWN_MODULES = ["skills", "sessions"] as const;
 
 interface PullOpts {
 	modules?: string;
+	project?: string;
 	dryRun?: boolean;
 	agent?: string;
 	allAgents?: boolean;
 	all?: boolean;
+	yes?: boolean;
 }
 
 /**
@@ -40,9 +43,15 @@ interface PullOpts {
  */
 interface AgentPullScan {
 	agentType: AgentType;
-	/** Scope to download skills from; null when skills aren't being
+	/** Project to download skills from; null when skills aren't being
 	 * pulled or the agent has no registered environment. */
-	skillScopeId: string | null;
+	skillProjectId: string | null;
+	/** Non-null for shared projects so duplicate skill keys land under
+	 * `<key>__<ownerHandle>` instead of overwriting the user's own skill. */
+	sharedOwnerHandle: string | null;
+	/** Explicit project pulls partition the lock by project_id because the
+	 * same target agent can pull multiple visible projects with one key. */
+	projectQualifiedSkillCache: boolean;
 	skills: SkillSummary[];
 	skillsInSync: number;
 	sessions: { remote: SessionListItem; reason: "new" | "updated" }[];
@@ -73,9 +82,8 @@ export async function pull(opts: PullOpts) {
 		return;
 	}
 
-	// `--all` widens every axis it can. Pull only has modules + agents
-	// (no project axis); explicit narrowing via --agent or --modules
-	// still wins.
+	// `--all` widens every axis it can. Project selection only applies
+	// to skill pulls; explicit narrowing via --agent or --modules wins.
 	if (opts.all && !opts.agent && !opts.allAgents) {
 		opts.allAgents = true;
 	}
@@ -92,6 +100,13 @@ export async function pull(opts: PullOpts) {
 	const modules = parseModules(opts.modules, DOWN_MODULES);
 	if (!modules) return;
 
+	if (opts.project && modules.includes("sessions")) {
+		p.log.error("--project is supported for skill pulls only. Use --modules skills.");
+		p.outro(chalk.red("Aborted."));
+		process.exitCode = 1;
+		return;
+	}
+
 	const api = new ApiClient();
 	// Read once before the loop, mutate as downloads land, persist once at
 	// the end. Lost work on partial failure is safe — re-running a pull is
@@ -107,7 +122,7 @@ export async function pull(opts: PullOpts) {
 	const scans: AgentPullScan[] = [];
 	try {
 		for (const agentType of targetTypes) {
-			scans.push(await scanOneAgent(api, agentType, modules, skillsLock));
+			scans.push(await scanOneAgent(api, agentType, modules, opts, skillsLock));
 		}
 	} catch (e) {
 		scanSpinner.stop("Scan failed.");
@@ -196,35 +211,61 @@ async function scanOneAgent(
 	api: ApiClient,
 	agentType: AgentType,
 	modules: string[],
+	opts: PullOpts,
 	skillsLock: SkillsLock | null,
 ): Promise<AgentPullScan> {
 	const notes: string[] = [];
-	let skillScopeId: string | null = null;
+	let skillProjectId: string | null = null;
+	let sharedOwnerHandle: string | null = null;
 	const skills: SkillSummary[] = [];
 	let skillsInSync = 0;
 
 	if (modules.includes("skills") && skillsLock) {
 		const adapter = adapterForType(agentType);
-		const envId = getEnvIdByAgent(agentType);
-		if (adapter && !envId) {
-			// Sessions still pull fine (they query by agent type), but
-			// skills need the env's scope — skip them with a notice.
-			notes.push("No environment registered — skipping skills. Run `clawdi setup`.");
-		} else if (adapter && envId) {
-			// Resolve THIS agent's scope so a multi-agent account doesn't
-			// install sibling-agent skills into this adapter's directory.
-			skillScopeId = await fetchScopeIdForEnv(api, envId);
+		if (adapter && opts.project) {
+			skillProjectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
+			const project = (await listProjects(api.baseUrl, api.apiKey)).find(
+				(p) => p.id === skillProjectId,
+			);
+			if (project?.is_owner === false) {
+				sharedOwnerHandle = project.owner_handle ?? null;
+				if (!sharedOwnerHandle) {
+					throw new Error(
+						"Shared project is missing owner handle; cannot choose shared skill path.",
+					);
+				}
+			}
+		} else if (adapter) {
+			const envId = getEnvIdByAgent(agentType);
+			if (!envId) {
+				// Sessions still pull fine (they query by agent type), but
+				// skills need the env's Agent Project — skip them with a notice.
+				notes.push("No environment registered — skipping skills. Run `clawdi setup`.");
+			} else {
+				// Resolve THIS agent's project so a multi-agent account doesn't
+				// install sibling-agent skills into this adapter's directory.
+				skillProjectId = await fetchProjectIdForEnv(api, envId);
+			}
+		}
+
+		if (adapter && skillProjectId) {
 			const page = unwrap(
 				await api.GET("/api/skills", {
-					params: { query: { page_size: 200, scope_id: skillScopeId } },
+					params: { query: { page_size: 200, project_id: skillProjectId } },
 				}),
 			);
 			for (const skill of page.items) {
 				// A skill is "in sync" iff its cloud content_hash matches
 				// our cached hash AND a local file exists — the local
 				// check restores skills the user wiped but kept the lock.
-				const cached = skillsLock.skills[skillCacheKey(agentType, skill.skill_key)]?.hash;
-				const localExists = existsSync(adapter.getSkillPath(skill.skill_key));
+				const cacheKey = opts.project
+					? skillCacheKey(agentType, `${skillProjectId}:${skill.skill_key}`)
+					: skillCacheKey(agentType, skill.skill_key);
+				const cached = skillsLock.skills[cacheKey]?.hash;
+				const localPath = sharedOwnerHandle
+					? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
+					: adapter.getSkillPath(skill.skill_key);
+				const localExists = existsSync(localPath);
 				if (cached && cached === skill.content_hash && localExists) skillsInSync++;
 				else skills.push(skill);
 			}
@@ -249,7 +290,17 @@ async function scanOneAgent(
 		}
 	}
 
-	return { agentType, skillScopeId, skills, skillsInSync, sessions, sessionsUnchanged, notes };
+	return {
+		agentType,
+		skillProjectId,
+		sharedOwnerHandle,
+		projectQualifiedSkillCache: Boolean(opts.project),
+		skills,
+		skillsInSync,
+		sessions,
+		sessionsUnchanged,
+		notes,
+	};
 }
 
 /** Download one agent's scanned skills + sessions. Mutates `skillsLock`. */
@@ -259,22 +310,37 @@ async function downloadOneAgent(
 	skillsLock: SkillsLock | null,
 ): Promise<AgentPullResult> {
 	let skillsPulled = 0;
-	if (scan.skills.length > 0 && scan.skillScopeId && skillsLock) {
+	if (scan.skills.length > 0 && scan.skillProjectId && skillsLock) {
 		const adapter = adapterForType(scan.agentType);
 		if (adapter) {
 			for (const skill of scan.skills) {
 				const safeKey = sanitizeMetadata(skill.skill_key);
 				try {
-					// Scope-explicit download so a duplicate skill_key across
-					// two scopes resolves to the right bytes for THIS agent.
+					// Project-explicit download so duplicate skill_keys across
+					// projects resolve to the right bytes for THIS agent.
 					const tarBytes = await api.getBytes(
-						`/api/scopes/${encodeURIComponent(scan.skillScopeId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+						`/api/projects/${encodeURIComponent(scan.skillProjectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 					);
-					await adapter.writeSkillArchive(skill.skill_key, tarBytes);
-					skillsLock.skills[skillCacheKey(scan.agentType, skill.skill_key)] = {
+					if (scan.sharedOwnerHandle) {
+						await adapter.writeSharedSkillArchive(
+							skill.skill_key,
+							scan.sharedOwnerHandle,
+							tarBytes,
+						);
+					} else {
+						await adapter.writeSkillArchive(skill.skill_key, tarBytes);
+					}
+					const cacheKey = scan.projectQualifiedSkillCache
+						? skillCacheKey(scan.agentType, `${scan.skillProjectId}:${skill.skill_key}`)
+						: skillCacheKey(scan.agentType, skill.skill_key);
+					skillsLock.skills[cacheKey] = {
 						hash: skill.content_hash,
 					};
-					const skillDir = dirname(adapter.getSkillPath(skill.skill_key));
+					const skillDir = dirname(
+						scan.sharedOwnerHandle
+							? adapter.getSharedSkillPath(skill.skill_key, scan.sharedOwnerHandle)
+							: adapter.getSkillPath(skill.skill_key),
+					);
 					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 					skillsPulled++;
 				} catch (e) {

@@ -219,16 +219,21 @@ function isTransientInvocation(): boolean {
  */
 export async function maybeAutoUpdate(): Promise<void> {
 	const current = getCliVersion();
+	const isHumanTerminal = !!process.stdout.isTTY;
 
 	// Notify on the FIRST run after a successful background install — the
 	// new binary's `getCliVersion()` no longer matches what we wrote last
 	// time. After-the-fact is the only honest signal we have, since the
 	// detached spawn can't write a marker that the parent reliably sees.
+	//
+	// Keep this notice out of piped / scripted output. `clawdi --version`,
+	// `--json` commands, and shell completions need stdout to stay machine-
+	// parseable even on the first run after an update.
 	const lastFile = lastVersionPath();
 	try {
 		if (existsSync(lastFile)) {
 			const last = readFileSync(lastFile, "utf-8").trim();
-			if (last && last !== current && isNewer(current, last)) {
+			if (isHumanTerminal && last && last !== current && isNewer(current, last)) {
 				console.log(
 					`${chalk.green("✓")} ${chalk.gray(`Updated clawdi to v${current} (was v${last})`)}`,
 				);
@@ -241,7 +246,7 @@ export async function maybeAutoUpdate(): Promise<void> {
 
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
-	if (!process.stdout.isTTY) return;
+	if (!isHumanTerminal) return;
 	if (isTransientInvocation()) return;
 
 	// `clawdi config set autoUpdate false` writes the literal string "false";

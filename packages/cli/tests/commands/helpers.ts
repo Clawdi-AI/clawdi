@@ -1,6 +1,40 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+const AGENT_HOME_OVERRIDE_KEYS = [
+	"CLAUDE_CONFIG_DIR",
+	"CODEX_HOME",
+	"HERMES_HOME",
+	"OPENCLAW_STATE_DIR",
+] as const;
+
+type AgentHomeOverrideKey = (typeof AGENT_HOME_OVERRIDE_KEYS)[number];
+
+export type AgentHomeOverrideSnapshot = Partial<Record<AgentHomeOverrideKey, string>>;
+
+/**
+ * Tests that set only `HOME` still need to neutralize agent-specific home
+ * overrides; those env vars take precedence over `HOME` in adapter path
+ * resolution and can leak host state into fixtures.
+ */
+export function snapshotAndClearAgentHomeOverrides(): AgentHomeOverrideSnapshot {
+	const snapshot: AgentHomeOverrideSnapshot = {};
+	for (const key of AGENT_HOME_OVERRIDE_KEYS) {
+		const value = process.env[key];
+		if (value !== undefined) snapshot[key] = value;
+		delete process.env[key];
+	}
+	return snapshot;
+}
+
+export function restoreAgentHomeOverrides(snapshot: AgentHomeOverrideSnapshot): void {
+	for (const key of AGENT_HOME_OVERRIDE_KEYS) {
+		const value = snapshot[key];
+		if (value !== undefined) process.env[key] = value;
+		else delete process.env[key];
+	}
+}
+
 export interface CapturedRequest {
 	url: string;
 	path: string;
@@ -94,15 +128,15 @@ export const jsonResponse = (data: unknown, status = 200) =>
  * the probe to return 200 — drop this handler near the top of the handler
  * list and all push tests "just work".
  *
- * `default_scope_id` is part of the env shape because the skill upload path
- * reads it via `fetchScopeIdForEnv` to pin uploads to the agent's own scope.
+ * `default_project_id` is part of the env shape because the skill upload path
+ * reads it via `fetchProjectIdForEnv` to pin uploads to the agent's own project.
  * Without it, multi-agent users on an unbound CLI key would see skills land
- * under whichever env was touched last (the `/api/scopes/default` heuristic
+ * under whichever env was touched last (the `/api/projects/default` heuristic
  * we replaced).
  */
 export const okEnvironmentProbe = (
 	envId = "env-test",
-	defaultScopeId = "00000000-0000-0000-0000-000000000099",
+	defaultProjectId = "00000000-0000-0000-0000-000000000099",
 ) => ({
 	method: "GET",
 	path: `/api/environments/${envId}`,
@@ -115,6 +149,6 @@ export const okEnvironmentProbe = (
 			os: "darwin",
 			last_seen_at: new Date().toISOString(),
 			created_at: new Date().toISOString(),
-			default_scope_id: defaultScopeId,
+			default_project_id: defaultProjectId,
 		}),
 });

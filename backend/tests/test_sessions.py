@@ -1,4 +1,4 @@
-"""Session ingestion — batch create de-duplicates and respects user scope."""
+"""Session ingestion — batch create de-duplicates and respects user project."""
 
 from __future__ import annotations
 
@@ -672,10 +672,10 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
 
 @pytest.mark.asyncio
 async def test_global_search_encodes_nested_skill_keys_in_href(
-    client: httpx.AsyncClient, db_session, seed_user, scope_id: str
+    client: httpx.AsyncClient, db_session, seed_user, project_id: str
 ):
     """Round-40 P2 regression: search hits build
-    `href=/skills/<key>?scope=<scope>`. With nested Hermes keys
+    `href=/skills/<key>?project=<project>`. With nested Hermes keys
     (`category/foo`) the un-encoded slash collapses the
     dashboard's single `[key]` route segment into multiple
     parts — palette clicks land on a non-matching page. The
@@ -686,7 +686,7 @@ async def test_global_search_encodes_nested_skill_keys_in_href(
     db_session.add(
         Skill(
             user_id=seed_user.id,
-            scope_id=uuid.UUID(scope_id),
+            project_id=uuid.UUID(project_id),
             skill_key="category/searchable-foo",
             name="searchable foo",
             description="hermes nested",
@@ -920,7 +920,7 @@ async def test_session_batch_orphan_session_can_be_adopted_by_new_env(
     """Round-33 P2 regression: a session row with
     `environment_id IS NULL` (orphaned by `ON DELETE SET NULL`
     after the original env was deleted, or legacy row from before
-    scope_id existed) MUST be adoptable by a fresh env push.
+    project_id existed) MUST be adoptable by a fresh env push.
     Pre-fix the upsert WHERE checked
     `existing.env IS NOT DISTINCT FROM incoming.env`; NULL
     against a real UUID is FALSE, so the conflict was a no-op,
@@ -1145,7 +1145,7 @@ async def test_extract_creates_memories_linked_to_session(
     assert r.json() == {"memories_created": 2}
 
     # Verify the rows landed with the right source + linkage.
-    # Scope the lookup to this test's user — Memory has no FK cascade so
+    # Project the lookup to this test's user — Memory has no FK cascade so
     # rows from other tests can outlive their user fixture.
     from sqlalchemy import select
 

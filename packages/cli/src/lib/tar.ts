@@ -81,6 +81,52 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 }
 
 /**
+ * Extract a skill tarball into a shared-project target dir.
+ *
+ * Skill tarballs have `<skillKey>/...` at the top level (upload side
+ * doesn't know the content will be re-served as shared). For a
+ * shared skill we want the result at `<targetDir>` whose basename
+ * is `<skillKey>__<ownerHandle>`, not `<skillKey>`. Extract into a
+ * sibling temp dir then rename the resulting `<skillKey>` folder
+ * into place. Atomic from the caller's perspective: targetDir
+ * either has the prior version (on failure mid-extract) or the
+ * new version (on success).
+ */
+export async function extractSharedSkillTarGz(
+	skillKey: string,
+	targetDir: string,
+	bytes: Buffer,
+): Promise<void> {
+	const { dirname, basename } = await import("node:path");
+	const { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } = await import("node:fs");
+	const parent = dirname(targetDir);
+	mkdirSync(parent, { recursive: true });
+	const tmp = mkdtempSync(`${parent}/.share-extract-${basename(targetDir)}-`);
+	try {
+		await extractTarGz(tmp, bytes);
+		const extracted = `${tmp}/${skillKey}`;
+		if (!existsSync(extracted)) {
+			throw new Error(`Shared skill tarball did not contain expected '${skillKey}/' root entry`);
+		}
+		// Wipe any prior version atomically: rename old → trash, then
+		// rename new → place, then nuke trash. Two renames so an
+		// interrupted reconcile leaves either the old or the new
+		// content in place, never a partial.
+		const trash = `${parent}/.share-trash-${basename(targetDir)}-${process.pid}`;
+		if (existsSync(targetDir)) renameSync(targetDir, trash);
+		try {
+			renameSync(extracted, targetDir);
+		} catch (e) {
+			if (existsSync(trash)) renameSync(trash, targetDir);
+			throw e;
+		}
+		if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
+	} finally {
+		if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+/**
  * Walk `dirPath` looking for symlinks whose resolved target falls
  * outside the trusted area. Returns the list of offending source
  * paths; an empty array means every symlink stays inside.

@@ -5,9 +5,17 @@ import { join } from "node:path";
 import { pull } from "../../src/commands/pull";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { jsonResponse, mockFetch, okEnvironmentProbe, seedAuthAndEnv } from "./helpers";
+import {
+	type AgentHomeOverrideSnapshot,
+	jsonResponse,
+	mockFetch,
+	okEnvironmentProbe,
+	restoreAgentHomeOverrides,
+	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
+} from "./helpers";
 
-const TEST_SCOPE_ID = "00000000-0000-0000-0000-000000000099";
+const TEST_PROJECT_ID = "00000000-0000-0000-0000-000000000099";
 
 type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
 const AGENT_TYPE: Record<AgentKey, string> = {
@@ -19,9 +27,11 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 function setup(agent: AgentKey) {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -30,6 +40,8 @@ function setup(agent: AgentKey) {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
@@ -63,7 +75,7 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
+				path: `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -83,10 +95,10 @@ content
 		expect(existsSync(skillMd)).toBe(true);
 		expect(readFileSync(skillMd, "utf-8")).toContain("description: pulled from cloud");
 
-		// Both list + scoped download should have been called
+		// Both list + project-explicit download should have been called
 		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
 		expect(
-			captured.some((c) => c.path === `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`),
+			captured.some((c) => c.path === `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`),
 		).toBe(true);
 	});
 
@@ -96,7 +108,7 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/demo/download`,
+				path: `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`,
 				response: () => jsonResponse({}),
 			},
 			{
@@ -164,7 +176,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -197,7 +209,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
@@ -230,7 +242,7 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/scopes/${TEST_SCOPE_ID}/skills/fresh/download`,
+				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{

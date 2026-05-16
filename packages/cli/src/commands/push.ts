@@ -11,7 +11,7 @@ import { sha256Hex } from "../lib/hash";
 import { parseModules } from "../lib/prompts";
 import {
 	adapterForType,
-	fetchScopeIdForEnv,
+	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
@@ -127,12 +127,12 @@ export async function push(opts: PushOpts) {
 	const sessionsLock = readSessionsLock();
 	const skillsLock = readSkillsLock();
 
-	// Project scope is agent-independent (derived only from flags), so
+	// Project selection is agent-independent (derived only from flags), so
 	// resolve it once and report it once — not per agent.
 	const projectFilter = opts.project ?? (opts.all ? undefined : process.cwd());
 	if (modules.includes("sessions")) {
-		const scope = projectFilter ? `project ${projectFilter}` : "all projects";
-		p.log.info(chalk.gray(`Scanning ${scope}`));
+		const target = projectFilter ? `project ${projectFilter}` : "all projects";
+		p.log.info(chalk.gray(`Scanning ${target}`));
 	}
 
 	// Scan every agent first — one spinner, one combined summary — so a
@@ -402,7 +402,7 @@ async function scanOneAgent(
 
 	// Filter against the sessions-lock cache: any session whose hash matches
 	// the stored value can be skipped — the server already has it. This is
-	// the per-entity diff that replaces the old global mtime cursor; scope
+	// the per-entity diff that replaces the old global mtime cursor; project
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
 	if (modules.includes("sessions")) {
@@ -591,16 +591,21 @@ async function uploadOneAgent(
 	}
 
 	if (skills.length > 0) {
-		// Skill upload uses scope-explicit URLs. Resolve THIS agent's
-		// env's default_scope_id directly — not the auth key's "most
-		// recently active env" heuristic. With a multi-agent setup on
-		// an unbound CLI key, the latter would route a `claude_code`
-		// push under whichever env was touched last (often `codex`
-		// from the previous push), while sessions still wrote
-		// correctly to `envId`. The `claude_code` daemon would never
-		// see these skills because its reconcile listing is scoped to
-		// its own env.
-		const skillScopeId = await fetchScopeIdForEnv(api, envId);
+		// Skill upload uses project-explicit URLs. Resolve
+		// THIS agent's env's default_project_id directly — not the
+		// auth key's "most recently active env" heuristic. With a
+		// multi-agent setup on an unbound CLI key, the latter would
+		// route a `claude_code` push under whichever env was
+		// touched last (often `codex` from the previous push),
+		// while sessions still wrote correctly to `envId`. The
+		// `claude_code` daemon would never see these skills because
+		// its reconcile listing is tied to its own project.
+		if (!envId) {
+			throw new Error(
+				`internal error: skill push without envId for ${agentType}; the early-return guard above should have caught this`,
+			);
+		}
+		const skillProjectId = await fetchProjectIdForEnv(api, envId);
 
 		// `skills` is already the to-upload set — the scan phase hashed
 		// every skill and dropped the ones already in sync.
@@ -617,7 +622,7 @@ async function uploadOneAgent(
 				const tarBytes = await tarSkillDir(skill.directoryPath, undefined, skill.skillKey);
 				try {
 					await api.uploadSkill(
-						skillScopeId,
+						skillProjectId,
 						skill.skillKey,
 						tarBytes,
 						`${skill.skillKey}.tar.gz`,
@@ -626,9 +631,9 @@ async function uploadOneAgent(
 					pushed++;
 					// Cache key is partitioned by `(agentType, skillKey)`: in
 					// multi-agent push, agent A and agent B can have the same
-					// `foo` content under different scopes; a flat skill_key
+					// `foo` content under different projects; a flat skill_key
 					// cache would say "B already in sync" the moment A pushed,
-					// leaving B's scope missing the skill.
+					// leaving B's project missing the skill.
 					if (skill.contentHash) {
 						skillsLock.skills[skillCacheKey(agentType, skill.skillKey)] = {
 							hash: skill.contentHash,

@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teardown } from "../../src/commands/teardown";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
-import { seedAuthAndEnv } from "./helpers";
+import {
+	type AgentHomeOverrideSnapshot,
+	restoreAgentHomeOverrides,
+	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
+} from "./helpers";
 
 type AgentKey = "claude-code" | "codex" | "hermes" | "openclaw";
 const AGENT_TYPE: Record<AgentKey, string> = {
@@ -15,6 +20,7 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 let origIsTTY: boolean | undefined;
 
 function setup(agent: AgentKey): {
@@ -22,6 +28,7 @@ function setup(agent: AgentKey): {
 	skillPath: string;
 } {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -46,6 +53,8 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	process.exitCode = 0;
 	if (origIsTTY !== undefined) {
 		Object.defineProperty(process.stdin, "isTTY", { value: origIsTTY, configurable: true });

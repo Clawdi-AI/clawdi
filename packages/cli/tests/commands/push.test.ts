@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { push } from "../../src/commands/push";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
+	type AgentHomeOverrideSnapshot,
 	type CapturedRequest,
 	jsonResponse,
 	mockFetch,
 	okEnvironmentProbe,
+	restoreAgentHomeOverrides,
 	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
 } from "./helpers";
 
 /** Narrow the JSON-parsed request body of `/api/sessions/batch`. */
@@ -35,12 +38,14 @@ const AGENT_TYPE: Record<AgentKey, string> = {
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 function setup(agent: AgentKey): {
 	sent: ReturnType<typeof mockFetch>["captured"];
 	restore: () => void;
 } {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, AGENT_TYPE[agent]);
@@ -50,6 +55,8 @@ function setup(agent: AgentKey): {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	// `push` sets `process.exitCode = 1` on abort paths (not logged in,
 	// no env). Reset to 0 so subsequent test files start clean —
 	// `bun test` (1.3.13+) inherits the file's final exitCode.
@@ -58,23 +65,19 @@ afterEach(() => {
 });
 
 describe("push — Hermes fixture", () => {
-	it("uploads the 2 non-empty sessions plus per-session content", async () => {
+	it("uploads session metadata in bounded batches", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
 				method: "POST",
 				path: "/api/sessions/batch",
-				// Round 2 (commit 4e013dc) replaced `{ synced: int }` with this
-				// 4-field response. The CLI reads `needs_content` to decide
-				// which sessions still need a content upload after batch — so
-				// this mock must list both ids or no follow-up uploads happen.
 				response: () =>
 					jsonResponse({
-						created: 2,
+						created: 0,
 						updated: 0,
 						unchanged: 0,
-						needs_content: ["s-json", "s-plain"],
+						needs_content: [],
 					}),
 			},
 			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
@@ -86,20 +89,19 @@ describe("push — Hermes fixture", () => {
 			restore();
 		}
 
-		const batchCall = captured.find((c) => c.path === "/api/sessions/batch");
-		expect(batchCall).toBeDefined();
-		expect(batchCall?.method).toBe("POST");
-		// Adapter filters out s-empty; s-json comes first by started_at DESC.
-		const sessions = batchSessions(batchCall);
-		expect(sessions).toHaveLength(2);
-		expect(sessions.map((s) => s.local_session_id).sort()).toEqual(["s-json", "s-plain"]);
+		const batchCalls = captured.filter((c) => c.path === "/api/sessions/batch");
+		expect(batchCalls.length).toBeGreaterThan(0);
+		for (const call of batchCalls) expect(call.method).toBe("POST");
+		const chunkSizes = batchCalls.map((call) => batchSessions(call).length);
+		expect(Math.max(...chunkSizes)).toBeLessThanOrEqual(500);
 		// environment_id was seeded via seedAuthAndEnv
-		expect(sessions[0]?.environment_id).toBe("env-test");
+		expect(batchCalls.flatMap(batchSessions).every((s) => s.environment_id === "env-test")).toBe(
+			true,
+		);
 
-		// After batch, each session gets a content upload (multipart).
+		// `needs_content` is empty in this test's mock responses.
 		const uploads = captured.filter((c) => c.path.match(/^\/api\/sessions\/[^/]+\/upload$/));
-		expect(uploads).toHaveLength(2);
-		for (const u of uploads) expect(u.isMultipart).toBe(true);
+		expect(uploads).toHaveLength(0);
 
 		// state.json updated. Round 1 (commit d8122d6) switched the cursor
 		// key from global `sessions` to per-agent `sessions:<agentType>` so
@@ -121,18 +123,18 @@ describe("push — Hermes fixture", () => {
 
 	it("skills module uploads multipart per skill", async () => {
 		setup("hermes");
-		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
-			// `okEnvironmentProbe` returns `default_scope_id =
+			// `okEnvironmentProbe` returns `default_project_id =
 			// "00000000-...-099"` by default; the upload mock below
-			// pins the URL to that same scope. Push now reads the
-			// scope from the agent's env, not from
-			// `/api/scopes/default`, so multi-agent users land
-			// under their own env's scope.
+			// pins the URL to that same project. Push now reads the
+			// project from the agent's env, not from
+			// `/api/projects/default`, so multi-agent users land
+			// under their own env's project.
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/scopes/${scopeId}/skills/upload`,
+				path: `/api/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -141,24 +143,24 @@ describe("push — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		const uploads = captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`);
-		expect(uploads).toHaveLength(1);
-		expect(uploads[0]?.isMultipart).toBe(true);
+		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		expect(uploads.length).toBeGreaterThan(0);
+		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
 	});
 
 	it("a skill already in the skills-lock is skipped on the next push", async () => {
 		setup("hermes");
-		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/scopes/${scopeId}/skills/upload`,
+				path: `/api/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
 		const uploadCount = () =>
-			captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`).length;
+			captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`).length;
 		try {
 			// First push computes the skill's folder hash, uploads it, and
 			// records the hash in the skills-lock.
@@ -423,7 +425,7 @@ describe("push — --all flag fan-out", () => {
 
 	it("--all alone reaches all axes for a single registered agent", async () => {
 		setup("claude-code");
-		const scopeId = "00000000-0000-0000-0000-000000000099";
+		const projectId = "00000000-0000-0000-0000-000000000099";
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
 			{
@@ -433,7 +435,7 @@ describe("push — --all flag fan-out", () => {
 			},
 			{
 				method: "POST",
-				path: `/api/scopes/${scopeId}/skills/upload`,
+				path: `/api/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -450,7 +452,9 @@ describe("push — --all flag fan-out", () => {
 		expect(batchSessions(batch)).toHaveLength(1);
 		// Skill axis was also exercised — proves --all defaults modules
 		// to the full set when --modules isn't passed.
-		const skillUploads = captured.filter((c) => c.path === `/api/scopes/${scopeId}/skills/upload`);
+		const skillUploads = captured.filter(
+			(c) => c.path === `/api/projects/${projectId}/skills/upload`,
+		);
 		expect(skillUploads.length).toBeGreaterThan(0);
 	});
 

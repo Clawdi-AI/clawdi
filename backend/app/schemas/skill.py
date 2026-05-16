@@ -44,13 +44,13 @@ class SkillSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     content: str | None = None
-    # Scope + machine surface so the dashboard can render a
-    # per-machine grouped list, target the scope-explicit URLs
+    # Project + machine surface so the dashboard can render a
+    # per-machine grouped list, target the project-explicit URLs
     # (delete / re-upload) without a separate fetch, and show
     # which machine owns the skill. `machine_name` is null for
-    # skills in the user's Personal scope (no env-bound origin).
-    scope_id: str | None = None
-    scope_name: str | None = None
+    # skills in the user's Personal project (no env-bound origin).
+    project_id: str | None = None
+    project_name: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 
@@ -72,13 +72,13 @@ class SkillDetailResponse(BaseModel):
     # writes mid-edit).
     content_hash: str = ""
     updated_at: datetime | None = None
-    # Scope + machine context for the detail page. Lets the editor
-    # build the `/api/scopes/{scope_id}/skills/upload` URL for save
+    # Project + machine context for the detail page. Lets the editor
+    # build the `/api/projects/{project_id}/skills/upload` URL for save
     # without an extra round-trip, and lets the page caption say
     # "on my-mac" so multi-machine users can tell which copy
     # they're looking at.
-    scope_id: str | None = None
-    scope_name: str | None = None
+    project_id: str | None = None
+    project_name: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 

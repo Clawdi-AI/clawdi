@@ -20,7 +20,11 @@ import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
-import { fetchDefaultScopeId, fetchScopeIdForEnv, getEnvIdByAgent } from "../lib/select-adapter";
+import {
+	fetchDefaultProjectId,
+	fetchProjectIdForEnv,
+	getEnvIdByAgent,
+} from "../lib/select-adapter";
 import { computeSkillFolderHash } from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { tarSingleFile, tarSkillDir } from "../lib/tar";
@@ -55,10 +59,26 @@ function countFiles(dir: string): number {
 	return count;
 }
 
-export async function skillList(opts: { json?: boolean } = {}) {
+export async function skillList(opts: { json?: boolean; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const page = unwrap(await api.GET("/api/skills", { params: { query: { page_size: 200 } } }));
+	let projectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	}
+	const page = unwrap(
+		await api.GET("/api/skills", {
+			params: { query: projectId ? { page_size: 200, project_id: projectId } : { page_size: 200 } },
+		}),
+	);
 	const skills = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
@@ -85,7 +105,10 @@ export async function skillList(opts: { json?: boolean } = {}) {
 	console.log(chalk.gray(`\n  ${summary}`));
 }
 
-export async function skillAdd(path: string, opts: { yes?: boolean; agent?: string } = {}) {
+export async function skillAdd(
+	path: string,
+	opts: { yes?: boolean; agent?: string; project?: string } = {},
+) {
 	requireAuth();
 	const resolved = resolve(path);
 	const stat = statSync(resolved);
@@ -190,14 +213,32 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 		}
 	}
 
-	// Phase-2 scope resolution. Mirrors `skill install --agent X`:
-	//   --agent X → env-X's scope on THIS machine
-	//   no --agent → default scope, but only if its owning env
+	// Phase-2 project resolution. Mirrors `skill install --agent X`:
+	//   --agent X → env-X's project on THIS machine
+	//   no --agent → default project, but only if its owning env
 	//                lives on THIS machine (else refuse so the
 	//                user doesn't ship a local skill into a
 	//                sibling machine's cloud inventory)
-	let scopeId: string;
-	if (opts.agent) {
+	let projectId: string;
+	if (opts.project && opts.agent) {
+		console.log(
+			chalk.red("Pass either --project or --agent, not both. They target the same thing."),
+		);
+		process.exit(1);
+	}
+	if (opts.project) {
+		// Explicit project by UUID, slug, or name. The shared project
+		// resolver handles disambiguation + default fallback.
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
@@ -209,18 +250,18 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 			);
 			process.exit(1);
 		}
-		scopeId = await fetchScopeIdForEnv(api, envId);
+		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
-		scopeId = await fetchDefaultScopeId(api);
+		projectId = await fetchDefaultProjectId(api);
 		const envs = unwrap(await api.GET("/api/environments"));
-		const owning = envs.find((e) => e.default_scope_id === scopeId);
+		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
 			if (localEnvIdForAgent !== owning.id) {
 				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
 				console.log(
 					chalk.red(
-						`Account default scope belongs to ${machineName}'s ${owning.agent_type} env. ` +
+						`Account default project belongs to ${machineName}'s ${owning.agent_type} env. ` +
 							`Pass \`--agent <type>\` to install for an env on this machine, or run ` +
 							`\`clawdi skill add\` from that machine.`,
 					),
@@ -230,7 +271,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 		}
 	}
 	const result = await api.uploadSkill(
-		scopeId,
+		projectId,
 		skillKey,
 		tarBytes,
 		`${skillKey}.tar.gz`,
@@ -246,7 +287,7 @@ export async function skillAdd(path: string, opts: { yes?: boolean; agent?: stri
 
 export async function skillInstall(
 	repoInput: string,
-	opts: { agent?: string; yes?: boolean } = {},
+	opts: { agent?: string; project?: string; list?: boolean; yes?: boolean } = {},
 ) {
 	requireAuth();
 
@@ -272,24 +313,39 @@ export async function skillInstall(
 
 	const api = new ApiClient();
 
-	// Resolve the install scope BEFORE the adapter filter so
-	// `--agent X` lands the cloud install in env-X's scope. Without
-	// this, the install hit the account's default scope (typically
+	// Resolve the install project BEFORE the adapter filter so
+	// `--agent X` lands the cloud install in env-X's project. Without
+	// this, the install hit the account's default project (typically
 	// the most-recently-active env) while local writes went to
 	// agent X's adapter — dashboard / daemon for X never saw the
 	// skill, and the user's default-env home picked up rows it
 	// didn't want.
-	let scopeId: string;
+	let projectId: string;
 	// `targetAgent` is the agent we'll write the local archive
 	// for. With --agent it's explicit; without --agent we must
-	// infer it from the default scope so the cloud install and
+	// infer it from the default project so the cloud install and
 	// the local archive land in the same place. Pre-fix the
-	// no-flag path installed to ONE cloud scope but wrote to
+	// no-flag path installed to ONE cloud project but wrote to
 	// EVERY registered adapter — siblings ended up with a local
-	// SKILL.md file and no cloud row in their own scope, so
+	// SKILL.md file and no cloud row in their own project, so
 	// their dashboard / daemon state diverged.
 	let targetAgent: string | undefined = opts.agent;
-	if (opts.agent) {
+	if (opts.agent && opts.project) {
+		console.log(chalk.red("Pass either --project or --agent, not both."));
+		process.exit(1);
+	}
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		targetAgent = "__skip_local__";
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
@@ -301,20 +357,20 @@ export async function skillInstall(
 			);
 			process.exit(1);
 		}
-		scopeId = await fetchScopeIdForEnv(api, envId);
+		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
-		// No --agent flag: install to the account's default scope
+		// No --agent flag: install to the account's default project
 		// and ONLY write the local archive to the agent that owns
-		// that scope. Mirrors the dashboard's "Install" semantics
+		// that project. Mirrors the dashboard's "Install" semantics
 		// when no env is selected.
-		scopeId = await fetchDefaultScopeId(api);
+		projectId = await fetchDefaultProjectId(api);
 		const envs = unwrap(await api.GET("/api/environments"));
-		const owning = envs.find((e) => e.default_scope_id === scopeId);
+		const owning = envs.find((e) => e.default_project_id === projectId);
 		// Match the owning env to a LOCAL env on THIS machine. The
-		// account's default scope can belong to a sibling machine
+		// account's default project can belong to a sibling machine
 		// running the same agent type — in that case writing the
 		// archive into this machine's adapter directory leaves a
-		// local file with no cloud row in this machine's env scope
+		// local file with no cloud row in this machine's env project
 		// (the cloud row is under the sibling's env). Filtering by
 		// `agent_type` alone hit that exact case for multi-machine
 		// users. The proper match is `local env id == owning env id`.
@@ -323,7 +379,7 @@ export async function skillInstall(
 			if (localEnvIdForAgent === owning.id) {
 				targetAgent = owning.agent_type;
 			} else {
-				// Default scope belongs to a sibling machine. Tell the
+				// Default project belongs to a sibling machine. Tell the
 				// user explicitly so they can re-run with --agent or
 				// `clawdi pull` later from the right machine.
 				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
@@ -339,8 +395,8 @@ export async function skillInstall(
 		}
 	}
 	const installResult = unwrap(
-		await api.POST("/api/scopes/{scope_id}/skills/install", {
-			params: { path: { scope_id: scopeId } },
+		await api.POST("/api/projects/{project_id}/skills/install", {
+			params: { path: { project_id: projectId } },
 			body: { repo, path },
 		}),
 	);
@@ -348,7 +404,7 @@ export async function skillInstall(
 	// Select adapters to install to.
 	let adapters = getRegisteredAdapters();
 	if (targetAgent === "__skip_local__") {
-		// Cloud install landed in a sibling machine's scope; don't
+		// Cloud install landed in a sibling machine's project; don't
 		// write a local copy on this machine.
 		adapters = [];
 	} else if (targetAgent) {
@@ -382,14 +438,14 @@ export async function skillInstall(
 	if (adapters.length > 0) {
 		let tarBytes: Buffer;
 		try {
-			// Scope-explicit download keyed off the scope we just
-			// installed into. The legacy unscoped endpoint resolves
+			// Project-explicit download keyed off the project we just
+			// installed into. The legacy account-wide endpoint resolves
 			// duplicate skill keys by "most recently updated across
-			// visible scopes" — a multi-agent account where another
-			// scope has a newer copy of the same skill_key would
+			// visible projects" — a multi-agent account where another
+			// project has a newer copy of the same skill_key would
 			// land that other agent's bytes locally.
 			tarBytes = await api.getBytes(
-				`/api/scopes/${encodeURIComponent(scopeId)}/skills/${encodeURIComponent(installResult.skill_key)}/download`,
+				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(installResult.skill_key)}/download`,
 			);
 		} catch (e) {
 			console.log(
@@ -444,20 +500,34 @@ export async function skillInstall(
 	}
 }
 
-export async function skillRm(key: string, opts: { agent?: string } = {}) {
+export async function skillRm(key: string, opts: { agent?: string; project?: string } = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	// Phase-2 scope-explicit delete: only the targeted scope's
+	// Phase-2 project-explicit delete: only the targeted project's
 	// copy is removed. Mirrors `skill add`/`install`: --agent X
-	// pins env-X's scope on this machine; without --agent we
-	// require the default scope's owning env to be a LOCAL env on
+	// pins env-X's project on this machine; without --agent we
+	// require the default project's owning env to be a LOCAL env on
 	// THIS machine, otherwise we'd silently uninstall from a
 	// sibling machine's agent. (Pre-fix the no-flag path used
-	// `fetchDefaultScopeId` blindly — the heuristic resolves to
+	// `fetchDefaultProjectId` blindly — the heuristic resolves to
 	// "most-recently-active env" which on multi-machine accounts
 	// is often someone else's env.)
-	let scopeId: string;
-	if (opts.agent) {
+	let projectId: string;
+	if (opts.agent && opts.project) {
+		console.log(chalk.red("Pass either --project or --agent, not both."));
+		process.exit(1);
+	}
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
 			const entry = adapterRegistry[opts.agent as keyof typeof adapterRegistry];
@@ -469,18 +539,18 @@ export async function skillRm(key: string, opts: { agent?: string } = {}) {
 			);
 			process.exit(1);
 		}
-		scopeId = await fetchScopeIdForEnv(api, envId);
+		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
-		scopeId = await fetchDefaultScopeId(api);
+		projectId = await fetchDefaultProjectId(api);
 		const envs = unwrap(await api.GET("/api/environments"));
-		const owning = envs.find((e) => e.default_scope_id === scopeId);
+		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
 			if (localEnvIdForAgent !== owning.id) {
 				const machineName = (owning as { machine_name?: string }).machine_name ?? "another machine";
 				console.log(
 					chalk.red(
-						`Account default scope belongs to ${machineName}'s ${owning.agent_type} env. ` +
+						`Account default project belongs to ${machineName}'s ${owning.agent_type} env. ` +
 							`Pass \`--agent <type>\` to remove from an env on this machine, or run ` +
 							`\`clawdi skill rm\` from that machine.`,
 					),
@@ -490,8 +560,8 @@ export async function skillRm(key: string, opts: { agent?: string } = {}) {
 		}
 	}
 	unwrap(
-		await api.DELETE("/api/scopes/{scope_id}/skills/{skill_key}", {
-			params: { path: { scope_id: scopeId, skill_key: key } },
+		await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+			params: { path: { project_id: projectId, skill_key: key } },
 		}),
 	);
 	console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));

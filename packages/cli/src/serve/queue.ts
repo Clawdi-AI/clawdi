@@ -47,14 +47,14 @@ export type QueueItem =
 	| (ItemBase & {
 			kind: "skill_push";
 			skill_key: string;
-			// Scope_id this item was enqueued under. Drained items
-			// whose stamped scope no longer matches the daemon's
-			// current scope are dropped (mid-flight reassignment).
+			// Project ID this item was enqueued under. Drained items
+			// whose stamped project no longer matches the daemon's
+			// current project are dropped (mid-flight reassignment).
 			// Optional for back-compat with queue files written by
-			// pre-scope-stamp binaries; the drain loop stamps the
-			// current scope when the field is absent so legacy
+			// pre-project-stamp binaries; the drain loop stamps the
+			// current project when the field is absent so legacy
 			// pending work doesn't silently disappear on upgrade.
-			scope_id?: string;
+			project_id?: string;
 			// Hash of what we're about to upload. Distinguishes
 			// duplicates: same skill_key with same new_hash = dedup.
 			new_hash: string;
@@ -141,12 +141,12 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 		)
 			return false;
 		// Legacy queue items written by an older binary may not
-		// carry `scope_id`. Accept them — the drain loop stamps
-		// the current scope before upload, so legacy work doesn't
+		// carry `project_id`. Accept them — the drain loop stamps
+		// the current project before upload, so legacy work doesn't
 		// silently disappear after a binary upgrade. Reject only
 		// if the field is present but the wrong type (corruption
 		// signal, not a back-compat case).
-		if (r.scope_id !== undefined && typeof r.scope_id !== "string") return false;
+		if (r.project_id !== undefined && typeof r.project_id !== "string") return false;
 		return true;
 	}
 	if (r.kind === "session_push") {
