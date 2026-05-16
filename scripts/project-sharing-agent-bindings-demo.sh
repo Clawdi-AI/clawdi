@@ -126,6 +126,7 @@ section "CLI user and agent contracts"
     tests/commands/project-create.test.ts \
     tests/commands/project-list.test.ts \
     tests/commands/project-members.test.ts \
+    tests/commands/project-sharing-owner.test.ts \
     tests/commands/project-show.test.ts \
     tests/project-folders.test.ts \
     tests/commands/run.test.ts \
