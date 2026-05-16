@@ -3,6 +3,7 @@
 import { useUser } from "@clerk/nextjs";
 import {
 	BarChart3,
+	BookOpen,
 	Brain,
 	ChevronsUpDown,
 	CircleHelp,
@@ -163,6 +164,19 @@ export function AppSidebar() {
 								{/* `DeployTrigger` is `null` in OSS builds — the dynamic import is
 								    only constructed when `IS_HOSTED` is true (see top of file). */}
 								{DeployTrigger ? <DeployTrigger /> : null}
+								<SidebarMenuItem>
+									<SidebarMenuButton asChild tooltip="Docs">
+										<a
+											href="https://deepwiki.com/Clawdi-AI/clawdi"
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<BookOpen />
+											<span>Docs</span>
+											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+										</a>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
 								<SidebarMenuItem>
 									<SidebarMenuButton asChild tooltip="GitHub">
 										<a

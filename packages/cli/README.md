@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://clawdi.ai">Website</a> ·
   <a href="https://github.com/Clawdi-AI/clawdi">GitHub</a> ·
+  <a href="https://deepwiki.com/Clawdi-AI/clawdi">Docs</a> ·
   <a href="https://www.npmjs.com/package/clawdi">npm</a> ·
   <a href="https://github.com/Clawdi-AI/clawdi/blob/main/docs/architecture.md">Architecture</a> ·
   <a href="#quickstart">Quickstart</a> ·
