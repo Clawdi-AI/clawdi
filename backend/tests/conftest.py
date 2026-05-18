@@ -33,7 +33,7 @@ from app.models.user import User
 TEST_DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True)
 def _ensure_crypto_keys():
     """Make sure vault/JWT keys are valid for the test run.
 
@@ -77,7 +77,7 @@ async def db_session(engine) -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def create_env_with_scope(
+async def create_env_with_project(
     db_session,
     *,
     user_id,
@@ -87,26 +87,26 @@ async def create_env_with_scope(
     os: str = "darwin",
 ):
     """Test helper: insert an AgentEnvironment together with its
-    env-local scope and wire `default_scope_id`. Mirrors the
+    env-local project and wire `default_project_id`. Mirrors the
     `register_environment` route flow so tests don't have to
-    duplicate the inline-scope creation pattern. Returns the
-    env (with default_scope_id populated).
+    duplicate the inline-project creation pattern. Returns the
+    env (with default_project_id populated).
     """
-    from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+    from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
     from app.models.session import AgentEnvironment
 
-    # Mutual FK: env.default_scope_id (NOT NULL) → scope.id;
-    # scope.origin_environment_id (NULLABLE) → env.id. Insert
-    # scope without origin first, then env pointing at scope,
-    # then back-fill scope.origin_environment_id.
+    # Mutual FK: env.default_project_id (NOT NULL) → project.id;
+    # project.origin_environment_id (NULLABLE) → env.id. Insert
+    # project without origin first, then env pointing at project,
+    # then back-fill project.origin_environment_id.
     pending_slug = f"env-{uuid.uuid4().hex[:12]}"
-    scope = Scope(
+    project = Project(
         user_id=user_id,
         name=f"{machine_name} ({agent_type})",
         slug=pending_slug,
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
-    db_session.add(scope)
+    db_session.add(project)
     await db_session.flush()
 
     env = AgentEnvironment(
@@ -115,12 +115,12 @@ async def create_env_with_scope(
         machine_name=machine_name,
         agent_type=agent_type,
         os=os,
-        default_scope_id=scope.id,
+        default_project_id=project.id,
     )
     db_session.add(env)
     await db_session.flush()
 
-    scope.origin_environment_id = env.id
+    project.origin_environment_id = env.id
     await db_session.commit()
     await db_session.refresh(env)
     return env
@@ -131,11 +131,11 @@ async def seed_user(db_session: AsyncSession) -> User:
     """A throwaway user row scoped to one test, cleaned up in teardown.
 
     Mirrors the auto-create flow in `_auth_via_clerk_jwt`: every user
-    must have a Personal scope so the default-scope resolver has a
-    fallback target. Without this, write paths that resolve scope
+    must have a Personal project so the default-project resolver has a
+    fallback target. Without this, write paths that resolve project
     server-side would 500 on a fresh test user.
     """
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     user = User(
         clerk_id=f"test_{uuid.uuid4().hex[:12]}",
@@ -145,11 +145,11 @@ async def seed_user(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.flush()
 
-    personal = Scope(
+    personal = Project(
         user_id=user.id,
         name="Personal",
         slug="personal",
-        kind=SCOPE_KIND_PERSONAL,
+        kind=PROJECT_KIND_PERSONAL,
     )
     db_session.add(personal)
     await db_session.commit()
@@ -164,19 +164,41 @@ async def seed_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture
-async def scope_id(db_session: AsyncSession, seed_user: User) -> str:
-    """Personal scope id for the seed user. Most upload / read tests
-    target this — phase-2 routes are scope-explicit, so the URL needs
-    a scope_id and the seed user's Personal scope is the natural
-    default for tests that don't care about multi-env isolation."""
+async def project_id(db_session: AsyncSession, seed_user: User) -> str:
+    """Personal project id for the seed user.
+
+    Most upload/read tests target this — phase-2 routes are
+    project-explicit, and the seed user's Personal project is the
+    natural default for tests that don't care about multi-env
+    isolation.
+    """
     from sqlalchemy import select
 
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     result = await db_session.execute(
-        select(Scope.id).where(Scope.user_id == seed_user.id, Scope.kind == SCOPE_KIND_PERSONAL)
+        select(Project.id).where(
+            Project.user_id == seed_user.id,
+            Project.kind == PROJECT_KIND_PERSONAL,
+        )
     )
     return str(result.scalar_one())
+
+
+@pytest_asyncio.fixture
+async def seed_project(db_session: AsyncSession, seed_user: User):
+    """The Personal project created alongside seed_user."""
+    from sqlalchemy import select
+
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+
+    result = await db_session.execute(
+        select(Project).where(
+            Project.user_id == seed_user.id,
+            Project.kind == PROJECT_KIND_PERSONAL,
+        )
+    )
+    return result.scalar_one()
 
 
 @pytest_asyncio.fixture

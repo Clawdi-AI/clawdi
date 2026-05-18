@@ -14,16 +14,16 @@ from app.schemas.dashboard import ContributionDayResponse, DashboardStatsRespons
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
-# These endpoints aggregate by `user_id` across every scope/env
-# the user owns. An env-bound deploy key (full-permission api_key
+# These endpoints aggregate by `user_id` across every project/env
+# the user owns. An Agent API key (full-permission api_key
 # minted with `scopes=None` but pinned to `environment_id=A`)
 # would otherwise read account-wide totals — sessions, message
 # counts, token usage, contribution graph, skill/vault/memory
 # counts — for sibling envs B/C/D that the resource-level routes
 # (memories.py, vault.py, skills.py) explicitly hide from it.
 # Forcing `require_web_auth` (Clerk JWT only, no api_keys at
-# all) keeps the deploy-key isolation model intact: env-bound
-# keys can read/write within their env, but never see the
+# all) keeps the deploy-key isolation model intact: Agent environment
+# keys can read/write within their Agent Project, but never see the
 # user-wide aggregate that would let them infer activity in
 # other envs. The dashboard is the only consumer here — no CLI
 # callsites.

@@ -1,7 +1,7 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
-import { extractTarGz } from "../lib/tar";
+import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -294,6 +294,10 @@ export class CodexAdapter implements AgentAdapter {
 		return skillsDir();
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
+	}
+
 	getSessionsWatchPaths(): string[] {
 		// Codex dumps every session under `~/.codex/sessions/`. We
 		// watch the root recursively and let `collectSessions`
@@ -314,6 +318,14 @@ export class CodexAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await extractTarGz(skillsDir(), tarGzBytes);
+	}
+
+	async writeSharedSkillArchive(
+		key: string,
+		ownerHandle: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

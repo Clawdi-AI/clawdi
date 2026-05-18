@@ -17,13 +17,13 @@ from app.services.tar_utils import tar_from_content
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_happy_path(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: str):
     content = "---\nname: hello\ndescription: greet the user\n---\n# Hello\n"
     tar_bytes, _ = tar_from_content("hello", content)
 
     files = {"file": ("hello.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "hello"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -36,7 +36,7 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, scope_id: str)
     # See test_skill_upload_changed_content_bumps_version below for the
     # bump-on-real-change case.
     r2 = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "hello"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["version"] == 1, "identical re-upload must not bump version"
@@ -48,7 +48,7 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, scope_id: str)
 
 @pytest.mark.asyncio
 async def test_dashboard_edit_with_stale_content_hash_returns_412(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """Regression: the dashboard edit endpoint takes `content_hash` as
     the editor's last-known hash (If-Match precondition), NOT as the
@@ -65,7 +65,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     seed_content = "---\nname: editme\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("editme", seed_content)
     seed = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "editme"},
         files={"file": ("editme.tar.gz", tar_bytes, "application/gzip")},
     )
@@ -76,7 +76,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     # Stale `content_hash` (anything not the current row hash) -> 412.
     stale = "0" * 64
     r = await client.put(
-        f"/api/scopes/{scope_id}/skills/editme/content",
+        f"/api/projects/{project_id}/skills/editme/content",
         json={
             "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
             "content_hash": stale,
@@ -88,26 +88,26 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     assert detail["current_content_hash"] == current_hash
 
     # And the row was NOT updated.
-    detail_get = await client.get(f"/api/scopes/{scope_id}/skills/editme")
+    detail_get = await client.get(f"/api/projects/{project_id}/skills/editme")
     assert "# Original" in detail_get.json().get("content", "")
 
     # Sending the CURRENT hash succeeds. Schema requires 64-char
     # lowercase hex; the seeded hash satisfies that.
     ok = await client.put(
-        f"/api/scopes/{scope_id}/skills/editme/content",
+        f"/api/projects/{project_id}/skills/editme/content",
         json={
             "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
             "content_hash": current_hash,
         },
     )
     assert ok.status_code == 200, ok.text
-    after = await client.get(f"/api/scopes/{scope_id}/skills/editme")
+    after = await client.get(f"/api/projects/{project_id}/skills/editme")
     assert "# Edited" in after.json().get("content", "")
 
 
 @pytest.mark.asyncio
 async def test_dashboard_edit_without_content_hash_is_last_write_wins(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """The `content_hash` field is optional. Phase-1 dashboard editor
     leaves it blank for last-write-wins. Verify the omitted-hash path
@@ -115,25 +115,25 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
     seed_content = "---\nname: lww\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("lww", seed_content)
     await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "lww"},
         files={"file": ("lww.tar.gz", tar_bytes, "application/gzip")},
     )
 
     r = await client.put(
-        f"/api/scopes/{scope_id}/skills/lww/content",
+        f"/api/projects/{project_id}/skills/lww/content",
         json={
             "content": "---\nname: lww\ndescription: edited\n---\n# Edited\n",
         },
     )
     assert r.status_code == 200, r.text
-    after = await client.get(f"/api/scopes/{scope_id}/skills/lww")
+    after = await client.get(f"/api/projects/{project_id}/skills/lww")
     assert "# Edited" in after.json().get("content", "")
 
 
 @pytest.mark.asyncio
 async def test_skill_upload_unchanged_does_not_bump_version(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """A re-upload of byte-identical content must not bump `version` or
     `updated_at`. The dashboard would otherwise inflate version numbers
@@ -146,7 +146,7 @@ async def test_skill_upload_unchanged_does_not_bump_version(
     files = {"file": ("stable.tar.gz", tar_bytes, "application/gzip")}
 
     first = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "stable"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
     )
     assert first.json()["version"] == 1
     first_updated_at = (await client.get("/api/skills/stable")).json().get("updated_at")
@@ -161,7 +161,7 @@ async def test_skill_upload_unchanged_does_not_bump_version(
     await asyncio.sleep(0.05)
 
     second = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "stable"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
     )
     assert second.status_code == 200
     assert second.json()["version"] == 1, "version must not bump on identical re-upload"
@@ -174,7 +174,9 @@ async def test_skill_upload_unchanged_does_not_bump_version(
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_changed_content_bumps_version(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_changed_content_bumps_version(
+    client: httpx.AsyncClient, project_id: str
+):
     """When the SKILL.md content actually changes, version goes up and
     `updated_at` advances."""
     v1_content = "---\nname: mut\ndescription: v1\n---\n# v1\n"
@@ -182,7 +184,7 @@ async def test_skill_upload_changed_content_bumps_version(client: httpx.AsyncCli
     files_v1 = {"file": ("mut.tar.gz", v1_tar, "application/gzip")}
 
     first = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "mut"}, files=files_v1
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v1
     )
     assert first.json()["version"] == 1
 
@@ -191,14 +193,16 @@ async def test_skill_upload_changed_content_bumps_version(client: httpx.AsyncCli
     files_v2 = {"file": ("mut.tar.gz", v2_tar, "application/gzip")}
 
     second = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "mut"}, files=files_v2
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v2
     )
     assert second.status_code == 200
     assert second.json()["version"] == 2, "real content change must bump version"
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_accepts_client_supplied_hash(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_accepts_client_supplied_hash(
+    client: httpx.AsyncClient, project_id: str
+):
     """New CLIs (>= 0.3.4) compute a file-tree hash and send it as a form
     field. Server should trust it and skip its own hashing.
 
@@ -217,11 +221,11 @@ async def test_skill_upload_accepts_client_supplied_hash(client: httpx.AsyncClie
     fake_hash = hashlib.sha256(b"client-says-this").hexdigest()
     data = {"skill_key": "hashed", "content_hash": fake_hash}
 
-    first = await client.post(f"/api/scopes/{scope_id}/skills/upload", data=data, files=files)
+    first = await client.post(f"/api/projects/{project_id}/skills/upload", data=data, files=files)
     assert first.status_code == 200, first.text
     assert first.json()["version"] == 1
 
-    second = await client.post(f"/api/scopes/{scope_id}/skills/upload", data=data, files=files)
+    second = await client.post(f"/api/projects/{project_id}/skills/upload", data=data, files=files)
     assert second.status_code == 200, second.text
     assert second.json()["version"] == 1, (
         "second push with same client-supplied hash must skip the bump"
@@ -229,7 +233,7 @@ async def test_skill_upload_accepts_client_supplied_hash(client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, project_id: str):
     """Archive with ``../evil`` must be rejected before it ever hits disk.
 
     The 400 response body is intentionally generic (no echo of the
@@ -245,7 +249,7 @@ async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, sc
 
     files = {"file": ("evil.tar.gz", buf.getvalue(), "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "evil"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "evil"}, files=files
     )
     assert r.status_code == 400, r.text
     # Positive contract: server returns the fixed validation
@@ -260,7 +264,7 @@ async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, sc
 
 @pytest.mark.asyncio
 async def test_skill_upload_rejects_archive_rooted_at_wrong_path(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """Round-45 P2 regression: an upload with `skill_key=category/foo`
     but a tar rooted at `foo/SKILL.md` was silently accepted.
@@ -281,7 +285,7 @@ async def test_skill_upload_rejects_archive_rooted_at_wrong_path(
     flat_tar, _ = tar_from_content("foo", content)
     files = {"file": ("flat.tar.gz", flat_tar, "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "category/foo"},
         files=files,
     )
@@ -291,7 +295,7 @@ async def test_skill_upload_rejects_archive_rooted_at_wrong_path(
 
 @pytest.mark.asyncio
 async def test_skill_upload_rejects_reserved_routing_suffix(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """Reserved-suffix guard on skill_key. Round 36's `:path`
     converter on `/{skill_key:path}` made nested keys round-trip,
@@ -306,7 +310,7 @@ async def test_skill_upload_rejects_reserved_routing_suffix(
         tar_bytes, _ = tar_from_content(evil_key, content)
         files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
         r = await client.post(
-            f"/api/scopes/{scope_id}/skills/upload",
+            f"/api/projects/{project_id}/skills/upload",
             data={"skill_key": evil_key},
             files=files,
         )
@@ -320,7 +324,7 @@ async def test_skill_upload_rejects_reserved_routing_suffix(
     tar_bytes, _ = tar_from_content("download", content)
     files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "download"},
         files=files,
     )
@@ -328,7 +332,9 @@ async def test_skill_upload_rejects_reserved_routing_suffix(
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_rejects_overlength_nested_key(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_rejects_overlength_nested_key(
+    client: httpx.AsyncClient, project_id: str
+):
     """Round-38 P2 regression: pre-fix the per-component regex
     accepted up to 4 × 200 = 800 chars, but `Skill.skill_key` is
     `String(200)`. A 400-char nested key passed FastAPI
@@ -348,7 +354,7 @@ async def test_skill_upload_rejects_overlength_nested_key(client: httpx.AsyncCli
     assert len(long_key) > 200
 
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": long_key},
         files=files,
     )
@@ -356,7 +362,7 @@ async def test_skill_upload_rejects_overlength_nested_key(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient, project_id: str):
     """Round-35 P2 regression: Hermes layouts nest skills under
     a category dir (`~/.hermes/skills/category/foo/SKILL.md`),
     so the adapter emits `category/foo` as `skill_key`. The
@@ -375,7 +381,7 @@ async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient,
     tar_bytes, _ = tar_from_content("category/foo", content)
     files = {"file": ("nested.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "category/foo"},
         files=files,
     )
@@ -390,7 +396,7 @@ async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient,
     flat_files = {"file": ("evil.tar.gz", flat_tar, "application/gzip")}
     for evil_key in ("../escape", "category/../escape", "/abs", ".hidden"):
         r_evil = await client.post(
-            f"/api/scopes/{scope_id}/skills/upload",
+            f"/api/projects/{project_id}/skills/upload",
             data={"skill_key": evil_key},
             files=flat_files,
         )
@@ -451,14 +457,14 @@ def test_compute_file_tree_hash_strips_nested_skill_key():
 
 
 @pytest.mark.asyncio
-async def test_nested_skill_round_trips_through_scoped_routes(
-    client: httpx.AsyncClient, scope_id: str
+async def test_nested_skill_round_trips_through_project_routes(
+    client: httpx.AsyncClient, project_id: str
 ):
-    """Round-36 P2 regression: scoped GET / download / DELETE routes
+    """Round-36 P2 regression: project GET / download / DELETE routes
     must capture slash-bearing skill_keys (Hermes layout). Pre-fix
     the `{skill_key}` path param refused to match a URL containing
     `/`, so a Hermes nested skill could be uploaded but not opened
-    / downloaded / deleted via the scoped routes — bricked by the
+    / downloaded / deleted via the project routes — bricked by the
     ASGI router. The fix uses Starlette's `:path` converter and
     declares the bare GET AFTER `/{skill_key:path}/download` so the
     download regex is tried first (FastAPI matches in declaration
@@ -470,47 +476,47 @@ async def test_nested_skill_round_trips_through_scoped_routes(
     tar_bytes, _ = tar_from_content(nested_key, content)
     files = {"file": ("nested.tar.gz", tar_bytes, "application/gzip")}
 
-    # Upload via the scoped form-data route.
+    # Upload via the project form-data route.
     r_upload = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": nested_key},
         files=files,
     )
     assert r_upload.status_code == 200, r_upload.text
 
     # GET detail with nested key (literal `/` in URL path).
-    r_get = await client.get(f"/api/scopes/{scope_id}/skills/{nested_key}")
+    r_get = await client.get(f"/api/projects/{project_id}/skills/{nested_key}")
     assert r_get.status_code == 200, r_get.text
     assert r_get.json()["skill_key"] == nested_key
 
     # GET download — most-specific subroute. The reorder is the
     # whole point of this test: the bare GET must NOT have eaten
-    # the URL `/api/scopes/{sid}/skills/category/foo/download` as
+    # the URL `/api/projects/{sid}/skills/category/foo/download` as
     # `skill_key="category/foo/download"`.
-    r_download = await client.get(f"/api/scopes/{scope_id}/skills/{nested_key}/download")
+    r_download = await client.get(f"/api/projects/{project_id}/skills/{nested_key}/download")
     assert r_download.status_code == 200, r_download.text
     assert r_download.headers["content-type"].startswith("application/gzip")
 
     # PUT content — also a more-specific subroute; ordering matters
     # the same way it does for download.
-    new_md = "---\nname: nested\ndescription: edited via scoped PUT\n---\n# Nested v2\n"
+    new_md = "---\nname: nested\ndescription: edited via project PUT\n---\n# Nested v2\n"
     r_put = await client.put(
-        f"/api/scopes/{scope_id}/skills/{nested_key}/content",
+        f"/api/projects/{project_id}/skills/{nested_key}/content",
         json={"content": new_md},
     )
     assert r_put.status_code == 200, r_put.text
 
     # DELETE last — verifies the deletion route also accepts nested
-    # keys so an uninstall via the scoped DELETE actually removes
+    # keys so an uninstall via the project DELETE actually removes
     # the row.
-    r_delete = await client.delete(f"/api/scopes/{scope_id}/skills/{nested_key}")
+    r_delete = await client.delete(f"/api/projects/{project_id}/skills/{nested_key}")
     assert r_delete.status_code == 200, r_delete.text
-    r_get_after = await client.get(f"/api/scopes/{scope_id}/skills/{nested_key}")
+    r_get_after = await client.get(f"/api/projects/{project_id}/skills/{nested_key}")
     assert r_get_after.status_code == 404, r_get_after.text
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, scope_id: str):
+async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, project_id: str):
     """A valid tar with no SKILL.md is rejected — we need the frontmatter."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
@@ -521,151 +527,157 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, scope_i
 
     files = {"file": ("nomanifest.tar.gz", buf.getvalue(), "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "no-manifest"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "no-manifest"}, files=files
     )
     assert r.status_code == 400, r.text
     assert "SKILL.md" in r.text
 
 
 @pytest.mark.asyncio
-async def test_list_skills_etag_binds_revision_and_scope(
-    client: httpx.AsyncClient, db_session, seed_user, scope_id: str
+async def test_list_skills_etag_binds_revision_and_project(
+    client: httpx.AsyncClient, db_session, seed_user, project_id: str
 ):
     """Round-32 P2 regression: the conditional GET ETag on
-    `/api/skills` must bind both `skills_revision` AND `scope_id`.
-    Reusing an old scope's ETag against a new scope at the same
-    revision MUST NOT short-circuit with 304 — the new scope can
+    `/api/skills` must bind both `skills_revision` AND `project_id`.
+    Reusing an old project's ETag against a new project at the same
+    revision MUST NOT short-circuit with 304 — the new project can
     have a totally different listing at the same revision counter
-    (counter is account-wide, listing is scope-scoped). Pre-fix
-    the daemon would silently miss the new scope's existing skills
+    (counter is account-wide, listing is project-filtered). Pre-fix
+    the daemon would silently miss the new project's existing skills
     until some unrelated cloud change bumped the revision."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    # Land a skill in scope A so the list isn't empty.
-    content = "---\nname: alpha\ndescription: in scope A\n---\n# Hello\n"
+    # Land a skill in project A so the list isn't empty.
+    content = "---\nname: alpha\ndescription: in project A\n---\n# Hello\n"
     tar_bytes, _ = tar_from_content("alpha", content)
     files = {"file": ("alpha.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload", data={"skill_key": "alpha"}, files=files
+        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "alpha"}, files=files
     )
     assert r.status_code == 200, r.text
 
-    # Capture scope A's listing ETag.
-    list_a = await client.get(f"/api/skills?scope_id={scope_id}")
+    # Capture project A's listing ETag.
+    list_a = await client.get(f"/api/skills?project_id={project_id}")
     assert list_a.status_code == 200, list_a.text
     etag_a = list_a.headers.get("ETag")
     assert etag_a is not None
-    # ETag carries `<revision>:<scope_id>`. Sanity-check both
+    # ETag carries `<revision>:<project_id>`. Sanity-check both
     # components are present so a regression to plain
     # `<revision>` would fail the test.
-    assert ":" in etag_a.strip('"'), f"expected revision:scope tag, got {etag_a}"
-    assert scope_id in etag_a, f"scope_id missing from ETag {etag_a}"
+    assert ":" in etag_a.strip('"'), f"expected revision:project tag, got {etag_a}"
+    assert project_id in etag_a, f"project_id missing from ETag {etag_a}"
 
-    # Replaying the same ETag against the same scope returns 304.
-    r304 = await client.get(f"/api/skills?scope_id={scope_id}", headers={"If-None-Match": etag_a})
+    # Replaying the same ETag against the same project returns 304.
+    r304 = await client.get(
+        f"/api/skills?project_id={project_id}",
+        headers={"If-None-Match": etag_a},
+    )
     assert r304.status_code == 304, r304.text
 
-    # Now register a SECOND scope and land a skill there. Crucially,
+    # Now register a SECOND project and land a skill there. Crucially,
     # the second upload bumps the user-wide skills_revision (pre-fix
-    # behaviour would let a SAME-revision scope swap silently 304).
+    # behaviour would let a SAME-revision project swap silently 304).
     # We test the stronger property anyway: the daemon's cached
-    # ETag from scope A must NOT cause a 304 against scope B even
+    # ETag from project A must NOT cause a 304 against project B even
     # if B happened to be at the same revision.
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="machine-b",
         machine_name="Mac B",
         agent_type="codex",
     )
-    scope_b = str(env_b.default_scope_id)
-    content_b = "---\nname: beta\ndescription: in scope B\n---\n# Beta\n"
+    project_b = str(env_b.default_project_id)
+    content_b = "---\nname: beta\ndescription: in project B\n---\n# Beta\n"
     tar_bytes_b, _ = tar_from_content("beta", content_b)
     files_b = {"file": ("beta.tar.gz", tar_bytes_b, "application/gzip")}
     r_b = await client.post(
-        f"/api/scopes/{scope_b}/skills/upload", data={"skill_key": "beta"}, files=files_b
+        f"/api/projects/{project_b}/skills/upload", data={"skill_key": "beta"}, files=files_b
     )
     assert r_b.status_code == 200, r_b.text
 
-    # Replaying scope A's ETag against scope B MUST NOT 304 —
+    # Replaying project A's ETag against project B MUST NOT 304 —
     # different representation. Also cover the same-revision
     # boundary explicitly: the upload above bumped revision, so
-    # forge an If-None-Match with scope A's tag rewritten to
-    # the new revision (still wrong scope) and confirm we get 200.
-    list_b = await client.get(f"/api/skills?scope_id={scope_b}", headers={"If-None-Match": etag_a})
+    # forge an If-None-Match with project A's tag rewritten to
+    # the new revision (still wrong project) and confirm we get 200.
+    list_b = await client.get(
+        f"/api/skills?project_id={project_b}",
+        headers={"If-None-Match": etag_a},
+    )
     assert list_b.status_code == 200, list_b.text
     assert any(item["skill_key"] == "beta" for item in list_b.json()["items"])
 
     # Defense-in-depth: rewrite the revision component to current
-    # so caller has a same-revision-different-scope ETag — the
+    # so caller has a same-revision-different-project ETag — the
     # exact race the round-32 finding describes. Must still 200.
     new_etag = list_b.headers["ETag"]
     new_revision = new_etag.strip('"').split(":")[0]
-    forged = f'"{new_revision}:{scope_id}"'
+    forged = f'"{new_revision}:{project_id}"'
     r_forged = await client.get(
-        f"/api/skills?scope_id={scope_b}", headers={"If-None-Match": forged}
+        f"/api/skills?project_id={project_b}", headers={"If-None-Match": forged}
     )
     assert r_forged.status_code == 200, r_forged.text
 
 
 @pytest.mark.asyncio
-async def test_scope_explicit_upload_targets_named_scope(
+async def test_project_explicit_upload_targets_named_project(
     client: httpx.AsyncClient, db_session, seed_user
 ):
-    """Phase-2 route: POST /api/scopes/{scope_id}/skills/upload
-    lands the upload in the URL-named scope, not the caller-
+    """Phase-2 route: POST /api/projects/{project_id}/skills/upload
+    lands the upload in the URL-named project, not the caller-
     resolved default. Verifies the route shim works AND that
-    cross-scope writes don't bleed (a skill uploaded to env A's
-    scope must not appear in env B's scope's list)."""
-    from tests.conftest import create_env_with_scope
+    cross-project writes don't bleed (a skill uploaded to env A's
+    project must not appear in env B's project's list)."""
+    from tests.conftest import create_env_with_project
 
-    env_a = await create_env_with_scope(
+    env_a = await create_env_with_project(
         db_session, user_id=seed_user.id, machine_id="a", machine_name="MachineA"
     )
-    env_b = await create_env_with_scope(
+    env_b = await create_env_with_project(
         db_session, user_id=seed_user.id, machine_id="b", machine_name="MachineB"
     )
 
-    content = "---\nname: scoped\ndescription: x\n---\n# Scoped\n"
-    tar_bytes, _ = tar_from_content("scoped", content)
-    files = {"file": ("scoped.tar.gz", tar_bytes, "application/gzip")}
+    content = "---\nname: projected\ndescription: x\n---\n# Projected\n"
+    tar_bytes, _ = tar_from_content("projected", content)
+    files = {"file": ("projected.tar.gz", tar_bytes, "application/gzip")}
 
-    # Upload to env_a's scope explicitly via phase-2 route.
+    # Upload to env_a's project explicitly via phase-2 route.
     r = await client.post(
-        f"/api/scopes/{env_a.default_scope_id}/skills/upload",
-        data={"skill_key": "scoped"},
+        f"/api/projects/{env_a.default_project_id}/skills/upload",
+        data={"skill_key": "projected"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
-    # Phase-2 read on env_a's scope: skill is there.
-    detail_a = await client.get(f"/api/scopes/{env_a.default_scope_id}/skills/scoped")
+    # Phase-2 read on env_a's project: skill is there.
+    detail_a = await client.get(f"/api/projects/{env_a.default_project_id}/skills/projected")
     assert detail_a.status_code == 200, detail_a.text
-    assert detail_a.json()["skill_key"] == "scoped"
+    assert detail_a.json()["skill_key"] == "projected"
 
-    # Phase-2 read on env_b's scope: NOT there. This is the
-    # isolation invariant — same skill_key in different scopes
+    # Phase-2 read on env_b's project: NOT there. This is the
+    # isolation invariant — same skill_key in different projects
     # don't see each other.
-    detail_b = await client.get(f"/api/scopes/{env_b.default_scope_id}/skills/scoped")
+    detail_b = await client.get(f"/api/projects/{env_b.default_project_id}/skills/projected")
     assert detail_b.status_code == 404, detail_b.text
 
 
 @pytest.mark.asyncio
-async def test_scope_explicit_upload_rejects_other_users_scope(
+async def test_project_explicit_upload_rejects_other_users_project(
     client: httpx.AsyncClient, db_session, seed_user
 ):
-    """Targeting a scope you don't own returns 404 — never leak
-    another tenant's scope existence via 403."""
-    from app.models.scope import SCOPE_KIND_PERSONAL, Scope
+    """Targeting a project you don't own returns 404 — never leak
+    another tenant's project existence via 403."""
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
     from app.models.user import User as UserModel
 
-    other = UserModel(clerk_id="other_scope_test", email="other2@clawdi.local", name="Other")
+    other = UserModel(clerk_id="other_project_test", email="other2@clawdi.local", name="Other")
     db_session.add(other)
     await db_session.flush()
-    other_scope = Scope(
-        user_id=other.id, name="Personal", slug="personal", kind=SCOPE_KIND_PERSONAL
+    other_project = Project(
+        user_id=other.id, name="Personal", slug="personal", kind=PROJECT_KIND_PERSONAL
     )
-    db_session.add(other_scope)
+    db_session.add(other_project)
     await db_session.commit()
 
     try:
@@ -673,7 +685,7 @@ async def test_scope_explicit_upload_rejects_other_users_scope(
         tar_bytes, _ = tar_from_content("x", content)
         files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
         r = await client.post(
-            f"/api/scopes/{other_scope.id}/skills/upload",
+            f"/api/projects/{other_project.id}/skills/upload",
             data={"skill_key": "x"},
             files=files,
         )
@@ -685,7 +697,7 @@ async def test_scope_explicit_upload_rejects_other_users_scope(
 
 @pytest.mark.asyncio
 async def test_skill_reupload_after_delete_reactivates_row(
-    client: httpx.AsyncClient, scope_id: str
+    client: httpx.AsyncClient, project_id: str
 ):
     """Round-r5 P1: a soft-deleted skill row (`is_active=False`)
     must reactivate when the daemon re-uploads byte-identical
@@ -703,14 +715,14 @@ async def test_skill_reupload_after_delete_reactivates_row(
 
     # 1) initial upload — row created active.
     r = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "revive"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
-    # 2) soft-delete via the scope-explicit route.
-    r_del = await client.delete(f"/api/scopes/{scope_id}/skills/revive")
+    # 2) soft-delete via the project-explicit route.
+    r_del = await client.delete(f"/api/projects/{project_id}/skills/revive")
     assert r_del.status_code == 200, r_del.text
 
     # Listing must now hide it.
@@ -724,7 +736,7 @@ async def test_skill_reupload_after_delete_reactivates_row(
     # content_hash` MUST also require `existing.is_active` —
     # otherwise the response 200s without reactivating.
     r_re = await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "revive"},
         files=files,
     )
@@ -738,21 +750,21 @@ async def test_skill_reupload_after_delete_reactivates_row(
 
 
 @pytest.mark.asyncio
-async def test_legacy_upload_resolves_default_scope_with_deprecation_header(
-    client: httpx.AsyncClient, scope_id: str
+async def test_legacy_upload_resolves_default_project_with_deprecation_header(
+    client: httpx.AsyncClient, project_id: str
 ):
     """Round-r6 back-compat: pre-PR-66 CLI binaries call the
     legacy `POST /api/skills/upload` route. Round-3 originally
     410'd it for safety, but every user has a deterministic
-    default scope after the migration (`resolve_default_write_scope`
-    never returns None). Asymmetric with DELETE: a wrong-scope
+    default project after the migration (`resolve_default_write_project`
+    never returns None). Asymmetric with DELETE: a wrong-project
     upload creates a stray row that's recoverable in 30s; a
-    wrong-scope DELETE is permanent loss. So upload soft-
+    wrong-project DELETE is permanent loss. So upload soft-
     deprecates and continues to function — old CLIs keep
     pushing skills.
 
     Pinned by: legacy upload returns 200 with the skill landed
-    in the resolved default scope (same as `scope_id` here for
+    in the resolved default project (same as `project_id` here for
     the single-env test fixture), and the response carries the
     Deprecation / Sunset headers so newer clients can warn.
     """
@@ -776,23 +788,23 @@ async def test_legacy_upload_resolves_default_scope_with_deprecation_header(
     assert "Sunset" in r.headers
     assert "successor-version" in r.headers.get("Link", "")
 
-    # Confirm the row landed in the test fixture's scope (the
-    # only env-scope present, so resolve_default_write_scope
+    # Confirm the row landed in the test fixture's project (the
+    # only env-project present, so resolve_default_write_project
     # picks it deterministically).
     detail = await client.get("/api/skills/legacy-up")
     assert detail.status_code == 200
-    assert detail.json()["scope_id"] == scope_id
+    assert detail.json()["project_id"] == project_id
 
 
 @pytest.mark.asyncio
-async def test_legacy_delete_still_410s(client: httpx.AsyncClient, scope_id: str):
+async def test_legacy_delete_still_410s(client: httpx.AsyncClient, project_id: str):
     """Round-r6: round-3's 410-on-DELETE design preserved.
     DELETE remains hard-410 (not soft-deprecated like upload)
-    because a wrong-scope delete is permanent data loss — the
+    because a wrong-project delete is permanent data loss — the
     asymmetry that justifies the back-compat split. Clients
-    must use the scope-explicit `DELETE /api/scopes/{sid}/
+    must use the project-explicit `DELETE /api/projects/{sid}/
     skills/{key}` so they pick which row to delete on multi-
-    scope accounts.
+    project accounts.
     """
     # Upload via the new route to make sure there's a row to
     # potentially-delete; the 410 must fire BEFORE we look up
@@ -800,14 +812,14 @@ async def test_legacy_delete_still_410s(client: httpx.AsyncClient, scope_id: str
     content = "---\nname: legacy-del\ndescription: bc shim test\n---\n# x\n"
     tar_bytes, _ = tar_from_content("legacy-del", content)
     await client.post(
-        f"/api/scopes/{scope_id}/skills/upload",
+        f"/api/projects/{project_id}/skills/upload",
         data={"skill_key": "legacy-del"},
         files={"file": ("legacy-del.tgz", tar_bytes, "application/gzip")},
     )
 
     r = await client.delete("/api/skills/legacy-del")
     assert r.status_code == 410, r.text
-    assert r.json()["detail"]["code"] == "scope_explicit_route_required"
+    assert r.json()["detail"]["code"] == "project_explicit_route_required"
 
     # Row is still there — 410 must not have triggered any
     # write side-effect.

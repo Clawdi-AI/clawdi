@@ -8,9 +8,10 @@ SAME route, with `environment_id` set on the request body —
 gated by the user's Clerk JWT, no backend-to-backend secrets.
 
 Deploy-keys differ from interactive keys only in their
-`environment_id` column. Default scope is full account access
+`environment_id` column. Default permissions are full account access
 just like a self-installed clawdi key; the dashboard can pass an
-explicit narrower `scopes` list per use-case if it wants.
+explicit narrower API permission `scopes` list per use-case if it
+wants.
 """
 
 from __future__ import annotations
@@ -57,8 +58,8 @@ async def mint_api_key(
     `scopes=None` means full account access — the default for both
     interactive keys (`clawdi auth login`) and deploy keys minted
     by the dashboard with `environment_id` set. `scopes=[...]`
-    narrows the key on purpose if a caller wants a tighter blast
-    radius; the route layer doesn't impose narrowing for deploy
+    narrows API permissions on purpose if a caller wants a tighter
+    blast radius; the route layer doesn't impose narrowing for deploy
     keys because the agent must do whatever the user does
     (sessions push, skills writeback, memories update, vault
     resolve, MCP proxy).

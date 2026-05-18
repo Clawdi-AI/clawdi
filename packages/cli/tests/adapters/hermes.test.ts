@@ -3,13 +3,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { tarSkillDir } from "../../src/lib/tar";
+import {
+	type AgentHomeOverrideSnapshot,
+	restoreAgentHomeOverrides,
+	snapshotAndClearAgentHomeOverrides,
+} from "../commands/helpers";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 beforeEach(() => {
 	origHome = process.env.HOME;
+	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp("hermes");
 	process.env.HOME = tmpHome;
 });
@@ -17,6 +24,8 @@ beforeEach(() => {
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	restoreAgentHomeOverrides(origHomeOverrides);
+	origHomeOverrides = {};
 	cleanupTmp(tmpHome);
 });
 

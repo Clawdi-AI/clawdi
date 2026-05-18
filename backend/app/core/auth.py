@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.user import User
-from app.services.user_provisioning import lazy_create_user_with_personal_scope
+from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 bearer_scheme = HTTPBearer()
 
@@ -161,7 +161,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     # Backfill email/name on rows that were lazy-created via the
     # admin path (`_resolve_or_create_user` in routes/admin.py) — that
-    # path doesn't have a Clerk JWT in scope so the row starts with
+    # path doesn't have a Clerk JWT in context so the row starts with
     # email=None / name=None. The first time the user signs into
     # cloud.clawdi.ai directly, this branch fills them in.
     #
@@ -266,16 +266,16 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
 
     if not user:
         # First login (production path, or rebind enabled with no
-        # match): create a fresh user row + Personal scope bound to
+        # match): create a fresh user row + Personal project bound to
         # this Clerk sub. Downstream resolvers assume every user has
-        # a Personal scope; the helper enforces that invariant in a
+        # a Personal project; the helper enforces that invariant in a
         # single transaction.
         #
         # Race-loser status is 401: this is a user-auth flow, so a
         # vanishing winner row is fail-closed-and-let-the-client-
         # retry territory, not the operational 500 the admin path
         # uses.
-        user = await lazy_create_user_with_personal_scope(
+        user = await lazy_create_user_with_personal_project(
             db,
             clerk_id=clerk_id,
             email=email,
@@ -448,7 +448,7 @@ async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
 def _is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
     "narrow capability" and rejected from user-only routes. Today
-    that's just deploy keys (env-bound, narrow scopes), but the
+    that's just Agent API keys with narrow scopes, but the
     check is on the scope list rather than `environment_id` so a
     future scoped Personal key — minted with explicit scopes but
     no env binding — slips into the same protective bucket
@@ -467,7 +467,7 @@ def _is_env_bound_api_key(auth: AuthContext) -> bool:
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
-    this one is about env-scope visibility (used to filter
+    this one is about env-project visibility (used to filter
     list/read/delete results)."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
 
@@ -478,13 +478,13 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     surface is intended for the user themselves (their laptop
     CLI, the dashboard).
 
-    Env-bound deploy keys with `scopes=None` (the default for
+    Agent environment deploy keys with `scopes=None` (the default for
     keys minted via `POST /api/auth/keys` with `environment_id`
     set) PASS this gate by explicit policy: a hosted agent pod
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
-    boundary for env-bound keys is enforced inside the route's
-    own `scope_ids_visible_to` / `_scope_filter_*` calls, not
+    boundary for Agent API keys is enforced inside the route's
+    own `project_ids_visible_to` / `_project_filter_*` calls, not
     here.
 
     Only narrowly-scoped keys (explicit `scopes` list) are
@@ -499,9 +499,27 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     return auth
 
 
+async def require_user_auth_unbound(
+    auth: AuthContext = Depends(require_user_auth),
+) -> AuthContext:
+    """Require Clerk JWT OR fully-unbound CLI api_key.
+
+    `require_user_auth` already rejects narrowly-scoped api_keys
+    (those with explicit `scopes` list). This wrapper adds the
+    additional rejection: api_keys bound to a specific environment
+    cannot invoke sharing operations.
+    """
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "sharing operations require user-level auth (Agent API keys cannot manage sharing)",
+        )
+    return auth
+
+
 async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """CLI auth only (rejects Clerk JWT — no plaintext to web)
-    and rejects narrowly-scoped api_keys. Env-bound deploy keys
+    and rejects narrowly-scoped api_keys. Agent API keys
     pass by the same "behaves like user-installed clawdi" policy
     as `require_user_auth` — `clawdi run` from a hosted agent pod
     must resolve vault plaintext for the env it's bound to.
@@ -563,7 +581,7 @@ async def require_admin_api_key(
 ) -> None:
     """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
     a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
-    + ops-side scripts that don't have a per-user Clerk JWT in scope.
+    + ops-side scripts that don't have a per-user Clerk JWT in context.
 
     503 when `admin_api_key` is empty — endpoints are disabled by default
     for OSS self-hosters who don't need ops tooling. Constant-time
@@ -578,3 +596,38 @@ async def require_admin_api_key(
         )
     if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")
+
+
+class ShareTokenContext:
+    """What require_share_token returns."""
+
+    def __init__(self, project_id, link_id):
+        self.project_id = project_id
+        self.link_id = link_id
+
+
+async def require_share_token(
+    token: str,
+    db: AsyncSession = Depends(get_session),
+) -> ShareTokenContext:
+    """Validate an opaque share token from the URL path.
+
+    Anonymous endpoint dep - does NOT establish an AuthContext and
+    does NOT carry user identity. Token holders are bearers of access
+    to one specific project's skill content, nothing more.
+    """
+    from app.models.project_share_link import ProjectShareLink
+    from app.services.sharing import hash_share_token
+
+    token_hash = hash_share_token(token)
+    result = await db.execute(
+        select(ProjectShareLink).where(ProjectShareLink.token_hash == token_hash)
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "share link not found")
+    if link.revoked_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "share link has been revoked")
+    if link.expires_at is not None and link.expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_410_GONE, "share link has expired")
+    return ShareTokenContext(project_id=link.project_id, link_id=link.id)

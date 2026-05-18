@@ -30,9 +30,9 @@ import { log, toErrorMessage } from "./log";
  * the backend; widen the union as new event types ship. Keep in
  * sync with `app/services/sync_events.py`.
  *
- * `scope_id` carries the scope that owns the affected skill —
- * daemons MUST drop events whose scope_id doesn't match their
- * env's default_scope_id, otherwise a skill_deleted in scope A
+ * `project_id` carries the project that owns the affected skill —
+ * daemons MUST drop events whose project_id doesn't match their
+ * env's default_project_id, otherwise a skill_deleted in project A
  * would prompt env B's daemon to delete its (different) local
  * skill with the same skill_key. The phase-1 design defers
  * server-side filtering to phase 2; daemon-side filtering is the
@@ -41,7 +41,7 @@ export type ServerEvent =
 	| {
 			type: "skill_changed";
 			skill_key: string;
-			scope_id: string;
+			project_id: string;
 			skills_revision: number;
 			/** Tree hash of the bytes the server now stores. The
 			 * daemon uses this to recognize its OWN upload echoing
@@ -55,7 +55,7 @@ export type ServerEvent =
 	| {
 			type: "skill_deleted";
 			skill_key: string;
-			scope_id: string;
+			project_id: string;
 			skills_revision: number;
 	  };
 

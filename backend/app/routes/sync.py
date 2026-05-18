@@ -3,7 +3,7 @@
 Daemon opens a long-lived `GET /api/sync/events` connection authed
 with the same Bearer token it uses for any other API call; server
 pushes
-`{"type":"skill_changed"|"skill_deleted","skill_key":"…","scope_id":"…","skills_revision":N}`
+`{"type":"skill_changed"|"skill_deleted","skill_key":"…","project_id":"…","skills_revision":N}`
 events as the user's skills change. Daemon immediately pulls the
 affected skill — sub-second propagation rather than waiting for
 the 60s reconcile safety net.
@@ -20,10 +20,10 @@ Connection cap: per-user max concurrent SSE connections (v1
 default 10) — excess gets 429 with `Retry-After`. Stops a
 misbehaving daemon from opening hundreds of streams.
 
-Server-side scope filter: each subscriber registers with the set
-of `scope_ids` it's allowed to see (`scope_ids_visible_to`). The
+Server-side project filter: each subscriber registers with the set
+of `project_ids` it's allowed to see (`project_ids_visible_to`). The
 broker filters per-event so a bound api_key for env A never
-receives `skill_changed` for skills in env B's scope — not even
+receives `skill_changed` for skills in env B's project — not even
 as metadata. The daemon keeps a client-side filter as
 defense-in-depth.
 
@@ -44,7 +44,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory
-from app.core.scope import scope_ids_visible_to
+from app.core.project import project_ids_visible_to
 from app.services import sync_events
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -71,7 +71,7 @@ async def _stream(
 ) -> AsyncIterator[bytes]:
     """SSE event source. Drains `queue` (events from
     `bump_skills_revision`, already broker-filtered to the
-    subscriber's visible scopes) and emits heartbeats so proxies
+    subscriber's visible projects) and emits heartbeats so proxies
     don't nuke the connection during quiet periods. Returns when
     the client disconnects, when `revoked` fires (api_key
     revocation noticed by the periodic refresher), or whichever
@@ -102,13 +102,13 @@ async def _stream(
 
 
 # Cadence at which the SSE channel re-queries the caller's
-# `scope_ids_visible_to` to catch runtime scope reassignment.
-# Without this, a deploy key whose env's default_scope_id changed
-# mid-stream would keep receiving events for the old scope until
+# `project_ids_visible_to` to catch runtime project reassignment.
+# Without this, a deploy key whose env's default_project_id changed
+# mid-stream would keep receiving events for the old project until
 # disconnection. Aligned with the daemon's own
-# `refreshDefaultScopeIdLoop` (HEARTBEAT_INTERVAL_MS) so client
-# and server converge on the new scope at the same cadence.
-SCOPE_REFRESH_INTERVAL_S = 30.0
+# `refreshDefaultProjectIdLoop` (HEARTBEAT_INTERVAL_MS) so client
+# and server converge on the new project at the same cadence.
+PROJECT_VISIBILITY_REFRESH_INTERVAL_S = 30.0
 
 
 @router.get("/events")
@@ -125,8 +125,8 @@ async def events(
 ):
     """SSE event channel. Daemons subscribe here and pull any
     skill referenced in incoming `skill_changed` events. Server-
-    side scope filter applied at broker level: subscribers only
-    receive events for scopes they have read access to.
+    side project filter applied at broker level: subscribers only
+    receive events for projects they have read access to.
 
     No request-scoped DB session: SSE streams live for hours,
     and `Depends(get_session)` would pin one connection from
@@ -138,18 +138,18 @@ async def events(
     """
     user_id = auth.user_id
 
-    # Resolve the caller's initial visible-scope set, then atomic
+    # Resolve the caller's initial visible-project set, then atomic
     # cap-and-subscribe. The cap check + register pair is wrapped
     # in a lock inside `try_subscribe` so concurrent handshakes
     # can't both pass a stale count read and exceed the cap.
     async with async_session_factory() as initial_db:
-        initial_visible = frozenset(await scope_ids_visible_to(initial_db, auth))
+        initial_visible = frozenset(await project_ids_visible_to(initial_db, auth))
     subscription = await sync_events.try_subscribe(
         user_id,
         initial_visible,
         max_per_user=PER_USER_CONNECTION_CAP,
         api_key_id=auth.api_key.id if auth.api_key is not None else None,
-        # Per-key cap only applies to env-bound deploy keys. Unbound
+        # Per-key cap only applies to Agent API keys. Unbound
         # CLI keys are user-level (one key shared across N daemons
         # via `clawdi serve install --all`), so the per-key cap of 2
         # would silently 429 the third local agent on a multi-agent
@@ -165,7 +165,7 @@ async def events(
     queue, subscriber = subscription
 
     log.info(
-        "sync events: subscribed user=%s visible_scopes=%d connection_count=%s",
+        "sync events: subscribed user=%s visible_projects=%d connection_count=%s",
         user_id,
         len(initial_visible),
         sync_events.connection_count(user_id),
@@ -179,9 +179,9 @@ async def events(
     revoked = asyncio.Event()
 
     async def refresh_visibility() -> None:
-        """Periodically re-query the caller's visible scope set
+        """Periodically re-query the caller's visible project set
         and re-check api_key revocation. Closes both the cross-
-        scope leak window when an env's default_scope_id changes
+        project leak window when an env's default_project_id changes
         mid-stream AND the post-revocation auth window.
 
         Opens its own short-lived `async_session_factory()` per
@@ -195,11 +195,11 @@ async def events(
         from app.models.api_key import ApiKey
 
         while True:
-            await asyncio.sleep(SCOPE_REFRESH_INTERVAL_S)
+            await asyncio.sleep(PROJECT_VISIBILITY_REFRESH_INTERVAL_S)
             try:
                 async with async_session_factory() as refresh_db:
                     # Revocation check first — if the key is dead, the
-                    # scope set is moot. The handshake-time AuthContext
+                    # project set is moot. The handshake-time AuthContext
                     # is stale; re-read the row to see `revoked_at` AND
                     # whether the row still exists. Env delete cascades
                     # `api_keys.environment_id` so a deleted env can
@@ -228,18 +228,18 @@ async def events(
                             )
                             revoked.set()
                             return
-                    fresh = frozenset(await scope_ids_visible_to(refresh_db, auth))
+                    fresh = frozenset(await project_ids_visible_to(refresh_db, auth))
             except Exception as e:  # noqa: BLE001 — keep stream alive
-                log.warning("sync events: scope refresh failed user=%s: %s", user_id, e)
+                log.warning("sync events: project refresh failed user=%s: %s", user_id, e)
                 continue
-            if fresh != subscriber.visible_scope_ids:
+            if fresh != subscriber.visible_project_ids:
                 log.info(
-                    "sync events: scope filter updated user=%s old=%d new=%d",
+                    "sync events: project filter updated user=%s old=%d new=%d",
                     user_id,
-                    len(subscriber.visible_scope_ids or set()),
+                    len(subscriber.visible_project_ids or set()),
                     len(fresh),
                 )
-                subscriber.visible_scope_ids = fresh
+                subscriber.visible_project_ids = fresh
 
     async def gen() -> AsyncIterator[bytes]:
         refresh_task = asyncio.create_task(refresh_visibility())

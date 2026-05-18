@@ -232,15 +232,15 @@ export class ApiClient {
 	}
 
 	/**
-	 * Upload a skill archive (`.tar.gz`) into the named scope.
-	 * One env binds to one scope, so a daemon's writes always land
-	 * in its own env's scope. Single writer per env means no
+	 * Upload a skill archive (`.tar.gz`) into the named project.
+	 * One env binds to one project, so a daemon's writes always land
+	 * in its own env's project. Single writer per env means no
 	 * If-Match needed; last-write-wins by definition. openapi-fetch
 	 * can't model multipart today, so this stays hand-rolled — but
 	 * the response shape is still typed from the generated schema.
 	 */
 	async uploadSkill(
-		scopeId: string,
+		projectId: string,
 		skillKey: string,
 		file: Buffer,
 		filename: string,
@@ -252,7 +252,7 @@ export class ApiClient {
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
 		return this.multipartPost<SkillUploadResponse>(
-			`/api/scopes/${encodeURIComponent(scopeId)}/skills/upload`,
+			`/api/projects/${encodeURIComponent(projectId)}/skills/upload`,
 			fields,
 			file,
 			filename,
@@ -318,11 +318,31 @@ export class ApiClient {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 			}
-			return (await res.json()) as T;
+			return await readJson<T>(res, "multipart upload response");
 		} finally {
 			clearTimeout(timer);
 			this.abortSignal?.removeEventListener("abort", onEngineAbort);
 		}
+	}
+
+	async postJson<T>(path: string, query?: Record<string, string | undefined>): Promise<T> {
+		const url = new URL(`${this.baseUrl}${path}`);
+		for (const [key, value] of Object.entries(query ?? {})) {
+			if (value !== undefined) url.searchParams.set(key, value);
+		}
+		const req = new Request(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiKey}`,
+				"X-Request-ID": randomUUID(),
+			},
+		});
+		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
+		if (!res.ok) {
+			const body = await res.text();
+			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
+		}
+		return await readJson<T>(res, path);
 	}
 
 	async getBytes(path: string): Promise<Buffer> {
@@ -335,6 +355,18 @@ export class ApiClient {
 			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 		}
 		return Buffer.from(await res.arrayBuffer());
+	}
+}
+
+export async function readJson<T>(res: Response, context = "API response"): Promise<T> {
+	try {
+		return (await res.json()) as T;
+	} catch {
+		throw new ApiError({
+			status: res.status,
+			body: `${context} returned an invalid JSON response`,
+			hint: hintFor(res.status),
+		});
 	}
 }
 

@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def create_api_key(
     body: ApiKeyCreate,
     # Dashboard-only: a leaked deploy-key must not be able to mint a
-    # broader-scope or unscoped key for itself. Minting flows live
+    # broader-permission or unbounded key for itself. Minting flows live
     # behind a human-in-browser action (settings → API Keys, or the
     # device-flow approval). Headless callers should use the
     # device-flow / OAuth path, not call this endpoint directly.
@@ -37,12 +37,13 @@ async def create_api_key(
     # the user's browser is the only conduit and `mint_api_key`
     # service-layer validates env ownership against `auth.user_id`.
     #
-    # Scope policy: deploy keys default to FULL account access —
+    # Permission policy: deploy keys default to FULL account access —
     # same as a key the user mints for their own laptop. The hosted
     # agent should be able to do whatever the user can do (vault,
     # memories, settings — not just push sessions/skills). The
     # `scopes` body field is still honoured if the caller wants to
-    # narrow on purpose; passing `null`/omitting it = no narrowing.
+    # narrow API permissions on purpose; passing `null`/omitting it
+    # = no permission narrowing.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ):
@@ -84,7 +85,7 @@ async def create_api_key(
 async def list_api_keys(
     # Dashboard-only: a leaked deploy key would otherwise be able
     # to enumerate every other key issued for the account (id /
-    # label / prefix / scopes / env binding). Mirrors the lockdown
+    # label / prefix / permission scopes / env binding). Mirrors the lockdown
     # already applied to POST + DELETE.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),

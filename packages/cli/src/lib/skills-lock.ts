@@ -21,11 +21,11 @@ import { SKILL_TAR_EXCLUDE } from "./tar";
  */
 export interface SkillsLock {
 	version: 2;
-	// Key is `${agentType}:${skill_key}` — phase-2 scopes mean the same
-	// `skill_key` can live in different agents' scopes independently. A
+	// Key is `${agentType}:${skill_key}` — phase-2 projects mean the same
+	// `skill_key` can live in different agents' projects independently. A
 	// pre-fix flat-keyed cache would let multi-agent push think agent B
 	// already shipped `foo` because agent A did, and skip the upload —
-	// B's scope would silently never receive `foo`. Use `skillCacheKey()`
+	// B's project would silently never receive `foo`. Use `skillCacheKey()`
 	// to compose, never raw skill_key.
 	skills: Record<string, { hash: string }>;
 }

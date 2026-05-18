@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
-import { extractTarGz } from "../lib/tar";
+import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -144,8 +144,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			}
 		}
 
-		// Dedupe resume chains. The Map is module-scoped only — it goes out of
-		// scope when this function returns and is GC'd, so uuid data never
+		// Dedupe resume chains. The Map is local to this module — it goes out of
+		// use when this function returns and is GC'd, so uuid data never
 		// leaks into RawSession or anywhere downstream.
 		return dedupeResumeChains(sessions, uuidsBySession);
 	}
@@ -300,6 +300,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return join(claudeDir(), "skills");
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(claudeDir(), "skills", `${skillKey}__${ownerHandle}`);
+	}
+
 	async listSkillKeys(): Promise<string[]> {
 		// Flat layout: top-level dirs under skills/. Mirrors the
 		// filtering of `collectSkills` so the daemon's hot-path
@@ -342,6 +346,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await extractTarGz(skillsDir, tarGzBytes);
+	}
+
+	async writeSharedSkillArchive(
+		key: string,
+		ownerHandle: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

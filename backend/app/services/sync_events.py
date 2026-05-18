@@ -14,21 +14,24 @@ Single owner of two intertwined concerns:
 2. Each running `clawdi serve` daemon has an open SSE connection
    to `GET /api/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
-   `{type:"skill_changed"|"skill_deleted", skill_key, scope_id,
-   skills_revision}` event to every connection of that user that
-   has visibility into the event's `scope_id`. SSE is the primary
-   path for instant propagation; 60s reconcile is the safety net.
+   `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
+   skills_revision}` event to every connection of that user, and
+   every accepted project member, that has visibility into the
+   event's `project_id`. SSE is the primary path for instant
+   propagation; 60s reconcile is the safety net.
 
-Server-side scope filter: every subscribe call carries the
-caller's `visible_scope_ids` (computed via
-`scope.scope_ids_visible_to`). The broker filters events to
+Server-side project filter: every subscribe call carries the
+caller's `visible_project_ids` (computed via
+`project.project_ids_visible_to`). The broker filters events to
 match: a bound api_key for env A NEVER receives events for skills
-in env B's scope, even with the daemon's client-side filter
+in env B's project, even with the daemon's client-side filter
 removed. Without this server-side gate, a deploy key could
-observe `skill_key` and `scope_id` for every change in the user's
+observe `skill_key` and `project_id` for every change in the user's
 account — a metadata leak even if the daemon would never act on
-the event. The daemon retains a defense-in-depth client-side
-filter on receipt.
+the event. Shared-project member fan-out still goes through this
+filter, so membership removal stops future events as soon as the
+subscriber's refreshed visibility drops the project. The daemon
+retains a defense-in-depth client-side filter on receipt.
 
 Broadcast-after-commit is enforced via SQLAlchemy's
 `after_commit` event hook: `bump_skills_revision` registers an
@@ -63,6 +66,7 @@ from sqlalchemy import event, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.project_membership import ProjectMembership
 from app.models.user import User
 
 log = logging.getLogger(__name__)
@@ -70,25 +74,25 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class _Subscriber:
-    """A single SSE connection's queue plus the set of scope_ids
+    """A single SSE connection's queue plus the set of project_ids
     the caller is allowed to receive events for. Bound api_keys
-    see exactly one scope; Clerk JWT (dashboard, future) sees all
-    of the user's scopes.
+    see exactly one project; Clerk JWT (dashboard, future) sees all
+    of the user's projects.
 
-    `visible_scope_ids` is mutable — an out-of-band refresh
-    task on the SSE channel re-queries `scope_ids_visible_to`
-    every 30s and replaces the field, so a runtime env-scope
+    `visible_project_ids` is mutable — an out-of-band refresh
+    task on the SSE channel re-queries `project_ids_visible_to`
+    every 30s and replaces the field, so a runtime env-project
     reassignment converges within one refresh cycle. Without
     this, a deploy key whose env is reassigned to a different
-    scope would keep receiving event metadata for its former
-    scope until the connection drops.
+    project would keep receiving event metadata for its former
+    project until the connection drops.
     """
 
     queue: asyncio.Queue[dict[str, Any]] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
     # `None` means "no filter" (admin / future server-internal use).
     # Empty set means "no events at all" — useful for a subscriber
-    # whose visible-scope query returned empty (rare).
-    visible_scope_ids: frozenset[UUID] | None = None
+    # whose visible-project query returned empty (rare).
+    visible_project_ids: frozenset[UUID] | None = None
     # Identity of the api_key (or None for Clerk JWT) that owns
     # this subscription. Used for per-key fan-out caps so a leaked
     # deploy key can't open all `max_per_user` slots and starve
@@ -108,7 +112,7 @@ _subscribe_lock = asyncio.Lock()
 
 async def try_subscribe(
     user_id: UUID,
-    visible_scope_ids: frozenset[UUID],
+    visible_project_ids: frozenset[UUID],
     *,
     max_per_user: int,
     api_key_id: UUID | None = None,
@@ -118,10 +122,10 @@ async def try_subscribe(
     """Atomic check-and-subscribe. Returns `(queue, subscriber)` on
     success, `None` if EITHER the per-user OR the per-key cap is
     at limit. The subscriber handle is exposed so the SSE route
-    can update its `visible_scope_ids` field as the user's scope
+    can update its `visible_project_ids` field as the user's project
     view changes.
 
-    Per-key cap defends against a leaked DEPLOY KEY (env-bound)
+    Per-key cap defends against a leaked Agent API key
     opening all `max_per_user` slots. `max_per_key` defaults to 2
     (one daemon + one debug session). Bypasses:
       - Clerk JWT (api_key_id=None)
@@ -142,19 +146,19 @@ async def try_subscribe(
             existing_for_key = sum(1 for s in existing if s.api_key_id == api_key_id)
             if existing_for_key >= max_per_key:
                 return None
-        sub = _Subscriber(visible_scope_ids=visible_scope_ids, api_key_id=api_key_id)
+        sub = _Subscriber(visible_project_ids=visible_project_ids, api_key_id=api_key_id)
         _subscribers[user_id].append(sub)
         return sub.queue, sub
 
 
 def subscribe(
     user_id: UUID,
-    visible_scope_ids: frozenset[UUID],
+    visible_project_ids: frozenset[UUID],
 ) -> asyncio.Queue[dict[str, Any]]:
     """Non-atomic subscribe — exposed for tests and callers that
     don't need to enforce a cap. Production SSE callers use
     `try_subscribe` for atomic cap-and-subscribe."""
-    sub = _Subscriber(visible_scope_ids=visible_scope_ids)
+    sub = _Subscriber(visible_project_ids=visible_project_ids)
     _subscribers[user_id].append(sub)
     return sub.queue
 
@@ -177,26 +181,26 @@ def connection_count(user_id: UUID) -> int:
 
 def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
     """Push an event to every subscriber for `user_id` whose
-    `visible_scope_ids` includes the event's scope. Non-blocking —
+    `visible_project_ids` includes the event's project. Non-blocking —
     if a queue is full, drop on the floor (the 60s reconcile loop
     catches missed events). Never raises."""
     subs = _subscribers.get(user_id)
     if not subs:
         return
-    raw_scope = event_payload.get("scope_id")
-    event_scope: UUID | None = None
-    if isinstance(raw_scope, UUID):
-        event_scope = raw_scope
-    elif isinstance(raw_scope, str):
+    raw_project_id = event_payload.get("project_id")
+    event_project_id: UUID | None = None
+    if isinstance(raw_project_id, UUID):
+        event_project_id = raw_project_id
+    elif isinstance(raw_project_id, str):
         try:
-            event_scope = UUID(raw_scope)
+            event_project_id = UUID(raw_project_id)
         except ValueError:
-            event_scope = None
+            event_project_id = None
     for sub in subs:
-        if sub.visible_scope_ids is not None:
-            if event_scope is None or event_scope not in sub.visible_scope_ids:
+        if sub.visible_project_ids is not None:
+            if event_project_id is None or event_project_id not in sub.visible_project_ids:
                 # Subscriber doesn't have visibility into this
-                # scope — skip silently. Logging would be noisy
+                # project — skip silently. Logging would be noisy
                 # since the multi-env case fan-outs N events of
                 # which N-1 are filtered.
                 continue
@@ -215,7 +219,7 @@ async def bump_skills_revision(
     user_id: UUID,
     *,
     skill_key: str,
-    scope_id: UUID,
+    project_id: UUID,
     event_type: str = "skill_changed",
     content_hash: str | None = None,
 ) -> int:
@@ -226,10 +230,10 @@ async def bump_skills_revision(
     surrounding transaction fails. Returns the new revision so
     callers can echo it in their response.
 
-    The SSE event carries `scope_id` so the broker can filter
-    events per-subscriber to scopes the caller has visibility into.
+    The SSE event carries `project_id` so the broker can filter
+    events per-subscriber to projects the caller has visibility into.
     Without server-side filtering, an api_key bound to env A would
-    observe skill_changed events for skills in env B's scope as
+    observe skill_changed events for skills in env B's project as
     metadata leakage — even if the daemon's client-side filter
     refused to act on them.
 
@@ -264,12 +268,25 @@ async def bump_skills_revision(
     payload: dict[str, Any] = {
         "type": event_type,
         "skill_key": skill_key,
-        "scope_id": str(scope_id),
+        "project_id": str(project_id),
         "skills_revision": new_revision,
     }
     if content_hash is not None:
         payload["content_hash"] = content_hash
-    _queue_for_commit(db, user_id, payload)
+    member_rows = (
+        (
+            await db.execute(
+                select(ProjectMembership.member_user_id).where(
+                    ProjectMembership.project_id == project_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    target_user_ids = {user_id, *member_rows}
+    for target_user_id in target_user_ids:
+        _queue_for_commit(db, target_user_id, payload)
     return new_revision
 
 

@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./consts": "./src/consts/index.ts",
+		"./sharing": "./src/sharing/agent-handoff.ts",
 		"./api": "./src/api/index.ts",
 		"./style/theme.css": "./src/style/theme.css"
 	},

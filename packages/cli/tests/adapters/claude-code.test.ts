@@ -235,7 +235,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 
 		const adapter = new ClaudeCodeAdapter();
 		const result = await adapter.collectSessions();
-		// scope to just the two we wrote — the fixture's pre-existing session
+		// project to just the two we wrote — the fixture's pre-existing session
 		// would otherwise pad the result count
 		const ours = result.sessions.filter((s) =>
 			["aaaa-aaaa", "bbbb-bbbb"].includes(s.localSessionId),

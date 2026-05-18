@@ -19,7 +19,7 @@
  * agent without arguing about which one owns the supervisor
  * slot. v1 daemon services exactly one agent per process.
  *
- * Windows is out of scope for v1 — explicitly told by the user.
+ * Windows is not part of v1 — explicitly told by the user.
  */
 
 import { execFileSync } from "node:child_process";

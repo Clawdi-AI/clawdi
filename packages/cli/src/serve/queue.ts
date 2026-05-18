@@ -28,6 +28,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 
@@ -47,14 +48,14 @@ export type QueueItem =
 	| (ItemBase & {
 			kind: "skill_push";
 			skill_key: string;
-			// Scope_id this item was enqueued under. Drained items
-			// whose stamped scope no longer matches the daemon's
-			// current scope are dropped (mid-flight reassignment).
+			// Project ID this item was enqueued under. Drained items
+			// whose stamped project no longer matches the daemon's
+			// current project are dropped (mid-flight reassignment).
 			// Optional for back-compat with queue files written by
-			// pre-scope-stamp binaries; the drain loop stamps the
-			// current scope when the field is absent so legacy
+			// pre-project-stamp binaries; the drain loop stamps the
+			// current project when the field is absent so legacy
 			// pending work doesn't silently disappear on upgrade.
-			scope_id?: string;
+			project_id?: string;
 			// Hash of what we're about to upload. Distinguishes
 			// duplicates: same skill_key with same new_hash = dedup.
 			new_hash: string;
@@ -134,19 +135,14 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 		// scrubs the file. Allows Hermes-style nested keys
 		// (`category/foo`, up to 4 components) so a queued
 		// Hermes push survives a daemon restart.
-		if (
-			!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}){0,3}$/.test(
-				r.skill_key,
-			)
-		)
-			return false;
+		if (!isValidSkillKey(r.skill_key)) return false;
 		// Legacy queue items written by an older binary may not
-		// carry `scope_id`. Accept them — the drain loop stamps
-		// the current scope before upload, so legacy work doesn't
+		// carry `project_id`. Accept them — the drain loop stamps
+		// the current project before upload, so legacy work doesn't
 		// silently disappear after a binary upgrade. Reject only
 		// if the field is present but the wrong type (corruption
 		// signal, not a back-compat case).
-		if (r.scope_id !== undefined && typeof r.scope_id !== "string") return false;
+		if (r.project_id !== undefined && typeof r.project_id !== "string") return false;
 		return true;
 	}
 	if (r.kind === "session_push") {

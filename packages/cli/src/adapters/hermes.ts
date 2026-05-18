@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
-import { extractTarGz } from "../lib/tar";
+import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -247,6 +247,13 @@ export class HermesAdapter implements AgentAdapter {
 		return skillsDir();
 	}
 
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		// Hermes nests skills under category dirs; route shared
+		// project content into a dedicated `shared/` category so it
+		// doesn't intermix with user-authored categories.
+		return join(skillsDir(), "shared", `${skillKey}__${ownerHandle}`);
+	}
+
 	async listSkillKeys(): Promise<string[]> {
 		// Hermes nests skills under category dirs:
 		//   `~/.hermes/skills/category/foo/SKILL.md`
@@ -299,6 +306,14 @@ export class HermesAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await extractTarGz(skillsDir(), tarGzBytes);
+	}
+
+	async writeSharedSkillArchive(
+		key: string,
+		ownerHandle: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

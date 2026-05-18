@@ -34,7 +34,7 @@ describe("RetryQueue", () => {
 		const a = new RetryQueue({ agentType: "claude_code" });
 		a.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -53,11 +53,11 @@ describe("RetryQueue", () => {
 		expect(b.peek()?.kind).toBe("skill_push");
 	});
 
-	it("dedups by skill_key — newer entry replaces older", () => {
+	it("dedups by skill_key — newer entry replaces older", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -65,7 +65,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
 			enqueued_at: "2026-01-01T00:00:01Z",
@@ -75,14 +75,15 @@ describe("RetryQueue", () => {
 		const front = q.peek();
 		if (front?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(front.new_hash).toBe("h2");
+		await q.flushPersist();
 	});
 
-	it("evicts oldest when over maxItems and counts the drop", () => {
+	it("evicts oldest when over maxItems and counts the drop", async () => {
 		const q = new RetryQueue({ agentType: "claude_code", maxItems: 2 });
 		for (const k of ["a", "b", "c"]) {
 			q.enqueue({
 				kind: "skill_push",
-				scope_id: "test-scope",
+				project_id: "test-project",
 				skill_key: k,
 				new_hash: `${k}-h`,
 				enqueued_at: "2026-01-01T00:00:00Z",
@@ -92,13 +93,14 @@ describe("RetryQueue", () => {
 		expect(q.depth).toBe(2);
 		expect(q.drainDroppedDelta()).toBe(1);
 		expect(q.drainDroppedDelta()).toBe(0); // delta resets after read
+		await q.flushPersist();
 	});
 
-	it("markDoneIfVersion removes the item when version matches", () => {
+	it("markDoneIfVersion removes the item when version matches", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -108,16 +110,17 @@ describe("RetryQueue", () => {
 		if (!live) throw new Error("expected item in queue");
 		expect(q.markDoneIfVersion(live)).toBe(true);
 		expect(q.depth).toBe(0);
+		await q.flushPersist();
 	});
 
-	it("markDoneIfVersion is a no-op if a newer version replaced the item", () => {
+	it("markDoneIfVersion is a no-op if a newer version replaced the item", async () => {
 		// Repro the silent-data-loss bug: drain takes v=N, watcher
 		// enqueues v=N+1, drain's later markDone must NOT delete
 		// the new item.
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -128,7 +131,7 @@ describe("RetryQueue", () => {
 		// While the drain is "uploading", the watcher fires again.
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
 			enqueued_at: "2026-01-01T00:00:01Z",
@@ -140,13 +143,14 @@ describe("RetryQueue", () => {
 		const front = q.peek();
 		if (front?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(front.new_hash).toBe("h2");
+		await q.flushPersist();
 	});
 
 	it("bumpAttempts increments the counter and persists", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -178,7 +182,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "test-scope",
+			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -204,14 +208,15 @@ describe("RetryQueue", () => {
 		const reloaded = new RetryQueue({ agentType: "claude_code" });
 		reloaded.load();
 		expect(reloaded.depth).toBe(1);
+		await reloaded.flushPersist();
 	});
 
-	it("loads legacy skill_push items written without scope_id", () => {
-		// Pre-scope-stamp daemon binaries persisted skill_push items
-		// without a `scope_id` field. After upgrade, those items
+	it("loads legacy skill_push items written without project_id", () => {
+		// Pre-project-stamp daemon binaries persisted skill_push items
+		// without a `project_id` field. After upgrade, those items
 		// must NOT silently disappear — `isQueueItem` accepts the
 		// missing field, and the drain loop stamps the current
-		// scope before upload. Without this back-compat, a daemon
+		// project before upload. Without this back-compat, a daemon
 		// upgrading mid-flight would lose every queued offline edit.
 		const path = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code", "queue.jsonl");
 		const dir = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code");
@@ -223,7 +228,7 @@ describe("RetryQueue", () => {
 			enqueued_at: "2026-01-01T00:00:00Z",
 			attempts: 0,
 			version: 1,
-			// no scope_id field
+			// no project_id field
 		});
 		writeFileSync(path, `${legacy}\n`);
 
@@ -232,12 +237,12 @@ describe("RetryQueue", () => {
 		expect(q.depth).toBe(1);
 		const item = q.peek();
 		expect(item?.kind).toBe("skill_push");
-		expect(item && "scope_id" in item ? item.scope_id : undefined).toBeUndefined();
+		expect(item && "project_id" in item ? item.project_id : undefined).toBeUndefined();
 		// Sanity: the skill_key survived load.
 		expect(item && "skill_key" in item ? item.skill_key : undefined).toBe("legacy-x");
 	});
 
-	it("scrubs queued items whose skill_key violates the backend pattern", () => {
+	it("scrubs queued items whose skill_key violates the backend pattern", async () => {
 		// Pre-fix daemons watched every subdir under the skills root,
 		// including dotfile entries like `.system`. Those got pushed,
 		// the backend 422'd them on every drain, and the queue file
@@ -253,7 +258,7 @@ describe("RetryQueue", () => {
 				kind: "skill_push",
 				skill_key: ".system",
 				new_hash: "h-bad",
-				scope_id: "s",
+				project_id: "s",
 				enqueued_at: "2026-01-01T00:00:00Z",
 				attempts: 0,
 				version: 1,
@@ -262,7 +267,7 @@ describe("RetryQueue", () => {
 				kind: "skill_push",
 				skill_key: "legit-skill",
 				new_hash: "h-good",
-				scope_id: "s",
+				project_id: "s",
 				enqueued_at: "2026-01-01T00:00:00Z",
 				attempts: 0,
 				version: 2,
@@ -276,6 +281,7 @@ describe("RetryQueue", () => {
 		const item = q.peek();
 		if (item?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(item.skill_key).toBe("legit-skill");
+		await q.flushPersist();
 
 		// Re-load from disk: the eager persist should have already
 		// scrubbed the bad line, so a second daemon boot finds only
@@ -288,7 +294,7 @@ describe("RetryQueue", () => {
 		expect(item2.skill_key).toBe("legit-skill");
 	});
 
-	it("eviction prefers skill_push over session_push", () => {
+	it("eviction prefers skill_push over session_push", async () => {
 		// Per round-5 must-have: session content is lossless;
 		// only skill_push should get FIFO-evicted when the queue
 		// is full. Without this rule a long offline window
@@ -304,7 +310,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "alpha",
 			new_hash: "ha",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -312,7 +318,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "beta",
 			new_hash: "hb",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -328,9 +334,10 @@ describe("RetryQueue", () => {
 		const skill = all.find((i) => i.kind === "skill_push");
 		if (skill?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(skill.skill_key).toBe("beta");
+		await q.flushPersist();
 	});
 
-	it("onEvict callback fires once per evicted item", () => {
+	it("onEvict callback fires once per evicted item", async () => {
 		// Sync-engine wires onEvict to clear inFlightSessionHash
 		// when a session_push gets evicted. Without that hook the
 		// dedup map keeps the dropped session out forever — silent
@@ -365,9 +372,10 @@ describe("RetryQueue", () => {
 		// must have fired exactly once for it.
 		expect(evicted).toEqual(["session:alpha"]);
 		expect(q.depth).toBe(1);
+		await q.flushPersist();
 	});
 
-	it("loads legacy items missing the version field, normalizes to 0", () => {
+	it("loads legacy items missing the version field, normalizes to 0", async () => {
 		// Pre-version-stamp daemons wrote queue items without
 		// `version`. Strict reject would silently drop ALL pending
 		// work on binary upgrade. The predicate now accepts missing
@@ -380,7 +388,7 @@ describe("RetryQueue", () => {
 			kind: "skill_push",
 			skill_key: "legacy-key",
 			new_hash: "h-legacy",
-			scope_id: "s",
+			project_id: "s",
 			enqueued_at: "2026-01-01T00:00:00Z",
 			attempts: 0,
 			// no version field
@@ -398,12 +406,13 @@ describe("RetryQueue", () => {
 		// legacy-stamp doesn't collide with a fresh enqueue.
 		const v = q.enqueue({
 			kind: "skill_push",
-			scope_id: "s",
+			project_id: "s",
 			skill_key: "fresh-key",
 			new_hash: "h-fresh",
 			enqueued_at: "2026-01-02T00:00:00Z",
 			attempts: 0,
 		});
 		expect(v).toBe(1);
+		await q.flushPersist();
 	});
 });

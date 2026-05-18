@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
-import { extractTarGz } from "../lib/tar";
+import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -40,7 +40,7 @@ function skillsDir() {
  * Enumerate every `agents/<id>` subdir we should read from. OpenClaw can
  * host many agent personalities side-by-side (see issue #28: a single state
  * root with `main`, `financial`, `sales`, etc.) so we union them. Honoring
- * `OPENCLAW_AGENT_ID` as a single-agent override keeps the explicit-scope
+ * `OPENCLAW_AGENT_ID` as a single-agent override keeps the explicit-project
  * escape hatch from the issue's workaround.
  */
 function listAgentDirs(): string[] {
@@ -329,7 +329,7 @@ export class OpenClawAdapter implements AgentAdapter {
 				if (existing) {
 					console.warn(
 						`[openclaw] skipping duplicate skill "${entry.name}" at ${dirPath} ` +
-							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to scope explicitly.`,
+							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
 					);
 					continue;
 				}
@@ -357,6 +357,10 @@ export class OpenClawAdapter implements AgentAdapter {
 
 	getSkillsRootDir(): string {
 		return skillsDir();
+	}
+
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
 	}
 
 	async listSkillKeys(): Promise<string[]> {
@@ -404,6 +408,14 @@ export class OpenClawAdapter implements AgentAdapter {
 		mkdirSync(targetDir, { recursive: true });
 
 		await extractTarGz(skillsDir(), tarGzBytes);
+	}
+
+	async writeSharedSkillArchive(
+		key: string,
+		ownerHandle: string,
+		tarGzBytes: Buffer,
+	): Promise<void> {
+		await extractSharedSkillTarGz(key, this.getSharedSkillPath(key, ownerHandle), tarGzBytes);
 	}
 
 	buildRunCommand(args: string[], _env: Record<string, string>): string[] {

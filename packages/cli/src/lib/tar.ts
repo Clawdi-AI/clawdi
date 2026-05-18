@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as tar from "tar";
+import { assertValidSkillKey } from "./skill-key";
 
 /**
  * Directories that should never end up inside an uploaded skill tarball.
@@ -72,12 +74,63 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 		const stream = tar.extract({
 			cwd,
 			gzip: true,
-			filter: (path) => !path.includes("..") && !path.startsWith("/"),
+			filter: (path, entry) => {
+				if (path.includes("..") || path.startsWith("/")) return false;
+				const type = "type" in entry ? entry.type : undefined;
+				return type !== "SymbolicLink" && type !== "Link";
+			},
 		});
 		stream.on("finish", () => resolvePromise());
 		stream.on("error", reject);
 		stream.end(bytes);
 	});
+}
+
+/**
+ * Extract a skill tarball into a shared-project target dir.
+ *
+ * Skill tarballs have `<skillKey>/...` at the top level (upload side
+ * doesn't know the content will be re-served as shared). For a
+ * shared skill we want the result at `<targetDir>` whose basename
+ * is `<skillKey>__<ownerHandle>`, not `<skillKey>`. Extract into a
+ * sibling temp dir then rename the resulting `<skillKey>` folder
+ * into place. Atomic from the caller's perspective: targetDir
+ * either has the prior version (on failure mid-extract) or the
+ * new version (on success).
+ */
+export async function extractSharedSkillTarGz(
+	skillKey: string,
+	targetDir: string,
+	bytes: Buffer,
+): Promise<void> {
+	assertValidSkillKey(skillKey);
+	const { dirname, basename } = await import("node:path");
+	const { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } = await import("node:fs");
+	const parent = dirname(targetDir);
+	mkdirSync(parent, { recursive: true });
+	const tmp = mkdtempSync(`${parent}/.share-extract-${basename(targetDir)}-`);
+	try {
+		await extractTarGz(tmp, bytes);
+		const extracted = `${tmp}/${skillKey}`;
+		if (!existsSync(extracted)) {
+			throw new Error(`Shared skill tarball did not contain expected '${skillKey}/' root entry`);
+		}
+		// Wipe any prior version atomically: rename old → trash, then
+		// rename new → place, then nuke trash. Two renames so an
+		// interrupted reconcile leaves either the old or the new
+		// content in place, never a partial.
+		const trash = `${parent}/.share-trash-${basename(targetDir)}-${process.pid}-${randomUUID()}`;
+		if (existsSync(targetDir)) renameSync(targetDir, trash);
+		try {
+			renameSync(extracted, targetDir);
+		} catch (e) {
+			if (existsSync(trash)) renameSync(trash, targetDir);
+			throw e;
+		}
+		if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
+	} finally {
+		if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+	}
 }
 
 /**

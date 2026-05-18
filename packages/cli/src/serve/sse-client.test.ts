@@ -17,12 +17,12 @@ import { parseRecord } from "./sse-client";
 describe("parseRecord", () => {
 	it("parses a well-formed skill_changed record", () => {
 		const record =
-			'event: skill_changed\ndata: {"type":"skill_changed","skill_key":"hello","scope_id":"00000000-0000-0000-0000-000000000001","skills_revision":7}';
+			'event: skill_changed\ndata: {"type":"skill_changed","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":7}';
 		const parsed = parseRecord(record);
 		expect(parsed).toEqual({
 			type: "skill_changed",
 			skill_key: "hello",
-			scope_id: "00000000-0000-0000-0000-000000000001",
+			project_id: "00000000-0000-0000-0000-000000000001",
 			skills_revision: 7,
 		});
 	});
@@ -32,7 +32,7 @@ describe("parseRecord", () => {
 		// Mixed with a real event in the same record, the comment
 		// must be stripped without affecting the event.
 		const record =
-			': ping\nevent: skill_changed\ndata: {"type":"skill_changed","skill_key":"a","scope_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}';
+			': ping\nevent: skill_changed\ndata: {"type":"skill_changed","skill_key":"a","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}';
 		const parsed = parseRecord(record);
 		expect(parsed?.skill_key).toBe("a");
 	});
@@ -42,7 +42,7 @@ describe("parseRecord", () => {
 		// `data: hi`. The space is part of the framing, not the
 		// payload. A regression here would prepend a space to
 		// every event's JSON and break the parse.
-		const record = `event:skill_changed\ndata:{"type":"skill_changed","skill_key":"x","scope_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}`;
+		const record = `event:skill_changed\ndata:{"type":"skill_changed","skill_key":"x","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}`;
 		const parsed = parseRecord(record);
 		expect(parsed?.skill_key).toBe("x");
 	});
@@ -53,7 +53,7 @@ describe("parseRecord", () => {
 		// JSON so this rarely fires in practice, but the parser
 		// has to honor it or a future server change breaks us.
 		const record =
-			'event: skill_changed\ndata: {"type":"skill_changed",\ndata: "skill_key":"multi","scope_id":"00000000-0000-0000-0000-000000000001","skills_revision":2}';
+			'event: skill_changed\ndata: {"type":"skill_changed",\ndata: "skill_key":"multi","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":2}';
 		const parsed = parseRecord(record);
 		expect(parsed?.skill_key).toBe("multi");
 	});
@@ -82,7 +82,7 @@ describe("parseRecord", () => {
 		// warn. Helps catch a server-side regression without
 		// breaking the channel.
 		const record =
-			'event: skill_changed\ndata: {"type":"skill_deleted","skill_key":"x","scope_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}';
+			'event: skill_changed\ndata: {"type":"skill_deleted","skill_key":"x","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}';
 		const parsed = parseRecord(record);
 		expect(parsed?.type).toBe("skill_deleted");
 	});

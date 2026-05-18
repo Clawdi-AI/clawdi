@@ -142,12 +142,12 @@ class EnvironmentResponse(BaseModel):
     dropped_count: int = 0
     sync_enabled: bool = False
     # Schema-enforced NOT NULL on agent_environments — every env
-    # has a scope after register_environment runs (which heals
-    # legacy rows that lost their scope). Daemons rely on this
+    # has a default project after register_environment runs (which
+    # heals legacy rows that lost their value). Daemons rely on this
     # being present to know which SSE events belong to them.
     # Stringified for JSON (UUIDs serialise as strings via
     # FastAPI default).
-    default_scope_id: str
+    default_project_id: str
 
 
 class SessionBatchResponse(BaseModel):

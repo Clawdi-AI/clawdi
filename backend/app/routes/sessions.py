@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.scope import SCOPE_KIND_ENVIRONMENT, Scope
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -139,8 +139,8 @@ async def register_environment(
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
     # Bound deploy keys are pinned to a single env. Letting them
-    # create *new* envs (and new env-local scopes) would let a
-    # leaked key expand the account's footprint — beyond the scope
+    # create *new* envs (and new env-local projects) would let a
+    # leaked key expand the account's footprint — beyond the project
     # of the binding. Allow the idempotent re-register of the same
     # env (machine_id / agent_type match the one the key is bound
     # to) so daemons can survive `clawdi setup` re-runs without
@@ -182,9 +182,9 @@ async def register_environment(
     # `with_for_update()` row-locks the env so concurrent
     # `clawdi setup` re-registrations serialize through the
     # heal path below — without the lock both requests would
-    # read default_scope_id IS NULL, both would INSERT a new
-    # scope, and the second writer would overwrite env's
-    # default_scope_id with its own scope, orphaning the first.
+    # read default_project_id IS NULL, both would INSERT a new
+    # project, and the second writer would overwrite env's
+    # default_project_id with its own project, orphaning the first.
     result = await db.execute(
         select(AgentEnvironment)
         .where(
@@ -200,40 +200,40 @@ async def register_environment(
         env.machine_name = body.machine_name
         env.agent_version = body.agent_version
         env.last_seen_at = datetime.now(UTC)
-        # Heal envs that somehow ended up without a default_scope_id —
-        # this row predates the scope migration, was created via a
+        # Heal envs that somehow ended up without a default_project_id —
+        # this row predates the project migration, was created via a
         # path that bypassed the new-env branch below, or had its
-        # scope dropped by an earlier broken cleanup. The daemon's
-        # boot path requires a scope to upload anything; without
+        # project dropped by an earlier broken cleanup. The daemon's
+        # boot path requires a project to upload anything; without
         # this backfill, re-running `clawdi setup` against an old
         # env still leaves the daemon dead at startup with the
-        # opaque "environment X has no default_scope_id" fatal.
+        # opaque "environment X has no default_project_id" fatal.
         # Concurrent calls are serialized by the FOR UPDATE row
-        # lock above — the second writer sees default_scope_id
+        # lock above — the second writer sees default_project_id
         # already set and skips this branch.
-        if env.default_scope_id is None:
+        if env.default_project_id is None:
             import uuid as _uuid
 
             healing_slug = f"env-{_uuid.uuid4().hex[:12]}"
-            healing_scope = Scope(
+            healing_project = Project(
                 user_id=auth.user_id,
                 name=f"{body.machine_name} ({body.agent_type})",
                 slug=healing_slug,
-                kind=SCOPE_KIND_ENVIRONMENT,
+                kind=PROJECT_KIND_ENVIRONMENT,
                 origin_environment_id=env.id,
             )
-            db.add(healing_scope)
+            db.add(healing_project)
             await db.flush()
-            env.default_scope_id = healing_scope.id
+            env.default_project_id = healing_project.id
         await db.commit()
         return EnvironmentCreatedResponse(id=str(env.id))
 
-    # Mutual FK between env.default_scope_id (NOT NULL → scope) and
-    # scope.origin_environment_id (NULLABLE → env). Insert order:
-    #   1. scope without origin_environment_id (slug pre-computed
+    # Mutual FK between env.default_project_id (NOT NULL → project) and
+    # project.origin_environment_id (NULLABLE → env). Insert order:
+    #   1. project without origin_environment_id (slug pre-computed
     #      from a fresh UUID so it's stable across the two writes)
-    #   2. env with default_scope_id = scope.id
-    #   3. update scope.origin_environment_id = env.id
+    #   2. env with default_project_id = project.id
+    #   3. update project.origin_environment_id = env.id
     #
     # Concurrent `clawdi setup` runs for the same (user, machine,
     # agent) race here. The new
@@ -245,13 +245,13 @@ async def register_environment(
     from sqlalchemy.exc import IntegrityError
 
     pending_slug = f"env-{_uuid.uuid4().hex[:12]}"
-    scope = Scope(
+    project = Project(
         user_id=auth.user_id,
         name=f"{body.machine_name} ({body.agent_type})",
         slug=pending_slug,
-        kind=SCOPE_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_ENVIRONMENT,
     )
-    db.add(scope)
+    db.add(project)
     try:
         await db.flush()
 
@@ -263,12 +263,12 @@ async def register_environment(
             agent_version=body.agent_version,
             os=body.os,
             last_seen_at=datetime.now(UTC),
-            default_scope_id=scope.id,
+            default_project_id=project.id,
         )
         db.add(env)
         await db.flush()
 
-        scope.origin_environment_id = env.id
+        project.origin_environment_id = env.id
         await db.commit()
         await db.refresh(env)
         return EnvironmentCreatedResponse(id=str(env.id))
@@ -296,16 +296,17 @@ async def register_environment(
 async def list_environments(
     # Bare get_auth is intentional. Even narrowly-scoped api_keys
     # (e.g. the legacy `sessions:write`-only deploy key) need to
-    # discover their own env at boot to find its default_scope.
+    # discover their own env at boot to find its default_project.
     # Auth is enforced via the user_id filter + the env-binding
     # restriction below — a bound key only sees its own env regardless
-    # of scope list, and an unscoped key is just the user themselves.
+    # of API permission list, and an unbound key is just the user
+    # themselves.
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse]:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
-    # key enumerate sibling machines and their default_scope_ids
+    # key enumerate sibling machines and their default_project_ids
     # — the whole point of the env binding is to bound the blast
     # radius of a leaked key. The full list stays available to
     # Clerk JWT (dashboard) callers.
@@ -330,7 +331,7 @@ async def get_environment(
 ) -> EnvironmentResponse:
     # Bound api_keys may only fetch their own env. Without this an
     # env-A deploy key could probe sibling envs by id and read their
-    # `default_scope_id` — the same boundary that list_environments
+    # `default_project_id` — the same boundary that list_environments
     # enforces, applied per-row.
     bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id != bound_env:
@@ -364,7 +365,7 @@ def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
         # NOT NULL per schema; the heal path in register_environment
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
-        default_scope_id=str(env.default_scope_id),
+        default_project_id=str(env.default_project_id),
     )
 
 
@@ -421,7 +422,7 @@ async def sync_heartbeat(
     # Heartbeat is the daemon's write path for liveness fields. A
     # read-only key would otherwise be able to write `last_sync_error
     # = None` and mask a real outage. `skills:write` is the daemon's
-    # canonical write scope (it always pushes skills), so reuse it.
+    # canonical write project (it always pushes skills), so reuse it.
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> None:
@@ -441,7 +442,7 @@ async def sync_heartbeat(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
 
     # If the deploy-key is bound to a specific env, refuse calls
-    # for any other env. Resource-level scope alone wasn't enough
+    # for any other env. Resource-level project alone wasn't enough
     # — without this, a key from pod A could heartbeat under
     # pod B's id and corrupt B's observability fields.
     if (
@@ -526,11 +527,11 @@ async def batch_create_sessions(
             created=0, updated=0, unchanged=0, needs_content=[], rejected=[]
         )
 
-    # Env-bound deploy-keys must NOT be able to write sessions
+    # Agent API keys must NOT be able to write sessions
     # under a different env_id, even one the same user owns. The
-    # whole point of the env binding is to bound the blast radius
+    # whole point of the Agent boundary is to bound the blast radius
     # of a leaked deploy-key — without this check, a key from
-    # pod A could land sessions on pod B's environment and the
+    # Agent A could land sessions on Agent B's environment and the
     # dashboard would attribute them to the wrong machine.
     # `sync_heartbeat` already enforces the same invariant; we
     # were inconsistent here.
@@ -766,7 +767,7 @@ async def batch_create_sessions(
         },
         # Refuse cross-env rebinds at the conflict step itself. The
         # pre-fetch FOR UPDATE check above guards the case where the
-        # row already exists, but two env-bound keys racing on a
+        # row already exists, but two Agent API keys racing on a
         # never-before-seen `local_session_id` BOTH pass the pre-
         # check (no row to lock). The first INSERT wins; the second
         # falls through to ON CONFLICT and would otherwise overwrite
@@ -787,7 +788,7 @@ async def batch_create_sessions(
         #   (b) Existing row has `environment_id IS NULL` —
         #       orphaned by `ON DELETE SET NULL` after its
         #       original env was deleted, OR a legacy row from
-        #       before scope_id existed. A new env adopting the
+        #       before project_id existed. A new env adopting the
         #       orphan is the right outcome (otherwise the row
         #       stays unreachable forever; the client would
         #       silently drop it from `needs_content` and the
@@ -1772,7 +1773,7 @@ async def _load_session_for_owner(
     """Fetch a session the current caller is allowed to mutate.
 
     404s rather than 403s on visibility violations (env-binding mismatch)
-    to avoid leaking which session-ids exist outside the caller's scope.
+    to avoid leaking which session-ids exist outside the caller's project.
     """
     bound_env = _bound_env_id(auth)
     stmt = select(Session).where(

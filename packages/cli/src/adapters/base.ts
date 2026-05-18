@@ -97,6 +97,19 @@ export interface AgentAdapter {
 	 * skill — empty-key callers were getting `<root>/skills//SKILL.md`
 	 * before this method existed. */
 	getSkillsRootDir(): string;
+	/** Returns the on-disk path where a SHARED-PROJECT skill should
+	 * land. The owner-handle (resolved server-side, frozen at link
+	 * create for each shared owner) is appended with `__` separator so
+	 * the same key from different owners coexists with the recipient's
+	 * own key.
+	 *
+	 * Example for Claude Code:
+	 *   getSharedSkillPath("git-tools", "alice-a3b4")
+	 *     → "~/.claude/skills/git-tools__alice-a3b4"
+	 *
+	 * Personal project skills keep using `getSkillsRootDir() + key`
+	 * with no suffix. */
+	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi serve` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
 	 * files there) or a single file (Hermes uses a SQLite DB). The
@@ -109,6 +122,17 @@ export interface AgentAdapter {
 	 * may simply have never run yet. */
 	getSessionsWatchPaths(): string[];
 	writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void>;
+	/** Like `writeSkillArchive` but lands the content at the shared-
+	 * project path (`getSharedSkillPath(key, ownerHandle)`) rather than
+	 * `getSkillsRootDir() + key`. Tarball still has `<key>/...` as its
+	 * top-level layout (uploads don't know they'll be re-served as
+	 * shared); implementations extract into a temp dir and rename
+	 * the top entry to `<key>__<ownerHandle>`.
+	 *
+	 * Called by `clawdi inbox accept` after a successful upgrade or
+	 * redeem so the recipient's agent immediately sees the shared
+	 * skill folder without waiting for a daemon reconcile cycle. */
+	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
 	/** Remove a skill from the agent's local skills directory.
 	 * Called by the daemon's reconcile sweep when a previously-
 	 * observed cloud skill is no longer in the listing (dashboard

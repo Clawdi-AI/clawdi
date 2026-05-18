@@ -173,4 +173,17 @@ describe("ApiClient error classification", () => {
 			globalThis.fetch = origFetch;
 		}
 	});
+
+	it("readJson maps empty success bodies to ApiError instead of SyntaxError", async () => {
+		const { readJson } = await import("../src/lib/api-client");
+		let caught: unknown;
+		try {
+			await readJson(new Response("", { status: 200 }), "empty response");
+		} catch (e) {
+			caught = e;
+		}
+		expect(caught).toBeInstanceOf(ApiError);
+		expect((caught as ApiError).status).toBe(200);
+		expect((caught as ApiError).body).toContain("empty response");
+	});
 });

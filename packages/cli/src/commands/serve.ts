@@ -201,14 +201,14 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		// `--environment-id` deliberately rejected for `--all`. A
 		// single id pinned across every agent unit defeats the
 		// per-agent env model — every daemon would `resolveEnvironmentId`
-		// to the same value and trample each other's scope. Each
+		// to the same value and trample each other's project. Each
 		// agent picks up its own id from `~/.clawdi/environments/<agent>.json`
 		// (written by `clawdi setup`), or fail loudly if missing.
 		if (opts.environmentId) {
 			console.error(
 				"--environment-id can't be combined with --all. Each agent's env is read from " +
 					"~/.clawdi/environments/<agent>.json (written by `clawdi setup`); pinning a " +
-					"single id across every unit would route every daemon to the same scope.",
+					"single id across every unit would route every daemon to the same project.",
 			);
 			process.exit(1);
 		}
@@ -389,7 +389,7 @@ export async function serveStatus(opts: ServeInstallOpts): Promise<void> {
 	// status should mirror that. Falling through `pickAgent` here used
 	// to silently hide all-but-one daemon's state behind a warning,
 	// which made debugging multi-agent setups (the actual common case)
-	// confusing. With --agent, scope to that one daemon.
+	// confusing. With --agent, project to that one daemon.
 	const targets: AgentType[] = opts.agent
 		? [pickAgent(opts.agent).agentType]
 		: listRegisteredAgentTypes();

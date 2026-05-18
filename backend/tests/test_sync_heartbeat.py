@@ -121,15 +121,15 @@ async def env_bound_cli_client(
     environment_id. Yields (client, bound_env_id, other_env_id) so
     tests can assert the bound key works on its own env and 403s
     on another env owned by the same user."""
-    from tests.conftest import create_env_with_scope
+    from tests.conftest import create_env_with_project
 
-    bound_env = await create_env_with_scope(
+    bound_env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="bound",
         machine_name="bound",
     )
-    other_env = await create_env_with_scope(
+    other_env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id="other",

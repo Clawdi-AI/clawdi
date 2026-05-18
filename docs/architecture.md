@@ -6,7 +6,7 @@ High-level map of what's actually in Clawdi Cloud today — updated as the code 
 
 ## One-paragraph overview
 
-Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. The web app is a read-mostly dashboard on the same backend. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
+Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a read-mostly dashboard on the same backend. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
 
 ---
 
@@ -51,6 +51,11 @@ All keyed off Clerk `user_id`:
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
 | `agent_environments` | One row per (machine × agent). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup` |
+| `projects` | Owned data containers for skills, vaults, and future memory/session grouping. Kinds are `personal`, `environment`, and `workspace`; `environment` is the internal Agent Project kind | Provisioning, `clawdi setup`, `clawdi project create` |
+| `project_memberships` | Viewer-only shared Project access granted by invite or share link | Share accept / invite accept |
+| `project_share_links` | Hashed bearer links for read-only Project access. Raw tokens are only returned once | `clawdi project share` |
+| `project_invitations` | Pending directed invites to existing Clawdi users | `clawdi project invite` |
+| `agent_project_bindings` | Runtime Agent composition: one fixed `primary` Agent Project row plus ordered `context` attachments | `clawdi setup`, `clawdi agent projects ...` |
 | `sessions` | Per-conversation metadata: `environment_id`, `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi push` |
 | `skills` | Per-skill metadata + tar.gz body in file store | CLI `skill add / install`, dashboard upload |
 | `vaults` + `vault_items` | Three-level secrets: vault → section → field. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts and returns plain values; CLI-only | `clawdi vault set` |
@@ -143,7 +148,7 @@ The MCP server registration path also differs per agent — see `commands/setup.
 
 Sync state (`sessions.lastSyncedAt`, `skills.lastSyncedAt`) lives in `~/.clawdi/sync.json` — **the server is stateless about sync**. The CLI sends `?since=` filters on upload. This keeps the server simple and lets multiple machines sync independently.
 
-Per-project filter: `sync up` defaults to the current working directory as a filter. `--all` disables it, `--project <path>` overrides. Hermes ignores the filter (its sessions have no `cwd`); it prints a yellow warning and syncs everything instead of silently dropping the filter.
+Per-project filter: `clawdi push` defaults to the current working directory as a local path filter for sessions. `--all` disables it, `--project <path>` overrides. This is not the cloud Project alias used by Project sharing commands. Hermes ignores the filter (its sessions have no `cwd`); it prints a yellow warning and syncs everything instead of silently dropping the filter.
 
 ---
 
@@ -157,12 +162,14 @@ clawdi://prod/stripe/secret_key
 clawdi://prod/database/url
 ```
 
-Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault endpoints:
+Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 
 - `/api/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**
-- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }`, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer
+- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. It can resolve a single Project via `project_id` or an Agent's ordered Project set via `agent_id`.
 
-`clawdi run -- <cmd>` hits `/vault/resolve`, merges the returned env into the child process's environment, and `exec`s. This lets the user commit `.env` files with `OPENAI_API_KEY=clawdi://default/openai/api_key` without exposing the real secret in git — at runtime the CLI substitutes.
+`clawdi run -- <cmd>` hits `/vault/resolve`, merges the returned env into the child process's environment, and `exec`s. `clawdi run --project <project> -- <cmd>` resolves from that explicit cloud Project. Without `--project`, a local `clawdi project folder link --project <project>` can select the Project for the current folder or a parent folder. Folder links are local CLI selection hints only: they do not grant Project access, attach Projects to Agents, or compose Projects.
+
+Agent runtime resolution is separate from folder links. `clawdi vault resolve KEY --agent <agent-id>` reads the fixed Agent Project first, then attached Projects by explicit order. Conflicting keys across that order block by default and require `--allow-conflicts` for first-match wins.
 
 ---
 
@@ -181,7 +188,7 @@ Tool descriptions on `memory_search` / `memory_add` are intentionally verbose an
 
 ## What's not implemented
 
-Several items were scoped but not built. Named for discoverability if someone picks them up:
+Several items were considered but not built. Named for discoverability if someone picks them up:
 
 - **Celery / background tasks** — no async task queue. Memory is embedded synchronously on `memory_add`.
 - **Session → Memory LLM pipeline** — sessions are just stored; nothing auto-extracts memories from transcripts. Users / agents add memories explicitly.
