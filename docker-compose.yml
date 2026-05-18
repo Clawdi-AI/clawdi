@@ -1,12 +1,15 @@
-name: clawdi-dev
+name: ${COMPOSE_PROJECT_NAME:-clawdi-dev}
 
 # Dev-only infrastructure. Brings up a Postgres 16 image with pgvector +
 # pg_trgm so local dev doesn't have to install those extensions by hand.
 #
+# Paseo overrides COMPOSE_PROJECT_NAME and INFRA_POSTGRES_PORT per worktree.
+# Outside Paseo, this preserves the repo's normal 5433 dev port.
+#
 # Usage:
-#   docker compose up -d            # start postgres in the background
-#   docker compose down             # stop (keeps data volume)
-#   docker compose down -v          # stop AND wipe the data volume
+#   docker compose up -d postgres            # start postgres in the background
+#   docker compose down                      # stop (keeps data volume)
+#   docker compose down -v                   # stop AND wipe the data volume
 #
 # The backend itself runs locally via `pdm dev` — this file intentionally
 # does NOT bake a backend container for dev, because you want hot reload
@@ -19,18 +22,17 @@ services:
     # the upstream postgres image, so pg_trgm is still available via the
     # standard `CREATE EXTENSION` call wired in app/core/database.py.
     image: pgvector/pgvector:pg16
-    container_name: clawdi-pg
     restart: unless-stopped
     environment:
-      POSTGRES_DB: clawdi
-      POSTGRES_USER: clawdi
-      POSTGRES_PASSWORD: clawdi_dev
+      POSTGRES_DB: ${INFRA_POSTGRES_DB:-clawdi}
+      POSTGRES_USER: ${INFRA_POSTGRES_USER:-clawdi}
+      POSTGRES_PASSWORD: ${INFRA_POSTGRES_PASSWORD:-clawdi_dev}
     ports:
-      - "5433:5432"
+      - "${INFRA_POSTGRES_HOST:-127.0.0.1}:${INFRA_POSTGRES_PORT:-5433}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 10
