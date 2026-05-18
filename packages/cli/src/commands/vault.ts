@@ -58,21 +58,7 @@ async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<stri
 	const candidates = list.items.filter((v) => v.slug === slug);
 	if (candidates.length === 0) return null;
 	if (candidates.length === 1) return candidates[0].project_id;
-	const headers: Record<string, string> = {};
-	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
-	const projectRes = await fetch(`${api.baseUrl}/api/projects/default`, { headers });
-	let def: string;
-	if (projectRes.ok) {
-		const body = (await projectRes.json()) as { project_id: string };
-		def = body.project_id;
-	} else {
-		const legacy = (
-			unwrap(await api.GET("/api/projects/default")) as {
-				project_id?: string;
-			}
-		).project_id;
-		def = legacy ?? "";
-	}
+	const def = unwrap(await api.GET("/api/projects/default")).project_id ?? "";
 	const inDefault = candidates.find((v) => v.project_id === def);
 	if (inDefault) return inDefault.project_id;
 	// Multiple matches, none in the default project. Pick the

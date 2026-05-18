@@ -23,6 +23,7 @@
  */
 
 import { allAdapterEntries } from "../adapters/registry";
+import { readJson } from "../lib/api-client";
 import { isValidSkillKey } from "../lib/skill-key";
 import { addToken, listTokens } from "./tokens";
 
@@ -48,7 +49,7 @@ export async function pullSharedSkills(
 		url.searchParams.set("page_size", String(PAGE_SIZE));
 		const r = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
 		if (!r.ok) throw new Error(`Skill listing failed: HTTP ${r.status}`);
-		const body = (await r.json()) as { items: SkillSummary[] };
+		const body = await readJson<{ items: SkillSummary[] }>(r, "/api/skills");
 		items.push(...body.items);
 		if (body.items.length < PAGE_SIZE) break;
 		page += 1;

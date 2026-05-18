@@ -8,6 +8,7 @@ import {
 	allAdapterEntries,
 	getAdapterEntry,
 } from "../adapters/registry";
+import { readJson } from "./api-client";
 import { getClawdiDir } from "./config";
 
 export function getEnvIdByAgent(agentType: string): string | null {
@@ -44,7 +45,10 @@ export async function fetchDefaultProjectId(
 	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
 
 	const projectRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
-	const body = (await projectRes.json().catch(() => ({}))) as { project_id?: string };
+	const body: { project_id?: string } = await readJson<{ project_id?: string }>(
+		projectRes,
+		"/api/projects/default",
+	).catch(() => ({}));
 	if (body.project_id) return body.project_id;
 	if (!projectRes.ok) {
 		throw new Error(`Failed to resolve default project: HTTP ${projectRes.status}`);

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { ApiError } from "./api-client";
+import { ApiError, readJson } from "./api-client";
 import { getAuth, getConfig } from "./config";
 import type { ProjectBrief } from "./project-resolver";
 
@@ -43,7 +43,7 @@ export async function authedJson<T>(
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
-	return r.json() as Promise<T>;
+	return await readJson<T>(r, path);
 }
 
 export function projectAlias(project: Pick<ProjectBrief, "slug" | "is_owner" | "owner_handle">) {

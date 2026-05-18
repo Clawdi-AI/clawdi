@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { ApiClient, ApiError, readJson, unwrap } from "../lib/api-client";
 import {
 	clearAuth,
 	clearPendingAuth,
@@ -53,7 +53,7 @@ async function verifyAndSave(apiKey: string, apiUrl: string): Promise<MeResponse
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!res.ok) return null;
-	const me = (await res.json()) as MeResponse;
+	const me = await readJson<MeResponse>(res, "/api/auth/me");
 	setAuth({ apiKey, userId: me.id, email: me.email });
 	return me;
 }
@@ -72,7 +72,7 @@ async function saveThenVerify(apiKey: string, apiUrl: string): Promise<MeRespons
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!res.ok) return null;
-	const me = (await res.json()) as MeResponse;
+	const me = await readJson<MeResponse>(res, "/api/auth/me");
 	setAuth({ apiKey, userId: me.id, email: me.email });
 	return me;
 }
@@ -146,10 +146,10 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 				if (!r.ok) {
 					return { kind: "fail", name: t.project_name, reason: `HTTP ${r.status}` };
 				}
-				const body = (await r.json()) as {
+				const body = await readJson<{
 					project_id?: string;
 					resolved_owner_handle?: string;
-				};
+				}>(r, "share upgrade");
 				return {
 					kind: "ok",
 					token: t,

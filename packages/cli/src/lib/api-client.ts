@@ -318,7 +318,7 @@ export class ApiClient {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 			}
-			return (await res.json()) as T;
+			return await readJson<T>(res, "multipart upload response");
 		} finally {
 			clearTimeout(timer);
 			this.abortSignal?.removeEventListener("abort", onEngineAbort);
@@ -342,7 +342,7 @@ export class ApiClient {
 			const body = await res.text();
 			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 		}
-		return (await res.json()) as T;
+		return await readJson<T>(res, path);
 	}
 
 	async getBytes(path: string): Promise<Buffer> {
@@ -355,6 +355,18 @@ export class ApiClient {
 			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 		}
 		return Buffer.from(await res.arrayBuffer());
+	}
+}
+
+export async function readJson<T>(res: Response, context = "API response"): Promise<T> {
+	try {
+		return (await res.json()) as T;
+	} catch {
+		throw new ApiError({
+			status: res.status,
+			body: `${context} returned an invalid JSON response`,
+			hint: hintFor(res.status),
+		});
 	}
 }
 

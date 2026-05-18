@@ -15,7 +15,7 @@ import { rmSync } from "node:fs";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
-import { ApiError } from "../lib/api-client";
+import { ApiError, readJson } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 import { listProjects } from "../lib/project-resolver";
 import { pullSharedSkills } from "../share/eager-pull";
@@ -211,7 +211,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
-	const items = (await r.json()) as InvitationItem[];
+	const items = await readJson<InvitationItem[]>(r, "/api/me/invitations");
 
 	if (opts.json) {
 		console.log(JSON.stringify({ invitations: items }, null, 2));
@@ -435,7 +435,7 @@ async function acceptAnonymousUrl(
 		throw new Error("Share link has been revoked or expired.");
 	}
 	if (!r.ok) throw new Error(`Redeem failed: HTTP ${r.status}`);
-	const body = (await r.json()) as SharePreview;
+	const body = await readJson<SharePreview>(r, "redeem share link");
 
 	const record: ShareToken = {
 		project_id: body.project_id,
@@ -562,7 +562,7 @@ async function acceptUrl(
 	if (r.status === 410) throw new Error("Share link revoked or expired.");
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
-	const body = (await r.json()) as ShareUpgradeResponse;
+	const body = await readJson<ShareUpgradeResponse>(r, "upgrade share link");
 	const pulled = await eagerPullAndReport(
 		apiUrl,
 		bearer,
@@ -600,7 +600,7 @@ async function acceptInvitation(
 	}
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
-	const body = (await r.json()) as InvitationAcceptResponse;
+	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
 	const pulled = await eagerPullAndReport(
 		apiUrl,
 		bearer,

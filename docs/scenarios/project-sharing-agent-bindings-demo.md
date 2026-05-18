@@ -90,6 +90,8 @@ Expected:
 - CLI/API listings expose People / Access, Invites, and Links state.
 - The generated share URL is shown once and clearly marked as read-only viewer access.
 - Link listings show the prefix, label, timestamps, accepts, and revoke affordance.
+- Revoking a share link stops future accepts only; accepted viewers stay members until
+  `project members --remove`, `project leave`, or `project unshare` changes membership.
 - No secret plaintext is shown.
 
 Web PR follow-up: Projects list/detail and Share dialog should mirror
@@ -317,6 +319,7 @@ Expected:
 - Removed members no longer see the project in `project list --shared-with-me`.
 - Agent attachments for revoked users are pruned.
 - Revoked links cannot be accepted by new recipients.
+- Link revoke alone does not remove existing members; use member removal or unshare for that.
 - Existing owners and owned project data remain intact.
 
 ## Verification

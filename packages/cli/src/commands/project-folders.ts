@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { readJson } from "../lib/api-client";
 import { projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import {
 	findProjectFolderLink,
@@ -104,7 +105,7 @@ async function fetchDefaultProject(): Promise<ProjectBrief | null> {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!r.ok) return null;
-	const body = (await r.json()) as { project_id: string };
+	const body = await readJson<{ project_id: string }>(r, "/api/projects/default");
 	const projects = await listProjects(apiUrl, apiKey).catch(() => []);
 	return projects.find((item) => item.id === body.project_id) ?? null;
 }

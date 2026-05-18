@@ -1,4 +1,4 @@
-import { ApiError } from "./api-client";
+import { ApiError, readJson } from "./api-client";
 
 /**
  * Resolve a user-supplied `<project>` argument to a backend project UUID.
@@ -41,7 +41,7 @@ export async function resolveProjectId(
 		if (!r.ok) {
 			throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 		}
-		const def = (await r.json()) as { project_id: string };
+		const def = await readJson<{ project_id: string }>(r, "/api/projects/default");
 		return def.project_id;
 	}
 	if (UUID_RE.test(input)) return input;
@@ -93,5 +93,5 @@ export async function listProjects(apiUrl: string, bearer: string): Promise<Proj
 			hint: "",
 		});
 	}
-	return (await projectResponse.json()) as ProjectBrief[];
+	return await readJson<ProjectBrief[]>(projectResponse, "/api/projects");
 }

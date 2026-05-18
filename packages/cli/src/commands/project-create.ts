@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
+import { ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 
 interface ProjectRow {
@@ -81,7 +81,7 @@ export async function projectCreateCommand(
 		throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
 	}
 
-	const project = (await r.json()) as ProjectRow;
+	const project = await readJson<ProjectRow>(r, "create project");
 	if (opts.json) {
 		console.log(JSON.stringify({ status: "created", project }, null, 2));
 		return;

@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { readJson } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 import { getEnvIdByAgent } from "../lib/select-adapter";
@@ -69,7 +70,13 @@ export async function vaultResolveCommand(
 		method: "POST",
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
-	const body = (await r.json().catch(() => ({}))) as VaultResolveHit | { detail?: unknown };
+	let body: VaultResolveHit | { detail?: unknown };
+	try {
+		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/api/vault/resolve");
+	} catch (e) {
+		if (r.ok) throw e;
+		body = {};
+	}
 
 	if (!r.ok) {
 		if (opts.json) {

@@ -1,7 +1,7 @@
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
+import { ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
@@ -81,7 +81,7 @@ export async function projectShareCommand(
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
-	const body = (await r.json()) as ShareLinkCreated;
+	const body = await readJson<ShareLinkCreated>(r, "create share link");
 
 	console.log();
 	console.log(

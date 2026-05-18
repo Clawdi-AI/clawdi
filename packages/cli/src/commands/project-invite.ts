@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
+import { ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -78,7 +78,7 @@ export async function projectInviteCommand(
 	}
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
-	const body = (await r.json()) as InvitationResponse;
+	const body = await readJson<InvitationResponse>(r, "create project invitation");
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
 	console.log(chalk.gray("  They will join as a read-only viewer after accepting."));
 	console.log(chalk.gray("  Attaching it to an Agent is separate; after accept they can run:"));
