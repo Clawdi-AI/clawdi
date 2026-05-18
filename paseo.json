@@ -1,0 +1,11 @@
+{
+	"worktree": {
+		"setup": ["bash scripts/paseo/setup.sh"],
+		"teardown": ["bash scripts/paseo/teardown.sh"]
+	},
+	"scripts": {
+		"dev": {
+			"command": "bash scripts/paseo/dev.sh"
+		}
+	}
+}
