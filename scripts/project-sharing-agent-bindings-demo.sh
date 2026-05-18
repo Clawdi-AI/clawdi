@@ -8,11 +8,20 @@
 # Prerequisites:
 #   - pdm on PATH (or set PDM_BIN=/path/to/pdm)
 #   - bun on PATH (or set BUN_BIN=/path/to/bun)
-#   - Postgres reachable through DATABASE_URL, defaulting to localhost:5433
+#   - Postgres reachable through, in priority order:
+#       1. DATABASE_URL from the current shell
+#       2. backend/.env
+#       3. .paseo/ports.env (derives the per-worktree DB URL)
+#       4. localhost:5433 dev default
 #
 # Usage:
 #   docker compose up -d postgres
 #   bash scripts/project-sharing-agent-bindings-demo.sh
+#
+# Safety:
+#   Refuses non-local database hosts by default. Set
+#   ALLOW_NONLOCAL_DATABASE_URL=1 only for an intentional disposable
+#   remote test database.
 
 set -euo pipefail
 
@@ -20,7 +29,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PDM_BIN="${PDM_BIN:-pdm}"
 BUN_BIN="${BUN_BIN:-bun}"
 DEFAULT_DATABASE_URL="postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi"
-EFFECTIVE_DATABASE_URL="${DATABASE_URL:-$DEFAULT_DATABASE_URL}"
+EFFECTIVE_DATABASE_URL=""
+DATABASE_URL_SOURCE=""
 
 section() {
   printf "\n== %s ==\n" "$1"
@@ -37,17 +47,139 @@ require_command() {
   return 0
 }
 
+read_env_file_value() {
+  local file="$1"
+  local key="$2"
+
+  [ -f "$file" ] || return 1
+  python3 - "$file" "$key" <<'PY'
+import shlex
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+
+for raw_line in path.read_text().splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    if line.startswith("export "):
+        line = line[len("export ") :].lstrip()
+
+    key, value = line.split("=", 1)
+    if key.strip() != target:
+        continue
+
+    value = value.strip()
+    if value:
+        try:
+            parts = shlex.split(value, comments=True, posix=True)
+        except ValueError:
+            parts = []
+        if len(parts) == 1:
+            value = parts[0]
+
+    if not value:
+        sys.exit(1)
+
+    print(value)
+    sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
+resolve_database_url() {
+  if [ -n "${DATABASE_URL:-}" ]; then
+    EFFECTIVE_DATABASE_URL="$DATABASE_URL"
+    DATABASE_URL_SOURCE="DATABASE_URL"
+    return
+  fi
+
+  if EFFECTIVE_DATABASE_URL="$(read_env_file_value "$ROOT/backend/.env" DATABASE_URL)"; then
+    DATABASE_URL_SOURCE="backend/.env"
+    return
+  fi
+
+  local pg_port=""
+  if pg_port="$(read_env_file_value "$ROOT/.paseo/ports.env" PG_PORT)" || \
+     pg_port="$(read_env_file_value "$ROOT/.paseo/ports.env" INFRA_POSTGRES_PORT)"; then
+    EFFECTIVE_DATABASE_URL="postgresql+asyncpg://clawdi:clawdi_dev@127.0.0.1:${pg_port}/clawdi"
+    DATABASE_URL_SOURCE=".paseo/ports.env"
+    return
+  fi
+
+  EFFECTIVE_DATABASE_URL="$DEFAULT_DATABASE_URL"
+  DATABASE_URL_SOURCE="default"
+}
+
 resolve_db_endpoint() {
   EFFECTIVE_DATABASE_URL="$EFFECTIVE_DATABASE_URL" python3 - <<'PY'
 import os
+import sys
 from urllib.parse import urlparse
 
 url = os.environ["EFFECTIVE_DATABASE_URL"]
 parsed = urlparse(url)
 host = parsed.hostname or "localhost"
-port = parsed.port or 5432
+try:
+    port = parsed.port or 5432
+except ValueError as exc:
+    print(f"Invalid database URL port: {exc}", file=sys.stderr)
+    sys.exit(1)
 print(f"{host} {port}")
 PY
+}
+
+is_loopback_host() {
+  local host="$1"
+  python3 - "$host" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host = sys.argv[1]
+if host == "localhost":
+    sys.exit(0)
+
+try:
+    if ipaddress.ip_address(host).is_loopback:
+        sys.exit(0)
+except ValueError:
+    pass
+
+try:
+    infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+except OSError:
+    sys.exit(1)
+
+for info in infos:
+    address = info[4][0]
+    try:
+        if ipaddress.ip_address(address).is_loopback:
+            sys.exit(0)
+    except ValueError:
+        pass
+
+sys.exit(1)
+PY
+}
+
+require_local_database() {
+  local host="$1"
+  if is_loopback_host "$host"; then
+    return
+  fi
+
+  if [ "${ALLOW_NONLOCAL_DATABASE_URL:-}" = "1" ]; then
+    echo "Database safety: non-local host allowed by ALLOW_NONLOCAL_DATABASE_URL=1"
+    return
+  fi
+
+  echo "Refusing to run demo smoke against non-local database host: $host" >&2
+  echo "Set ALLOW_NONLOCAL_DATABASE_URL=1 only for an intentional disposable remote test database." >&2
+  exit 1
 }
 
 check_postgres() {
@@ -76,13 +208,16 @@ preflight() {
   require_command python3 "Install Python 3 for the Postgres reachability check." || ok=0
 
   if [[ "$ok" -eq 1 ]]; then
+    resolve_database_url
     read -r db_host db_port < <(resolve_db_endpoint)
+    echo "Database source: ${DATABASE_URL_SOURCE}"
     echo "Database endpoint: ${db_host}:${db_port}"
+    require_local_database "$db_host"
     if ! check_postgres "$db_host" "$db_port"; then
       ok=0
       echo "  Start the demo database with:" >&2
       echo "    docker compose up -d postgres" >&2
-      echo "  Or point DATABASE_URL at a reachable test database." >&2
+      echo "  Or point DATABASE_URL / backend/.env / .paseo/ports.env at a reachable test database." >&2
     fi
   fi
 

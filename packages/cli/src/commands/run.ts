@@ -39,10 +39,11 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		if (selectedProject) {
 			console.log(chalk.green(`✓ Using Project ${selectedProject.label} for vault env injection.`));
 		}
-		vaultEnv = await api.postJson<VaultResolved>(
+		const resolved = await api.postJson<unknown>(
 			"/api/vault/resolve",
 			selectedProject ? { project_id: selectedProject.projectId } : undefined,
 		);
+		vaultEnv = assertVaultResolved(resolved);
 	} catch (e) {
 		if (e instanceof ApiError && e.status === 403) {
 			console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
@@ -72,6 +73,18 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 	child.on("exit", (code) => {
 		process.exit(code ?? 0);
 	});
+}
+
+function assertVaultResolved(value: unknown): VaultResolved {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("vault/resolve returned an invalid response");
+	}
+	for (const [key, val] of Object.entries(value)) {
+		if (typeof val !== "string") {
+			throw new Error(`vault/resolve returned a non-string value for ${key}`);
+		}
+	}
+	return value as VaultResolved;
 }
 
 async function selectProject(api: ApiClient, opts: RunOpts): Promise<SelectedProject | null> {

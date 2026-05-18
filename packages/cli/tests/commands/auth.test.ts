@@ -98,6 +98,7 @@ describe("authLogin pending share upgrade", () => {
 			"GET /api/skills?project_id=project-shared&page=1&page_size=200",
 			"GET /api/projects/project-shared/skills/deploy-helper/download",
 		]);
+		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
 
 		const [token] = listTokens();
 		expect(token.upgraded_at).toBeString();

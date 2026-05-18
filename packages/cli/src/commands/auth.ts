@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
@@ -15,6 +16,10 @@ import {
 	setPendingAuth,
 } from "../lib/config";
 import type { ShareToken } from "../share/tokens";
+
+function upgradeIdempotencyKey(token: string): string {
+	return `upgrade-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
+}
 
 interface MeResponse {
 	id: string;
@@ -111,6 +116,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					headers: {
 						Authorization: `Bearer ${apiKey}`,
 						"Content-Type": "application/json",
+						"Idempotency-Key": upgradeIdempotencyKey(t.token),
 					},
 					body: "{}",
 				});

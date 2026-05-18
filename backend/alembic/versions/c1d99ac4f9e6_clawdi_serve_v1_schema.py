@@ -3,22 +3,22 @@
 Single consolidated migration for the `clawdi serve` daemon
 PR. Produces the same end-state schema the previous chain of
 six migrations did (api_key scopes/env_id, agent_env
-observability + dedup unique, projects table + per-row project_id
-backfill, vault per-project slug, skill_conflicts removed,
-sessions composite indexes, and Personal-project-for-every-user
+observability + dedup unique, scopes table + per-row scope_id
+backfill, vault per-scope slug, skill_conflicts removed,
+sessions composite indexes, and Personal-scope-for-every-user
 backfill) but in a single ordered upgrade() — no skill_conflicts
 ever created (it was added then dropped in the previous chain),
-no duplicate Personal-project step needed.
+no duplicate Personal-scope step needed.
 
 End-state guarantees the rest of the codebase relies on:
-  - every `user` has exactly one `projects` row with `kind='personal'`
-  - every `agent_environment` has exactly one `projects` row with
-    `kind='environment'` and matching `default_project_id`
-  - every active `skill` has a non-null `project_id`
-  - every `vault` has a non-null `project_id`
-  - skill uniqueness is `(user_id, project_id, skill_key)` for
-    active rows, allowing the same `skill_key` across projects
-  - vault slug uniqueness is `(user_id, project_id, slug)`
+  - every `user` has exactly one `scopes` row with `kind='personal'`
+  - every `agent_environment` has exactly one `scopes` row with
+    `kind='environment'` and matching `default_scope_id`
+  - every active `skill` has a non-null `scope_id`
+  - every `vault` has a non-null `scope_id`
+  - skill uniqueness is `(user_id, scope_id, skill_key)` for
+    active rows, allowing the same `skill_key` across scopes
+  - vault slug uniqueness is `(user_id, scope_id, slug)`
   - agent_environments unique on (user_id, machine_id, agent_type)
     so concurrent `clawdi setup` runs converge on a single row
   - sessions list queries are covered by composite indexes for
@@ -28,7 +28,7 @@ Idempotency: every backfill step uses `WHERE … IS NULL` /
 `ON CONFLICT DO NOTHING` / `WHERE NOT EXISTS` guards. A crash
 mid-way is restartable without manual cleanup.
 
-`PROJECT_MIGRATION_DUP_THRESHOLD_PCT` env var (default 1) gates
+`SCOPE_MIGRATION_DUP_THRESHOLD_PCT` env var (default 1) gates
 the duplicate-skill cleanup step — fails if the rows-to-soft-
 delete ratio exceeds that percentage of total active skills,
 signalling data drift that needs ops attention before the
@@ -148,7 +148,7 @@ def upgrade() -> None:
     #    had no DB guard against concurrent `clawdi setup` runs
     #    creating duplicates. Naive DELETE would lose load-bearing
     #    FK refs (sessions.environment_id SET NULL, api_keys
-    #    CASCADE, projects.origin_environment_id SET NULL) — remap
+    #    CASCADE, scopes.origin_environment_id SET NULL) — remap
     #    each before the DELETE so the row goes cleanly.
     # ============================================================
     bind.execute(
@@ -193,8 +193,8 @@ def upgrade() -> None:
             """
         )
     )
-    # Note: projects table doesn't exist yet — skipped here. The
-    # project creation below uses post-dedup envs so this is
+    # Note: scopes table doesn't exist yet — skipped here. The
+    # scope creation below uses post-dedup envs so this is
     # automatically consistent.
     bind.execute(
         sa.text(
@@ -213,10 +213,10 @@ def upgrade() -> None:
     )
 
     # ============================================================
-    # 5. CREATE TABLE projects + indices + partial unique constraint
+    # 5. CREATE TABLE scopes + indices + partial unique constraint
     # ============================================================
     op.create_table(
-        "projects",
+        "scopes",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
@@ -244,42 +244,42 @@ def upgrade() -> None:
             ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "slug", name="uq_projects_user_slug"),
+        sa.UniqueConstraint("user_id", "slug", name="uq_scopes_user_slug"),
         sa.CheckConstraint(
             "kind IN ('personal', 'environment')",
-            name="ck_projects_kind_v1",
+            name="ck_scopes_kind_v1",
         ),
     )
-    op.create_index("ix_projects_user_id", "projects", ["user_id"], unique=False)
+    op.create_index("ix_scopes_user_id", "scopes", ["user_id"], unique=False)
     op.create_index(
-        "ix_projects_origin_environment_id",
-        "projects",
+        "ix_scopes_origin_environment_id",
+        "scopes",
         ["origin_environment_id"],
         unique=False,
     )
-    # Exactly one personal-kind project per user.
+    # Exactly one personal-kind scope per user.
     op.create_index(
-        "uq_projects_one_personal_per_user",
-        "projects",
+        "uq_scopes_one_personal_per_user",
+        "scopes",
         ["user_id"],
         unique=True,
         postgresql_where=sa.text("kind = 'personal'"),
     )
 
     # ============================================================
-    # 6. Add nullable project_id columns
+    # 6. Add nullable scope_id columns
     # ============================================================
     op.add_column(
         "agent_environments",
-        sa.Column("default_project_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("default_scope_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     op.add_column(
         "skills",
-        sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("scope_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     op.add_column(
         "vaults",
-        sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("scope_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
 
     # ============================================================
@@ -289,12 +289,12 @@ def upgrade() -> None:
     #    concurrent active duplicates; this migration step
     #    establishes the precondition.
     # ============================================================
-    threshold_raw = os.environ.get("PROJECT_MIGRATION_DUP_THRESHOLD_PCT", "1")
+    threshold_raw = os.environ.get("SCOPE_MIGRATION_DUP_THRESHOLD_PCT", "1")
     try:
         threshold_pct = float(threshold_raw)
     except ValueError:
         raise RuntimeError(
-            f"PROJECT_MIGRATION_DUP_THRESHOLD_PCT={threshold_raw!r} is not a number"
+            f"SCOPE_MIGRATION_DUP_THRESHOLD_PCT={threshold_raw!r} is not a number"
         ) from None
 
     total_skills = bind.execute(
@@ -324,7 +324,7 @@ def upgrade() -> None:
         if dup_rows > 0 and (dup_rows / total_skills * 100) > threshold_pct:
             raise RuntimeError(
                 f"skills duplicate-rows ratio {dup_rows}/{total_skills} exceeds "
-                f"PROJECT_MIGRATION_DUP_THRESHOLD_PCT={threshold_pct}. Investigate "
+                f"SCOPE_MIGRATION_DUP_THRESHOLD_PCT={threshold_pct}. Investigate "
                 "before running the migration. Override the env var if intentional."
             )
         bind.execute(
@@ -350,7 +350,7 @@ def upgrade() -> None:
     # 8. Cleanup orphan rows (user_id no longer in users) before
     #    new FKs are created. Today's schema has no FK between
     #    agent_environments.user_id and users.id, so legacy data
-    #    can carry orphans. The new projects.user_id FK + cascading
+    #    can carry orphans. The new scopes.user_id FK + cascading
     #    constraints would fail on those rows.
     # ============================================================
     bind.execute(
@@ -379,20 +379,20 @@ def upgrade() -> None:
     )
 
     # ============================================================
-    # 9. INSERT Personal project for every user. Belt-and-suspenders
+    # 9. INSERT Personal scope for every user. Belt-and-suspenders
     #    idempotency: `WHERE NOT EXISTS` checks for any existing
-    #    Personal project for that user, so re-runs and partial
+    #    Personal scope for that user, so re-runs and partial
     #    prior states both converge.
     # ============================================================
     bind.execute(
         sa.text(
             """
-            INSERT INTO projects (id, user_id, name, slug, kind)
+            INSERT INTO scopes (id, user_id, name, slug, kind)
             SELECT gen_random_uuid(), u.id, 'Personal', 'personal', 'personal'
             FROM users u
             WHERE NOT EXISTS (
                 SELECT 1
-                FROM projects s
+                FROM scopes s
                 WHERE s.user_id = u.id
                   AND s.kind = 'personal'
             )
@@ -401,7 +401,7 @@ def upgrade() -> None:
     )
 
     # ============================================================
-    # 10. INSERT env-local project for every agent_environment.
+    # 10. INSERT env-local scope for every agent_environment.
     #     Slug is `env-{id-prefix}` for deterministic re-
     #     runnability — same env produces the same slug every time.
     #     Filter to envs whose owning user still exists (orphans
@@ -410,7 +410,7 @@ def upgrade() -> None:
     bind.execute(
         sa.text(
             """
-            INSERT INTO projects (
+            INSERT INTO scopes (
                 id, user_id, name, slug, kind, origin_environment_id
             )
             SELECT
@@ -428,72 +428,72 @@ def upgrade() -> None:
     )
 
     # ============================================================
-    # 11. Point every agent_environment at its env-local project.
+    # 11. Point every agent_environment at its env-local scope.
     # ============================================================
     bind.execute(
         sa.text(
             """
             UPDATE agent_environments e
-            SET default_project_id = s.id
-            FROM projects s
+            SET default_scope_id = s.id
+            FROM scopes s
             WHERE s.origin_environment_id = e.id
               AND s.kind = 'environment'
-              AND e.default_project_id IS NULL
+              AND e.default_scope_id IS NULL
             """
         )
     )
 
     # ============================================================
-    # 12. Backfill skills.project_id by heuristic.
-    #     - User has 1+ envs: most recently active env's local project
+    # 12. Backfill skills.scope_id by heuristic.
+    #     - User has 1+ envs: most recently active env's local scope
     #       (deterministic tiebreak: id DESC on tied last_seen_at).
-    #     - User has 0 envs: user's Personal project (rare — skills
+    #     - User has 0 envs: user's Personal scope (rare — skills
     #       uploaded but no env registered yet).
     #
     #     `file_key` paths are NOT rewritten — the row stores its
     #     own path, so existing blobs serve from their pre-
     #     migration location and only new uploads land in the
-    #     project-prefixed path. Long-term cleanup of legacy paths
+    #     scope-prefixed path. Long-term cleanup of legacy paths
     #     is a separate ops task.
     # ============================================================
     bind.execute(
         sa.text(
             """
             UPDATE skills s
-            SET project_id = COALESCE(
-                (SELECT project_row.id
-                 FROM projects project_row
-                 WHERE project_row.origin_environment_id IN (
+            SET scope_id = COALESCE(
+                (SELECT scope.id
+                 FROM scopes scope
+                 WHERE scope.origin_environment_id IN (
                      SELECT env.id FROM agent_environments env
                      WHERE env.user_id = s.user_id
                      ORDER BY env.last_seen_at DESC NULLS LAST, env.id DESC
                      LIMIT 1
                  )
-                 AND project_row.kind = 'environment'
+                 AND scope.kind = 'environment'
                  LIMIT 1),
-                (SELECT id FROM projects
+                (SELECT id FROM scopes
                  WHERE user_id = s.user_id AND kind = 'personal'
                  LIMIT 1)
             )
-            WHERE s.project_id IS NULL
+            WHERE s.scope_id IS NULL
             """
         )
     )
 
     # ============================================================
-    # 13. Backfill vaults.project_id to user's Personal project (vaults
+    # 13. Backfill vaults.scope_id to user's Personal scope (vaults
     #     are not machine-bound today).
     # ============================================================
     bind.execute(
         sa.text(
             """
             UPDATE vaults v
-            SET project_id = (
-                SELECT id FROM projects
+            SET scope_id = (
+                SELECT id FROM scopes
                 WHERE user_id = v.user_id AND kind = 'personal'
                 LIMIT 1
             )
-            WHERE v.project_id IS NULL
+            WHERE v.scope_id IS NULL
             """
         )
     )
@@ -502,9 +502,9 @@ def upgrade() -> None:
     # 14. Validate no NULLs remain in newly-required columns.
     # ============================================================
     for table, col in (
-        ("agent_environments", "default_project_id"),
-        ("skills", "project_id"),
-        ("vaults", "project_id"),
+        ("agent_environments", "default_scope_id"),
+        ("skills", "scope_id"),
+        ("vaults", "scope_id"),
     ):
         null_count = bind.execute(
             sa.text(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")
@@ -516,20 +516,20 @@ def upgrade() -> None:
             )
 
     # ============================================================
-    # 15. SET NOT NULL + FK + per-project indexes.
+    # 15. SET NOT NULL + FK + per-scope indexes.
     #     FKs added via NOT VALID + VALIDATE so the row scan
     #     doesn't take an exclusive lock — meta-only ADD then
     #     SHARE UPDATE EXCLUSIVE walk lets reads + writes proceed
     #     for tables that grow into the millions.
     # ============================================================
-    op.alter_column("agent_environments", "default_project_id", nullable=False)
-    op.alter_column("skills", "project_id", nullable=False)
-    op.alter_column("vaults", "project_id", nullable=False)
+    op.alter_column("agent_environments", "default_scope_id", nullable=False)
+    op.alter_column("skills", "scope_id", nullable=False)
+    op.alter_column("vaults", "scope_id", nullable=False)
 
     fk_specs = (
-        ("fk_agent_environments_default_project_id", "agent_environments", "default_project_id"),
-        ("fk_skills_project_id", "skills", "project_id"),
-        ("fk_vaults_project_id", "vaults", "project_id"),
+        ("fk_agent_environments_default_scope_id", "agent_environments", "default_scope_id"),
+        ("fk_skills_scope_id", "skills", "scope_id"),
+        ("fk_vaults_scope_id", "vaults", "scope_id"),
     )
     for fk_name, table, col in fk_specs:
         bind.execute(
@@ -537,15 +537,15 @@ def upgrade() -> None:
                 f"""
                 ALTER TABLE {table}
                 ADD CONSTRAINT {fk_name}
-                FOREIGN KEY ({col}) REFERENCES projects(id) ON DELETE CASCADE
+                FOREIGN KEY ({col}) REFERENCES scopes(id) ON DELETE CASCADE
                 NOT VALID
                 """
             )
         )
         bind.execute(sa.text(f"ALTER TABLE {table} VALIDATE CONSTRAINT {fk_name}"))
 
-    op.create_index("ix_skills_project_id", "skills", ["project_id"], unique=False)
-    op.create_index("ix_vaults_project_id", "vaults", ["project_id"], unique=False)
+    op.create_index("ix_skills_scope_id", "skills", ["scope_id"], unique=False)
+    op.create_index("ix_vaults_scope_id", "vaults", ["scope_id"], unique=False)
 
     # ============================================================
     # 16. New partial unique index on active skills. Soft-deleted
@@ -553,17 +553,17 @@ def upgrade() -> None:
     #     for the unique slot.
     # ============================================================
     op.create_index(
-        "uq_skills_active_user_project_skill_key",
+        "uq_skills_active_user_scope_skill_key",
         "skills",
-        ["user_id", "project_id", "skill_key"],
+        ["user_id", "scope_id", "skill_key"],
         unique=True,
         postgresql_where=sa.text("is_active = true"),
     )
 
     # ============================================================
-    # 17. Vault slug uniqueness becomes (user_id, project_id, slug).
+    # 17. Vault slug uniqueness becomes (user_id, scope_id, slug).
     #     Pre-migration `uq_vault_user_slug` was per-user; with
-    #     one-env-one-project, two envs are entitled to hold the
+    #     one-env-one-scope, two envs are entitled to hold the
     #     same slug independently.
     # ============================================================
     bind.execute(sa.text("ALTER TABLE vaults DROP CONSTRAINT IF EXISTS uq_vault_user_slug"))
@@ -574,11 +574,11 @@ def upgrade() -> None:
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_constraint
-                    WHERE conname = 'uq_vault_user_project_slug'
+                    WHERE conname = 'uq_vault_user_scope_slug'
                 ) THEN
                     ALTER TABLE vaults
-                    ADD CONSTRAINT uq_vault_user_project_slug
-                    UNIQUE (user_id, project_id, slug);
+                    ADD CONSTRAINT uq_vault_user_scope_slug
+                    UNIQUE (user_id, scope_id, slug);
                 END IF;
             END$$;
             """
@@ -631,7 +631,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Reverse order of upgrade(). FKs/indices first, then columns
-    # and finally the projects table itself.
+    # and finally the scopes table itself.
 
     # 18. Sessions composite indexes (plain DROP — non-concurrent).
     op.drop_index("ix_sessions_user_updated_at", table_name="sessions", if_exists=True)
@@ -639,7 +639,7 @@ def downgrade() -> None:
     op.drop_index("ix_sessions_user_env", table_name="sessions", if_exists=True)
 
     # 17. Vault slug uniqueness reverts to (user_id, slug).
-    op.execute("ALTER TABLE vaults DROP CONSTRAINT IF EXISTS uq_vault_user_project_slug")
+    op.execute("ALTER TABLE vaults DROP CONSTRAINT IF EXISTS uq_vault_user_scope_slug")
     op.execute(
         """
         DO $$
@@ -655,29 +655,29 @@ def downgrade() -> None:
     )
 
     # 16. Active-skills unique index.
-    op.drop_index("uq_skills_active_user_project_skill_key", table_name="skills")
+    op.drop_index("uq_skills_active_user_scope_skill_key", table_name="skills")
 
-    # 15. Per-project indexes + FKs + NOT NULL → nullable.
-    op.drop_index("ix_vaults_project_id", table_name="vaults")
-    op.drop_index("ix_skills_project_id", table_name="skills")
-    op.drop_constraint("fk_vaults_project_id", "vaults", type_="foreignkey")
-    op.drop_constraint("fk_skills_project_id", "skills", type_="foreignkey")
+    # 15. Per-scope indexes + FKs + NOT NULL → nullable.
+    op.drop_index("ix_vaults_scope_id", table_name="vaults")
+    op.drop_index("ix_skills_scope_id", table_name="skills")
+    op.drop_constraint("fk_vaults_scope_id", "vaults", type_="foreignkey")
+    op.drop_constraint("fk_skills_scope_id", "skills", type_="foreignkey")
     op.drop_constraint(
-        "fk_agent_environments_default_project_id",
+        "fk_agent_environments_default_scope_id",
         "agent_environments",
         type_="foreignkey",
     )
 
-    # 6. Drop project_id columns.
-    op.drop_column("vaults", "project_id")
-    op.drop_column("skills", "project_id")
-    op.drop_column("agent_environments", "default_project_id")
+    # 6. Drop scope_id columns.
+    op.drop_column("vaults", "scope_id")
+    op.drop_column("skills", "scope_id")
+    op.drop_column("agent_environments", "default_scope_id")
 
-    # 5. Drop projects table + its indexes.
-    op.drop_index("uq_projects_one_personal_per_user", table_name="projects")
-    op.drop_index("ix_projects_origin_environment_id", table_name="projects")
-    op.drop_index("ix_projects_user_id", table_name="projects")
-    op.drop_table("projects")
+    # 5. Drop scopes table + its indexes.
+    op.drop_index("uq_scopes_one_personal_per_user", table_name="scopes")
+    op.drop_index("ix_scopes_origin_environment_id", table_name="scopes")
+    op.drop_index("ix_scopes_user_id", table_name="scopes")
+    op.drop_table("scopes")
 
     # 4. Drop the agent_envs unique constraint.
     op.drop_constraint(

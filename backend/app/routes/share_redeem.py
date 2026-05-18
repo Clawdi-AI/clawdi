@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -15,6 +16,7 @@ from app.core.auth import (
     require_share_token,
     require_user_auth_unbound,
 )
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.project import Project
 from app.models.project_share_link import ProjectShareLink
@@ -33,13 +35,47 @@ router = APIRouter(prefix="/api/share", tags=["share-redeem"])
 _REDEEM_RATE_WINDOW = timedelta(minutes=1)
 _REDEEM_RATE_LIMIT = 30
 _REDEEM_IDEMPOTENCY_TTL = timedelta(hours=24)
+_PREVIEW_RATE_WINDOW = timedelta(minutes=1)
+_PREVIEW_RATE_LIMIT = 120
+_PREVIEW_RATE_BUCKETS: dict[str, deque[datetime]] = {}
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip() or "unknown"
+    if settings.trust_forwarded_for:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip() or "unknown"
+        cf_connecting_ip = request.headers.get("cf-connecting-ip")
+        if cf_connecting_ip:
+            return cf_connecting_ip.strip() or "unknown"
     return request.client.host if request.client else "unknown"
+
+
+def _register_preview_attempt(request: Request) -> None:
+    """Throttle preview probes before token validation.
+
+    Redeem attempts are persisted per valid link. Preview also needs a cheap
+    guard for invalid-token scans, where no link_id exists yet.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - _PREVIEW_RATE_WINDOW
+    client_key = _client_ip(request)[:128]
+    bucket = _PREVIEW_RATE_BUCKETS.setdefault(client_key, deque())
+    while bucket and bucket[0] < cutoff:
+        bucket.popleft()
+    if len(bucket) >= _PREVIEW_RATE_LIMIT:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "share preview rate limit exceeded",
+            headers={"Retry-After": str(int(_PREVIEW_RATE_WINDOW.total_seconds()))},
+        )
+    bucket.append(now)
+    if len(_PREVIEW_RATE_BUCKETS) > 4096:
+        for key, attempts in list(_PREVIEW_RATE_BUCKETS.items()):
+            while attempts and attempts[0] < cutoff:
+                attempts.popleft()
+            if not attempts:
+                _PREVIEW_RATE_BUCKETS.pop(key, None)
 
 
 async def _register_redeem_attempt(
@@ -108,6 +144,7 @@ async def _register_redeem_attempt(
         )
     ).scalar_one()
     if recent_count > _REDEEM_RATE_LIMIT:
+        await db.commit()
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "share redeem rate limit exceeded",
@@ -172,9 +209,12 @@ async def _build_redeem_payload(ctx: ShareTokenContext, db: AsyncSession) -> Sha
 
 @router.get("/{token}/preview", response_model=ShareRedeemResponse)
 async def preview(
-    ctx: ShareTokenContext = Depends(require_share_token),
+    token: str,
+    request: Request,
     db: AsyncSession = Depends(get_session),
 ) -> ShareRedeemResponse:
+    _register_preview_attempt(request)
+    ctx = await require_share_token(token=token, db=db)
     return await _build_redeem_payload(ctx, db)
 
 

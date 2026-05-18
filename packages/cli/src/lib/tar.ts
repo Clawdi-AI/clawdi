@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as tar from "tar";
@@ -73,7 +74,11 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 		const stream = tar.extract({
 			cwd,
 			gzip: true,
-			filter: (path) => !path.includes("..") && !path.startsWith("/"),
+			filter: (path, entry) => {
+				if (path.includes("..") || path.startsWith("/")) return false;
+				const type = "type" in entry ? entry.type : undefined;
+				return type !== "SymbolicLink" && type !== "Link";
+			},
 		});
 		stream.on("finish", () => resolvePromise());
 		stream.on("error", reject);
@@ -114,7 +119,7 @@ export async function extractSharedSkillTarGz(
 		// rename new → place, then nuke trash. Two renames so an
 		// interrupted reconcile leaves either the old or the new
 		// content in place, never a partial.
-		const trash = `${parent}/.share-trash-${basename(targetDir)}-${process.pid}`;
+		const trash = `${parent}/.share-trash-${basename(targetDir)}-${process.pid}-${randomUUID()}`;
 		if (existsSync(targetDir)) renameSync(targetDir, trash);
 		try {
 			renameSync(extracted, targetDir);

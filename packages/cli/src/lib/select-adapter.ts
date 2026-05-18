@@ -44,13 +44,11 @@ export async function fetchDefaultProjectId(
 	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
 
 	const projectRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
-	if (projectRes.ok) {
-		const body = (await projectRes.json()) as { project_id: string };
-		return body.project_id;
+	const body = (await projectRes.json().catch(() => ({}))) as { project_id?: string };
+	if (body.project_id) return body.project_id;
+	if (!projectRes.ok) {
+		throw new Error(`Failed to resolve default project: HTTP ${projectRes.status}`);
 	}
-
-	const legacyBody = (await projectRes.json()) as { project_id?: string };
-	if (legacyBody.project_id) return legacyBody.project_id;
 	throw new Error("Failed to resolve default project: missing project_id in response");
 }
 

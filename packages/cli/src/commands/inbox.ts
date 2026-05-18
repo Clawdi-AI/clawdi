@@ -66,6 +66,10 @@ function redeemIdempotencyKey(token: string): string {
 	return `redeem-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
 }
 
+function upgradeIdempotencyKey(token: string): string {
+	return `upgrade-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
+}
+
 interface AcceptOpts {
 	agent?: string[];
 	useAs?: string;
@@ -358,10 +362,18 @@ export function inboxForgetCommand(projectIdOrAlias: string): void {
 	}
 
 	const skillKeys = token.last_seen_skill_keys ?? [];
+	const sameOwnerTokens = listTokens().filter(
+		(other) => other.project_id !== token.project_id && other.owner_handle === token.owner_handle,
+	);
+	const preserveAllForOwner = sameOwnerTokens.some((other) => !other.last_seen_skill_keys);
+	const preservedKeys = new Set(
+		sameOwnerTokens.flatMap((other) => other.last_seen_skill_keys ?? []),
+	);
 	let removed = 0;
 	for (const entry of allAdapterEntries()) {
 		const adapter = entry.create();
 		for (const key of skillKeys) {
+			if (preserveAllForOwner || preservedKeys.has(key)) continue;
 			const path = adapter.getSharedSkillPath(key, token.owner_handle);
 			try {
 				rmSync(path, { recursive: true, force: true });
@@ -526,7 +538,11 @@ async function acceptUrl(
 
 	const r = await fetch(`${apiUrl}/api/share/${token}/upgrade`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+		headers: {
+			Authorization: `Bearer ${bearer}`,
+			"Content-Type": "application/json",
+			"Idempotency-Key": upgradeIdempotencyKey(token),
+		},
 		body: JSON.stringify(reqBody),
 	});
 

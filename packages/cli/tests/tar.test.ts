@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
@@ -134,6 +134,28 @@ describe("tarSkillDir filter", () => {
 			await expect(
 				extractSharedSkillTarGz("../escape", join(root, "target"), bytes),
 			).rejects.toThrow("Invalid skill_key");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("drops symlink entries from downloaded shared skill archives", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-shared-extract-test-"));
+		try {
+			mkdirSync(join(root, "safe-skill"), { recursive: true });
+			writeFileSync(join(root, "safe-skill", "SKILL.md"), "# safe");
+			symlinkSync("/etc/hosts", join(root, "safe-skill", "leak"));
+
+			const chunks: Buffer[] = [];
+			await tar
+				.create({ gzip: true, cwd: root }, ["safe-skill"])
+				.on("data", (chunk: Buffer) => chunks.push(chunk))
+				.promise();
+
+			const target = join(root, "target");
+			await extractSharedSkillTarGz("safe-skill", target, Buffer.concat(chunks));
+			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+			expect(existsSync(join(target, "leak"))).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

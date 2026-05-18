@@ -39,6 +39,7 @@ export interface CapturedRequest {
 	url: string;
 	path: string;
 	method: string;
+	headers: Record<string, string>;
 	isMultipart: boolean;
 	body?: unknown;
 }
@@ -70,6 +71,7 @@ export function mockFetch(
 		const path = url.replace(/^https?:\/\/[^/]+/, "");
 
 		const headers = isRequest ? input.headers : new Headers(init?.headers);
+		const capturedHeaders = Object.fromEntries(headers.entries());
 		const contentType = headers.get("content-type") ?? "";
 		const rawBody = isRequest ? input.body : init?.body;
 		const isMultipart = rawBody instanceof FormData;
@@ -84,7 +86,7 @@ export function mockFetch(
 			}
 		}
 
-		captured.push({ url, path, method, isMultipart, body });
+		captured.push({ url, path, method, headers: capturedHeaders, isMultipart, body });
 
 		for (const h of handlers) {
 			if (h.method && h.method.toUpperCase() !== method) continue;

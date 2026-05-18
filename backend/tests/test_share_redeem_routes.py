@@ -15,12 +15,33 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.project_share_link import ProjectShareLink
 from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.user import User
 from app.services.sharing import generate_share_token, hash_share_token
+
+
+def test_share_redeem_client_ip_trusts_forwarded_headers_only_when_enabled(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.routes.share_redeem import _client_ip
+
+    def make_request(headers: dict[str, str], client_host: str | None = "10.0.0.1"):
+        return SimpleNamespace(
+            headers=headers,
+            client=SimpleNamespace(host=client_host) if client_host else None,
+        )
+
+    monkeypatch.setattr(settings, "trust_forwarded_for", False)
+    assert _client_ip(make_request({"x-forwarded-for": "1.2.3.4, 10.0.0.2"})) == "10.0.0.1"
+
+    monkeypatch.setattr(settings, "trust_forwarded_for", True)
+    assert _client_ip(make_request({"x-forwarded-for": " 1.2.3.4 , 10.0.0.2"})) == "1.2.3.4"
+    assert _client_ip(make_request({"cf-connecting-ip": "5.6.7.8"})) == "5.6.7.8"
+    assert _client_ip(make_request({}, client_host=None)) == "unknown"
 
 
 @pytest_asyncio.fixture
@@ -61,6 +82,22 @@ async def _make_share_link(db_session, seed_project, seed_user) -> str:
 async def test_preview_unknown_token_404(client_unauth):
     r = await client_unauth.get("/api/share/totally-bogus-token/preview")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_preview_rate_limit_blocks_token_probe_flood(client_unauth, monkeypatch):
+    from app.routes import share_redeem as share_redeem_routes
+
+    share_redeem_routes._PREVIEW_RATE_BUCKETS.clear()
+    monkeypatch.setattr(share_redeem_routes, "_PREVIEW_RATE_LIMIT", 2)
+    try:
+        assert (await client_unauth.get("/api/share/bogus-one/preview")).status_code == 404
+        assert (await client_unauth.get("/api/share/bogus-two/preview")).status_code == 404
+        blocked = await client_unauth.get("/api/share/bogus-three/preview")
+        assert blocked.status_code == 429, blocked.text
+        assert blocked.headers["retry-after"]
+    finally:
+        share_redeem_routes._PREVIEW_RATE_BUCKETS.clear()
 
 
 @pytest.mark.asyncio
@@ -146,6 +183,18 @@ async def test_redeem_rate_limit_blocks_valid_token_flood(
     blocked = await client_unauth.post(f"/api/share/{raw}/redeem")
     assert blocked.status_code == 429, blocked.text
     assert blocked.headers["retry-after"]
+
+    link = (
+        await db_session.execute(
+            select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
+        )
+    ).scalar_one()
+    attempts = (
+        await db_session.execute(
+            select(ShareRedeemAttempt).where(ShareRedeemAttempt.link_id == link.id)
+        )
+    ).scalars()
+    assert len(attempts.all()) == 3
 
 
 @pytest.mark.asyncio

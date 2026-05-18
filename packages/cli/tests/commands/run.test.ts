@@ -157,4 +157,36 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.API_TOKEN).toBe("from-default-project");
 		expect(lines.join("\n")).not.toContain("Using Project");
 	});
+
+	it("runs without vault injection when resolve returns an invalid body", async () => {
+		const { calls, spawnImpl } = recordSpawn();
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					new Response("null", {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					}),
+			},
+		]);
+		const origLog = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await run(["node", "server.js"], { projectFolder: false }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
+		expect(lines.join("\n")).toContain("Could not fetch vault secrets");
+		expect(lines.join("\n")).not.toContain("Injected");
+	});
 });

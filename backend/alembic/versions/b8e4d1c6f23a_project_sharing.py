@@ -1,15 +1,17 @@
-"""project sharing + agent project bindings
+"""scope-to-project rename + project sharing
 
 Revision ID: b8e4d1c6f23a
 Revises: 62bdb2921f5f
 Create Date: 2026-05-11 21:00:00.000000
 
-Adds the v1 tables needed for cross-user project sharing and agent-side
-runtime composition:
+Renames serve-v1 scope objects to project terminology, then adds the v1
+tables needed for cross-user project sharing and agent-side runtime
+composition:
   - project_memberships
   - project_invitations
   - project_share_links
   - agent_project_bindings
+  - share_redeem_attempts
 
 """
 
@@ -26,7 +28,109 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _rename_scopes_to_projects() -> None:
+    op.rename_table("scopes", "projects")
+    op.alter_column("agent_environments", "default_scope_id", new_column_name="default_project_id")
+    op.alter_column("skills", "scope_id", new_column_name="project_id")
+    op.alter_column("vaults", "scope_id", new_column_name="project_id")
+
+    op.execute(
+        'ALTER TABLE "projects" '
+        'RENAME CONSTRAINT "uq_scopes_user_slug" TO "uq_projects_user_slug"'
+    )
+    op.execute(
+        'ALTER TABLE "projects" '
+        'RENAME CONSTRAINT "ck_scopes_kind_v1" TO "ck_projects_kind_v1"'
+    )
+    op.execute('ALTER INDEX "ix_scopes_user_id" RENAME TO "ix_projects_user_id"')
+    op.execute(
+        'ALTER INDEX "ix_scopes_origin_environment_id" '
+        'RENAME TO "ix_projects_origin_environment_id"'
+    )
+    op.execute(
+        'ALTER INDEX "uq_scopes_one_personal_per_user" '
+        'RENAME TO "uq_projects_one_personal_per_user"'
+    )
+
+    op.execute(
+        'ALTER TABLE "agent_environments" '
+        'RENAME CONSTRAINT "fk_agent_environments_default_scope_id" '
+        'TO "fk_agent_environments_default_project_id"'
+    )
+    op.execute(
+        'ALTER TABLE "skills" '
+        'RENAME CONSTRAINT "fk_skills_scope_id" TO "fk_skills_project_id"'
+    )
+    op.execute('ALTER INDEX "ix_skills_scope_id" RENAME TO "ix_skills_project_id"')
+    op.execute(
+        'ALTER INDEX "uq_skills_active_user_scope_skill_key" '
+        'RENAME TO "uq_skills_active_user_project_skill_key"'
+    )
+
+    op.execute(
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "fk_vaults_scope_id" TO "fk_vaults_project_id"'
+    )
+    op.execute(
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "uq_vault_user_scope_slug" TO "uq_vault_user_project_slug"'
+    )
+    op.execute('ALTER INDEX "ix_vaults_scope_id" RENAME TO "ix_vaults_project_id"')
+
+
+def _rename_projects_to_scopes() -> None:
+    op.rename_table("projects", "scopes")
+    op.alter_column("agent_environments", "default_project_id", new_column_name="default_scope_id")
+    op.alter_column("skills", "project_id", new_column_name="scope_id")
+    op.alter_column("vaults", "project_id", new_column_name="scope_id")
+
+    op.execute(
+        'ALTER TABLE "scopes" '
+        'RENAME CONSTRAINT "uq_projects_user_slug" TO "uq_scopes_user_slug"'
+    )
+    op.execute(
+        'ALTER TABLE "scopes" '
+        'RENAME CONSTRAINT "ck_projects_kind_v1" TO "ck_scopes_kind_v1"'
+    )
+    op.execute('ALTER INDEX "ix_projects_user_id" RENAME TO "ix_scopes_user_id"')
+    op.execute(
+        'ALTER INDEX "ix_projects_origin_environment_id" '
+        'RENAME TO "ix_scopes_origin_environment_id"'
+    )
+    op.execute(
+        'ALTER INDEX "uq_projects_one_personal_per_user" '
+        'RENAME TO "uq_scopes_one_personal_per_user"'
+    )
+
+    op.execute(
+        'ALTER TABLE "agent_environments" '
+        'RENAME CONSTRAINT "fk_agent_environments_default_project_id" '
+        'TO "fk_agent_environments_default_scope_id"'
+    )
+    op.execute(
+        'ALTER TABLE "skills" '
+        'RENAME CONSTRAINT "fk_skills_project_id" TO "fk_skills_scope_id"'
+    )
+    op.execute('ALTER INDEX "ix_skills_project_id" RENAME TO "ix_skills_scope_id"')
+    op.execute(
+        'ALTER INDEX "uq_skills_active_user_project_skill_key" '
+        'RENAME TO "uq_skills_active_user_scope_skill_key"'
+    )
+
+    op.execute(
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "fk_vaults_project_id" TO "fk_vaults_scope_id"'
+    )
+    op.execute(
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "uq_vault_user_project_slug" TO "uq_vault_user_scope_slug"'
+    )
+    op.execute('ALTER INDEX "ix_vaults_project_id" RENAME TO "ix_vaults_scope_id"')
+
+
 def upgrade() -> None:
+    _rename_scopes_to_projects()
+
     op.drop_constraint("ck_projects_kind_v1", "projects", type_="check")
     op.create_check_constraint(
         "ck_projects_kind_v2",
@@ -196,6 +300,51 @@ def upgrade() -> None:
     op.create_index("ix_project_share_links_created_by", "project_share_links", ["created_by"])
 
     op.create_table(
+        "share_redeem_attempts",
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column(
+            "link_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("project_share_links.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("client_key", sa.String(128), nullable=False),
+        sa.Column("idempotency_key", sa.String(200)),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+        sa.UniqueConstraint(
+            "link_id",
+            "idempotency_key",
+            name="uq_share_redeem_attempts_link_idempotency",
+        ),
+    )
+    op.create_index(
+        "ix_share_redeem_attempts_link_client_created",
+        "share_redeem_attempts",
+        ["link_id", "client_key", "created_at"],
+    )
+    op.create_index(
+        "ix_share_redeem_attempts_created_at",
+        "share_redeem_attempts",
+        ["created_at"],
+    )
+
+    op.create_table(
         "agent_project_bindings",
         sa.Column(
             "id",
@@ -283,6 +432,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index("ix_share_redeem_attempts_created_at", "share_redeem_attempts")
+    op.drop_index("ix_share_redeem_attempts_link_client_created", "share_redeem_attempts")
+    op.drop_table("share_redeem_attempts")
+
     op.drop_index("uq_agent_project_bindings_one_primary", "agent_project_bindings")
     op.drop_index("ix_agent_project_bindings_project", "agent_project_bindings")
     op.drop_index("ix_agent_project_bindings_agent", "agent_project_bindings")
@@ -307,3 +460,4 @@ def downgrade() -> None:
         "projects",
         "kind IN ('personal', 'environment')",
     )
+    _rename_projects_to_scopes()
