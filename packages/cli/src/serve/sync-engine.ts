@@ -87,6 +87,12 @@ const QUEUE_RETRY_INTERVAL_MS = 15_000;
 // loop is fine; the queue.peek() is cheap (in-memory check).
 const QUEUE_EMPTY_POLL_MS = 500;
 const MAX_QUEUE_ATTEMPTS = 30;
+const SKILL_UPLOAD_ECHO_TTL_MS = 2 * 60_000;
+
+export type PendingSkillUploadEcho = {
+	contentHash: string;
+	expiresAtMs: number;
+};
 
 interface EngineOpts {
 	environmentId: string;
@@ -212,6 +218,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// can't trigger a delete of skills that live on page 2+.
 	const cloudObservedKeys = new Set<string>();
 	let lastSeenRevision: number | null = null;
+	const pendingSkillUploadEchoes = new Map<string, PendingSkillUploadEcho>();
 	// Full ETag string from the last successful /api/skills
 	// response. Includes the project_id (e.g. `"42:abc-uuid"`) so a
 	// project reassignment forces the next listing to round-trip
@@ -607,10 +614,17 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// loop catches anything we suppress here in error.
 		// Local state is already at this revision (we wrote it),
 		// so it IS safe to advance lastSeenRevision here.
-		if (event.content_hash && lastPushedHash.get(event.skill_key) === event.content_hash) {
+		const pendingEchoMatched = event.content_hash
+			? consumePendingSkillUploadEcho(pendingSkillUploadEchoes, event.skill_key, event.content_hash)
+			: false;
+		if (
+			event.content_hash &&
+			(lastPushedHash.get(event.skill_key) === event.content_hash || pendingEchoMatched)
+		) {
 			log.debug("engine.sse_self_echo_suppressed", {
 				skill_key: event.skill_key,
 				content_hash: event.content_hash,
+				reason: pendingEchoMatched ? "pending_upload" : "last_pushed",
 			});
 			lastSeenRevision = event.skills_revision;
 			return;
@@ -748,6 +762,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			lastPushedHash,
 			lastPushedSessionHash,
 			inFlightSessionHash,
+			pendingSkillUploadEchoes,
 			() => defaultProjectId,
 			(err) => {
 				lastSyncError = err;
@@ -941,6 +956,7 @@ async function drainQueueLoop(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
+	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	getProjectId: () => string,
 	setLastError: (err: string | null) => void,
 	onAuthFailure: (origin: string) => void,
@@ -987,6 +1003,7 @@ async function drainQueueLoop(
 				lastPushedHash,
 				lastPushedSessionHash,
 				inFlightSessionHash,
+				pendingSkillUploadEchoes,
 				getProjectId(),
 			);
 			setLastError(null);
@@ -1128,6 +1145,7 @@ async function processQueueItem(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
+	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
 ): Promise<void> {
 	if (item.kind === "skill_push") {
@@ -1151,7 +1169,14 @@ async function processQueueItem(
 			queue.markDoneIfVersion(item);
 			return;
 		}
-		await uploadSkillFromQueue(opts, api, item, lastPushedHash, projectId);
+		await uploadSkillFromQueue(
+			opts,
+			api,
+			item,
+			lastPushedHash,
+			pendingSkillUploadEchoes,
+			projectId,
+		);
 		// markDoneIfVersion — if a newer version of the same
 		// skill_key was enqueued while we were uploading, leave
 		// it in the queue so the next drain picks it up. The
@@ -1332,6 +1357,7 @@ async function uploadSkillFromQueue(
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
+	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
 ): Promise<void> {
 	const dir = join(opts.adapter.getSkillsRootDir(), item.skill_key);
@@ -1378,6 +1404,14 @@ async function uploadSkillFromQueue(
 	// the truth on disk now. CAS-style: only write if nothing
 	// else moved it.
 	const hashBeforeUpload = lastPushedHash.get(item.skill_key);
+	// Server broadcasts `skill_changed` after commit, which can
+	// reach our SSE consumer before this HTTP request resumes and
+	// writes `lastPushedHash`. Remember the exact bytes we are
+	// sending so that self-echo is suppressed even in that window.
+	// Otherwise the daemon can pull its own just-uploaded archive
+	// back onto disk and clobber a local edit made immediately
+	// after the upload lands.
+	rememberPendingSkillUploadEcho(pendingSkillUploadEchoes, item.skill_key, actualHash);
 	const result = await api.uploadSkill(
 		projectId,
 		item.skill_key,
@@ -2199,6 +2233,35 @@ function redactItem(item: QueueItem): Record<string, unknown> {
 		return { kind: item.kind, skill_key: item.skill_key, attempts: item.attempts };
 	}
 	return { kind: item.kind, attempts: item.attempts };
+}
+
+export function rememberPendingSkillUploadEcho(
+	m: Map<string, PendingSkillUploadEcho>,
+	key: string,
+	contentHash: string,
+	nowMs = Date.now(),
+): void {
+	m.set(key, {
+		contentHash,
+		expiresAtMs: nowMs + SKILL_UPLOAD_ECHO_TTL_MS,
+	});
+}
+
+export function consumePendingSkillUploadEcho(
+	m: Map<string, PendingSkillUploadEcho>,
+	key: string,
+	contentHash: string,
+	nowMs = Date.now(),
+): boolean {
+	const pending = m.get(key);
+	if (!pending) return false;
+	if (pending.expiresAtMs <= nowMs) {
+		m.delete(key);
+		return false;
+	}
+	if (pending.contentHash !== contentHash) return false;
+	m.delete(key);
+	return true;
 }
 
 /** Bump the in-flight refcount for a skill_key. Pair with

@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiError } from "../lib/api-client";
-import { isAuthFailure, isOversizedUploadError, resolveOwningSkillKey } from "./sync-engine";
+import type { PendingSkillUploadEcho } from "./sync-engine";
+import {
+	consumePendingSkillUploadEcho,
+	isAuthFailure,
+	isOversizedUploadError,
+	rememberPendingSkillUploadEcho,
+	resolveOwningSkillKey,
+} from "./sync-engine";
 
 describe("isAuthFailure", () => {
 	// Pull-side and push-side both rely on this classifier to decide
@@ -96,6 +103,32 @@ describe("addInFlight / releaseInFlight refcount", () => {
 		releaseInFlight(m, "a");
 		expect(m.has("a")).toBe(false);
 		expect(m.has("b")).toBe(true);
+	});
+});
+
+describe("pending skill upload echo suppression", () => {
+	it("suppresses the exact skill_changed echo that can arrive before upload returns", () => {
+		const pending = new Map<string, PendingSkillUploadEcho>();
+		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
+
+		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-1", 1_500)).toBe(true);
+		expect(pending.has("foo")).toBe(false);
+	});
+
+	it("does not suppress a different hash for the same skill", () => {
+		const pending = new Map<string, PendingSkillUploadEcho>();
+		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
+
+		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-2", 1_500)).toBe(false);
+		expect(pending.has("foo")).toBe(true);
+	});
+
+	it("expires stale pending echoes", () => {
+		const pending = new Map<string, PendingSkillUploadEcho>();
+		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
+
+		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-1", 200_000)).toBe(false);
+		expect(pending.has("foo")).toBe(false);
 	});
 });
 

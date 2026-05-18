@@ -1,6 +1,6 @@
 # Project Sharing + Agent Project Demo
 
-**Date:** 2026-05-14  
+**Date:** 2026-05-14
 **Status:** Ship-state walkthrough for Project collaboration and Agent Project use.
 
 ## Product Model
