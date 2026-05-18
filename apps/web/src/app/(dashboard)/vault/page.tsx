@@ -50,10 +50,10 @@ export default function VaultPage() {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async (vault: { slug: string; scope_id: string }) =>
+		mutationFn: async (vault: { slug: string; project_id: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 				}),
 			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
@@ -119,7 +119,7 @@ export default function VaultPage() {
 						<VaultCard
 							key={v.id}
 							vault={v}
-							onDelete={() => deleteVault.mutate({ slug: v.slug, scope_id: v.scope_id })}
+							onDelete={() => deleteVault.mutate({ slug: v.slug, project_id: v.project_id })}
 							isDeleting={deleteVault.isPending}
 						/>
 					))}
@@ -150,18 +150,18 @@ function VaultCard({
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
 
-	// Cache key includes scope_id so a JWT user with the same slug
-	// in two scopes (Personal + env-A) doesn't share entries.
-	// Without the scope_id in the key the second card would render
+	// Cache key includes project_id so a JWT user with the same slug
+	// in two projects (Personal + env-A) doesn't share entries.
+	// Without the project_id in the key the second card would render
 	// the first's items.
-	const itemsCacheKey = ["vault-items", vault.slug, vault.scope_id] as const;
+	const itemsCacheKey = ["vault-items", vault.slug, vault.project_id] as const;
 
 	const { data: items } = useQuery({
 		queryKey: itemsCacheKey,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 				}),
 			),
 	});
@@ -170,7 +170,7 @@ function VaultCard({
 		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
 			unwrap(
 				await api.PUT("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 					body: { section, fields: { [key]: value } },
 				}),
 			),
@@ -187,7 +187,7 @@ function VaultCard({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { scope_id: vault.scope_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
 					body: { section, fields: [name] },
 				}),
 			),
@@ -255,7 +255,7 @@ function VaultCard({
 	// doesn't stack a card inside a card.
 	return (
 		<section className="space-y-2">
-			{/* Scope group/header to the heading row only — otherwise the delete
+			{/* Project group/header to the heading row only — otherwise the delete
 			    icon pops in whenever the cursor moves anywhere in the table body
 			    below. */}
 			<div className="group/header flex items-center justify-between gap-2 px-1">

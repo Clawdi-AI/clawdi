@@ -20,7 +20,7 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // mutation; the column defs only know how to render and which row to
 // pass to the callback.
 export function makeSkillColumns(
-	onUninstall: (skillKey: string, scopeId: string) => void,
+	onUninstall: (skillKey: string, projectId: string) => void,
 	uninstallPending: boolean,
 ): ColumnDef<SkillSummary>[] {
 	return [
@@ -31,8 +31,8 @@ export function makeSkillColumns(
 			header: () => <span className="text-sm font-medium">Skill</span>,
 			cell: ({ row }) => {
 				const s = row.original;
-				const href = s.scope_id
-					? `/skills/${encodeURIComponent(s.skill_key)}?scope=${encodeURIComponent(s.scope_id)}`
+				const href = s.project_id
+					? `/skills/${encodeURIComponent(s.skill_key)}?project=${encodeURIComponent(s.project_id)}`
 					: `/skills/${encodeURIComponent(s.skill_key)}`;
 				return (
 					<div className="flex items-start gap-2">
@@ -95,20 +95,20 @@ export function makeSkillColumns(
 			header: () => <span className="sr-only">Actions</span>,
 			cell: ({ row }) => {
 				const s = row.original;
-				const scopeId = s.scope_id;
+				const projectId = s.project_id;
 				return (
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						disabled={uninstallPending || !scopeId}
+						disabled={uninstallPending || !projectId}
 						onClick={(e) => {
 							e.stopPropagation();
-							if (!scopeId) return;
+							if (!projectId) return;
 							const ok = window.confirm(
 								`Uninstall "${s.name}" from this agent?\n\n` +
 									"Your other agents keep their copies.",
 							);
-							if (ok) onUninstall(s.skill_key, scopeId);
+							if (ok) onUninstall(s.skill_key, projectId);
 						}}
 						className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
 						aria-label={`Uninstall ${s.name}`}
