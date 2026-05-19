@@ -625,6 +625,9 @@ clawdi://prod/stripe/secret_key
 Fields imported from `.env` files or stored with `clawdi vault set OPENAI_API_KEY`
 use no section by default, so they resolve as `clawdi://default/OPENAI_API_KEY`.
 Sectioned paths remain available for manually structured vault fields.
+In these examples `default`, `prod`, and any other first path component are
+vault slugs, not Projects. Project selection is deliberately kept outside the
+portable reference.
 
 Project selection comes from runtime context:
 

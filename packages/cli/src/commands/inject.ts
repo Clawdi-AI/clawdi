@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
+import { applyLinkedProjectContext } from "../lib/reference-context";
 import {
 	type ResolveReferenceOptions,
 	replaceResolvedReferences,
@@ -11,6 +12,7 @@ export interface InjectOptions extends ResolveReferenceOptions {
 	in?: string;
 	out?: string;
 	force?: boolean;
+	projectFolder?: boolean;
 }
 
 export async function injectCommand(opts: InjectOptions = {}): Promise<void> {
@@ -25,7 +27,7 @@ export async function injectCommand(opts: InjectOptions = {}): Promise<void> {
 
 		const input = await readInput(inputPath);
 		const refs = scanClawdiReferences(input);
-		const resolved = await resolveReferenceMap(refs, opts);
+		const resolved = await resolveReferenceMap(refs, applyLinkedProjectContext(opts));
 		const output = replaceResolvedReferences(input, resolved);
 
 		if (outputPath === "-") {

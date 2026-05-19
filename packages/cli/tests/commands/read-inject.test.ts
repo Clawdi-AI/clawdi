@@ -5,29 +5,37 @@ import { join } from "node:path";
 
 import { injectCommand } from "../../src/commands/inject";
 import { readCommand } from "../../src/commands/read";
+import { setProjectFolderLink } from "../../src/lib/project-folders";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
 let tmpRoot: string;
+let projectRoot: string;
+let origCwd: string;
 let origHome: string | undefined;
 let origClawdiHome: string | undefined;
 let origApiUrl: string | undefined;
 
 beforeEach(() => {
+	origCwd = process.cwd();
 	origHome = process.env.HOME;
 	origClawdiHome = process.env.CLAWDI_HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpRoot = join(tmpdir(), `clawdi-ref-${Date.now()}-${Math.random().toString(36)}`);
 	tmpHome = join(tmpRoot, "home");
+	projectRoot = join(tmpRoot, "project");
 	const clawdiHome = join(tmpRoot, "state");
 	mkdirSync(clawdiHome, { recursive: true });
+	mkdirSync(projectRoot, { recursive: true });
 	writeFileSync(join(clawdiHome, "auth.json"), JSON.stringify({ apiKey: "test-key" }));
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_HOME = clawdiHome;
 	process.env.CLAWDI_API_URL = "http://api.test";
+	process.chdir(projectRoot);
 });
 
 afterEach(() => {
+	process.chdir(origCwd);
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
 	if (origClawdiHome) process.env.CLAWDI_HOME = origClawdiHome;
@@ -70,6 +78,40 @@ describe("readCommand", () => {
 		expect(captured[0].path).toContain("section=stripe");
 		expect(captured[0].path).toContain("field=secret_key");
 	});
+
+	it("uses the linked Project folder when no explicit project is passed", async () => {
+		setProjectFolderLink(projectRoot, {
+			project_id: "project-linked",
+			project_label: "engineering",
+			project_name: "Engineering",
+			project_slug: "engineering",
+			owner_handle: null,
+			owner_display: null,
+		});
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://default/OPENAI_API_KEY",
+						value: "sk-linked",
+						source_project_id: "project-linked",
+						source_alias: "engineering",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+		try {
+			await readCommand("clawdi://default/OPENAI_API_KEY");
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured[0].path).toContain("project_id=project-linked");
+	});
 });
 
 describe("injectCommand", () => {
@@ -106,6 +148,44 @@ describe("injectCommand", () => {
 		expect(err).toContain("Resolved 1 clawdi reference");
 		expect(err).toContain("redacted");
 		expect(err).not.toContain("sk-live");
+	});
+
+	it("uses the linked Project folder when resolving template references", async () => {
+		setProjectFolderLink(projectRoot, {
+			project_id: "project-linked",
+			project_label: "engineering",
+			project_name: "Engineering",
+			project_slug: "engineering",
+			owner_handle: null,
+			owner_display: null,
+		});
+		const input = join(tmpRoot, "linked.template");
+		const output = join(tmpRoot, "linked.env");
+		writeFileSync(input, "token=clawdi://default/OPENAI_API_KEY\n");
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://default/OPENAI_API_KEY",
+						value: "sk-linked",
+						source_project_id: "project-linked",
+						source_alias: "engineering",
+					}),
+			},
+		]);
+		const origErr = console.error;
+		console.error = () => {};
+		try {
+			await injectCommand({ in: input, out: output });
+		} finally {
+			console.error = origErr;
+			restore();
+		}
+
+		expect(captured[0].path).toContain("project_id=project-linked");
+		expect(readFileSync(output, "utf8")).toBe("token=sk-linked\n");
 	});
 
 	it("refuses to overwrite output without --force", async () => {

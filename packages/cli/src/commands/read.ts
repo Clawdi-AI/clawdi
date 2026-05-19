@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { applyLinkedProjectContext } from "../lib/reference-context";
 import {
 	type ResolveReferenceOptions,
 	resolveClawdiReference,
@@ -7,10 +8,10 @@ import {
 
 export async function readCommand(
 	reference: string,
-	opts: ResolveReferenceOptions & { json?: boolean } = {},
+	opts: ResolveReferenceOptions & { json?: boolean; projectFolder?: boolean } = {},
 ): Promise<void> {
 	try {
-		const hit = await resolveClawdiReference(reference, opts);
+		const hit = await resolveClawdiReference(reference, applyLinkedProjectContext(opts));
 		if (opts.json) {
 			console.log(JSON.stringify(hit, null, 2));
 			return;
