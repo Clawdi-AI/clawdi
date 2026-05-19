@@ -17,7 +17,7 @@ export function DashboardSection({
 	return (
 		<section
 			className={cn(
-				"overflow-hidden rounded-lg border bg-card/60",
+				"-mx-4 overflow-hidden border-y bg-card/60 sm:mx-0 sm:rounded-lg sm:border",
 				priority === "primary" && "border-foreground/15 bg-card",
 				className,
 			)}

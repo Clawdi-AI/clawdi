@@ -21,12 +21,16 @@ export function SearchInput({
 	value,
 	onChange,
 	placeholder = "Search…",
+	name = "search",
+	ariaLabel = "Search",
 	className,
 	autoFocus,
 }: {
 	value: string;
 	onChange: (next: string) => void;
 	placeholder?: string;
+	name?: string;
+	ariaLabel?: string;
 	className?: string;
 	autoFocus?: boolean;
 }) {
@@ -34,11 +38,14 @@ export function SearchInput({
 		<div className={cn("relative", className)}>
 			<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
 			<Input
+				name={name}
+				aria-label={ariaLabel}
 				type="text"
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				placeholder={placeholder}
 				className="pl-9 pr-9"
+				autoComplete="off"
 				autoFocus={autoFocus}
 			/>
 			{value ? (

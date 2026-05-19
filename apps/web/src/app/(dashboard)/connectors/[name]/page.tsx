@@ -478,13 +478,18 @@ function ConnectorToolsList({
 
 	return (
 		<section>
-			<div className="mb-3 flex items-center justify-between gap-3">
+			<div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					Available Tools{" "}
 					<span className="font-normal text-muted-foreground/60">({tools.length})</span>
 				</h2>
 				{tools.length > 8 && (
-					<SearchInput value={search} onChange={setSearch} placeholder="Search…" className="w-56" />
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder="Search…"
+						className="w-full sm:w-56"
+					/>
 				)}
 			</div>
 			<div className="max-h-[32rem] overflow-y-auto rounded-lg border">

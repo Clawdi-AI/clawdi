@@ -32,10 +32,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 			<CommandPaletteProvider>
 				<BreadcrumbTitleProvider>
 					<AppSidebar />
-					{/* 1rem = SidebarInset's md:m-2 top+bottom. Without this cap the
-					    inset scrolls the whole page and the sticky SiteHeader has
-					    nothing to pin against. */}
-					<SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-y-auto">
+					<SidebarInset className="md:h-svh md:overflow-y-auto">
 						<SiteHeader />
 						<div className="flex flex-1 flex-col">
 							<div className="@container/main flex flex-1 flex-col gap-2">
