@@ -164,13 +164,13 @@ clawdi push --dry-run # preview what push would upload
 ```bash
 bun install
 bun run --cwd packages/cli typecheck   # tsc --noEmit
-bun run --cwd packages/cli test        # ~160 tests, < 3s
+bun run --cwd packages/cli test        # ~350 tests, ~5s
 bun run --cwd packages/cli build       # produces dist/
 ```
 
 ## Testing
 
-All tests run with `bun test` (< 3s for the full suite, ~160 tests) and never
+All tests run with `bun test` (~5s for the full suite, ~350 tests) and never
 touch the network, your real `~/.clawdi`, or a real agent install. They're
 designed to be safe to run on every file save.
 
@@ -182,6 +182,7 @@ designed to be safe to run on every file save.
 | Adapter regression | Per-agent `collectSessions` / `collectSkills` / `writeSkillArchive` against pre-built fixture `$HOME`s | `tests/adapters/*.test.ts` |
 | Command regression | `push` / `pull` / `doctor` / `update` / `skill init` with `globalThis.fetch` mocked; assert golden payloads and filesystem state | `tests/commands/*.test.ts` |
 | Process smoke | Spawn `bun src/index.ts <args>` — catches bundle / import-level breakage the in-process tests can't see | `tests/smoke.test.ts` |
+| Process e2e | Spawn the real CLI process against a local mock API; covers vault `read`, `inject`, and `run --env-file` reference resolution without touching real credentials | `tests/e2e/*.test.ts` |
 | Release checklist | Manual; see below | — |
 
 ### Fixtures
@@ -214,7 +215,8 @@ when an upstream agent's on-disk format changes and a test breaks.
 ### Running tests
 
 ```bash
-bun test                              # everything (~160 tests, < 3s)
+bun test                              # everything (~350 tests, ~5s)
+bun run test:e2e                     # process-level vault reference e2e
 bun test tests/adapters/              # adapter layer only
 bun test tests/commands/push.test.ts  # just push regression
 bun run test:watch                    # watch mode
