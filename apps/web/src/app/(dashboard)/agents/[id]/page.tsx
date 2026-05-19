@@ -290,6 +290,9 @@ export default function AgentDetailPage() {
 					    flex-wrap subtitle (agent_type, version, os,
 					    last seen, sync badge). Icon vertically centers
 					    against the text block — items-center. */}
+					<h1 className="sr-only">
+						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
+					</h1>
 					<div className="flex items-center justify-between gap-4">
 						<AgentLabel
 							machineName={agent.machine_name}

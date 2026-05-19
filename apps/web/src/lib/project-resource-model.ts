@@ -71,7 +71,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Vaults",
 		description: "Vaults and keys stored inside a Project.",
 		managementDescription:
-			"Create vaults and keys in Projects you own. Shared Custom Projects stay read-only.",
+			"Vaults hold secret keys. Add a vault to every Project where agents should use it.",
 		href: "/vault",
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",

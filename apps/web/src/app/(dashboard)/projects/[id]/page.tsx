@@ -286,7 +286,7 @@ export default function ProjectDetailPage() {
 							title="Resources in This Project"
 							description={
 								isOwner
-									? "Skills and vaults saved in this Project."
+									? "Skills and vaults available in this Project."
 									: "Shared resources you can read from this Project."
 							}
 							action={<ProjectResourceLinks projectId={project.id} />}
@@ -332,8 +332,8 @@ export default function ProjectDetailPage() {
 									title="Vaults"
 									description={
 										isOwner
-											? "Vaults and key names saved in this Project."
-											: "Read-only vault and key names shared by the owner."
+											? "Vaults available in this Project."
+											: "Read-only vaults shared through this Project."
 									}
 								/>
 								{isOwner ? (
@@ -448,7 +448,9 @@ function OverviewCard({
 function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLabel: string) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
-		return `${typeLabel} ${access}. Use it to share skills and vaults, then attach it to agents when needed.`;
+		return isOwner
+			? `${typeLabel} you own. Add skills and vaults here, share the Project, then attach it to agents when needed.`
+			: `${typeLabel} shared with you. You can read its skills and vaults and attach it to agents when needed.`;
 	}
 	if (project.kind === "environment") {
 		return `${typeLabel} ${access}. This is the Agent Project for one connected agent. It is managed for you and cannot be shared.`;
@@ -986,7 +988,7 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault Created", { description: "Saved in this Project." });
+			toast.success("Vault Created", { description: "Available in this Project." });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
@@ -1022,7 +1024,7 @@ function CreateVaultInProjectForm({
 				</Button>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				Use lowercase letters, numbers, and hyphens. Add keys after the vault is created.
+				Use lowercase letters, numbers, and hyphens. Add keys from the Vaults page after creation.
 			</p>
 		</div>
 	);
@@ -1063,7 +1065,7 @@ function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
 					<Badge variant={savedHere ? "secondary" : "outline"}>
-						{savedHere ? "Saved Here" : "Linked"}
+						{savedHere ? "Available Here" : "Linked"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
