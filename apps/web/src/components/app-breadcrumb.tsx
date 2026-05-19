@@ -66,7 +66,9 @@ export function AppBreadcrumb() {
 						<span key={href} className="contents">
 							<BreadcrumbItem>
 								{isLast ? (
-									<BreadcrumbPage className="max-w-[420px] truncate">{label}</BreadcrumbPage>
+									<BreadcrumbPage className="max-w-[calc(100vw-6rem)] truncate sm:max-w-[420px]">
+										{label}
+									</BreadcrumbPage>
 								) : (
 									// asChild + next/link: shadcn's default BreadcrumbLink is
 									// a raw <a> which forces a full page reload + drops

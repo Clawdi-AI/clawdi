@@ -1,8 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, Database, Key, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { makeMemoryColumns } from "@/components/memories/memory-columns";
 import { PageHeader } from "@/components/page-header";
@@ -22,13 +23,16 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
+import type { Memory } from "@/lib/api-schemas";
+import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { getProjectResourceDefinition, memoryDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
 	{ value: "all", label: "All" },
@@ -105,17 +109,62 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
 	});
 
-	const columns = useMemo(
-		() =>
-			makeMemoryColumns((id) => {
-				// Memory deletion is account-wide and reflects on every machine via
-				// the daemon's live sync — gone in seconds, no undo from this UI.
-				const ok = window.confirm(
-					"Delete this memory?\n\nYour AI will stop recalling it on every agent within seconds.",
-				);
-				if (ok) deleteMemory.mutate(id);
-			}),
+	const requestDeleteMemory = useCallback(
+		(id: string) => {
+			// Memory deletion is account-wide and reflects on every machine via
+			// the daemon's live sync — gone in seconds, no undo from this UI.
+			const ok = window.confirm(
+				"Delete this memory?\n\nYour AI will stop recalling it on every agent within seconds.",
+			);
+			if (ok) deleteMemory.mutate(id);
+		},
 		[deleteMemory],
+	);
+
+	const columns = useMemo(() => makeMemoryColumns(requestDeleteMemory), [requestDeleteMemory]);
+
+	const emptyMessage =
+		debouncedSearch || apiCategory
+			? "No matches — try a different search or category."
+			: "No memories yet. Add one above, or your agents will create them automatically as they work.";
+	const paginationFooter = (
+		<DataTablePagination
+			page={pagination.pageIndex + 1}
+			pageSize={pagination.pageSize}
+			total={total}
+			onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
+			onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+		/>
+	);
+	const tableToolbar = (
+		<DataTableToolbar
+			value={search}
+			onChange={(v) => {
+				setSearch(v);
+				setPagination((p) => ({ ...p, pageIndex: 0 }));
+			}}
+			placeholder="Search memories…"
+		>
+			<ToggleGroup
+				type="single"
+				value={category}
+				onValueChange={(v) => {
+					if (!v) return;
+					setCategory(v);
+					setPagination((p) => ({ ...p, pageIndex: 0 }));
+				}}
+				variant="outline"
+				size="sm"
+				spacing={1}
+				className="w-full flex-wrap justify-start sm:w-fit"
+			>
+				{CATEGORIES.map((c) => (
+					<ToggleGroupItem key={c.value} value={c.value}>
+						{c.label}
+					</ToggleGroupItem>
+				))}
+			</ToggleGroup>
+		</DataTableToolbar>
 	);
 
 	return (
@@ -167,59 +216,119 @@ export default function MemoriesPage() {
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
-				<DataTable
-					columns={columns}
-					data={memories ?? []}
-					isLoading={isLoading}
-					getRowHref={(m) => memoryDetailHref(m.id)}
-					rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
-					emptyMessage={
-						debouncedSearch || apiCategory
-							? "No matches — try a different search or category."
-							: "No memories yet. Add one above, or your agents will create them automatically as they work."
-					}
-					pagination={pagination}
-					onPaginationChange={setPagination}
-					pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
-					toolbar={
-						<DataTableToolbar
-							value={search}
-							onChange={(v) => {
-								setSearch(v);
-								setPagination((p) => ({ ...p, pageIndex: 0 }));
-							}}
-							placeholder="Search memories…"
-						>
-							<ToggleGroup
-								type="single"
-								value={category}
-								onValueChange={(v) => {
-									if (!v) return;
-									setCategory(v);
-									setPagination((p) => ({ ...p, pageIndex: 0 }));
-								}}
-								variant="outline"
-								size="sm"
-							>
-								{CATEGORIES.map((c) => (
-									<ToggleGroupItem key={c.value} value={c.value}>
-										{c.label}
-									</ToggleGroupItem>
-								))}
-							</ToggleGroup>
-						</DataTableToolbar>
-					}
-					footer={
-						<DataTablePagination
-							page={pagination.pageIndex + 1}
-							pageSize={pagination.pageSize}
-							total={total}
-							onPageChange={(p) => setPagination((s) => ({ ...s, pageIndex: p - 1 }))}
-							onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
+				<>
+					<div className="md:hidden">
+						{tableToolbar}
+						<MobileMemoryList
+							memories={memories ?? []}
+							isLoading={isLoading}
+							emptyMessage={emptyMessage}
+							onDelete={requestDeleteMemory}
 						/>
-					}
-				/>
+						<div className="mt-3">{paginationFooter}</div>
+					</div>
+					<div className="hidden md:block">
+						<DataTable
+							columns={columns}
+							data={memories ?? []}
+							isLoading={isLoading}
+							getRowHref={(m) => memoryDetailHref(m.id)}
+							rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
+							emptyMessage={emptyMessage}
+							pagination={pagination}
+							onPaginationChange={setPagination}
+							pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
+							toolbar={tableToolbar}
+							footer={paginationFooter}
+						/>
+					</div>
+				</>
 			)}
+		</div>
+	);
+}
+
+function MobileMemoryList({
+	memories,
+	isLoading,
+	emptyMessage,
+	onDelete,
+}: {
+	memories: Memory[];
+	isLoading: boolean;
+	emptyMessage: ReactNode;
+	onDelete: (id: string) => void;
+}) {
+	if (isLoading) {
+		return (
+			<div className="mt-3 space-y-2">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<div key={index} className="rounded-lg border bg-card p-3">
+						<Skeleton className="h-4 w-5/6" />
+						<Skeleton className="mt-2 h-4 w-2/3" />
+						<Skeleton className="mt-3 h-5 w-24" />
+					</div>
+				))}
+			</div>
+		);
+	}
+
+	if (!memories.length) {
+		return (
+			<div className="mt-3 rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+				{emptyMessage}
+			</div>
+		);
+	}
+
+	return (
+		<div className="mt-3 divide-y rounded-lg border bg-card">
+			{memories.map((memory) => (
+				<article key={memory.id} className="relative p-3">
+					<Link
+						href={memoryDetailHref(memory.id)}
+						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
+						className="absolute inset-0 rounded-lg"
+					/>
+					<div className="pointer-events-none relative z-10 flex items-start justify-between gap-3">
+						<div className="min-w-0 flex-1 space-y-2">
+							<p className="break-words text-sm leading-relaxed">{memory.content}</p>
+							<div className="flex flex-wrap items-center gap-1.5">
+								<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
+									{memory.category}
+								</Badge>
+								{memory.tags?.slice(0, 3).map((tag) => (
+									<span key={tag} className="text-xs text-muted-foreground">
+										#{tag}
+									</span>
+								))}
+							</div>
+							<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+								{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
+								{memory.source_machine_name ? (
+									<span className="inline-flex min-w-0 items-center gap-1">
+										<Laptop className="size-3 shrink-0" />
+										<span className="truncate">Learned on {memory.source_machine_name}</span>
+									</span>
+								) : null}
+							</div>
+						</div>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							onClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								onDelete(memory.id);
+							}}
+							className="pointer-events-auto shrink-0 text-muted-foreground hover:text-destructive"
+							aria-label="Delete memory"
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</div>
+				</article>
+			))}
 		</div>
 	);
 }

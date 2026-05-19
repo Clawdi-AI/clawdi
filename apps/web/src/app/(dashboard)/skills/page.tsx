@@ -436,12 +436,16 @@ function SkillsPageInner() {
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2">
 												<Sparkles className="size-4 shrink-0 text-primary" />
-												<Link
-													href={skillDetailHref(skill.skillKey, targetProjectId)}
-													className="truncate text-sm font-medium hover:underline"
-												>
-													{skill.name}
-												</Link>
+												{isInstalled && targetProjectId ? (
+													<Link
+														href={skillDetailHref(skill.skillKey, targetProjectId)}
+														className="truncate text-sm font-medium hover:underline"
+													>
+														{skill.name}
+													</Link>
+												) : (
+													<span className="truncate text-sm font-medium">{skill.name}</span>
+												)}
 											</div>
 											<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
 												{skill.description}

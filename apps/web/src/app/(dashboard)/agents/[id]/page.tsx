@@ -344,13 +344,13 @@ export default function AgentDetailPage() {
 						    not below the table — keeps the CTA visible
 						    above the fold when the table is empty, and
 						    avoids a lonely button taking its own row. */}
-						<div className="flex items-center justify-between gap-3">
-							<TabsList>
-								<TabsTrigger value="sessions">
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+							<TabsList className="grid w-full grid-cols-3 sm:w-fit">
+								<TabsTrigger value="sessions" className="min-w-0 px-2">
 									Sessions
 									<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
 								</TabsTrigger>
-								<TabsTrigger value="skills">
+								<TabsTrigger value="skills" className="min-w-0 px-2">
 									Skills
 									{skillsForThisEnv ? (
 										<span className="ml-1.5 text-xs text-muted-foreground">
@@ -358,7 +358,7 @@ export default function AgentDetailPage() {
 										</span>
 									) : null}
 								</TabsTrigger>
-								<TabsTrigger value="projects">
+								<TabsTrigger value="projects" className="min-w-0 px-2">
 									Projects
 									{projectBindings ? (
 										<span className="ml-1.5 text-xs text-muted-foreground">
@@ -368,10 +368,10 @@ export default function AgentDetailPage() {
 								</TabsTrigger>
 							</TabsList>
 							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm">
+								<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
 									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
 										<Plus />
-										Install skills
+										Install Skills
 									</Link>
 								</Button>
 							) : null}

@@ -200,6 +200,14 @@ export function skillDetailHref(skillKey: string, projectId?: string | null): st
 	return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
 }
 
+export function decodeResourceRouteParam(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
+}
+
 export function sessionDetailHref(sessionId: string): string {
 	return `/sessions/${encodeURIComponent(sessionId)}`;
 }

@@ -97,12 +97,12 @@ function StepNumber({ n }: { n: number }) {
 export function AddAgentSetup() {
 	return (
 		<Tabs defaultValue="agent">
-			<TabsList>
-				<TabsTrigger value="agent">
+			<TabsList className="grid w-full grid-cols-2">
+				<TabsTrigger value="agent" className="min-w-0 px-2">
 					<Rocket />
 					Send to Agent
 				</TabsTrigger>
-				<TabsTrigger value="cli">
+				<TabsTrigger value="cli" className="min-w-0 px-2">
 					<Terminal />
 					Manual Setup
 				</TabsTrigger>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	connectorDetailHref,
+	decodeResourceRouteParam,
 	getProjectResourceDefinition,
 	memoryDetailHref,
 	PROJECT_RESOURCE_NAV_IDS,
@@ -30,6 +31,12 @@ describe("project resource model", () => {
 		expect(sessionDetailHref("session 1")).toBe("/sessions/session%201");
 		expect(memoryDetailHref("memory 1")).toBe("/memories/memory%201");
 		expect(connectorDetailHref("google drive")).toBe("/connectors/google%20drive");
+	});
+
+	it("decodes route params before handing them to typed API clients", () => {
+		expect(decodeResourceRouteParam("team%2Ffoo")).toBe("team/foo");
+		expect(decodeResourceRouteParam("already-decoded")).toBe("already-decoded");
+		expect(decodeResourceRouteParam("%E0%A4%A")).toBe("%E0%A4%A");
 	});
 
 	it("keeps the current Project resource contract explicit", () => {

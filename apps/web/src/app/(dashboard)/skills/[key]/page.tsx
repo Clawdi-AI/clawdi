@@ -18,7 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, unwrap, useApi } from "@/lib/api";
-import { projectResourceHref } from "@/lib/project-resource-model";
+import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
@@ -44,7 +44,8 @@ export default function SkillDetailPage() {
 }
 
 function SkillDetailPageInner() {
-	const { key } = useParams<{ key: string }>();
+	const { key: routeKey } = useParams<{ key: string }>();
+	const skillKey = useMemo(() => decodeResourceRouteParam(routeKey), [routeKey]);
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -66,22 +67,22 @@ function SkillDetailPageInner() {
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["skill", key, selectedProjectId],
+		queryKey: ["skill", skillKey, selectedProjectId],
 		queryFn: async () => {
 			if (selectedProjectId) {
 				return unwrap(
 					await api.GET("/api/projects/{project_id}/skills/{skill_key}", {
-						params: { path: { project_id: selectedProjectId, skill_key: key } },
+						params: { path: { project_id: selectedProjectId, skill_key: skillKey } },
 					}),
 				);
 			}
 			return unwrap(
-				await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: key } } }),
+				await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: skillKey } } }),
 			);
 		},
 	});
 
-	useSetBreadcrumbTitle(skill?.name || (skill ? key : null));
+	useSetBreadcrumbTitle(skill?.name || (skill ? skillKey : null));
 
 	const { data: defaultProject, error: projectError } = useQuery({
 		queryKey: ["projects", "default"],
@@ -166,7 +167,7 @@ function SkillDetailPageInner() {
 			// upload short-circuit as "unchanged".
 			return unwrap(
 				await api.PUT("/api/projects/{project_id}/skills/{skill_key}/content", {
-					params: { path: { project_id: targetProjectId, skill_key: key } },
+					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 					body: { content: draft, content_hash: editingHash ?? undefined },
 				}),
 			);
@@ -180,7 +181,7 @@ function SkillDetailPageInner() {
 			setIsEditing(false);
 			setDraft("");
 			setEditingHash(null);
-			queryClient.invalidateQueries({ queryKey: ["skill", key] });
+			queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
 		onError: (e) => {
@@ -195,7 +196,7 @@ function SkillDetailPageInner() {
 					description:
 						"Another edit landed while you were typing. Reload to see the latest, then re-apply your change.",
 				});
-				queryClient.invalidateQueries({ queryKey: ["skill", key] });
+				queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 				return;
 			}
 			toast.error("Failed to save", { description: errorMessage(e) });
@@ -207,7 +208,7 @@ function SkillDetailPageInner() {
 			if (!targetProjectId) throw new Error("Default project not loaded yet");
 			return unwrap(
 				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: targetProjectId, skill_key: key } },
+					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 				}),
 			);
 		},
@@ -239,7 +240,7 @@ function SkillDetailPageInner() {
 		// they're nuking it everywhere.
 		const where = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
 		const ok = window.confirm(
-			`Uninstall "${skill?.name ?? key}" ${where}?\n\n` +
+			`Uninstall "${skill?.name ?? skillKey}" ${where}?\n\n` +
 				"Your other agents keep their copies. To get it back here, " +
 				"re-install it from the marketplace.",
 		);
