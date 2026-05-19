@@ -6,7 +6,7 @@ import { getEnvIdByAgent } from "../lib/select-adapter";
 
 interface VaultResolveHit {
 	key: string;
-	value: string;
+	value?: string;
 	source_project_id: string;
 	source_alias: string;
 	vault_slug?: string | null;
@@ -38,6 +38,7 @@ export async function vaultResolveCommand(
 		allowConflicts?: boolean;
 		debug?: boolean;
 		json?: boolean;
+		dryRun?: boolean;
 	} = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
@@ -65,6 +66,7 @@ export async function vaultResolveCommand(
 	}
 	if (opts.allowConflicts) params.set("allow_conflicts", "true");
 	if (opts.debug) params.set("debug", "true");
+	if (opts.dryRun) params.set("preview", "true");
 
 	const r = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {
 		method: "POST",
@@ -104,24 +106,43 @@ export async function vaultResolveCommand(
 	}
 
 	const hit = body as VaultResolveHit;
+	if (opts.dryRun) {
+		console.log(
+			`${chalk.green("✓")} ${key} resolves from ${hit.source_alias} ${chalk.gray("(redacted)")}`,
+		);
+		if (opts.debug && hit.precedence) {
+			printPrecedence(hit);
+		}
+		return;
+	}
+	if (typeof hit.value !== "string") {
+		console.error(chalk.red("vault resolve returned no value."));
+		process.exitCode = 1;
+		return;
+	}
 	console.log(`${hit.value}  ${chalk.gray(`(from ${hit.source_alias})`)}`);
 
 	if (opts.debug && hit.precedence) {
-		console.log(chalk.gray("  searched:"));
-		for (const entry of hit.precedence) {
-			const suffix =
-				entry.reason === "match"
-					? chalk.green("match")
-					: entry.reason === "conflict"
-						? chalk.red("conflict")
-						: entry.reason === "skipped"
-							? chalk.yellow("skipped")
-							: chalk.gray("not found");
-			const agentUse = entry.binding_type
-				? chalk.gray(` ${formatAgentUse(entry.binding_type)}:${entry.priority}`)
-				: "";
-			console.log(`    ${entry.alias} ${suffix}${agentUse}`);
-		}
+		printPrecedence(hit);
+	}
+}
+
+function printPrecedence(hit: VaultResolveHit): void {
+	if (!hit.precedence) return;
+	console.log(chalk.gray("  searched:"));
+	for (const entry of hit.precedence) {
+		const suffix =
+			entry.reason === "match"
+				? chalk.green("match")
+				: entry.reason === "conflict"
+					? chalk.red("conflict")
+					: entry.reason === "skipped"
+						? chalk.yellow("skipped")
+						: chalk.gray("not found");
+		const agentUse = entry.binding_type
+			? chalk.gray(` ${formatAgentUse(entry.binding_type)}:${entry.priority}`)
+			: "";
+		console.log(`    ${entry.alias} ${suffix}${agentUse}`);
 	}
 }
 

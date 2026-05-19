@@ -61,16 +61,20 @@ describe("doctor --json", () => {
 			captured = args.map(String).join(" ");
 		};
 
-		const { restore } = mockFetch([
+		const { captured: fetchCalls, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/api/auth/me",
 				response: () => jsonResponse({ id: "u1", email: "e" }),
 			},
 			{
-				method: "POST",
-				path: "/api/vault/resolve",
-				response: () => jsonResponse({ K1: "v1", K2: "v2" }),
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "default", name: "Default" }],
+						total: 2,
+					}),
 			},
 			{
 				method: "GET",
@@ -90,8 +94,10 @@ describe("doctor --json", () => {
 		expect(checks.find((c) => c.name === "API reachability")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Environments")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Environments")?.detail).toContain("hermes");
-		expect(checks.find((c) => c.name === "Vault resolve")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Vault metadata")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Vault metadata")?.detail).toContain("2 vaults reachable");
 		expect(checks.find((c) => c.name === "MCP connectors")?.ok).toBe(true);
+		expect(fetchCalls.some((request) => request.path.startsWith("/api/vault/resolve"))).toBe(false);
 
 		// Hermes fixture present → that agent shows ✓, others show ✗ (not installed)
 		const hermesCheck = checks.find((c) => c.name === "Agent: Hermes");
@@ -114,8 +120,8 @@ describe("doctor --json", () => {
 				response: () => new Response("nope", { status: 503 }),
 			},
 			{
-				method: "POST",
-				path: "/api/vault/resolve",
+				method: "GET",
+				path: "/api/vault",
 				response: () => new Response("", { status: 503 }),
 			},
 			{

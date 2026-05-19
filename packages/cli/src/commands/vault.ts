@@ -251,23 +251,6 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
-	const api = new ApiClient();
-
-	let pinnedProjectId: string | undefined;
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	}
-
-	await ensureVault(api, "default", "Default", pinnedProjectId);
-
 	const fields: Record<string, string> = {};
 	for (const [key, value] of parseDotenv(content)) {
 		fields[key] = value;
@@ -290,6 +273,22 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 			return;
 		}
 	}
+
+	const api = new ApiClient();
+	let pinnedProjectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	}
+
+	await ensureVault(api, "default", "Default", pinnedProjectId);
 
 	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, "default"));
 	unwrap(

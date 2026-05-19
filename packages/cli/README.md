@@ -92,11 +92,14 @@ Run a command with vault references without putting plaintext secrets on disk:
 clawdi vault set OPENAI_API_KEY
 echo "OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY" > .env.local
 clawdi run --env-file .env.local -- python scripts/ingest.py
+clawdi run --dry-run --env-file .env.local -- python scripts/ingest.py
 clawdi read clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
 clawdi inject --in .env.template --out .env.local
 ```
 
 `clawdi vault set`, `clawdi vault import`, and `clawdi vault list` print exact references that include the Project ID. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
+
+Use `--dry-run` on `clawdi read`, `clawdi inject`, `clawdi run`, and `clawdi vault resolve` to verify provenance without requesting plaintext values. `clawdi doctor` checks vault metadata only; it does not resolve stored secrets.
 
 Sync a local agent CLI credential profile to another machine:
 

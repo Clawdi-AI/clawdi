@@ -185,6 +185,46 @@ describe("readCommand", () => {
 		expect(err).toContain("but --project resolved to 00000000-0000-0000-0000-000000000999");
 		expect(process.exitCode).toBe(1);
 	});
+
+	it("dry-runs a reference without fetching or printing plaintext", async () => {
+		const exact =
+			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/prod/section/stripe/field/secret_key";
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: exact,
+						source_project_id: "00000000-0000-0000-0000-000000000123",
+						source_alias: "prod",
+						vault_slug: "prod",
+						section: "stripe",
+						item_name: "secret_key",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await readCommand(exact, { dryRun: true, json: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const body = JSON.parse(out) as { source_alias: string; value?: string };
+		expect(body.source_alias).toBe("prod");
+		expect(body.value).toBeUndefined();
+		expect(out).not.toContain("sk-live");
+		expect(captured[0].path).toContain("preview=true");
+		expect(captured[0].path).toContain("vault_slug=prod");
+		expect(captured[0].path).toContain("section=stripe");
+		expect(captured[0].path).toContain("field=secret_key");
+	});
 });
 
 describe("injectCommand", () => {
@@ -281,5 +321,46 @@ describe("injectCommand", () => {
 		expect(err).toContain("Refusing to overwrite");
 		expect(process.exitCode).toBe(1);
 		expect(existsSync(output)).toBe(true);
+	});
+
+	it("dry-runs references without writing output or fetching plaintext", async () => {
+		const input = join(tmpRoot, "config.template");
+		const output = join(tmpRoot, "config");
+		writeFileSync(input, "token=clawdi://prod/stripe/secret_key\n");
+		writeFileSync(output, "existing");
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/stripe/secret_key",
+						source_project_id: "project-prod",
+						source_alias: "prod",
+						vault_slug: "prod",
+						section: "stripe",
+						item_name: "secret_key",
+					}),
+			},
+		]);
+		const origErr = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await injectCommand({ in: input, out: output, dryRun: true });
+		} finally {
+			console.error = origErr;
+			restore();
+		}
+
+		expect(readFileSync(output, "utf8")).toBe("existing");
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("preview=true");
+		expect(err).toContain("Dry run");
+		expect(err).toContain("prod");
+		expect(err).toContain("redacted");
+		expect(err).not.toContain("sk-live");
 	});
 });

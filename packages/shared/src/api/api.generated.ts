@@ -5399,6 +5399,8 @@ export interface operations {
                 /** @description Allow first-match wins when attached Projects contain the same key. */
                 allow_conflicts?: boolean;
                 debug?: boolean;
+                /** @description Return provenance only for single-key/reference resolution; do not decrypt. */
+                preview?: boolean;
             };
             header?: never;
             path?: never;

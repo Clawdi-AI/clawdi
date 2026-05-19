@@ -148,6 +148,27 @@ describe("vaultImport", () => {
 			},
 		});
 	});
+
+	it("does not create a vault or resolve a project when the dotenv file has no keys", async () => {
+		const envFile = join(tmpHome, ".env.empty");
+		writeFileSync(envFile, ["# comments only", "invalid line without equals", ""].join("\n"));
+		const { captured, restore } = mockFetch([]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultImport(envFile, { yes: true, project: "production" });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+		expect(out).toContain("No keys found in file.");
+	});
 });
 
 function mockVaultListFetch() {

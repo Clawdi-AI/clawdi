@@ -51,15 +51,18 @@ beforeAll(() => {
 				return json({ detail: "unexpected reference" }, 404);
 			}
 
-			return json({
+			const body = {
 				reference: REFERENCE,
-				value: SECRET,
 				source_project_id: PROJECT_ID,
 				source_alias: "prod",
 				vault_slug: "prod",
 				section: "openai",
 				item_name: "api_key",
-			});
+			};
+			if (url.searchParams.get("preview") === "true") {
+				return json(body);
+			}
+			return json({ ...body, value: SECRET });
 		},
 	});
 });
@@ -142,6 +145,39 @@ describe("vault reference process e2e", () => {
 			expect(result.stdout).not.toContain(SECRET);
 			expect(result.stderr).not.toContain(SECRET);
 			expect(apiCalls).toHaveLength(1);
+		} finally {
+			rmSync(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("dry-runs a child command without launching or exposing plaintext", async () => {
+		const fixture = createFixture();
+		const envFile = join(fixture.root, ".env");
+		writeFileSync(envFile, `OPENAI_API_KEY=${REFERENCE}\n`);
+		const childScript = "process.exit(42);";
+
+		try {
+			const result = await runCli(fixture, [
+				"run",
+				"--dry-run",
+				"--env-file",
+				envFile,
+				"--no-inherit-env",
+				"--no-project-folder",
+				"--",
+				process.execPath,
+				"-e",
+				childScript,
+			]);
+
+			expect(result.code).toBe(0);
+			expect(result.stdout).toContain("Dry run: command will not be launched.");
+			expect(result.stdout).toContain("OPENAI_API_KEY");
+			expect(result.stdout).toContain("redacted");
+			expect(result.stdout).not.toContain(SECRET);
+			expect(result.stderr).not.toContain(SECRET);
+			expect(apiCalls).toHaveLength(1);
+			expect(apiCalls[0].path).toContain("preview=true");
 		} finally {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}

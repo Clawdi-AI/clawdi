@@ -237,6 +237,57 @@ describe("run command project folder selection", () => {
 		expect(lines.join("\n")).not.toContain("sk-test");
 	});
 
+	it("dry-runs env-file references without launching or fetching plaintext", async () => {
+		const envFile = join(tmpRoot, ".env");
+		writeFileSync(envFile, "OPENAI_API_KEY=clawdi://prod/openai/api_key\n");
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/openai/api_key",
+						source_project_id: "project-default",
+						source_alias: "prod",
+						vault_slug: "prod",
+						section: "openai",
+						item_name: "api_key",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await run(
+				["node", "server.js"],
+				{
+					envFile: [envFile],
+					inheritEnv: false,
+					projectFolder: false,
+					dryRun: true,
+				},
+				spawnImpl,
+			);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const out = lines.join("\n");
+		expect(calls).toHaveLength(0);
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("preview=true");
+		expect(out).toContain("Dry run: command will not be launched.");
+		expect(out).toContain("OPENAI_API_KEY");
+		expect(out).toContain("redacted");
+		expect(out).not.toContain("sk-test");
+	});
+
 	it("lets explicit env-file references override legacy all-vault values", async () => {
 		const envFile = join(tmpRoot, ".env");
 		writeFileSync(envFile, "OPENAI_API_KEY=clawdi://prod/openai/api_key\n");

@@ -9,10 +9,13 @@ import { errMessage } from "../lib/errors";
 import { findProjectFolderLink } from "../lib/project-folders";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import {
+	type ClawdiReference,
+	previewReferenceMap,
 	type ResolveReferenceOptions,
 	replaceResolvedReferences,
 	resolveReferenceMap,
 	scanClawdiReferences,
+	type VaultReferencePreview,
 } from "../lib/secret-references";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 
@@ -24,6 +27,7 @@ interface RunOpts {
 	inheritEnv?: boolean;
 	allVaultEnv?: boolean;
 	allowConflicts?: boolean;
+	dryRun?: boolean;
 }
 
 interface SelectedProject {
@@ -47,6 +51,14 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 	const api = new ApiClient();
 	const selectedProject = await selectProject(api, opts);
 	let vaultEnv: VaultResolved = {};
+
+	if (opts.dryRun) {
+		const baseEnv = opts.inheritEnv === false ? {} : { ...process.env };
+		const envFileVars = loadEnvFiles(opts.envFile ?? []);
+		const envWithReferences = { ...baseEnv, ...envFileVars };
+		await previewRun(args, envWithReferences, selectedProject, opts);
+		return;
+	}
 
 	if (opts.allVaultEnv) {
 		try {
@@ -110,6 +122,60 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 	child.on("exit", (code) => {
 		process.exit(code ?? 0);
 	});
+}
+
+async function previewRun(
+	args: string[],
+	env: Record<string, string | undefined>,
+	selectedProject: SelectedProject | null,
+	opts: RunOpts,
+): Promise<void> {
+	const refs = scanEnvReferenceUses(env);
+	const resolved = await previewReferenceMap(
+		refs.map((entry) => entry.ref),
+		{
+			project: opts.project,
+			projectId: opts.project || opts.agent ? undefined : selectedProject?.projectId,
+			agent: opts.agent,
+			allowConflicts: opts.allowConflicts,
+		},
+	);
+	console.log(chalk.green("Dry run: command will not be launched."));
+	console.log(chalk.gray(`  Command: ${args.join(" ")}`));
+	if (opts.agent) {
+		console.log(chalk.gray(`  Agent context: ${opts.agent}`));
+	} else if (selectedProject) {
+		console.log(chalk.gray(`  Project context: ${selectedProject.label}`));
+	} else {
+		console.log(chalk.gray("  Project context: default write project"));
+	}
+	if (opts.allVaultEnv) {
+		console.log(
+			chalk.yellow("  Legacy all-vault-env requested; broad env values were not fetched."),
+		);
+	}
+	if (resolved.size === 0) {
+		console.log(chalk.gray("  No clawdi references found in env input."));
+		return;
+	}
+	console.log(
+		chalk.green(
+			`  Would resolve ${resolved.size} clawdi reference${resolved.size === 1 ? "" : "s"}:`,
+		),
+	);
+	for (const hit of resolved.values()) {
+		const envKeys = refs
+			.filter((entry) => entry.ref.raw === hit.reference)
+			.map((entry) => entry.envKey)
+			.join(", ");
+		console.log(chalk.gray(`    ${envKeys}: ${formatPreview(hit)}`));
+	}
+}
+
+function formatPreview(hit: VaultReferencePreview): string {
+	const path = [hit.vault_slug, hit.section, hit.item_name].filter(Boolean).join("/");
+	const suffix = path ? ` ${path}` : "";
+	return `${hit.reference} -> ${hit.source_alias}${suffix} (redacted)`;
 }
 
 function assertVaultResolved(value: unknown): VaultResolved {
@@ -189,4 +255,17 @@ async function resolveEnvReferences(
 		chalk.green(`✓ Resolved ${resolved.size} clawdi reference${resolved.size === 1 ? "" : "s"}`),
 	);
 	return out;
+}
+
+function scanEnvReferenceUses(
+	env: Record<string, string | undefined>,
+): Array<{ envKey: string; ref: ClawdiReference }> {
+	const uses: Array<{ envKey: string; ref: ClawdiReference }> = [];
+	for (const [envKey, value] of Object.entries(env)) {
+		if (typeof value !== "string") continue;
+		for (const ref of scanClawdiReferences(value)) {
+			uses.push({ envKey, ref });
+		}
+	}
+	return uses;
 }

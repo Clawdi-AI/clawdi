@@ -14,9 +14,8 @@ export interface ClawdiReference {
 	isExact: boolean;
 }
 
-export interface VaultReferenceHit {
+export interface VaultReferencePreview {
 	reference: string;
-	value: string;
 	source_project_id: string;
 	source_alias: string;
 	source_display?: string;
@@ -44,6 +43,10 @@ export interface VaultReferenceHit {
 		section?: string;
 		item_name?: string;
 	}>;
+}
+
+export interface VaultReferenceHit extends VaultReferencePreview {
+	value: string;
 }
 
 export interface ResolveReferenceOptions {
@@ -152,6 +155,25 @@ export async function resolveClawdiReference(
 	input: string,
 	opts: ResolveReferenceOptions = {},
 ): Promise<VaultReferenceHit> {
+	const hit = await requestClawdiReference<VaultReferenceHit>(input, opts, false);
+	if (typeof hit.value !== "string") {
+		throw new Error("vault resolve returned no value.");
+	}
+	return hit;
+}
+
+export async function previewClawdiReference(
+	input: string,
+	opts: ResolveReferenceOptions = {},
+): Promise<VaultReferencePreview> {
+	return await requestClawdiReference<VaultReferencePreview>(input, opts, true);
+}
+
+async function requestClawdiReference<T extends VaultReferencePreview>(
+	input: string,
+	opts: ResolveReferenceOptions,
+	preview: boolean,
+): Promise<T> {
 	if (opts.project && opts.agent) {
 		throw new Error("Pass either --project or --agent, not both.");
 	}
@@ -188,19 +210,17 @@ export async function resolveClawdiReference(
 	}
 	if (opts.allowConflicts) params.set("allow_conflicts", "true");
 	if (opts.debug) params.set("debug", "true");
+	if (preview) params.set("preview", "true");
 
 	const response = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
-	const body = await readJson<VaultReferenceHit | { detail?: unknown }>(
-		response,
-		"/api/vault/resolve",
-	);
+	const body = await readJson<T | { detail?: unknown }>(response, "/api/vault/resolve");
 	if (!response.ok) {
 		throw new VaultReferenceResolveError(response.status, body);
 	}
-	return { ...(body as VaultReferenceHit), reference: input };
+	return { ...(body as T), reference: input };
 }
 
 export async function resolveReferenceMap(
@@ -211,6 +231,18 @@ export async function resolveReferenceMap(
 	for (const ref of refs) {
 		if (resolved.has(ref.raw)) continue;
 		resolved.set(ref.raw, await resolveClawdiReference(ref.raw, opts));
+	}
+	return resolved;
+}
+
+export async function previewReferenceMap(
+	refs: ClawdiReference[],
+	opts: ResolveReferenceOptions = {},
+): Promise<Map<string, VaultReferencePreview>> {
+	const resolved = new Map<string, VaultReferencePreview>();
+	for (const ref of refs) {
+		if (resolved.has(ref.raw)) continue;
+		resolved.set(ref.raw, await previewClawdiReference(ref.raw, opts));
 	}
 	return resolved;
 }

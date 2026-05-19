@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, Check, Copy, Key, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
@@ -24,7 +23,6 @@ interface VaultField {
 	key: string;
 	name: string;
 	section: string;
-	reference: string;
 }
 
 export default function VaultPage() {
@@ -76,31 +74,25 @@ export default function VaultPage() {
 				}
 			/>
 
-			<form
-				className="flex gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (newVaultSlug) createVault.mutate(newVaultSlug);
-				}}
-			>
-				<Label htmlFor="vault-slug" className="sr-only">
-					Vault name
-				</Label>
+			{/* Create vault */}
+			<div className="flex gap-2">
 				<Input
-					id="vault-slug"
-					name="vault-slug"
 					value={newVaultSlug}
 					onChange={(e) => setNewVaultSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-					placeholder="ai-keys…"
-					autoComplete="off"
-					spellCheck={false}
+					placeholder="New vault name (e.g. ai-keys, prod)"
 					className="flex-1"
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && newVaultSlug) createVault.mutate(newVaultSlug);
+					}}
 				/>
-				<Button type="submit" disabled={!newVaultSlug || createVault.isPending}>
-					<Plus aria-hidden="true" />
+				<Button
+					onClick={() => newVaultSlug && createVault.mutate(newVaultSlug)}
+					disabled={!newVaultSlug || createVault.isPending}
+				>
+					<Plus />
 					Create
 				</Button>
-			</form>
+			</div>
 
 			{error ? (
 				<Alert variant="destructive">
@@ -157,8 +149,6 @@ function VaultCard({
 	const [adding, setAdding] = useState(false);
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
-	const [copiedReference, setCopiedReference] = useState<string | null>(null);
-	const fieldDomPrefix = `${vault.project_id}-${vault.slug}`;
 
 	// Cache key includes project_id so a JWT user with the same slug
 	// in two projects (Personal + env-A) doesn't share entries.
@@ -213,43 +203,16 @@ function VaultCard({
 					key: section === "(default)" ? f : `${section}/${f}`,
 					name: f,
 					section: section === "(default)" ? "" : section,
-					reference: buildExactClawdiReference(
-						vault.project_id,
-						vault.slug,
-						section === "(default)" ? "" : section,
-						f,
-					),
 				})),
 			)
 		: [];
-
-	const copyReference = async (reference: string) => {
-		try {
-			await navigator.clipboard.writeText(reference);
-			setCopiedReference(reference);
-			window.setTimeout(
-				() => setCopiedReference((current) => (current === reference ? null : current)),
-				1600,
-			);
-			toast.success("Reference copied", { description: reference });
-		} catch (e) {
-			toast.error("Copy failed", { description: errorMessage(e) });
-		}
-	};
 
 	const columns = useMemo<ColumnDef<VaultField>[]>(
 		() => [
 			{
 				accessorKey: "key",
 				header: "Key",
-				cell: ({ row }) => (
-					<div className="min-w-0 space-y-0.5">
-						<div className="font-mono text-xs">{row.original.key}</div>
-						<div className="max-w-[42rem] truncate font-mono text-muted-foreground text-xs">
-							{row.original.reference}
-						</div>
-					</div>
-				),
+				cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
 			},
 			{
 				id: "value",
@@ -261,56 +224,30 @@ function VaultCard({
 				id: "actions",
 				header: "",
 				cell: ({ row }) => (
-					<div className="flex justify-end gap-1">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									onClick={(e) => {
-										e.stopPropagation();
-										copyReference(row.original.reference);
-									}}
-									className="text-muted-foreground"
-									aria-label={`Copy exact reference for ${row.original.key}`}
-								>
-									{copiedReference === row.original.reference ? (
-										<Check className="size-3.5" aria-hidden="true" />
-									) : (
-										<Copy className="size-3.5" aria-hidden="true" />
-									)}
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent side="left" className="text-xs">
-								Copy exact reference
-							</TooltipContent>
-						</Tooltip>
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							onClick={(e) => {
-								e.stopPropagation();
-								// Removing a secret breaks any clawdi:// reference
-								// to it the next time an AI tries to resolve.
-								const ok = window.confirm(
-									`Delete "${row.original.key}"?\n\n` +
-										"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
-								);
-								if (ok)
-									deleteItem.mutate({ section: row.original.section, name: row.original.name });
-							}}
-							disabled={deleteItem.isPending}
-							className="text-muted-foreground hover:text-destructive"
-							aria-label={`Delete ${row.original.key}`}
-						>
-							<Trash2 className="size-3.5" aria-hidden="true" />
-						</Button>
-					</div>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onClick={(e) => {
+							e.stopPropagation();
+							// Removing a secret breaks any clawdi:// reference
+							// to it the next time an AI tries to resolve.
+							const ok = window.confirm(
+								`Delete "${row.original.key}"?\n\n` +
+									"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
+							);
+							if (ok) deleteItem.mutate({ section: row.original.section, name: row.original.name });
+						}}
+						disabled={deleteItem.isPending}
+						className="text-muted-foreground hover:text-destructive"
+						aria-label={`Delete ${row.original.key}`}
+					>
+						<Trash2 className="size-3.5" />
+					</Button>
 				),
-				size: 80,
+				size: 40,
 			},
 		],
-		[deleteItem, copiedReference],
+		[deleteItem],
 	);
 
 	// Flat section layout — heading + action row on top, then the table.
@@ -335,7 +272,7 @@ function VaultCard({
 						onClick={() => setAdding(!adding)}
 						className="text-muted-foreground"
 					>
-						<Plus className="size-3.5" aria-hidden="true" />
+						<Plus className="size-3.5" />
 						Add Key
 					</Button>
 					<Button
@@ -355,56 +292,53 @@ function VaultCard({
 							if (ok) onDelete();
 						}}
 						disabled={isDeleting}
-						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive focus-visible:opacity-100"
+						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
 						aria-label="Delete vault"
 					>
-						<Trash2 className="size-3.5" aria-hidden="true" />
+						<Trash2 className="size-3.5" />
 					</Button>
 				</div>
 			</div>
 
+			{/* Inline add form, when toggled */}
 			{adding ? (
-				<form
-					className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (newKey && newValue)
-							upsertItem.mutate({ section: "", key: newKey, value: newValue });
-					}}
-				>
-					<Label htmlFor={`key-${fieldDomPrefix}`} className="sr-only">
+				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
+					<Label htmlFor={`key-${vault.slug}`} className="sr-only">
 						Key name
 					</Label>
 					<Input
-						id={`key-${fieldDomPrefix}`}
-						name="key-name"
+						id={`key-${vault.slug}`}
 						value={newKey}
 						onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-						placeholder="OPENAI_API_KEY…"
-						autoComplete="off"
-						spellCheck={false}
+						placeholder="KEY_NAME"
 						className="max-w-[220px] flex-1 font-mono"
 					/>
-					<Label htmlFor={`value-${fieldDomPrefix}`} className="sr-only">
+					<Label htmlFor={`value-${vault.slug}`} className="sr-only">
 						Secret value
 					</Label>
 					<Input
-						id={`value-${fieldDomPrefix}`}
-						name="secret-value"
+						id={`value-${vault.slug}`}
 						type="password"
 						value={newValue}
 						onChange={(e) => setNewValue(e.target.value)}
-						placeholder="Paste secret value…"
-						autoComplete="off"
-						spellCheck={false}
+						placeholder="secret value"
 						className="flex-1"
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && newKey && newValue)
+								upsertItem.mutate({ section: "", key: newKey, value: newValue });
+						}}
 					/>
-					<Button type="submit" disabled={!newKey || !newValue || upsertItem.isPending} size="sm">
-						{upsertItem.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
+					<Button
+						onClick={() =>
+							newKey && newValue && upsertItem.mutate({ section: "", key: newKey, value: newValue })
+						}
+						disabled={!newKey || !newValue || upsertItem.isPending}
+						size="sm"
+					>
+						{upsertItem.isPending ? <Spinner /> : <Plus />}
 						Save
 					</Button>
 					<Button
-						type="button"
 						variant="ghost"
 						size="icon-sm"
 						onClick={() => {
@@ -414,9 +348,9 @@ function VaultCard({
 						}}
 						aria-label="Cancel"
 					>
-						<X aria-hidden="true" />
+						<X />
 					</Button>
-				</form>
+				</div>
 			) : null}
 
 			{allFields.length > 0 ? (
@@ -429,22 +363,4 @@ function VaultCard({
 			) : null}
 		</section>
 	);
-}
-
-function buildExactClawdiReference(
-	projectId: string,
-	vaultSlug: string,
-	section: string,
-	field: string,
-): string {
-	const parts = [
-		"project",
-		projectId,
-		"vault",
-		vaultSlug,
-		...(section ? ["section", section] : []),
-		"field",
-		field,
-	].map((part) => encodeURIComponent(part));
-	return `clawdi://${parts.join("/")}`;
 }

@@ -324,6 +324,7 @@ vaultCmd
 	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence and skipped matches")
+	.option("--dry-run", "Check where the key resolves without printing the plaintext value")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
@@ -346,6 +347,7 @@ program
 	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence without printing secrets in diagnostics")
+	.option("--dry-run", "Check the reference without printing the plaintext value")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
@@ -367,6 +369,7 @@ program
 	.option("-p, --project <project>", "Project to resolve from")
 	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("--dry-run", "Show references that would resolve without writing output")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
@@ -611,6 +614,7 @@ program
 	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected Project")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
+	.option("--dry-run", "Show reference resolution plan without launching the command")
 	.argument("<command...>", "Command to run")
 	.addHelpText(
 		"after",

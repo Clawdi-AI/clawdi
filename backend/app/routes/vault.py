@@ -554,6 +554,10 @@ async def resolve_vault(
         description="Allow first-match wins when attached Projects contain the same key.",
     ),
     debug: bool = Query(default=False),
+    preview: bool = Query(
+        default=False,
+        description="Return provenance only for single-key/reference resolution; do not decrypt.",
+    ),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -623,7 +627,6 @@ async def resolve_vault(
             precedence.append(entry_debug)
             if hit_item is not None and winner is None:
                 winner = {
-                    "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
                     "source_project_id": str(entry["project_id"]),
                     "source_alias": entry["alias"],
                     "source_display": entry["display"],
@@ -633,6 +636,8 @@ async def resolve_vault(
                     "section": hit_item.section,
                     "item_name": hit_item.item_name,
                 }
+                if not preview:
+                    winner["value"] = decrypt(hit_item.encrypted_value, hit_item.nonce)
 
         reference = (
             f"clawdi://{vault_slug}/{section}/{field}"
@@ -718,7 +723,6 @@ async def resolve_vault(
 
             if hit_item is not None and winner is None:
                 winner = {
-                    "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
                     "source_project_id": str(entry["project_id"]),
                     "source_alias": entry["alias"],
                     "source_display": entry["display"],
@@ -728,6 +732,8 @@ async def resolve_vault(
                     "section": hit_item.section,
                     "item_name": hit_item.item_name,
                 }
+                if not preview:
+                    winner["value"] = decrypt(hit_item.encrypted_value, hit_item.nonce)
 
         if winner is None:
             raise HTTPException(
