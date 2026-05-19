@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
+import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
 
 interface VaultField {
@@ -32,6 +33,8 @@ interface VaultField {
 	name: string;
 	section: string;
 }
+
+const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 
 export default function VaultPage() {
 	return (
@@ -143,7 +146,7 @@ function VaultPageInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Vaults"
-				description="Secret references stored in Projects. Agents can read vaults from their Home Project and attached Projects."
+				description={VAULTS_RESOURCE.managementDescription}
 				actions={
 					vaults ? (
 						<Badge variant="secondary">

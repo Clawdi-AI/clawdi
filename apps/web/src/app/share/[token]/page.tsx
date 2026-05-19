@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 import { env } from "@/lib/env";
+import { projectDetailHref } from "@/lib/project-resource-model";
 
 /**
  * Public project-share landing page.
@@ -118,7 +119,7 @@ export default function SharePage() {
 			return upgradeShare(token, bearer);
 		},
 		onSuccess: (result) => {
-			router.push(`/projects/${result.project_id}`);
+			router.push(projectDetailHref(result.project_id));
 		},
 	});
 
@@ -168,7 +169,7 @@ export default function SharePage() {
 						/>
 						<ContentTile
 							icon={<Lock className="size-5" />}
-							label="Vault keys"
+							label="Vault refs"
 							count={data.vault_count}
 							hint="Key names only"
 							muted={data.vault_count === 0}

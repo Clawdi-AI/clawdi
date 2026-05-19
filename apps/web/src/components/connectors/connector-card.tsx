@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { connectorDetailHref } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,7 +23,7 @@ export function ConnectorCard({
 	isConnected?: boolean;
 }) {
 	return (
-		<Link href={`/connectors/${app.name}`} className="group">
+		<Link href={connectorDetailHref(app.name)} className="group">
 			<Card
 				className={cn(
 					"h-full gap-0 rounded-lg border-border/60 py-0 shadow-none",

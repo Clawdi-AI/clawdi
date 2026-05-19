@@ -32,6 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -368,7 +369,7 @@ export default function AgentDetailPage() {
 							</TabsList>
 							{activeTab === "skills" ? (
 								<Button asChild variant="outline" size="sm">
-									<Link href={`/skills?target=${encodeURIComponent(id)}`}>
+									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
 										<Plus />
 										Install skills
 									</Link>
@@ -381,7 +382,7 @@ export default function AgentDetailPage() {
 								columns={sessionColumns}
 								data={sessionsPage?.items ?? []}
 								isLoading={sessionsLoading}
-								getRowHref={(s) => `/sessions/${s.id}`}
+								getRowHref={(s) => sessionDetailHref(s.id)}
 								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 								emptyMessage="No sessions synced from this agent yet."
 							/>

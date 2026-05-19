@@ -18,6 +18,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
+import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
@@ -167,7 +168,7 @@ export default function DashboardPage() {
 								<p className="text-sm text-muted-foreground">Latest syncs from your agents.</p>
 							</div>
 							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
-								<Link href="/sessions">
+								<Link href={projectResourceHref("sessions")}>
 									View all
 									<ArrowRight />
 								</Link>
@@ -177,7 +178,7 @@ export default function DashboardPage() {
 							columns={sessionColumnsCompact}
 							data={sessions ?? []}
 							isLoading={sessionsLoading}
-							getRowHref={(s) => `/sessions/${s.id}`}
+							getRowHref={(s) => sessionDetailHref(s.id)}
 							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
 						/>

@@ -7,8 +7,10 @@ import {
 	CircleHelp,
 	CirclePlus,
 	ExternalLink,
+	FolderKanban,
 	Key,
 	LayoutDashboard,
+	type LucideIcon,
 	Mail,
 	MessageCircle,
 	MessageSquare,
@@ -16,7 +18,6 @@ import {
 	Search,
 	Settings,
 	Sparkles,
-	Workflow,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
@@ -40,6 +41,7 @@ import {
 	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
+	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
@@ -49,6 +51,12 @@ import {
 import { UserMenuItems } from "@/components/user-menu";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
+import {
+	PROJECT_RESOURCE_GROUPS,
+	type ProjectResourceId,
+	projectResourceDefinitionsForGroup,
+	projectResourceScopeLabel,
+} from "@/lib/project-resource-model";
 
 // Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
 // builds collapse the conditional, the bundler eliminates the
@@ -58,15 +66,14 @@ const DeployTrigger = IS_HOSTED
 	? dynamic(() => import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })))
 	: null;
 
-const navItems = [
-	{ href: "/", label: "Overview", icon: LayoutDashboard },
-	{ href: "/sessions", label: "Sessions", icon: MessageSquare },
-	{ href: "/projects", label: "Projects", icon: Workflow },
-	{ href: "/memories", label: "Memories", icon: Brain },
-	{ href: "/skills", label: "Skills", icon: Sparkles },
-	{ href: "/vault", label: "Vault", icon: Key },
-	{ href: "/connectors", label: "Connectors", icon: Plug },
-];
+const RESOURCE_ICONS = {
+	projects: FolderKanban,
+	skills: Sparkles,
+	vaults: Key,
+	sessions: MessageSquare,
+	memories: Brain,
+	connectors: Plug,
+} satisfies Record<ProjectResourceId, LucideIcon>;
 
 function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 	return (
@@ -130,23 +137,48 @@ export function AppSidebar() {
 								</SidebarMenuItem>
 							</SidebarMenu>
 							<SidebarMenu>
-								{navItems.map((item) => {
-									const active =
-										pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-									return (
-										<SidebarMenuItem key={item.href}>
-											<SidebarMenuButton asChild isActive={active} tooltip={item.label}>
-												<Link href={item.href}>
-													<item.icon />
-													<span>{item.label}</span>
-												</Link>
-											</SidebarMenuButton>
-										</SidebarMenuItem>
-									);
-								})}
+								<SidebarMenuItem>
+									<SidebarMenuButton asChild isActive={pathname === "/"} tooltip="Overview">
+										<Link href="/">
+											<LayoutDashboard />
+											<span>Overview</span>
+										</Link>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
+
+					{PROJECT_RESOURCE_GROUPS.map((group) => (
+						<SidebarGroup key={group.id} className="pt-0">
+							<SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+							<SidebarGroupContent>
+								<SidebarMenu>
+									{projectResourceDefinitionsForGroup(group.id).map((definition) => {
+										const Icon = RESOURCE_ICONS[definition.id];
+										const active =
+											pathname === definition.href || pathname.startsWith(`${definition.href}/`);
+										return (
+											<SidebarMenuItem key={definition.id}>
+												<SidebarMenuButton
+													asChild
+													isActive={active}
+													tooltip={`${definition.navLabel} - ${projectResourceScopeLabel(
+														definition.projectScope,
+													)}`}
+												>
+													<Link href={definition.href}>
+														<Icon />
+														<span>{definition.navLabel}</span>
+													</Link>
+												</SidebarMenuButton>
+											</SidebarMenuItem>
+										);
+									})}
+								</SidebarMenu>
+							</SidebarGroupContent>
+						</SidebarGroup>
+					))}
 
 					{/* Secondary nav pinned to the bottom of SidebarContent — matches
 					    dashboard-01's NavSecondary pattern. */}

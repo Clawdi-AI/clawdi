@@ -24,6 +24,7 @@ import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { getProjectResourceDefinition, sessionDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
@@ -41,6 +42,7 @@ const SORT_KEYS = [
 	"relevance",
 ] as const;
 type SortKey = (typeof SORT_KEYS)[number];
+const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
 
 // 1-indexed strict integer parser. `Number()` (unlike `parseInt`)
 // rejects mixed input like "3junk", so a malformed `?page=3junk`
@@ -190,7 +192,7 @@ function SessionsListInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Sessions"
-				description="Activity history from connected agents. Reusable resources are managed through Projects."
+				description={SESSIONS_RESOURCE.managementDescription}
 				actions={
 					data ? (
 						<Badge variant="secondary">
@@ -222,7 +224,7 @@ function SessionsListInner() {
 								? "No sessions match your filters."
 								: "No sessions yet. Once your agent has a conversation, it'll show up here."
 						}
-						getRowHref={(s) => `/sessions/${s.id}`}
+						getRowHref={(s) => sessionDetailHref(s.id)}
 						rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 						sorting={sorting}
 						onSortingChange={(updater) => {

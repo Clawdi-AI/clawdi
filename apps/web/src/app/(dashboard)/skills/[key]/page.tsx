@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
@@ -217,7 +218,7 @@ function SkillDetailPageInner() {
 					: "Skill uninstalled from this agent. Other agents keep their copies.",
 			);
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			router.push("/skills");
+			router.push(projectResourceHref("skills"));
 		},
 		onError: (e) => toast.error("Failed to uninstall", { description: errorMessage(e) }),
 	});

@@ -18,6 +18,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, useAuthedFetch } from "@/lib/api";
+import { projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
@@ -75,7 +76,7 @@ export function NotificationCenter() {
 				description: copy.description,
 				action: {
 					label: "Open project",
-					onClick: () => router.push(`/projects/${result.project_id}`),
+					onClick: () => router.push(projectDetailHref(result.project_id)),
 				},
 			});
 		},

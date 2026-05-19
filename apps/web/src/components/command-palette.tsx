@@ -3,13 +3,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	Brain,
+	FolderKanban,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
 	MessageSquare,
 	Plug,
 	Sparkles,
-	Workflow,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -25,16 +25,48 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
+import {
+	PROJECT_RESOURCE_GROUPS,
+	type ProjectResourceId,
+	projectResourceDefinitionsForGroup,
+	projectResourceScopeLabel,
+} from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
-const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
-	{ label: "Overview", href: "/", icon: LayoutDashboard },
-	{ label: "Sessions", href: "/sessions", icon: MessageSquare },
-	{ label: "Projects", href: "/projects", icon: Workflow },
-	{ label: "Memories", href: "/memories", icon: Brain },
-	{ label: "Skills", href: "/skills", icon: Sparkles },
-	{ label: "Vault", href: "/vault", icon: Key },
-	{ label: "Connectors", href: "/connectors", icon: Plug },
+const RESOURCE_ICONS = {
+	projects: FolderKanban,
+	skills: Sparkles,
+	vaults: Key,
+	sessions: MessageSquare,
+	memories: Brain,
+	connectors: Plug,
+} satisfies Record<ProjectResourceId, LucideIcon>;
+
+const NAV_SHORTCUTS: {
+	label: string;
+	href: string;
+	icon: LucideIcon;
+	subtitle: string;
+	searchText: string;
+}[] = [
+	{
+		label: "Overview",
+		href: "/",
+		icon: LayoutDashboard,
+		subtitle: "Dashboard",
+		searchText: "overview dashboard",
+	},
+	...PROJECT_RESOURCE_GROUPS.flatMap((group) =>
+		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
+			label: definition.navLabel,
+			href: definition.href,
+			icon: RESOURCE_ICONS[definition.id],
+			subtitle: `${group.label} - ${definition.projectPathLabel}`,
+			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
+				definition.projectScope,
+			)} ${definition.projectPathLabel}`,
+		})),
+	),
 ];
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
@@ -150,7 +182,7 @@ function CommandPalette({
 	const navMatches = useMemo(
 		() =>
 			normalizedQuery
-				? NAV_SHORTCUTS.filter((s) => s.label.toLowerCase().includes(normalizedQuery))
+				? NAV_SHORTCUTS.filter((s) => s.searchText.toLowerCase().includes(normalizedQuery))
 				: NAV_SHORTCUTS,
 		[normalizedQuery],
 	);
@@ -174,7 +206,7 @@ function CommandPalette({
 			open={open}
 			onOpenChange={onOpenChange}
 			title="Search"
-			description="Search across sessions, memories, skills, and vaults."
+			description="Jump to resource paths or search sessions, memories, skills, and vaults."
 			// cmdk does its own filtering by default — we do server-side, so
 			// disable client filter and trust the API's ranking.
 			shouldFilter={false}
@@ -205,16 +237,19 @@ function CommandPalette({
 				) : null}
 
 				{navMatches.length > 0 ? (
-					<CommandGroup heading="Jump to">
+					<CommandGroup heading="Jump to resource path">
 						{navMatches.map((s) => (
 							<CommandItem
 								key={s.href}
-								value={s.label}
+								value={s.searchText}
 								onSelect={() => jump(s.href)}
 								className="gap-2"
 							>
-								<s.icon className="size-4" />
-								{s.label}
+								<s.icon className="size-4 shrink-0" />
+								<div className="flex min-w-0 flex-col">
+									<span className="truncate">{s.label}</span>
+									<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
+								</div>
 							</CommandItem>
 						))}
 					</CommandGroup>

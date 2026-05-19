@@ -166,6 +166,8 @@ export function ProjectScopePicker({
 						<ProjectIdentity
 							project={selectedProject}
 							showKind={false}
+							showOwner={false}
+							showAccess={false}
 							titleClassName="text-sm"
 							className="text-left"
 						/>

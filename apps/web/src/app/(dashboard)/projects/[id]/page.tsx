@@ -66,9 +66,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import {
-	getProjectResourceDefinition,
-	PROJECT_MANAGED_RESOURCE_IDS,
+	projectDetailHref,
+	projectManagedResourceDefinitions,
 	projectResourceHref,
+	skillDetailHref,
 } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
 
@@ -121,7 +122,7 @@ export default function ProjectDetailPage() {
 	const handleUseWithAgentOpenChange = (open: boolean) => {
 		setUseWithAgentOpen(open);
 		if (!open && searchParams.get("useWithAgent") === "1") {
-			router.replace(`/projects/${projectId}`, { scroll: false });
+			router.replace(projectDetailHref(projectId), { scroll: false });
 		}
 	};
 
@@ -168,7 +169,7 @@ export default function ProjectDetailPage() {
 			refresh();
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings"] });
 			toast.success("Left shared project", { description: "Membership removed." });
-			router.push("/projects");
+			router.push(projectResourceHref("projects"));
 		},
 		onError: (e) => {
 			toast.error("Failed to leave shared project", {
@@ -191,7 +192,7 @@ export default function ProjectDetailPage() {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<Button asChild variant="ghost" size="sm" className="w-fit">
-					<Link href="/projects">
+					<Link href={projectResourceHref("projects")}>
 						<ArrowLeft className="mr-1.5 size-4" />
 						Projects
 					</Link>
@@ -208,7 +209,7 @@ export default function ProjectDetailPage() {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
 				<Button asChild variant="ghost" size="sm" className="w-fit">
-					<Link href="/projects">
+					<Link href={projectResourceHref("projects")}>
 						<ArrowLeft className="mr-1.5 size-4" />
 						Projects
 					</Link>
@@ -226,7 +227,7 @@ export default function ProjectDetailPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<Button asChild variant="ghost" size="sm" className="w-fit">
-				<Link href="/projects">
+				<Link href={projectResourceHref("projects")}>
 					<ArrowLeft className="mr-1.5 size-4" />
 					Projects
 				</Link>
@@ -264,7 +265,7 @@ export default function ProjectDetailPage() {
 				<div className="space-y-6">
 					<section className="space-y-5 rounded-lg border bg-card/60 p-4">
 						<ContentHeader
-							title="Content library"
+							title="Project resources"
 							description={
 								isOwner
 									? "Skills and vault references saved in this workspace."
@@ -793,11 +794,13 @@ function ContentHeader({
 function ProjectResourceLinks({ projectId }: { projectId: string }) {
 	return (
 		<>
-			{PROJECT_MANAGED_RESOURCE_IDS.map((resourceId) => {
-				const resource = getProjectResourceDefinition(resourceId);
+			{projectManagedResourceDefinitions().map((resource) => {
 				return (
 					<Button asChild key={resource.id} variant="outline" size="sm">
-						<Link href={projectResourceHref(resource.id, projectId)}>
+						<Link
+							href={projectResourceHref(resource.id, projectId)}
+							title={resource.projectPathLabel}
+						>
 							<ExternalLink className="mr-1.5 size-3.5" />
 							{resource.label}
 						</Link>
@@ -960,7 +963,7 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 			</div>
 			<Button asChild variant="ghost" size="icon-sm">
 				<Link
-					href={`/skills/${encodeURIComponent(skill.skill_key)}?project=${encodeURIComponent(skill.project_id ?? ownProjectId)}`}
+					href={skillDetailHref(skill.skill_key, skill.project_id ?? ownProjectId)}
 					aria-label={`Open ${skill.name}`}
 				>
 					<ExternalLink className="size-3.5" />

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage() {
@@ -45,7 +46,7 @@ export default function MemoryDetailPage() {
 			),
 		onSuccess: () => {
 			toast.success("Memory deleted — your AI won't recall this on any agent.");
-			router.push("/memories");
+			router.push(projectResourceHref("memories"));
 		},
 		onError: (e) => toast.error("Failed to delete", { description: errorMessage(e) }),
 	});
@@ -130,7 +131,7 @@ export default function MemoryDetailPage() {
 								{" · "}
 							</span>
 							<Link
-								href={`/sessions/${memory.source_session_id}`}
+								href={sessionDetailHref(memory.source_session_id)}
 								className="underline hover:text-foreground"
 							>
 								view session

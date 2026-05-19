@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, useAuthedFetch } from "@/lib/api";
+import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
 
 interface ProjectRow {
@@ -38,6 +39,8 @@ interface ProjectRow {
 	owner_display?: string | null;
 	owner_handle?: string | null;
 }
+
+const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export default function ProjectsPage() {
 	const authedFetch = useAuthedFetch();
@@ -85,7 +88,7 @@ export default function ProjectsPage() {
 			toast.success("Project created", {
 				description: `${project.name} is ready for skills, vault references, and sharing.`,
 			});
-			router.push(`/projects/${project.id}`);
+			router.push(projectDetailHref(project.id));
 		},
 		onError: (e) => {
 			toast.error("Failed to create project", {
@@ -97,7 +100,7 @@ export default function ProjectsPage() {
 	if (projects.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
-				<PageHeader title="Projects" description="Shared workspaces for people and agents" />
+				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
 				<Skeleton className="h-36 w-full" />
 				<Skeleton className="h-48 w-full" />
 			</div>
@@ -108,7 +111,7 @@ export default function ProjectsPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Projects"
-				description="Shared workspaces for people and agents"
+				description={PROJECTS_RESOURCE.managementDescription}
 				actions={
 					<Button
 						variant="outline"
@@ -146,8 +149,8 @@ export default function ProjectsPage() {
 					<DialogHeader>
 						<DialogTitle>New project</DialogTitle>
 						<DialogDescription>
-							Create a shared workspace for a project, team, or workflow. Add skills, vault
-							references, and access settings after creation.
+							Create a workspace for a project, team, or workflow. Add skills, vault references, and
+							access settings from the Project detail page.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -271,7 +274,7 @@ function OwnedProjectRow({ project }: { project: ProjectRow }) {
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
 					<Button asChild variant="outline" size="sm">
-						<Link href={`/projects/${project.id}`}>
+						<Link href={projectDetailHref(project.id)}>
 							Open
 							<ArrowRight className="size-3.5" />
 						</Link>
@@ -304,13 +307,13 @@ function SharedProjectRow({ project }: { project: ProjectRow }) {
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
 					<Button asChild variant="outline" size="sm">
-						<Link href={`/projects/${project.id}`}>
+						<Link href={projectDetailHref(project.id)}>
 							Open
 							<ArrowRight className="size-3.5" />
 						</Link>
 					</Button>
 					<Button asChild variant="outline" size="sm">
-						<Link href={`/projects/${project.id}?useWithAgent=1`}>
+						<Link href={`${projectDetailHref(project.id)}?useWithAgent=1`}>
 							<Bot className="mr-1.5 size-3.5" />
 							Attach to Agent
 						</Link>

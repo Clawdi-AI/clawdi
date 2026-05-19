@@ -30,6 +30,7 @@ import {
 import { type ApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
+import { getProjectResourceDefinition, projectResourceHref } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
 
 type Section = "general" | "profile" | "projects" | "api-keys";
@@ -40,6 +41,7 @@ const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "projects", label: "Projects", icon: Workflow },
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
+const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export function SettingsDialog({
 	open,
@@ -158,10 +160,7 @@ function GeneralPanel() {
 function ProjectsPanel({ onClose }: { onClose: () => void }) {
 	return (
 		<>
-			<PanelHeader
-				title="Projects"
-				description="Projects are shared workspaces for people and agents."
-			/>
+			<PanelHeader title="Projects" description={PROJECTS_RESOURCE.description} />
 			<div className="rounded-lg border p-4">
 				<div className="flex items-start gap-3">
 					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
@@ -172,7 +171,7 @@ function ProjectsPanel({ onClose }: { onClose: () => void }) {
 							invitations, and member access in one place.
 						</p>
 						<Button asChild size="sm" variant="outline">
-							<Link href="/projects" onClick={onClose}>
+							<Link href={projectResourceHref("projects")} onClick={onClose}>
 								Open Projects
 							</Link>
 						</Button>

@@ -16,12 +16,14 @@ import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
+import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
 // always full at every viewport — no orphan cards on the bottom.
 const PAGE_SIZE = 24;
+const CONNECTORS_RESOURCE = getProjectResourceDefinition("connectors");
 
 // 1-indexed page parser. Rejects non-integer / 0 / negative URL values
 // so `?page=-5` or `?page=2junk` doesn't reach the slicer. `Number()`
@@ -143,7 +145,7 @@ function ConnectorsList() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Connectors"
-				description="Sign in once; your AI can read and act in Gmail, GitHub, Notion, Drive, Calendar."
+				description={CONNECTORS_RESOURCE.managementDescription}
 				actions={
 					<>
 						{total > 0 ? (

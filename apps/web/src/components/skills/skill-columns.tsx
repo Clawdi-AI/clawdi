@@ -6,6 +6,7 @@ import { Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { skillDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -57,9 +58,7 @@ export function makeSkillColumns(
 			cell: ({ row }) => {
 				const s = row.original;
 				const sourceProjectName = s.project_name ?? null;
-				const href = s.project_id
-					? `/skills/${encodeURIComponent(s.skill_key)}?project=${encodeURIComponent(s.project_id)}`
-					: `/skills/${encodeURIComponent(s.skill_key)}`;
+				const href = skillDetailHref(s.skill_key, s.project_id);
 				const access = resolveSkillProjectAccess(s, options);
 				return (
 					<div className="flex items-start gap-2">

@@ -26,6 +26,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
+import { getProjectResourceDefinition, memoryDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { errorMessage } from "@/lib/utils";
 
@@ -42,6 +43,7 @@ const CATEGORIES = [
 // "no filter". Keep them separate so ToggleGroup can render a selected state
 // for the All chip (Radix does not treat "" as a selected value).
 const ALL = "all";
+const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");
 
 export default function MemoriesPage() {
 	const api = useApi();
@@ -120,7 +122,7 @@ export default function MemoriesPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Memories"
-				description="Account-wide context agents can recall. Project-managed resources live under Projects."
+				description={MEMORIES_RESOURCE.managementDescription}
 				actions={
 					<>
 						{data ? (
@@ -169,7 +171,7 @@ export default function MemoriesPage() {
 					columns={columns}
 					data={memories ?? []}
 					isLoading={isLoading}
-					getRowHref={(m) => `/memories/${m.id}`}
+					getRowHref={(m) => memoryDetailHref(m.id)}
 					rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
 					emptyMessage={
 						debouncedSearch || apiCategory

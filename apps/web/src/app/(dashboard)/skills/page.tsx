@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -37,6 +38,7 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // through their Home Project.
 
 const FALLBACK_TARGET_LABEL = "Active agent";
+const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
 // Next 16 prerender bails out unless `useSearchParams()` lives
 // inside a Suspense boundary. Wrap the whole page so static
@@ -265,7 +267,7 @@ function SkillsPageInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Skills"
-				description="Install and manage reusable capabilities inside a Project. Agents use their Home Project plus attached Projects."
+				description={SKILLS_RESOURCE.managementDescription}
 				actions={
 					targetProject && isProjectOwner(targetProject) ? (
 						<ShareProjectDialog
@@ -435,9 +437,7 @@ function SkillsPageInner() {
 											<div className="flex items-center gap-2">
 												<Sparkles className="size-4 shrink-0 text-primary" />
 												<Link
-													href={`/skills/${encodeURIComponent(skill.skillKey)}${
-														targetProjectId ? `?project=${encodeURIComponent(targetProjectId)}` : ""
-													}`}
+													href={skillDetailHref(skill.skillKey, targetProjectId)}
 													className="truncate text-sm font-medium hover:underline"
 												>
 													{skill.name}
