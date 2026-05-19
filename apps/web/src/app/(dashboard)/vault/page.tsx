@@ -41,6 +41,8 @@ import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { VaultKeyImportDialog } from "@/components/vault/key-import";
+import type { KeyImportSummary } from "@/components/vault/key-import-parse";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
@@ -976,6 +978,32 @@ function VaultKeysPanel({
 		onError: (e) => toast.error("Failed to Save Key", { description: errorMessage(e) }),
 	});
 
+	const importItems = useMutation({
+		mutationFn: async ({
+			fields,
+			summary,
+		}: {
+			fields: Record<string, string>;
+			summary: KeyImportSummary;
+		}) => {
+			unwrap(
+				await api.PUT("/api/vault/{slug}/items", {
+					params: { path: { slug: vault.slug }, query: queryParams },
+					body: { section: "", fields },
+				}),
+			);
+			return summary;
+		},
+		onSuccess: (summary) => {
+			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
+			const changed = summary.created + summary.updated;
+			toast.success("Keys Imported", {
+				description: `${changed} key${changed === 1 ? "" : "s"} saved to ${vault.name || vault.slug}.`,
+			});
+		},
+		onError: (e) => toast.error("Failed to Import Keys", { description: errorMessage(e) }),
+	});
+
 	const deleteItem = useMutation({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
@@ -999,6 +1027,9 @@ function VaultKeysPanel({
 				})),
 			)
 		: [];
+	const defaultKeyNames = new Set(
+		allFields.filter((field) => field.section === "").map((field) => field.name),
+	);
 
 	const columns = useMemo<ColumnDef<VaultField>[]>(
 		() => [
@@ -1067,15 +1098,29 @@ function VaultKeysPanel({
 							Read-only
 						</Badge>
 					) : (
-						<Button
-							variant="ghost"
-							size="xs"
-							onClick={() => setAdding(!adding)}
-							className="text-muted-foreground"
-						>
-							<Plus className="size-3.5" />
-							Add Key
-						</Button>
+						<>
+							<Button
+								variant="ghost"
+								size="xs"
+								onClick={() => setAdding(!adding)}
+								className="text-muted-foreground"
+							>
+								<Plus className="size-3.5" />
+								Add Key
+							</Button>
+							<VaultKeyImportDialog
+								existingKeys={defaultKeyNames}
+								isPending={importItems.isPending}
+								onImport={async (fields, summary) => {
+									try {
+										await importItems.mutateAsync({ fields, summary });
+										return true;
+									} catch {
+										return false;
+									}
+								}}
+							/>
+						</>
 					)}
 				</div>
 			</div>
