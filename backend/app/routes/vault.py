@@ -11,15 +11,20 @@ from app.core.project import (
     project_ids_visible_to,
     resolve_default_write_project,
     resolve_for_parent,
+    validate_project_for_caller,
 )
 from app.core.query_utils import like_needle
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultCredentialProfile, VaultItem
 from app.schemas.common import Paginated
 from app.schemas.vault import (
     VaultCreate,
     VaultCreatedResponse,
+    VaultCredentialProfileResolveRequest,
+    VaultCredentialProfileResolveResponse,
+    VaultCredentialProfileResponse,
+    VaultCredentialProfileUpsert,
     VaultDeleteResponse,
     VaultItemDelete,
     VaultItemsDeleteResponse,
@@ -118,8 +123,6 @@ async def create_vault(
     # project via the explicit path.
     selected_project_id = project_id
     if selected_project_id is not None:
-        from app.core.project import validate_project_for_caller
-
         await validate_project_for_caller(db, auth, selected_project_id)
     else:
         selected_project_id = await resolve_default_write_project(db, auth)
@@ -259,6 +262,105 @@ async def delete_vault_items(
 
     await db.commit()
     return VaultItemsDeleteResponse(status="deleted")
+
+
+# --- Credential profiles (CLI auth/config file sync; not env injection) ---
+
+
+@router.post("/credential-profiles")
+async def upsert_credential_profile(
+    body: VaultCredentialProfileUpsert,
+    project_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> VaultCredentialProfileResponse:
+    """Store an encrypted local CLI credential profile.
+
+    Credential profiles are deliberately separate from `vault_items`: they
+    should not be returned by `/api/vault/resolve` all-env injection. The CLI
+    materializes them back to tool-specific local files instead.
+    """
+    if project_id is not None:
+        await validate_project_for_caller(db, auth, project_id)
+        selected_project_id = project_id
+    else:
+        selected_project_id = await resolve_default_write_project(db, auth)
+
+    ciphertext, nonce = encrypt(body.payload)
+    existing = (
+        await db.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.project_id == selected_project_id,
+                VaultCredentialProfile.tool == body.tool,
+                VaultCredentialProfile.profile == body.profile,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        existing.encrypted_payload = ciphertext
+        existing.nonce = nonce
+        profile = existing
+    else:
+        profile = VaultCredentialProfile(
+            user_id=auth.user_id,
+            project_id=selected_project_id,
+            tool=body.tool,
+            profile=body.profile,
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+        )
+        db.add(profile)
+
+    await db.commit()
+    await db.refresh(profile)
+    return VaultCredentialProfileResponse(
+        id=str(profile.id),
+        project_id=str(profile.project_id),
+        tool=profile.tool,
+        profile=profile.profile,
+        updated_at=profile.updated_at,
+    )
+
+
+@router.post("/credential-profiles/resolve")
+async def resolve_credential_profile(
+    body: VaultCredentialProfileResolveRequest,
+    auth: AuthContext = Depends(require_user_cli),
+    db: AsyncSession = Depends(get_session),
+) -> VaultCredentialProfileResolveResponse:
+    """Resolve one local CLI credential profile for materialization.
+
+    Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+    """
+    if body.project_id is not None:
+        allowed_project_ids = set(await _plaintext_project_ids(db, auth))
+        if body.project_id not in allowed_project_ids:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "credential profile not found")
+        selected_project_id = body.project_id
+    else:
+        selected_project_id = await resolve_default_write_project(db, auth)
+
+    profile = (
+        await db.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.project_id == selected_project_id,
+                VaultCredentialProfile.tool == body.tool,
+                VaultCredentialProfile.profile == body.profile,
+            )
+        )
+    ).scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "credential profile not found")
+
+    return VaultCredentialProfileResolveResponse(
+        id=str(profile.id),
+        project_id=str(profile.project_id),
+        tool=profile.tool,
+        profile=profile.profile,
+        updated_at=profile.updated_at,
+        payload=decrypt(profile.encrypted_payload, profile.nonce),
+    )
 
 
 # --- Resolve (CLI only — returns plaintext values) ---

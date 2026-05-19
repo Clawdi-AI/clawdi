@@ -54,3 +54,29 @@ class VaultItem(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("vault_id", "section", "item_name", name="uq_vault_item_section_name"),
     )
+
+
+class VaultCredentialProfile(Base, TimestampMixin):
+    __tablename__ = "vault_credential_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tool: Mapped[str] = mapped_column(String(80), nullable=False)
+    profile: Mapped[str] = mapped_column(String(120), nullable=False, server_default="default")
+    encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "tool",
+            "profile",
+            name="uq_vault_credential_profiles_project_tool_profile",
+        ),
+    )

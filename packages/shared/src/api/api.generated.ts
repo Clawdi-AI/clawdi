@@ -1129,6 +1129,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/vault/credential-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upsert Credential Profile
+         * @description Store an encrypted local CLI credential profile.
+         *
+         *     Credential profiles are deliberately separate from `vault_items`: they
+         *     should not be returned by `/api/vault/resolve` all-env injection. The CLI
+         *     materializes them back to tool-specific local files instead.
+         */
+        post: operations["upsert_credential_profile_api_vault_credential_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/vault/credential-profiles/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Credential Profile
+         * @description Resolve one local CLI credential profile for materialization.
+         *
+         *     Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+         */
+        post: operations["resolve_credential_profile_api_vault_credential_profiles_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/vault/resolve": {
         parameters: {
             query?: never;
@@ -3173,6 +3219,64 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** VaultCredentialProfileResolveRequest */
+        VaultCredentialProfileResolveRequest: {
+            /** Tool */
+            tool: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Project Id */
+            project_id?: string | null;
+        };
+        /** VaultCredentialProfileResolveResponse */
+        VaultCredentialProfileResolveResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Tool */
+            tool: string;
+            /** Profile */
+            profile: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Payload */
+            payload: string;
+        };
+        /** VaultCredentialProfileResponse */
+        VaultCredentialProfileResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Tool */
+            tool: string;
+            /** Profile */
+            profile: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** VaultCredentialProfileUpsert */
+        VaultCredentialProfileUpsert: {
+            /** Tool */
+            tool: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Payload */
+            payload: string;
+        };
         /** VaultDeleteResponse */
         VaultDeleteResponse: {
             /**
@@ -5197,6 +5301,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultItemsDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_credential_profile_api_vault_credential_profiles_post: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultCredentialProfileUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCredentialProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_credential_profile_api_vault_credential_profiles_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultCredentialProfileResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCredentialProfileResolveResponse"];
                 };
             };
             /** @description Validation Error */

@@ -74,6 +74,40 @@ async def test_vault_resolve_requires_cli_auth(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_vault_credential_profile_round_trip_and_not_env_injected(
+    cli_client: httpx.AsyncClient,
+):
+    payload = '{"kind":"local_agent_profile","files":[{"logicalName":"auth.json"}]}'
+    stored = await cli_client.post(
+        "/api/vault/credential-profiles",
+        json={"tool": "codex", "profile": "default", "payload": payload},
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["tool"] == "codex"
+
+    resolved = await cli_client.post(
+        "/api/vault/credential-profiles/resolve",
+        json={"tool": "codex", "profile": "default"},
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["payload"] == payload
+
+    # Credential profiles are not vault_items and must never be included in
+    # legacy all-env injection.
+    env = (await cli_client.post("/api/vault/resolve")).json()
+    assert "CODEX_DEFAULT" not in env
+
+
+@pytest.mark.asyncio
+async def test_vault_credential_profile_resolve_requires_cli_auth(client: httpx.AsyncClient):
+    r = await client.post(
+        "/api/vault/credential-profiles/resolve",
+        json={"tool": "codex", "profile": "default"},
+    )
+    assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
 async def test_vault_delete_cascades_items(cli_client: httpx.AsyncClient):
     await cli_client.post("/api/vault", json={"slug": "temp", "name": "Temp"})
     await cli_client.put(

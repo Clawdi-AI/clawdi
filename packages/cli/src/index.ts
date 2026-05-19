@@ -757,6 +757,54 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+const agentCredentialsCmd = agentCmd
+	.command("credentials")
+	.description("Sync local agent CLI credential profiles");
+
+agentCredentialsCmd
+	.command("import <tool>")
+	.description("Import a local agent CLI credential profile into Clawdi Vault")
+	.option("-p, --project <id-or-slug>", "Target a specific project")
+	.option("--profile <name>", "Profile name", "default")
+	.option("--from <path>", "Credential file to import (required for tools without an adapter)")
+	.option("--to <path>", "Materialization target path to store with the profile")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--dry-run", "Show what would be imported without storing anything")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi agent credentials import codex
+  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials`,
+	)
+	.action(async (tool: string, opts) => {
+		const { agentCredentialsImportCommand } = await import("./commands/agent-credentials.js");
+		await agentCredentialsImportCommand(tool, opts);
+	});
+
+agentCredentialsCmd
+	.command("materialize <tool>")
+	.description("Restore a stored local agent CLI credential profile on this machine")
+	.option("-p, --project <id-or-slug>", "Read from a specific project")
+	.option("--profile <name>", "Profile name", "default")
+	.option("--to <path>", "Override destination path (only for single-file profiles)")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
+	.option("--dry-run", "Show what would be written without changing files")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi agent credentials materialize codex
+  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
+	)
+	.action(async (tool: string, opts) => {
+		const { agentCredentialsMaterializeCommand } = await import("./commands/agent-credentials.js");
+		await agentCredentialsMaterializeCommand(tool, opts);
+	});
+
 const agentProjectsCmd = agentCmd
 	.command("projects")
 	.description("View Agent Project and attachments");

@@ -1128,13 +1128,13 @@ Client-side encrypted future:
 - Future proxy mode resolves references to service bindings and credential
   capabilities instead of returning raw secret values.
 
-Future typed credential APIs:
+Typed credential profile APIs:
 
 ```text
 POST /api/vault/connected-accounts/authorize
 POST /api/vault/connected-accounts/:id/refresh
-POST /api/vault/agent-credential-profiles/import
-POST /api/vault/agent-credential-profiles/:id/materialize-plan
+POST /api/vault/credential-profiles
+POST /api/vault/credential-profiles/resolve
 POST /api/vault/capability-grants
 POST /api/vault/capability-grants/:id/revoke
 POST /api/vault/service-bindings/:id/session
@@ -1350,9 +1350,9 @@ Deliver:
 - Minimal credential metadata for future delivery modes:
   `credential_kind`, `runtime_policy`, local agent profile placeholders, and
   service-binding placeholders.
-- Codex local credential profile adapter design, with implementation allowed
-  only if the supported file schema is confirmed and the import/materialize
-  flow can avoid broad `~/.codex` scanning.
+- Codex local credential profile adapter backed by dedicated encrypted
+  credential-profile storage, not `vault_items`, so legacy all-env injection
+  never receives the stored auth file.
 - Documentation that clearly says env injection is not isolation.
 
 Security statement:
