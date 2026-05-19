@@ -11,12 +11,15 @@ Bitwarden, or another external secrets product. The product direction should
 be a Clawdi-native password-manager experience:
 
 - 1Password-style secret references, `read`, `run`, and `inject`.
+- First-class Clawdi Project and Agent semantics around those references.
+- Vault maturity features users expect from commercial tools: audit, versions,
+  rollback, scoped service tokens, TTL, and kill switches.
 - Bitwarden/1Password-style client-side encrypted vault data for user-owned
   secrets.
 - Clawdi-specific Project, Agent Project, attachment order, and conflict
   semantics.
-- Agent-specific runtime controls: lease/TTL, kill switch, audit, and optional
-  credential proxy or TEE-backed runtime for hosted agents.
+- Agent-specific runtime controls: lease/TTL, kill switch, audit, and a
+  deferred credential proxy track for hosted agents.
 - OpenBao or cloud KMS only as a key-operations adapter for server-managed
   keys, legacy migration, rotation, rewrap, and audit hardening.
 
@@ -30,6 +33,13 @@ The product promise should evolve in two steps:
 
 Do not claim zero-knowledge or "Clawdi cannot see your secrets" until the
 second step ships.
+
+Important prioritization update: Agent Vault-style proxying is technically the
+right long-term answer for hosted agents, but it should not block the first
+Clawdi Vault release. Proxy mode needs controlled networking, CA/proxy
+compatibility, request policy, and careful logging boundaries. Phase 1 should
+ship password-manager workflow first, while preserving data-model and API
+extension points for proxy/runtime policies.
 
 ## Current State
 
@@ -122,6 +132,45 @@ Implication for Clawdi:
   models.
 - Infisical is now a direct agent-credential competitor, so it should be
   treated as product research, not a core dependency.
+
+### Infisical Agent Vault
+
+Relevant product patterns:
+
+- Agent Vault is an MIT-licensed credential broker and vault for AI agents.
+  The open-source license permits commercial use, modification, and
+  distribution outside any enterprise-only `ee/` code, provided copyright and
+  license notices are preserved.
+- Its core idea is not env injection. The agent receives dummy credentials or
+  no real credential at all, sends ordinary HTTP(S) requests through a proxy,
+  and the broker injects real credentials at the outbound request boundary.
+- Service rules map host/path patterns to auth injection behavior. Credentials
+  are referenced by key name, not embedded in the service config.
+- Agents can be long-lived named identities or receive short-lived,
+  vault-scoped sessions from `vault run`.
+- Proposal workflows let agents request new services or credentials, then wait
+  for a human to approve, reject, or provide the missing credential.
+- Strict deny mode, egress filtering, request logging, and per-vault roles are
+  central to the model.
+- Agent Vault's own docs are explicit that local `vault run` is not a sandbox:
+  a child process can bypass proxy environment variables unless the runtime
+  also controls network egress.
+
+Implication for Clawdi:
+
+- Agent Vault is the strongest reference for Clawdi's future hosted-agent
+  secure runtime.
+- The design principle to absorb is: credential use should become a scoped
+  outbound capability, not a plaintext string handed to the agent.
+- The product mechanisms worth copying are service rules, dummy credential
+  substitution, proposal approval, strict unmatched-host deny, scoped sessions,
+  token rotation, and request audit.
+- Do not directly depend on Agent Vault as Clawdi's core Vault backend. Its
+  object model is Infisical's, not Clawdi's Project + Agent Project +
+  attachment model, and it primarily covers HTTP(S) API credentials rather than
+  all local secret-reference workflows.
+- Proxy mode should be planned as a deferred Clawdi Secure Runtime track, not
+  as a Phase 1 dependency.
 
 ### Keeper Secrets Manager
 
@@ -237,7 +286,7 @@ material into follow-up actions. The core risks are:
 2. **Untrusted child process or dependency**
    - Any process launched with env vars can read and exfiltrate them.
    - Response: least-reference resolution, `--no-inherit-env`, TTLs, warnings,
-     and proxy mode for high-risk commands.
+     and clear docs that env injection is a compatibility mechanism.
 3. **Hosted-agent prompt/tool exfiltration**
    - An agent can be instructed to print, save, or transmit values it can read.
    - Response: per-Agent grants, approval prompts for sensitive references,
@@ -264,7 +313,10 @@ material into follow-up actions. The core risks are:
 
 This threat model pushes Clawdi toward three distinct delivery modes: local dev
 env injection for compatibility, local/sidecar service for workload ergonomics,
-and proxy/TEE-backed access for hosted agents with stronger controls.
+and proxy/TEE-backed access for hosted agents with stronger controls. The first
+two are near-term product work; proxy/TEE belongs behind a separate proof of
+concept because it needs runtime network control to make the security claim
+honest.
 
 ## Product Goals
 
@@ -275,7 +327,7 @@ and proxy/TEE-backed access for hosted agents with stronger controls.
 4. Make CLI and web surfaces feel like one Vault product, not separate tools.
 5. Preserve Clawdi Project and Agent semantics.
 6. Reduce blast radius for AI agents through scoped grants, TTL, audit, and
-   optional proxy/TEE modes.
+   explicit future proxy/TEE modes.
 7. Move toward a trust model where Clawdi cannot decrypt ordinary user vault
    items.
 8. Keep OpenBao/KMS behind an adapter so deployment choices do not leak into
@@ -289,6 +341,9 @@ and proxy/TEE-backed access for hosted agents with stronger controls.
 4. Do not make env injection the final secure-agent model. Env injection is a
    developer convenience, not a sandbox.
 5. Do not remove existing Project and Agent conflict behavior.
+6. Do not build an HTTPS proxy/MITM system in Phase 1. Keep the architecture
+   ready for it, but defer implementation until hosted-agent runtime isolation
+   is better understood.
 
 ## Recommended User Experience
 
@@ -488,14 +543,26 @@ Deep Module responsible for delivering secrets to processes and agents:
    - Runtime receives short-lived plaintext via env or process memory.
    - Scope is Agent + Project + reference list.
    - Strong audit and kill switch required.
+   - This is the realistic near-term hosted-agent path.
 
-3. **Hosted agent secure mode**
+3. **Local/sidecar service mode**
+   - Long-running workloads resolve explicit references from a local service.
+   - Requires loopback binding, request tokens, reference allowlists, TTLs, and
+     no broad list/read endpoint.
+   - Inspired by AWS Secrets Manager Agent and Vault Agent.
+   - Useful for CI and daemon-style agents where repeated CLI resolves are
+     awkward.
+
+4. **Deferred hosted-agent proxy mode**
    - Agent does not receive long-lived secrets.
    - Requests go through a credential proxy or tool proxy.
    - Proxy attaches credentials to outbound calls.
    - Add policy, rate limits, request audit, and host allowlists.
+   - Requires controlled network egress, CA/proxy compatibility work, and
+     careful request/response logging policy.
+   - Treat as a later proof of concept, not Phase 1 or Phase 2.
 
-4. **TEE-backed mode**
+5. **TEE-backed mode**
    - Decryption or proxy runs inside an attested confidential VM.
    - Useful for stronger "operator cannot inspect runtime memory" claims.
    - Requires separate Phala/dstack or confidential compute evaluation.
@@ -532,8 +599,10 @@ Candidate tables:
    - `version`
    - `ciphertext`
    - `crypto_scheme`
+   - `credential_kind` (`secret_value`, `connected_account`, `proxy_binding`)
    - `key_ref`
    - `associated_data_hash`
+   - `runtime_policy`
    - `created_by_user_id`
    - `created_at`
    - `replaced_at`
@@ -580,6 +649,23 @@ Candidate tables:
    - `expires_at`
    - `revoked_at`
    - `last_used_at`
+7. `vault_service_bindings`
+   - `id`
+   - `project_id`
+   - `vault_id`
+   - `credential_id`
+   - `service_name`
+   - `host_pattern`
+   - `path_pattern`
+   - `auth_strategy`
+   - `enabled`
+   - `created_at`
+
+The `credential_kind`, `runtime_policy`, and `vault_service_bindings` fields
+are future-proofing seams. Phase 1 can store only ordinary secret values, but
+the model should not assume every credential is forever delivered as a raw env
+string. Later proxy mode can attach a credential to a host/path service binding
+without changing the user-facing `clawdi://` reference model.
 
 ## API Direction
 
@@ -620,8 +706,9 @@ Client-side encrypted future:
 
 - Server resolves references to encrypted field blobs and wrapped keys.
 - CLI/browser unwraps keys locally and decrypts fields.
-- Hosted agent mode requests runtime leases or proxy access instead of raw
-  decrypt where possible.
+- Hosted agent basic mode requests runtime leases for explicit references.
+- Future proxy mode resolves references to service bindings and credential
+  capabilities instead of returning raw secret values.
 
 ## Security Model Options
 
@@ -669,7 +756,9 @@ Properties:
 - Works across SDKs/CLIs only when traffic can be forced through the proxy.
 - Requires network control for strong enforcement.
 
-This is the recommended secure-agent direction.
+This is the recommended secure-agent direction, but it is not recommended for
+Phase 1. Treat it as a hosted-agent proof of concept after reference UX and
+basic Vault maturity are in place.
 
 ### Option E: TEE Runtime
 
@@ -697,10 +786,12 @@ Ship first:
 4. `clawdi inject --in ... --out ...` for template workflows.
 5. Batch resolve API with provenance and conflict diagnostics.
 6. Web "Copy Clawdi Reference" on every field.
-7. Masking for command output where the CLI can reasonably mediate stdout and
-   stderr.
+7. Masking for Clawdi-owned output. Child-process stdout/stderr masking should
+   be optional or deferred because piping output can break TTY behavior.
 8. Product copy that says Clawdi keeps plaintext out of files and injects at
    runtime.
+9. Minimal `credential_kind` and `runtime_policy` fields or API placeholders so
+   later proxy/service-binding work does not require a reference-model rewrite.
 
 Defer from Phase 1:
 
@@ -709,6 +800,8 @@ Defer from Phase 1:
 3. OpenBao/KMS production adapter.
 4. Hosted-agent proxy enforcement.
 5. Dynamic secrets engines and full enterprise gateway deployment.
+6. HTTPS proxy/MITM mode and CA injection.
+7. Localhost sidecar service.
 
 Acceptance criteria:
 
@@ -716,15 +809,19 @@ Acceptance criteria:
 2. The same references work through `read`, `run`, and `inject`.
 3. Duplicate references across attached Projects produce a deterministic conflict
    explanation.
-4. CLI output masks resolved secret values by default.
+4. CLI output masks resolved secret values in Clawdi-owned logs and messages by
+   default.
 5. Documentation clearly states env injection is a compatibility mechanism.
+6. The model can represent a future non-env credential delivery mode without
+   changing `clawdi://` references.
 
 ## Recommended Phasing
 
 ### Phase 1: Secret Reference UX
 
 Goal: make Clawdi feel like a commercial CLI secrets tool without changing
-the storage trust model yet.
+the storage trust model yet. This phase proves workflow value and replaces
+plaintext `.env` habits.
 
 Deliver:
 
@@ -736,6 +833,9 @@ Deliver:
 - Batch reference resolve endpoint.
 - Explicit `--all-vault-env` for legacy all-env injection.
 - Web "Copy Clawdi Reference".
+- Minimal credential metadata for future delivery modes:
+  `credential_kind`, `runtime_policy`, and service-binding placeholders.
+- Documentation that clearly says env injection is not isolation.
 
 Security statement:
 
@@ -743,24 +843,35 @@ Security statement:
   runtime."
 - Do not claim Clawdi cannot decrypt.
 
-### Phase 2: Key Operations Hardening
+### Phase 2: Vault Maturity
 
-Goal: remove raw `VAULT_ENCRYPTION_KEY` as a production dependency and add
-rotation/audit.
+Goal: make the server-managed Vault operationally credible before attempting
+client-side encryption or proxy mode.
 
 Deliver:
 
+- Vault audit events for create/update/delete/resolve/read-reference/runtime
+  lease.
+- Item version history and rollback.
+- Project/Agent visible access graph.
+- Scoped service tokens and runtime tokens.
+- TTL/max TTL on runtime access.
+- Kill switch at field, vault, Project, Agent, and token levels.
+- Resolve and run flows that always carry provenance.
 - `VaultCryptoEngine` adapter.
 - OpenBao Transit adapter or managed KMS adapter.
 - Legacy ciphertext dual-read.
 - Rewrap migration job.
 - Audit for server-side decrypt/rewrap.
 - Separate backend, migration, and ops tokens.
+- Design-only sidecar/local service spec with SSRF and loopback protections;
+  implementation can wait unless a workload needs it.
 
 Security statement:
 
 - "Production vault encryption keys are managed by KMS/OpenBao with audit and
   rotation."
+- "Secret access is scoped, logged, expirable, and revocable."
 - Still do not claim zero-knowledge.
 
 ### Phase 3: Client-Side Encrypted Vault
@@ -783,48 +894,42 @@ Security statement:
 
 - "For client-managed vaults, Clawdi servers cannot decrypt item values."
 
-### Phase 4: Agent Capability and Lease Model
+### Phase 4: Hosted-Agent Proxy PoC
 
-Goal: make Clawdi Vault differentiated for AI agents.
-
-Deliver:
-
-- Per-Agent secret scopes.
-- Runtime leases with TTL/max TTL.
-- Kill switch at field, Project, Agent, and service-token levels.
-- Per-reference audit.
-- Conflict-aware agent runtime resolution.
-- Optional approval prompts for sensitive references.
-
-Security statement:
-
-- "Agents get only scoped, auditable, revocable access."
-
-### Phase 5: Secure Hosted Agent Runtime
-
-Goal: reduce or remove plaintext secret exposure to hosted agents.
+Goal: evaluate Agent Vault-style credential brokering only where Clawdi controls
+the runtime enough to enforce it.
 
 Deliver:
 
-- Credential proxy mode.
-- Host allowlists and request policy.
+- One or two supported services first, such as Anthropic and GitHub.
+- Service binding model: host/path -> credential injection policy.
+- Dummy credential substitution.
+- Strict deny for unmatched hosts by default in controlled sandboxes.
+- Scoped proxy sessions minted by Clawdi runtime.
+- CA/proxy bootstrap for the supported hosted runtime only.
 - Request/response audit controls.
-- TEE/dstack proof-of-concept if the product wants verifiable privacy.
+- Human approval flow for new service access.
+- Explicit bypass analysis: what network paths can avoid the proxy?
+- TEE/dstack proof-of-concept only if product wants verifiable runtime privacy.
 
 Security statement:
 
-- "In secure runtime mode, agents do not receive long-lived credentials."
+- "In controlled hosted runtime proxy mode, agents do not receive long-lived
+  credentials for supported HTTP(S) services."
+- Do not promise this for local `clawdi run` or unmanaged machines.
 
 ## Architecture Decision
 
 Recommended decision:
 
 1. Build Clawdi-native secret references and runtime injection first.
-2. Add OpenBao/KMS as an operational hardening adapter, not as the product
-   storage model.
-3. Move core user vaults toward client-side encryption.
-4. Treat agent leases, kill switch, and proxy mode as first-class product
-   differentiators.
+2. Mature the server-managed Vault with audit, versions, rollback, scoped
+   tokens, TTL, kill switches, and OpenBao/KMS key operations.
+3. Move core user vaults toward client-side encryption once the product
+   workflow is proven.
+4. Keep Agent Vault-style proxying as a first-class architecture slot, but defer
+   implementation to a hosted-agent proof of concept where Clawdi can control
+   egress and CA/proxy bootstrapping.
 5. Treat Phala/dstack or other TEE deployment as a separate high-trust hosted
    agent feasibility project.
 
@@ -838,6 +943,9 @@ Rejected alternatives:
   surface and risks depending on direct competitors or closed services.
 - **Keep all-env injection as the main UX:** convenient, but too broad and not
   least-privilege.
+- **Build proxy mode before reference UX:** technically attractive, but it
+  introduces CA, MITM, egress-control, compatibility, and logging risks before
+  users have the basic password-manager workflow.
 
 ## Open Questions
 
@@ -852,8 +960,8 @@ Rejected alternatives:
 3. Should web vault editing be client-side encrypted from day one of Phase 3,
    or CLI-first with web read-only metadata?
 4. What is the default hosted-agent mode?
-   - Plain env injection with TTL.
-   - Proxy-first for supported services.
+   - Lease-scoped plaintext injection first.
+   - Proxy-first only for controlled hosted sandboxes after a PoC.
    - User-selectable trust tier.
 5. Are Project-level VaultKeys enough, or do we need per-Vault keys from the
    beginning?
@@ -861,6 +969,13 @@ Rejected alternatives:
    `clawdi://$APP_ENV/database/url`?
 7. What audit data is safe to show to Project members without leaking secret
    names or sensitive metadata?
+8. Which runtime does the first proxy PoC target?
+   - Clawdi-hosted containers.
+   - E2B/Daytona/Firecracker-style sandboxes.
+   - A single supported local agent with clear "not a sandbox" warnings.
+9. Which services are worth supporting first for proxy mode?
+   - Anthropic and GitHub are the obvious candidates because they are central
+     to coding agents and have straightforward HTTP APIs.
 
 ## Source Notes
 
@@ -882,6 +997,15 @@ Rejected alternatives:
 - Infisical secret scanning is relevant to future Clawdi leak-prevention
   features:
   <https://infisical.com/docs/cli/scanning-overview>
+- Infisical Agent Vault is the main reference for hosted-agent credential
+  brokering: MIT-licensed proxy/vault, dummy credential substitution, service
+  rules, proposals, scoped sessions, and explicit "not a sandbox" caveats:
+  <https://github.com/Infisical/agent-vault>
+  <https://docs.agent-vault.dev/>
+  <https://docs.agent-vault.dev/learn/security>
+  <https://docs.agent-vault.dev/learn/services>
+  <https://docs.agent-vault.dev/learn/proposals>
+  <https://docs.agent-vault.dev/agents/overview>
 - Keeper Secrets Manager CLI shows machine-oriented profiles, OS-native
   keychain storage, and environment substitution:
   <https://docs.keeper.io/en/keeperpam/secrets-manager/secrets-manager-command-line-interface>
