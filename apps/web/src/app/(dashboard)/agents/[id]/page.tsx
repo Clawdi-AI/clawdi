@@ -399,7 +399,7 @@ export default function AgentDetailPage() {
 						</TabsContent>
 
 						<TabsContent value="projects" className="mt-0">
-							<AgentWorkspacePanel
+							<AgentProjectsPanel
 								agentId={id}
 								bindings={projectBindings ?? []}
 								projects={projects ?? []}
@@ -423,7 +423,7 @@ function parseAgentTab(value: string | null): AgentTab | null {
 	return null;
 }
 
-function AgentWorkspacePanel({
+function AgentProjectsPanel({
 	agentId,
 	bindings,
 	projects,
@@ -465,7 +465,7 @@ function AgentWorkspacePanel({
 		onSuccess: () => {
 			setPrimaryProjectId("");
 			onChanged();
-			toast.success("Home project updated");
+			toast.success("Home Project updated");
 		},
 		onError: (e) => toast.error("Failed to set primary project", { description: errorMessage(e) }),
 	});
@@ -532,10 +532,10 @@ function AgentWorkspacePanel({
 	return (
 		<div className="space-y-4">
 			<div className="space-y-1">
-				<h2 className="text-base font-semibold">Projects used by this agent</h2>
+				<h2 className="text-base font-semibold">Projects Used by This Agent</h2>
 				<p className="text-xs text-muted-foreground">
-					Home is the default writable workspace. Attached projects add resources according to your
-					access; order affects lookup and provenance.
+					The Home Project is the default writable context. Attached Projects add resources
+					according to your access; order affects lookup and provenance.
 				</p>
 			</div>
 			<div className="rounded-lg border bg-card/60 p-4">
@@ -543,17 +543,17 @@ function AgentWorkspacePanel({
 					<div className="space-y-3">
 						<div className="flex items-center gap-2">
 							<Home className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Home project</h2>
+							<h2 className="text-sm font-semibold">Home Project</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							The Home project is this agent&apos;s default writable workspace. Shared viewer
-							projects can be attached, but they cannot be Home.
+							The Home Project is this agent&apos;s writable default. Shared viewer Projects can be
+							attached, but they cannot be Home.
 						</p>
 						{primary ? (
 							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
 						) : (
 							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-								No explicit Home project yet.
+								No explicit Home Project yet.
 							</div>
 						)}
 					</div>

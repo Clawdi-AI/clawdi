@@ -69,6 +69,7 @@ import {
 	projectDetailHref,
 	projectManagedResourceDefinitions,
 	projectResourceHref,
+	projectResourcePathLabel,
 	skillDetailHref,
 } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
@@ -235,7 +236,7 @@ export default function ProjectDetailPage() {
 
 			<PageHeader
 				title={displayProjectName(project)}
-				description={`${isOwner ? "Project workspace" : "Shared workspace"} · ${project.slug}`}
+				description={`${isOwner ? "Owned Project" : "Shared Project"} · ${project.slug}`}
 				actions={
 					<div className="flex items-center gap-2">
 						<ProjectKindBadge kind={project.kind} />
@@ -265,11 +266,11 @@ export default function ProjectDetailPage() {
 				<div className="space-y-6">
 					<section className="space-y-5 rounded-lg border bg-card/60 p-4">
 						<ContentHeader
-							title="Project resources"
+							title="Project Resources"
 							description={
 								isOwner
-									? "Skills and vault references saved in this workspace."
-									: "Shared resources you can read from this workspace."
+									? "Skills and vault references saved in this Project."
+									: "Shared resources you can read from this Project."
 							}
 							action={<ProjectResourceLinks projectId={project.id} />}
 						/>
@@ -283,7 +284,7 @@ export default function ProjectDetailPage() {
 									title="Skills"
 									description={
 										isOwner
-											? "Reusable instructions stored in this workspace."
+											? "Reusable instructions stored in this Project."
 											: "Readable instructions shared by the owner."
 									}
 								/>
@@ -305,16 +306,16 @@ export default function ProjectDetailPage() {
 										))}
 									</div>
 								) : (
-									<EmptyLine message="No skills are visible in this workspace yet." />
+									<EmptyLine message="No skills are visible in this Project yet." />
 								)}
 							</div>
 
 							<div className="space-y-3">
 								<ContentHeader
-									title="Vault references"
+									title="Vault References"
 									description={
 										isOwner
-											? "Vault key references saved in this workspace."
+											? "Vault key references saved in this Project."
 											: "Read-only vault key names shared by the owner."
 									}
 								/>
@@ -332,7 +333,7 @@ export default function ProjectDetailPage() {
 										))}
 									</div>
 								) : (
-									<EmptyLine message="No vault references are visible in this workspace yet." />
+									<EmptyLine message="No vault references are visible in this Project yet." />
 								)}
 							</div>
 						</div>
@@ -435,10 +436,10 @@ function OwnerAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Users className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Collaborators and access</h2>
+					<h2 className="text-sm font-semibold">Collaborators and Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Manage people, pending invites, and share links for this workspace. New members join as
+					Manage people, pending invites, and share links for this Project. New members join as
 					viewers by default.
 				</p>
 			</div>
@@ -486,8 +487,7 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You have viewer access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this workspace. Attach this project to an agent when you want it available
-					during a run.
+					You can read this Project. Attach it to an agent when you want it available during a run.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -615,8 +615,8 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Attach to Agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName} as an attached project. The agent keeps its Home project for writes
-						and reads this project as extra context.
+						Add {projectName} as an attached Project. The agent keeps its Home Project for writes
+						and reads this Project as extra context.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -625,9 +625,9 @@ function UseProjectWithAgentDialog({
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
 						<Bot className="size-4" />
-						<AlertTitle>No agents connected</AlertTitle>
+						<AlertTitle>No Agents Connected</AlertTitle>
 						<AlertDescription>
-							Add an agent from Overview first, then attach this project from here or from the
+							Add an agent from Overview first, then attach this Project from here or from the
 							agent&apos;s Projects tab.
 						</AlertDescription>
 					</Alert>
@@ -676,10 +676,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already this agent&apos;s Home project</div>
+										<div className="font-medium">Already this agent&apos;s Home Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											No attach step is needed. Open the agent&apos;s Projects tab to review its
-											workspace order.
+											Project order.
 										</p>
 									</div>
 								</div>
@@ -687,9 +687,9 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already attached to this agent</div>
+										<div className="font-medium">Already Attached to This Agent</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Open the agent&apos;s Projects tab to review its workspace order or detach it.
+											Open the agent&apos;s Projects tab to review its Project order or detach it.
 										</p>
 									</div>
 								</div>
@@ -697,10 +697,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Attach as readable context</div>
+										<div className="font-medium">Attach as Readable Context</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Skills and vault reference names from this project become available to the
-											selected agent. Writes still land in the agent&apos;s Home project.
+											Skills and vault reference names from this Project become available to the
+											selected agent. Writes still land in the agent&apos;s Home Project.
 										</p>
 									</div>
 								</div>
@@ -799,7 +799,7 @@ function ProjectResourceLinks({ projectId }: { projectId: string }) {
 					<Button asChild key={resource.id} variant="outline" size="sm">
 						<Link
 							href={projectResourceHref(resource.id, projectId)}
-							title={resource.projectPathLabel}
+							title={projectResourcePathLabel(resource)}
 						>
 							<ExternalLink className="mr-1.5 size-3.5" />
 							{resource.label}

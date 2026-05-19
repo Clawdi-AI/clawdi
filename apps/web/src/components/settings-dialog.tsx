@@ -154,7 +154,7 @@ function GeneralPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Projects — link to shared workspaces and access management.
+// Projects — link to shared Projects and access management.
 // ---------------------------------------------------------------------------
 
 function ProjectsPanel({ onClose }: { onClose: () => void }) {

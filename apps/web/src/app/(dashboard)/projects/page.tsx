@@ -123,7 +123,7 @@ export default function ProjectsPage() {
 						}}
 					>
 						<Plus className="size-3.5" />
-						New project
+						New Project
 					</Button>
 				}
 			/>
@@ -147,10 +147,10 @@ export default function ProjectsPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New project</DialogTitle>
+						<DialogTitle>New Project</DialogTitle>
 						<DialogDescription>
-							Create a workspace for a project, team, or workflow. Add skills, vault references, and
-							access settings from the Project detail page.
+							Create a Project for a team or workflow. Add skills, vault references, and access
+							settings from the Project detail page.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -194,7 +194,7 @@ export default function ProjectsPage() {
 							</Button>
 							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
 								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create project"}
+								{createProject.isPending ? "Creating…" : "Create Project"}
 							</Button>
 						</div>
 					</form>
@@ -214,18 +214,18 @@ export default function ProjectsPage() {
 
 			<section className="space-y-3">
 				<SectionHeader
-					title="My projects"
+					title="My Projects"
 					count={ownedProjects.length}
-					description="Workspaces you own. Add resources, invite people, and choose when agents use them."
+					description="Projects you own. Add resources, invite people, and choose when agents use them."
 				/>
 				{ownedProjects.length === 0 ? (
 					<EmptyLine
-						title="Create your first collaboration project"
-						message="Use projects for workspaces you want to share and reuse across people and agents."
+						title="Create Your First Collaboration Project"
+						message="Use Projects you want to share and reuse across people and agents."
 						action={
 							<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
 								<Plus className="size-3.5" />
-								New project
+								New Project
 							</Button>
 						}
 					/>
@@ -240,13 +240,13 @@ export default function ProjectsPage() {
 
 			<section className="space-y-3">
 				<SectionHeader
-					title="Shared with me"
+					title="Shared With Me"
 					count={sharedProjects.length}
-					description="Workspaces other people shared with you. Open them or use them with an agent when needed."
+					description="Projects other people shared with you. Open them or use them with an agent when needed."
 				/>
 				{sharedProjects.length === 0 ? (
 					<EmptyLine
-						title="No shared projects yet"
+						title="No Shared Projects Yet"
 						message="Accepted invites and share links appear here with viewer access. Pending collaboration invites are available from the inbox in the top bar; using a shared Project with an agent is your choice."
 					/>
 				) : (
@@ -339,9 +339,9 @@ function ProjectSummaryCards({
 		<div className="grid gap-3 md:grid-cols-3">
 			<SummaryCard
 				icon={FolderOpen}
-				label="My projects"
+				label="My Projects"
 				value={ownedCount}
-				description="Workspaces you own and can share."
+				description="Projects you own and can share."
 				action={
 					<Button variant="ghost" size="sm" onClick={onCreate} className="h-7 px-2">
 						<Plus className="size-3.5" />
@@ -351,13 +351,13 @@ function ProjectSummaryCards({
 			/>
 			<SummaryCard
 				icon={Users}
-				label="Shared with me"
+				label="Shared With Me"
 				value={sharedCount}
 				description="Viewer access from other owners."
 			/>
 			<SummaryCard
 				icon={Bot}
-				label="Ready for agents"
+				label="Ready for Agents"
 				value={totalCount}
 				description="Available to use with agents when you choose."
 			/>

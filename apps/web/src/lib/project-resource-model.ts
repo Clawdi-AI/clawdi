@@ -9,7 +9,7 @@ export type ProjectResourceId =
 	| "connectors";
 
 export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
-export type ProjectResourceGroup = "workspace" | "project-resources" | "user-resources";
+export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
 
 type DashboardStatCountKey = {
 	[K in keyof DashboardStats]: DashboardStats[K] extends number ? K : never;
@@ -26,7 +26,7 @@ export interface ProjectResourceDefinition {
 	emptyCta: string;
 	routeGroup: ProjectResourceGroup;
 	projectScope: ProjectResourceScope;
-	projectPathLabel: string;
+	pathSegments: readonly string[];
 	projectQueryParam?: "project";
 	statsKey?: DashboardStatCountKey;
 	countLabel?: string;
@@ -38,14 +38,14 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Projects",
 		singularLabel: "Project",
 		navLabel: "Projects",
-		description: "Resource workspaces and access boundaries.",
+		description: "Project registry and access boundaries.",
 		managementDescription:
-			"Create workspaces, share access, and open a Project's internal resources.",
+			"Create Projects, share access, and open a Project's internal resources.",
 		href: "/projects",
-		emptyCta: "Create workspace",
-		routeGroup: "workspace",
+		emptyCta: "Create Project",
+		routeGroup: "project-registry",
 		projectScope: "container",
-		projectPathLabel: "Project registry",
+		pathSegments: ["Projects"],
 		countLabel: "projects",
 	},
 	{
@@ -57,10 +57,10 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Manage installed skills from a selected Project or from the Project detail page.",
 		href: "/skills",
-		emptyCta: "Browse marketplace",
+		emptyCta: "Browse Marketplace",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
-		projectPathLabel: "Projects -> Project -> Skills",
+		pathSegments: ["Projects", "Project", "Skills"],
 		projectQueryParam: "project",
 		statsKey: "skills_count",
 		countLabel: "skills",
@@ -69,15 +69,15 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		id: "vaults",
 		label: "Vaults",
 		singularLabel: "Vault",
-		navLabel: "Vault",
+		navLabel: "Vaults",
 		description: "Secret references stored inside a Project.",
 		managementDescription:
 			"Create vaults and keys in owned Projects; shared Projects stay read-only.",
 		href: "/vault",
-		emptyCta: "Create your first",
+		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
-		projectPathLabel: "Projects -> Project -> Vaults",
+		pathSegments: ["Projects", "Project", "Vaults"],
 		projectQueryParam: "project",
 		statsKey: "vault_keys_count",
 		countLabel: "keys",
@@ -91,10 +91,10 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Browse agent activity; Project context comes from each agent's Home and attached Projects.",
 		href: "/sessions",
-		emptyCta: "Start syncing",
+		emptyCta: "Start Syncing",
 		routeGroup: "user-resources",
 		projectScope: "activity",
-		projectPathLabel: "Agents -> Sessions",
+		pathSegments: ["Agents", "Sessions"],
 		statsKey: "total_sessions",
 		countLabel: "sessions",
 	},
@@ -106,10 +106,10 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Account-wide context agents can recall.",
 		managementDescription: "Manage account memory separately from Project-owned resources.",
 		href: "/memories",
-		emptyCta: "Add your first",
+		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
-		projectPathLabel: "Account memory",
+		pathSegments: ["Account", "Memory"],
 		statsKey: "memories_count",
 		countLabel: "memories",
 	},
@@ -122,10 +122,10 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Connect apps once at the account level; Projects use them through agents and tools.",
 		href: "/connectors",
-		emptyCta: "Connect an app",
+		emptyCta: "Connect App",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
-		projectPathLabel: "Account connectors",
+		pathSegments: ["Account", "Connectors"],
 		statsKey: "connectors_count",
 		countLabel: "connectors",
 	},
@@ -133,18 +133,18 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 
 export const PROJECT_RESOURCE_GROUPS = [
 	{
-		id: "workspace",
-		label: "Workspace",
+		id: "project-registry",
+		label: "Project Registry",
 		resourceIds: ["projects"],
 	},
 	{
 		id: "project-resources",
-		label: "Project resources",
+		label: "Project Resources",
 		resourceIds: ["skills", "vaults"],
 	},
 	{
 		id: "user-resources",
-		label: "User resources",
+		label: "User Resources",
 		resourceIds: ["sessions", "memories", "connectors"],
 	},
 ] as const satisfies readonly {
@@ -176,6 +176,13 @@ export function projectResourceDefinitionsForGroup(
 
 export function projectManagedResourceDefinitions(): ProjectResourceDefinition[] {
 	return PROJECT_MANAGED_RESOURCE_IDS.map((id) => getProjectResourceDefinition(id));
+}
+
+export function projectResourcePathLabel(
+	resource: ProjectResourceDefinition,
+	separator = " / ",
+): string {
+	return resource.pathSegments.join(separator);
 }
 
 export function projectResourceHref(id: ProjectResourceId, projectId?: string): string {
@@ -223,7 +230,7 @@ export function projectResourceScopeDescription(resource: ProjectResourceDefinit
 		case "container":
 			return "Top-level Project and sharing surface.";
 		case "project-managed":
-			return "Stored in a Project and filtered with ?project=.";
+			return "Stored in a Project and opened through the selected Project context.";
 		case "activity":
 			return "User activity, with Project context inherited through agents.";
 		case "account-wide":

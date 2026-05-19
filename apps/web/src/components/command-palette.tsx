@@ -29,6 +29,7 @@ import {
 	PROJECT_RESOURCE_GROUPS,
 	type ProjectResourceId,
 	projectResourceDefinitionsForGroup,
+	projectResourcePathLabel,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
@@ -61,10 +62,10 @@ const NAV_SHORTCUTS: {
 			label: definition.navLabel,
 			href: definition.href,
 			icon: RESOURCE_ICONS[definition.id],
-			subtitle: `${group.label} - ${definition.projectPathLabel}`,
+			subtitle: `${group.label} - ${projectResourcePathLabel(definition)}`,
 			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
 				definition.projectScope,
-			)} ${definition.projectPathLabel}`,
+			)} ${projectResourcePathLabel(definition)}`,
 		})),
 	),
 ];

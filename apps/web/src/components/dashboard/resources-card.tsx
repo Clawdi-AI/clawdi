@@ -1,16 +1,9 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import {
-	Brain,
-	ChevronRight,
-	FolderKanban,
-	Key,
-	MessageSquare,
-	Plug,
-	Sparkles,
-} from "lucide-react";
+import { Brain, FolderKanban, Key, MessageSquare, Plug, Sparkles } from "lucide-react";
 import Link from "next/link";
+import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
@@ -135,11 +128,13 @@ function ResourceRow({ resource }: { resource: Resource }) {
 			<Icon className="size-4 shrink-0 text-muted-foreground" />
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
-				<div
-					className="truncate text-xs text-muted-foreground"
-					title={empty ? definition.emptyCta : definition.projectPathLabel}
-				>
-					{definition.projectPathLabel}
+				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+					<ProjectResourcePath resource={definition} />
+					{empty ? (
+						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+							{definition.emptyCta}
+						</span>
+					) : null}
 				</div>
 			</div>
 			<span
@@ -148,7 +143,6 @@ function ResourceRow({ resource }: { resource: Resource }) {
 			>
 				{formatNumber(resource.count)}
 			</span>
-			<ChevronRight className="size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
 		</Link>
 	);
 }

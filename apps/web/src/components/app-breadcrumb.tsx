@@ -24,7 +24,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	sessions: "Sessions",
 	memories: "Memories",
 	skills: "Skills",
-	vault: "Vault",
+	vault: "Vaults",
 	connectors: "Connectors",
 	agents: "Agents",
 };

@@ -127,7 +127,7 @@ export function ShareProjectDialog({
 				{children ?? (
 					<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 						<Share2 className="mr-2 size-4" />
-						Share project
+						Share Project
 					</Button>
 				)}
 			</DialogTrigger>
@@ -142,10 +142,10 @@ export function ShareProjectDialog({
 				{isPersonalProject ? (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Personal project sharing needs extra care</AlertTitle>
+						<AlertTitle>Personal Project Sharing Needs Extra Care</AlertTitle>
 						<AlertDescription>
-							Personal projects often mix experiments and one-off vault references. For cleaner
-							collaboration, consider sharing a dedicated project workspace.
+							Personal Projects often mix experiments and one-off vault references. For cleaner
+							collaboration, consider sharing a dedicated Project.
 						</AlertDescription>
 					</Alert>
 				) : null}

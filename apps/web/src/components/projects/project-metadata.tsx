@@ -202,13 +202,13 @@ export function projectKindMeta(kind: string) {
 	if (kind === "workspace") {
 		return {
 			label: "Project",
-			description: "Shared workspace for a project, team, or workflow.",
+			description: "Shared Project for a team or workflow.",
 		};
 	}
 	if (kind === "environment") {
 		return {
 			label: "Environment",
-			description: "Workspace created by an agent environment.",
+			description: "Project created by an agent environment.",
 		};
 	}
 	if (kind === "personal") {

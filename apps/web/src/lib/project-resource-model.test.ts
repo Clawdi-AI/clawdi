@@ -8,6 +8,7 @@ import {
 	projectManagedResourceDefinitions,
 	projectResourceDefinitionsForGroup,
 	projectResourceHref,
+	projectResourcePathLabel,
 	projectResourceScopeDescription,
 	projectResourceScopeLabel,
 	sessionDetailHref,
@@ -60,7 +61,27 @@ describe("project resource model", () => {
 		expect(projectResourceScopeLabel("activity")).toBe("Activity history");
 		expect(projectResourceScopeLabel("account-wide")).toBe("Account-wide");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
-			"?project=",
+			"selected Project context",
 		);
+	});
+
+	it("renders resource paths from reusable path segments", () => {
+		expect(projectResourcePathLabel(getProjectResourceDefinition("projects"))).toBe("Projects");
+		expect(projectResourcePathLabel(getProjectResourceDefinition("skills"))).toBe(
+			"Projects / Project / Skills",
+		);
+		expect(projectResourcePathLabel(getProjectResourceDefinition("vaults"))).toBe(
+			"Projects / Project / Vaults",
+		);
+		expect(projectResourcePathLabel(getProjectResourceDefinition("sessions"))).toBe(
+			"Agents / Sessions",
+		);
+		expect(projectResourcePathLabel(getProjectResourceDefinition("memories"))).toBe(
+			"Account / Memory",
+		);
+		expect(projectResourcePathLabel(getProjectResourceDefinition("connectors"))).toBe(
+			"Account / Connectors",
+		);
+		expect(getProjectResourceDefinition("vaults").navLabel).toBe("Vaults");
 	});
 });
