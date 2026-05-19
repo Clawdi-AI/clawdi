@@ -68,8 +68,8 @@ Decision impact from the second pass:
 - The medium-term product target **does** broaden: Vault should become a
   credential-and-capability layer, not only a secret-string store.
 - The data model must reserve room for `secret_value`, `oauth_connection`,
-  `service_binding`, `proxy_binding`, `workload_identity`, and
-  `delegated_tool_grant`.
+  `local_agent_profile`, `service_binding`, `proxy_binding`,
+  `workload_identity`, and `delegated_tool_grant`.
 - The product must label credential custody explicitly. Client-managed vault
   items, server-managed connected accounts, TEE-managed proxy sessions, and
   external workload identities have different security claims.
@@ -121,6 +121,8 @@ The later agent-runtime promise is:
      Hermes, OpenClaw, scripts, and local dev servers.
    - Cares about not committing `.env` files and not manually copying keys
      between machines.
+   - Also wants Clawdi to back up and re-materialize local agent credentials,
+     such as Codex local auth/config files, without copying tokens by hand.
 2. **Small team sharing Projects**
    - Wants shared Project credentials with clear ownership, conflict handling,
      and visible access.
@@ -155,8 +157,9 @@ The later agent-runtime promise is:
    - Proxy mode is only strong when network egress is controlled.
 6. **Leave room for capabilities**
    - Even when Phase 1 returns strings, the model should support future
-     credential kinds: raw secret value, OAuth connection, delegated tool
-     grant, workload identity, service binding, and proxy capability.
+     credential kinds: raw secret value, local agent profile, OAuth
+     connection, delegated tool grant, workload identity, service binding, and
+     proxy capability.
 7. **Prefer replacing static secrets where possible**
    - Some credentials should never become vault strings at all. OAuth,
      workload identity, GitHub App installation tokens, cloud OIDC federation,
@@ -725,6 +728,52 @@ The product vocabulary should stay Clawdi-native:
 Avoid borrowing "vault permissions" language where it conflicts with Project
 as the data boundary.
 
+### Local Agent Credential Profiles
+
+Clawdi should also manage local credential profiles for agent CLIs, starting
+with Codex.
+
+Target workflow:
+
+```bash
+clawdi agent credentials import codex \
+  --project personal \
+  --from ~/.codex/auth.json
+
+clawdi agent credentials materialize codex \
+  --project personal \
+  --to ~/.codex/auth.json \
+  --backup
+```
+
+This is different from `clawdi run --env-file`:
+
+- `run` injects secrets into one child process.
+- Local agent credential profiles restore a tool's expected credential file so
+  the tool can run normally.
+
+Design constraints:
+
+- Use per-tool adapters, not broad home-directory scanning.
+- Start with explicit Codex adapter paths, such as `~/.codex/auth.json` and
+  non-secret config templates from `~/.codex/config.toml`, after confirming the
+  installed Codex schema.
+- Never import Codex logs, history, shell snapshots, session archives, or other
+  runtime artifacts.
+- Always show a dry-run summary of paths and field names before import.
+- Materialization should write atomically, preserve file permissions, and create
+  a timestamped backup by default.
+- The default storage target should be `custody_model=client_managed` once
+  client-side encryption exists. Until then, product copy must say Clawdi can
+  decrypt server-managed imported credentials.
+- For team sharing, require explicit confirmation before a local agent profile
+  can be granted to another user, Agent, Project, or service token.
+
+The first adapter should be Codex-specific because Codex is a primary Clawdi
+user workflow. Additional adapters for Claude Code, OpenClaw, and other local
+agents should follow the same import/materialize contract instead of each
+inventing its own vault semantics.
+
 ## Recommended Architecture
 
 ### Module 1: Secret Reference
@@ -817,7 +866,18 @@ Deep Module responsible for delivering secrets to processes and agents:
    - Useful for CI and daemon-style agents where repeated CLI resolves are
      awkward.
 
-4. **Tool authorization / capability mode**
+4. **Local agent credential profile mode**
+   - Clawdi stores an agent CLI's local credential profile as structured secret
+     material plus a non-secret template.
+   - A tool-specific adapter imports and materializes credentials for Codex or
+     another local agent.
+   - This is for compatibility with tools that expect local auth files instead
+     of env vars.
+   - Security claim: avoids manual token copying and supports backup/restore,
+     but the materialized local file is plaintext to that tool and the local
+     OS user.
+
+5. **Tool authorization / capability mode**
    - Agent does not request a raw credential. It requests permission to call a
      Clawdi-managed tool, MCP server, or connected-account action.
    - User approval grants scoped capabilities such as `gmail.send`,
@@ -830,7 +890,7 @@ Deep Module responsible for delivering secrets to processes and agents:
      server-side token custody unless the tool gateway runs client-side or in
      an attested runtime.
 
-5. **Deferred hosted-agent proxy mode**
+6. **Deferred hosted-agent proxy mode**
    - Agent does not receive long-lived secrets.
    - Requests go through a credential proxy or tool proxy.
    - Proxy attaches credentials to outbound calls.
@@ -839,7 +899,7 @@ Deep Module responsible for delivering secrets to processes and agents:
      careful request/response logging policy.
    - Treat as a later proof of concept, not Phase 1 or Phase 2.
 
-6. **TEE-backed mode**
+7. **TEE-backed mode**
    - Decryption or proxy runs inside an attested confidential VM.
    - Useful for stronger "operator cannot inspect runtime memory" claims.
    - Requires separate Phala/dstack or confidential compute evaluation.
@@ -880,8 +940,8 @@ Candidate tables:
    - `ciphertext`
    - `crypto_scheme`
    - `credential_kind` (`secret_value`, `oauth_connection`,
-     `service_binding`, `proxy_binding`, `workload_identity`,
-     `delegated_tool_grant`)
+     `local_agent_profile`, `service_binding`, `proxy_binding`,
+     `workload_identity`, `delegated_tool_grant`)
    - `custody_model` (`client_managed`, `server_managed`, `tee_managed`,
      `external_provider`)
    - `key_ref`
@@ -983,6 +1043,20 @@ Candidate tables:
    - `custody_model`
    - `status`
    - `created_at`
+11. `vault_agent_credential_profiles`
+   - `id`
+   - `project_id`
+   - `agent_tool` (`codex`, `claude_code`, `openclaw`)
+   - `profile_name`
+   - `schema_version`
+   - `source_path`
+   - `target_path`
+   - `secret_item_version_id`
+   - `non_secret_template`
+   - `imported_by_user_id`
+   - `last_materialized_at`
+   - `created_at`
+   - `revoked_at`
 
 The `credential_kind`, `runtime_policy`, and `vault_service_bindings` fields
 are future-proofing seams. Phase 1 can store only ordinary secret values, but
@@ -1005,6 +1079,11 @@ security claim:
   key use happens inside an attested runtime.
 - `external_provider`: Clawdi stores a binding or trust relationship and asks
   an upstream provider to mint short-lived credentials.
+
+For `local_agent_profile`, the credential may be `client_managed` or
+`server_managed` depending on the phase. The materialized file is always local
+plaintext for the target tool, so the product claim is backup/restore and
+controlled sharing, not sandboxing.
 
 ## API Direction
 
@@ -1049,11 +1128,13 @@ Client-side encrypted future:
 - Future proxy mode resolves references to service bindings and credential
   capabilities instead of returning raw secret values.
 
-Future connected-account/capability APIs:
+Future typed credential APIs:
 
 ```text
 POST /api/vault/connected-accounts/authorize
 POST /api/vault/connected-accounts/:id/refresh
+POST /api/vault/agent-credential-profiles/import
+POST /api/vault/agent-credential-profiles/:id/materialize-plan
 POST /api/vault/capability-grants
 POST /api/vault/capability-grants/:id/revoke
 POST /api/vault/service-bindings/:id/session
@@ -1061,8 +1142,8 @@ POST /api/vault/service-bindings/:id/session
 
 These should share the same Project/Agent grant and audit machinery as secret
 reference resolution. The difference is the delivered artifact: a resolved
-secret value, a short-lived access token, a tool execution grant, or a proxy
-session.
+secret value, a local agent credential profile, a short-lived access token, a
+tool execution grant, or a proxy session.
 
 ## Security Model Options
 
@@ -1100,7 +1181,22 @@ Properties:
 
 This is the recommended target for the core password-manager promise.
 
-### Option D: Connected Account / Tool Authorization
+### Option D: Local Agent Credential Profiles
+
+Properties:
+
+- Clawdi imports a supported local agent credential file into a Vault item.
+- The CLI can later materialize that profile back to the tool's expected path.
+- This is useful for Codex and similar tools that expect local auth files
+  instead of per-command environment variables.
+- The local materialized file is plaintext to the target tool and local OS
+  user, so this is backup/restore and controlled sharing, not a sandbox.
+- The stored profile should become client-managed once client-side encryption
+  exists.
+
+Use this as a narrow Codex-first adapter, not a broad `~/.codex` backup system.
+
+### Option E: Connected Account / Tool Authorization
 
 Properties:
 
@@ -1116,7 +1212,7 @@ This is the recommended direction for SaaS and MCP integrations. It should be
 designed with Vault because it shares Project/Agent grants and audit, but it
 does not need to block Phase 1 secret references.
 
-### Option E: Credential Proxy for Agents
+### Option F: Credential Proxy for Agents
 
 Properties:
 
@@ -1130,7 +1226,7 @@ This is the recommended secure-agent direction, but it is not recommended for
 Phase 1. Treat it as a hosted-agent proof of concept after reference UX and
 basic Vault maturity are in place.
 
-### Option F: TEE Runtime
+### Option G: TEE Runtime
 
 Properties:
 
@@ -1171,6 +1267,11 @@ Ship first:
    runtime.
 9. Minimal `credential_kind` and `runtime_policy` fields or API placeholders so
    later proxy/service-binding work does not require a reference-model rewrite.
+10. Codex local credential profile design and adapter spike:
+   - detect supported Codex credential/config paths without reading unrelated
+     Codex logs or history;
+   - import only allowlisted secret fields after a dry-run summary;
+   - materialize back to the Codex path with atomic write and backup.
 
 Required behavior details:
 
@@ -1209,6 +1310,7 @@ Defer from Phase 1:
 5. Dynamic secrets engines and full enterprise gateway deployment.
 6. HTTPS proxy/MITM mode and CA injection.
 7. Localhost sidecar service.
+8. Full cross-agent credential-profile support beyond the first Codex adapter.
 
 Acceptance criteria:
 
@@ -1223,6 +1325,9 @@ Acceptance criteria:
    changing `clawdi://` references.
 7. Existing `clawdi run` users can still opt into all-env injection during the
    migration window.
+8. The Codex adapter spike can show an import/materialize dry run for supported
+   Codex credential paths without reading logs, history, shell snapshots, or
+   archived sessions.
 
 ## Recommended Phasing
 
@@ -1243,7 +1348,11 @@ Deliver:
 - Explicit `--all-vault-env` for legacy all-env injection.
 - Web "Copy Clawdi Reference".
 - Minimal credential metadata for future delivery modes:
-  `credential_kind`, `runtime_policy`, and service-binding placeholders.
+  `credential_kind`, `runtime_policy`, local agent profile placeholders, and
+  service-binding placeholders.
+- Codex local credential profile adapter design, with implementation allowed
+  only if the supported file schema is confirmed and the import/materialize
+  flow can avoid broad `~/.codex` scanning.
 - Documentation that clearly says env injection is not isolation.
 
 Security statement:
@@ -1276,7 +1385,7 @@ Deliver:
 - Design-only sidecar/local service spec with SSRF and loopback protections;
   implementation can wait unless a workload needs it.
 - Typed credential foundations for `oauth_connection`, `service_binding`,
-  `workload_identity`, and `delegated_tool_grant`.
+  `local_agent_profile`, `workload_identity`, and `delegated_tool_grant`.
 - `custody_model` on credential records so API responses and product copy can
   distinguish "Clawdi cannot decrypt" from "Clawdi can use this credential
   under scoped policy."
@@ -1285,6 +1394,8 @@ Deliver:
   agent, Project, and runtime.
 - Design spec for connected-account UX: provider connection, scope review,
   human approval, revocation, and per-agent grant visibility.
+- Productionized Codex credential profile import/materialize flow if the Phase
+  1 adapter spike proves stable enough.
 
 Security statement:
 
