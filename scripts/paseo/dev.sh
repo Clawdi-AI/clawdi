@@ -51,6 +51,7 @@ export CORS_ORIGINS
 export NEXT_PUBLIC_API_URL="$API_URL"
 export NEXT_PUBLIC_CLAWDI_HOSTED="${NEXT_PUBLIC_CLAWDI_HOSTED:-}"
 export NEXT_PUBLIC_DEPLOY_API_URL="${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}"
+DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-true}"
 case "$WEB_PUBLIC_HOST" in
   ""|"localhost"|"127.0.0.1")
     ;;
@@ -71,6 +72,22 @@ docker compose up -d --wait postgres
 run_backend_migrations
 
 pids=()
+backend_dev_auth_env=()
+if [ -n "${DEV_AUTH_BYPASS:-}" ]; then
+  backend_dev_auth_env+=("DEV_AUTH_BYPASS=${DEV_AUTH_BYPASS}")
+fi
+if [ -n "${DEV_AUTH_TOKEN:-}" ]; then
+  backend_dev_auth_env+=("DEV_AUTH_TOKEN=${DEV_AUTH_TOKEN}")
+fi
+if [ -n "${DEV_AUTH_CLERK_ID:-}" ]; then
+  backend_dev_auth_env+=("DEV_AUTH_CLERK_ID=${DEV_AUTH_CLERK_ID}")
+fi
+if [ -n "${DEV_AUTH_EMAIL:-}" ]; then
+  backend_dev_auth_env+=("DEV_AUTH_EMAIL=${DEV_AUTH_EMAIL}")
+fi
+if [ -n "${DEV_AUTH_NAME:-}" ]; then
+  backend_dev_auth_env+=("DEV_AUTH_NAME=${DEV_AUTH_NAME}")
+fi
 
 cleanup() {
   trap - EXIT INT TERM
@@ -98,12 +115,9 @@ pids+=("$!")
 
 (
   cd backend
-  DATABASE_URL="$DATABASE_URL" \
-    DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-}" \
-    DEV_AUTH_TOKEN="${DEV_AUTH_TOKEN:-}" \
-    DEV_AUTH_CLERK_ID="${DEV_AUTH_CLERK_ID:-}" \
-    DEV_AUTH_EMAIL="${DEV_AUTH_EMAIL:-}" \
-    DEV_AUTH_NAME="${DEV_AUTH_NAME:-}" \
+  env \
+    DATABASE_URL="$DATABASE_URL" \
+    "${backend_dev_auth_env[@]}" \
     DEBUG=true \
     PUBLIC_API_URL="$API_URL" \
     WEB_ORIGIN="$WEB_URL" \

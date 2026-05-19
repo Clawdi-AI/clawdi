@@ -1058,23 +1058,20 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 }
 
 function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: string }) {
-	const savedHere = vault.project_id === ownProjectId;
+	const attachedHere = vault.project_ids.includes(ownProjectId);
 	return (
 		<div className="flex items-center justify-between gap-3 p-3">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={savedHere ? "secondary" : "outline"}>
-						{savedHere ? "Available Here" : "Linked"}
+					<Badge variant={attachedHere ? "secondary" : "outline"}>
+						{attachedHere ? "Attached Here" : "Linked"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
 			</div>
 			<Button asChild variant="ghost" size="icon-sm">
-				<Link
-					href={projectResourceHref("vaults", vault.project_id ?? ownProjectId)}
-					aria-label="Open vault page"
-				>
+				<Link href={projectResourceHref("vaults", ownProjectId)} aria-label="Open vault page">
 					<ExternalLink className="size-3.5" />
 				</Link>
 			</Button>

@@ -14,7 +14,7 @@ interface SkillRow {
 }
 
 interface VaultRow {
-	project_id?: string | null;
+	project_ids: string[];
 	slug: string;
 	name: string;
 }
@@ -60,7 +60,7 @@ export async function projectShowCommand(
 		})),
 	]);
 	const ownSkills = skills.filter((s) => s.project_id === projectId);
-	const ownVaults = vaultsPage.items.filter((v) => v.project_id === projectId);
+	const ownVaults = vaultsPage.items.filter((v) => v.project_ids.includes(projectId));
 
 	const payload = {
 		project: {

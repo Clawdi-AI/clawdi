@@ -22,7 +22,7 @@ from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
-from app.models.vault import Vault
+from app.models.vault import Vault, VaultProjectAttachment
 from app.services.memory_provider import get_memory_provider
 
 
@@ -180,8 +180,9 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
     visible_project_ids = await project_ids_visible_to(db, auth)
     stmt = (
         select(Vault)
+        .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
         .where(
-            Vault.project_id.in_(visible_project_ids),
+            VaultProjectAttachment.project_id.in_(visible_project_ids),
         )
         .where(
             or_(
@@ -189,6 +190,7 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
                 Vault.name.ilike(needle, escape="\\"),
             )
         )
+        .distinct()
         .order_by(Vault.slug)
         .limit(TYPE_LIMIT)
     )

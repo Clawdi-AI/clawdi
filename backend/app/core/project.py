@@ -1,9 +1,10 @@
 """Project resolution helpers.
 
-Every write target (skills, vaults) carries a required `project_id`
-column. Routes that need to resolve the project from the caller's
-auth context (rather than taking a `/api/projects/{project_id}/...`
-path parameter) use the helpers below:
+Project-scoped writes need a concrete `project_id`: skills store it
+directly, while attachable resources such as vaults use it to create
+their Project attachment. Routes that need to resolve the project from
+the caller's auth context (rather than taking a
+`/api/projects/{project_id}/...` path parameter) use the helpers below:
 
   * api_key with environment_id → that Agent Project id. Always
     defined; no ambiguity.

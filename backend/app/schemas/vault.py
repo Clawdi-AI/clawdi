@@ -24,9 +24,10 @@ class VaultResponse(BaseModel):
     id: str
     slug: str
     name: str
-    # Project this vault lives in. Required by clients so duplicate
-    # slugs can be disambiguated on follow-up reads/writes.
-    project_id: str
+    # Projects this vault is attached to and visible through for the
+    # current caller. Key rows belong to the vault, not to Projects.
+    project_ids: list[str]
+    is_owner: bool = True
     created_at: datetime
 
 

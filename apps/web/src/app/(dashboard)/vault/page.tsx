@@ -56,20 +56,17 @@ interface VaultProjectMetadata {
 	owner_handle?: string | null;
 }
 
-interface VaultCatalogEntry {
-	vault: Vault;
+interface VaultAttachmentView {
+	projectId: string;
 	project?: VaultProjectMetadata;
 	agent: ProjectAgentMetadata | null;
 	readOnly: boolean;
 }
 
-interface VaultCatalogGroup {
-	slug: string;
-	entries: VaultCatalogEntry[];
-}
-
-interface VaultCatalogView extends VaultCatalogGroup {
-	visibleEntries: VaultCatalogEntry[];
+interface VaultCatalogView {
+	vault: Vault;
+	attachments: VaultAttachmentView[];
+	visibleAttachments: VaultAttachmentView[];
 }
 
 const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
@@ -121,10 +118,6 @@ function VaultPageInner() {
 		() => orderedProjects.filter((project) => isProjectOwner(project)),
 		[orderedProjects],
 	);
-	const ownedProjectIds = useMemo(
-		() => new Set(ownedProjects.map((project) => project.id)),
-		[ownedProjects],
-	);
 	const projectsById = useMemo(
 		() => new Map(orderedProjects.map((project) => [project.id, project])),
 		[orderedProjects],
@@ -134,67 +127,59 @@ function VaultPageInner() {
 	const filterProject = filterProjectId ? (projectsById.get(filterProjectId) ?? null) : null;
 	const isStaleProjectFilter = !!filterProjectId && projects !== undefined && !filterProject;
 
-	const vaultCatalog = useMemo<VaultCatalogGroup[]>(() => {
-		const bySlug = new Map<string, VaultCatalogEntry[]>();
+	const vaultCatalog = useMemo<VaultCatalogView[]>(() => {
 		const projectRank = new Map(orderedProjects.map((project, index) => [project.id, index]));
 
-		for (const vault of vaults ?? []) {
-			const project = projectsById.get(vault.project_id);
-			const entries = bySlug.get(vault.slug) ?? [];
-			entries.push({
-				vault,
-				project,
-				agent: project ? projectAgentFor(project, agentsById) : null,
-				readOnly: !ownedProjectIds.has(vault.project_id),
+		return [...(vaults ?? [])]
+			.sort((a, b) => a.slug.localeCompare(b.slug))
+			.map((vault) => {
+				const attachments = vault.project_ids
+					.map((projectId) => {
+						const project = projectsById.get(projectId);
+						return {
+							projectId,
+							project,
+							agent: project ? projectAgentFor(project, agentsById) : null,
+							readOnly: !isProjectOwner(project ?? { is_owner: false }),
+						};
+					})
+					.sort((a, b) => {
+						const rankA = projectRank.get(a.projectId) ?? Number.MAX_SAFE_INTEGER;
+						const rankB = projectRank.get(b.projectId) ?? Number.MAX_SAFE_INTEGER;
+						if (rankA !== rankB) return rankA - rankB;
+						const nameA = a.project ? displayProjectName(a.project) : a.projectId;
+						const nameB = b.project ? displayProjectName(b.project) : b.projectId;
+						return nameA.localeCompare(nameB);
+					});
+				return { vault, attachments, visibleAttachments: attachments };
 			});
-			bySlug.set(vault.slug, entries);
-		}
-
-		return [...bySlug.entries()]
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([slug, entries]) => ({
-				slug,
-				entries: entries.sort((a, b) => {
-					const rankA = projectRank.get(a.vault.project_id) ?? Number.MAX_SAFE_INTEGER;
-					const rankB = projectRank.get(b.vault.project_id) ?? Number.MAX_SAFE_INTEGER;
-					if (rankA !== rankB) return rankA - rankB;
-					const nameA = a.project ? displayProjectName(a.project) : a.vault.project_id;
-					const nameB = b.project ? displayProjectName(b.project) : b.vault.project_id;
-					return nameA.localeCompare(nameB);
-				}),
-			}));
-	}, [agentsById, orderedProjects, ownedProjectIds, projectsById, vaults]);
+	}, [agentsById, orderedProjects, projectsById, vaults]);
 
 	const visibleVaultCatalog = useMemo<VaultCatalogView[]>(() => {
 		const query = searchQuery.trim().toLowerCase();
 		return vaultCatalog
-			.map((group) => {
-				const visibleEntries = filterProjectId
-					? group.entries.filter((entry) => entry.vault.project_id === filterProjectId)
-					: group.entries;
-				return { ...group, visibleEntries };
+			.map((entry) => {
+				const visibleAttachments = filterProjectId
+					? entry.attachments.filter((attachment) => attachment.projectId === filterProjectId)
+					: entry.attachments;
+				return { ...entry, visibleAttachments };
 			})
-			.filter((group) => group.visibleEntries.length > 0)
-			.filter((group) => {
+			.filter((entry) => !filterProjectId || entry.visibleAttachments.length > 0)
+			.filter((entry) => {
 				if (!query) return true;
-				if (group.slug.toLowerCase().includes(query)) return true;
-				return group.entries.some((entry) => {
-					const project = entry.project;
+				if (entry.vault.slug.toLowerCase().includes(query)) return true;
+				if (entry.vault.name.toLowerCase().includes(query)) return true;
+				return entry.attachments.some((attachment) => {
+					const project = attachment.project;
 					return project
 						? `${displayProjectName(project)} ${project.slug}`.toLowerCase().includes(query)
-						: entry.vault.project_id.toLowerCase().includes(query);
+						: attachment.projectId.toLowerCase().includes(query);
 				});
 			});
 	}, [filterProjectId, searchQuery, vaultCatalog]);
 
 	const createProjectAlreadyHasSlug =
-		!!newVaultSlug &&
-		!!createProjectId &&
-		vaultCatalog.some(
-			(group) =>
-				group.slug === newVaultSlug &&
-				group.entries.some((entry) => entry.vault.project_id === createProjectId),
-		);
+		!!newVaultSlug && vaultCatalog.some((entry) => entry.vault.slug === newVaultSlug);
 
 	useEffect(() => {
 		if (ownedProjects.length === 0) {
@@ -248,15 +233,35 @@ function VaultPageInner() {
 		onError: (e) => toast.error("Failed to Add to Project", { description: errorMessage(e) }),
 	});
 
-	const deleteVault = useMutation({
-		mutationFn: async (vault: { slug: string; project_id: string }) =>
+	const detachVaultProject = useMutation({
+		mutationFn: async (vault: { slug: string; projectId: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}", {
-					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
+					params: { path: { slug: vault.slug }, query: { project_id: vault.projectId } },
 				}),
 			),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vaults"] }),
-		onError: (e) => toast.error("Failed to Remove Vault", { description: errorMessage(e) }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+			toast.success("Vault Removed from Project");
+		},
+		onError: (e) => toast.error("Failed to Remove from Project", { description: errorMessage(e) }),
+	});
+
+	const deleteVault = useMutation({
+		mutationFn: async (vault: { slug: string }) =>
+			unwrap(
+				await api.DELETE("/api/vault/{slug}", {
+					params: { path: { slug: vault.slug }, query: {} },
+				}),
+			),
+		onSuccess: (_result, variables) => {
+			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+			queryClient.removeQueries({ queryKey: ["vault-items"] });
+			toast.success("Vault Deleted", {
+				description: `${variables.slug} and its keys were removed.`,
+			});
+		},
+		onError: (e) => toast.error("Failed to Delete Vault", { description: errorMessage(e) }),
 	});
 
 	return (
@@ -336,7 +341,7 @@ function VaultPageInner() {
 				<div className="rounded-lg border bg-card/60 p-4">
 					<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)_minmax(220px,320px)] lg:items-end">
 						<div className="space-y-1">
-							<h2 className="text-base font-semibold">Vaults</h2>
+							<h2 className="text-base font-semibold">Vault Inventory</h2>
 							<p className="text-sm text-muted-foreground">
 								{filterProject
 									? `Showing vaults attached to ${displayProjectName(filterProject)}.`
@@ -385,20 +390,22 @@ function VaultPageInner() {
 					</div>
 				) : visibleVaultCatalog.length > 0 ? (
 					<div className="space-y-3">
-						{visibleVaultCatalog.map((group) => (
-							<VaultGroupCard
-								key={group.slug}
-								group={group}
+						{visibleVaultCatalog.map((entry) => (
+							<VaultCard
+								key={entry.vault.id}
+								entry={entry}
 								ownedProjects={ownedProjects}
 								agents={envs ?? []}
 								onAddProject={(projectId) =>
-									addVaultToProject.mutate({ slug: group.slug, projectId })
+									addVaultToProject.mutate({ slug: entry.vault.slug, projectId })
 								}
 								isAddingProject={addVaultToProject.isPending}
-								onRemove={(vault) =>
-									deleteVault.mutate({ slug: vault.slug, project_id: vault.project_id })
+								onDetachProject={(projectId) =>
+									detachVaultProject.mutate({ slug: entry.vault.slug, projectId })
 								}
-								isRemoving={deleteVault.isPending}
+								isDetachingProject={detachVaultProject.isPending}
+								onDeleteVault={() => deleteVault.mutate({ slug: entry.vault.slug })}
+								isDeletingVault={deleteVault.isPending}
 							/>
 						))}
 					</div>
@@ -492,7 +499,7 @@ function CreateVaultDialog({
 							/>
 							{isDuplicate ? (
 								<p className="text-xs text-muted-foreground">
-									This vault already exists in the selected Project.{" "}
+									This vault already exists.{" "}
 									<button
 										type="button"
 										onClick={onOpenExisting}
@@ -500,7 +507,7 @@ function CreateVaultDialog({
 									>
 										Show it
 									</button>
-									, or choose another Project.
+									, then use Add to Project if another Project needs it.
 								</p>
 							) : (
 								<p className="text-xs text-muted-foreground">
@@ -541,31 +548,39 @@ function CreateVaultDialog({
 	);
 }
 
-function VaultGroupCard({
-	group,
+function VaultCard({
+	entry,
 	ownedProjects,
 	agents,
 	onAddProject,
 	isAddingProject,
-	onRemove,
-	isRemoving,
+	onDetachProject,
+	isDetachingProject,
+	onDeleteVault,
+	isDeletingVault,
 }: {
-	group: VaultCatalogView;
+	entry: VaultCatalogView;
 	ownedProjects: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
 	onAddProject: (projectId: string) => void;
 	isAddingProject: boolean;
-	onRemove: (vault: Vault) => void;
-	isRemoving: boolean;
+	onDetachProject: (projectId: string) => void;
+	isDetachingProject: boolean;
+	onDeleteVault: () => void;
+	isDeletingVault: boolean;
 }) {
-	const usedProjectIds = useMemo(
-		() => new Set(group.entries.map((entry) => entry.vault.project_id)),
-		[group.entries],
-	);
+	const { vault, attachments, visibleAttachments } = entry;
+	const canManageVault = vault.is_owner;
+	const usedProjectIds = useMemo(() => new Set(vault.project_ids), [vault.project_ids]);
 	const addProjectOptions = useMemo(
-		() => ownedProjects.filter((project) => project.id && !usedProjectIds.has(project.id)),
-		[ownedProjects, usedProjectIds],
+		() =>
+			canManageVault
+				? ownedProjects.filter((project) => project.id && !usedProjectIds.has(project.id))
+				: [],
+		[canManageVault, ownedProjects, usedProjectIds],
 	);
+	const accessProjectId = visibleAttachments[0]?.projectId ?? attachments[0]?.projectId ?? null;
+
 	return (
 		<section className="overflow-hidden rounded-lg border bg-card/60">
 			<div className="border-b p-4">
@@ -574,69 +589,79 @@ function VaultGroupCard({
 						<span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border bg-background/70 text-muted-foreground">
 							<Key className="size-4.5" />
 						</span>
-						<div className="min-w-0">
+						<div className="min-w-0 space-y-2">
 							<div className="flex flex-wrap items-center gap-2">
-								<h3 className="truncate font-mono text-lg font-semibold" translate="no">
-									{group.slug}
+								<h3 className="truncate text-lg font-semibold" translate="no">
+									{vault.name || vault.slug}
 								</h3>
+								<Badge variant="outline">Vault</Badge>
 								<Badge variant="secondary">
-									{group.entries.length} Project{group.entries.length === 1 ? "" : "s"}
+									{attachments.length} Project{attachments.length === 1 ? "" : "s"}
 								</Badge>
+								{canManageVault ? null : <Badge variant="outline">Read-only</Badge>}
 							</div>
-							<div className="mt-2 flex flex-wrap gap-1.5">
-								{group.entries.map((entry) => (
-									<ProjectChip key={entry.vault.id} entry={entry} />
+							<div className="truncate font-mono text-xs text-muted-foreground" translate="no">
+								{vault.slug}
+							</div>
+							<div className="flex flex-wrap gap-1.5">
+								{attachments.map((attachment) => (
+									<ProjectChip key={attachment.projectId} attachment={attachment} />
 								))}
 							</div>
 						</div>
 					</div>
-					<AddProjectToVaultControl
-						slug={group.slug}
-						options={addProjectOptions}
-						agents={agents}
-						onAddProject={onAddProject}
-						isPending={isAddingProject}
-					/>
-				</div>
-			</div>
-			<div className="border-b px-4 py-3">
-				<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-					<div>
-						<h4 className="text-sm font-semibold">Attached Projects</h4>
-						<p className="text-xs text-muted-foreground">
-							Agents can use this vault only through these Projects.
-						</p>
-					</div>
-					{group.visibleEntries.length !== group.entries.length ? (
-						<p className="text-xs text-muted-foreground">
-							Showing {group.visibleEntries.length} of {group.entries.length}
-						</p>
+					{canManageVault ? (
+						<div className="flex flex-wrap gap-2 lg:justify-end">
+							<AddProjectToVaultControl
+								vaultName={vault.name || vault.slug}
+								options={addProjectOptions}
+								agents={agents}
+								onAddProject={onAddProject}
+								isPending={isAddingProject}
+							/>
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								onClick={() => {
+									const projectCount = attachments.length;
+									const ok = window.confirm(
+										`Delete ${vault.name || vault.slug}?\n\nThis permanently deletes every key in this vault and removes it from ${projectCount} Project${projectCount === 1 ? "" : "s"}.`,
+									);
+									if (ok) onDeleteVault();
+								}}
+								disabled={isDeletingVault}
+								className="w-fit text-muted-foreground hover:text-destructive"
+							>
+								<Trash2 className="size-3.5" />
+								Delete Vault
+							</Button>
+						</div>
 					) : null}
 				</div>
 			</div>
-			<div className="divide-y">
-				{group.visibleEntries.map((entry) => (
-					<VaultProjectKeyPanel
-						key={entry.vault.id}
-						entry={entry}
-						totalProjects={group.entries.length}
-						onRemove={() => onRemove(entry.vault)}
-						isRemoving={isRemoving}
-					/>
-				))}
+			<div className="grid xl:grid-cols-[minmax(0,1fr)_380px]">
+				<VaultKeysPanel vault={vault} accessProjectId={accessProjectId} />
+				<AttachedProjectsPanel
+					vault={vault}
+					attachments={attachments}
+					visibleAttachments={visibleAttachments}
+					onDetachProject={onDetachProject}
+					isDetachingProject={isDetachingProject}
+				/>
 			</div>
 		</section>
 	);
 }
 
 function AddProjectToVaultControl({
-	slug,
+	vaultName,
 	options,
 	agents,
 	onAddProject,
 	isPending,
 }: {
-	slug: string;
+	vaultName: string;
 	options: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
 	onAddProject: (projectId: string) => void;
@@ -671,7 +696,7 @@ function AddProjectToVaultControl({
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-xl">
 				<DialogHeader>
-					<DialogTitle>Add {slug} to Project</DialogTitle>
+					<DialogTitle>Add {vaultName} to Project</DialogTitle>
 					<DialogDescription>
 						Attach this vault to another Project so agents using that Project can read its keys.
 					</DialogDescription>
@@ -732,8 +757,8 @@ function SelectedProjectTile({
 	);
 }
 
-function ProjectChip({ entry }: { entry: VaultCatalogEntry }) {
-	if (!entry.project) {
+function ProjectChip({ attachment }: { attachment: VaultAttachmentView }) {
+	if (!attachment.project) {
 		return (
 			<Badge variant="outline" className="text-xs">
 				Unknown Project
@@ -744,49 +769,47 @@ function ProjectChip({ entry }: { entry: VaultCatalogEntry }) {
 		<Badge
 			variant="outline"
 			className="max-w-full gap-1.5 text-xs"
-			title={displayProjectName(entry.project)}
+			title={displayProjectName(attachment.project)}
 		>
-			<span className="truncate">{displayProjectName(entry.project)}</span>
-			{entry.readOnly ? <span className="text-muted-foreground">Viewer</span> : null}
+			<span className="truncate">{displayProjectName(attachment.project)}</span>
+			{attachment.readOnly ? <span className="text-muted-foreground">Viewer</span> : null}
 		</Badge>
 	);
 }
 
-function VaultProjectKeyPanel({
-	entry,
-	totalProjects,
-	onRemove,
-	isRemoving,
+function VaultKeysPanel({
+	vault,
+	accessProjectId,
 }: {
-	entry: VaultCatalogEntry;
-	totalProjects: number;
-	onRemove: () => void;
-	isRemoving: boolean;
+	vault: Vault;
+	accessProjectId: string | null;
 }) {
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const [adding, setAdding] = useState(false);
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
-	const { vault, project, agent, readOnly } = entry;
-	const fieldDomId = `${vault.slug}-${vault.project_id}`;
-	const itemsCacheKey = ["vault-items", vault.slug, vault.project_id] as const;
+	const readOnly = !vault.is_owner;
+	const fieldDomId = `${vault.slug}-keys`;
+	const itemsCacheKey = ["vault-items", vault.id, accessProjectId] as const;
+	const queryParams = { project_id: accessProjectId ?? undefined };
 
 	const { data: items } = useQuery({
 		queryKey: itemsCacheKey,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
+					params: { path: { slug: vault.slug }, query: queryParams },
 				}),
 			),
+		enabled: vault.is_owner || !!accessProjectId,
 	});
 
 	const upsertItem = useMutation({
 		mutationFn: async ({ section, key, value }: { section: string; key: string; value: string }) =>
 			unwrap(
 				await api.PUT("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
+					params: { path: { slug: vault.slug }, query: queryParams },
 					body: { section, fields: { [key]: value } },
 				}),
 			),
@@ -803,7 +826,7 @@ function VaultProjectKeyPanel({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: { project_id: vault.project_id } },
+					params: { path: { slug: vault.slug }, query: queryParams },
 					body: { section, fields: [name] },
 				}),
 			),
@@ -871,70 +894,38 @@ function VaultProjectKeyPanel({
 	const keyCountLabel = items
 		? `${allFields.length} ${allFields.length === 1 ? "key" : "keys"}`
 		: "Loading keys";
-	const removeLabel = totalProjects > 1 ? "Remove from Project" : "Delete Vault";
 
 	return (
-		<section className="space-y-3 p-4">
-			<div className="group/header flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+		<section className="space-y-3 p-4 xl:border-r">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div className="min-w-0">
-					{project ? (
-						<ProjectIdentity
-							project={project}
-							agent={agent}
-							showOwner={false}
-							showAccess={!isProjectOwner(project)}
-							titleClassName="text-sm"
-						/>
-					) : (
-						<div className="min-w-0">
-							<h4 className="text-sm font-semibold">Unknown Project</h4>
-							<p className="truncate font-mono text-xs text-muted-foreground" translate="no">
-								{vault.project_id}
-							</p>
-						</div>
-					)}
+					<h4 className="text-sm font-semibold">Keys in this Vault</h4>
+					<p className="text-xs text-muted-foreground">
+						Every attached Project uses this same key set.
+					</p>
 				</div>
-				<div className="flex flex-wrap items-center gap-1.5 md:justify-end">
+				<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
 					<Badge variant="secondary">{keyCountLabel}</Badge>
 					{readOnly ? (
 						<Badge variant="outline" title="Viewer access is read-only.">
 							Read-only
 						</Badge>
 					) : (
-						<>
-							<Button
-								variant="ghost"
-								size="xs"
-								onClick={() => setAdding(!adding)}
-								className="text-muted-foreground"
-							>
-								<Plus className="size-3.5" />
-								Add Key
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								onClick={() => {
-									const projectName = project ? displayProjectName(project) : "this Project";
-									const ok = window.confirm(
-										`${removeLabel}?\n\n${vault.slug} will no longer be available in ${projectName}. Keys in this Project entry will be removed.`,
-									);
-									if (ok) onRemove();
-								}}
-								disabled={isRemoving}
-								className="text-muted-foreground hover:text-destructive md:opacity-0 md:group-hover/header:opacity-100 md:focus-visible:opacity-100"
-								aria-label={removeLabel}
-								title={removeLabel}
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</>
+						<Button
+							variant="ghost"
+							size="xs"
+							onClick={() => setAdding(!adding)}
+							className="text-muted-foreground"
+						>
+							<Plus className="size-3.5" />
+							Add Key
+						</Button>
 					)}
 				</div>
 			</div>
 
 			{!readOnly && adding ? (
-				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2 sm:ml-9">
+				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
 					<Label htmlFor={`key-${fieldDomId}`} className="sr-only">
 						Key name
 					</Label>
@@ -991,17 +982,116 @@ function VaultProjectKeyPanel({
 			) : null}
 
 			{allFields.length > 0 ? (
-				<div className="sm:pl-9">
-					<DataTable columns={columns} data={allFields} />
-				</div>
+				<DataTable columns={columns} data={allFields} />
 			) : !adding ? (
-				<p className="text-sm text-muted-foreground sm:pl-9">
+				<p className="text-sm text-muted-foreground">
 					{readOnly
-						? "No key names are visible in this shared Project yet."
-						: "No keys yet. Add the first key for this Project."}
+						? "No key names are visible in this shared vault yet."
+						: "No keys yet. Add the first key to this vault."}
 				</p>
 			) : null}
 		</section>
+	);
+}
+
+function AttachedProjectsPanel({
+	vault,
+	attachments,
+	visibleAttachments,
+	onDetachProject,
+	isDetachingProject,
+}: {
+	vault: Vault;
+	attachments: VaultAttachmentView[];
+	visibleAttachments: VaultAttachmentView[];
+	onDetachProject: (projectId: string) => void;
+	isDetachingProject: boolean;
+}) {
+	return (
+		<section className="space-y-3 border-t p-4 xl:border-t-0">
+			<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+				<div>
+					<h4 className="text-sm font-semibold">Attached Projects</h4>
+					<p className="text-xs text-muted-foreground">Projects where agents can use this vault.</p>
+				</div>
+				{visibleAttachments.length !== attachments.length ? (
+					<p className="text-xs text-muted-foreground">
+						Showing {visibleAttachments.length} of {attachments.length}
+					</p>
+				) : null}
+			</div>
+			{visibleAttachments.length > 0 ? (
+				<div className="divide-y rounded-md border">
+					{visibleAttachments.map((attachment) => (
+						<VaultProjectAttachmentRow
+							key={attachment.projectId}
+							vault={vault}
+							attachment={attachment}
+							onDetachProject={onDetachProject}
+							isDetachingProject={isDetachingProject}
+						/>
+					))}
+				</div>
+			) : (
+				<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+					This vault is not attached to any Project in the current view.
+				</p>
+			)}
+		</section>
+	);
+}
+
+function VaultProjectAttachmentRow({
+	vault,
+	attachment,
+	onDetachProject,
+	isDetachingProject,
+}: {
+	vault: Vault;
+	attachment: VaultAttachmentView;
+	onDetachProject: (projectId: string) => void;
+	isDetachingProject: boolean;
+}) {
+	const projectName = attachment.project ? displayProjectName(attachment.project) : "this Project";
+	return (
+		<div className="flex items-start justify-between gap-3 p-3">
+			<div className="min-w-0">
+				{attachment.project ? (
+					<ProjectIdentity
+						project={attachment.project}
+						agent={attachment.agent}
+						showOwner={false}
+						showAccess={attachment.readOnly}
+						titleClassName="text-sm"
+					/>
+				) : (
+					<div className="min-w-0">
+						<h5 className="text-sm font-semibold">Unknown Project</h5>
+						<p className="truncate font-mono text-xs text-muted-foreground" translate="no">
+							{attachment.projectId}
+						</p>
+					</div>
+				)}
+			</div>
+			{vault.is_owner ? (
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					onClick={() => {
+						const ok = window.confirm(
+							`Remove from ${projectName}?\n\n${vault.slug} will no longer be available in that Project. The vault and its keys stay attached to other Projects.`,
+						);
+						if (ok) onDetachProject(attachment.projectId);
+					}}
+					disabled={isDetachingProject}
+					className="shrink-0 text-muted-foreground hover:text-destructive"
+					aria-label={`Remove ${vault.slug} from ${projectName}`}
+					title="Remove from Project"
+				>
+					<Trash2 className="size-3.5" />
+				</Button>
+			) : null}
+		</div>
 	);
 }
 

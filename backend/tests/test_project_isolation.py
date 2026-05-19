@@ -38,7 +38,7 @@ from app.models.memory import Memory
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.user import User
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 
 
 async def _override_factory(db_session: AsyncSession, user: User, api_key: ApiKey | None = None):
@@ -631,12 +631,12 @@ async def test_search_excludes_vault_for_scoped_keys(
     # scoped key.
     vault = Vault(
         user_id=seed_user.id,
-        project_id=env.default_project_id,
         slug="search-vault",
         name="Search Test Vault",
     )
     db_session.add(vault)
     await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=env.default_project_id))
     item = VaultItem(
         vault_id=vault.id,
         section="api",

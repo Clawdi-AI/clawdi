@@ -15,59 +15,25 @@ function requireAuth() {
 }
 
 /**
- * Create a vault if it doesn't exist. 409 is the common "already exists"
- * response and is expected when the caller is about to PUT items into a
- * pre-existing vault; everything else propagates as a normal ApiError so
- * users see auth/network failures instead of a silent skip.
+ * Create a vault if it doesn't exist, and attach it to the selected
+ * Project when the caller pins one. The endpoint is idempotent for an
+ * existing slug, so this is safe before every item write.
  */
 async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?: string) {
 	const created = await api.POST("/api/vault", {
 		body: { slug, name },
 		params: projectId ? { query: { project_id: projectId } } : { query: {} },
 	});
-	// `response` is only populated when the server actually replied — on a
-	// network-level failure `response` is undefined, so optional-chain it
-	// before inspecting the status, then let `unwrap` raise the right
-	// ApiError (either the HTTP one or a synthetic network one).
-	if (created.error !== undefined && created.response?.status !== 409) {
-		unwrap(created);
-	}
+	unwrap(created);
 }
 
-/**
- * Resolve the slug → exact project_id. Round 30 added a 409
- * `ambiguous_vault_slug` whenever a JWT (or unbound) caller can
- * see the same slug under multiple projects (Personal + env-A, two
- * envs with collision-named vaults, etc.). Slug-only lookups
- * pre-this-helper would 409 in those cases. We resolve by:
- *   1. Listing visible vaults (cheap — `/api/vault` returns
- *      a single page with project_id per row).
- *   2. Picking the row whose project_id matches the caller's
- *      default WRITE project (`/api/projects/default`). For
- *      Agent API keys this is unambiguous (one visible
- *      project); for JWT/unbound it picks the same project a
- *      fresh `clawdi vault set` would create the vault in,
- *      keeping CLI behavior consistent across read+write.
- *   3. Falling back to any unique match if no slug+default
- *      pair exists (fresh CLI account where the vault was
- *      created in a non-default project by the dashboard).
- *   4. Returning `null` when the slug genuinely doesn't
- *      exist for this caller; downstream calls then surface
- *      the server's 404 to the user.
- */
 async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<string | null> {
 	const list = unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } }));
-	const candidates = list.items.filter((v) => v.slug === slug);
-	if (candidates.length === 0) return null;
-	if (candidates.length === 1) return candidates[0].project_id;
+	const candidate = list.items.find((v) => v.slug === slug);
+	if (!candidate) return null;
 	const def = unwrap(await api.GET("/api/projects/default")).project_id ?? "";
-	const inDefault = candidates.find((v) => v.project_id === def);
-	if (inDefault) return inDefault.project_id;
-	// Multiple matches, none in the default project. Pick the
-	// first deterministically — caller still gets a single
-	// project, which is better than a 409 for any sane user
-	// flow (and we surface a hint in the diagnostics path).
-	return candidates[0].project_id;
+	if (def && candidate.project_ids.includes(def)) return def;
+	return candidate.project_ids[0] ?? null;
 }
 
 export async function vaultSet(key: string, opts: { project?: string } = {}) {
@@ -100,11 +66,6 @@ export async function vaultSet(key: string, opts: { project?: string } = {}) {
 
 	await ensureVault(api, vaultSlug, vaultSlug, pinnedProjectId);
 
-	// Pass project_id so the server's slug → vault lookup
-	// doesn't 409 on JWT / unbound callers who can see the
-	// same slug under multiple projects. For Agent API keys
-	// this is a no-op — only one project is visible. `ensureVault`
-	// above just guaranteed at least one match exists.
 	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, vaultSlug));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
@@ -155,44 +116,38 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	);
 	const vaults = page.items;
 
-	// Pass each vault's project_id from the listing so the
-	// items lookup never trips the round-30 ambiguity 409.
-	// For Agent API keys this is a no-op (single visible
-	// project); for JWT / unbound it disambiguates a duplicate
-	// slug across projects deterministically.
-	const fetchItems = (slug: string, project_id: string) =>
+	const fetchItems = (slug: string, attachedProjectId?: string) =>
 		api
 			.GET("/api/vault/{slug}/items", {
-				params: { path: { slug }, query: { project_id } },
+				params: {
+					path: { slug },
+					query: attachedProjectId ? { project_id: attachedProjectId } : {},
+				},
 			})
 			.then(unwrap);
 
 	if (opts.json || !process.stdout.isTTY) {
-		// Emit an ARRAY of `{slug, project_id, name, items}` instead
-		// of a `slug → items` map. Round 30's per-project vault
-		// uniqueness means a JWT or unbound caller can see the
-		// same slug in two projects (Personal + env-A); the map
-		// shape would have the second row silently overwrite the
-		// first under the shared key, dropping one project's items
-		// entirely. The array shape preserves both rows so
-		// `jq '.[] | select(.project_id=="…")'` etc still works,
-		// and downstream tooling can consistently key on
-		// `(project_id, slug)` rather than guessing.
+		// Emit an array so tooling can inspect each vault with its
+		// attached Projects. Keys belong to the vault; project_ids are
+		// where that vault is available.
 		const out: Array<{
 			slug: string;
-			project_id: string;
+			project_ids: string[];
 			name: string;
 			items: Awaited<ReturnType<typeof fetchItems>>;
 			references: VaultReferenceRow[];
 		}> = [];
 		for (const v of vaults) {
-			const items = await fetchItems(v.slug, v.project_id);
+			const attachedProjectId = projectId ?? v.project_ids[0];
+			const items = await fetchItems(v.slug, attachedProjectId);
 			out.push({
 				slug: v.slug,
-				project_id: v.project_id,
+				project_ids: v.project_ids,
 				name: v.name,
 				items,
-				references: buildVaultReferenceRows(v.project_id, v.slug, items),
+				references: attachedProjectId
+					? buildVaultReferenceRows(attachedProjectId, v.slug, items)
+					: [],
 			});
 		}
 		console.log(JSON.stringify(out, null, 2));
@@ -211,11 +166,13 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	}
 
 	for (const v of vaults) {
-		const items = await fetchItems(v.slug, v.project_id);
-		console.log(
-			chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(`project=${v.project_id}`)}`),
-		);
-		for (const row of buildVaultReferenceRows(v.project_id, v.slug, items)) {
+		const attachedProjectId = projectId ?? v.project_ids[0];
+		const items = await fetchItems(v.slug, attachedProjectId);
+		const projectLabel = attachedProjectId ? `project=${attachedProjectId}` : "project=unattached";
+		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(projectLabel)}`));
+		for (const row of attachedProjectId
+			? buildVaultReferenceRows(attachedProjectId, v.slug, items)
+			: []) {
 			console.log(chalk.gray(`    ${sanitizeMetadata(row.key)}`));
 			console.log(chalk.gray(`      ${row.reference}`));
 		}

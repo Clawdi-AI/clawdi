@@ -3406,8 +3406,13 @@ export interface components {
             slug: string;
             /** Name */
             name: string;
-            /** Project Id */
-            project_id: string;
+            /** Project Ids */
+            project_ids: string[];
+            /**
+             * Is Owner
+             * @default true
+             */
+            is_owner: boolean;
             /**
              * Created At
              * Format: date-time

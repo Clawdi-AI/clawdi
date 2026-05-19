@@ -19,7 +19,7 @@ from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
 from app.models.user import User
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.services.sharing import generate_share_token, hash_share_token, resolve_owner_handle
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
@@ -539,9 +539,14 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
         (env.default_project_id, "primary-secret"),
         (context_project.id, "context-secret"),
     ):
-        vault = Vault(user_id=seed_user.id, project_id=project_id, slug="default", name="Default")
+        vault = Vault(
+            user_id=seed_user.id,
+            slug=f"default-{str(project_id)[:8]}",
+            name="Default",
+        )
         db_session.add(vault)
         await db_session.flush()
+        db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=project_id))
         ciphertext, nonce = encrypt(value)
         db_session.add(
             VaultItem(

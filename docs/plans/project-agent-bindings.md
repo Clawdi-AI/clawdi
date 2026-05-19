@@ -305,7 +305,8 @@ own Project.
 2. `POST /api/vault/resolve?key=<KEY>&agent_id=<agent_id>`
 3. `POST /api/vault/resolve?agent_id=<agent_id>`
 4. Existing `/api/vault` CRUD routes accept explicit `project_id`
-   where needed and keep plaintext resolution CLI/API-key-only.
+   where needed to attach or filter a vault. Keys stay on the vault
+   itself, and plaintext resolution remains CLI/API-key-only.
 
 These endpoints enforce Agent Project composition and return provenance.
 
