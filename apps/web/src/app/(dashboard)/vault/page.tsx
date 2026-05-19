@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, Key, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Lock, Plus, Search, Trash2, X } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -37,7 +37,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 interface VaultField {
 	key: string;
@@ -86,6 +86,7 @@ function VaultPageInner() {
 	const [createProjectId, setCreateProjectId] = useState("");
 	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
 	const [projectFilter, setProjectFilter] = useQueryState(
 		"project",
 		parseAsString.withDefault("all").withOptions({ clearOnDefault: true, history: "replace" }),
@@ -178,6 +179,18 @@ function VaultPageInner() {
 			});
 	}, [filterProjectId, searchQuery, vaultCatalog]);
 
+	const ownedVaultCatalog = useMemo(
+		() => visibleVaultCatalog.filter((entry) => entry.vault.is_owner),
+		[visibleVaultCatalog],
+	);
+	const sharedVaultCatalog = useMemo(
+		() => visibleVaultCatalog.filter((entry) => !entry.vault.is_owner),
+		[visibleVaultCatalog],
+	);
+	const selectedVault = useMemo(
+		() => visibleVaultCatalog.find((entry) => entry.vault.id === selectedVaultId) ?? null,
+		[visibleVaultCatalog, selectedVaultId],
+	);
 	const createProjectAlreadyHasSlug =
 		!!newVaultSlug && vaultCatalog.some((entry) => entry.vault.slug === newVaultSlug);
 
@@ -191,6 +204,19 @@ function VaultPageInner() {
 		const nextProjectId = filterProjectIsWritable ? filterProjectId : (ownedProjects[0]?.id ?? "");
 		if (createProjectId !== nextProjectId) setCreateProjectId(nextProjectId);
 	}, [createProjectId, filterProjectId, ownedProjects]);
+
+	useEffect(() => {
+		if (visibleVaultCatalog.length === 0) {
+			if (selectedVaultId) setSelectedVaultId(null);
+			return;
+		}
+		if (
+			!selectedVaultId ||
+			!visibleVaultCatalog.some((entry) => entry.vault.id === selectedVaultId)
+		) {
+			setSelectedVaultId(ownedVaultCatalog[0]?.vault.id ?? sharedVaultCatalog[0]?.vault.id ?? null);
+		}
+	}, [ownedVaultCatalog, selectedVaultId, sharedVaultCatalog, visibleVaultCatalog]);
 
 	const createVault = useMutation({
 		mutationFn: async ({ slug, projectId }: { slug: string; projectId: string }) =>
@@ -273,7 +299,8 @@ function VaultPageInner() {
 					<>
 						{vaults ? (
 							<Badge variant="secondary">
-								{vaultCatalog.length} vault{vaultCatalog.length === 1 ? "" : "s"}
+								{vaultCatalog.filter((entry) => entry.vault.is_owner).length} mine ·{" "}
+								{vaultCatalog.filter((entry) => !entry.vault.is_owner).length} shared
 							</Badge>
 						) : null}
 						<Button
@@ -337,7 +364,7 @@ function VaultPageInner() {
 				}}
 			/>
 
-			<section className="space-y-3">
+			<section className="space-y-4">
 				<div className="rounded-lg border bg-card/60 p-4">
 					<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)_minmax(220px,320px)] lg:items-end">
 						<div className="space-y-1">
@@ -345,7 +372,7 @@ function VaultPageInner() {
 							<p className="text-sm text-muted-foreground">
 								{filterProject
 									? `Showing vaults attached to ${displayProjectName(filterProject)}.`
-									: "Each card shows one vault and the Projects it is attached to."}
+									: "My Vaults are editable. Shared Vaults are read-only."}
 							</p>
 						</div>
 						<ProjectScopePicker
@@ -380,34 +407,42 @@ function VaultPageInner() {
 				</div>
 
 				{isLoading ? (
-					<div className="space-y-3">
-						{Array.from({ length: 3 }).map((_, index) => (
-							<div key={index} className="rounded-lg border bg-card/60 p-4">
-								<Skeleton className="h-14 w-full" />
-								<Skeleton className="mt-3 h-28 w-full" />
-							</div>
-						))}
+					<div className="grid gap-4 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+						<div className="rounded-lg border bg-card/60 p-4">
+							<Skeleton className="h-6 w-32" />
+							<Skeleton className="mt-4 h-16 w-full" />
+							<Skeleton className="mt-3 h-16 w-full" />
+						</div>
+						<div className="rounded-lg border bg-card/60 p-4">
+							<Skeleton className="h-16 w-full" />
+							<Skeleton className="mt-4 h-52 w-full" />
+						</div>
 					</div>
 				) : visibleVaultCatalog.length > 0 ? (
-					<div className="space-y-3">
-						{visibleVaultCatalog.map((entry) => (
-							<VaultCard
-								key={entry.vault.id}
-								entry={entry}
+					<div className="grid gap-4 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] xl:items-start">
+						<VaultInventoryList
+							ownedEntries={ownedVaultCatalog}
+							sharedEntries={sharedVaultCatalog}
+							selectedVaultId={selectedVault?.vault.id ?? null}
+							onSelect={setSelectedVaultId}
+						/>
+						{selectedVault ? (
+							<VaultDetailPanel
+								entry={selectedVault}
 								ownedProjects={ownedProjects}
 								agents={envs ?? []}
 								onAddProject={(projectId) =>
-									addVaultToProject.mutate({ slug: entry.vault.slug, projectId })
+									addVaultToProject.mutate({ slug: selectedVault.vault.slug, projectId })
 								}
 								isAddingProject={addVaultToProject.isPending}
 								onDetachProject={(projectId) =>
-									detachVaultProject.mutate({ slug: entry.vault.slug, projectId })
+									detachVaultProject.mutate({ slug: selectedVault.vault.slug, projectId })
 								}
 								isDetachingProject={detachVaultProject.isPending}
-								onDeleteVault={() => deleteVault.mutate({ slug: entry.vault.slug })}
+								onDeleteVault={() => deleteVault.mutate({ slug: selectedVault.vault.slug })}
 								isDeletingVault={deleteVault.isPending}
 							/>
-						))}
+						) : null}
 					</div>
 				) : (
 					<EmptyState
@@ -548,7 +583,136 @@ function CreateVaultDialog({
 	);
 }
 
-function VaultCard({
+function VaultInventoryList({
+	ownedEntries,
+	sharedEntries,
+	selectedVaultId,
+	onSelect,
+}: {
+	ownedEntries: VaultCatalogView[];
+	sharedEntries: VaultCatalogView[];
+	selectedVaultId: string | null;
+	onSelect: (vaultId: string) => void;
+}) {
+	return (
+		<aside className="overflow-hidden rounded-lg border bg-card/60 xl:sticky xl:top-4">
+			<div className="border-b p-4">
+				<h3 className="text-sm font-semibold">Choose Vault</h3>
+				<p className="mt-1 text-xs text-muted-foreground">
+					Editable Vaults are yours. Shared Vaults come from Projects shared with you.
+				</p>
+			</div>
+			<div className="divide-y">
+				<VaultInventorySection
+					title="My Vaults"
+					count={ownedEntries.length}
+					emptyText="No editable vaults in this view."
+					entries={ownedEntries}
+					selectedVaultId={selectedVaultId}
+					onSelect={onSelect}
+				/>
+				<VaultInventorySection
+					title="Shared With Me"
+					count={sharedEntries.length}
+					emptyText="No read-only vaults in this view."
+					entries={sharedEntries}
+					selectedVaultId={selectedVaultId}
+					onSelect={onSelect}
+				/>
+			</div>
+		</aside>
+	);
+}
+
+function VaultInventorySection({
+	title,
+	count,
+	emptyText,
+	entries,
+	selectedVaultId,
+	onSelect,
+}: {
+	title: string;
+	count: number;
+	emptyText: string;
+	entries: VaultCatalogView[];
+	selectedVaultId: string | null;
+	onSelect: (vaultId: string) => void;
+}) {
+	return (
+		<section className="p-3">
+			<div className="mb-2 flex items-center justify-between gap-2 px-1">
+				<h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
+				<Badge variant="secondary" className="text-xs">
+					{count}
+				</Badge>
+			</div>
+			{entries.length > 0 ? (
+				<div className="space-y-1.5">
+					{entries.map((entry) => (
+						<VaultInventoryRow
+							key={entry.vault.id}
+							entry={entry}
+							selected={entry.vault.id === selectedVaultId}
+							onSelect={() => onSelect(entry.vault.id)}
+						/>
+					))}
+				</div>
+			) : (
+				<p className="px-1 py-3 text-sm text-muted-foreground">{emptyText}</p>
+			)}
+		</section>
+	);
+}
+
+function VaultInventoryRow({
+	entry,
+	selected,
+	onSelect,
+}: {
+	entry: VaultCatalogView;
+	selected: boolean;
+	onSelect: () => void;
+}) {
+	const { vault, visibleAttachments, attachments } = entry;
+	const attachmentLabel =
+		visibleAttachments.length === 1
+			? attachmentName(visibleAttachments[0])
+			: `${visibleAttachments.length || attachments.length} Projects`;
+	return (
+		<button
+			type="button"
+			onClick={onSelect}
+			aria-pressed={selected}
+			className={cn(
+				"flex w-full items-start gap-3 rounded-md border border-transparent px-3 py-2.5 text-left transition-colors",
+				"hover:border-border hover:bg-muted/30",
+				selected && "border-border bg-background shadow-xs",
+			)}
+		>
+			<span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-background/70 text-muted-foreground">
+				{vault.is_owner ? <Key className="size-4" /> : <Lock className="size-4" />}
+			</span>
+			<span className="min-w-0 flex-1">
+				<span className="flex min-w-0 items-center gap-2">
+					<span className="truncate text-sm font-semibold" translate="no">
+						{vault.name || vault.slug}
+					</span>
+					<VaultAccessBadge isOwner={vault.is_owner} compact />
+				</span>
+				<span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+					<span className="truncate font-mono" translate="no">
+						{vault.slug}
+					</span>
+					<span className="shrink-0">·</span>
+					<span className="truncate">{attachmentLabel}</span>
+				</span>
+			</span>
+		</button>
+	);
+}
+
+function VaultDetailPanel({
 	entry,
 	ownedProjects,
 	agents,
@@ -586,19 +750,18 @@ function VaultCard({
 			<div className="border-b p-4">
 				<div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
 					<div className="flex min-w-0 items-start gap-3">
-						<span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border bg-background/70 text-muted-foreground">
-							<Key className="size-4.5" />
+						<span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-md border bg-background/70 text-muted-foreground">
+							{canManageVault ? <Key className="size-5" /> : <Lock className="size-5" />}
 						</span>
 						<div className="min-w-0 space-y-2">
 							<div className="flex flex-wrap items-center gap-2">
-								<h3 className="truncate text-lg font-semibold" translate="no">
+								<h3 className="truncate text-xl font-semibold" translate="no">
 									{vault.name || vault.slug}
 								</h3>
-								<Badge variant="outline">Vault</Badge>
+								<VaultAccessBadge isOwner={vault.is_owner} />
 								<Badge variant="secondary">
 									{attachments.length} Project{attachments.length === 1 ? "" : "s"}
 								</Badge>
-								{canManageVault ? null : <Badge variant="outline">Read-only</Badge>}
 							</div>
 							<div className="truncate font-mono text-xs text-muted-foreground" translate="no">
 								{vault.slug}
@@ -640,6 +803,18 @@ function VaultCard({
 					) : null}
 				</div>
 			</div>
+			{canManageVault ? null : (
+				<div className="flex gap-3 border-b bg-muted/20 px-4 py-3 text-sm">
+					<Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+					<div>
+						<p className="font-medium">Read-only Vault</p>
+						<p className="text-xs text-muted-foreground">
+							You can inspect key names because this Vault is attached to a shared Project. Only the
+							owner can edit keys or Project access.
+						</p>
+					</div>
+				</div>
+			)}
 			<div className="grid xl:grid-cols-[minmax(0,1fr)_380px]">
 				<VaultKeysPanel vault={vault} accessProjectId={accessProjectId} />
 				<AttachedProjectsPanel
@@ -777,6 +952,21 @@ function ProjectChip({ attachment }: { attachment: VaultAttachmentView }) {
 	);
 }
 
+function VaultAccessBadge({ isOwner, compact = false }: { isOwner: boolean; compact?: boolean }) {
+	return (
+		<Badge
+			variant={isOwner ? "secondary" : "outline"}
+			className={cn("shrink-0 text-xs", compact && "px-1.5 py-0 text-[11px]")}
+		>
+			{isOwner ? "Owner" : "Read-only"}
+		</Badge>
+	);
+}
+
+function attachmentName(attachment: VaultAttachmentView) {
+	return attachment.project ? displayProjectName(attachment.project) : "Unknown Project";
+}
+
 function VaultKeysPanel({
 	vault,
 	accessProjectId,
@@ -899,9 +1089,11 @@ function VaultKeysPanel({
 		<section className="space-y-3 p-4 xl:border-r">
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div className="min-w-0">
-					<h4 className="text-sm font-semibold">Keys in this Vault</h4>
+					<h4 className="text-sm font-semibold">Keys</h4>
 					<p className="text-xs text-muted-foreground">
-						Every attached Project uses this same key set.
+						{readOnly
+							? "Key names are visible; secret values stay hidden."
+							: "Stored once here; every attached Project uses this same set."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -1011,8 +1203,12 @@ function AttachedProjectsPanel({
 		<section className="space-y-3 border-t p-4 xl:border-t-0">
 			<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
 				<div>
-					<h4 className="text-sm font-semibold">Attached Projects</h4>
-					<p className="text-xs text-muted-foreground">Projects where agents can use this vault.</p>
+					<h4 className="text-sm font-semibold">Project Availability</h4>
+					<p className="text-xs text-muted-foreground">
+						{vault.is_owner
+							? "Projects where agents can use this Vault."
+							: "Shared Projects that include this Vault."}
+					</p>
 				</div>
 				{visibleAttachments.length !== attachments.length ? (
 					<p className="text-xs text-muted-foreground">
