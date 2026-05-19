@@ -1426,6 +1426,201 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Servers */
+        get: operations["list_mcp_servers_api_mcp_servers_get"];
+        put?: never;
+        /** Create Mcp Server */
+        post: operations["create_mcp_server_api_mcp_servers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/servers/{server_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Mcp Server */
+        get: operations["get_mcp_server_api_mcp_servers__server_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Mcp Server */
+        delete: operations["delete_mcp_server_api_mcp_servers__server_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Mcp Server */
+        patch: operations["update_mcp_server_api_mcp_servers__server_id__patch"];
+        trace?: never;
+    };
+    "/api/mcp/packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Packs */
+        get: operations["list_mcp_packs_api_mcp_packs_get"];
+        put?: never;
+        /** Create Mcp Pack */
+        post: operations["create_mcp_pack_api_mcp_packs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/packs/{pack_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Mcp Pack */
+        get: operations["get_mcp_pack_api_mcp_packs__pack_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Mcp Pack */
+        delete: operations["delete_mcp_pack_api_mcp_packs__pack_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Mcp Pack */
+        patch: operations["update_mcp_pack_api_mcp_packs__pack_id__patch"];
+        trace?: never;
+    };
+    "/api/mcp/packs/{pack_id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Mcp Pack Entries */
+        put: operations["put_mcp_pack_entries_api_mcp_packs__pack_id__entries_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Mcp Installations */
+        get: operations["list_project_mcp_installations_api_projects__project_id__mcp_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Project Mcp Installation */
+        post: operations["create_project_mcp_installation_api_projects__project_id__mcp_installations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp/packs/{pack_id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Mcp Pack In Project */
+        post: operations["install_mcp_pack_in_project_api_projects__project_id__mcp_packs__pack_id__install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp/installations/{installation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Mcp Installation */
+        get: operations["get_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Project Mcp Installation */
+        delete: operations["delete_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Project Mcp Installation */
+        patch: operations["update_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__patch"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp/installations/{installation_id}/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Project Mcp Credential Bindings */
+        put: operations["put_project_mcp_credential_bindings_api_projects__project_id__mcp_installations__installation_id__bindings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/mcp/installations/{installation_id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Project Mcp Tool Policies */
+        put: operations["put_project_mcp_tool_policies_api_projects__project_id__mcp_installations__installation_id__tools_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -2348,6 +2543,303 @@ export interface components {
              */
             created_at: string;
         };
+        /** McpPackCreate */
+        McpPackCreate: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "catalog" | "private";
+            /** Entries */
+            entries?: components["schemas"]["McpPackEntryInput"][];
+        };
+        /** McpPackEntriesPut */
+        McpPackEntriesPut: {
+            /** Entries */
+            entries: components["schemas"]["McpPackEntryInput"][];
+        };
+        /** McpPackEntryInput */
+        McpPackEntryInput: {
+            /** Mcp Server Id */
+            mcp_server_id: string;
+            /** Server Alias */
+            server_alias: string;
+            /** Default Tool Prefix */
+            default_tool_prefix?: string | null;
+            /**
+             * Default Enabled
+             * @default true
+             */
+            default_enabled: boolean;
+            /** Version Pin */
+            version_pin?: string | null;
+        };
+        /** McpPackEntryResponse */
+        McpPackEntryResponse: {
+            /** Id */
+            id: string;
+            /** Pack Id */
+            pack_id: string;
+            /** Mcp Server Id */
+            mcp_server_id: string;
+            /** Server Alias */
+            server_alias: string;
+            /** Default Tool Prefix */
+            default_tool_prefix: string | null;
+            /** Default Enabled */
+            default_enabled: boolean;
+            /** Version Pin */
+            version_pin: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            server: components["schemas"]["McpServerResponse"];
+        };
+        /** McpPackResponse */
+        McpPackResponse: {
+            /** Id */
+            id: string;
+            /** Owner User Id */
+            owner_user_id: string | null;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string | null;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "catalog" | "private";
+            /** Archived At */
+            archived_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Entries */
+            entries?: components["schemas"]["McpPackEntryResponse"][];
+        };
+        /** McpPackUpdate */
+        McpPackUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+        };
+        /** McpServerCreate */
+        McpServerCreate: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "catalog" | "private";
+            /**
+             * Source Type
+             * @default custom
+             * @enum {string}
+             */
+            source_type: "catalog" | "custom" | "composio" | "pipedream" | "docker";
+            /** Source Ref */
+            source_ref?: string | null;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "stdio" | "http" | "sse" | "streamable_http";
+            /**
+             * Runtime Mode
+             * @default local
+             * @enum {string}
+             */
+            runtime_mode: "local" | "remote";
+            /** Default Command */
+            default_command?: string | null;
+            /** Default Args */
+            default_args?: unknown[] | null;
+            /** Default Cwd Template */
+            default_cwd_template?: string | null;
+            /** Default Url */
+            default_url?: string | null;
+            /** Required Inputs */
+            required_inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Config */
+            auth_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Runtime Config */
+            runtime_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /** Discovery Cache */
+            discovery_cache?: {
+                [key: string]: unknown;
+            } | null;
+            /** Risk Metadata */
+            risk_metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** McpServerResponse */
+        McpServerResponse: {
+            /** Id */
+            id: string;
+            /** Owner User Id */
+            owner_user_id: string | null;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string | null;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "catalog" | "private";
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "catalog" | "custom" | "composio" | "pipedream" | "docker";
+            /** Source Ref */
+            source_ref: string | null;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "stdio" | "http" | "sse" | "streamable_http";
+            /**
+             * Runtime Mode
+             * @enum {string}
+             */
+            runtime_mode: "local" | "remote";
+            /** Default Command */
+            default_command: string | null;
+            /** Default Args */
+            default_args: unknown[] | null;
+            /** Default Cwd Template */
+            default_cwd_template: string | null;
+            /** Default Url */
+            default_url: string | null;
+            /** Required Inputs */
+            required_inputs: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Config */
+            auth_config: {
+                [key: string]: unknown;
+            } | null;
+            /** Runtime Config */
+            runtime_config: {
+                [key: string]: unknown;
+            } | null;
+            /** Capabilities */
+            capabilities: {
+                [key: string]: unknown;
+            } | null;
+            /** Discovery Cache */
+            discovery_cache: {
+                [key: string]: unknown;
+            } | null;
+            /** Risk Metadata */
+            risk_metadata: {
+                [key: string]: unknown;
+            } | null;
+            /** Archived At */
+            archived_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** McpServerUpdate */
+        McpServerUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Source Type */
+            source_type?: ("catalog" | "custom" | "composio" | "pipedream" | "docker") | null;
+            /** Source Ref */
+            source_ref?: string | null;
+            /** Transport */
+            transport?: ("stdio" | "http" | "sse" | "streamable_http") | null;
+            /** Runtime Mode */
+            runtime_mode?: ("local" | "remote") | null;
+            /** Default Command */
+            default_command?: string | null;
+            /** Default Args */
+            default_args?: unknown[] | null;
+            /** Default Cwd Template */
+            default_cwd_template?: string | null;
+            /** Default Url */
+            default_url?: string | null;
+            /** Required Inputs */
+            required_inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Config */
+            auth_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Runtime Config */
+            runtime_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /** Discovery Cache */
+            discovery_cache?: {
+                [key: string]: unknown;
+            } | null;
+            /** Risk Metadata */
+            risk_metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /**
          * MemberResponse
          * @description Returned by GET /api/projects/{project_id}/members.
@@ -2487,6 +2979,316 @@ export interface components {
             name: string;
             /** Slug */
             slug?: string | null;
+        };
+        /** ProjectMcpCredentialBindingInput */
+        ProjectMcpCredentialBindingInput: {
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "env" | "header" | "arg" | "url" | "oauth" | "config_file";
+            /** Target Name */
+            target_name: string;
+            /**
+             * Value Source
+             * @default vault
+             * @enum {string}
+             */
+            value_source: "vault" | "local_env" | "input" | "connector";
+            /** Vault Id */
+            vault_id?: string | null;
+            /** Vault Item Id */
+            vault_item_id?: string | null;
+            /** Display Vault Uri */
+            display_vault_uri?: string | null;
+            /** Local Env Name */
+            local_env_name?: string | null;
+            /** Input Id */
+            input_id?: string | null;
+            /** Connector Ref */
+            connector_ref?: string | null;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+            /**
+             * Redact In Logs
+             * @default true
+             */
+            redact_in_logs: boolean;
+        };
+        /** ProjectMcpCredentialBindingResponse */
+        ProjectMcpCredentialBindingResponse: {
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "env" | "header" | "arg" | "url" | "oauth" | "config_file";
+            /** Target Name */
+            target_name: string;
+            /**
+             * Value Source
+             * @default vault
+             * @enum {string}
+             */
+            value_source: "vault" | "local_env" | "input" | "connector";
+            /** Vault Id */
+            vault_id?: string | null;
+            /** Vault Item Id */
+            vault_item_id?: string | null;
+            /** Display Vault Uri */
+            display_vault_uri?: string | null;
+            /** Local Env Name */
+            local_env_name?: string | null;
+            /** Input Id */
+            input_id?: string | null;
+            /** Connector Ref */
+            connector_ref?: string | null;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+            /**
+             * Redact In Logs
+             * @default true
+             */
+            redact_in_logs: boolean;
+            /** Id */
+            id: string;
+            /** Installation Id */
+            installation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ProjectMcpCredentialBindingsPut */
+        ProjectMcpCredentialBindingsPut: {
+            /** Bindings */
+            bindings: components["schemas"]["ProjectMcpCredentialBindingInput"][];
+        };
+        /** ProjectMcpInstallationCreate */
+        ProjectMcpInstallationCreate: {
+            /** Mcp Server Id */
+            mcp_server_id: string;
+            /** Source Pack Id */
+            source_pack_id?: string | null;
+            /** Server Alias */
+            server_alias?: string | null;
+            /** Tool Prefix */
+            tool_prefix?: string | null;
+            /** Version Pin */
+            version_pin?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Command Override */
+            command_override?: string | null;
+            /** Args Override */
+            args_override?: unknown[] | null;
+            /** Cwd Template Override */
+            cwd_template_override?: string | null;
+            /** Url Override */
+            url_override?: string | null;
+            /** Env Template */
+            env_template?: {
+                [key: string]: unknown;
+            } | null;
+            /** Headers Template */
+            headers_template?: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Override */
+            auth_override?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timeout Ms */
+            timeout_ms?: number | null;
+            /** Startup Timeout Ms */
+            startup_timeout_ms?: number | null;
+            /**
+             * Restart Policy
+             * @default none
+             * @enum {string}
+             */
+            restart_policy: "none" | "on_failure";
+        };
+        /** ProjectMcpInstallationResponse */
+        ProjectMcpInstallationResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Mcp Server Id */
+            mcp_server_id: string;
+            /** Source Pack Id */
+            source_pack_id: string | null;
+            /** Installed By User Id */
+            installed_by_user_id: string;
+            /** Server Alias */
+            server_alias: string;
+            /** Tool Prefix */
+            tool_prefix: string | null;
+            /** Version Pin */
+            version_pin: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Command Override */
+            command_override: string | null;
+            /** Args Override */
+            args_override: unknown[] | null;
+            /** Cwd Template Override */
+            cwd_template_override: string | null;
+            /** Url Override */
+            url_override: string | null;
+            /** Env Template */
+            env_template: {
+                [key: string]: unknown;
+            } | null;
+            /** Headers Template */
+            headers_template: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Override */
+            auth_override: {
+                [key: string]: unknown;
+            } | null;
+            /** Timeout Ms */
+            timeout_ms: number | null;
+            /** Startup Timeout Ms */
+            startup_timeout_ms: number | null;
+            /**
+             * Restart Policy
+             * @enum {string}
+             */
+            restart_policy: "none" | "on_failure";
+            /** Archived At */
+            archived_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            server: components["schemas"]["McpServerResponse"];
+            /** Bindings */
+            bindings?: components["schemas"]["ProjectMcpCredentialBindingResponse"][];
+            /** Tool Policies */
+            tool_policies?: components["schemas"]["ProjectMcpToolPolicyResponse"][];
+        };
+        /** ProjectMcpInstallationUpdate */
+        ProjectMcpInstallationUpdate: {
+            /** Server Alias */
+            server_alias?: string | null;
+            /** Tool Prefix */
+            tool_prefix?: string | null;
+            /** Version Pin */
+            version_pin?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Command Override */
+            command_override?: string | null;
+            /** Args Override */
+            args_override?: unknown[] | null;
+            /** Cwd Template Override */
+            cwd_template_override?: string | null;
+            /** Url Override */
+            url_override?: string | null;
+            /** Env Template */
+            env_template?: {
+                [key: string]: unknown;
+            } | null;
+            /** Headers Template */
+            headers_template?: {
+                [key: string]: unknown;
+            } | null;
+            /** Auth Override */
+            auth_override?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timeout Ms */
+            timeout_ms?: number | null;
+            /** Startup Timeout Ms */
+            startup_timeout_ms?: number | null;
+            /** Restart Policy */
+            restart_policy?: ("none" | "on_failure") | null;
+        };
+        /** ProjectMcpToolPoliciesPut */
+        ProjectMcpToolPoliciesPut: {
+            /** Tools */
+            tools: components["schemas"]["ProjectMcpToolPolicyInput"][];
+        };
+        /** ProjectMcpToolPolicyInput */
+        ProjectMcpToolPolicyInput: {
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Risk Level
+             * @default unknown
+             * @enum {string}
+             */
+            risk_level: "read" | "write" | "destructive" | "unknown";
+            /**
+             * Approval Policy
+             * @default default
+             * @enum {string}
+             */
+            approval_policy: "default" | "always_ask" | "never_allow";
+        };
+        /** ProjectMcpToolPolicyResponse */
+        ProjectMcpToolPolicyResponse: {
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Risk Level
+             * @default unknown
+             * @enum {string}
+             */
+            risk_level: "read" | "write" | "destructive" | "unknown";
+            /**
+             * Approval Policy
+             * @default default
+             * @enum {string}
+             */
+            approval_policy: "default" | "always_ask" | "never_allow";
+            /** Id */
+            id: string;
+            /** Installation Id */
+            installation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** ProjectResponse */
         ProjectResponse: {
@@ -5772,6 +6574,605 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorToolResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mcp_servers_api_mcp_servers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"][];
+                };
+            };
+        };
+    };
+    create_mcp_server_api_mcp_servers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mcp_server_api_mcp_servers__server_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mcp_server_api_mcp_servers__server_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_mcp_server_api_mcp_servers__server_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mcp_packs_api_mcp_packs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpPackResponse"][];
+                };
+            };
+        };
+    };
+    create_mcp_pack_api_mcp_packs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpPackCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mcp_pack_api_mcp_packs__pack_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mcp_pack_api_mcp_packs__pack_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_mcp_pack_api_mcp_packs__pack_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpPackUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_mcp_pack_entries_api_mcp_packs__pack_id__entries_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpPackEntriesPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_mcp_installations_api_projects__project_id__mcp_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_project_mcp_installation_api_projects__project_id__mcp_installations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMcpInstallationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_mcp_pack_in_project_api_projects__project_id__mcp_packs__pack_id__install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                installation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                installation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_mcp_installation_api_projects__project_id__mcp_installations__installation_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                installation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMcpInstallationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_project_mcp_credential_bindings_api_projects__project_id__mcp_installations__installation_id__bindings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                installation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMcpCredentialBindingsPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_project_mcp_tool_policies_api_projects__project_id__mcp_installations__installation_id__tools_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                installation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMcpToolPoliciesPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMcpInstallationResponse"];
                 };
             };
             /** @description Validation Error */
