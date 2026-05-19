@@ -241,14 +241,16 @@ async function resolveEnvReferences(
 	env: Record<string, string | undefined>,
 	opts: ResolveReferenceOptions,
 ): Promise<Record<string, string>> {
-	const refs = Object.values(env).flatMap((value) =>
-		typeof value === "string" ? scanClawdiReferences(value) : [],
+	const uses = scanEnvReferenceUses(env);
+	if (uses.length === 0) return {};
+	const resolved = await resolveReferenceMap(
+		uses.map((entry) => entry.ref),
+		opts,
 	);
-	if (refs.length === 0) return {};
-	const resolved = await resolveReferenceMap(refs, opts);
+	const envKeysWithReferences = new Set(uses.map((entry) => entry.envKey));
 	const out: Record<string, string> = {};
 	for (const [key, value] of Object.entries(env)) {
-		if (typeof value !== "string" || scanClawdiReferences(value).length === 0) continue;
+		if (typeof value !== "string" || !envKeysWithReferences.has(key)) continue;
 		out[key] = replaceResolvedReferences(value, resolved);
 	}
 	console.log(

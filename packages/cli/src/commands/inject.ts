@@ -7,7 +7,6 @@ import {
 	type ResolveReferenceOptions,
 	replaceResolvedReferences,
 	resolveReferenceMap,
-	scanClawdiReferences,
 	scanClawdiReferenceUses,
 	type VaultReferencePreview,
 } from "../lib/secret-references";
@@ -32,7 +31,7 @@ export async function injectCommand(opts: InjectOptions = {}): Promise<void> {
 
 		const input = await readInput(inputPath);
 		const uses = scanClawdiReferenceUses(input);
-		const refs = scanClawdiReferences(input);
+		const refs = uses.map((use) => use.ref);
 		if (opts.dryRun) {
 			const resolved = await previewReferenceMap(refs, applyLinkedProjectContext(opts));
 			printDryRunPlan("inject", resolved, uses, input);
