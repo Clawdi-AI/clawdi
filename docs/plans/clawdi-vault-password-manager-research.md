@@ -41,6 +41,80 @@ compatibility, request policy, and careful logging boundaries. Phase 1 should
 ship password-manager workflow first, while preserving data-model and API
 extension points for proxy/runtime policies.
 
+## Product Definition
+
+Clawdi Vault is an agent-native credential layer. It is not a general-purpose
+password manager, not a full Infisical replacement, and not a low-level key
+management system.
+
+The product job is:
+
+> Let a person or team give an AI agent the credentials it needs for a specific
+> Project and runtime task, without copying plaintext secrets into files,
+> prompts, logs, or broad process environments, and with enough provenance,
+> audit, expiry, and revocation to recover when the agent or workflow changes.
+
+The narrow v1 promise is:
+
+> Clawdi keeps plaintext credentials out of repo files and local config by
+> turning them into `clawdi://` references that resolve only at runtime through
+> Project-aware, conflict-aware CLI and web workflows.
+
+The later trust promise is:
+
+> For client-managed vaults, Clawdi servers store ciphertext and grants but
+> cannot decrypt item values.
+
+The later agent-runtime promise is:
+
+> For controlled hosted runtimes, Clawdi can convert selected credentials from
+> plaintext strings into scoped outbound capabilities, so agents use APIs
+> without receiving long-lived credential values.
+
+## Target Users
+
+1. **Solo developer using local agents**
+   - Wants one place to store API keys and DB URLs used by Claude Code, Codex,
+     Hermes, OpenClaw, scripts, and local dev servers.
+   - Cares about not committing `.env` files and not manually copying keys
+     between machines.
+2. **Small team sharing Projects**
+   - Wants shared Project credentials with clear ownership, conflict handling,
+     and visible access.
+   - Cares about revoking a member or Agent without rotating everything by
+     hand.
+3. **Operator running hosted or remote agents**
+   - Wants agents to use GitHub, Anthropic, Stripe, or internal APIs without
+     exposing broad long-lived tokens to the agent process.
+   - Cares about audit, TTL, kill switch, and eventually proxy-mode isolation.
+4. **Security-conscious buyer**
+   - Wants a credible path from server-managed encryption to client-managed
+     encryption and customer-controlled boundaries.
+   - Cares about honest claims more than premature zero-knowledge marketing.
+
+## Product Principles
+
+1. **References first, plaintext last**
+   - The durable artifact users write into files, docs, scripts, and agent
+     setup should be a `clawdi://` reference, not a secret value.
+2. **Project is the human boundary; Agent is the runtime boundary**
+   - Sharing answers who may access a Project.
+   - Agent Project and attachments answer which Projects a runtime may use.
+3. **Runtime delivery is explicit**
+   - `read`, `run`, `inject`, hosted runtime leases, and future proxy mode are
+     different delivery choices with different risk levels.
+4. **Every resolved secret has provenance**
+   - Users must be able to see which Project, vault, section, field, and Agent
+     context produced a value.
+5. **Do not overclaim**
+   - Server-managed encryption is not zero-knowledge.
+   - Env injection is not a sandbox.
+   - Proxy mode is only strong when network egress is controlled.
+6. **Leave room for capabilities**
+   - Even when Phase 1 returns strings, the model should support future
+     credential kinds: raw secret value, connected account, service binding,
+     and proxy capability.
+
 ## Current State
 
 Today Clawdi Vault is server-side encrypted:
@@ -320,18 +394,30 @@ honest.
 
 ## Product Goals
 
-1. Give users a commercial password-manager workflow inside Clawdi.
-2. Make `clawdi://` a real secret-reference scheme, not just an input parser.
-3. Let users keep secret references in `.env`, config files, scripts, agent
-   setup, and docs without plaintext leakage.
-4. Make CLI and web surfaces feel like one Vault product, not separate tools.
-5. Preserve Clawdi Project and Agent semantics.
-6. Reduce blast radius for AI agents through scoped grants, TTL, audit, and
-   explicit future proxy/TEE modes.
-7. Move toward a trust model where Clawdi cannot decrypt ordinary user vault
-   items.
-8. Keep OpenBao/KMS behind an adapter so deployment choices do not leak into
-   product semantics.
+1. **Replace plaintext secret habits with references**
+   - A user should be able to turn a plaintext `.env` or config template into
+     durable `clawdi://` references and keep working locally.
+2. **Make secret resolution Project-aware and Agent-aware**
+   - The same reference should resolve through explicit Project selection,
+     folder links, or Agent Project attachment order without losing provenance.
+3. **Make conflicts safer than silent precedence**
+   - Duplicate keys across attached Projects should block by default and
+     explain the winning and conflicting sources.
+4. **Make Vault usable from both CLI and web**
+   - Users should create, inspect, copy references, and understand access from
+     the dashboard, while the CLI handles runtime delivery.
+5. **Add operational controls before stronger crypto claims**
+   - Audit, versions, rollback, scoped tokens, TTL, and kill switches should
+     land before client-side encryption or proxy mode.
+6. **Move toward a client-managed trust model**
+   - For ordinary user vault items, the target state is server-stored
+     ciphertext with client-held or client-unwrapped keys.
+7. **Reserve proxy/TEE for controlled hosted runtimes**
+   - Agent Vault-style proxying remains a strategic track, but only where
+     Clawdi can enforce network/proxy behavior.
+8. **Keep key-management infrastructure behind adapters**
+   - OpenBao/KMS should improve server-side key operations without becoming
+     the product model or leaking deployment choices into user workflows.
 
 ## Non-goals
 
@@ -344,6 +430,10 @@ honest.
 6. Do not build an HTTPS proxy/MITM system in Phase 1. Keep the architecture
    ready for it, but defer implementation until hosted-agent runtime isolation
    is better understood.
+7. Do not build broad enterprise secrets-manager features before the agent
+   workflow is proven: dynamic DB credentials, PKI, SSH certificates,
+   Kubernetes operators, cross-cloud syncs, and full policy engines are later
+   integrations or enterprise tracks.
 
 ## Recommended User Experience
 
@@ -379,6 +469,25 @@ clawdi://vlt_<id>/item_<id>/field_<id>
 ```
 
 The web UI should have "Copy Clawdi Reference" on every field.
+
+### Phase 1 User Journey
+
+The first release should make one workflow feel complete:
+
+1. User stores a secret through CLI or web.
+2. User copies or types a `clawdi://` reference.
+3. User replaces plaintext values in `.env`, config templates, or scripts with
+   that reference.
+4. User runs `clawdi run --env-file .env -- <cmd>` or
+   `clawdi inject --in config.template --out config`.
+5. Clawdi resolves only the explicit references, shows which Project context was
+   used, and refuses ambiguous Agent-attached Project conflicts by default.
+6. The child process or generated file receives the plaintext value; Clawdi's
+   own logs and diagnostics do not print it.
+
+This journey is successful even before client-side encryption ships because it
+removes plaintext from durable files and validates the agent-native reference
+model.
 
 ### CLI Commands
 
@@ -437,6 +546,20 @@ The web Vault should support:
 - Audit timeline.
 - Rotate marker and "needs rotation" state.
 - Kill switch for a Project, Agent, or individual field.
+
+For Phase 1, the web surface should stay narrow:
+
+- Create and edit vault metadata and fields using the existing server-managed
+  encryption model.
+- Show field names and sections without exposing values by default.
+- Reveal/copy plaintext only after explicit user action and only for authorized
+  users.
+- Copy `clawdi://` reference for each field.
+- Show Project and Agent access context enough to explain where runtime
+  resolution will read from.
+
+Avoid building a heavy generic password-manager UI before references and
+runtime delivery are proven.
 
 ### Machine and Agent Access
 
@@ -777,6 +900,15 @@ Treat as a separate feasibility track for hosted agents or high-trust tiers.
 Phase 1 should be intentionally narrow so the product quickly feels like a
 password manager while preserving honest security claims.
 
+Phase 1 product objective:
+
+> A developer can stop storing plaintext secrets in local project files, keep
+> `clawdi://` references under version control, and run existing tools with
+> those references resolved only at runtime.
+
+Phase 1 is not a security rearchitecture. It is a product wedge that proves the
+reference model, Project/Agent resolution semantics, and CLI/web workflow.
+
 Ship first:
 
 1. Reference parser and scanner shared by CLI commands.
@@ -792,6 +924,34 @@ Ship first:
    runtime.
 9. Minimal `credential_kind` and `runtime_policy` fields or API placeholders so
    later proxy/service-binding work does not require a reference-model rewrite.
+
+Required behavior details:
+
+1. `clawdi read`
+   - Accepts one `clawdi://` reference.
+   - Supports `--project`, `--agent`, `--json`, and `--debug`.
+   - Prints plaintext only when the user explicitly asks to read a value.
+   - Debug output shows provenance but never logs the secret value.
+2. `clawdi run`
+   - Reads references from explicit `--env-file` inputs and inherited env vars.
+   - Resolves only references, not every secret in the Project.
+   - Keeps legacy all-env injection behind `--all-vault-env`.
+   - Supports `--no-inherit-env` for cleaner child-process environments.
+   - Does not promise child-process stdout/stderr masking unless a separate
+     non-TTY masking mode is explicitly enabled.
+3. `clawdi inject`
+   - Reads a template file or stdin.
+   - Writes to a file or stdout.
+   - Refuses to overwrite existing files unless `--force` is passed.
+   - Prints a summary of resolved references and redacts values.
+4. Batch resolve API
+   - Accepts explicit references, Project/Agent context, and conflict policy.
+   - Returns values plus provenance for CLI use.
+   - Emits audit events for every resolved reference.
+5. Web copy reference
+   - Provides a stable reference for every field.
+   - Indicates whether the reference is Project-relative or absolute.
+   - Does not require revealing the plaintext value.
 
 Defer from Phase 1:
 
@@ -814,6 +974,8 @@ Acceptance criteria:
 5. Documentation clearly states env injection is a compatibility mechanism.
 6. The model can represent a future non-env credential delivery mode without
    changing `clawdi://` references.
+7. Existing `clawdi run` users can still opt into all-env injection during the
+   migration window.
 
 ## Recommended Phasing
 
@@ -946,6 +1108,31 @@ Rejected alternatives:
 - **Build proxy mode before reference UX:** technically attractive, but it
   introduces CA, MITM, egress-control, compatibility, and logging risks before
   users have the basic password-manager workflow.
+
+## Product Decision
+
+Clawdi Vault should be positioned as:
+
+> A Project-aware credential layer for AI agents and developer workflows.
+
+Do say:
+
+- "Use `clawdi://` references instead of plaintext secrets in files."
+- "Resolve secrets through Project and Agent context at runtime."
+- "Audit, expire, and revoke runtime secret access."
+- "Future client-managed vaults can prevent Clawdi servers from decrypting
+  ordinary item values."
+
+Do not say yet:
+
+- "Clawdi is zero-knowledge."
+- "Clawdi run is a sandbox."
+- "Agents cannot exfiltrate secrets."
+- "Clawdi replaces your whole enterprise secrets platform."
+
+The first product wedge is not "store secrets"; many products do that. The
+wedge is "make credentials usable by agents with Clawdi's Project and Agent
+semantics, without turning every workflow into plaintext env sprawl."
 
 ## Open Questions
 
