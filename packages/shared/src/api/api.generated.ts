@@ -1142,9 +1142,10 @@ export interface paths {
          * Resolve Vault
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
-         *     Plaintext is owner-only. Shared project memberships widen metadata/read
-         *     surfaces, but never decrypt another user's vault values. A bound Agent API
-         *     key is further capped to its default-write project.
+         *     Project membership grants CLI/API-key callers read access to vault values.
+         *     A bound Agent API key is capped to its default-write Project unless
+         *     resolving through its own `agent_id`, where the Agent Project plus explicit
+         *     attached Projects define runtime reads.
          */
         post: operations["resolve_vault_api_vault_resolve_post"];
         delete?: never;
