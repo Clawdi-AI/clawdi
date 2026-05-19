@@ -25,6 +25,35 @@ const execFileAsync = promisify(execFile);
 type TargetStrategy = "adapter_default" | "explicit";
 type SourceKind = "file" | "keychain";
 
+interface BuiltInCredentialAdapter {
+	logicalName: string;
+	defaultPath: () => string;
+}
+
+const TOOL_ALIASES: Record<string, string> = {
+	claude: "claude-code",
+	claude_code: "claude-code",
+	claudecode: "claude-code",
+	github: "gh",
+	"github-cli": "gh",
+	github_cli: "gh",
+};
+
+const BUILTIN_CREDENTIAL_ADAPTERS: Record<string, BuiltInCredentialAdapter> = {
+	codex: {
+		logicalName: "auth.json",
+		defaultPath: () => join(getCodexHome(), "auth.json"),
+	},
+	"claude-code": {
+		logicalName: ".credentials.json",
+		defaultPath: () => join(getClaudeHome(), ".credentials.json"),
+	},
+	gh: {
+		logicalName: "hosts.yml",
+		defaultPath: () => join(getGhConfigHome(), "hosts.yml"),
+	},
+};
+
 interface CredentialFileSnapshot {
 	logicalName: string;
 	sourcePath: string;
@@ -120,54 +149,16 @@ function normalizeName(input: string, label: string, maxLength = 80): string {
 }
 
 function canonicalTool(input: string): string {
-	switch (input) {
-		case "claude":
-		case "claude-code":
-		case "claude_code":
-		case "claudecode":
-			return "claude-code";
-		case "github":
-		case "github-cli":
-		case "github_cli":
-			return "gh";
-		default:
-			return input;
-	}
+	return TOOL_ALIASES[input] ?? input;
 }
 
-function codexDefaultPlan(from?: string, to?: string): FilePlan[] {
-	const sourcePath = resolve(expandHome(from ?? join(getCodexHome(), "auth.json")));
+function builtInFilePlan(tool: string, from?: string, to?: string): FilePlan[] | null {
+	const adapter = BUILTIN_CREDENTIAL_ADAPTERS[tool];
+	if (!adapter) return null;
+	const sourcePath = resolve(expandHome(from ?? adapter.defaultPath()));
 	return [
 		{
-			logicalName: "auth.json",
-			sourcePath,
-			targetPath: to ? resolve(expandHome(to)) : undefined,
-			targetStrategy: to ? "explicit" : "adapter_default",
-			sourceKind: "file",
-			mode: 0o600,
-		},
-	];
-}
-
-function claudeCodeDefaultPlan(from?: string, to?: string): FilePlan[] {
-	const sourcePath = resolve(expandHome(from ?? join(getClaudeHome(), ".credentials.json")));
-	return [
-		{
-			logicalName: ".credentials.json",
-			sourcePath,
-			targetPath: to ? resolve(expandHome(to)) : undefined,
-			targetStrategy: to ? "explicit" : "adapter_default",
-			sourceKind: "file",
-			mode: 0o600,
-		},
-	];
-}
-
-function ghDefaultPlan(from?: string, to?: string): FilePlan[] {
-	const sourcePath = resolve(expandHome(from ?? join(getGhConfigHome(), "hosts.yml")));
-	return [
-		{
-			logicalName: "hosts.yml",
+			logicalName: adapter.logicalName,
 			sourcePath,
 			targetPath: to ? resolve(expandHome(to)) : undefined,
 			targetStrategy: to ? "explicit" : "adapter_default",
@@ -200,9 +191,8 @@ function buildImportPlan(tool: string, opts: ImportOptions): FilePlan[] {
 	if (source === "keychain") {
 		return keychainPlan(tool, opts);
 	}
-	if (tool === "codex") return codexDefaultPlan(opts.from, opts.to);
-	if (tool === "claude-code") return claudeCodeDefaultPlan(opts.from, opts.to);
-	if (tool === "gh") return ghDefaultPlan(opts.from, opts.to);
+	const builtInPlan = builtInFilePlan(tool, opts.from, opts.to);
+	if (builtInPlan) return builtInPlan;
 	if (!opts.from) {
 		throw new Error(
 			`No built-in credential adapter for "${tool}". Built-ins are codex, claude-code, and gh. Pass --from <path> to import an explicit credential file.`,
@@ -251,16 +241,8 @@ function validateKeychainIdentifier(input: string, label: string): string {
 }
 
 function adapterTargetPath(tool: string, logicalName: string): string | null {
-	if (tool === "codex" && logicalName === "auth.json") {
-		return join(getCodexHome(), "auth.json");
-	}
-	if (tool === "claude-code" && logicalName === ".credentials.json") {
-		return join(getClaudeHome(), ".credentials.json");
-	}
-	if (tool === "gh" && logicalName === "hosts.yml") {
-		return join(getGhConfigHome(), "hosts.yml");
-	}
-	return null;
+	const adapter = BUILTIN_CREDENTIAL_ADAPTERS[tool];
+	return adapter?.logicalName === logicalName ? adapter.defaultPath() : null;
 }
 
 async function snapshotFile(plan: FilePlan): Promise<CredentialFileSnapshot> {
@@ -450,8 +432,8 @@ function credentialFileMode(): number {
 }
 
 function backupPath(path: string): string {
-	const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
-	return `${path}.bak-${timestamp}`;
+	const timestamp = new Date().toISOString().replace(/[-:.]/g, "");
+	return `${path}.bak-${timestamp}-${process.pid}`;
 }
 
 function copyCredentialBackup(from: string, to: string): void {

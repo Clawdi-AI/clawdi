@@ -240,6 +240,9 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	if (!response.ok) {
 		throw new VaultReferenceResolveError(response.status, body);
 	}
+	if (preview) {
+		return stripPreviewValue(body as T, input);
+	}
 	return { ...(body as T), reference: input };
 }
 
@@ -247,24 +250,18 @@ export async function resolveReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferenceHit>> {
-	const resolved = new Map<string, VaultReferenceHit>();
-	for (const ref of refs) {
-		if (resolved.has(ref.raw)) continue;
-		resolved.set(ref.raw, await resolveClawdiReference(ref.raw, opts));
-	}
-	return resolved;
+	const unique = uniqueReferenceRaws(refs);
+	const hits = await Promise.all(unique.map((raw) => resolveClawdiReference(raw, opts)));
+	return new Map(hits.map((hit) => [hit.reference, hit]));
 }
 
 export async function previewReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferencePreview>> {
-	const resolved = new Map<string, VaultReferencePreview>();
-	for (const ref of refs) {
-		if (resolved.has(ref.raw)) continue;
-		resolved.set(ref.raw, await previewClawdiReference(ref.raw, opts));
-	}
-	return resolved;
+	const unique = uniqueReferenceRaws(refs);
+	const hits = await Promise.all(unique.map((raw) => previewClawdiReference(raw, opts)));
+	return new Map(hits.map((hit) => [hit.reference, hit]));
 }
 
 export function replaceResolvedReferences(
@@ -312,17 +309,35 @@ export class VaultReferenceResolveError extends Error {
 function resolveErrorMessage(status: number, body: unknown): string {
 	const detail = extractDetail(body);
 	if (status === 404) return detail.message ?? "No vault value found for reference.";
-	if (status === 403) return "vault resolve requires CLI authentication.";
+	if (status === 403) return detail.message ?? "vault resolve requires CLI authentication.";
 	if (status === 409) return detail.message ?? "Vault conflict blocked.";
+	if (detail.message) return detail.message;
 	return `vault resolve failed (${status}).`;
 }
 
 function extractDetail(body: unknown): { message?: string } {
 	if (body === null || typeof body !== "object" || !("detail" in body)) return {};
 	const detail = (body as { detail?: unknown }).detail;
+	if (typeof detail === "string") return { message: detail };
 	if (detail === null || typeof detail !== "object") return {};
 	const message = (detail as { message?: unknown }).message;
 	return typeof message === "string" ? { message } : {};
+}
+
+function uniqueReferenceRaws(refs: ClawdiReference[]): string[] {
+	const seen = new Set<string>();
+	const unique: string[] = [];
+	for (const ref of refs) {
+		if (seen.has(ref.raw)) continue;
+		seen.add(ref.raw);
+		unique.push(ref.raw);
+	}
+	return unique;
+}
+
+function stripPreviewValue<T extends VaultReferencePreview>(body: T, reference: string): T {
+	const { value: _value, ...preview } = body as T & { value?: unknown };
+	return { ...preview, reference } as T;
 }
 
 function resolveAgentId(agent: string): string {

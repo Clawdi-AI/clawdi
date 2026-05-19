@@ -204,6 +204,7 @@ describe("readCommand", () => {
 				response: () =>
 					jsonResponse({
 						reference: exact,
+						value: "sk-live",
 						source_project_id: "00000000-0000-0000-0000-000000000123",
 						source_alias: "prod",
 						vault_slug: "prod",
