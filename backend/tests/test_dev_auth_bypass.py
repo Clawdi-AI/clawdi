@@ -6,11 +6,12 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import _auth_via_dev_bypass
+from app.core.auth import _auth_via_dev_bypass, optional_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
@@ -92,3 +93,29 @@ async def test_dev_auth_bypass_authenticates_web_route_and_creates_personal_proj
         if existing is not None:
             await db_session.delete(existing)
             await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_dev_auth_bypass_authenticates_optional_public_web_auth(
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    clerk_id = f"dev_public_{uuid.uuid4().hex[:12]}"
+    monkeypatch.setattr(settings, "dev_auth_bypass", True)
+    monkeypatch.setattr(settings, "dev_auth_token", "dev-bypass")
+    monkeypatch.setattr(settings, "dev_auth_clerk_id", clerk_id)
+    monkeypatch.setattr(settings, "dev_auth_email", "dev-public@clawdi.local")
+    monkeypatch.setattr(settings, "dev_auth_name", "Dev Public User")
+    monkeypatch.setattr(settings, "environment", "development")
+
+    ctx = await optional_web_auth(
+        credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials="dev-bypass"),
+        db=db_session,
+    )
+
+    assert ctx is not None
+    assert ctx.user.clerk_id == clerk_id
+    assert ctx.user.email == "dev-public@clawdi.local"
+
+    await db_session.delete(ctx.user)
+    await db_session.commit()

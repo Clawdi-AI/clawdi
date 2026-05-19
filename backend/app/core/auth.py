@@ -590,6 +590,9 @@ async def optional_web_auth(
     if credentials is None:
         return None
     token = credentials.credentials
+    ctx = await _auth_via_dev_bypass(token, db)
+    if ctx:
+        return ctx
     try:
         ctx = await _auth_via_clerk_jwt(token, db)
     except HTTPException:

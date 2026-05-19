@@ -228,12 +228,12 @@ export default function SharePage() {
 						</div>
 					) : (
 						<div className="space-y-4">
-							<Link href={`/sign-in?redirect_url=/share/${token}`}>
-								<Button className="w-full" size="lg">
+							<Button asChild className="w-full" size="lg">
+								<Link href={`/sign-in?redirect_url=/share/${token}`}>
 									<LogIn className="mr-2 size-4" />
 									Sign in to accept
-								</Button>
-							</Link>
+								</Link>
+							</Button>
 							<div className="rounded-lg border bg-muted/30 p-4">
 								<div className="flex items-center gap-2 text-sm font-medium">
 									<KeyRound className="size-4" />
