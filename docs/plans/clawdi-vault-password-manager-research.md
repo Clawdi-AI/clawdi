@@ -753,8 +753,7 @@ clawdi agent credentials import gh \
 
 clawdi agent credentials materialize codex \
   --project personal \
-  --to ~/.codex/auth.json \
-  --backup
+  --to ~/.codex/auth.json
 ```
 
 This is different from `clawdi run --env-file`:
