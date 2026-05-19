@@ -1,6 +1,6 @@
 # Clawdi Vault Password Manager Research
 
-**Status:** research complete; architecture direction proposed
+**Status:** research expanded; architecture direction proposed
 **Last updated:** 2026-05-19
 **Owner:** product + platform
 
@@ -136,6 +136,66 @@ Implication for Clawdi:
 - Local credentials and vault unlock material should use OS-native secure
   storage where possible.
 
+### AWS Secrets Manager Agent and HashiCorp Vault Agent
+
+Relevant product patterns:
+
+- AWS Secrets Manager Agent is a local HTTP service that lets workloads fetch
+  secrets from `localhost`, caches secret values in memory, is read-only, and
+  includes SSRF protection. Its default cache refresh TTL is 300 seconds.
+- HashiCorp Vault Agent handles auto-authentication, token and lease renewal,
+  client-side caching, template rendering, and process-supervisor mode that can
+  inject secrets into a child process environment.
+- Both products treat secret delivery as a runtime integration problem, not only
+  as a storage problem.
+
+Implication for Clawdi:
+
+- A local/sidecar agent pattern is useful for hosted agents, CI, and long-running
+  workloads where repeated CLI resolves are clumsy.
+- A localhost credential service must have request signing or loopback-only
+  controls, reference/path scoping, SSRF defenses, TTLs, and audit from day one.
+- Template rendering and env injection are compatibility paths; proxy or
+  capability-mediated access is the safer agent-native direction.
+
+### Akeyless
+
+Relevant product patterns:
+
+- Akeyless markets a SaaS secrets platform around zero-knowledge encryption and
+  Distributed Fragments Cryptography.
+- The Akeyless Gateway / Universal Secrets Connector pattern keeps a customer
+  controlled component close to workloads and identity sources.
+- It supports many auth methods and cloud/Kubernetes deployment patterns.
+
+Implication for Clawdi:
+
+- The market has appetite for SaaS secrets products that still provide a
+  customer-controlled cryptographic boundary.
+- Clawdi can use this as evidence for an eventual customer-held/device-held key
+  story while keeping the product surface agent-native.
+- A gateway/connector can be a later enterprise deployment mode for teams that
+  want local policy enforcement near their infrastructure.
+
+### Agent OAuth and Connected-Account Platforms
+
+Relevant product patterns:
+
+- Composio uses hosted Connect Links so users can connect accounts during chat
+  or onboarding.
+- The agent platform handles OAuth flows, token refresh, and credential
+  management for tool calls.
+- This is closer to agent tool authorization than generic password management.
+
+Implication for Clawdi:
+
+- Static API keys are only one class of agent credential. OAuth connected
+  accounts, delegated tool execution, and per-tool permissions should be part of
+  the long-term Vault model.
+- Clawdi Vault should store both secret references and connected-account handles.
+- Proxy execution can reduce how often agents receive raw OAuth refresh tokens
+  or long-lived API keys.
+
 ### OpenBao
 
 OpenBao Transit provides:
@@ -162,6 +222,49 @@ Implication for Clawdi:
 - OpenBao is useful for key operations and server-side hardening.
 - OpenBao is not a replacement for the Clawdi Vault product surface.
 - OpenBao alone does not make the product zero-knowledge.
+
+## Agent Credential Threat Model
+
+Clawdi Vault has a broader threat model than a normal developer secrets CLI
+because AI agents can read files, call tools, run commands, and transform secret
+material into follow-up actions. The core risks are:
+
+1. **Plaintext-at-rest leakage**
+   - Secrets copied into `.env`, shell history, config files, issue comments,
+     logs, generated code, or agent memory.
+   - Response: secret references, `inject`, `run`, masking, scanning, and
+     reference-first docs.
+2. **Untrusted child process or dependency**
+   - Any process launched with env vars can read and exfiltrate them.
+   - Response: least-reference resolution, `--no-inherit-env`, TTLs, warnings,
+     and proxy mode for high-risk commands.
+3. **Hosted-agent prompt/tool exfiltration**
+   - An agent can be instructed to print, save, or transmit values it can read.
+   - Response: per-Agent grants, approval prompts for sensitive references,
+     egress/tool policy, per-reference audit, and kill switches.
+4. **Backend/operator compromise**
+   - Server-side decrypt authority turns backend compromise into Vault
+     compromise.
+   - Response: KMS/OpenBao hardening first, then client-side encryption for
+     ordinary user-managed vault items.
+5. **Database or backup leak**
+   - Encrypted blobs and metadata can reveal names, structure, and access
+     patterns.
+   - Response: AEAD associated data, key separation, metadata minimization,
+     item versioning, and audit redaction.
+6. **Localhost credential-service abuse**
+   - A browser, malicious dependency, or SSRF path can try to hit a local
+     credential endpoint.
+   - Response: loopback binding plus request tokens, origin/path checks,
+     reference allowlists, short leases, and no broad list/read endpoints.
+7. **Collaborator and Project-sharing mistakes**
+   - A shared Project can expose secrets to the wrong Agent or user.
+   - Response: Project membership review, explicit Agent attachment, conflict
+     diagnostics, scoped service tokens, and visible access graph.
+
+This threat model pushes Clawdi toward three distinct delivery modes: local dev
+env injection for compatibility, local/sidecar service for workload ergonomics,
+and proxy/TEE-backed access for hosted agents with stronger controls.
 
 ## Product Goals
 
@@ -580,6 +683,42 @@ Properties:
 
 Treat as a separate feasibility track for hosted agents or high-trust tiers.
 
+## Phase 1 Build Scope
+
+Phase 1 should be intentionally narrow so the product quickly feels like a
+password manager while preserving honest security claims.
+
+Ship first:
+
+1. Reference parser and scanner shared by CLI commands.
+2. `clawdi read <clawdi://...>` with JSON and masked-default output modes.
+3. `clawdi run --env-file ... -- <cmd>` that resolves only explicit references
+   by default.
+4. `clawdi inject --in ... --out ...` for template workflows.
+5. Batch resolve API with provenance and conflict diagnostics.
+6. Web "Copy Clawdi Reference" on every field.
+7. Masking for command output where the CLI can reasonably mediate stdout and
+   stderr.
+8. Product copy that says Clawdi keeps plaintext out of files and injects at
+   runtime.
+
+Defer from Phase 1:
+
+1. Zero-knowledge marketing claims.
+2. Full client-side encrypted vault migration.
+3. OpenBao/KMS production adapter.
+4. Hosted-agent proxy enforcement.
+5. Dynamic secrets engines and full enterprise gateway deployment.
+
+Acceptance criteria:
+
+1. A developer can replace a plaintext `.env` file with `clawdi://` references.
+2. The same references work through `read`, `run`, and `inject`.
+3. Duplicate references across attached Projects produce a deterministic conflict
+   explanation.
+4. CLI output masks resolved secret values by default.
+5. Documentation clearly states env injection is a compatibility mechanism.
+
 ## Recommended Phasing
 
 ### Phase 1: Secret Reference UX
@@ -746,6 +885,19 @@ Rejected alternatives:
 - Keeper Secrets Manager CLI shows machine-oriented profiles, OS-native
   keychain storage, and environment substitution:
   <https://docs.keeper.io/en/keeperpam/secrets-manager/secrets-manager-command-line-interface>
+- AWS Secrets Manager Agent and HashiCorp Vault Agent show local/sidecar
+  delivery patterns: localhost HTTP cache, read-only secret access, auto-auth,
+  lease renewal, templating, and process-supervisor injection:
+  <https://docs.aws.amazon.com/secretsmanager/latest/userguide/secrets-manager-agent.html>
+  <https://developer.hashicorp.com/vault/docs/agent-and-proxy/agent>
+  <https://developer.hashicorp.com/vault/docs/agent-and-proxy/agent/template>
+- Akeyless is relevant as a SaaS secrets-manager proof point for
+  customer-controlled cryptographic boundaries and gateway deployment patterns:
+  <https://docs.akeyless.io/docs/universal-secrets-connector>
+- Composio is relevant for agent OAuth / connected-account UX, where the agent
+  platform manages Connect Links, OAuth, token refresh, and credential handling
+  for tool calls:
+  <https://docs.composio.dev/docs/authentication>
 - OpenBao Transit is appropriate for encryption-as-a-service, key rotation,
   rewrap, ACLs, and audit, but not as the Clawdi product model:
   <https://openbao.org/docs/secrets/transit/>
