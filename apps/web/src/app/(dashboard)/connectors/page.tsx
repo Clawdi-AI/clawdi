@@ -8,6 +8,11 @@ import {
 	ConnectorCard,
 	ConnectorCardSkeleton,
 } from "@/components/connectors/connector-card";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -143,45 +148,52 @@ function ConnectorsList() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Connectors"
-				description={CONNECTORS_RESOURCE.managementDescription}
-				actions={
-					<>
-						{total > 0 ? (
-							<Badge variant="secondary">{total.toLocaleString()} available</Badge>
-						) : null}
-						{connected.activeConnections.length > 0 ? (
+			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
+
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Plug}
+					title="Connector Catalog"
+					count={total > 0 ? `${total.toLocaleString()} available` : undefined}
+					description="Account-level app connections. Connect once, then agents can use approved tools."
+					toolbar={
+						connected.activeConnections.length > 0 ? (
 							<Badge>{connected.activeConnections.length} active</Badge>
-						) : null}
-					</>
-				}
-			/>
-
-			<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
-
-			{showConnectedRail ? (
-				<ConnectedRail
-					apps={connected.data}
-					isLoading={connected.isLoading}
-					error={connected.error}
+						) : null
+					}
 				/>
-			) : null}
+				<DashboardSectionToolbar>
+					<SearchInput
+						value={query}
+						onChange={handleQueryChange}
+						placeholder="Search connectors…"
+					/>
+				</DashboardSectionToolbar>
+				<div className="space-y-5 p-4">
+					{showConnectedRail ? (
+						<ConnectedRail
+							apps={connected.data}
+							isLoading={connected.isLoading}
+							error={connected.error}
+						/>
+					) : null}
 
-			<CatalogSection
-				items={items}
-				total={total}
-				page={page}
-				totalPages={totalPages}
-				connectedNames={connectedNames}
-				isLoading={isCatalogLoading}
-				isFetching={isCatalogFetching}
-				error={catalogError}
-				query={query}
-				labelled={showConnectedRail}
-				onPrev={() => setPage((p) => Math.max(1, p - 1))}
-				onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-			/>
+					<CatalogSection
+						items={items}
+						total={total}
+						page={page}
+						totalPages={totalPages}
+						connectedNames={connectedNames}
+						isLoading={isCatalogLoading}
+						isFetching={isCatalogFetching}
+						error={catalogError}
+						query={query}
+						labelled={showConnectedRail}
+						onPrev={() => setPage((p) => Math.max(1, p - 1))}
+						onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+					/>
+				</div>
+			</DashboardSection>
 		</div>
 	);
 }

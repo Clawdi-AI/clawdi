@@ -58,6 +58,8 @@ interface DataTableProps<TData, TValue> {
 
 	toolbar?: React.ReactNode | ((table: ReturnType<typeof useReactTable<TData>>) => React.ReactNode);
 	footer?: React.ReactNode;
+	className?: string;
+	tableContainerClassName?: string;
 
 	/**
 	 * Optional row grouping. When provided, the table inserts a
@@ -85,6 +87,8 @@ export function DataTable<TData, TValue>({
 	pageCount,
 	toolbar,
 	footer,
+	className,
+	tableContainerClassName,
 	getRowGroup,
 }: DataTableProps<TData, TValue>) {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -106,11 +110,16 @@ export function DataTable<TData, TValue>({
 	});
 
 	return (
-		<div className="space-y-3">
+		<div className={cn("space-y-3", className)}>
 			{typeof toolbar === "function" ? toolbar(table) : toolbar}
 
-			<div className="overflow-hidden rounded-lg border bg-card">
-				<Table className="table-fixed">
+			<div
+				className={cn(
+					"overflow-x-auto overflow-y-hidden rounded-lg border bg-card",
+					tableContainerClassName,
+				)}
+			>
+				<Table className="min-w-full table-fixed">
 					<TableHeader className="bg-muted/40">
 						{table.getHeaderGroups().map((headerGroup) => (
 							<TableRow key={headerGroup.id} className="hover:bg-transparent">

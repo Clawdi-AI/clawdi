@@ -5,6 +5,11 @@ import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-
 import Link from "next/link";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { makeMemoryColumns } from "@/components/memories/memory-columns";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -137,34 +142,36 @@ export default function MemoriesPage() {
 		/>
 	);
 	const tableToolbar = (
-		<DataTableToolbar
-			value={search}
-			onChange={(v) => {
-				setSearch(v);
-				setPagination((p) => ({ ...p, pageIndex: 0 }));
-			}}
-			placeholder="Search memories…"
-		>
-			<ToggleGroup
-				type="single"
-				value={category}
-				onValueChange={(v) => {
-					if (!v) return;
-					setCategory(v);
+		<DashboardSectionToolbar>
+			<DataTableToolbar
+				value={search}
+				onChange={(v) => {
+					setSearch(v);
 					setPagination((p) => ({ ...p, pageIndex: 0 }));
 				}}
-				variant="outline"
-				size="sm"
-				spacing={1}
-				className="w-full flex-wrap justify-start sm:w-fit"
+				placeholder="Search memories…"
 			>
-				{CATEGORIES.map((c) => (
-					<ToggleGroupItem key={c.value} value={c.value}>
-						{c.label}
-					</ToggleGroupItem>
-				))}
-			</ToggleGroup>
-		</DataTableToolbar>
+				<ToggleGroup
+					type="single"
+					value={category}
+					onValueChange={(v) => {
+						if (!v) return;
+						setCategory(v);
+						setPagination((p) => ({ ...p, pageIndex: 0 }));
+					}}
+					variant="outline"
+					size="sm"
+					spacing={1}
+					className="w-full flex-wrap justify-start sm:w-fit"
+				>
+					{CATEGORIES.map((c) => (
+						<ToggleGroupItem key={c.value} value={c.value}>
+							{c.label}
+						</ToggleGroupItem>
+					))}
+				</ToggleGroup>
+			</DataTableToolbar>
+		</DashboardSectionToolbar>
 	);
 
 	return (
@@ -173,30 +180,23 @@ export default function MemoriesPage() {
 				title="Memories"
 				description={MEMORIES_RESOURCE.managementDescription}
 				actions={
-					<>
-						{data ? (
-							<Badge variant="secondary">
-								{total} memor{total === 1 ? "y" : "ies"}
-							</Badge>
-						) : null}
-						<ToggleGroup
-							type="single"
-							value={provider}
-							onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
-							disabled={updateSettings.isPending}
-							variant="outline"
-							size="sm"
-						>
-							<ToggleGroupItem value="builtin">
-								<Database />
-								Built-in
-							</ToggleGroupItem>
-							<ToggleGroupItem value="mem0">
-								<Brain />
-								Mem0
-							</ToggleGroupItem>
-						</ToggleGroup>
-					</>
+					<ToggleGroup
+						type="single"
+						value={provider}
+						onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
+						disabled={updateSettings.isPending}
+						variant="outline"
+						size="sm"
+					>
+						<ToggleGroupItem value="builtin">
+							<Database />
+							Built-in
+						</ToggleGroupItem>
+						<ToggleGroupItem value="mem0">
+							<Brain />
+							Mem0
+						</ToggleGroupItem>
+					</ToggleGroup>
 				}
 			/>
 
@@ -207,43 +207,59 @@ export default function MemoriesPage() {
 				/>
 			) : null}
 
-			<AddMemoryForm />
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Brain}
+					title="Memory Library"
+					count={data ? `${total} memor${total === 1 ? "y" : "ies"}` : undefined}
+					description="Account-level notes agents can recall across runs. They are not shared through Projects."
+				/>
+				<div className="border-b px-4 py-3">
+					<AddMemoryForm />
+				</div>
 
-			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Failed to Load Memories</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
-			) : (
-				<>
-					<div className="md:hidden">
-						{tableToolbar}
-						<MobileMemoryList
-							memories={memories ?? []}
-							isLoading={isLoading}
-							emptyMessage={emptyMessage}
-							onDelete={requestDeleteMemory}
-						/>
-						<div className="mt-3">{paginationFooter}</div>
+				{error ? (
+					<div className="p-4">
+						<Alert variant="destructive">
+							<AlertCircle />
+							<AlertTitle>Failed to Load Memories</AlertTitle>
+							<AlertDescription>{errorMessage(error)}</AlertDescription>
+						</Alert>
 					</div>
-					<div className="hidden md:block">
-						<DataTable
-							columns={columns}
-							data={memories ?? []}
-							isLoading={isLoading}
-							getRowHref={(m) => memoryDetailHref(m.id)}
-							rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
-							emptyMessage={emptyMessage}
-							pagination={pagination}
-							onPaginationChange={setPagination}
-							pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
-							toolbar={tableToolbar}
-							footer={paginationFooter}
-						/>
-					</div>
-				</>
-			)}
+				) : (
+					<>
+						<div className="md:hidden">
+							{tableToolbar}
+							<div className="p-4">
+								<MobileMemoryList
+									memories={memories ?? []}
+									isLoading={isLoading}
+									emptyMessage={emptyMessage}
+									onDelete={requestDeleteMemory}
+								/>
+								<div className="mt-3">{paginationFooter}</div>
+							</div>
+						</div>
+						<div className="hidden md:block">
+							<DataTable
+								columns={columns}
+								data={memories ?? []}
+								isLoading={isLoading}
+								getRowHref={(m) => memoryDetailHref(m.id)}
+								rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
+								emptyMessage={emptyMessage}
+								pagination={pagination}
+								onPaginationChange={setPagination}
+								pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
+								toolbar={tableToolbar}
+								footer={<div className="border-t px-4 py-3">{paginationFooter}</div>}
+								className="space-y-0"
+								tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
+							/>
+						</div>
+					</>
+				)}
+			</DashboardSection>
 		</div>
 	);
 }

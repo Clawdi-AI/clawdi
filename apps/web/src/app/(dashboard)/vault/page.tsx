@@ -521,7 +521,7 @@ function CreateVaultDialog({
 								name="new-vault-slug"
 								value={slug}
 								onChange={(e) => onSlugChange(normalizeVaultSlug(e.target.value))}
-								placeholder="github"
+								placeholder="github…"
 								autoComplete="off"
 								spellCheck={false}
 							/>
@@ -568,7 +568,7 @@ function CreateVaultDialog({
 						onClick={onSubmit}
 					>
 						{isPending ? <Spinner /> : <Plus />}
-						{isPending ? "Creating..." : "Create Vault"}
+						{isPending ? "Creating…" : "Create Vault"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1135,7 +1135,7 @@ function VaultKeysPanel({
 						name={`key-${fieldDomId}`}
 						value={newKey}
 						onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-						placeholder="KEY_NAME"
+						placeholder="KEY_NAME…"
 						autoComplete="off"
 						spellCheck={false}
 						className="max-w-[220px] flex-1 font-mono"
@@ -1149,7 +1149,7 @@ function VaultKeysPanel({
 						type="password"
 						value={newValue}
 						onChange={(e) => setNewValue(e.target.value)}
-						placeholder="Secret value"
+						placeholder="Secret value…"
 						autoComplete="off"
 						className="flex-1"
 						onKeyDown={(e) => {

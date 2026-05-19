@@ -54,7 +54,8 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		singularLabel: "Skill",
 		navLabel: "Skills",
 		description: "Reusable instructions installed inside a Project.",
-		managementDescription: "Pick a Project, then install or remove the skills saved there.",
+		managementDescription:
+			"Skills are Project resources. Choose a Project, then install or remove its skills.",
 		href: "/skills",
 		emptyCta: "Browse Marketplace",
 		routeGroup: "project-resources",
@@ -71,7 +72,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Vaults",
 		description: "Vaults that can be attached to one or more Projects.",
 		managementDescription:
-			"Vaults hold secret keys. Attach a vault to every Project where agents should use it.",
+			"Vaults own the keys. Attach a vault to every Project where agents should use those keys.",
 		href: "/vault",
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
@@ -88,7 +89,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Sessions",
 		description: "Activity history from connected agents.",
 		managementDescription:
-			"Browse conversations synced from agents. Each session shows which agent produced it.",
+			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: "/sessions",
 		emptyCta: "Start Syncing",
 		routeGroup: "user-resources",
@@ -103,7 +104,8 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		singularLabel: "Memory",
 		navLabel: "Memories",
 		description: "Account-level notes agents can recall.",
-		managementDescription: "Manage memories separately from resources saved in Projects.",
+		managementDescription:
+			"Memories are account-level context agents can recall. Project resources stay in Projects.",
 		href: "/memories",
 		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
@@ -119,7 +121,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Connectors",
 		description: "Account-wide app connections.",
 		managementDescription:
-			"Connect apps once at the account level. Agents can use them through tools.",
+			"Connect apps once at the account level. Agents can use approved connectors through tools.",
 		href: "/connectors",
 		emptyCta: "Connect App",
 		routeGroup: "user-resources",
@@ -237,7 +239,7 @@ export function projectResourceScopeDescription(resource: ProjectResourceDefinit
 		case "container":
 			return "Start here to create Projects, share Custom Projects, or open Project resources.";
 		case "project-managed":
-			return "Saved in one Project. Pick the Project before you add, edit, or remove it.";
+			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":
 			return "Activity from agents, shown with the agent that produced it.";
 		case "account-wide":

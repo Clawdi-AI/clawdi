@@ -49,7 +49,7 @@ function parseJsonKeyImport(text: string): ParsedKeyImport {
 		}
 		return withDuplicateErrors(entries, errors);
 	} catch {
-		return { entries: [], errors: ['Invalid JSON. Paste a flat object like {"API_KEY":"..."}.'] };
+		return { entries: [], errors: ['Invalid JSON. Paste a flat object like {"API_KEY":"…"}.'] };
 	}
 }
 

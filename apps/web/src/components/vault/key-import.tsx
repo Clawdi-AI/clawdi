@@ -103,7 +103,7 @@ export function VaultKeyImportDialog({
 							id="vault-key-import"
 							value={text}
 							onChange={(event) => setText(event.target.value)}
-							placeholder={"GITHUB_TOKEN=...\nSENTRY_DSN=https://..."}
+							placeholder={"GITHUB_TOKEN=…\nSENTRY_DSN=https://…"}
 							spellCheck={false}
 							className="min-h-44 resize-y font-mono text-xs"
 						/>

@@ -11,22 +11,28 @@ import {
 	Plus,
 	Search,
 	Sparkles,
+	Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useMemo, useState } from "react";
+import { type ReactNode, Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
 import {
 	compareProjectsForUse,
 	displayProjectName,
 	isCustomProject,
 	isProjectOwner,
-	ProjectScopePicker,
+	ProjectCompactPicker,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { makeSkillColumns } from "@/components/skills/skill-columns";
+import { makeSkillColumns, resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,11 +40,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -275,21 +282,19 @@ function SkillsPageInner() {
 		if (ok) setCustomRepo("");
 	};
 
+	const installedSkillsEmptyMessage = isStaleProject
+		? "This link points to a Project that is no longer available. Pick another Project."
+		: isStaleTarget
+			? "This link points to an agent that no longer exists. Pick a Project above."
+			: orderedProjects.length === 0
+				? "Create a Project first, then install skills into it."
+				: isProjectReady
+					? "No skills in this Project yet. Install one from the marketplace below."
+					: "Pick a Project to see its skills.";
+
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Skills"
-				description={SKILLS_RESOURCE.managementDescription}
-				actions={
-					targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject) ? (
-						<ShareProjectDialog
-							projectId={targetProject.id}
-							projectName={displayProjectName(targetProject)}
-							projectKind={targetProject.kind}
-						/>
-					) : null
-				}
-			/>
+			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
 
 			{projectsError ? (
 				<Alert variant="destructive">
@@ -320,33 +325,42 @@ function SkillsPageInner() {
 			) : null}
 
 			{orderedProjects.length > 0 ? (
-				<section className="rounded-lg border bg-card/60 p-4">
-					<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] lg:items-start">
-						<div className="flex items-start gap-2">
-							<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-								<FolderKanban className="size-3.5" />
-							</span>
-							<div className="min-w-0">
-								<h2 className="text-sm font-semibold">Current Project</h2>
-								<p className="mt-0.5 text-xs text-muted-foreground">
-									Skills are installed into one Project. Pick the Project first, then install or
-									remove skills below.
-								</p>
-							</div>
+				<DashboardSection priority="primary">
+					<DashboardSectionHeader
+						icon={FolderKanban}
+						title="Project Scope"
+						count={targetProject ? displayProjectName(targetProject) : undefined}
+						description="Choose the Project whose skills you want to view or change."
+						toolbar={
+							targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject) ? (
+								<ShareProjectDialog
+									projectId={targetProject.id}
+									projectName={displayProjectName(targetProject)}
+									projectKind={targetProject.kind}
+								/>
+							) : null
+						}
+						priority="primary"
+					/>
+					<DashboardSectionToolbar>
+						<div className="grid gap-2 sm:grid-cols-[minmax(260px,420px)_auto] sm:items-center sm:justify-start">
+							<ProjectCompactPicker
+								projects={orderedProjects}
+								agents={envs ?? []}
+								value={targetProjectId ?? ""}
+								onValueChange={(projectId) => {
+									void setProjectParam(projectId);
+									void setTargetEnvId("");
+								}}
+								placeholder="Choose Project…"
+								ariaLabel="Choose Project for skills"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Installs, removals, and marketplace choices apply only to this Project.
+							</p>
 						</div>
-						<ProjectScopePicker
-							projects={orderedProjects}
-							agents={envs ?? []}
-							value={targetProjectId ?? ""}
-							onValueChange={(projectId) => {
-								void setProjectParam(projectId);
-								void setTargetEnvId("");
-							}}
-							label="Project"
-							layout="stacked"
-						/>
-					</div>
-				</section>
+					</DashboardSectionToolbar>
+				</DashboardSection>
 			) : null}
 
 			{!canWriteTargetProject && targetProject ? (
@@ -360,56 +374,62 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			<section className="space-y-2">
-				<div className="flex items-baseline justify-between gap-3">
-					<h2 className="text-base font-semibold">
-						Installed Skills{" "}
-						{skillsForTarget ? (
-							<span className="ml-2 text-sm font-normal text-muted-foreground">
-								{skillsForTarget.length}
-							</span>
-						) : null}
-					</h2>
-				</div>
-				<DataTable
-					columns={skillColumns}
-					data={skillsForTarget ?? []}
-					isLoading={skillsLoading || isResolvingTarget}
-					rowAriaLabel={(s) => `Open ${s.name}`}
-					emptyMessage={
-						isStaleProject
-							? "This link points to a Project that is no longer available. Pick another Project."
-							: isStaleTarget
-								? "This link points to an agent that no longer exists. Pick a Project above."
-								: orderedProjects.length === 0
-									? "Create a Project first, then install skills into it."
-									: isProjectReady
-										? "No skills in this Project yet. Install one from the marketplace below."
-										: "Pick a Project to see its skills."
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Sparkles}
+					title="Installed Skills"
+					count={skillsForTarget ? skillsForTarget.length : undefined}
+					description={
+						targetProject
+							? `Skills saved in ${displayProjectName(targetProject)}.`
+							: "Pick a Project above to see its skills."
 					}
 				/>
-			</section>
-
-			<section className="rounded-lg border bg-card/60 p-4">
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-					<div className="min-w-0">
-						<h2 className="text-base font-semibold">Add a Skill</h2>
-						<p className="mt-1 text-xs text-muted-foreground">
-							Installs into{" "}
-							{targetProject ? displayProjectName(targetProject) : "the selected Project"}. Use an
-							owner/repo path, or pick one of the suggested skills below.
-						</p>
-					</div>
-					<a
-						href="https://skills.sh"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-					>
-						More on skills.sh <ExternalLink className="size-3" />
-					</a>
+				<div className="md:hidden">
+					<MobileSkillList
+						skills={skillsForTarget ?? []}
+						isLoading={skillsLoading || isResolvingTarget}
+						emptyMessage={installedSkillsEmptyMessage}
+						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
+						uninstallPending={uninstallSkill.isPending}
+						currentProjectId={targetProjectId}
+						writableProjectIds={writableProjectIds}
+					/>
 				</div>
-				<div className="mt-3 grid gap-1.5">
+				<div className="hidden md:block">
+					<DataTable
+						columns={skillColumns}
+						data={skillsForTarget ?? []}
+						isLoading={skillsLoading || isResolvingTarget}
+						rowAriaLabel={(s) => `Open ${s.name}`}
+						emptyMessage={installedSkillsEmptyMessage}
+						className="space-y-0"
+						tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
+					/>
+				</div>
+			</DashboardSection>
+
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Download}
+					title="Add a Skill"
+					description={
+						targetProject
+							? `Install into ${displayProjectName(targetProject)} by repository path or from suggested skills.`
+							: "Pick a Project before installing a skill."
+					}
+					toolbar={
+						<a
+							href="https://skills.sh"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						>
+							More on skills.sh <ExternalLink className="size-3" />
+						</a>
+					}
+				/>
+				<div className="grid gap-1.5 border-b px-4 py-3">
 					<Label htmlFor="skill-custom-repo" className="text-xs font-medium">
 						GitHub skill repository
 					</Label>
@@ -446,15 +466,19 @@ function SkillsPageInner() {
 						</Button>
 					</div>
 				</div>
-				{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
+				{customRepoError ? (
+					<p className="px-4 pt-3 text-xs text-destructive">{customRepoError}</p>
+				) : null}
 				{installError ? (
-					<Alert variant="destructive">
-						<AlertTitle>Install Failed</AlertTitle>
-						<AlertDescription>{installError}</AlertDescription>
-					</Alert>
+					<div className="px-4 pt-3">
+						<Alert variant="destructive">
+							<AlertTitle>Install Failed</AlertTitle>
+							<AlertDescription>{installError}</AlertDescription>
+						</Alert>
+					</div>
 				) : null}
 
-				<div className="mt-4 space-y-2">
+				<div className="space-y-2 p-4">
 					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 						Suggested Skills
 					</p>
@@ -511,7 +535,109 @@ function SkillsPageInner() {
 						})}
 					</div>
 				</div>
-			</section>
+			</DashboardSection>
+		</div>
+	);
+}
+
+function MobileSkillList({
+	skills,
+	isLoading,
+	emptyMessage,
+	onUninstall,
+	uninstallPending,
+	currentProjectId,
+	writableProjectIds,
+}: {
+	skills: SkillSummary[];
+	isLoading: boolean;
+	emptyMessage: ReactNode;
+	onUninstall: (skillKey: string, projectId: string) => void;
+	uninstallPending: boolean;
+	currentProjectId?: string | null;
+	writableProjectIds?: ReadonlySet<string> | null;
+}) {
+	if (isLoading) {
+		return (
+			<div className="divide-y">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<div key={index} className="px-4 py-3">
+						<Skeleton className="h-4 w-3/4" />
+						<Skeleton className="mt-2 h-3 w-full" />
+						<Skeleton className="mt-2 h-3 w-1/2" />
+					</div>
+				))}
+			</div>
+		);
+	}
+
+	if (skills.length === 0) {
+		return <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>;
+	}
+
+	return (
+		<div className="divide-y">
+			{skills.map((skill) => {
+				const access = resolveSkillProjectAccess(skill, { currentProjectId, writableProjectIds });
+				const canUninstall = access === "writable" && !!skill.project_id;
+				return (
+					<article
+						key={`${skill.project_id ?? "unknown"}-${skill.skill_key}`}
+						className="px-4 py-3"
+					>
+						<div className="flex items-start justify-between gap-3">
+							<div className="min-w-0 flex-1">
+								<div className="flex min-w-0 items-center gap-2">
+									<Sparkles className="size-4 shrink-0 text-primary" />
+									<Link
+										href={skillDetailHref(skill.skill_key, skill.project_id)}
+										className="truncate text-sm font-medium hover:underline"
+									>
+										{skill.name}
+									</Link>
+									<Badge variant="outline" className="shrink-0">
+										v{skill.version}
+									</Badge>
+									{access === "read-only" ? (
+										<Badge variant="secondary" className="shrink-0">
+											Shared
+										</Badge>
+									) : null}
+								</div>
+								{skill.description ? (
+									<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+										{skill.description}
+									</p>
+								) : null}
+								<div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+									<span className="truncate" translate="no">
+										{skill.source_repo ?? skill.source}
+									</span>
+									{skill.updated_at ? <span>{relativeTime(skill.updated_at)}</span> : null}
+								</div>
+							</div>
+							{canUninstall ? (
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									disabled={uninstallPending}
+									onClick={() => {
+										if (!skill.project_id) return;
+										const ok = window.confirm(
+											`Uninstall "${skill.name}" from this Project?\n\nOther Projects keep their copies.`,
+										);
+										if (ok) onUninstall(skill.skill_key, skill.project_id);
+									}}
+									className="shrink-0 text-muted-foreground hover:text-destructive"
+									aria-label={`Uninstall ${skill.name}`}
+								>
+									<Trash2 className="size-3.5" />
+								</Button>
+							) : null}
+						</div>
+					</article>
+				);
+			})}
 		</div>
 	);
 }

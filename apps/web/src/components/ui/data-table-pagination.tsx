@@ -37,7 +37,7 @@ export function DataTablePagination({
 				{total === 0 ? "0 results" : `${first}–${last} of ${total}`}
 			</div>
 
-			<div className="flex items-center gap-6">
+			<div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
 				<div className="flex items-center gap-2">
 					<span className="text-sm text-muted-foreground">Rows</span>
 					<Select value={String(pageSize)} onValueChange={(v) => onPageSizeChange(Number(v))}>
@@ -61,6 +61,7 @@ export function DataTablePagination({
 						onClick={() => onPageChange(1)}
 						disabled={page <= 1}
 						aria-label="First page"
+						className="hidden sm:inline-flex"
 					>
 						<ChevronsLeft className="size-4" />
 					</Button>
@@ -73,7 +74,7 @@ export function DataTablePagination({
 					>
 						<ChevronLeft className="size-4" />
 					</Button>
-					<span className="px-2 text-sm tabular-nums">
+					<span className="min-w-12 px-2 text-center text-sm tabular-nums whitespace-nowrap">
 						{page} / {pageCount}
 					</span>
 					<Button
@@ -91,6 +92,7 @@ export function DataTablePagination({
 						onClick={() => onPageChange(pageCount)}
 						disabled={page >= pageCount}
 						aria-label="Last page"
+						className="hidden sm:inline-flex"
 					>
 						<ChevronsRight className="size-4" />
 					</Button>
