@@ -759,11 +759,11 @@ projectCmd
 const agentCmd = program.command("agent").description("Manage agents");
 const agentCredentialsCmd = agentCmd
 	.command("credentials")
-	.description("Sync local agent CLI credential profiles");
+	.description("Sync local CLI credential profiles");
 
 agentCredentialsCmd
 	.command("import <tool>")
-	.description("Import a local agent CLI credential profile into Clawdi Vault")
+	.description("Import a local CLI credential profile into Clawdi Vault")
 	.option("-p, --project <id-or-slug>", "Target a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--from <path>", "Credential file to import (required for tools without an adapter)")
@@ -776,6 +776,8 @@ agentCredentialsCmd
 		`
 Examples:
   $ clawdi agent credentials import codex
+  $ clawdi agent credentials import claude-code
+  $ clawdi agent credentials import gh
   $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials`,
 	)
 	.action(async (tool: string, opts) => {
@@ -785,7 +787,7 @@ Examples:
 
 agentCredentialsCmd
 	.command("materialize <tool>")
-	.description("Restore a stored local agent CLI credential profile on this machine")
+	.description("Restore a stored local CLI credential profile on this machine")
 	.option("-p, --project <id-or-slug>", "Read from a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")
@@ -798,6 +800,8 @@ agentCredentialsCmd
 		`
 Examples:
   $ clawdi agent credentials materialize codex
+  $ clawdi agent credentials materialize claude-code
+  $ clawdi agent credentials materialize gh
   $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
 	)
 	.action(async (tool: string, opts) => {

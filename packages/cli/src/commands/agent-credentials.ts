@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { getCodexHome } from "../adapters/paths";
+import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
 import { getAuth, getConfig, isLoggedIn } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -97,11 +97,51 @@ function normalizeName(input: string, label: string, maxLength = 80): string {
 	return normalized;
 }
 
+function canonicalTool(input: string): string {
+	switch (input) {
+		case "claude":
+		case "claude-code":
+		case "claude_code":
+		case "claudecode":
+			return "claude-code";
+		case "github":
+		case "github-cli":
+		case "github_cli":
+			return "gh";
+		default:
+			return input;
+	}
+}
+
 function codexDefaultPlan(from?: string, to?: string): FilePlan[] {
 	const sourcePath = resolve(expandHome(from ?? join(getCodexHome(), "auth.json")));
 	return [
 		{
 			logicalName: "auth.json",
+			sourcePath,
+			targetPath: to ? resolve(expandHome(to)) : undefined,
+			targetStrategy: to ? "explicit" : "adapter_default",
+		},
+	];
+}
+
+function claudeCodeDefaultPlan(from?: string, to?: string): FilePlan[] {
+	const sourcePath = resolve(expandHome(from ?? join(getClaudeHome(), ".credentials.json")));
+	return [
+		{
+			logicalName: ".credentials.json",
+			sourcePath,
+			targetPath: to ? resolve(expandHome(to)) : undefined,
+			targetStrategy: to ? "explicit" : "adapter_default",
+		},
+	];
+}
+
+function ghDefaultPlan(from?: string, to?: string): FilePlan[] {
+	const sourcePath = resolve(expandHome(from ?? join(getGhConfigHome(), "hosts.yml")));
+	return [
+		{
+			logicalName: "hosts.yml",
 			sourcePath,
 			targetPath: to ? resolve(expandHome(to)) : undefined,
 			targetStrategy: to ? "explicit" : "adapter_default",
@@ -122,9 +162,11 @@ function explicitFilePlan(tool: string, from: string, to?: string): FilePlan[] {
 
 function buildImportPlan(tool: string, opts: ImportOptions): FilePlan[] {
 	if (tool === "codex") return codexDefaultPlan(opts.from, opts.to);
+	if (tool === "claude-code") return claudeCodeDefaultPlan(opts.from, opts.to);
+	if (tool === "gh") return ghDefaultPlan(opts.from, opts.to);
 	if (!opts.from) {
 		throw new Error(
-			`No built-in credential adapter for "${tool}". Pass --from <path> to import an explicit credential file.`,
+			`No built-in credential adapter for "${tool}". Built-ins are codex, claude-code, and gh. Pass --from <path> to import an explicit credential file.`,
 		);
 	}
 	return explicitFilePlan(tool, opts.from, opts.to);
@@ -133,6 +175,12 @@ function buildImportPlan(tool: string, opts: ImportOptions): FilePlan[] {
 function adapterTargetPath(tool: string, logicalName: string): string | null {
 	if (tool === "codex" && logicalName === "auth.json") {
 		return join(getCodexHome(), "auth.json");
+	}
+	if (tool === "claude-code" && logicalName === ".credentials.json") {
+		return join(getClaudeHome(), ".credentials.json");
+	}
+	if (tool === "gh" && logicalName === "hosts.yml") {
+		return join(getGhConfigHome(), "hosts.yml");
 	}
 	return null;
 }
@@ -287,7 +335,7 @@ export async function agentCredentialsImportCommand(
 	opts: ImportOptions = {},
 ): Promise<void> {
 	requireAuth();
-	const tool = normalizeName(toolInput, "tool");
+	const tool = canonicalTool(normalizeName(toolInput, "tool"));
 	const profile = normalizeName(opts.profile ?? "default", "profile", 120);
 	const plan = buildImportPlan(tool, opts);
 	const files = await Promise.all(plan.map(snapshotFile));
@@ -356,7 +404,7 @@ export async function agentCredentialsMaterializeCommand(
 	opts: MaterializeOptions = {},
 ): Promise<void> {
 	requireAuth();
-	const tool = normalizeName(toolInput, "tool");
+	const tool = canonicalTool(normalizeName(toolInput, "tool"));
 	const profile = normalizeName(opts.profile ?? "default", "profile", 120);
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();

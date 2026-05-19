@@ -121,8 +121,9 @@ The later agent-runtime promise is:
      Hermes, OpenClaw, scripts, and local dev servers.
    - Cares about not committing `.env` files and not manually copying keys
      between machines.
-   - Also wants Clawdi to back up and re-materialize local agent credentials,
-     such as Codex local auth/config files, without copying tokens by hand.
+   - Also wants Clawdi to back up and re-materialize local CLI credentials,
+     such as Codex, Claude Code, and GitHub CLI auth files, without copying
+     tokens by hand.
 2. **Small team sharing Projects**
    - Wants shared Project credentials with clear ownership, conflict handling,
      and visible access.
@@ -730,8 +731,10 @@ as the data boundary.
 
 ### Local Agent Credential Profiles
 
-Clawdi should also manage local credential profiles for agent CLIs, starting
-with Codex.
+Clawdi should also manage local credential profiles for developer and agent
+CLIs. P0 is Codex, Claude Code, and GitHub CLI because these are the first
+credentials users need when moving between machines or hosted agent
+environments.
 
 Target workflow:
 
@@ -739,6 +742,14 @@ Target workflow:
 clawdi agent credentials import codex \
   --project personal \
   --from ~/.codex/auth.json
+
+clawdi agent credentials import claude-code \
+  --project personal \
+  --from ~/.claude/.credentials.json
+
+clawdi agent credentials import gh \
+  --project personal \
+  --from ~/.config/gh/hosts.yml
 
 clawdi agent credentials materialize codex \
   --project personal \
@@ -755,12 +766,19 @@ This is different from `clawdi run --env-file`:
 Design constraints:
 
 - Use per-tool adapters, not broad home-directory scanning.
-- Start with explicit Codex adapter paths, such as `~/.codex/auth.json` and
-  non-secret config templates from `~/.codex/config.toml`, after confirming the
-  installed Codex schema.
-- Never import Codex logs, history, shell snapshots, session archives, or other
-  runtime artifacts.
-- Always show a dry-run summary of paths and field names before import.
+- P0 built-in adapter paths:
+  - Codex: `$CODEX_HOME/auth.json`, defaulting to `~/.codex/auth.json`.
+  - Claude Code: `$CLAUDE_CONFIG_DIR/.credentials.json`, defaulting to
+    `~/.claude/.credentials.json` on Linux/Windows. macOS stores Claude Code
+    credentials in Keychain, so automatic file import is best-effort there and
+    should fall back to `--from` only.
+  - GitHub CLI: `$GH_CONFIG_DIR/hosts.yml`, defaulting to the same config
+    precedence as `gh` (`$XDG_CONFIG_HOME/gh`, Windows `%AppData%/GitHub CLI`,
+    then `~/.config/gh`). If `gh` stores the token only in the system credential
+    store, P0 does not attempt keychain extraction.
+- Never import logs, history, shell snapshots, session archives, MCP configs, or
+  other runtime artifacts.
+- Always show a dry-run summary of paths and file sizes before import.
 - Materialization should write atomically, preserve file permissions, and create
   a timestamped backup by default.
 - The default storage target should be `custody_model=client_managed` once
@@ -769,9 +787,9 @@ Design constraints:
 - For team sharing, require explicit confirmation before a local agent profile
   can be granted to another user, Agent, Project, or service token.
 
-The first adapter should be Codex-specific because Codex is a primary Clawdi
-user workflow. Additional adapters for Claude Code, OpenClaw, and other local
-agents should follow the same import/materialize contract instead of each
+The first adapter set should stay narrow and explicit: Codex auth, Claude Code
+credentials, and GitHub CLI hosts. Additional adapters for OpenClaw and other
+local tools should follow the same import/materialize contract instead of each
 inventing its own vault semantics.
 
 ## Recommended Architecture
@@ -1187,14 +1205,16 @@ Properties:
 
 - Clawdi imports a supported local agent credential file into a Vault item.
 - The CLI can later materialize that profile back to the tool's expected path.
-- This is useful for Codex and similar tools that expect local auth files
-  instead of per-command environment variables.
+- This is useful for Codex, Claude Code on Linux/Windows, GitHub CLI file-backed
+  auth, and similar tools that expect local auth files instead of per-command
+  environment variables.
 - The local materialized file is plaintext to the target tool and local OS
   user, so this is backup/restore and controlled sharing, not a sandbox.
 - The stored profile should become client-managed once client-side encryption
   exists.
 
-Use this as a narrow Codex-first adapter, not a broad `~/.codex` backup system.
+Use this as a narrow allowlisted adapter set, not a broad home-directory backup
+system.
 
 ### Option E: Connected Account / Tool Authorization
 
@@ -1267,11 +1287,12 @@ Ship first:
    runtime.
 9. Minimal `credential_kind` and `runtime_policy` fields or API placeholders so
    later proxy/service-binding work does not require a reference-model rewrite.
-10. Codex local credential profile design and adapter spike:
-   - detect supported Codex credential/config paths without reading unrelated
-     Codex logs or history;
-   - import only allowlisted secret fields after a dry-run summary;
-   - materialize back to the Codex path with atomic write and backup.
+10. P0 local credential profile design and adapter spike:
+   - detect supported Codex, Claude Code, and GitHub CLI credential paths
+     without reading unrelated logs or history;
+   - import only allowlisted files after a dry-run summary;
+   - materialize back to each tool's expected path with atomic write and
+     backup.
 
 Required behavior details:
 
@@ -1325,9 +1346,9 @@ Acceptance criteria:
    changing `clawdi://` references.
 7. Existing `clawdi run` users can still opt into all-env injection during the
    migration window.
-8. The Codex adapter spike can show an import/materialize dry run for supported
-   Codex credential paths without reading logs, history, shell snapshots, or
-   archived sessions.
+8. The P0 adapter spike can show an import/materialize dry run for supported
+   Codex, Claude Code, and GitHub CLI credential paths without reading logs,
+   history, shell snapshots, or archived sessions.
 
 ## Recommended Phasing
 
@@ -1350,9 +1371,9 @@ Deliver:
 - Minimal credential metadata for future delivery modes:
   `credential_kind`, `runtime_policy`, local agent profile placeholders, and
   service-binding placeholders.
-- Codex local credential profile adapter backed by dedicated encrypted
-  credential-profile storage, not `vault_items`, so legacy all-env injection
-  never receives the stored auth file.
+- P0 local credential profile adapters for Codex, Claude Code, and GitHub CLI
+  backed by dedicated encrypted credential-profile storage, not `vault_items`,
+  so legacy all-env injection never receives the stored auth file.
 - Documentation that clearly says env injection is not isolation.
 
 Security statement:
@@ -1394,8 +1415,8 @@ Deliver:
   agent, Project, and runtime.
 - Design spec for connected-account UX: provider connection, scope review,
   human approval, revocation, and per-agent grant visibility.
-- Productionized Codex credential profile import/materialize flow if the Phase
-  1 adapter spike proves stable enough.
+- Productionized P0 credential profile import/materialize flow if the Phase 1
+  adapter spike proves stable enough.
 
 Security statement:
 

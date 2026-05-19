@@ -27,6 +27,21 @@ export function getCodexHome(): string {
 	return process.env.CODEX_HOME?.trim() || join(home(), ".codex");
 }
 
+/**
+ * GitHub CLI config home. Mirrors `gh help environment` precedence:
+ * `$GH_CONFIG_DIR`, `$XDG_CONFIG_HOME/gh`, Windows `%AppData%/GitHub CLI`,
+ * then `~/.config/gh`.
+ */
+export function getGhConfigHome(): string {
+	const override = process.env.GH_CONFIG_DIR?.trim();
+	if (override) return override;
+	const xdg = process.env.XDG_CONFIG_HOME?.trim();
+	if (xdg) return join(xdg, "gh");
+	const appData = process.env.APPDATA?.trim() || process.env.AppData?.trim();
+	if (process.platform === "win32" && appData) return join(appData, "GitHub CLI");
+	return join(home(), ".config", "gh");
+}
+
 /** Hermes: honors `$HERMES_HOME`; fallback `~/.hermes`. */
 export function getHermesHome(): string {
 	return process.env.HERMES_HOME?.trim() || join(home(), ".hermes");

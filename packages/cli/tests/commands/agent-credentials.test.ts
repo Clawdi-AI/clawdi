@@ -17,18 +17,26 @@ import {
 let tmpHome: string;
 let origHome: string | undefined;
 let origApiUrl: string | undefined;
+let origGhConfigDir: string | undefined;
+let origXdgConfigHome: string | undefined;
 let agentEnvSnapshot: AgentHomeOverrideSnapshot;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
+	origGhConfigDir = process.env.GH_CONFIG_DIR;
+	origXdgConfigHome = process.env.XDG_CONFIG_HOME;
 	agentEnvSnapshot = snapshotAndClearAgentHomeOverrides();
 	tmpHome = join(tmpdir(), `clawdi-agent-creds-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+	mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+	mkdirSync(join(tmpHome, ".config", "gh"), { recursive: true });
 	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_API_URL = "http://api.test";
+	delete process.env.GH_CONFIG_DIR;
+	delete process.env.XDG_CONFIG_HOME;
 });
 
 afterEach(() => {
@@ -36,6 +44,10 @@ afterEach(() => {
 	else delete process.env.HOME;
 	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
 	else delete process.env.CLAWDI_API_URL;
+	if (origGhConfigDir) process.env.GH_CONFIG_DIR = origGhConfigDir;
+	else delete process.env.GH_CONFIG_DIR;
+	if (origXdgConfigHome) process.env.XDG_CONFIG_HOME = origXdgConfigHome;
+	else delete process.env.XDG_CONFIG_HOME;
 	restoreAgentHomeOverrides(agentEnvSnapshot);
 	rmSync(tmpHome, { recursive: true, force: true });
 });
@@ -133,5 +145,99 @@ describe("agent credential profiles", () => {
 		);
 		expect(backups).toHaveLength(1);
 		expect(existsSync(join(tmpHome, ".codex", backups[0]))).toBe(true);
+	});
+
+	it("imports Claude Code credentials using the built-in adapter alias", async () => {
+		const claudeCredentialsPath = join(tmpHome, ".claude", ".credentials.json");
+		writeFileSync(claudeCredentialsPath, JSON.stringify({ accessToken: "claude-secret" }));
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/credential-profiles",
+				response: () =>
+					jsonResponse({
+						id: "profile-2",
+						project_id: "project-1",
+						tool: "claude-code",
+						profile: "default",
+						updated_at: new Date().toISOString(),
+					}),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await agentCredentialsImportCommand("claude_code", { yes: true, json: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(out).not.toContain("claude-secret");
+		expect(captured).toHaveLength(1);
+		expect(captured[0].body).toMatchObject({
+			tool: "claude-code",
+			profile: "default",
+		});
+		const body = captured[0].body as { payload: string };
+		const payload = JSON.parse(body.payload);
+		expect(payload.files[0].logicalName).toBe(".credentials.json");
+		expect(payload.files[0].targetStrategy).toBe("adapter_default");
+		expect(payload.files[0].content).toContain("claude-secret");
+	});
+
+	it("materializes a stored GitHub CLI hosts.yml profile to the gh config path", async () => {
+		const ghHostsPath = join(tmpHome, ".config", "gh", "hosts.yml");
+		writeFileSync(ghHostsPath, "github.com:\n  user: old\n");
+		const payload = {
+			schemaVersion: 1,
+			kind: "local_agent_profile",
+			tool: "gh",
+			profile: "default",
+			importedAt: new Date().toISOString(),
+			files: [
+				{
+					logicalName: "hosts.yml",
+					sourcePath: "/source/.config/gh/hosts.yml",
+					targetStrategy: "adapter_default",
+					content: "github.com:\n  oauth_token: gh-secret\n",
+					mode: 0o600,
+					size: 37,
+				},
+			],
+		};
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/credential-profiles/resolve",
+				response: () =>
+					jsonResponse({
+						id: "profile-3",
+						project_id: "project-1",
+						tool: "gh",
+						profile: "default",
+						updated_at: new Date().toISOString(),
+						payload: JSON.stringify(payload),
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+		try {
+			await agentCredentialsMaterializeCommand("github-cli", { yes: true, json: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(readFileSync(ghHostsPath, "utf-8")).toBe("github.com:\n  oauth_token: gh-secret\n");
+		const backups = readdirSync(join(tmpHome, ".config", "gh")).filter((name) =>
+			name.startsWith("hosts.yml.bak-"),
+		);
+		expect(backups).toHaveLength(1);
+		expect(existsSync(join(tmpHome, ".config", "gh", backups[0]))).toBe(true);
 	});
 });

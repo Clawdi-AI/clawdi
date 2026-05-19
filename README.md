@@ -103,7 +103,11 @@ Sync a local agent CLI credential profile to another machine:
 
 ```bash
 clawdi agent credentials import codex
+clawdi agent credentials import claude-code
+clawdi agent credentials import gh
 clawdi agent credentials materialize codex
+clawdi agent credentials materialize claude-code
+clawdi agent credentials materialize gh
 ```
 
 Install a shared skill into every registered agent at once:
@@ -239,7 +243,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
-| `clawdi agent credentials import/materialize` | Sync local agent CLI credential profiles such as Codex auth |
+| `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
 | `clawdi vault set/list/import` | Manage encrypted secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |
