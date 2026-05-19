@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -179,7 +187,7 @@ describe("agent credential profiles", () => {
 					sourcePath: "/source/.codex/auth.json",
 					targetStrategy: "adapter_default",
 					content: "new-auth",
-					mode: 0o600,
+					mode: 0o644,
 					size: 8,
 				},
 			],
@@ -209,6 +217,9 @@ describe("agent credential profiles", () => {
 		}
 
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe("new-auth");
+		if (process.platform !== "win32") {
+			expect(statSync(codexAuthPath).mode & 0o777).toBe(0o600);
+		}
 		const backups = readdirSync(join(tmpHome, ".codex")).filter((name) =>
 			name.startsWith("auth.json.bak-"),
 		);

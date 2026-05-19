@@ -55,7 +55,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_vault_credential_profiles_user_id"), table_name="vault_credential_profiles")
+    op.drop_index(
+        op.f("ix_vault_credential_profiles_user_id"),
+        table_name="vault_credential_profiles",
+    )
     op.drop_index(
         op.f("ix_vault_credential_profiles_project_id"),
         table_name="vault_credential_profiles",

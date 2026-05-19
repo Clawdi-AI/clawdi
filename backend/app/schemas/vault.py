@@ -52,7 +52,7 @@ class VaultItemsDeleteResponse(BaseModel):
     status: Literal["deleted"]
 
 
-class VaultResolveResponse(RootModel[dict[str, str]]):
+class VaultResolveResponse(RootModel[dict[str, object]]):
     pass
 
 

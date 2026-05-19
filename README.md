@@ -121,7 +121,7 @@ clawdi agent credentials materialize claude-code
 clawdi agent credentials materialize gh
 ```
 
-Credential profile sync is separate from `clawdi run`: it stores and restores a supported tool's local auth file, while `run` injects explicit `clawdi://` references into one child process. macOS Keychain imports are guarded behind `--source keychain` and require explicit `--keychain-service` plus `--keychain-account`; Clawdi does not guess or silently scrape credential-store items, and Keychain reads cannot use `--yes`.
+Credential profile sync is separate from `clawdi run`: it stores and restores a supported tool's local auth file, while `run` injects explicit `clawdi://` references into one child process. Profiles default to your stable Personal Project so `import` on one machine and `materialize` on another resolve the same namespace. They are personal backup/restore artifacts: shared Project viewers and env-bound Agent keys cannot materialize them. macOS Keychain imports are guarded behind `--source keychain` and require explicit `--keychain-service` plus `--keychain-account`; Clawdi does not guess or silently scrape credential-store items, and Keychain reads cannot use `--yes`.
 
 Current vault storage is server-managed encryption. Clawdi avoids plaintext secrets in repo files and local templates, but the backend can decrypt stored vault values and credential profiles today. Do not treat this release as zero-knowledge.
 

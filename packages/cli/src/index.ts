@@ -820,7 +820,7 @@ const agentCredentialsCmd = agentCmd
 
 agentCredentialsCmd
 	.command("import <tool>")
-	.description("Import a local CLI credential profile into Clawdi Vault")
+	.description("Import a personal local CLI credential profile into Clawdi Vault")
 	.option("-p, --project <id-or-slug>", "Target a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--source <source>", "Credential source: file or keychain", "file")
@@ -848,7 +848,7 @@ Examples:
 
 agentCredentialsCmd
 	.command("materialize <tool>")
-	.description("Restore a stored local CLI credential profile on this machine")
+	.description("Restore a personal local CLI credential profile on this machine")
 	.option("-p, --project <id-or-slug>", "Read from a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")

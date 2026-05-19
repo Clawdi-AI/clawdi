@@ -3327,7 +3327,7 @@ export interface components {
         };
         /** VaultResolveResponse */
         VaultResolveResponse: {
-            [key: string]: string;
+            [key: string]: unknown;
         };
         /** VaultResponse */
         VaultResponse: {

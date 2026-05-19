@@ -22,7 +22,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
-from app.models.vault import Vault
+from app.models.vault import Vault, VaultCredentialProfile
 
 
 @pytest.mark.asyncio
@@ -144,12 +144,156 @@ async def test_vault_credential_profile_round_trip_and_not_env_injected(
 
 
 @pytest.mark.asyncio
+async def test_vault_credential_profile_defaults_to_personal_project(
+    cli_client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    seed_project,
+):
+    from tests.conftest import create_env_with_project
+
+    await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"credential-default-{uuid.uuid4().hex[:8]}",
+        machine_name="Credential Default Env",
+    )
+
+    stored = await cli_client.post(
+        "/api/vault/credential-profiles",
+        json={"tool": "codex", "profile": "default", "payload": "{}"},
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["project_id"] == str(seed_project.id)
+
+    profile = (
+        await db_session.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.tool == "codex",
+                VaultCredentialProfile.profile == "default",
+            )
+        )
+    ).scalar_one()
+    assert profile.project_id == seed_project.id
+
+
+@pytest.mark.asyncio
+async def test_vault_credential_profile_shared_project_viewer_cannot_resolve(
+    cli_client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    from datetime import UTC, datetime
+
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.user import User
+    from app.services.vault_crypto import encrypt
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"credential_owner_{nonce}",
+        email=f"credential_owner_{nonce}@test.dev",
+        name="Credential Owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    shared = Project(
+        user_id=owner.id,
+        name="shared credential boundary",
+        slug=f"shared-credential-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"credential-owner-{nonce}",
+        )
+    )
+    ciphertext, nonce_bytes = encrypt('{"kind":"local_agent_profile","files":[]}')
+    db_session.add(
+        VaultCredentialProfile(
+            user_id=owner.id,
+            project_id=shared.id,
+            tool="codex",
+            profile="default",
+            encrypted_payload=ciphertext,
+            nonce=nonce_bytes,
+        )
+    )
+    await db_session.commit()
+
+    try:
+        resolved = await cli_client.post(
+            "/api/vault/credential-profiles/resolve",
+            json={"tool": "codex", "profile": "default", "project_id": str(shared.id)},
+        )
+        assert resolved.status_code == 404, resolved.text
+    finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_vault_credential_profile_resolve_requires_cli_auth(client: httpx.AsyncClient):
     r = await client.post(
         "/api/vault/credential-profiles/resolve",
         json={"tool": "codex", "profile": "default"},
     )
     assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
+async def test_vault_credential_profile_rejects_env_bound_agent_key(db_session, seed_user):
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"credential-bound-{uuid.uuid4().hex[:8]}",
+        machine_name="Credential Bound Agent",
+    )
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash=uuid.uuid4().hex,
+        key_prefix="clawdi_test",
+        label="env-bound",
+        scopes=None,
+        environment_id=env.id,
+    )
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=key)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            stored = await ac.post(
+                "/api/vault/credential-profiles",
+                json={"tool": "codex", "profile": "default", "payload": "{}"},
+            )
+            assert stored.status_code == 403, stored.text
+
+            resolved = await ac.post(
+                "/api/vault/credential-profiles/resolve",
+                json={"tool": "codex", "profile": "default"},
+            )
+            assert resolved.status_code == 403, resolved.text
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio

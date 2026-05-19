@@ -867,6 +867,14 @@ Implemented Phase 1 boundary:
   values; secrets are read only after the user proceeds.
 - File-backed P0 adapters are implemented for Codex, Claude Code, and GitHub
   CLI.
+- Credential profiles are personal backup/restore artifacts in Phase 1. Their
+  no-`--project` default is the user's stable Personal Project, not the
+  most-recently-active Agent Project, so import/materialize works across
+  machines. Resolve/materialize is owner-only and user-level CLI-only: shared
+  Project viewers and env-bound Agent keys cannot materialize complete local
+  auth files.
+- Materialized credential files are written owner-only (`0600`) regardless of
+  the source file mode.
 - macOS Keychain import is an explicit source only:
   `--source keychain --keychain-service <service> --keychain-account <account>`.
   Clawdi does not guess Claude Code or GitHub Keychain item names. On non-macOS,

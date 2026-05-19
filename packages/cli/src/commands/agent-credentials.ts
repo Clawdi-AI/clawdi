@@ -11,6 +11,7 @@ import { getAuth, getConfig, isLoggedIn } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 
 const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
+const CREDENTIAL_FILE_MODE = 0o600;
 const execFileAsync = promisify(execFile);
 
 type TargetStrategy = "adapter_default" | "explicit";
@@ -276,7 +277,7 @@ async function snapshotFile(plan: FilePlan): Promise<CredentialFileSnapshot> {
 		targetStrategy: plan.targetStrategy,
 		sourceKind: plan.sourceKind,
 		content,
-		mode: stat.mode & 0o777,
+		mode: credentialFileMode(),
 		size: stat.size,
 	};
 }
@@ -295,7 +296,7 @@ function previewPlan(plan: FilePlan): FilePlan {
 	if (stat.size > MAX_PROFILE_FILE_BYTES) {
 		throw new Error(`Credential file is too large: ${plan.sourcePath}`);
 	}
-	return { ...plan, mode: stat.mode & 0o777, size: stat.size };
+	return { ...plan, mode: credentialFileMode(), size: stat.size };
 }
 
 function assertKeychainAvailable() {
@@ -434,6 +435,10 @@ function writeAtomic(path: string, content: string, mode: number) {
 	const tmp = join(dir, `.${basename(path)}.tmp-${process.pid}-${Date.now()}`);
 	writeFileSync(tmp, content, { mode });
 	renameSync(tmp, path);
+}
+
+function credentialFileMode(): number {
+	return CREDENTIAL_FILE_MODE;
 }
 
 function backupPath(path: string): string {
@@ -611,7 +616,7 @@ export async function agentCredentialsMaterializeCommand(
 		if (existsSync(targetPath) && opts.backup !== false) {
 			copyFileSync(targetPath, backupPath(targetPath));
 		}
-		writeAtomic(targetPath, file.content, file.mode);
+		writeAtomic(targetPath, file.content, credentialFileMode());
 	}
 
 	if (!opts.json) {

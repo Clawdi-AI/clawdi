@@ -11,6 +11,7 @@ from app.core.project import (
     project_ids_visible_to,
     resolve_default_write_project,
     resolve_for_parent,
+    resolve_personal_project,
     validate_project_for_caller,
 )
 from app.core.query_utils import like_needle
@@ -271,7 +272,7 @@ async def delete_vault_items(
 async def upsert_credential_profile(
     body: VaultCredentialProfileUpsert,
     project_id: UUID | None = Query(default=None),
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCredentialProfileResponse:
     """Store an encrypted local CLI credential profile.
@@ -280,16 +281,18 @@ async def upsert_credential_profile(
     should not be returned by `/api/vault/resolve` all-env injection. The CLI
     materializes them back to tool-specific local files instead.
     """
+    _require_user_level_credential_profile_auth(auth)
     if project_id is not None:
         await validate_project_for_caller(db, auth, project_id)
         selected_project_id = project_id
     else:
-        selected_project_id = await resolve_default_write_project(db, auth)
+        selected_project_id = await resolve_personal_project(db, auth)
 
     ciphertext, nonce = encrypt(body.payload)
     existing = (
         await db.execute(
             select(VaultCredentialProfile).where(
+                VaultCredentialProfile.user_id == auth.user_id,
                 VaultCredentialProfile.project_id == selected_project_id,
                 VaultCredentialProfile.tool == body.tool,
                 VaultCredentialProfile.profile == body.profile,
@@ -333,17 +336,17 @@ async def resolve_credential_profile(
 
     Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
     """
+    _require_user_level_credential_profile_auth(auth)
     if body.project_id is not None:
-        allowed_project_ids = set(await _plaintext_project_ids(db, auth))
-        if body.project_id not in allowed_project_ids:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "credential profile not found")
+        await validate_project_for_caller(db, auth, body.project_id)
         selected_project_id = body.project_id
     else:
-        selected_project_id = await resolve_default_write_project(db, auth)
+        selected_project_id = await resolve_personal_project(db, auth)
 
     profile = (
         await db.execute(
             select(VaultCredentialProfile).where(
+                VaultCredentialProfile.user_id == auth.user_id,
                 VaultCredentialProfile.project_id == selected_project_id,
                 VaultCredentialProfile.tool == body.tool,
                 VaultCredentialProfile.profile == body.profile,
@@ -361,6 +364,15 @@ async def resolve_credential_profile(
         updated_at=profile.updated_at,
         payload=decrypt(profile.encrypted_payload, profile.nonce),
     )
+
+
+def _require_user_level_credential_profile_auth(auth: AuthContext) -> None:
+    """Credential profiles are personal backup/restore, not Agent runtime grants."""
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "credential profile sync requires user-level CLI authentication",
+        )
 
 
 # --- Resolve (CLI only — returns plaintext values) ---

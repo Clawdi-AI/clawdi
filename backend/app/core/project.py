@@ -67,6 +67,18 @@ async def _personal_project_id(db: AsyncSession, user_id: UUID) -> UUID:
     return project_id
 
 
+async def resolve_personal_project(
+    db: AsyncSession,
+    auth: AuthContext,
+) -> UUID:
+    """Return the caller's stable Personal Project id.
+
+    This is for account-level data whose default must not move between
+    machines as Agent environments become active.
+    """
+    return await _personal_project_id(db, auth.user_id)
+
+
 async def resolve_default_write_project(
     db: AsyncSession,
     auth: AuthContext,
