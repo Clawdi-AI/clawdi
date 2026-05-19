@@ -81,11 +81,11 @@ export function makeSkillColumns(
 										className="shrink-0"
 										title={
 											sourceProjectName
-												? `Shared from "${sourceProjectName}" — read-only`
-												: "Shared from another project — read-only"
+												? `Shared from "${sourceProjectName}". Read-only.`
+												: "Shared from another Project. Read-only."
 										}
 									>
-										shared
+										Shared
 									</Badge>
 								) : null}
 							</div>

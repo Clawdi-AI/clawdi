@@ -45,7 +45,7 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // /skills is the Project skill control center. Pick a Project at
 // the top, manage its installed skills below, and use the install
 // bar + featured tiles to add new ones. Agent pages deep-link here
-// through their Home Project.
+// through their Agent Project.
 
 const FALLBACK_TARGET_LABEL = "Active agent";
 const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
@@ -110,7 +110,7 @@ function SkillsPageInner() {
 	//       project found → that Project
 	//       project missing → stale link, block writes
 	//   - Legacy URL has ?target=X and envs loaded:
-	//       env found → its Home Project
+	//       env found → its Agent Project
 	//       env missing → stale link, block writes
 	//   - No URL scope → first visible Project, ordered for common use
 	const targetEnvFromUrl = useMemo(() => {
@@ -363,7 +363,7 @@ function SkillsPageInner() {
 			<section className="space-y-2">
 				<div className="flex items-baseline justify-between gap-3">
 					<h2 className="text-base font-semibold">
-						Installed Skills
+						Installed Skills{" "}
 						{skillsForTarget ? (
 							<span className="ml-2 text-sm font-normal text-muted-foreground">
 								{skillsForTarget.length}

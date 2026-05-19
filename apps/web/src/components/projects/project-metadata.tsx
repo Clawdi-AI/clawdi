@@ -215,7 +215,7 @@ export function ProjectScopePicker({
 	label = "Project",
 	placeholder = "Choose project…",
 	allowAll = false,
-	allLabel = "All Projects",
+	allLabel = "All Readable Projects",
 	allDescription = "Show every Project you can read",
 	disabled,
 	layout = "inline",

@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -192,6 +193,8 @@ export default function ProjectDetailPage() {
 		},
 	});
 
+	useSetBreadcrumbTitle(project ? displayProjectName(project) : null);
+
 	if (projects.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
@@ -231,7 +234,7 @@ export default function ProjectDetailPage() {
 				<Alert>
 					<AlertTitle>Project not found</AlertTitle>
 					<AlertDescription>
-						This project may have been removed, or your account no longer has access.
+						This Project may have been removed, or your account no longer has access.
 					</AlertDescription>
 				</Alert>
 			</div>
@@ -578,7 +581,7 @@ function SharedAccessPanel({
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
 							This removes your read-only membership. Agents will no longer be able to use this
-							project through your account.
+							Project through your account.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -680,8 +683,10 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Attach Project to Agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName} to an agent&apos;s Attached Projects. The Agent Project stays the
-						writable default; this Project is read by the agent.
+						Add {projectName}
+						{" to "}
+						an agent&apos;s Attached Projects. The Agent Project stays the writable default; this
+						Project is read by the agent.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -700,9 +705,9 @@ function UseProjectWithAgentDialog({
 					<div className="space-y-4">
 						<div className="space-y-2">
 							<div className="text-sm font-medium">Agent</div>
-							<Select value={selectedAgentId || undefined} onValueChange={setSelectedAgentId}>
+							<Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
 								<SelectTrigger
-									aria-label="Agent to attach this project to"
+									aria-label="Agent to attach this Project to"
 									className="h-auto min-h-9 w-full justify-between py-2"
 								>
 									{selectedEnv ? (

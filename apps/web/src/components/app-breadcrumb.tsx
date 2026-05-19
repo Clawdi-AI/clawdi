@@ -21,6 +21,7 @@ import {
  * full UUID.
  */
 const SEGMENT_LABELS: Record<string, string> = {
+	projects: "Projects",
 	sessions: "Sessions",
 	memories: "Memories",
 	skills: "Skills",

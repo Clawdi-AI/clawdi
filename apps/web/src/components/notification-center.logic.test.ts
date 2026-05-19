@@ -29,18 +29,18 @@ describe("notification center logic", () => {
 		expect(getPendingNotificationCount([invitation])).toBe(1);
 		expect(getPendingNotificationCount([invitation, { ...invitation, id: "inv_2" }])).toBe(2);
 
-		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification center");
-		expect(getNotificationCenterTriggerLabel(1)).toBe("Notification center, 1 pending invitation");
-		expect(getNotificationCenterTriggerLabel(2)).toBe("Notification center, 2 pending invitations");
+		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification Center");
+		expect(getNotificationCenterTriggerLabel(1)).toBe("Notification Center, 1 Pending Invitation");
+		expect(getNotificationCenterTriggerLabel(2)).toBe("Notification Center, 2 Pending Invitations");
 	});
 
 	test("formats notification title and empty copy without Skills-specific language", () => {
-		expect(getNotificationCenterTitle(0)).toBe("Notification center");
-		expect(getNotificationCenterTitle(1)).toBe("1 pending notification");
-		expect(getNotificationCenterTitle(3)).toBe("3 pending notifications");
+		expect(getNotificationCenterTitle(0)).toBe("Notification Center");
+		expect(getNotificationCenterTitle(1)).toBe("1 Pending Notification");
+		expect(getNotificationCenterTitle(3)).toBe("3 Pending Notifications");
 
 		const empty = getNotificationCenterEmptyCopy();
-		expect(empty.title).toBe("No pending notifications");
+		expect(empty.title).toBe("No Pending Notifications");
 		expect(empty.description).toContain("Project invitations");
 		expect(empty.description).toContain("action-required updates");
 		expect(empty.description).not.toContain("Skills");

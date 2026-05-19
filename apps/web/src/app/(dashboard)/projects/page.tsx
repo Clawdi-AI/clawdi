@@ -183,7 +183,7 @@ export default function ProjectsPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New Project</DialogTitle>
+						<DialogTitle>New Custom Project</DialogTitle>
 						<DialogDescription>
 							Create a Custom Project for a team, workflow, repo, or shareable resources. Add
 							skills, vaults, and sharing settings after it is created.
@@ -234,7 +234,7 @@ export default function ProjectsPage() {
 								variant={newProjectName.trim() ? "default" : "outline"}
 							>
 								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create Project"}
+								{createProject.isPending ? "Creating…" : "Create Custom Project"}
 							</Button>
 						</div>
 					</form>
@@ -521,7 +521,7 @@ function NewProjectButton({ onClick }: { onClick: () => void }) {
 	return (
 		<Button size="sm" variant="outline" onClick={onClick}>
 			<Plus className="size-3.5" />
-			New Project
+			New Custom Project
 		</Button>
 	);
 }

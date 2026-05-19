@@ -42,7 +42,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you.",
 		href: "/projects",
-		emptyCta: "Create Project",
+		emptyCta: "Create Custom Project",
 		routeGroup: "project-registry",
 		projectScope: "container",
 		pathSegments: ["Projects"],

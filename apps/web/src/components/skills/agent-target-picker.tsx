@@ -59,7 +59,7 @@ export function AgentTargetPicker({
 		<div className="flex flex-wrap items-center gap-3 text-sm">
 			<span className="text-muted-foreground">Install on</span>
 			<Select value={selectedProjectId ?? undefined} onValueChange={onChange}>
-				<SelectTrigger className="h-9 min-w-[220px] gap-2">
+				<SelectTrigger aria-label="Install target agent" className="h-9 min-w-[220px] gap-2">
 					{targetEnv ? (
 						<span className="flex items-center gap-2 truncate">
 							<AgentIcon agent={targetEnv.agent_type} size="sm" />

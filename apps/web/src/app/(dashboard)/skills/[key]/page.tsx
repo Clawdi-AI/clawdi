@@ -395,9 +395,12 @@ function SkillDetailPageInner() {
 							</Alert>
 							<Textarea
 								ref={textareaRef}
+								name="skill-content"
+								aria-label="Skill content"
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
 								className="min-h-[480px] font-mono text-sm leading-relaxed"
+								autoComplete="off"
 								spellCheck={false}
 								disabled={saveEdit.isPending}
 							/>

@@ -139,7 +139,7 @@ export function ShareProjectDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "Manage people with access, invite by email, or create a share link. Accepting gives project access only; using it with an agent is a separate choice."
+							? "Manage people with access, invite by email, or create a share link. Accepting gives Project access only; using it with an agent is a separate choice."
 							: "Global and Agent Projects are managed by the system and cannot be shared. Create a Custom Project for collaboration."}
 					</DialogDescription>
 				</DialogHeader>
@@ -190,15 +190,15 @@ function PermissionSummary() {
 	return (
 		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2">
 			<div>
-				<div className="font-medium text-foreground">Default role</div>
+				<div className="font-medium text-foreground">Default Role</div>
 				<p className="mt-1 text-muted-foreground">
 					Viewers can read Project skills, vault names, and key names. They cannot edit content.
 				</p>
 			</div>
 			<div>
-				<div className="font-medium text-foreground">Agent use</div>
+				<div className="font-medium text-foreground">Agent Use</div>
 				<p className="mt-1 text-muted-foreground">
-					Accepting gives project access only. The recipient can attach the project to an agent
+					Accepting gives Project access only. The recipient can attach the Project to an agent
 					later.
 				</p>
 			</div>
@@ -321,7 +321,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					anytime.
 				</p>
 				<Badge variant="secondary" className="text-xs">
-					{visibleLinks.filter((link) => link.revoked_at === null).length} active
+					{visibleLinks.filter((link) => link.revoked_at === null).length} Active
 				</Badge>
 			</div>
 
@@ -375,7 +375,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	return (
 		<Alert>
 			<CheckCircle2 />
-			<AlertTitle>Copy this link now</AlertTitle>
+			<AlertTitle>Copy This Link Now</AlertTitle>
 			<AlertDescription>
 				<p className="text-xs text-muted-foreground">
 					This is the only time the full URL is visible. After this, only the prefix{" "}
@@ -387,13 +387,21 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					</p>
 				) : null}
 				<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-					<Input readOnly value={link.url} className="min-w-0 font-mono text-xs" />
+					<Input
+						readOnly
+						value={link.url}
+						name="fresh-share-link-url"
+						aria-label="New share link URL"
+						autoComplete="off"
+						spellCheck={false}
+						className="min-w-0 font-mono text-xs"
+					/>
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => copyText(link.url, "Link copied")}
+						onClick={() => copyText(link.url, "Link Copied")}
 						className="sm:size-9 sm:px-0"
-						aria-label="Copy share link"
+						aria-label="Copy Share Link"
 					>
 						<Copy className="size-3.5" />
 						<span className="sm:sr-only">Copy</span>
@@ -405,7 +413,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 				<div className="mt-2 rounded-md border bg-background/60 p-2">
 					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div className="min-w-0">
-							<div className="text-xs font-medium">Agent handoff prompt</div>
+							<div className="text-xs font-medium">Agent Handoff Prompt</div>
 							<div className="truncate font-mono text-[11px] text-muted-foreground">
 								Viewer access · attach to an agent later · {link.prefix}
 							</div>
@@ -413,11 +421,11 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						<Button
 							variant="outline"
 							size="sm"
-							onClick={() => copyText(agentPrompt, "Agent prompt copied")}
-							aria-label={`Copy use with agent prompt for share link ${link.prefix}`}
+							onClick={() => copyText(agentPrompt, "Agent Prompt Copied")}
+							aria-label={`Copy agent handoff prompt for share link ${link.prefix}`}
 						>
 							<Copy className="mr-1.5 size-3.5" />
-							Copy prompt
+							Copy Prompt
 						</Button>
 					</div>
 				</div>
@@ -447,7 +455,7 @@ function LinkRow({
 						{link.label ? (
 							<span className="truncate font-medium">{link.label}</span>
 						) : (
-							<span className="text-xs italic text-muted-foreground">no label</span>
+							<span className="text-xs italic text-muted-foreground">No Label</span>
 						)}
 						{revoked ? (
 							<Badge variant="secondary" className="text-xs">
@@ -620,7 +628,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					variant="destructive"
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
-							? "Email invitations are unavailable for this project."
+							? "Email invitations are unavailable for this Project."
 							: invites.error instanceof ApiError
 								? formatApiError(invites.error.detail)
 								: errorMessage(invites.error)
@@ -638,7 +646,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 							<div className="min-w-0">
 								<div className="truncate font-medium">{inv.invitee_email}</div>
 								<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-									<Badge variant="outline">pending</Badge>
+									<Badge variant="outline">Pending</Badge>
 									<span aria-hidden>·</span>
 									<span>
 										Sent{" "}
@@ -753,7 +761,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 				<div className="space-y-1">
 					<h3 className="text-sm font-semibold">People with access</h3>
 					<p className="text-xs text-muted-foreground sm:max-w-sm">
-						People who accepted access. Viewers can read this project until you remove them.
+						People who accepted access. Viewers can read this Project until you remove them.
 					</p>
 				</div>
 				<AlertDialog>
@@ -769,7 +777,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 					</AlertDialogTrigger>
 					<AlertDialogContent>
 						<AlertDialogHeader>
-							<AlertDialogTitle>Stop sharing this project?</AlertDialogTitle>
+							<AlertDialogTitle>Stop Sharing This Project?</AlertDialogTitle>
 							<AlertDialogDescription>
 								This revokes active links, cancels pending invitations, and removes accepted
 								Viewers. Project content remains yours.
@@ -813,7 +821,8 @@ function MembersPanel({ projectId }: { projectId: string }) {
 								<div className="min-w-0">
 									<div className="truncate font-medium">{label}</div>
 									<div className="text-xs text-muted-foreground">
-										{member.role} · joined via {member.joined_via} ·{" "}
+										{formatMembershipToken(member.role)} · Joined via{" "}
+										{formatMembershipToken(member.joined_via)} ·{" "}
 										{new Date(member.joined_at).toLocaleDateString(undefined, {
 											month: "short",
 											day: "numeric",
@@ -836,7 +845,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 										<AlertDialogHeader>
 											<AlertDialogTitle>Remove this member?</AlertDialogTitle>
 											<AlertDialogDescription>
-												{label} will lose access to this project.
+												{label} will lose access to this Project.
 											</AlertDialogDescription>
 										</AlertDialogHeader>
 										<AlertDialogFooter>
@@ -845,7 +854,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 												onClick={() => remove.mutate(member.user_id)}
 												className="bg-destructive text-white hover:bg-destructive/90"
 											>
-												Remove member
+												Remove Member
 											</AlertDialogAction>
 										</AlertDialogFooter>
 									</AlertDialogContent>
@@ -866,4 +875,12 @@ function EmptyHint({ message, variant }: { message: string; variant?: "default" 
 			<AlertDescription>{message}</AlertDescription>
 		</Alert>
 	);
+}
+
+function formatMembershipToken(value: string) {
+	return value
+		.split(/[_-]+/g)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
 }

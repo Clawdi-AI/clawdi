@@ -174,8 +174,8 @@ function VaultPageInner() {
 						value={projectFilter}
 						onValueChange={(value) => void setProjectFilter(value)}
 						allowAll
-						allLabel="All Projects"
-						allDescription="Show owned and shared vaults together"
+						allLabel="All Readable Projects"
+						allDescription="Show every vault you can read"
 						label="Project"
 						layout="stacked"
 						disabled={!orderedProjects.length}

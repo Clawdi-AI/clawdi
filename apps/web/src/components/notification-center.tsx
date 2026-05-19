@@ -75,7 +75,7 @@ export function NotificationCenter() {
 			toast.success(copy.title, {
 				description: copy.description,
 				action: {
-					label: "Open project",
+					label: "Open Project",
 					onClick: () => router.push(projectDetailHref(result.project_id)),
 				},
 			});
@@ -133,7 +133,7 @@ export function NotificationCenter() {
 				<PopoverHeader className="px-4 py-3">
 					<div className="flex items-center justify-between gap-3">
 						<PopoverTitle>{getNotificationCenterTitle(count)}</PopoverTitle>
-						{count > 0 ? <Badge variant="secondary">{count} pending</Badge> : null}
+						{count > 0 ? <Badge variant="secondary">{count} Pending</Badge> : null}
 					</div>
 					<PopoverDescription>{getProjectInvitationAccessCopy()}</PopoverDescription>
 				</PopoverHeader>
@@ -178,7 +178,7 @@ function NotificationCenterContent({
 		return (
 			<div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
 				<Spinner className="size-3.5" />
-				Loading invitations…
+				Loading Invitations…
 			</div>
 		);
 	}
@@ -187,7 +187,7 @@ function NotificationCenterContent({
 		return (
 			<div className="space-y-3 px-4 py-4">
 				<div className="space-y-1">
-					<div className="text-sm font-medium">Couldn't load invitations</div>
+					<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
 					<p className="text-xs text-muted-foreground">{errorMessage(error)}</p>
 				</div>
 				<Button size="sm" variant="outline" onClick={onRetry}>
@@ -228,7 +228,7 @@ function NotificationCenterContent({
 										<div className="truncate text-sm font-medium">{invitation.project_name}</div>
 										<div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 											<span>
-												from {invitation.owner_display}{" "}
+												From {invitation.owner_display}{" "}
 												<span className="font-mono">@{invitation.owner_handle}</span>
 											</span>
 											<span aria-hidden="true">·</span>

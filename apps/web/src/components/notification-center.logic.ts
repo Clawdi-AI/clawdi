@@ -39,20 +39,20 @@ export function getPendingNotificationCount(
 }
 
 export function getNotificationCenterTriggerLabel(count: number): string {
-	if (count === 1) return "Notification center, 1 pending invitation";
-	if (count > 1) return `Notification center, ${count} pending invitations`;
-	return "Notification center";
+	if (count === 1) return "Notification Center, 1 Pending Invitation";
+	if (count > 1) return `Notification Center, ${count} Pending Invitations`;
+	return "Notification Center";
 }
 
 export function getNotificationCenterTitle(count: number): string {
-	if (count === 1) return "1 pending notification";
-	if (count > 1) return `${count} pending notifications`;
-	return "Notification center";
+	if (count === 1) return "1 Pending Notification";
+	if (count > 1) return `${count} Pending Notifications`;
+	return "Notification Center";
 }
 
 export function getNotificationCenterEmptyCopy(): { title: string; description: string } {
 	return {
-		title: "No pending notifications",
+		title: "No Pending Notifications",
 		description: "Project invitations and other action-required updates will appear here.",
 	};
 }
