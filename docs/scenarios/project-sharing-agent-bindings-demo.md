@@ -59,7 +59,7 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
 | Security | Agent API keys cannot manage sharing | sharing routes reject Agent API keys | API guard display |
-| Security | Plaintext vault values stay CLI/API-key only, but Project members read them like owners | web/JWT cannot call `vault resolve`; members can resolve via CLI/API key | API guard display |
+| Security | Vault plaintext stays CLI/API-key only; Project members get owner-equivalent read access | web/JWT cannot call `vault resolve`; members can resolve via CLI/API key | API guard display |
 | Revoke/conflict | Conflict block/allow and access cleanup | `vault resolve --agent`, unshare/leave/remove | Error copy / stale attachment cleanup |
 
 ## Role Logic Review
@@ -266,7 +266,7 @@ Security branch:
 
 - Web/JWT auth cannot call `vault resolve`.
 - Agent API keys cannot manage sharing or invitations.
-- Plaintext vault resolution remains CLI/API-key only, and Project members can resolve shared Project values like owners.
+- Plaintext vault resolution remains CLI/API-key only, and Project members have owner-equivalent read access to shared Project values.
 
 ## Flow 8: Skills, Pull, And Push Project Flags
 

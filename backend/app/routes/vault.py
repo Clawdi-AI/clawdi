@@ -424,10 +424,10 @@ async def resolve_vault(
 ) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
-    User-level CLI auth can resolve shared Project plaintext because Project
-    membership grants read access. A bound Agent API key is capped to its
-    default-write Project unless resolving through its own `agent_id`, where
-    the Agent Project plus explicit attached Projects define runtime reads.
+    Project membership grants CLI/API-key callers read access to vault values.
+    A bound Agent API key is capped to its default-write Project unless
+    resolving through its own `agent_id`, where the Agent Project plus explicit
+    attached Projects define runtime reads.
     """
     if project_id is not None and agent_id is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")

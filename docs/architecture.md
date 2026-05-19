@@ -58,7 +58,7 @@ All keyed off Clerk `user_id`:
 | `agent_project_bindings` | Runtime Agent composition: one fixed `primary` Agent Project row plus ordered `context` attachments | `clawdi setup`, `clawdi agent projects ...` |
 | `sessions` | Per-conversation metadata: `environment_id`, `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi push` |
 | `skills` | Per-skill metadata + tar.gz body in file store | CLI `skill add / install`, dashboard upload |
-| `vaults` + `vault_items` | Three-level secrets: vault → section → field. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts and returns plain values for readable Projects; CLI/API-key only | `clawdi vault set` |
+| `vaults` + `vault_items` | Three-level secrets: vault → section → field. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts readable Project values for CLI/API-key callers | `clawdi vault set` |
 | `memories` | Long-term recall. `content` (text), `category`, `tags`, plus three search columns (`content_tsv` generated tsvector, `embedding vector(768)`) | CLI and MCP `memory_add` |
 | `user_settings` | Opaque JSONB per-user prefs: `memory_provider` (`builtin` / `mem0`), `mem0_api_key` | `PATCH /api/settings` |
 
@@ -165,7 +165,7 @@ clawdi://prod/database/url
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 
 - `/api/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**
-- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. Project members can resolve shared Project values just like owners. It can resolve a single readable Project via `project_id` or an Agent's ordered Project set via `agent_id`; env-bound Agent keys only read attached shared Projects through the matching Agent boundary.
+- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. Project membership grants read access to vault values, so members can resolve shared Project values through CLI/API-key flows. It can resolve a single readable Project via `project_id` or an Agent's ordered Project set via `agent_id`; env-bound Agent keys only read attached shared Projects through the matching Agent boundary.
 
 `clawdi run -- <cmd>` hits `/vault/resolve`, merges the returned env into the child process's environment, and `exec`s. `clawdi run --project <project> -- <cmd>` resolves from that explicit cloud Project. Without `--project`, a local `clawdi project folder link --project <project>` can select the Project for the current folder or a parent folder. Folder links are local CLI selection hints only: they do not grant Project access, attach Projects to Agents, or compose Projects.
 
