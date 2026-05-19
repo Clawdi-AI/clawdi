@@ -182,7 +182,7 @@ designed to be safe to run on every file save.
 | Adapter regression | Per-agent `collectSessions` / `collectSkills` / `writeSkillArchive` against pre-built fixture `$HOME`s | `tests/adapters/*.test.ts` |
 | Command regression | `push` / `pull` / `doctor` / `update` / `skill init` with `globalThis.fetch` mocked; assert golden payloads and filesystem state | `tests/commands/*.test.ts` |
 | Process smoke | Spawn `bun src/index.ts <args>` — catches bundle / import-level breakage the in-process tests can't see | `tests/smoke.test.ts` |
-| Process e2e | Spawn the real CLI process against a local mock API; covers vault `read`, `inject`, and `run --env-file` reference resolution without touching real credentials | `tests/e2e/*.test.ts` |
+| Process e2e | Spawn the real CLI process against a local mock API; covers vault `read`, `inject`, `run --env-file`, and P0 credential profile import/materialize without touching real credentials | `tests/e2e/*.test.ts` |
 | Release checklist | Manual; see below | — |
 
 ### Fixtures
