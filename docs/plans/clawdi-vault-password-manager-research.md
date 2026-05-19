@@ -1,6 +1,6 @@
 # Clawdi Vault Password Manager Research
 
-**Status:** reviewed; architecture direction proposed
+**Status:** reviewed; Phase 1 implementation target
 **Last updated:** 2026-05-19
 **Owner:** product + platform
 
@@ -33,6 +33,19 @@ The product promise should evolve in two steps:
 
 Do not claim zero-knowledge or "Clawdi cannot see your secrets" until the
 second step ships.
+
+Current implementation target:
+
+1. Ship the Phase 1 reference workflow: `clawdi://`, `read`, `run --env-file`,
+   `inject`, masking, provenance, and conflict handling.
+2. Keep P0 credential-profile support narrow and allowlisted: Codex, Claude
+   Code, and GitHub CLI.
+3. Treat macOS Keychain and other OS credential stores as explicit interactive
+   sources. A user-approved system prompt is acceptable on macOS, but silent
+   scraping is not. Headless/CI flows must use file, token, helper, or
+   environment-based paths instead.
+4. Preserve honest custody copy: server-managed credentials can be decrypted by
+   Clawdi today; client-managed credentials are the future trust target.
 
 Important prioritization update: Agent Vault-style proxying is technically the
 right long-term answer for hosted agents, but it should not block the first
@@ -584,6 +597,10 @@ credential-and-capability layer, not only a secret-string store.
    Secret Service, browser password stores, SSH agents, or provider-specific
    token helpers. Any future credential-store bridge must be explicit,
    interactive, audited, and adapter-specific.
+9. Do not treat a successful local credential import as proof that the same
+   credential can be safely shared with a team or hosted agent. Sharing and
+   hosted materialization require separate confirmation, audit, and custody
+   labels.
 
 ## Recommended User Experience
 
@@ -756,6 +773,10 @@ clawdi agent credentials import claude-code \
   --project personal \
   --from ~/.claude/.credentials.json
 
+clawdi agent credentials import claude-code \
+  --project personal \
+  --source keychain
+
 clawdi agent credentials import gh \
   --project personal \
   --from ~/.config/gh/hosts.yml
@@ -777,23 +798,34 @@ Design constraints:
 - Treat OS credential stores as guarded sources, not files. They can sometimes
   be read by the owning app, a signed app in the same access group, a user-
   approved process, or a tool's own export command, but that is platform- and
-  tool-specific. P0 does not call `security`, Windows Credential Manager,
-  Secret Service, or `gh auth token` to extract tokens.
+  tool-specific. P0 file adapters do not call `security`, Windows Credential
+  Manager, Secret Service, or `gh auth token` by default.
+- A macOS Keychain adapter is acceptable when it is user-initiated and
+  interactive. The command must say exactly which tool credential it will read,
+  warn that macOS may show a system authorization prompt, and never run in
+  non-interactive mode unless the source is explicitly selected.
 - P0 built-in adapter paths:
   - Codex: `$CODEX_HOME/auth.json`, defaulting to `~/.codex/auth.json`.
   - Claude Code: `$CLAUDE_CONFIG_DIR/.credentials.json`, defaulting to
     `~/.claude/.credentials.json` on Linux/Windows. macOS stores Claude Code
-    credentials in Keychain, so automatic file import is best-effort there and
-    should fall back to `--from` only.
+    credentials in Keychain, so file import is best-effort there. A
+    `--source keychain` adapter can be implemented once the current Claude Code
+    Keychain service/account contract is verified.
   - GitHub CLI: `$GH_CONFIG_DIR/hosts.yml`, defaulting to the same config
     precedence as `gh` (`$XDG_CONFIG_HOME/gh`, Windows `%AppData%/GitHub CLI`,
     then `~/.config/gh`). If `gh` stores the token only in the system credential
-    store, P0 does not attempt keychain extraction.
+    store, a future explicit `--source gh-auth-token` adapter may call
+    `gh auth token` and materialize through `gh auth login --with-token`, but
+    only after user confirmation.
 - Never import logs, history, shell snapshots, session archives, MCP configs, or
   other runtime artifacts.
 - Always show a dry-run summary of paths and file sizes before import.
 - Materialization should write atomically, preserve file permissions, and create
   a timestamped backup by default.
+- Materializing back into an OS credential store is a separate adapter path.
+  It must use the tool's documented login/import command or a verified
+  Keychain/Credential Manager item contract; never write arbitrary credential
+  store rows based on guesses.
 - The default storage target should be `custody_model=client_managed` once
   client-side encryption exists. Until then, product copy must say Clawdi can
   decrypt server-managed imported credentials.
@@ -1074,20 +1106,28 @@ Candidate tables:
    - `custody_model`
    - `status`
    - `created_at`
-11. `vault_agent_credential_profiles`
+11. `vault_credential_profiles`
    - `id`
+   - `user_id`
    - `project_id`
-   - `agent_tool` (`codex`, `claude_code`, `openclaw`)
-   - `profile_name`
+   - `tool` (`codex`, `claude-code`, `gh`, later more allowlisted tools)
+   - `profile`
    - `schema_version`
-   - `source_path`
-   - `target_path`
-   - `secret_item_version_id`
-   - `non_secret_template`
-   - `imported_by_user_id`
+   - `encrypted_payload`
+   - `nonce`
+   - `custody_model`
+   - `source_kind` (`file`, `keychain`, `tool_command`, `manual`)
+   - `source_metadata`
+   - `target_strategy` (`adapter_default`, `explicit`, `tool_login`)
    - `last_materialized_at`
    - `created_at`
+   - `updated_at`
    - `revoked_at`
+
+Phase 1 may implement a smaller table with only encrypted payload storage and
+the `(project_id, tool, profile)` uniqueness rule. The important product
+boundary is that credential profiles stay separate from `vault_items`, so
+legacy all-env injection never receives complete local auth files by accident.
 
 The `credential_kind`, `runtime_policy`, and `vault_service_bindings` fields
 are future-proofing seams. Phase 1 can store only ordinary secret values, but
@@ -1216,13 +1256,18 @@ This is the recommended target for the core password-manager promise.
 
 Properties:
 
-- Clawdi imports a supported local agent credential file into a Vault item.
+- Clawdi imports a supported local agent credential file or explicit
+  credential-store export into a dedicated encrypted credential-profile record,
+  separate from ordinary `vault_items`.
 - The CLI can later materialize that profile back to the tool's expected path.
 - This is useful for Codex, Claude Code on Linux/Windows, GitHub CLI file-backed
-  auth, and similar tools that expect local auth files instead of per-command
-  environment variables.
+  auth, explicit macOS Keychain imports, and similar tools that expect local
+  auth files or OS credential-store entries instead of per-command environment
+  variables.
 - The local materialized file is plaintext to the target tool and local OS
-  user, so this is backup/restore and controlled sharing, not a sandbox.
+  user. A materialized Keychain or credential-store item is accessible under
+  that OS account's credential-store rules. This is backup/restore and
+  controlled sharing, not a sandbox.
 - The stored profile should become client-managed once client-side encryption
   exists.
 
@@ -1304,8 +1349,10 @@ Ship first:
    - detect supported Codex, Claude Code, and GitHub CLI credential paths
      without reading unrelated logs or history;
    - import only allowlisted files after a dry-run summary;
+   - allow an explicit macOS Keychain/tool-command source only after the user
+     chooses that source and confirms the system prompt risk;
    - materialize back to each tool's expected path with atomic write and
-     backup.
+     backup, or through a verified tool login/import command.
 
 Required behavior details:
 
@@ -1344,7 +1391,8 @@ Defer from Phase 1:
 5. Dynamic secrets engines and full enterprise gateway deployment.
 6. HTTPS proxy/MITM mode and CA injection.
 7. Localhost sidecar service.
-8. Full cross-agent credential-profile support beyond the first Codex adapter.
+8. Broad credential-profile support beyond the P0 allowlist and any explicit
+   macOS Keychain/tool-command bridge approved for those P0 tools.
 
 Acceptance criteria:
 
@@ -1362,6 +1410,9 @@ Acceptance criteria:
 8. The P0 adapter spike can show an import/materialize dry run for supported
    Codex, Claude Code, and GitHub CLI credential paths without reading logs,
    history, shell snapshots, or archived sessions.
+9. On macOS, an interactive credential-store import is allowed only when the
+   user explicitly selects that source, sees the target tool/account, and
+   confirms before any Keychain or tool-token command is invoked.
 
 ## Recommended Phasing
 
@@ -1387,6 +1438,8 @@ Deliver:
 - P0 local credential profile adapters for Codex, Claude Code, and GitHub CLI
   backed by dedicated encrypted credential-profile storage, not `vault_items`,
   so legacy all-env injection never receives the stored auth file.
+- Optional macOS interactive credential-store bridge for P0 tools, gated behind
+  explicit source selection and adapter-specific verification.
 - Documentation that clearly says env injection is not isolation.
 
 Security statement:
@@ -1628,6 +1681,21 @@ semantics, without turning every workflow into plaintext env sprawl."
 - Keeper Secrets Manager CLI shows machine-oriented profiles, OS-native
   keychain storage, and environment substitution:
   <https://docs.keeper.io/en/keeperpam/secrets-manager/secrets-manager-command-line-interface>
+- Claude Code's credential documentation defines the current platform split:
+  macOS uses encrypted Keychain, Linux uses `~/.claude/.credentials.json`, and
+  Windows uses `%USERPROFILE%\.claude\.credentials.json`:
+  <https://code.claude.com/docs/en/team>
+- GitHub CLI documents environment-token precedence, `gh auth token`,
+  `gh auth login --with-token`, and `--insecure-storage`; these are the
+  supported paths for explicit gh credential import/materialization design:
+  <https://cli.github.com/manual/gh_help_environment>
+  <https://cli.github.com/manual/gh_auth_token>
+  <https://cli.github.com/manual/gh_auth_login>
+- Apple Keychain access is explicitly mediated by app access groups,
+  entitlements, and user/system authorization, which is why Clawdi should treat
+  it as an interactive source rather than a plain file:
+  <https://developer.apple.com/documentation/security/sharing-access-to-keychain-items-among-a-collection-of-apps>
+  <https://support.apple.com/en-ca/guide/mac-help/kychn002/mac>
 - AWS Secrets Manager Agent and HashiCorp Vault Agent show local/sidecar
   delivery patterns: localhost HTTP cache, read-only secret access, auto-auth,
   lease renewal, templating, and process-supervisor injection:
