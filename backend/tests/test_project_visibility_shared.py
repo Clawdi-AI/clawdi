@@ -1,7 +1,7 @@
 """project_ids_visible_to widens to include shared memberships for
-Clerk JWT + unbound-CLI callers. Agent API keys keep their
-single-project ceiling regardless of memberships (deploy-key blast
-radius boundary)."""
+Clerk JWT + unbound-CLI callers. Env-bound Agent API keys keep their
+single-project ceiling on explicit project reads, but may read attached
+shared Projects through the matching Agent runtime boundary."""
 
 import uuid
 from datetime import UTC, datetime
@@ -278,12 +278,12 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
 
 
 @pytest.mark.asyncio
-async def test_recipient_cli_cannot_resolve_shared_project_vault_plaintext(
+async def test_recipient_cli_resolves_shared_project_vault_plaintext(
     cli_client,
     db_session,
     seed_user,
 ):
-    """Unbound CLI keys may read shared metadata, but not owner plaintext."""
+    """Unbound CLI keys may resolve shared Project vault plaintext."""
     from app.models.agent_project_binding import AgentProjectBinding
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.project_membership import ProjectMembership
@@ -359,15 +359,148 @@ async def test_recipient_cli_cannot_resolve_shared_project_vault_plaintext(
 
     try:
         explicit = await cli_client.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
-        assert explicit.status_code == 404, explicit.text
+        assert explicit.status_code == 200, explicit.text
+        explicit_body = explicit.json()
+        assert explicit_body["value"] == "owner-secret-value"
+        assert explicit_body["source_project_id"] == str(shared.id)
 
         attached_key = await cli_client.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
-        assert attached_key.status_code == 404, attached_key.text
+        assert attached_key.status_code == 200, attached_key.text
+        attached_body = attached_key.json()
+        assert attached_body["value"] == "owner-secret-value"
+        assert attached_body["source_binding_type"] == "context"
 
         attached_env = await cli_client.post(f"/api/vault/resolve?agent_id={env.id}")
         assert attached_env.status_code == 200, attached_env.text
-        assert "TOKEN" not in attached_env.json()
+        assert attached_env.json()["TOKEN"] == "owner-secret-value"
     finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_env_bound_agent_key_resolves_attached_shared_project_vault_plaintext(
+    db_session,
+    seed_user,
+):
+    """A bound Agent key can resolve shared Project vault plaintext only
+    through its own Agent attachment boundary."""
+    import httpx
+    from httpx import ASGITransport
+
+    from app.core.auth import get_auth
+    from app.core.database import get_session
+    from app.main import app
+    from app.models.agent_project_binding import AgentProjectBinding
+    from app.models.api_key import ApiKey
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.user import User
+    from app.models.vault import Vault, VaultItem
+    from app.services.vault_crypto import encrypt
+    from tests.conftest import create_env_with_project
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"bound_vo_{nonce}",
+        email=f"bound_vo_{nonce}@test.dev",
+        name="Bound Vault Owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+
+    shared = Project(
+        user_id=owner.id,
+        name="shared agent vault boundary",
+        slug=f"shared-agent-vault-boundary-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"bound-vo-{nonce}",
+        )
+    )
+
+    vault = Vault(
+        user_id=owner.id,
+        project_id=shared.id,
+        slug=f"owner-agent-secret-{nonce}",
+        name="Owner Agent Secret",
+    )
+    db_session.add(vault)
+    await db_session.flush()
+    ciphertext, nonce_bytes = encrypt("attached-secret-value")
+    db_session.add(
+        VaultItem(
+            vault_id=vault.id,
+            section="",
+            item_name="TOKEN",
+            encrypted_value=ciphertext,
+            nonce=nonce_bytes,
+        )
+    )
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"bound-viewer-{nonce}",
+        machine_name="Bound Viewer Agent",
+    )
+    db_session.add(
+        AgentProjectBinding(
+            agent_id=env.id,
+            project_id=shared.id,
+            binding_type="context",
+            priority=1,
+            default_write_enabled=False,
+            created_by_user_id=seed_user.id,
+        )
+    )
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash=("b" + nonce + "x" * (64 - len(nonce) - 1)),
+        key_prefix=f"clawdi_b{nonce[:3]}",
+        label="bound-agent",
+        environment_id=env.id,
+        scopes=None,
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+
+    async def _override_get_session():
+        yield db_session
+
+    async def _override_get_auth():
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            explicit = await ac.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
+            assert explicit.status_code == 404, explicit.text
+
+            attached_key = await ac.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
+            assert attached_key.status_code == 200, attached_key.text
+            assert attached_key.json()["value"] == "attached-secret-value"
+
+            attached_env = await ac.post(f"/api/vault/resolve?agent_id={env.id}")
+            assert attached_env.status_code == 200, attached_env.text
+            assert attached_env.json()["TOKEN"] == "attached-secret-value"
+    finally:
+        app.dependency_overrides.clear()
+        await db_session.delete(api_key)
         await db_session.delete(shared)
         await db_session.delete(owner)
         await db_session.commit()

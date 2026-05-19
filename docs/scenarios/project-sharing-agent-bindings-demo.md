@@ -6,7 +6,7 @@
 ## Product Model
 
 - Project is a shared library object with resources, membership, and access controls.
-- Project resources include skills and vault key names. Secret values are never shown in this demo.
+- Project resources include skills, vault key names, and vault env values for CLI/API-key runtime reads.
 - Agent has one fixed Agent Project for default writes.
 - Agent can attach multiple Projects for reads during runs.
 - Sharing grants Project membership only. It does not attach the Project to an agent.
@@ -59,7 +59,7 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
 | Security | Agent API keys cannot manage sharing | sharing routes reject Agent API keys | API guard display |
-| Security | Plaintext vault values stay CLI/API-key only | web/JWT cannot call `vault resolve` | API guard display |
+| Security | Plaintext vault values stay CLI/API-key only, but Project members read them like owners | web/JWT cannot call `vault resolve`; members can resolve via CLI/API key | API guard display |
 | Revoke/conflict | Conflict block/allow and access cleanup | `vault resolve --agent`, unshare/leave/remove | Error copy / stale attachment cleanup |
 
 ## Role Logic Review
@@ -92,7 +92,7 @@ Expected:
 - Link listings show the prefix, label, timestamps, accepts, and revoke affordance.
 - Revoking a share link stops future accepts only; accepted viewers stay members until
   `project members --remove`, `project leave`, or `project unshare` changes membership.
-- No secret plaintext is shown.
+- Secret plaintext is not shown in dashboard/web flows. CLI/API-key runtime paths can resolve shared Project vault values for members.
 
 Web PR follow-up: Projects list/detail and Share dialog should mirror
 the same People / Access, Invites, and Links state.
@@ -113,6 +113,7 @@ Expected:
 - Project access is accepted as viewer access.
 - The project appears under Shared with me with `@alice/engineering`.
 - Skills and vault key names are readable; writes stay disabled.
+- Vault env values resolve through CLI/API-key runtime paths; web/JWT still cannot read plaintext.
 - Human CLI output names the exact follow-up command:
   `clawdi agent projects attach <agent-id> --project @alice/engineering`.
 - No Project is attached to an Agent unless Bob passes `--agent`.
@@ -265,7 +266,7 @@ Security branch:
 
 - Web/JWT auth cannot call `vault resolve`.
 - Agent API keys cannot manage sharing or invitations.
-- Plaintext vault resolution remains CLI/API-key only.
+- Plaintext vault resolution remains CLI/API-key only, and Project members can resolve shared Project values like owners.
 
 ## Flow 8: Skills, Pull, And Push Project Flags
 

@@ -234,6 +234,44 @@ async def validate_project_read_for_caller(
     return project_id
 
 
+async def project_ids_readable_by_user(
+    db: AsyncSession,
+    user_id: UUID,
+) -> list[UUID]:
+    """Return owned + shared Project ids for a user.
+
+    This is the account-level read set. `project_ids_visible_to`
+    wraps it with auth-token blast-radius constraints for env-bound
+    Agent keys.
+    """
+    from app.models.project_membership import ProjectMembership
+
+    owned_ids = list(
+        (await db.execute(select(Project.id).where(Project.user_id == user_id))).scalars().all()
+    )
+    shared_ids = list(
+        (
+            await db.execute(
+                select(ProjectMembership.project_id).where(
+                    ProjectMembership.member_user_id == user_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Owned ordering preserved; shared appended deterministically.
+    # Membership rows could in theory dupe an owned project (e.g. if
+    # a stale row survived an ownership transfer); de-dup defensively.
+    seen = set(owned_ids)
+    result_ids = list(owned_ids)
+    for sid in shared_ids:
+        if sid not in seen:
+            result_ids.append(sid)
+            seen.add(sid)
+    return result_ids
+
+
 async def project_ids_visible_to(
     db: AsyncSession,
     auth: AuthContext,
@@ -272,34 +310,5 @@ async def project_ids_visible_to(
         return [env_project]
 
     # Clerk JWT and unbound CLI key: owned projects UNION projects the
-    # user joined as a viewer member. Two separate queries (one
-    # owned, one shared) keeps the SQL readable; both hit indexed
-    # columns and run sub-millisecond.
-    from app.models.project_membership import ProjectMembership
-
-    owned_ids = list(
-        (await db.execute(select(Project.id).where(Project.user_id == auth.user_id)))
-        .scalars()
-        .all()
-    )
-    shared_ids = list(
-        (
-            await db.execute(
-                select(ProjectMembership.project_id).where(
-                    ProjectMembership.member_user_id == auth.user_id
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    # Owned ordering preserved; shared appended deterministically.
-    # Membership rows could in theory dupe an owned project (e.g. if
-    # a stale row survived an ownership transfer); de-dup defensively.
-    seen = set(owned_ids)
-    result_ids = list(owned_ids)
-    for sid in shared_ids:
-        if sid not in seen:
-            result_ids.append(sid)
-            seen.add(sid)
-    return result_ids
+    # user joined as a member.
+    return await project_ids_readable_by_user(db, auth.user_id)
