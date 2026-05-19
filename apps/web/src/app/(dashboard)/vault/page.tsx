@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, Key, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, Copy, Key, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { unwrap, useApi } from "@/lib/api";
 import type { Vault } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
@@ -23,6 +24,7 @@ interface VaultField {
 	key: string;
 	name: string;
 	section: string;
+	reference: string;
 }
 
 export default function VaultPage() {
@@ -149,6 +151,7 @@ function VaultCard({
 	const [adding, setAdding] = useState(false);
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
+	const [copiedReference, setCopiedReference] = useState<string | null>(null);
 
 	// Cache key includes project_id so a JWT user with the same slug
 	// in two projects (Personal + env-A) doesn't share entries.
@@ -203,16 +206,38 @@ function VaultCard({
 					key: section === "(default)" ? f : `${section}/${f}`,
 					name: f,
 					section: section === "(default)" ? "" : section,
+					reference: buildClawdiReference(vault.slug, section === "(default)" ? "" : section, f),
 				})),
 			)
 		: [];
+
+	const copyReference = async (reference: string) => {
+		try {
+			await navigator.clipboard.writeText(reference);
+			setCopiedReference(reference);
+			window.setTimeout(
+				() => setCopiedReference((current) => (current === reference ? null : current)),
+				1600,
+			);
+			toast.success("Reference copied", { description: reference });
+		} catch (e) {
+			toast.error("Copy failed", { description: errorMessage(e) });
+		}
+	};
 
 	const columns = useMemo<ColumnDef<VaultField>[]>(
 		() => [
 			{
 				accessorKey: "key",
 				header: "Key",
-				cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
+				cell: ({ row }) => (
+					<div className="min-w-0 space-y-0.5">
+						<div className="font-mono text-xs">{row.original.key}</div>
+						<div className="max-w-[42rem] truncate font-mono text-muted-foreground text-xs">
+							{row.original.reference}
+						</div>
+					</div>
+				),
 			},
 			{
 				id: "value",
@@ -224,30 +249,56 @@ function VaultCard({
 				id: "actions",
 				header: "",
 				cell: ({ row }) => (
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						onClick={(e) => {
-							e.stopPropagation();
-							// Removing a secret breaks any clawdi:// reference
-							// to it the next time an AI tries to resolve.
-							const ok = window.confirm(
-								`Delete "${row.original.key}"?\n\n` +
-									"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
-							);
-							if (ok) deleteItem.mutate({ section: row.original.section, name: row.original.name });
-						}}
-						disabled={deleteItem.isPending}
-						className="text-muted-foreground hover:text-destructive"
-						aria-label={`Delete ${row.original.key}`}
-					>
-						<Trash2 className="size-3.5" />
-					</Button>
+					<div className="flex justify-end gap-1">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									onClick={(e) => {
+										e.stopPropagation();
+										copyReference(row.original.reference);
+									}}
+									className="text-muted-foreground"
+									aria-label={`Copy project-relative reference for ${row.original.key}`}
+								>
+									{copiedReference === row.original.reference ? (
+										<Check className="size-3.5" />
+									) : (
+										<Copy className="size-3.5" />
+									)}
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="left" className="text-xs">
+								Copy project-relative reference
+							</TooltipContent>
+						</Tooltip>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							onClick={(e) => {
+								e.stopPropagation();
+								// Removing a secret breaks any clawdi:// reference
+								// to it the next time an AI tries to resolve.
+								const ok = window.confirm(
+									`Delete "${row.original.key}"?\n\n` +
+										"Anything that resolves this key will start failing. To get it back you'd have to paste the value in again.",
+								);
+								if (ok)
+									deleteItem.mutate({ section: row.original.section, name: row.original.name });
+							}}
+							disabled={deleteItem.isPending}
+							className="text-muted-foreground hover:text-destructive"
+							aria-label={`Delete ${row.original.key}`}
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</div>
 				),
-				size: 40,
+				size: 80,
 			},
 		],
-		[deleteItem],
+		[deleteItem, copiedReference],
 	);
 
 	// Flat section layout — heading + action row on top, then the table.
@@ -363,4 +414,11 @@ function VaultCard({
 			) : null}
 		</section>
 	);
+}
+
+function buildClawdiReference(vaultSlug: string, section: string, field: string): string {
+	const parts = [vaultSlug, ...(section ? [section] : []), field].map((part) =>
+		encodeURIComponent(part),
+	);
+	return `clawdi://${parts.join("/")}`;
 }
