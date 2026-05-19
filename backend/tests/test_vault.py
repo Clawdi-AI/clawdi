@@ -67,6 +67,28 @@ async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.Asyn
 
 
 @pytest.mark.asyncio
+async def test_vault_resolve_exact_clawdi_reference(cli_client: httpx.AsyncClient):
+    await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    r = await cli_client.put(
+        "/api/vault/prod/items",
+        json={"section": "database", "fields": {"url": "postgres://secret"}},
+    )
+    assert r.status_code == 200, r.text
+
+    resolved = await cli_client.post(
+        "/api/vault/resolve?vault_slug=prod&section=database&field=url&debug=true"
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["reference"] == "clawdi://prod/database/url"
+    assert body["value"] == "postgres://secret"
+    assert body["vault_slug"] == "prod"
+    assert body["section"] == "database"
+    assert body["item_name"] == "url"
+    assert body["precedence"][0]["reason"] == "match"
+
+
+@pytest.mark.asyncio
 async def test_vault_resolve_requires_cli_auth(client: httpx.AsyncClient):
     """Web (Clerk) auth must be rejected from /resolve — plaintext leak gate."""
     r = await client.post("/api/vault/resolve")

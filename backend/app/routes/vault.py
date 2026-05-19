@@ -505,9 +505,42 @@ async def _first_vault_key_hit(
     return None, None
 
 
+async def _exact_vault_reference_hit(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    vault_slug: str,
+    section: str,
+    field: str,
+) -> tuple[Vault | None, VaultItem | None]:
+    vault = (
+        await db.execute(
+            select(Vault).where(Vault.project_id == project_id, Vault.slug == vault_slug)
+        )
+    ).scalar_one_or_none()
+    if vault is None:
+        return None, None
+    item = (
+        await db.execute(
+            select(VaultItem).where(
+                VaultItem.vault_id == vault.id,
+                VaultItem.section == section,
+                VaultItem.item_name == field,
+            )
+        )
+    ).scalar_one_or_none()
+    return vault, item
+
+
 @router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
 async def resolve_vault(
     key: str | None = Query(default=None),
+    vault_slug: str | None = Query(
+        default=None,
+        description="Exact clawdi:// vault slug to resolve.",
+    ),
+    section: str = Query(default="", description="Exact clawdi:// section to resolve."),
+    field: str | None = Query(default=None, description="Exact clawdi:// field to resolve."),
     project_id: UUID | None = Query(
         default=None,
         description="Project to resolve from (default: caller write project).",
@@ -541,6 +574,110 @@ async def resolve_vault(
     if not ordered:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     effective_project_ids = [entry["project_id"] for entry in ordered]
+
+    if vault_slug is not None or field is not None:
+        if key is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "pass key or vault_slug/field, not both",
+            )
+        if not vault_slug or not field:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "vault_slug and field are required for reference resolve",
+            )
+        precedence: list[dict] = []
+        winner: dict | None = None
+        conflicts: list[dict] = []
+        for entry in ordered:
+            hit_vault, hit_item = await _exact_vault_reference_hit(
+                db,
+                project_id=entry["project_id"],
+                vault_slug=vault_slug,
+                section=section,
+                field=field,
+            )
+            entry_debug = {
+                "project_id": str(entry["project_id"]),
+                "alias": entry["alias"],
+                "display": entry["display"],
+                "binding_type": entry["binding_type"],
+                "priority": entry["priority"],
+                "hit": hit_item is not None,
+                "reason": "match" if hit_item is not None and winner is None else "not-found",
+            }
+            if hit_item is not None and winner is not None:
+                entry_debug["reason"] = "conflict"
+                conflicts.append(
+                    {
+                        "project_id": str(entry["project_id"]),
+                        "alias": entry["alias"],
+                        "display": entry["display"],
+                        "binding_type": entry["binding_type"],
+                        "priority": entry["priority"],
+                        "vault_slug": hit_vault.slug if hit_vault else None,
+                        "section": hit_item.section,
+                        "item_name": hit_item.item_name,
+                    }
+                )
+            precedence.append(entry_debug)
+            if hit_item is not None and winner is None:
+                winner = {
+                    "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
+                    "source_project_id": str(entry["project_id"]),
+                    "source_alias": entry["alias"],
+                    "source_display": entry["display"],
+                    "source_binding_type": entry["binding_type"],
+                    "source_priority": entry["priority"],
+                    "vault_slug": hit_vault.slug if hit_vault else None,
+                    "section": hit_item.section,
+                    "item_name": hit_item.item_name,
+                }
+
+        reference = (
+            f"clawdi://{vault_slug}/{section}/{field}"
+            if section
+            else f"clawdi://{vault_slug}/{field}"
+        )
+        if winner is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "vault_reference_not_found",
+                    "reference": reference,
+                    "precedence": precedence,
+                },
+            )
+        if conflicts and not allow_conflicts:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "vault_conflicts_blocked",
+                    "reference": reference,
+                    "message": (
+                        "Vault reference exists in multiple attached Projects; "
+                        "pass allow_conflicts=true to use the first Project in Agent order."
+                    ),
+                    "winner": {
+                        "source_project_id": winner["source_project_id"],
+                        "source_alias": winner["source_alias"],
+                        "source_display": winner["source_display"],
+                        "source_binding_type": winner["source_binding_type"],
+                        "source_priority": winner["source_priority"],
+                        "vault_slug": winner["vault_slug"],
+                        "section": winner["section"],
+                        "item_name": winner["item_name"],
+                    },
+                    "conflicts": conflicts,
+                    "precedence": precedence,
+                },
+            )
+        response = {"reference": reference, **winner}
+        if debug:
+            response["precedence"] = precedence
+        if conflicts:
+            response["conflicts"] = conflicts
+        return response
 
     if key is not None:
         wanted = key.upper()

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import { ApiClient, ApiError } from "../lib/api-client";
 import type { VaultResolved } from "../lib/api-schemas";
@@ -6,10 +7,22 @@ import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { findProjectFolderLink } from "../lib/project-folders";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
+import {
+	type ResolveReferenceOptions,
+	replaceResolvedReferences,
+	resolveReferenceMap,
+	scanClawdiReferences,
+} from "../lib/secret-references";
+import { getEnvIdByAgent } from "../lib/select-adapter";
 
 interface RunOpts {
 	project?: string;
+	agent?: string;
 	projectFolder?: boolean;
+	envFile?: string[];
+	inheritEnv?: boolean;
+	allVaultEnv?: boolean;
+	allowConflicts?: boolean;
 }
 
 interface SelectedProject {
@@ -30,38 +43,61 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		process.exit(1);
 	}
 
-	// Fetch vault secrets
 	const api = new ApiClient();
 	const selectedProject = await selectProject(api, opts);
 	let vaultEnv: VaultResolved = {};
 
-	try {
-		if (selectedProject) {
-			console.log(chalk.green(`✓ Using Project ${selectedProject.label} for vault env injection.`));
+	if (opts.allVaultEnv) {
+		try {
+			if (selectedProject) {
+				console.log(
+					chalk.green(`✓ Using Project ${selectedProject.label} for vault env injection.`),
+				);
+			}
+			const resolved = await api.postJson<unknown>(
+				"/api/vault/resolve",
+				opts.agent
+					? { agent_id: resolveAgentId(opts.agent), allow_conflicts: conflictQuery(opts) }
+					: selectedProject
+						? { project_id: selectedProject.projectId }
+						: undefined,
+			);
+			vaultEnv = assertVaultResolved(resolved);
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 403) {
+				console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
+				process.exit(1);
+			}
+			console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
+			console.log(chalk.gray("  Running without vault injection."));
 		}
-		const resolved = await api.postJson<unknown>(
-			"/api/vault/resolve",
-			selectedProject ? { project_id: selectedProject.projectId } : undefined,
-		);
-		vaultEnv = assertVaultResolved(resolved);
-	} catch (e) {
-		if (e instanceof ApiError && e.status === 403) {
-			console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
-			process.exit(1);
+
+		const injectedCount = Object.keys(vaultEnv).length;
+		if (injectedCount > 0) {
+			console.log(chalk.green(`✓ Injected ${injectedCount} vault secrets`));
 		}
-		console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
-		console.log(chalk.gray("  Running without vault injection."));
 	}
 
-	const injectedCount = Object.keys(vaultEnv).length;
-	if (injectedCount > 0) {
-		console.log(chalk.green(`✓ Injected ${injectedCount} vault secrets`));
+	const baseEnv = opts.inheritEnv === false ? {} : { ...process.env };
+	const envFileVars = loadEnvFiles(opts.envFile ?? []);
+	const envWithReferences = { ...baseEnv, ...envFileVars };
+	let referenceEnv: Record<string, string> = {};
+	try {
+		referenceEnv = await resolveEnvReferences(envWithReferences, {
+			project: opts.project,
+			projectId: opts.project || opts.agent ? undefined : selectedProject?.projectId,
+			agent: opts.agent,
+			allowConflicts: opts.allowConflicts,
+		});
+	} catch (e) {
+		console.log(chalk.red(`Could not resolve clawdi references: ${errMessage(e)}`));
+		process.exit(1);
 	}
 
 	// Spawn child process with injected env
 	const [cmd, ...cmdArgs] = args;
 	const child = spawnImpl(cmd, cmdArgs, {
-		env: { ...process.env, ...vaultEnv },
+		env: { ...envWithReferences, ...vaultEnv, ...referenceEnv },
 		stdio: "inherit",
 	});
 
@@ -88,6 +124,7 @@ function assertVaultResolved(value: unknown): VaultResolved {
 }
 
 async function selectProject(api: ApiClient, opts: RunOpts): Promise<SelectedProject | null> {
+	if (opts.agent) return null;
 	if (opts.project) {
 		const projectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
 		return {
@@ -112,4 +149,66 @@ async function projectLabel(api: ApiClient, projectId: string): Promise<string |
 		return `@${project.owner_handle}/${project.slug}`;
 	}
 	return project.slug;
+}
+
+function resolveAgentId(agent: string): string {
+	return getEnvIdByAgent(agent) ?? agent;
+}
+
+function conflictQuery(opts: RunOpts): string | undefined {
+	return opts.allowConflicts ? "true" : undefined;
+}
+
+function loadEnvFiles(paths: string[]): Record<string, string> {
+	const values: Record<string, string> = {};
+	for (const path of paths) {
+		const content = readFileSync(path, "utf8");
+		for (const [key, value] of parseDotenv(content)) {
+			values[key] = value;
+		}
+	}
+	return values;
+}
+
+async function resolveEnvReferences(
+	env: Record<string, string | undefined>,
+	opts: ResolveReferenceOptions,
+): Promise<Record<string, string>> {
+	const refs = Object.values(env).flatMap((value) =>
+		typeof value === "string" ? scanClawdiReferences(value) : [],
+	);
+	if (refs.length === 0) return {};
+	const resolved = await resolveReferenceMap(refs, opts);
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(env)) {
+		if (typeof value !== "string" || scanClawdiReferences(value).length === 0) continue;
+		out[key] = replaceResolvedReferences(value, resolved);
+	}
+	console.log(
+		chalk.green(`✓ Resolved ${resolved.size} clawdi reference${resolved.size === 1 ? "" : "s"}`),
+	);
+	return out;
+}
+
+function parseDotenv(content: string): Array<[string, string]> {
+	const entries: Array<[string, string]> = [];
+	for (const line of content.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+		if (!match) continue;
+		entries.push([match[1], unquoteDotenvValue(match[2].trim())]);
+	}
+	return entries;
+}
+
+function unquoteDotenvValue(value: string): string {
+	if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+		return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+	}
+	if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+		return value.slice(1, -1);
+	}
+	const hashIndex = value.indexOf(" #");
+	return hashIndex === -1 ? value : value.slice(0, hashIndex).trimEnd();
 }

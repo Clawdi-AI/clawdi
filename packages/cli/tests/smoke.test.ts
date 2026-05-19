@@ -48,6 +48,8 @@ describe("CLI smoke — src entry", () => {
 			"doctor",
 			"update",
 			"mcp",
+			"read",
+			"inject",
 			"run",
 		]) {
 			expect(stdout).toContain(cmd);

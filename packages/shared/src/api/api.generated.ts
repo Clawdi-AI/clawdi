@@ -5386,6 +5386,12 @@ export interface operations {
         parameters: {
             query?: {
                 key?: string | null;
+                /** @description Exact clawdi:// vault slug to resolve. */
+                vault_slug?: string | null;
+                /** @description Exact clawdi:// section to resolve. */
+                section?: string;
+                /** @description Exact clawdi:// field to resolve. */
+                field?: string | null;
                 /** @description Project to resolve from (default: caller write project). */
                 project_id?: string | null;
                 /** @description Resolve through an Agent Project and attached Project order. */

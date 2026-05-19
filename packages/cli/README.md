@@ -86,11 +86,14 @@ remember that this repo uses Bun for TypeScript and PDM for backend scripts
 
 Later, in a different agent or a fresh session, ask "what package manager should I use here?" — it can call Clawdi memory search and answer from your actual context instead of guessing.
 
-Run a command with vault secrets without putting them on disk:
+Run a command with vault references without putting plaintext secrets on disk:
 
 ```bash
 clawdi vault set OPENAI_API_KEY
-clawdi run -- python scripts/ingest.py
+echo "OPENAI_API_KEY=clawdi://default/openai/api_key" > .env.local
+clawdi run --env-file .env.local -- python scripts/ingest.py
+clawdi read clawdi://default/openai/api_key
+clawdi inject --in .env.template --out .env.local
 ```
 
 Sync a local agent CLI credential profile to another machine:
@@ -239,7 +242,9 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
 | `clawdi vault set/list/import` | Manage encrypted secrets |
-| `clawdi run -- <cmd>` | Run a command with vault secrets injected |
+| `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
+| `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
+| `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
 | `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
 | `clawdi update` | Check for a newer CLI version |
 | `clawdi mcp` | Start the MCP stdio server used by agents |

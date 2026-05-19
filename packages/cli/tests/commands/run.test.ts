@@ -106,7 +106,7 @@ describe("run command project folder selection", () => {
 		};
 
 		try {
-			await run(["npm", "run", "deploy"], {}, spawnImpl);
+			await run(["npm", "run", "deploy"], { allVaultEnv: true }, spawnImpl);
 		} finally {
 			console.log = origLog;
 			restore();
@@ -143,7 +143,7 @@ describe("run command project folder selection", () => {
 		};
 
 		try {
-			await run(["node", "server.js"], { projectFolder: false }, spawnImpl);
+			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
 		} finally {
 			console.log = origLog;
 			restore();
@@ -178,7 +178,7 @@ describe("run command project folder selection", () => {
 		};
 
 		try {
-			await run(["node", "server.js"], { projectFolder: false }, spawnImpl);
+			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
 		} finally {
 			console.log = origLog;
 			restore();
@@ -188,5 +188,129 @@ describe("run command project folder selection", () => {
 		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
 		expect(lines.join("\n")).toContain("Could not fetch vault secrets");
 		expect(lines.join("\n")).not.toContain("Injected");
+	});
+
+	it("resolves clawdi references from env files without all-vault injection", async () => {
+		const envFile = join(tmpRoot, ".env");
+		writeFileSync(
+			envFile,
+			["OPENAI_API_KEY=clawdi://prod/openai/api_key", "LITERAL_VALUE=kept"].join("\n"),
+		);
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/openai/api_key",
+						value: "sk-test",
+						source_project_id: "project-default",
+						source_alias: "project-default",
+						vault_slug: "prod",
+						section: "openai",
+						item_name: "api_key",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await run(["node", "server.js"], { envFile: [envFile], projectFolder: false }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("vault_slug=prod");
+		expect(captured[0].path).toContain("section=openai");
+		expect(captured[0].path).toContain("field=api_key");
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-test");
+		expect(calls[0].env.LITERAL_VALUE).toBe("kept");
+		expect(lines.join("\n")).toContain("Resolved 1 clawdi reference");
+		expect(lines.join("\n")).not.toContain("sk-test");
+	});
+
+	it("lets explicit env-file references override legacy all-vault values", async () => {
+		const envFile = join(tmpRoot, ".env");
+		writeFileSync(envFile, "OPENAI_API_KEY=clawdi://prod/openai/api_key\n");
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve?vault_slug",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/openai/api_key",
+						value: "sk-explicit",
+						source_project_id: "project-default",
+						source_alias: "project-default",
+						vault_slug: "prod",
+						section: "openai",
+						item_name: "api_key",
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () => jsonResponse({ OPENAI_API_KEY: "sk-broad" }),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			await run(
+				["node", "server.js"],
+				{ envFile: [envFile], projectFolder: false, allVaultEnv: true },
+				spawnImpl,
+			);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(2);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-explicit");
+	});
+
+	it("uses linked Project folder when resolving env-file references", async () => {
+		linkCurrentProjectFolder();
+		const envFile = join(tmpRoot, ".env");
+		writeFileSync(envFile, "OPENAI_API_KEY=clawdi://prod/openai/api_key\n");
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/openai/api_key",
+						value: "sk-linked",
+						source_project_id: "project-linked",
+						source_alias: "engineering",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			await run(["node", "server.js"], { envFile: [envFile] }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("project_id=project-linked");
+		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-linked");
 	});
 });

@@ -35,7 +35,7 @@ Examples:
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
   $ clawdi project folder link --project engineering  Use this folder with a Project
-  $ clawdi run -- npm run deploy    Run with this folder's Project vault env
+  $ clawdi run --env-file .env -- npm run deploy  Resolve clawdi:// refs at runtime
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
@@ -338,6 +338,46 @@ vaultCmd
 		await vaultResolveCommand(key, { ...opts, project: opts.project });
 	});
 
+program
+	.command("read")
+	.description("Read one clawdi:// secret reference")
+	.argument("<reference>", "Reference to read")
+	.option("-p, --project <project>", "Project to resolve from")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("--debug", "Show project precedence without printing secrets in diagnostics")
+	.option("--json", "Output the full resolve response as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			"  $ clawdi read clawdi://prod/stripe/secret_key\n" +
+			"  $ clawdi read clawdi://prod/db/url --project engineering --json",
+	)
+	.action(async (reference, opts) => {
+		const { readCommand } = await import("./commands/read.js");
+		await readCommand(reference, { ...opts, project: opts.project });
+	});
+
+program
+	.command("inject")
+	.description("Render clawdi:// references in a template")
+	.option("--in <file>", "Input template path, or - for stdin", "-")
+	.option("--out <file>", "Output path, or - for stdout", "-")
+	.option("--force", "Overwrite an existing output file")
+	.option("-p, --project <project>", "Project to resolve from")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			"  $ clawdi inject --in .env.template --out .env.local\n" +
+			"  $ clawdi inject --in config.template.json --out -",
+	)
+	.action(async (opts) => {
+		const { injectCommand } = await import("./commands/inject.js");
+		await injectCommand({ ...opts, project: opts.project });
+	});
+
 // ─────────────────────────────────────────────────────────────
 // skill
 // ─────────────────────────────────────────────────────────────
@@ -558,8 +598,18 @@ program
 
 program
 	.command("run")
-	.description("Run a command with vault secrets injected")
-	.option("-p, --project <id-or-slug>", "Use vault env from an explicit Project")
+	.description("Run a command with clawdi:// references resolved")
+	.option("-p, --project <id-or-slug>", "Resolve references from an explicit Project")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option(
+		"--env-file <file>",
+		"Load dotenv-like file and resolve clawdi:// references",
+		(value, previous: string[]) => [...previous, value],
+		[],
+	)
+	.option("--no-inherit-env", "Do not inherit the parent process environment")
+	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected Project")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.argument("<command...>", "Command to run")
 	.addHelpText(
@@ -567,11 +617,11 @@ program
 		`
 Examples:
   $ clawdi project folder link --project engineering
-  $ clawdi run -- npm run deploy
-  ✓ Using Project engineering for vault env injection.
-  ✓ Injected 499 vault secrets
+  $ clawdi run --env-file .env -- npm run deploy
+  ✓ Resolved 2 clawdi references
 
-  $ clawdi run --project @alice/engineering -- npm run deploy
+  $ clawdi run --project @alice/engineering --env-file .env -- npm run deploy
+  $ clawdi run --all-vault-env -- npm run deploy
   $ clawdi run --no-project-folder -- python main.py`,
 	)
 	.action(async (args, opts) => {
