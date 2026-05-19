@@ -35,7 +35,7 @@ Examples:
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
   $ clawdi project folder link --project engineering  Use this folder with a Project
-  $ clawdi run --env-file .env -- npm run deploy  Resolve clawdi:// refs at runtime
+  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
@@ -374,7 +374,8 @@ program
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
-			"  $ clawdi inject --in .env.template --out .env.local\n" +
+			"  $ clawdi inject --dry-run --in .env.clawdi --out .env.local\n" +
+			"  $ clawdi inject --force --in .env.clawdi --out .env.local\n" +
 			"  $ clawdi inject --in config.template.json --out -",
 	)
 	.action(async (opts) => {
@@ -622,11 +623,12 @@ program
 		`
 Examples:
   $ clawdi project folder link --project engineering
-  $ clawdi run --env-file .env -- npm run deploy
+  $ clawdi run --dry-run --env-file .env.clawdi -- npm run dev
+  $ clawdi run --env-file .env.clawdi -- npm run dev
   ✓ Resolved 2 clawdi references
 
-  $ clawdi run --project @alice/engineering --env-file .env -- npm run deploy
-  $ clawdi run --all-vault-env -- npm run deploy
+  $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev
+  $ clawdi run --all-vault-env -- npm run dev
   $ clawdi run --no-project-folder -- python main.py`,
 	)
 	.action(async (args, opts) => {

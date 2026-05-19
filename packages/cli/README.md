@@ -74,7 +74,7 @@ Clawdi is the shared layer underneath:
 - **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
 - **Project sharing** — Share read-only Project access, accept it from the CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
-- **Vault secrets** — Store secrets server-side and inject them only when running a command.
+- **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
 - **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 
@@ -86,18 +86,21 @@ remember that this repo uses Bun for TypeScript and PDM for backend scripts
 
 Later, in a different agent or a fresh session, ask "what package manager should I use here?" — it can call Clawdi memory search and answer from your actual context instead of guessing.
 
-Run a command with vault references without putting plaintext secrets on disk:
+Run a fullstack dev command with vault references without putting plaintext secrets on disk:
 
 ```bash
 clawdi vault set OPENAI_API_KEY
-echo "OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY" > .env.local
-clawdi run --env-file .env.local -- python scripts/ingest.py
-clawdi run --dry-run --env-file .env.local -- python scripts/ingest.py
+echo "OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY" > .env.clawdi
+clawdi run --dry-run --env-file .env.clawdi -- npm run dev
+clawdi run --env-file .env.clawdi -- npm run dev
 clawdi read clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
-clawdi inject --in .env.template --out .env.local
+clawdi inject --dry-run --in .env.clawdi --out .env.local
+clawdi inject --force --in .env.clawdi --out .env.local
 ```
 
 `clawdi vault set`, `clawdi vault import`, and `clawdi vault list` print exact references that include the Project ID. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
+
+Agents should prefer `clawdi run --env-file .env.clawdi -- <command>` when they can launch the tool themselves. Use `clawdi inject` only for tools that must read a physical `.env.local`; generated files are written owner-only and should stay gitignored.
 
 Use `--dry-run` on `clawdi read`, `clawdi inject`, `clawdi run`, and `clawdi vault resolve` to verify provenance without requesting plaintext values. `clawdi doctor` checks vault metadata only; it does not resolve stored secrets.
 
@@ -249,7 +252,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
 | `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI; explicit Keychain import requires service/account options |
-| `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
+| `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
 | `clawdi vault set/list/import` | Manage encrypted secrets and copy exact references |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
