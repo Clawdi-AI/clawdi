@@ -559,6 +559,11 @@ credential-and-capability layer, not only a secret-string store.
    - Tool authorization and proxying protect users from agents seeing broad
      credentials.
    - They are complementary but not the same security property.
+11. **Make local CLI credentials portable without copying tokens by hand**
+   - Users should be able to explicitly import and materialize allowlisted CLI
+     credential profiles, starting with Codex, Claude Code, and GitHub CLI.
+   - This is a backup/restore and controlled-sharing workflow, not a promise
+     that Clawdi can silently extract every OS credential-store secret.
 
 ## Non-goals
 
@@ -575,6 +580,10 @@ credential-and-capability layer, not only a secret-string store.
    workflow is proven: dynamic DB credentials, PKI, SSH certificates,
    Kubernetes operators, cross-cloud syncs, and full policy engines are later
    integrations or enterprise tracks.
+8. Do not silently scrape macOS Keychain, Windows Credential Manager, Linux
+   Secret Service, browser password stores, SSH agents, or provider-specific
+   token helpers. Any future credential-store bridge must be explicit,
+   interactive, audited, and adapter-specific.
 
 ## Recommended User Experience
 
@@ -765,6 +774,11 @@ This is different from `clawdi run --env-file`:
 Design constraints:
 
 - Use per-tool adapters, not broad home-directory scanning.
+- Treat OS credential stores as guarded sources, not files. They can sometimes
+  be read by the owning app, a signed app in the same access group, a user-
+  approved process, or a tool's own export command, but that is platform- and
+  tool-specific. P0 does not call `security`, Windows Credential Manager,
+  Secret Service, or `gh auth token` to extract tokens.
 - P0 built-in adapter paths:
   - Codex: `$CODEX_HOME/auth.json`, defaulting to `~/.codex/auth.json`.
   - Claude Code: `$CLAUDE_CONFIG_DIR/.credentials.json`, defaulting to
