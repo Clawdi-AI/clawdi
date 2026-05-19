@@ -21,6 +21,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -78,6 +87,7 @@ function VaultPageInner() {
 	const queryClient = useQueryClient();
 	const [newVaultSlug, setNewVaultSlug] = useState("");
 	const [createProjectId, setCreateProjectId] = useState("");
+	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [projectFilter, setProjectFilter] = useQueryState(
 		"project",
@@ -207,12 +217,13 @@ function VaultPageInner() {
 			),
 		onSuccess: (_created, variables) => {
 			setNewVaultSlug("");
+			setCreateDialogOpen(false);
 			setSearchQuery(variables.slug);
 			void setProjectFilter(variables.projectId);
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
-			toast.success("Vault Created", { description: `Available in ${projectName}.` });
+			toast.success("Vault Created", { description: `Attached to ${projectName}.` });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
@@ -230,11 +241,11 @@ function VaultPageInner() {
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
-			toast.success("Project Added", {
-				description: `${variables.slug} is available in ${projectName}.`,
+			toast.success("Vault Added to Project", {
+				description: `${variables.slug} is now attached to ${projectName}.`,
 			});
 		},
-		onError: (e) => toast.error("Failed to Add Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Add to Project", { description: errorMessage(e) }),
 	});
 
 	const deleteVault = useMutation({
@@ -254,11 +265,22 @@ function VaultPageInner() {
 				title="Vaults"
 				description={VAULTS_RESOURCE.managementDescription}
 				actions={
-					vaults ? (
-						<Badge variant="secondary">
-							{vaultCatalog.length} vault{vaultCatalog.length === 1 ? "" : "s"}
-						</Badge>
-					) : null
+					<>
+						{vaults ? (
+							<Badge variant="secondary">
+								{vaultCatalog.length} vault{vaultCatalog.length === 1 ? "" : "s"}
+							</Badge>
+						) : null}
+						<Button
+							type="button"
+							size="sm"
+							onClick={() => setCreateDialogOpen(true)}
+							disabled={ownedProjects.length === 0}
+						>
+							<Plus />
+							Create Vault
+						</Button>
+					</>
 				}
 			/>
 
@@ -288,7 +310,9 @@ function VaultPageInner() {
 				</Alert>
 			) : null}
 
-			<CreateVaultPanel
+			<CreateVaultDialog
+				open={createDialogOpen}
+				onOpenChange={setCreateDialogOpen}
 				ownedProjects={ownedProjects}
 				agents={envs ?? []}
 				agentsById={agentsById}
@@ -315,8 +339,8 @@ function VaultPageInner() {
 							<h2 className="text-base font-semibold">Vaults</h2>
 							<p className="text-sm text-muted-foreground">
 								{filterProject
-									? `Showing vaults available in ${displayProjectName(filterProject)}.`
-									: "Each vault shows the Projects where agents can use it."}
+									? `Showing vaults attached to ${displayProjectName(filterProject)}.`
+									: "Each card shows one vault and the Projects it is attached to."}
 							</p>
 						</div>
 						<ProjectScopePicker
@@ -326,8 +350,8 @@ function VaultPageInner() {
 							onValueChange={(value) => void setProjectFilter(value)}
 							allowAll
 							allLabel="All Projects"
-							allDescription="Every vault you can read"
-							label="Show"
+							allDescription="Vaults attached to any Project you can read"
+							label="Filter by Project"
 							layout="stacked"
 							disabled={!orderedProjects.length}
 							triggerClassName="min-h-14 py-2"
@@ -384,7 +408,7 @@ function VaultPageInner() {
 						title={vaultCatalog.length === 0 ? "No vaults yet" : "No vaults match this view"}
 						description={
 							vaultCatalog.length === 0
-								? "Create a vault above, then add keys for each Project that should use it."
+								? "Create a vault, attach it to a Project, then add the keys that agents should use."
 								: "Change the Project filter or search term to see more vaults."
 						}
 					/>
@@ -394,7 +418,9 @@ function VaultPageInner() {
 	);
 }
 
-function CreateVaultPanel({
+function CreateVaultDialog({
+	open,
+	onOpenChange,
 	ownedProjects,
 	agents,
 	agentsById,
@@ -407,6 +433,8 @@ function CreateVaultPanel({
 	isDuplicate,
 	onOpenExisting,
 }: {
+	open: boolean;
+	onOpenChange: (value: boolean) => void;
 	ownedProjects: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
 	agentsById: ReadonlyMap<string, ProjectAgentMetadata>;
@@ -421,30 +449,31 @@ function CreateVaultPanel({
 }) {
 	const selectedProject = ownedProjects.find((project) => project.id === projectId) ?? null;
 	return (
-		<section className="rounded-lg border bg-card/60 p-4">
-			<div className="grid gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(280px,380px)_minmax(220px,1fr)_auto] xl:items-start">
-				<div className="space-y-1">
-					<h2 className="text-sm font-semibold">Create Vault</h2>
-					<p className="text-xs text-muted-foreground">
-						Pick the first Project that can use this vault. You can add more Projects later.
-					</p>
-				</div>
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="sm:max-w-xl">
+				<DialogHeader>
+					<DialogTitle>Create Vault</DialogTitle>
+					<DialogDescription>
+						Create the vault once, then attach it to each Project where agents should use it. Start
+						with one Project here.
+					</DialogDescription>
+				</DialogHeader>
 				{ownedProjects.length > 0 ? (
-					<>
+					<div className="grid gap-4">
 						{ownedProjects.length > 1 ? (
 							<ProjectScopePicker
 								projects={ownedProjects}
 								agents={agents}
 								value={projectId}
 								onValueChange={onProjectChange}
-								label="Project"
+								label="Attach to Project"
 								layout="stacked"
 								disabled={!ownedProjects.length}
 								triggerClassName="min-h-14 py-2"
 							/>
 						) : selectedProject ? (
 							<div className="grid gap-1.5">
-								<Label className="text-xs font-medium">Project</Label>
+								<Label className="text-xs font-medium">Attach to Project</Label>
 								<SelectedProjectTile project={selectedProject} agentsById={agentsById} />
 							</div>
 						) : null}
@@ -479,19 +508,9 @@ function CreateVaultPanel({
 								</p>
 							)}
 						</div>
-						<Button
-							type="button"
-							disabled={!slug || !projectId || isDuplicate || isPending}
-							variant={slug && projectId && !isDuplicate ? "default" : "outline"}
-							className="w-full xl:mt-5 xl:w-auto"
-							onClick={onSubmit}
-						>
-							{isPending ? <Spinner /> : <Plus />}
-							{isPending ? "Creating..." : "Create"}
-						</Button>
-					</>
+					</div>
 				) : (
-					<Alert className="xl:col-span-3">
+					<Alert>
 						<AlertCircle />
 						<AlertTitle>No Writable Projects</AlertTitle>
 						<AlertDescription>
@@ -499,8 +518,26 @@ function CreateVaultPanel({
 						</AlertDescription>
 					</Alert>
 				)}
-			</div>
-		</section>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+						disabled={isPending}
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						disabled={!slug || !projectId || isDuplicate || isPending || ownedProjects.length === 0}
+						onClick={onSubmit}
+					>
+						{isPending ? <Spinner /> : <Plus />}
+						{isPending ? "Creating..." : "Create Vault"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -554,11 +591,27 @@ function VaultGroupCard({
 						</div>
 					</div>
 					<AddProjectToVaultControl
+						slug={group.slug}
 						options={addProjectOptions}
 						agents={agents}
 						onAddProject={onAddProject}
 						isPending={isAddingProject}
 					/>
+				</div>
+			</div>
+			<div className="border-b px-4 py-3">
+				<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+					<div>
+						<h4 className="text-sm font-semibold">Attached Projects</h4>
+						<p className="text-xs text-muted-foreground">
+							Agents can use this vault only through these Projects.
+						</p>
+					</div>
+					{group.visibleEntries.length !== group.entries.length ? (
+						<p className="text-xs text-muted-foreground">
+							Showing {group.visibleEntries.length} of {group.entries.length}
+						</p>
+					) : null}
 				</div>
 			</div>
 			<div className="divide-y">
@@ -577,11 +630,13 @@ function VaultGroupCard({
 }
 
 function AddProjectToVaultControl({
+	slug,
 	options,
 	agents,
 	onAddProject,
 	isPending,
 }: {
+	slug: string;
 	options: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
 	onAddProject: (projectId: string) => void;
@@ -601,55 +656,59 @@ function AddProjectToVaultControl({
 	}, [open, options, projectId]);
 
 	if (options.length === 0) return null;
-	if (!open) {
-		return (
-			<Button
-				type="button"
-				size="sm"
-				variant="outline"
-				onClick={() => setOpen(true)}
-				className="w-fit justify-self-start lg:justify-self-end"
-			>
-				<Plus />
-				Add Project
-			</Button>
-		);
-	}
 	return (
-		<div className="grid justify-self-stretch gap-2 sm:grid-cols-[minmax(260px,340px)_auto_auto] sm:items-end lg:justify-self-end">
-			<ProjectScopePicker
-				projects={options}
-				agents={agents}
-				value={projectId}
-				onValueChange={setProjectId}
-				label="Add to Project"
-				layout="stacked"
-				triggerClassName="min-h-12 py-2"
-			/>
-			<Button
-				type="button"
-				size="sm"
-				disabled={!projectId || isPending}
-				onClick={() => {
-					if (!projectId) return;
-					onAddProject(projectId);
-					setOpen(false);
-				}}
-				className="w-full sm:w-auto"
-			>
-				{isPending ? <Spinner /> : <Plus />}
-				Add
-			</Button>
-			<Button
-				type="button"
-				variant="ghost"
-				size="icon-sm"
-				onClick={() => setOpen(false)}
-				aria-label="Cancel adding project"
-			>
-				<X />
-			</Button>
-		</div>
+		<Dialog open={open} onOpenChange={setOpen}>
+			<DialogTrigger asChild>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="w-fit justify-self-start lg:justify-self-end"
+				>
+					<Plus />
+					Add to Project
+				</Button>
+			</DialogTrigger>
+			<DialogContent className="sm:max-w-xl">
+				<DialogHeader>
+					<DialogTitle>Add {slug} to Project</DialogTitle>
+					<DialogDescription>
+						Attach this vault to another Project so agents using that Project can read its keys.
+					</DialogDescription>
+				</DialogHeader>
+				<ProjectScopePicker
+					projects={options}
+					agents={agents}
+					value={projectId}
+					onValueChange={setProjectId}
+					label="Project"
+					layout="stacked"
+					triggerClassName="min-h-14 py-2"
+				/>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => setOpen(false)}
+						disabled={isPending}
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						disabled={!projectId || isPending}
+						onClick={() => {
+							if (!projectId) return;
+							onAddProject(projectId);
+							setOpen(false);
+						}}
+					>
+						{isPending ? <Spinner /> : <Plus />}
+						Add to Project
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

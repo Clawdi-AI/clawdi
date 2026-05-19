@@ -988,7 +988,7 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault Created", { description: "Available in this Project." });
+			toast.success("Vault Created", { description: "Attached to this Project." });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});

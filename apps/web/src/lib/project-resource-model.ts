@@ -69,9 +69,9 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Vaults and keys stored inside a Project.",
+		description: "Vaults that can be attached to one or more Projects.",
 		managementDescription:
-			"Vaults hold secret keys. Add a vault to every Project where agents should use it.",
+			"Vaults hold secret keys. Attach a vault to every Project where agents should use it.",
 		href: "/vault",
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
