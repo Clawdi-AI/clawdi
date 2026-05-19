@@ -112,6 +112,23 @@ async def test_vault_resolve_preview_omits_plaintext(cli_client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
+async def test_vault_resolve_preview_rejects_legacy_all_env(
+    cli_client: httpx.AsyncClient,
+):
+    """`preview=true` is a provenance-only contract, not all-env decrypt."""
+    await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    r = await cli_client.put(
+        "/api/vault/prod/items",
+        json={"section": "", "fields": {"OPENAI_API_KEY": "sk-preview-secret"}},
+    )
+    assert r.status_code == 200, r.text
+
+    resolved = await cli_client.post("/api/vault/resolve?preview=true")
+    assert resolved.status_code == 400, resolved.text
+    assert "sk-preview-secret" not in resolved.text
+
+
+@pytest.mark.asyncio
 async def test_vault_resolve_requires_cli_auth(client: httpx.AsyncClient):
     """Web (Clerk) auth must be rejected from /resolve — plaintext leak gate."""
     r = await client.post("/api/vault/resolve")

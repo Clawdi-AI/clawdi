@@ -580,6 +580,12 @@ async def resolve_vault(
     resolving through its own `agent_id`, where the Agent Project plus explicit
     attached Projects define runtime reads.
     """
+    if preview and key is None and vault_slug is None and field is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "preview requires key or vault_slug/field",
+        )
+
     if agent_id is not None:
         ordered = await _agent_project_precedence(db, auth, agent_id)
         if project_id is not None:

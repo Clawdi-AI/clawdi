@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -446,6 +454,20 @@ function backupPath(path: string): string {
 	return `${path}.bak-${timestamp}`;
 }
 
+function copyCredentialBackup(from: string, to: string): void {
+	copyFileSync(from, to);
+	chmodCredentialFile(to);
+}
+
+function chmodCredentialFile(path: string): void {
+	try {
+		chmodSync(path, credentialFileMode());
+	} catch {
+		// Windows may ignore POSIX modes. The write path still uses the
+		// requested mode where the platform supports it.
+	}
+}
+
 function materializeTarget(
 	tool: string,
 	file: CredentialFileSnapshot,
@@ -614,7 +636,7 @@ export async function agentCredentialsMaterializeCommand(
 
 	for (const { file, targetPath } of targets) {
 		if (existsSync(targetPath) && opts.backup !== false) {
-			copyFileSync(targetPath, backupPath(targetPath));
+			copyCredentialBackup(targetPath, backupPath(targetPath));
 		}
 		writeAtomic(targetPath, file.content, credentialFileMode());
 	}

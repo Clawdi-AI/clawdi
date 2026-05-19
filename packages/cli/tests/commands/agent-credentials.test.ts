@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
@@ -175,6 +176,9 @@ describe("agent credential profiles", () => {
 	it("materializes a stored Codex profile to the local Codex auth path with backup", async () => {
 		const codexAuthPath = join(tmpHome, ".codex", "auth.json");
 		writeFileSync(codexAuthPath, "old-auth");
+		if (process.platform !== "win32") {
+			chmodSync(codexAuthPath, 0o644);
+		}
 		const payload = {
 			schemaVersion: 1,
 			kind: "local_agent_profile",
@@ -224,7 +228,11 @@ describe("agent credential profiles", () => {
 			name.startsWith("auth.json.bak-"),
 		);
 		expect(backups).toHaveLength(1);
-		expect(existsSync(join(tmpHome, ".codex", backups[0]))).toBe(true);
+		const backup = join(tmpHome, ".codex", backups[0]);
+		expect(existsSync(backup)).toBe(true);
+		if (process.platform !== "win32") {
+			expect(statSync(backup).mode & 0o777).toBe(0o600);
+		}
 	});
 
 	it("imports Claude Code credentials using the built-in adapter alias", async () => {
