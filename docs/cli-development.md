@@ -217,6 +217,7 @@ when an upstream agent's on-disk format changes and a test breaks.
 ```bash
 bun test                              # everything (~350 tests, ~5s)
 bun run test:e2e                     # process-level vault reference e2e
+scripts/vault-e2e.sh                 # real backend + Postgres vault smoke
 bun test tests/adapters/              # adapter layer only
 bun test tests/commands/push.test.ts  # just push regression
 bun run test:watch                    # watch mode
