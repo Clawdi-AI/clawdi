@@ -264,8 +264,8 @@ export function ProjectScopePicker({
 				<SelectTrigger
 					aria-label={label}
 					className={cn(
-						"h-auto min-h-10 w-full max-w-full justify-between py-1.5",
-						isStacked ? "min-w-0" : "min-w-[240px] sm:w-[360px]",
+						"h-auto min-h-16 w-full max-w-full justify-between rounded-[10px] border-border/80 bg-background/70 px-3 py-2.5 whitespace-normal shadow-xs transition-colors hover:bg-muted/20",
+						isStacked ? "min-w-0" : "min-w-[260px] sm:w-[420px]",
 						triggerClassName,
 					)}
 				>
@@ -320,15 +320,20 @@ function ProjectPickerValue({
 	agent?: ProjectAgentMetadata | null;
 }) {
 	return (
-		<span className="flex min-w-0 items-center gap-2 text-left">
-			<ProjectIcon project={project} agent={agent} className="mt-0 size-5 rounded-sm" />
-			<span className="min-w-0 flex-1">
-				<span className="flex min-w-0 items-center gap-2">
-					<span className="truncate font-medium">{displayProjectName(project)}</span>
-					<ProjectTypeBadge project={project} compact />
+		<span className="flex min-w-0 flex-1 items-center gap-3 pr-1 text-left">
+			<ProjectIcon project={project} agent={agent} className="mt-0 size-7 rounded-[8px]" />
+			<span className="grid min-w-0 flex-1 gap-0.5">
+				<span className="truncate text-[15px] leading-5 font-semibold">
+					{displayProjectName(project)}
 				</span>
-				<span className="block truncate font-mono text-xs text-muted-foreground" translate="no">
-					{projectAlias(project)}
+				<span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+					<span className="shrink-0">{projectPickerTypeText(project)}</span>
+					<span aria-hidden="true" className="text-muted-foreground/60">
+						·
+					</span>
+					<span className="min-w-0 truncate font-mono" translate="no">
+						{projectAlias(project)}
+					</span>
 				</span>
 			</span>
 		</span>
@@ -383,20 +388,28 @@ function ProjectPickerAllItem({
 		<span className="flex min-w-0 items-center gap-2 text-left">
 			<span
 				className={cn(
-					"flex shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground",
-					compact ? "size-5 rounded-sm" : "size-6",
+					"flex shrink-0 items-center justify-center rounded-[8px] border bg-muted/40 text-muted-foreground",
+					compact ? "size-7" : "size-6",
 				)}
 			>
-				<FolderKanban className={compact ? "size-3" : "size-3.5"} />
+				<FolderKanban className={compact ? "size-3.5" : "size-3.5"} />
 			</span>
-			<span className="min-w-0">
-				<span className="block truncate font-medium">{label}</span>
-				{compact ? null : (
-					<span className="block truncate text-xs text-muted-foreground">{description}</span>
-				)}
+			<span className={cn("min-w-0", compact && "grid gap-0.5")}>
+				<span className={cn("block truncate font-medium", compact && "text-[15px] leading-5")}>
+					{label}
+				</span>
+				<span className="block truncate text-xs text-muted-foreground">{description}</span>
 			</span>
 		</span>
 	);
+}
+
+function projectPickerTypeText(project: ProjectMetadata) {
+	if (project.is_owner === false) return "Shared Project";
+	if (project.kind === "workspace" || !project.kind) return "Custom Project";
+	if (project.kind === "personal") return "Global Project";
+	if (project.kind === "environment") return "Agent Project";
+	return "Project";
 }
 
 function ProjectTypeBadge({
