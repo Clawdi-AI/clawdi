@@ -107,6 +107,7 @@ run_cli() {
   local codex_home="$3"
   local claude_home="$4"
   local gh_home="$5"
+  local auth_token="${CLAWDI_RUN_AUTH_TOKEN:-$RAW_KEY}"
   shift 5
   HOME="$home" \
     CLAWDI_HOME="$clawdi_home" \
@@ -114,7 +115,7 @@ run_cli() {
     CLAUDE_CONFIG_DIR="$claude_home" \
     GH_CONFIG_DIR="$gh_home" \
     CLAWDI_API_URL="$API_URL" \
-    CLAWDI_AUTH_TOKEN="$RAW_KEY" \
+    CLAWDI_AUTH_TOKEN="$auth_token" \
     CLAWDI_NO_AUTO_UPDATE=1 \
     CLAWDI_NO_UPDATE_CHECK=1 \
     CI=true \
@@ -189,9 +190,11 @@ SEED_OUT=$(
 USER_ID="$(grep '^USER_ID=' <<<"$SEED_OUT" | cut -d= -f2)"
 ENV_ID="$(grep '^ENV_ID=' <<<"$SEED_OUT" | cut -d= -f2)"
 RAW_KEY="$(grep '^RAW_KEY=' <<<"$SEED_OUT" | cut -d= -f2)"
+USER_RAW_KEY="$(grep '^USER_RAW_KEY=' <<<"$SEED_OUT" | cut -d= -f2)"
 [ -n "$USER_ID" ] || fail "seed did not return USER_ID"
 [ -n "$ENV_ID" ] || fail "seed did not return ENV_ID"
 [ -n "$RAW_KEY" ] || fail "seed did not return RAW_KEY"
+[ -n "$USER_RAW_KEY" ] || fail "seed did not return USER_RAW_KEY"
 ok "seeded user_id=$USER_ID env_id=$ENV_ID"
 
 CLI_HOME="$SCRATCH/cli-home"
@@ -304,14 +307,16 @@ credential_case() {
   printf 'existing-local-credential' >"$dest_path"
   chmod 600 "$dest_path"
 
-  run_cli "$source_home" "$source_clawdi" "$source_codex" "$source_claude" "$source_gh" \
+  CLAWDI_RUN_AUTH_TOKEN="$USER_RAW_KEY" \
+    run_cli "$source_home" "$source_clawdi" "$source_codex" "$source_claude" "$source_gh" \
     agent credentials import "$tool" --profile e2e --yes --json \
     >"$LOG_DIR/credential-$tool-import.out" 2>"$LOG_DIR/credential-$tool-import.err" \
     || fail "credential import failed for $tool"
   assert_no_secret_in_file "$LOG_DIR/credential-$tool-import.out" "$needle"
   assert_no_secret_in_file "$LOG_DIR/credential-$tool-import.err" "$needle"
 
-  run_cli "$dest_home" "$dest_clawdi" "$dest_codex" "$dest_claude" "$dest_gh" \
+  CLAWDI_RUN_AUTH_TOKEN="$USER_RAW_KEY" \
+    run_cli "$dest_home" "$dest_clawdi" "$dest_codex" "$dest_claude" "$dest_gh" \
     agent credentials materialize "$tool" --profile e2e --yes --json \
     >"$LOG_DIR/credential-$tool-materialize.out" 2>"$LOG_DIR/credential-$tool-materialize.err" \
     || fail "credential materialize failed for $tool"
