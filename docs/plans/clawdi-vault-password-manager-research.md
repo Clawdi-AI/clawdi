@@ -1,6 +1,6 @@
 # Clawdi Vault Password Manager Research
 
-**Status:** research expanded; architecture direction proposed
+**Status:** reviewed; architecture direction proposed
 **Last updated:** 2026-05-19
 **Owner:** product + platform
 
@@ -70,6 +70,9 @@ Decision impact from the second pass:
 - The data model must reserve room for `secret_value`, `oauth_connection`,
   `service_binding`, `proxy_binding`, `workload_identity`, and
   `delegated_tool_grant`.
+- The product must label credential custody explicitly. Client-managed vault
+  items, server-managed connected accounts, TEE-managed proxy sessions, and
+  external workload identities have different security claims.
 - Agent Vault-style proxying is still the right hosted-agent security track,
   but it remains a later proof of concept because its guarantee depends on
   controlled egress and proxy enforcement.
@@ -97,6 +100,13 @@ The later trust promise is:
 
 > For client-managed vaults, Clawdi servers store ciphertext and grants but
 > cannot decrypt item values.
+
+That promise applies only to credentials whose `custody_model` is
+client-managed. Some future credential types may intentionally be
+server-managed because Clawdi needs to refresh an OAuth token, mint a runtime
+session, or attach a credential inside a hosted tool/proxy gateway. Those modes
+can reduce what the agent sees, but they do not mean Clawdi is unable to use the
+credential.
 
 The later agent-runtime promise is:
 
@@ -145,13 +155,18 @@ The later agent-runtime promise is:
    - Proxy mode is only strong when network egress is controlled.
 6. **Leave room for capabilities**
    - Even when Phase 1 returns strings, the model should support future
-     credential kinds: raw secret value, connected account, service binding,
-     and proxy capability.
+     credential kinds: raw secret value, OAuth connection, delegated tool
+     grant, workload identity, service binding, and proxy capability.
 7. **Prefer replacing static secrets where possible**
    - Some credentials should never become vault strings at all. OAuth,
      workload identity, GitHub App installation tokens, cloud OIDC federation,
      and short-lived certificates are often better primitives than long-lived
      API keys.
+8. **Name the custody model**
+   - "Clawdi cannot decrypt" is valid only for client-managed vault items.
+     Server-managed connected accounts, proxy bindings, and hosted runtime
+     credentials require different claims: scoped, audited, expirable, and
+     revocable.
 
 ## Current State
 
@@ -249,10 +264,10 @@ Implication for Clawdi:
 
 Relevant product patterns:
 
-- Agent Vault is an MIT-licensed credential broker and vault for AI agents.
-  The open-source license permits commercial use, modification, and
-  distribution outside any enterprise-only `ee/` code, provided copyright and
-  license notices are preserved.
+- Agent Vault's open-source repo is an MIT-licensed credential broker and vault
+  for AI agents. The license permits commercial use, modification, and
+  distribution for the open-source code outside any enterprise-only `ee/` code,
+  provided copyright and license notices are preserved.
 - Its core idea is not env injection. The agent receives dummy credentials or
   no real credential at all, sends ordinary HTTP(S) requests through a proxy,
   and the broker injects real credentials at the outbound request boundary.
@@ -489,10 +504,12 @@ material into follow-up actions. The core risks are:
    - Response: Project membership review, explicit Agent attachment, conflict
      diagnostics, scoped service tokens, and visible access graph.
 
-This threat model pushes Clawdi toward three distinct delivery modes: local dev
-env injection for compatibility, local/sidecar service for workload ergonomics,
-and proxy/TEE-backed access for hosted agents with stronger controls. The first
-two are near-term product work; proxy/TEE belongs behind a separate proof of
+This threat model pushes Clawdi toward several distinct delivery modes: local
+dev env injection for compatibility, lease-scoped hosted-agent plaintext for
+the near-term hosted path, local/sidecar service for workload ergonomics,
+authorization/tool grants for SaaS tools, and proxy/TEE-backed access for
+hosted agents with stronger controls. Reference UX and scoped runtime leases
+are near-term product work. Proxy/TEE belongs behind a separate proof of
 concept because it needs runtime network control to make the security claim
 honest.
 
@@ -532,6 +549,12 @@ credential-and-capability layer, not only a secret-string store.
    - OAuth refresh tokens, user consent, tool scopes, and delegated grants
      should not be hidden as generic plaintext fields forever. They need their
      own lifecycle, revocation, audit, and user approval surfaces.
+10. **Separate user secrecy from agent least privilege**
+   - Client-side encryption protects users from Clawdi decrypting ordinary
+     vault values.
+   - Tool authorization and proxying protect users from agents seeing broad
+     credentials.
+   - They are complementary but not the same security property.
 
 ## Non-goals
 
@@ -803,6 +826,9 @@ Deep Module responsible for delivering secrets to processes and agents:
      authorizes the tool call under the approved scope.
    - This is the right direction for SaaS tools that support OAuth or a
      provider-specific delegated authorization flow.
+   - Security claim: reduces agent exposure, but may still require Clawdi
+     server-side token custody unless the tool gateway runs client-side or in
+     an attested runtime.
 
 5. **Deferred hosted-agent proxy mode**
    - Agent does not receive long-lived secrets.
@@ -856,6 +882,8 @@ Candidate tables:
    - `credential_kind` (`secret_value`, `oauth_connection`,
      `service_binding`, `proxy_binding`, `workload_identity`,
      `delegated_tool_grant`)
+   - `custody_model` (`client_managed`, `server_managed`, `tee_managed`,
+     `external_provider`)
    - `key_ref`
    - `associated_data_hash`
    - `runtime_policy`
@@ -909,7 +937,8 @@ Candidate tables:
    - `id`
    - `project_id`
    - `vault_id`
-   - `credential_id`
+   - `credential_source_type`
+   - `credential_source_id`
    - `service_name`
    - `host_pattern`
    - `path_pattern`
@@ -924,6 +953,7 @@ Candidate tables:
    - `display_name`
    - `scopes`
    - `token_ref`
+   - `custody_model`
    - `refresh_policy`
    - `status`
    - `created_by_user_id`
@@ -950,6 +980,7 @@ Candidate tables:
    - `audience`
    - `subject_template`
    - `credential_destination`
+   - `custody_model`
    - `status`
    - `created_at`
 
@@ -963,6 +994,17 @@ The connected-account and capability-grant tables are not Phase 1 requirements.
 They are included because second-pass research shows this category will matter:
 OAuth and tool grants should become typed objects with revocation, scopes, and
 audit, not opaque rows in `vault_items`.
+
+`custody_model` is a required design axis, not only metadata. It controls the
+security claim:
+
+- `client_managed`: Clawdi stores ciphertext and cannot decrypt ordinary values.
+- `server_managed`: Clawdi can use/decrypt the credential under policy, usually
+  for OAuth refresh, hosted runtime delivery, or legacy server-side vault data.
+- `tee_managed`: Clawdi service orchestration can request an operation, but the
+  key use happens inside an attested runtime.
+- `external_provider`: Clawdi stores a binding or trust relationship and asks
+  an upstream provider to mint short-lived credentials.
 
 ## API Direction
 
@@ -1058,7 +1100,23 @@ Properties:
 
 This is the recommended target for the core password-manager promise.
 
-### Option D: Credential Proxy for Agents
+### Option D: Connected Account / Tool Authorization
+
+Properties:
+
+- User connects an account or approves a scoped tool capability.
+- Agent receives a grant or calls a Clawdi-managed tool, not a broad raw
+  credential.
+- Scopes, consent, refresh, revocation, and audit are first-class product
+  objects.
+- Clawdi may still hold or refresh tokens unless the integration is
+  client-managed, external-provider managed, or TEE-managed.
+
+This is the recommended direction for SaaS and MCP integrations. It should be
+designed with Vault because it shares Project/Agent grants and audit, but it
+does not need to block Phase 1 secret references.
+
+### Option E: Credential Proxy for Agents
 
 Properties:
 
@@ -1072,7 +1130,7 @@ This is the recommended secure-agent direction, but it is not recommended for
 Phase 1. Treat it as a hosted-agent proof of concept after reference UX and
 basic Vault maturity are in place.
 
-### Option E: TEE Runtime
+### Option F: TEE Runtime
 
 Properties:
 
@@ -1219,6 +1277,9 @@ Deliver:
   implementation can wait unless a workload needs it.
 - Typed credential foundations for `oauth_connection`, `service_binding`,
   `workload_identity`, and `delegated_tool_grant`.
+- `custody_model` on credential records so API responses and product copy can
+  distinguish "Clawdi cannot decrypt" from "Clawdi can use this credential
+  under scoped policy."
 - First-class agent actor identity in audit events, so secret reads, token
   refreshes, capability grants, and proxy sessions are attributable to a user,
   agent, Project, and runtime.
@@ -1251,6 +1312,10 @@ Deliver:
 Security statement:
 
 - "For client-managed vaults, Clawdi servers cannot decrypt item values."
+- This statement does not cover explicitly server-managed connected accounts,
+  proxy bindings, hosted runtime credentials, or external-provider workload
+  identity bindings. Those credentials need their own `custody_model` label and
+  product copy.
 
 ### Phase 4: Hosted-Agent Proxy / Tool Gateway PoC
 
@@ -1321,12 +1386,15 @@ Do say:
 - "Use `clawdi://` references instead of plaintext secrets in files."
 - "Resolve secrets through Project and Agent context at runtime."
 - "Audit, expire, and revoke runtime secret access."
+- "Credential custody is explicit: client-managed, server-managed,
+  TEE-managed, or external-provider managed."
 - "Future client-managed vaults can prevent Clawdi servers from decrypting
   ordinary item values."
 
 Do not say yet:
 
 - "Clawdi is zero-knowledge."
+- "Clawdi cannot use or decrypt every kind of credential."
 - "Clawdi run is a sandbox."
 - "Agents cannot exfiltrate secrets."
 - "Clawdi replaces your whole enterprise secrets platform."
@@ -1368,6 +1436,12 @@ semantics, without turning every workflow into plaintext env sprawl."
    - GitHub App installation tokens may be the cleanest coding-agent wedge.
    - Google/Gmail is a stronger proof of human delegated consent, but has more
      review and compliance overhead.
+11. Which credentials must remain server-managed for product functionality?
+   - OAuth refresh tokens for hosted tools may need server custody.
+   - Ordinary static API keys and `.env` replacements should move toward
+     client-managed custody.
+   - Enterprise customers may ask for external-provider or TEE-managed custody
+     before allowing hosted agent execution.
 
 ## Source Notes
 
@@ -1390,8 +1464,10 @@ semantics, without turning every workflow into plaintext env sprawl."
   features:
   <https://infisical.com/docs/cli/scanning-overview>
 - Infisical Agent Vault is the main reference for hosted-agent credential
-  brokering: MIT-licensed proxy/vault, dummy credential substitution, service
-  rules, proposals, scoped sessions, and explicit "not a sandbox" caveats:
+  brokering: the open-source repo is MIT-licensed, while enterprise-only code
+  should be treated separately; the design references are proxy/vault, dummy
+  credential substitution, service rules, proposals, scoped sessions, and
+  explicit "not a sandbox" caveats:
   <https://github.com/Infisical/agent-vault>
   <https://docs.agent-vault.dev/>
   <https://docs.agent-vault.dev/learn/security>
