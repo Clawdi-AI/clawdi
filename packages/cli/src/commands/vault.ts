@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
+import { parseDotenv } from "../lib/dotenv";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { buildExactClawdiReference } from "../lib/secret-references";
 
@@ -250,7 +251,6 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
-	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
 	const api = new ApiClient();
 
 	let pinnedProjectId: string | undefined;
@@ -269,17 +269,7 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 	await ensureVault(api, "default", "Default", pinnedProjectId);
 
 	const fields: Record<string, string> = {};
-	for (const line of lines) {
-		const eqIdx = line.indexOf("=");
-		if (eqIdx === -1) continue;
-		const key = line.slice(0, eqIdx).trim();
-		let value = line.slice(eqIdx + 1).trim();
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
+	for (const [key, value] of parseDotenv(content)) {
 		fields[key] = value;
 	}
 

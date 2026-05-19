@@ -168,7 +168,16 @@ export async function resolveClawdiReference(
 		field: ref.field,
 	});
 	if (ref.project) {
-		params.set("project_id", await resolveProjectId(apiUrl, auth.apiKey, ref.project));
+		const referenceProjectId = await resolveProjectId(apiUrl, auth.apiKey, ref.project);
+		if (opts.project) {
+			const explicitProjectId = await resolveProjectId(apiUrl, auth.apiKey, opts.project);
+			if (explicitProjectId !== referenceProjectId) {
+				throw new Error(
+					`Reference points to Project ${referenceProjectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that Project.`,
+				);
+			}
+		}
+		params.set("project_id", referenceProjectId);
 	} else if (opts.project) {
 		params.set("project_id", await resolveProjectId(apiUrl, auth.apiKey, opts.project));
 	} else if (opts.projectId) {

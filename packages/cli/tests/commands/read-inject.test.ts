@@ -149,6 +149,42 @@ describe("readCommand", () => {
 		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
 		expect(captured[0].path).not.toContain("project_id=project-linked");
 	});
+
+	it("rejects an explicit --project that conflicts with an exact reference", async () => {
+		const exact =
+			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY";
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/projects",
+				response: () =>
+					jsonResponse([
+						{
+							id: "00000000-0000-0000-0000-000000000999",
+							name: "Staging",
+							slug: "staging",
+							kind: "workspace",
+						},
+					]),
+			},
+		]);
+		const origErr = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await readCommand(exact, { project: "staging" });
+		} finally {
+			console.error = origErr;
+			restore();
+		}
+
+		expect(captured.some((request) => request.path.startsWith("/api/vault/resolve"))).toBe(false);
+		expect(err).toContain("Reference points to Project 00000000-0000-0000-0000-000000000123");
+		expect(err).toContain("but --project resolved to 00000000-0000-0000-0000-000000000999");
+		expect(process.exitCode).toBe(1);
+	});
 });
 
 describe("injectCommand", () => {

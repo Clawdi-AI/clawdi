@@ -58,13 +58,23 @@ class VaultResolveResponse(RootModel[dict[str, str]]):
 
 class VaultCredentialProfileUpsert(BaseModel):
     tool: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
-    profile: str = Field(default="default", min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_.-]+$")
+    profile: str = Field(
+        default="default",
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    )
     payload: str = Field(min_length=1)
 
 
 class VaultCredentialProfileResolveRequest(BaseModel):
     tool: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
-    profile: str = Field(default="default", min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_.-]+$")
+    profile: str = Field(
+        default="default",
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    )
     project_id: UUID | None = None
 
 

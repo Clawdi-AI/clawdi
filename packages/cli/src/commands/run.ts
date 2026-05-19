@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { ApiClient, ApiError } from "../lib/api-client";
 import type { VaultResolved } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
+import { parseDotenv } from "../lib/dotenv";
 import { errMessage } from "../lib/errors";
 import { findProjectFolderLink } from "../lib/project-folders";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
@@ -188,27 +189,4 @@ async function resolveEnvReferences(
 		chalk.green(`✓ Resolved ${resolved.size} clawdi reference${resolved.size === 1 ? "" : "s"}`),
 	);
 	return out;
-}
-
-function parseDotenv(content: string): Array<[string, string]> {
-	const entries: Array<[string, string]> = [];
-	for (const line of content.split(/\r?\n/)) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith("#")) continue;
-		const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-		if (!match) continue;
-		entries.push([match[1], unquoteDotenvValue(match[2].trim())]);
-	}
-	return entries;
-}
-
-function unquoteDotenvValue(value: string): string {
-	if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-		return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-	}
-	if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-		return value.slice(1, -1);
-	}
-	const hashIndex = value.indexOf(" #");
-	return hashIndex === -1 ? value : value.slice(0, hashIndex).trimEnd();
 }
