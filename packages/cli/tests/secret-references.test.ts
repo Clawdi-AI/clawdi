@@ -4,6 +4,7 @@ import {
 	buildExactClawdiReference,
 	parseClawdiReference,
 	scanClawdiReferences,
+	scanClawdiReferenceUses,
 } from "../src/lib/secret-references";
 
 describe("clawdi secret references", () => {
@@ -88,6 +89,23 @@ describe("clawdi secret references", () => {
 		expect(refs.map((ref) => ref.raw)).toEqual([
 			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY",
 			"clawdi://prod/stripe/secret_key",
+		]);
+	});
+
+	it("scans reference locations for template diagnostics", () => {
+		const uses = scanClawdiReferenceUses(
+			[
+				"OPENAI_API_KEY=clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY",
+				"STRIPE_SECRET_KEY=clawdi://prod/stripe/secret_key",
+			].join("\n"),
+		);
+
+		expect(uses.map((use) => ({ raw: use.ref.raw, line: use.line }))).toEqual([
+			{
+				raw: "clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY",
+				line: 1,
+			},
+			{ raw: "clawdi://prod/stripe/secret_key", line: 2 },
 		]);
 	});
 });

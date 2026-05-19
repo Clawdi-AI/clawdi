@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -259,6 +267,7 @@ describe("injectCommand", () => {
 
 		expect(readFileSync(output, "utf8")).toBe("token=sk-live\n");
 		expect(err).toContain("Resolved 1 clawdi reference");
+		expect(err).toContain("token line 1");
 		expect(err).toContain("redacted");
 		expect(err).not.toContain("sk-live");
 	});
@@ -359,8 +368,43 @@ describe("injectCommand", () => {
 		expect(captured).toHaveLength(1);
 		expect(captured[0].path).toContain("preview=true");
 		expect(err).toContain("Dry run");
+		expect(err).toContain("token line 1");
 		expect(err).toContain("prod");
 		expect(err).toContain("redacted");
 		expect(err).not.toContain("sk-live");
+	});
+
+	it("keeps generated secret files owner-only when forcing an overwrite", async () => {
+		const input = join(tmpRoot, "config.template");
+		const output = join(tmpRoot, "config");
+		writeFileSync(input, "token=clawdi://prod/stripe/secret_key\n");
+		writeFileSync(output, "existing");
+		if (process.platform !== "win32") chmodSync(output, 0o644);
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/stripe/secret_key",
+						value: "sk-live",
+						source_project_id: "project-prod",
+						source_alias: "prod",
+					}),
+			},
+		]);
+		const origErr = console.error;
+		console.error = () => {};
+		try {
+			await injectCommand({ in: input, out: output, force: true });
+		} finally {
+			console.error = origErr;
+			restore();
+		}
+
+		expect(readFileSync(output, "utf8")).toBe("token=sk-live\n");
+		if (process.platform !== "win32") {
+			expect(statSync(output).mode & 0o777).toBe(0o600);
+		}
 	});
 });

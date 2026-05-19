@@ -14,6 +14,12 @@ export interface ClawdiReference {
 	isExact: boolean;
 }
 
+export interface ClawdiReferenceUse {
+	ref: ClawdiReference;
+	line: number;
+	column: number;
+}
+
 export interface VaultReferencePreview {
 	reference: string;
 	source_project_id: string;
@@ -149,6 +155,20 @@ export function scanClawdiReferences(input: string): ClawdiReference[] {
 		refs.push(parseClawdiReference(raw));
 	}
 	return refs;
+}
+
+export function scanClawdiReferenceUses(input: string): ClawdiReferenceUse[] {
+	const uses: ClawdiReferenceUse[] = [];
+	for (const match of input.matchAll(CLAWDI_REF_RE)) {
+		const raw = match[0];
+		const index = match.index ?? 0;
+		const prefix = input.slice(0, index);
+		const line = prefix.split("\n").length;
+		const lastNewline = prefix.lastIndexOf("\n");
+		const column = index - lastNewline;
+		uses.push({ ref: parseClawdiReference(raw), line, column });
+	}
+	return uses;
 }
 
 export async function resolveClawdiReference(

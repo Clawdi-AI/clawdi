@@ -369,6 +369,7 @@ program
 	.option("-p, --project <project>", "Project to resolve from")
 	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.option("--dry-run", "Show references that would resolve without writing output")
 	.addHelpText(
 		"after",
