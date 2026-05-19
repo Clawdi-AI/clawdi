@@ -107,6 +107,10 @@ clawdi agent credentials materialize claude-code
 clawdi agent credentials materialize gh
 ```
 
+Credential profile sync is separate from `clawdi run`: it stores and restores a supported tool's local auth file, while `run` injects explicit `clawdi://` references into one child process. macOS Keychain imports are guarded behind `--source keychain` and require explicit `--keychain-service` plus `--keychain-account`; Clawdi does not guess or silently scrape credential-store items, and Keychain reads cannot use `--yes`.
+
+Current vault storage is server-managed encryption. Clawdi avoids plaintext secrets in repo files and local templates, but the backend can decrypt stored vault values and credential profiles today. Do not treat this release as zero-knowledge.
+
 Install a shared skill into every registered agent at once:
 
 ```bash
@@ -239,7 +243,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
-| `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI |
+| `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI; explicit Keychain import requires service/account options |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
 | `clawdi vault set/list/import` | Manage encrypted secrets |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |

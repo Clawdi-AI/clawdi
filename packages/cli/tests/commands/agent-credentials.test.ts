@@ -95,6 +95,75 @@ describe("agent credential profiles", () => {
 		expect(payload.files[0].targetStrategy).toBe("adapter_default");
 	});
 
+	it("dry-runs an explicit Keychain source without reading or uploading a secret", async () => {
+		const { captured, restore } = mockFetch([]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await agentCredentialsImportCommand("claude-code", {
+				source: "keychain",
+				keychainService: "com.example.ClaudeCode",
+				keychainAccount: "user@example.test",
+				dryRun: true,
+				json: true,
+			});
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+		expect(out).toContain('"source": "keychain"');
+		expect(out).toContain("keychain://com.example.ClaudeCode/user@example.test");
+		expect(out).not.toContain("secret");
+	});
+
+	it("requires explicit Keychain service and account names", async () => {
+		await expect(
+			agentCredentialsImportCommand("claude-code", {
+				source: "keychain",
+				yes: true,
+				json: true,
+			}),
+		).rejects.toThrow("does not guess credential-store item names");
+	});
+
+	it("rejects unsafe Keychain service/account metadata", async () => {
+		await expect(
+			agentCredentialsImportCommand("claude-code", {
+				source: "keychain",
+				keychainService: "com.example.ClaudeCode\nspoof",
+				keychainAccount: "user@example.test",
+				dryRun: true,
+				json: true,
+			}),
+		).rejects.toThrow("must not contain control characters");
+	});
+
+	it("fails clearly for Keychain import on non-macOS", async () => {
+		if (process.platform === "darwin") return;
+		const { restore } = mockFetch([]);
+		const origLog = console.log;
+		console.log = () => {};
+		try {
+			await expect(
+				agentCredentialsImportCommand("claude-code", {
+					source: "keychain",
+					keychainService: "com.example.ClaudeCode",
+					keychainAccount: "user@example.test",
+					yes: true,
+					json: true,
+				}),
+			).rejects.toThrow("macOS Keychain import is only available on macOS");
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+	});
+
 	it("materializes a stored Codex profile to the local Codex auth path with backup", async () => {
 		const codexAuthPath = join(tmpHome, ".codex", "auth.json");
 		writeFileSync(codexAuthPath, "old-auth");

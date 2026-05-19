@@ -816,8 +816,11 @@ agentCredentialsCmd
 	.description("Import a local CLI credential profile into Clawdi Vault")
 	.option("-p, --project <id-or-slug>", "Target a specific project")
 	.option("--profile <name>", "Profile name", "default")
+	.option("--source <source>", "Credential source: file or keychain", "file")
 	.option("--from <path>", "Credential file to import (required for tools without an adapter)")
 	.option("--to <path>", "Materialization target path to store with the profile")
+	.option("--keychain-service <service>", "macOS Keychain service name for --source keychain")
+	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
 	.option("-y, --yes", "Skip confirmation prompt")
 	.option("--dry-run", "Show what would be imported without storing anything")
 	.option("--json", "Emit machine-readable JSON")
@@ -827,6 +830,7 @@ agentCredentialsCmd
 Examples:
   $ clawdi agent credentials import codex
   $ clawdi agent credentials import claude-code
+  $ clawdi agent credentials import claude-code --source keychain --keychain-service <service> --keychain-account <account>
   $ clawdi agent credentials import gh
   $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials`,
 	)

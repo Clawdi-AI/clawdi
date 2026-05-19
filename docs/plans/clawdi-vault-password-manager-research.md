@@ -832,6 +832,21 @@ Design constraints:
 - For team sharing, require explicit confirmation before a local agent profile
   can be granted to another user, Agent, Project, or service token.
 
+Implemented Phase 1 boundary:
+
+- `clawdi agent credentials import` uses a two-step preview/read flow. Dry-run
+  and confirmation summaries do not read credential file contents or Keychain
+  values; secrets are read only after the user proceeds.
+- File-backed P0 adapters are implemented for Codex, Claude Code, and GitHub
+  CLI.
+- macOS Keychain import is an explicit source only:
+  `--source keychain --keychain-service <service> --keychain-account <account>`.
+  Clawdi does not guess Claude Code or GitHub Keychain item names. On non-macOS,
+  Keychain import fails before reading anything. Keychain reads require an
+  interactive confirmation and cannot use `--yes`. Materializing back into
+  Keychain remains intentionally out of scope until a tool-specific import or
+  verified item contract exists.
+
 The first adapter set should stay narrow and explicit: Codex auth, Claude Code
 credentials, and GitHub CLI hosts. Additional adapters for OpenClaw and other
 local tools should follow the same import/materialize contract instead of each
@@ -1413,6 +1428,26 @@ Acceptance criteria:
 9. On macOS, an interactive credential-store import is allowed only when the
    user explicitly selects that source, sees the target tool/account, and
    confirms before any Keychain or tool-token command is invoked.
+
+Next-phase blockers with acceptance criteria:
+
+- Audit trail: every reference resolve, credential-profile resolve, and
+  materialization grant emits a durable event with actor, Project, Agent
+  context, item reference, source kind, and request id, without secret values.
+- Versions and rollback: vault item and credential-profile writes create
+  version rows, expose latest/version metadata, and support restoring a prior
+  version with audit.
+- TTL and kill switch: runtime/service tokens can expire, and Projects, Agents,
+  vaults, fields, and credential profiles can be revoked without deleting
+  history.
+- Key rotation and rewrap: server-managed encrypted payloads can be rewrapped
+  under a new key, with migration status and rollback protection.
+- Client-managed encryption: ordinary user vault values can be stored as
+  client-encrypted ciphertext with local unlock/recovery; only then may product
+  copy claim Clawdi cannot decrypt those values.
+- Credential-store write-back: Keychain/Credential Manager materialization uses
+  a verified tool import command or documented item contract, never arbitrary
+  guessed rows.
 
 ## Recommended Phasing
 

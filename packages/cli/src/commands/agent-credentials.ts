@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
@@ -9,14 +11,17 @@ import { getAuth, getConfig, isLoggedIn } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 
 const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
 type TargetStrategy = "adapter_default" | "explicit";
+type SourceKind = "file" | "keychain";
 
 interface CredentialFileSnapshot {
 	logicalName: string;
 	sourcePath: string;
 	targetPath?: string;
 	targetStrategy: TargetStrategy;
+	sourceKind?: SourceKind;
 	content: string;
 	mode: number;
 	size: number;
@@ -46,8 +51,11 @@ interface CredentialProfileResolveResponse extends CredentialProfileResponse {
 interface ImportOptions {
 	project?: string;
 	profile?: string;
+	source?: string;
 	from?: string;
 	to?: string;
+	keychainService?: string;
+	keychainAccount?: string;
 	yes?: boolean;
 	dryRun?: boolean;
 	json?: boolean;
@@ -68,6 +76,11 @@ interface FilePlan {
 	sourcePath: string;
 	targetPath?: string;
 	targetStrategy: TargetStrategy;
+	sourceKind: SourceKind;
+	keychainService?: string;
+	keychainAccount?: string;
+	mode: number;
+	size?: number;
 }
 
 function requireAuth() {
@@ -121,6 +134,8 @@ function codexDefaultPlan(from?: string, to?: string): FilePlan[] {
 			sourcePath,
 			targetPath: to ? resolve(expandHome(to)) : undefined,
 			targetStrategy: to ? "explicit" : "adapter_default",
+			sourceKind: "file",
+			mode: 0o600,
 		},
 	];
 }
@@ -133,6 +148,8 @@ function claudeCodeDefaultPlan(from?: string, to?: string): FilePlan[] {
 			sourcePath,
 			targetPath: to ? resolve(expandHome(to)) : undefined,
 			targetStrategy: to ? "explicit" : "adapter_default",
+			sourceKind: "file",
+			mode: 0o600,
 		},
 	];
 }
@@ -145,6 +162,8 @@ function ghDefaultPlan(from?: string, to?: string): FilePlan[] {
 			sourcePath,
 			targetPath: to ? resolve(expandHome(to)) : undefined,
 			targetStrategy: to ? "explicit" : "adapter_default",
+			sourceKind: "file",
+			mode: 0o600,
 		},
 	];
 }
@@ -156,11 +175,22 @@ function explicitFilePlan(tool: string, from: string, to?: string): FilePlan[] {
 			sourcePath: resolve(expandHome(from)),
 			targetPath: to ? resolve(expandHome(to)) : resolve(expandHome(from)),
 			targetStrategy: "explicit",
+			sourceKind: "file",
+			mode: 0o600,
 		},
 	];
 }
 
 function buildImportPlan(tool: string, opts: ImportOptions): FilePlan[] {
+	const source = opts.source ?? "file";
+	if (source !== "file" && source !== "keychain") {
+		throw new Error(
+			`Unsupported credential source "${source}". Supported sources are file and keychain.`,
+		);
+	}
+	if (source === "keychain") {
+		return keychainPlan(tool, opts);
+	}
 	if (tool === "codex") return codexDefaultPlan(opts.from, opts.to);
 	if (tool === "claude-code") return claudeCodeDefaultPlan(opts.from, opts.to);
 	if (tool === "gh") return ghDefaultPlan(opts.from, opts.to);
@@ -170,6 +200,45 @@ function buildImportPlan(tool: string, opts: ImportOptions): FilePlan[] {
 		);
 	}
 	return explicitFilePlan(tool, opts.from, opts.to);
+}
+
+function keychainPlan(tool: string, opts: ImportOptions): FilePlan[] {
+	if (opts.from) {
+		throw new Error("--from cannot be used with --source keychain.");
+	}
+	if (!opts.keychainService || !opts.keychainAccount) {
+		throw new Error(
+			"--source keychain requires --keychain-service <service> and --keychain-account <account>. Clawdi does not guess credential-store item names.",
+		);
+	}
+	const service = validateKeychainIdentifier(opts.keychainService, "Keychain service");
+	const account = validateKeychainIdentifier(opts.keychainAccount, "Keychain account");
+	return [
+		{
+			logicalName: `${tool}:keychain-password`,
+			sourcePath: `keychain://${service}/${account}`,
+			targetPath: opts.to ? resolve(expandHome(opts.to)) : undefined,
+			targetStrategy: "explicit",
+			sourceKind: "keychain",
+			keychainService: service,
+			keychainAccount: account,
+			mode: 0o600,
+		},
+	];
+}
+
+function validateKeychainIdentifier(input: string, label: string): string {
+	const value = input.trim();
+	if (!value) {
+		throw new Error(`${label} must not be empty.`);
+	}
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code < 32 || code === 127) {
+			throw new Error(`${label} must not contain control characters.`);
+		}
+	}
+	return value;
 }
 
 function adapterTargetPath(tool: string, logicalName: string): string | null {
@@ -186,6 +255,9 @@ function adapterTargetPath(tool: string, logicalName: string): string | null {
 }
 
 async function snapshotFile(plan: FilePlan): Promise<CredentialFileSnapshot> {
+	if (plan.sourceKind === "keychain") {
+		return await snapshotKeychain(plan);
+	}
 	if (!existsSync(plan.sourcePath)) {
 		throw new Error(`Credential file not found: ${plan.sourcePath}`);
 	}
@@ -202,9 +274,59 @@ async function snapshotFile(plan: FilePlan): Promise<CredentialFileSnapshot> {
 		sourcePath: plan.sourcePath,
 		targetPath: plan.targetPath,
 		targetStrategy: plan.targetStrategy,
+		sourceKind: plan.sourceKind,
 		content,
 		mode: stat.mode & 0o777,
 		size: stat.size,
+	};
+}
+
+function previewPlan(plan: FilePlan): FilePlan {
+	if (plan.sourceKind === "keychain") {
+		return { ...plan, size: 0 };
+	}
+	if (!existsSync(plan.sourcePath)) {
+		throw new Error(`Credential file not found: ${plan.sourcePath}`);
+	}
+	const stat = statSync(plan.sourcePath);
+	if (!stat.isFile()) {
+		throw new Error(`Credential path is not a file: ${plan.sourcePath}`);
+	}
+	if (stat.size > MAX_PROFILE_FILE_BYTES) {
+		throw new Error(`Credential file is too large: ${plan.sourcePath}`);
+	}
+	return { ...plan, mode: stat.mode & 0o777, size: stat.size };
+}
+
+function assertKeychainAvailable() {
+	if (process.platform !== "darwin") {
+		throw new Error("macOS Keychain import is only available on macOS.");
+	}
+}
+
+async function snapshotKeychain(plan: FilePlan): Promise<CredentialFileSnapshot> {
+	assertKeychainAvailable();
+	if (!plan.keychainService || !plan.keychainAccount) {
+		throw new Error("Missing Keychain service/account.");
+	}
+	const { stdout } = await execFileAsync("security", [
+		"find-generic-password",
+		"-s",
+		plan.keychainService,
+		"-a",
+		plan.keychainAccount,
+		"-w",
+	]);
+	const content = stdout.replace(/\n$/, "");
+	return {
+		logicalName: plan.logicalName,
+		sourcePath: plan.sourcePath,
+		targetPath: plan.targetPath,
+		targetStrategy: plan.targetStrategy,
+		sourceKind: "keychain",
+		content,
+		mode: plan.mode,
+		size: Buffer.byteLength(content),
 	};
 }
 
@@ -261,11 +383,14 @@ function parseEnvelope(payload: string): CredentialProfileEnvelope {
 			throw new Error("Stored credential profile has an unsupported target strategy.");
 		}
 		const targetPath = typeof entry.targetPath === "string" ? entry.targetPath : undefined;
+		const sourceKind =
+			entry.sourceKind === "file" || entry.sourceKind === "keychain" ? entry.sourceKind : undefined;
 		files.push({
 			logicalName: entry.logicalName,
 			sourcePath: entry.sourcePath,
 			targetPath,
 			targetStrategy: entry.targetStrategy,
+			sourceKind,
 			content: entry.content,
 			mode: entry.mode,
 			size: entry.size,
@@ -338,15 +463,14 @@ export async function agentCredentialsImportCommand(
 	const tool = canonicalTool(normalizeName(toolInput, "tool"));
 	const profile = normalizeName(opts.profile ?? "default", "profile", 120);
 	const plan = buildImportPlan(tool, opts);
-	const files = await Promise.all(plan.map(snapshotFile));
-	const envelope = buildEnvelope(tool, profile, files);
+	const previewPlans = plan.map(previewPlan);
 
 	const preview = previewFiles(
-		files.map((file) => ({
+		previewPlans.map((file) => ({
 			logicalName: file.logicalName,
 			sourcePath: file.sourcePath,
 			targetPath: file.targetPath ?? adapterTargetPath(tool, file.logicalName) ?? undefined,
-			size: file.size,
+			size: file.size ?? 0,
 		})),
 	);
 
@@ -356,12 +480,13 @@ export async function agentCredentialsImportCommand(
 				{
 					tool,
 					profile,
+					source: opts.source ?? "file",
 					dry_run: Boolean(opts.dryRun),
-					files: files.map((file) => ({
+					files: previewPlans.map((file) => ({
 						logical_name: file.logicalName,
 						source_path: file.sourcePath,
 						target_path: file.targetPath ?? adapterTargetPath(tool, file.logicalName),
-						size: file.size,
+						size: file.size ?? 0,
 					})),
 				},
 				null,
@@ -374,6 +499,22 @@ export async function agentCredentialsImportCommand(
 
 	if (opts.dryRun) return;
 
+	const hasKeychainSource = previewPlans.some((file) => file.sourceKind === "keychain");
+	if (hasKeychainSource) {
+		assertKeychainAvailable();
+		if (opts.yes) {
+			throw new Error(
+				"--yes cannot be used with --source keychain; confirm interactively before reading Keychain.",
+			);
+		}
+		if (!opts.json) {
+			p.note(
+				"macOS may show a system authorization prompt. Clawdi will read only the explicit Keychain service/account shown above.",
+				"Keychain source",
+			);
+		}
+	}
+
 	if (!opts.yes) {
 		const ok = await p.confirm({ message: "Import this credential profile into Clawdi Vault?" });
 		if (p.isCancel(ok) || !ok) {
@@ -382,6 +523,8 @@ export async function agentCredentialsImportCommand(
 		}
 	}
 
+	const files = await Promise.all(previewPlans.map(snapshotFile));
+	const envelope = buildEnvelope(tool, profile, files);
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
 	const response = await api.postJsonBody<CredentialProfileResponse>(
