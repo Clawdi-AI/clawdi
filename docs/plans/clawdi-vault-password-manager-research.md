@@ -606,7 +606,22 @@ credential-and-capability layer, not only a secret-string store.
 
 ### Secret References
 
-Short-term, keep existing project-relative syntax:
+Use exact Project-qualified references by default, following the 1Password
+shape where the reference itself points at the stored resource:
+
+```text
+clawdi://project/<project-id>/vault/<vault>/field/<field>
+clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>
+```
+
+Examples:
+
+```text
+clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY
+clawdi://project/00000000-0000-0000-0000-000000000123/vault/prod/section/openai/field/api_key
+```
+
+Keep project-relative syntax for portable templates and environment switching:
 
 ```text
 clawdi://<vault>/<field>
@@ -636,14 +651,14 @@ Project selection comes from runtime context:
 3. Local Project folder link.
 4. Existing default-write Project behavior.
 
-Later, add stable absolute references:
+Later, add stable object-id references:
 
 ```text
-clawdi://project/<project-slug>/vault/<vault>/section/<section>/field/<field>
 clawdi://vlt_<id>/item_<id>/field_<id>
 ```
 
-The web UI should have "Copy Clawdi Reference" on every field.
+The web UI should have "Copy Clawdi Reference" on every field and should copy
+the exact Project-qualified reference by default.
 
 ### Phase 1 User Journey
 
@@ -669,7 +684,7 @@ model.
 Add 1Password-like general commands:
 
 ```bash
-clawdi read clawdi://prod/stripe/secret_key
+clawdi read clawdi://project/<project-id>/vault/prod/section/stripe/field/secret_key
 
 clawdi run --env-file .env -- npm run dev
 
@@ -682,7 +697,7 @@ Support `.env` files like:
 
 ```env
 STRIPE_SECRET_KEY=clawdi://prod/stripe/secret_key
-OPENAI_API_KEY=clawdi://default/OPENAI_API_KEY
+OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
 ```
 
 Change `clawdi run` defaults:
@@ -701,7 +716,7 @@ Add quality-of-life flags:
 ```bash
 clawdi run --env-file .env --no-inherit-env -- npm run dev
 clawdi run --agent codex --env-file .env -- npm run test
-clawdi read clawdi://prod/db/url --json
+clawdi read clawdi://project/<project-id>/vault/prod/section/db/field/url --json
 clawdi inject --in .env.template --out -    # stdout
 ```
 
@@ -1188,7 +1203,7 @@ Current Phase 1 server-managed reference resolution uses exact single-reference
 resolve on the existing CLI-only endpoint:
 
 ```text
-POST /api/vault/resolve?vault_slug=default&section=&field=OPENAI_API_KEY
+POST /api/vault/resolve?project_id=<project-id>&vault_slug=default&section=&field=OPENAI_API_KEY
 ```
 
 The CLI can call this endpoint repeatedly for `run` and `inject`. A future
@@ -1212,7 +1227,7 @@ Response:
 
 ```json
 {
-  "reference": "clawdi://default/OPENAI_API_KEY",
+  "reference": "clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY",
   "value": "sk-...",
   "source_project_id": "...",
   "source_alias": "engineering",
@@ -1389,6 +1404,8 @@ Required behavior details:
 
 1. `clawdi read`
    - Accepts one `clawdi://` reference.
+   - Exact references carry their Project in the URI and ignore folder-link
+     defaults.
    - Supports `--project`, `--agent`, `--json`, and `--debug`.
    - Prints plaintext only when the user explicitly asks to read a value.
    - Debug output shows provenance but never logs the secret value.
@@ -1412,7 +1429,7 @@ Required behavior details:
      is added.
 5. Web copy reference
    - Provides a stable reference for every field.
-   - Indicates whether the reference is Project-relative or absolute.
+   - Copies the exact Project-qualified reference by default.
    - Does not require revealing the plaintext value.
 
 Defer from Phase 1:

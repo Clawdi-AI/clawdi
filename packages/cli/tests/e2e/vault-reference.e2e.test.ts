@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..", "..");
 const srcEntry = join(cliRoot, "src", "index.ts");
-const REFERENCE = "clawdi://prod/openai/api_key";
+const PROJECT_ID = "00000000-0000-0000-0000-000000000123";
+const REFERENCE = `clawdi://project/${PROJECT_ID}/vault/prod/section/openai/field/api_key`;
 const SECRET = "sk-e2e-vault-reference";
 
 interface ApiCall {
@@ -44,7 +45,8 @@ beforeAll(() => {
 			if (
 				url.searchParams.get("vault_slug") !== "prod" ||
 				url.searchParams.get("section") !== "openai" ||
-				url.searchParams.get("field") !== "api_key"
+				url.searchParams.get("field") !== "api_key" ||
+				url.searchParams.get("project_id") !== PROJECT_ID
 			) {
 				return json({ detail: "unexpected reference" }, 404);
 			}
@@ -52,7 +54,7 @@ beforeAll(() => {
 			return json({
 				reference: REFERENCE,
 				value: SECRET,
-				source_project_id: "project-e2e",
+				source_project_id: PROJECT_ID,
 				source_alias: "prod",
 				vault_slug: "prod",
 				section: "openai",
@@ -84,6 +86,7 @@ describe("vault reference process e2e", () => {
 			expect(apiCalls[0].path).toContain("vault_slug=prod");
 			expect(apiCalls[0].path).toContain("section=openai");
 			expect(apiCalls[0].path).toContain("field=api_key");
+			expect(apiCalls[0].path).toContain(`project_id=${PROJECT_ID}`);
 		} finally {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}

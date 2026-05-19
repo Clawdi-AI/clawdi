@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata } from "../lib/sanitize";
+import { buildExactClawdiReference } from "../lib/secret-references";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -115,6 +116,13 @@ export async function vaultSet(key: string, opts: { project?: string } = {}) {
 	);
 
 	console.log(chalk.green(`✓ Stored ${key}`));
+	if (project_id) {
+		console.log(
+			chalk.gray(
+				`  Reference: ${buildExactClawdiReference(project_id, vaultSlug, section, field)}`,
+			),
+		);
+	}
 }
 
 export async function vaultList(opts: { json?: boolean; project?: string } = {}) {
@@ -280,6 +288,16 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 	);
 
 	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to vault "default"`));
+	if (project_id) {
+		console.log(chalk.gray("  References:"));
+		for (const field of Object.keys(fields).sort()) {
+			console.log(
+				chalk.gray(
+					`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(project_id, "default", "", field)}`,
+				),
+			);
+		}
+	}
 }
 
 function parseVaultKey(key: string): { vaultSlug: string; section: string; field: string } {

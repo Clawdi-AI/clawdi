@@ -112,6 +112,43 @@ describe("readCommand", () => {
 
 		expect(captured[0].path).toContain("project_id=project-linked");
 	});
+
+	it("uses the project encoded in an exact reference instead of the folder link", async () => {
+		setProjectFolderLink(projectRoot, {
+			project_id: "project-linked",
+			project_label: "engineering",
+			project_name: "Engineering",
+			project_slug: "engineering",
+			owner_handle: null,
+			owner_display: null,
+		});
+		const exact =
+			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY";
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: exact,
+						value: "sk-exact",
+						source_project_id: "00000000-0000-0000-0000-000000000123",
+						source_alias: "production",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+		try {
+			await readCommand(exact);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
+		expect(captured[0].path).not.toContain("project_id=project-linked");
+	});
 });
 
 describe("injectCommand", () => {

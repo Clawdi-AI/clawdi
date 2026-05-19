@@ -223,17 +223,20 @@ run_cli "$CLI_HOME" "$CLAWDI_HOME" "$CODEX_HOME" "$CLAUDE_HOME" "$GH_HOME" \
   || fail "clawdi vault list failed"
 grep -Fq "OPENAI_API_KEY" "$LOG_DIR/vault-list.json" || fail "vault list did not include OPENAI_API_KEY"
 assert_no_secret_in_file "$LOG_DIR/vault-list.json" "$VAULT_SECRET"
+VAULT_PROJECT_ID="$("$(command -v bun)" -e 'const fs = require("fs"); const rows = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const row = rows.find((v) => v.slug === "default"); if (row) console.log(row.project_id);' "$LOG_DIR/vault-list.json")"
+[ -n "$VAULT_PROJECT_ID" ] || fail "could not find default vault project_id"
+OPENAI_REF="clawdi://project/$VAULT_PROJECT_ID/vault/default/field/OPENAI_API_KEY"
 
 READ_VALUE="$(
   run_cli "$CLI_HOME" "$CLAWDI_HOME" "$CODEX_HOME" "$CLAUDE_HOME" "$GH_HOME" \
-    read clawdi://default/OPENAI_API_KEY 2>"$LOG_DIR/read.err"
+    read "$OPENAI_REF" 2>"$LOG_DIR/read.err"
 )"
 [ "$READ_VALUE" = "$VAULT_SECRET" ] || fail "clawdi read returned unexpected value"
 assert_no_secret_in_file "$LOG_DIR/read.err" "$VAULT_SECRET"
 
 TEMPLATE="$SCRATCH/.env.template"
 RENDERED="$SCRATCH/.env.local"
-printf 'OPENAI_API_KEY=clawdi://default/OPENAI_API_KEY\n' >"$TEMPLATE"
+printf 'OPENAI_API_KEY=%s\n' "$OPENAI_REF" >"$TEMPLATE"
 run_cli "$CLI_HOME" "$CLAWDI_HOME" "$CODEX_HOME" "$CLAUDE_HOME" "$GH_HOME" \
   inject --in "$TEMPLATE" --out "$RENDERED" \
   >"$LOG_DIR/inject.out" 2>"$LOG_DIR/inject.err" \
@@ -243,7 +246,7 @@ assert_no_secret_in_file "$LOG_DIR/inject.out" "$VAULT_SECRET"
 assert_no_secret_in_file "$LOG_DIR/inject.err" "$VAULT_SECRET"
 
 RUN_ENV="$SCRATCH/run.env"
-printf 'OPENAI_API_KEY=clawdi://default/OPENAI_API_KEY\n' >"$RUN_ENV"
+printf 'OPENAI_API_KEY=%s\n' "$OPENAI_REF" >"$RUN_ENV"
 CHILD_SCRIPT="if (process.env.OPENAI_API_KEY !== '$VAULT_SECRET') process.exit(42); console.log('vault-run-ok')"
 run_cli "$CLI_HOME" "$CLAWDI_HOME" "$CODEX_HOME" "$CLAUDE_HOME" "$GH_HOME" \
   run --env-file "$RUN_ENV" --no-inherit-env --no-project-folder -- \

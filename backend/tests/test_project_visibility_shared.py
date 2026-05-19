@@ -495,6 +495,14 @@ async def test_env_bound_agent_key_resolves_attached_shared_project_vault_plaint
             assert attached_key.status_code == 200, attached_key.text
             assert attached_key.json()["value"] == "attached-secret-value"
 
+            attached_exact = await ac.post(
+                "/api/vault/resolve"
+                f"?vault_slug={vault.slug}&field=TOKEN&project_id={shared.id}&agent_id={env.id}"
+            )
+            assert attached_exact.status_code == 200, attached_exact.text
+            assert attached_exact.json()["value"] == "attached-secret-value"
+            assert attached_exact.json()["source_project_id"] == str(shared.id)
+
             attached_env = await ac.post(f"/api/vault/resolve?agent_id={env.id}")
             assert attached_env.status_code == 200, attached_env.text
             assert attached_env.json()["TOKEN"] == "attached-secret-value"

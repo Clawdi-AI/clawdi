@@ -313,4 +313,75 @@ describe("run command project folder selection", () => {
 		expect(captured[0].path).toContain("project_id=project-linked");
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-linked");
 	});
+
+	it("uses the project encoded in an exact reference instead of the folder link", async () => {
+		linkCurrentProjectFolder();
+		const envFile = join(tmpRoot, ".env");
+		const exact =
+			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY";
+		writeFileSync(envFile, `OPENAI_API_KEY=${exact}\n`);
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: exact,
+						value: "sk-exact",
+						source_project_id: "00000000-0000-0000-0000-000000000123",
+						source_alias: "production",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			await run(["node", "server.js"], { envFile: [envFile] }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
+		expect(captured[0].path).not.toContain("project_id=project-linked");
+		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-exact");
+	});
+
+	it("keeps exact references inside the requested agent boundary", async () => {
+		const envFile = join(tmpRoot, ".env");
+		const exact =
+			"clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY";
+		writeFileSync(envFile, `OPENAI_API_KEY=${exact}\n`);
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: exact,
+						value: "sk-agent-exact",
+						source_project_id: "00000000-0000-0000-0000-000000000123",
+						source_alias: "attached-prod",
+					}),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			await run(["node", "server.js"], { envFile: [envFile], agent: "agent-123" }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("agent_id=agent-123");
+		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
+		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-agent-exact");
+	});
 });

@@ -350,7 +350,7 @@ program
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
-			"  $ clawdi read clawdi://prod/stripe/secret_key\n" +
+			"  $ clawdi read clawdi://project/<project-id>/vault/prod/section/stripe/field/secret_key\n" +
 			"  $ clawdi read clawdi://prod/db/url --project engineering --json",
 	)
 	.action(async (reference, opts) => {

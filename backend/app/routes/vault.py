@@ -564,10 +564,10 @@ async def resolve_vault(
     resolving through its own `agent_id`, where the Agent Project plus explicit
     attached Projects define runtime reads.
     """
-    if project_id is not None and agent_id is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")
     if agent_id is not None:
         ordered = await _agent_project_precedence(db, auth, agent_id)
+        if project_id is not None:
+            ordered = [entry for entry in ordered if entry["project_id"] == project_id]
     else:
         selected_project_id = project_id or await resolve_default_write_project(db, auth)
         ordered = await _project_precedence(db, auth, selected_project_id)

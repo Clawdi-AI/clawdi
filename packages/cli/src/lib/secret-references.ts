@@ -3,13 +3,15 @@ import { getAuth, getConfig } from "./config";
 import { resolveProjectId } from "./project-resolver";
 import { getEnvIdByAgent } from "./select-adapter";
 
-const CLAWDI_REF_RE = /clawdi:\/\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~%-]+){1,2}/g;
+const CLAWDI_REF_RE = /clawdi:\/\/[A-Za-z0-9._~%-]+(?:\/[A-Za-z0-9._~%-]+)+/g;
 
 export interface ClawdiReference {
 	raw: string;
+	project?: string;
 	vault: string;
 	section: string;
 	field: string;
+	isExact: boolean;
 }
 
 export interface VaultReferenceHit {
@@ -62,13 +64,22 @@ export function parseClawdiReference(input: string): ClawdiReference {
 	if (url.protocol !== "clawdi:") {
 		throw new Error(`Expected a clawdi:// reference, got: ${input}`);
 	}
-	const vault = decodeURIComponent(url.hostname);
+	const host = decodeURIComponent(url.hostname);
 	const parts = url.pathname
 		.split("/")
 		.filter(Boolean)
 		.map((part) => decodeURIComponent(part));
+	if (host === "project" && parts[1] === "vault") {
+		return parseProjectReference(input, parts);
+	}
+	return parseRelativeReference(input, host, parts);
+}
+
+function parseRelativeReference(input: string, vault: string, parts: string[]): ClawdiReference {
 	if (!vault || (parts.length !== 1 && parts.length !== 2)) {
-		throw new Error("Expected clawdi://<vault>/<field> or clawdi://<vault>/<section>/<field>.");
+		throw new Error(
+			"Expected clawdi://<vault>/<field>, clawdi://<vault>/<section>/<field>, or clawdi://project/<project>/vault/<vault>/field/<field>.",
+		);
 	}
 	const [sectionOrField, maybeField] = parts;
 	return {
@@ -76,6 +87,52 @@ export function parseClawdiReference(input: string): ClawdiReference {
 		vault,
 		section: maybeField === undefined ? "" : sectionOrField,
 		field: maybeField ?? sectionOrField,
+		isExact: false,
+	};
+}
+
+function parseProjectReference(input: string, parts: string[]): ClawdiReference {
+	const invalid = () =>
+		new Error(
+			"Expected clawdi://project/<project>/vault/<vault>/field/<field> or clawdi://project/<project>/vault/<vault>/section/<section>/field/<field>.",
+		);
+	if (parts.length !== 5 && parts.length !== 7) throw invalid();
+	const [
+		project,
+		vaultKeyword,
+		vault,
+		maybeSectionKeyword,
+		maybeSectionOrField,
+		fieldKeyword,
+		maybeField,
+	] = parts;
+	if (!project || vaultKeyword !== "vault" || !vault) throw invalid();
+	if (parts.length === 5) {
+		if (maybeSectionKeyword !== "field" || !maybeSectionOrField) throw invalid();
+		return {
+			raw: input,
+			project,
+			vault,
+			section: "",
+			field: maybeSectionOrField,
+			isExact: true,
+		};
+	}
+	if (
+		maybeSectionKeyword !== "section" ||
+		!maybeSectionOrField ||
+		fieldKeyword !== "field" ||
+		!maybeField
+	) {
+		throw invalid();
+	}
+	return {
+		raw: input,
+		project,
+		vault,
+		section: maybeSectionOrField,
+		field: maybeField,
+		isExact: true,
 	};
 }
 
@@ -110,7 +167,9 @@ export async function resolveClawdiReference(
 		section: ref.section,
 		field: ref.field,
 	});
-	if (opts.project) {
+	if (ref.project) {
+		params.set("project_id", await resolveProjectId(apiUrl, auth.apiKey, ref.project));
+	} else if (opts.project) {
 		params.set("project_id", await resolveProjectId(apiUrl, auth.apiKey, opts.project));
 	} else if (opts.projectId) {
 		params.set("project_id", opts.projectId);
@@ -132,7 +191,7 @@ export async function resolveClawdiReference(
 	if (!response.ok) {
 		throw new VaultReferenceResolveError(response.status, body);
 	}
-	return body as VaultReferenceHit;
+	return { ...(body as VaultReferenceHit), reference: input };
 }
 
 export async function resolveReferenceMap(
@@ -152,6 +211,24 @@ export function replaceResolvedReferences(
 	resolved: Map<string, VaultReferenceHit>,
 ): string {
 	return input.replace(CLAWDI_REF_RE, (raw) => resolved.get(raw)?.value ?? raw);
+}
+
+export function buildExactClawdiReference(
+	project: string,
+	vault: string,
+	section: string,
+	field: string,
+): string {
+	const parts = [
+		"project",
+		project,
+		"vault",
+		vault,
+		...(section ? ["section", section] : []),
+		"field",
+		field,
+	].map((part) => encodeURIComponent(part));
+	return `clawdi://${parts.join("/")}`;
 }
 
 export function maskSecret(value: string): string {

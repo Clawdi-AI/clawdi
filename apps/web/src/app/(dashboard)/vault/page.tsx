@@ -206,7 +206,12 @@ function VaultCard({
 					key: section === "(default)" ? f : `${section}/${f}`,
 					name: f,
 					section: section === "(default)" ? "" : section,
-					reference: buildClawdiReference(vault.slug, section === "(default)" ? "" : section, f),
+					reference: buildExactClawdiReference(
+						vault.project_id,
+						vault.slug,
+						section === "(default)" ? "" : section,
+						f,
+					),
 				})),
 			)
 		: [];
@@ -260,7 +265,7 @@ function VaultCard({
 										copyReference(row.original.reference);
 									}}
 									className="text-muted-foreground"
-									aria-label={`Copy project-relative reference for ${row.original.key}`}
+									aria-label={`Copy exact reference for ${row.original.key}`}
 								>
 									{copiedReference === row.original.reference ? (
 										<Check className="size-3.5" />
@@ -270,7 +275,7 @@ function VaultCard({
 								</Button>
 							</TooltipTrigger>
 							<TooltipContent side="left" className="text-xs">
-								Copy project-relative reference
+								Copy exact reference
 							</TooltipContent>
 						</Tooltip>
 						<Button
@@ -416,9 +421,20 @@ function VaultCard({
 	);
 }
 
-function buildClawdiReference(vaultSlug: string, section: string, field: string): string {
-	const parts = [vaultSlug, ...(section ? [section] : []), field].map((part) =>
-		encodeURIComponent(part),
-	);
+function buildExactClawdiReference(
+	projectId: string,
+	vaultSlug: string,
+	section: string,
+	field: string,
+): string {
+	const parts = [
+		"project",
+		projectId,
+		"vault",
+		vaultSlug,
+		...(section ? ["section", section] : []),
+		"field",
+		field,
+	].map((part) => encodeURIComponent(part));
 	return `clawdi://${parts.join("/")}`;
 }
