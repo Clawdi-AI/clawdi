@@ -8,14 +8,24 @@ cd "$REPO_ROOT"
 # shellcheck source=scripts/paseo/common.sh
 . "$SCRIPT_DIR/common.sh"
 require_paseo_setup
+REQUESTED_WEB_PUBLIC_URL="${WEB_PUBLIC_URL:-}"
+REQUESTED_API_PUBLIC_URL="${API_PUBLIC_URL:-}"
 load_paseo_ports
 
 WEB_RUNTIME_PORT="${WEB_PORT}"
 BACKEND_RUNTIME_PORT="${BACKEND_PORT}"
 WEB_BIND_HOST="${HOST:-0.0.0.0}"
 API_BIND_HOST="${HOST:-0.0.0.0}"
-WEB_URL="${WEB_PUBLIC_URL:-http://localhost:${WEB_RUNTIME_PORT}}"
-API_URL="${API_PUBLIC_URL:-http://localhost:${BACKEND_RUNTIME_PORT}}"
+WEB_URL="${REQUESTED_WEB_PUBLIC_URL:-${WEB_PUBLIC_URL:-http://localhost:${WEB_RUNTIME_PORT}}}"
+API_URL="${REQUESTED_API_PUBLIC_URL:-${API_PUBLIC_URL:-http://localhost:${BACKEND_RUNTIME_PORT}}}"
+WEB_PUBLIC_HOST="$(
+  python3 - "$WEB_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+print(urlparse(sys.argv[1]).hostname or "")
+PY
+)"
 CORS_ORIGINS="$(
   json_string_array \
     "$WEB_URL" \
@@ -31,6 +41,8 @@ export INFRA_POSTGRES_DB=clawdi
 export INFRA_POSTGRES_USER=clawdi
 export INFRA_POSTGRES_PASSWORD=clawdi_dev
 
+export WEB_PUBLIC_URL="$WEB_URL"
+export API_PUBLIC_URL="$API_URL"
 export DATABASE_URL
 export DEBUG=true
 export PUBLIC_API_URL="$API_URL"
@@ -39,6 +51,13 @@ export CORS_ORIGINS
 export NEXT_PUBLIC_API_URL="$API_URL"
 export NEXT_PUBLIC_CLAWDI_HOSTED="${NEXT_PUBLIC_CLAWDI_HOSTED:-}"
 export NEXT_PUBLIC_DEPLOY_API_URL="${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}"
+case "$WEB_PUBLIC_HOST" in
+  ""|"localhost"|"127.0.0.1")
+    ;;
+  *)
+    export NEXT_ALLOWED_DEV_ORIGINS="${NEXT_ALLOWED_DEV_ORIGINS:-$WEB_PUBLIC_HOST}"
+    ;;
+esac
 if [ "${DEV_AUTH_BYPASS:-}" = "true" ]; then
   export DEV_AUTH_TOKEN="${DEV_AUTH_TOKEN:-dev-bypass}"
   export DEV_AUTH_CLERK_ID="${DEV_AUTH_CLERK_ID:-dev_browser}"
@@ -72,6 +91,7 @@ trap 'cleanup; exit 143' TERM
     NEXT_PUBLIC_DEPLOY_API_URL="$NEXT_PUBLIC_DEPLOY_API_URL" \
     NEXT_PUBLIC_DEV_AUTH_BYPASS="${NEXT_PUBLIC_DEV_AUTH_BYPASS:-}" \
     NEXT_PUBLIC_DEV_AUTH_TOKEN="${NEXT_PUBLIC_DEV_AUTH_TOKEN:-}" \
+    NEXT_ALLOWED_DEV_ORIGINS="${NEXT_ALLOWED_DEV_ORIGINS:-}" \
     bun run dev -- --hostname "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
 ) &
 pids+=("$!")
