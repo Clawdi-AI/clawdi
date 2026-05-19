@@ -616,10 +616,15 @@ clawdi://<vault>/<section>/<field>
 Examples:
 
 ```text
-clawdi://default/openai/api_key
+clawdi://default/OPENAI_API_KEY
+clawdi://prod/openai/api_key
 clawdi://prod/database/url
 clawdi://prod/stripe/secret_key
 ```
+
+Fields imported from `.env` files or stored with `clawdi vault set OPENAI_API_KEY`
+use no section by default, so they resolve as `clawdi://default/OPENAI_API_KEY`.
+Sectioned paths remain available for manually structured vault fields.
 
 Project selection comes from runtime context:
 
@@ -674,7 +679,7 @@ Support `.env` files like:
 
 ```env
 STRIPE_SECRET_KEY=clawdi://prod/stripe/secret_key
-OPENAI_API_KEY=clawdi://default/openai/api_key
+OPENAI_API_KEY=clawdi://default/OPENAI_API_KEY
 ```
 
 Change `clawdi run` defaults:
@@ -697,8 +702,10 @@ clawdi read clawdi://prod/db/url --json
 clawdi inject --in .env.template --out -    # stdout
 ```
 
-Default output should mask resolved secrets when possible. A `--no-masking`
-escape hatch can exist, but the command should make the risk clear.
+Clawdi-owned diagnostics, previews, and summaries should mask resolved secrets
+when possible. Commands whose primary purpose is to reveal or materialize a
+secret, such as `read`, `inject --out`, and the child process launched by
+`run`, are explicit plaintext sinks.
 
 ### Web Product
 
@@ -706,7 +713,8 @@ The web Vault should support:
 
 - Create vault/item/section/field.
 - Copy secret reference.
-- Reveal/copy plaintext only after explicit user action.
+- Eventually reveal/copy plaintext only after explicit user action, once the
+  web plaintext trust model is explicitly approved.
 - Project-level sharing view.
 - Agent access view: which Agents can use which Projects.
 - Version history and restore.
@@ -719,11 +727,11 @@ For Phase 1, the web surface should stay narrow:
 - Create and edit vault metadata and fields using the existing server-managed
   encryption model.
 - Show field names and sections without exposing values by default.
-- Reveal/copy plaintext only after explicit user action and only for authorized
-  users.
 - Copy `clawdi://` reference for each field.
+- Keep web plaintext reveal/copy out of Phase 1 unless the web trust model is
+  changed. The current web CRUD API intentionally never returns plain values.
 - Show Project and Agent access context enough to explain where runtime
-  resolution will read from.
+  resolution will read from when that access view ships.
 
 Avoid building a heavy generic password-manager UI before references and
 runtime delivery are proven.
@@ -1173,20 +1181,24 @@ controlled sharing, not sandboxing.
 
 ## API Direction
 
-Short-term server-managed reference resolution:
+Current Phase 1 server-managed reference resolution uses exact single-reference
+resolve on the existing CLI-only endpoint:
 
 ```text
-POST /api/vault/references/resolve
+POST /api/vault/resolve?vault_slug=default&section=&field=OPENAI_API_KEY
 ```
 
-Request:
+The CLI can call this endpoint repeatedly for `run` and `inject`. A future
+batch endpoint can reduce round trips and centralize audit emission, but it is
+not required for the current reference UX.
+
+Query parameters:
 
 ```json
 {
-  "references": [
-    "clawdi://prod/database/url",
-    "clawdi://default/openai/api_key"
-  ],
+  "vault_slug": "default",
+  "section": "",
+  "field": "OPENAI_API_KEY",
   "project_id": "...",
   "agent_id": "...",
   "allow_conflicts": false
@@ -1197,11 +1209,11 @@ Response:
 
 ```json
 {
-  "values": {
-    "clawdi://prod/database/url": "postgres://...",
-    "clawdi://default/openai/api_key": "sk-..."
-  },
-  "provenance": {},
+  "reference": "clawdi://default/OPENAI_API_KEY",
+  "value": "sk-...",
+  "source_project_id": "...",
+  "source_alias": "engineering",
+  "precedence": [],
   "conflicts": []
 }
 ```
@@ -1348,18 +1360,19 @@ reference model, Project/Agent resolution semantics, and CLI/web workflow.
 Ship first:
 
 1. Reference parser and scanner shared by CLI commands.
-2. `clawdi read <clawdi://...>` with JSON and masked-default output modes.
+2. `clawdi read <clawdi://...>` with JSON/debug output. Explicit `read`
+   prints plaintext, while provenance diagnostics stay masked.
 3. `clawdi run --env-file ... -- <cmd>` that resolves only explicit references
    by default.
 4. `clawdi inject --in ... --out ...` for template workflows.
-5. Batch resolve API with provenance and conflict diagnostics.
+5. Exact reference resolve API with provenance and conflict diagnostics.
 6. Web "Copy Clawdi Reference" on every field.
 7. Masking for Clawdi-owned output. Child-process stdout/stderr masking should
    be optional or deferred because piping output can break TTY behavior.
 8. Product copy that says Clawdi keeps plaintext out of files and injects at
    runtime.
-9. Minimal `credential_kind` and `runtime_policy` fields or API placeholders so
-   later proxy/service-binding work does not require a reference-model rewrite.
+9. Keep credential-profile storage separate from `vault_items` so future typed
+   credential delivery modes do not require a reference-model rewrite.
 10. P0 local credential profile design and adapter spike:
    - detect supported Codex, Claude Code, and GitHub CLI credential paths
      without reading unrelated logs or history;
@@ -1388,10 +1401,12 @@ Required behavior details:
    - Writes to a file or stdout.
    - Refuses to overwrite existing files unless `--force` is passed.
    - Prints a summary of resolved references and redacts values.
-4. Batch resolve API
-   - Accepts explicit references, Project/Agent context, and conflict policy.
-   - Returns values plus provenance for CLI use.
-   - Emits audit events for every resolved reference.
+4. Exact reference resolve API
+   - Accepts one explicit `clawdi://` reference as vault/section/field query
+     parameters plus Project/Agent context and conflict policy.
+   - Returns value plus provenance for CLI use.
+   - Can be wrapped by the CLI for multiple references until a batch endpoint
+     is added.
 5. Web copy reference
    - Provides a stable reference for every field.
    - Indicates whether the reference is Project-relative or absolute.
@@ -1415,8 +1430,9 @@ Acceptance criteria:
 2. The same references work through `read`, `run`, and `inject`.
 3. Duplicate references across attached Projects produce a deterministic conflict
    explanation.
-4. CLI output masks resolved secret values in Clawdi-owned logs and messages by
-   default.
+4. CLI-owned diagnostics, summaries, and error messages mask resolved secret
+   values by default; explicit plaintext sinks are limited to `read`,
+   generated output files, and the launched child process.
 5. Documentation clearly states env injection is a compatibility mechanism.
 6. The model can represent a future non-env credential delivery mode without
    changing `clawdi://` references.
@@ -1463,18 +1479,18 @@ Deliver:
 - `clawdi run --env-file ... -- <cmd>`
 - `clawdi inject --in ... --out ...`
 - Reference scanner shared across commands.
-- Default masking.
-- Batch reference resolve endpoint.
+- Masking for Clawdi-owned diagnostics and summaries.
+- Exact reference resolve endpoint, with batch resolve deferred.
 - Explicit `--all-vault-env` for legacy all-env injection.
 - Web "Copy Clawdi Reference".
-- Minimal credential metadata for future delivery modes:
-  `credential_kind`, `runtime_policy`, local agent profile placeholders, and
-  service-binding placeholders.
+- Dedicated local agent credential-profile storage separate from `vault_items`;
+  typed credential metadata and service-binding placeholders are Phase 2.
 - P0 local credential profile adapters for Codex, Claude Code, and GitHub CLI
   backed by dedicated encrypted credential-profile storage, not `vault_items`,
   so legacy all-env injection never receives the stored auth file.
-- Optional macOS interactive credential-store bridge for P0 tools, gated behind
-  explicit source selection and adapter-specific verification.
+- Optional macOS interactive credential-store bridge, gated behind explicit
+  source selection and explicit service/account input. Phase 1 does not guess
+  tool Keychain item names.
 - Documentation that clearly says env injection is not isolation.
 
 Security statement:

@@ -157,10 +157,13 @@ Per-project filter: `clawdi push` defaults to the current working directory as a
 Three-level layout: vault → section → field. Example paths:
 
 ```
-clawdi://default/openai/api_key
+clawdi://default/OPENAI_API_KEY
+clawdi://prod/openai/api_key
 clawdi://prod/stripe/secret_key
 clawdi://prod/database/url
 ```
+
+`.env` imports and `clawdi vault set OPENAI_API_KEY` store fields without a section by default, so that key resolves as `clawdi://default/OPENAI_API_KEY`. Sectioned references are for manually structured fields.
 
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 

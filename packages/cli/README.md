@@ -90,11 +90,13 @@ Run a command with vault references without putting plaintext secrets on disk:
 
 ```bash
 clawdi vault set OPENAI_API_KEY
-echo "OPENAI_API_KEY=clawdi://default/openai/api_key" > .env.local
+echo "OPENAI_API_KEY=clawdi://default/OPENAI_API_KEY" > .env.local
 clawdi run --env-file .env.local -- python scripts/ingest.py
-clawdi read clawdi://default/openai/api_key
+clawdi read clawdi://default/OPENAI_API_KEY
 clawdi inject --in .env.template --out .env.local
 ```
+
+Secrets stored with `clawdi vault set OPENAI_API_KEY` or imported from `.env` use `clawdi://default/OPENAI_API_KEY`. Structured fields can still use sectioned references such as `clawdi://prod/openai/api_key`.
 
 Sync a local agent CLI credential profile to another machine:
 
