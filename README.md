@@ -102,7 +102,7 @@ clawdi read clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
 clawdi inject --in .env.template --out .env.local
 ```
 
-`clawdi vault set` and `clawdi vault import` print exact references that include the Project ID. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
+`clawdi vault set`, `clawdi vault import`, and `clawdi vault list` print exact references that include the Project ID. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
 
 Sync a local agent CLI credential profile to another machine:
 
@@ -254,7 +254,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
 | `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI; explicit Keychain import requires service/account options |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for `clawdi run` vault selection |
-| `clawdi vault set/list/import` | Manage encrypted secrets |
+| `clawdi vault set/list/import` | Manage encrypted secrets and copy exact references |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |

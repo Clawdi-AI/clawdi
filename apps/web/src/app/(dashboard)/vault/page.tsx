@@ -76,25 +76,31 @@ export default function VaultPage() {
 				}
 			/>
 
-			{/* Create vault */}
-			<div className="flex gap-2">
+			<form
+				className="flex gap-2"
+				onSubmit={(e) => {
+					e.preventDefault();
+					if (newVaultSlug) createVault.mutate(newVaultSlug);
+				}}
+			>
+				<Label htmlFor="vault-slug" className="sr-only">
+					Vault name
+				</Label>
 				<Input
+					id="vault-slug"
+					name="vault-slug"
 					value={newVaultSlug}
 					onChange={(e) => setNewVaultSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-					placeholder="New vault name (e.g. ai-keys, prod)"
+					placeholder="ai-keys…"
+					autoComplete="off"
+					spellCheck={false}
 					className="flex-1"
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && newVaultSlug) createVault.mutate(newVaultSlug);
-					}}
 				/>
-				<Button
-					onClick={() => newVaultSlug && createVault.mutate(newVaultSlug)}
-					disabled={!newVaultSlug || createVault.isPending}
-				>
-					<Plus />
+				<Button type="submit" disabled={!newVaultSlug || createVault.isPending}>
+					<Plus aria-hidden="true" />
 					Create
 				</Button>
-			</div>
+			</form>
 
 			{error ? (
 				<Alert variant="destructive">
@@ -152,6 +158,7 @@ function VaultCard({
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
 	const [copiedReference, setCopiedReference] = useState<string | null>(null);
+	const fieldDomPrefix = `${vault.project_id}-${vault.slug}`;
 
 	// Cache key includes project_id so a JWT user with the same slug
 	// in two projects (Personal + env-A) doesn't share entries.
@@ -268,9 +275,9 @@ function VaultCard({
 									aria-label={`Copy exact reference for ${row.original.key}`}
 								>
 									{copiedReference === row.original.reference ? (
-										<Check className="size-3.5" />
+										<Check className="size-3.5" aria-hidden="true" />
 									) : (
-										<Copy className="size-3.5" />
+										<Copy className="size-3.5" aria-hidden="true" />
 									)}
 								</Button>
 							</TooltipTrigger>
@@ -296,7 +303,7 @@ function VaultCard({
 							className="text-muted-foreground hover:text-destructive"
 							aria-label={`Delete ${row.original.key}`}
 						>
-							<Trash2 className="size-3.5" />
+							<Trash2 className="size-3.5" aria-hidden="true" />
 						</Button>
 					</div>
 				),
@@ -328,7 +335,7 @@ function VaultCard({
 						onClick={() => setAdding(!adding)}
 						className="text-muted-foreground"
 					>
-						<Plus className="size-3.5" />
+						<Plus className="size-3.5" aria-hidden="true" />
 						Add Key
 					</Button>
 					<Button
@@ -348,53 +355,56 @@ function VaultCard({
 							if (ok) onDelete();
 						}}
 						disabled={isDeleting}
-						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive"
+						className="text-muted-foreground opacity-0 group-hover/header:opacity-100 hover:text-destructive focus-visible:opacity-100"
 						aria-label="Delete vault"
 					>
-						<Trash2 className="size-3.5" />
+						<Trash2 className="size-3.5" aria-hidden="true" />
 					</Button>
 				</div>
 			</div>
 
-			{/* Inline add form, when toggled */}
 			{adding ? (
-				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
-					<Label htmlFor={`key-${vault.slug}`} className="sr-only">
+				<form
+					className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						if (newKey && newValue)
+							upsertItem.mutate({ section: "", key: newKey, value: newValue });
+					}}
+				>
+					<Label htmlFor={`key-${fieldDomPrefix}`} className="sr-only">
 						Key name
 					</Label>
 					<Input
-						id={`key-${vault.slug}`}
+						id={`key-${fieldDomPrefix}`}
+						name="key-name"
 						value={newKey}
 						onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-						placeholder="KEY_NAME"
+						placeholder="OPENAI_API_KEY…"
+						autoComplete="off"
+						spellCheck={false}
 						className="max-w-[220px] flex-1 font-mono"
 					/>
-					<Label htmlFor={`value-${vault.slug}`} className="sr-only">
+					<Label htmlFor={`value-${fieldDomPrefix}`} className="sr-only">
 						Secret value
 					</Label>
 					<Input
-						id={`value-${vault.slug}`}
+						id={`value-${fieldDomPrefix}`}
+						name="secret-value"
 						type="password"
 						value={newValue}
 						onChange={(e) => setNewValue(e.target.value)}
-						placeholder="secret value"
+						placeholder="Paste secret value…"
+						autoComplete="off"
+						spellCheck={false}
 						className="flex-1"
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && newKey && newValue)
-								upsertItem.mutate({ section: "", key: newKey, value: newValue });
-						}}
 					/>
-					<Button
-						onClick={() =>
-							newKey && newValue && upsertItem.mutate({ section: "", key: newKey, value: newValue })
-						}
-						disabled={!newKey || !newValue || upsertItem.isPending}
-						size="sm"
-					>
-						{upsertItem.isPending ? <Spinner /> : <Plus />}
+					<Button type="submit" disabled={!newKey || !newValue || upsertItem.isPending} size="sm">
+						{upsertItem.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
 						Save
 					</Button>
 					<Button
+						type="button"
 						variant="ghost"
 						size="icon-sm"
 						onClick={() => {
@@ -404,9 +414,9 @@ function VaultCard({
 						}}
 						aria-label="Cancel"
 					>
-						<X />
+						<X aria-hidden="true" />
 					</Button>
-				</div>
+				</form>
 			) : null}
 
 			{allFields.length > 0 ? (

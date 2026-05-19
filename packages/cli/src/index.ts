@@ -286,7 +286,7 @@ vaultCmd
 
 vaultCmd
 	.command("list")
-	.description("List stored keys")
+	.description("List stored keys and exact references")
 	.option(
 		"-p, --project <id-or-slug>",
 		"List vaults in a specific project (default: all visible projects)",

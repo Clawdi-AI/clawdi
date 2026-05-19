@@ -182,13 +182,16 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			project_id: string;
 			name: string;
 			items: Awaited<ReturnType<typeof fetchItems>>;
+			references: VaultReferenceRow[];
 		}> = [];
 		for (const v of vaults) {
+			const items = await fetchItems(v.slug, v.project_id);
 			out.push({
 				slug: v.slug,
 				project_id: v.project_id,
 				name: v.name,
-				items: await fetchItems(v.slug, v.project_id),
+				items,
+				references: buildVaultReferenceRows(v.project_id, v.slug, items),
 			});
 		}
 		console.log(JSON.stringify(out, null, 2));
@@ -208,17 +211,39 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 
 	for (const v of vaults) {
 		const items = await fetchItems(v.slug, v.project_id);
-		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
-		for (const [section, fields] of Object.entries(items)) {
-			for (const field of fields) {
-				const display =
-					section === "(default)"
-						? sanitizeMetadata(field)
-						: `${sanitizeMetadata(section)}/${sanitizeMetadata(field)}`;
-				console.log(chalk.gray(`    ${display}`));
-			}
+		console.log(
+			chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(`project=${v.project_id}`)}`),
+		);
+		for (const row of buildVaultReferenceRows(v.project_id, v.slug, items)) {
+			console.log(chalk.gray(`    ${sanitizeMetadata(row.key)}`));
+			console.log(chalk.gray(`      ${row.reference}`));
 		}
 	}
+}
+
+interface VaultReferenceRow {
+	key: string;
+	section: string;
+	field: string;
+	reference: string;
+}
+
+function buildVaultReferenceRows(
+	projectId: string,
+	vaultSlug: string,
+	items: Record<string, string[]>,
+): VaultReferenceRow[] {
+	return Object.entries(items).flatMap(([section, fields]) =>
+		fields.map((field) => {
+			const normalizedSection = section === "(default)" ? "" : section;
+			return {
+				key: normalizedSection ? `${normalizedSection}/${field}` : field,
+				section: normalizedSection,
+				field,
+				reference: buildExactClawdiReference(projectId, vaultSlug, normalizedSection, field),
+			};
+		}),
+	);
 }
 
 export async function vaultImport(file: string, opts: { yes?: boolean; project?: string } = {}) {

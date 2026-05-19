@@ -658,7 +658,9 @@ clawdi://vlt_<id>/item_<id>/field_<id>
 ```
 
 The web UI should have "Copy Clawdi Reference" on every field and should copy
-the exact Project-qualified reference by default.
+the exact Project-qualified reference by default. `clawdi vault list` should
+also print exact references so existing secrets are recoverable without opening
+the dashboard.
 
 ### Phase 1 User Journey
 
@@ -1431,6 +1433,10 @@ Required behavior details:
    - Provides a stable reference for every field.
    - Copies the exact Project-qualified reference by default.
    - Does not require revealing the plaintext value.
+6. CLI list reference discovery
+   - `clawdi vault list` prints copyable exact references in human output.
+   - `clawdi vault list --json` preserves the legacy `items` shape and adds a
+     structured `references` array.
 
 Defer from Phase 1:
 
