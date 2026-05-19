@@ -41,6 +41,39 @@ compatibility, request policy, and careful logging boundaries. Phase 1 should
 ship password-manager workflow first, while preserving data-model and API
 extension points for proxy/runtime policies.
 
+Second-pass research update: the agent-credential market is not one category.
+It splits into four separate problems:
+
+1. **Secret reference UX** — 1Password, Doppler, Infisical CLI, Bitwarden
+   Secrets Manager, and similar tools help users avoid plaintext config files
+   by resolving secrets at runtime.
+2. **Credential broker/proxy** — Infisical Agent Vault, Authsome, Secretless
+   Broker, and Boundary credential injection keep credentials out of the
+   caller process by injecting them at a controlled boundary.
+3. **Tool/OAuth authorization** — Arcade, Composio, Cred, Grantex, Better Auth
+   Agent Auth, and the MCP Authorization spec focus on delegated user consent,
+   connected accounts, scopes, tool grants, and audit.
+4. **Workload identity** — Teleport Machine & Workload Identity, SPIFFE-style
+   systems, and cloud OIDC federation reduce the need for stored static
+   secrets by issuing short-lived workload credentials.
+
+Clawdi Vault must treat those as different credential delivery modes behind one
+Project/Agent product model. The product should not force every future
+credential into "a string returned as an env var."
+
+Decision impact from the second pass:
+
+- The Phase 1 recommendation does **not** change: ship `clawdi://`, `read`,
+  `run --env-file`, `inject`, masking, provenance, and conflict handling first.
+- The medium-term product target **does** broaden: Vault should become a
+  credential-and-capability layer, not only a secret-string store.
+- The data model must reserve room for `secret_value`, `oauth_connection`,
+  `service_binding`, `proxy_binding`, `workload_identity`, and
+  `delegated_tool_grant`.
+- Agent Vault-style proxying is still the right hosted-agent security track,
+  but it remains a later proof of concept because its guarantee depends on
+  controlled egress and proxy enforcement.
+
 ## Product Definition
 
 Clawdi Vault is an agent-native credential layer. It is not a general-purpose
@@ -114,6 +147,11 @@ The later agent-runtime promise is:
    - Even when Phase 1 returns strings, the model should support future
      credential kinds: raw secret value, connected account, service binding,
      and proxy capability.
+7. **Prefer replacing static secrets where possible**
+   - Some credentials should never become vault strings at all. OAuth,
+     workload identity, GitHub App installation tokens, cloud OIDC federation,
+     and short-lived certificates are often better primitives than long-lived
+     API keys.
 
 ## Current State
 
@@ -259,6 +297,33 @@ Implication for Clawdi:
 - Local credentials and vault unlock material should use OS-native secure
   storage where possible.
 
+### Emerging Agent-Native Vaults and Local Brokers
+
+Relevant product patterns:
+
+- Authsome is a local-first, MIT-licensed credential broker. It stores
+  credentials in an encrypted local SQLite vault, handles OAuth refresh, and
+  injects credentials through a local HTTP proxy. Its positioning is explicitly
+  local, single-user, and no-cloud.
+- Cred focuses on OAuth credential delegation for agents. Refresh tokens stay
+  in a broker-side vault; agents receive short-lived access tokens and signed
+  delegation receipts.
+- PassBox presents the combined shape many teams will expect: zero-knowledge
+  E2E encryption, CLI-native `get/set/run`, `.env` workflows, and an MCP server
+  for agents.
+
+Implication for Clawdi:
+
+- The emerging market validates our product framing: users want
+  password-manager workflow plus agent credential control.
+- Authsome reinforces that local proxy mode can be useful, but it is a
+  different product from Clawdi's cloud Project/Agent sharing model.
+- Cred reinforces that OAuth connected accounts should be first-class objects,
+  not merely plaintext refresh tokens stored as generic secret fields.
+- PassBox reinforces the eventual client-side encrypted vault expectation.
+  Clawdi can defer that trust model, but should not make data-model choices that
+  block it.
+
 ### AWS Secrets Manager Agent and HashiCorp Vault Agent
 
 Relevant product patterns:
@@ -300,6 +365,32 @@ Implication for Clawdi:
 - A gateway/connector can be a later enterprise deployment mode for teams that
   want local policy enforcement near their infrastructure.
 
+### Secretless Broker, Boundary, and Workload Identity
+
+Relevant product patterns:
+
+- CyberArk Secretless Broker lets applications connect to databases and other
+  services without fetching or managing secrets. The broker authenticates to
+  the target on behalf of the application.
+- HashiCorp Boundary distinguishes credential brokering from credential
+  injection. Brokering returns the credential to the user/session; injection
+  passes the credential to a worker that authenticates to the target on the
+  user's behalf, so the user never sees it.
+- Teleport Machine & Workload Identity replaces long-lived secrets with
+  short-lived certificates and JWTs for non-human identities, issued and renewed
+  by a workload agent.
+
+Implication for Clawdi:
+
+- "Return a secret value" and "use a credential on behalf of the caller" are
+  different product modes. Clawdi should name them separately.
+- Credential injection is stronger than brokering when Clawdi controls the
+  worker or hosted runtime. For local unmanaged processes, it is mostly a
+  convenience layer unless network egress is controlled.
+- Workload identity is the best answer whenever an upstream supports it. Clawdi
+  Vault should eventually prefer short-lived identity federation over storing
+  static cloud keys.
+
 ### Agent OAuth and Connected-Account Platforms
 
 Relevant product patterns:
@@ -309,6 +400,14 @@ Relevant product patterns:
 - The agent platform handles OAuth flows, token refresh, and credential
   management for tool calls.
 - This is closer to agent tool authorization than generic password management.
+- Arcade handles OAuth 2.0, API keys, and user tokens needed by agents to call
+  external services through tools, and prompts users when a tool needs
+  authorization.
+- MCP Authorization is converging around OAuth 2.1, Protected Resource Metadata,
+  authorization-server discovery, and optional dynamic client registration.
+- Better Auth Agent Auth and Grantex represent a newer layer: agents discover
+  capabilities, request grants, receive short-lived JWTs, and call tools under
+  explicit scopes.
 
 Implication for Clawdi:
 
@@ -318,6 +417,11 @@ Implication for Clawdi:
 - Clawdi Vault should store both secret references and connected-account handles.
 - Proxy execution can reduce how often agents receive raw OAuth refresh tokens
   or long-lived API keys.
+- A future Clawdi "Vault" item may be a connected account or tool grant, not a
+  decryptable string field. The UI and API should not overfit to "secret value"
+  as the only credential representation.
+- MCP/tool authorization should be designed alongside Vault, because agents will
+  increasingly ask for tool capabilities rather than raw credentials.
 
 ### OpenBao
 
@@ -392,6 +496,12 @@ two are near-term product work; proxy/TEE belongs behind a separate proof of
 concept because it needs runtime network control to make the security claim
 honest.
 
+Second-pass research adds a fourth direction: **authorization instead of
+secret delivery**. For SaaS tools and MCP servers, the safer primitive is often
+"this agent may perform this scoped action for this human" rather than "this
+agent may read this API token." Clawdi Vault should therefore evolve into a
+credential-and-capability layer, not only a secret-string store.
+
 ## Product Goals
 
 1. **Replace plaintext secret habits with references**
@@ -418,6 +528,10 @@ honest.
 8. **Keep key-management infrastructure behind adapters**
    - OpenBao/KMS should improve server-side key operations without becoming
      the product model or leaking deployment choices into user workflows.
+9. **Treat connected accounts and grants as first-class credentials**
+   - OAuth refresh tokens, user consent, tool scopes, and delegated grants
+     should not be hidden as generic plaintext fields forever. They need their
+     own lifecycle, revocation, audit, and user approval surfaces.
 
 ## Non-goals
 
@@ -649,6 +763,10 @@ Deep Module responsible for "who may unwrap or use what":
 - Kill switch.
 - Read/write/admin capability separation.
 - Audit event emission.
+- Connected account grants.
+- Tool capability grants with scopes, constraints, and approval state.
+- Workload identity bindings for providers that support short-lived identity
+  federation.
 
 This module is where Clawdi's agent-specific differentiation belongs.
 
@@ -676,7 +794,17 @@ Deep Module responsible for delivering secrets to processes and agents:
    - Useful for CI and daemon-style agents where repeated CLI resolves are
      awkward.
 
-4. **Deferred hosted-agent proxy mode**
+4. **Tool authorization / capability mode**
+   - Agent does not request a raw credential. It requests permission to call a
+     Clawdi-managed tool, MCP server, or connected-account action.
+   - User approval grants scoped capabilities such as `gmail.send`,
+     `github.issue.create`, or `linear.issue.read`.
+   - Clawdi stores the connected account and token lifecycle, then executes or
+     authorizes the tool call under the approved scope.
+   - This is the right direction for SaaS tools that support OAuth or a
+     provider-specific delegated authorization flow.
+
+5. **Deferred hosted-agent proxy mode**
    - Agent does not receive long-lived secrets.
    - Requests go through a credential proxy or tool proxy.
    - Proxy attaches credentials to outbound calls.
@@ -685,10 +813,13 @@ Deep Module responsible for delivering secrets to processes and agents:
      careful request/response logging policy.
    - Treat as a later proof of concept, not Phase 1 or Phase 2.
 
-5. **TEE-backed mode**
+6. **TEE-backed mode**
    - Decryption or proxy runs inside an attested confidential VM.
    - Useful for stronger "operator cannot inspect runtime memory" claims.
    - Requires separate Phala/dstack or confidential compute evaluation.
+   - Second-pass search found strong Phala/dstack material for confidential
+     agent runtimes, but no public evidence that OpenBao or Agent Vault has
+     already been productized inside dstack as a reusable reference stack.
 
 ### Module 5: Key Operations Adapter
 
@@ -722,7 +853,9 @@ Candidate tables:
    - `version`
    - `ciphertext`
    - `crypto_scheme`
-   - `credential_kind` (`secret_value`, `connected_account`, `proxy_binding`)
+   - `credential_kind` (`secret_value`, `oauth_connection`,
+     `service_binding`, `proxy_binding`, `workload_identity`,
+     `delegated_tool_grant`)
    - `key_ref`
    - `associated_data_hash`
    - `runtime_policy`
@@ -783,12 +916,53 @@ Candidate tables:
    - `auth_strategy`
    - `enabled`
    - `created_at`
+8. `vault_connected_accounts`
+   - `id`
+   - `project_id`
+   - `provider`
+   - `external_account_id`
+   - `display_name`
+   - `scopes`
+   - `token_ref`
+   - `refresh_policy`
+   - `status`
+   - `created_by_user_id`
+   - `created_at`
+   - `revoked_at`
+9. `vault_capability_grants`
+   - `id`
+   - `project_id`
+   - `agent_id`
+   - `user_id`
+   - `connected_account_id`
+   - `capability`
+   - `scopes`
+   - `constraints`
+   - `grant_token_hash`
+   - `expires_at`
+   - `revoked_at`
+   - `created_at`
+10. `vault_workload_identities`
+   - `id`
+   - `project_id`
+   - `provider`
+   - `issuer`
+   - `audience`
+   - `subject_template`
+   - `credential_destination`
+   - `status`
+   - `created_at`
 
 The `credential_kind`, `runtime_policy`, and `vault_service_bindings` fields
 are future-proofing seams. Phase 1 can store only ordinary secret values, but
 the model should not assume every credential is forever delivered as a raw env
 string. Later proxy mode can attach a credential to a host/path service binding
 without changing the user-facing `clawdi://` reference model.
+
+The connected-account and capability-grant tables are not Phase 1 requirements.
+They are included because second-pass research shows this category will matter:
+OAuth and tool grants should become typed objects with revocation, scopes, and
+audit, not opaque rows in `vault_items`.
 
 ## API Direction
 
@@ -832,6 +1006,21 @@ Client-side encrypted future:
 - Hosted agent basic mode requests runtime leases for explicit references.
 - Future proxy mode resolves references to service bindings and credential
   capabilities instead of returning raw secret values.
+
+Future connected-account/capability APIs:
+
+```text
+POST /api/vault/connected-accounts/authorize
+POST /api/vault/connected-accounts/:id/refresh
+POST /api/vault/capability-grants
+POST /api/vault/capability-grants/:id/revoke
+POST /api/vault/service-bindings/:id/session
+```
+
+These should share the same Project/Agent grant and audit machinery as secret
+reference resolution. The difference is the delivered artifact: a resolved
+secret value, a short-lived access token, a tool execution grant, or a proxy
+session.
 
 ## Security Model Options
 
@@ -1028,6 +1217,13 @@ Deliver:
 - Separate backend, migration, and ops tokens.
 - Design-only sidecar/local service spec with SSRF and loopback protections;
   implementation can wait unless a workload needs it.
+- Typed credential foundations for `oauth_connection`, `service_binding`,
+  `workload_identity`, and `delegated_tool_grant`.
+- First-class agent actor identity in audit events, so secret reads, token
+  refreshes, capability grants, and proxy sessions are attributable to a user,
+  agent, Project, and runtime.
+- Design spec for connected-account UX: provider connection, scope review,
+  human approval, revocation, and per-agent grant visibility.
 
 Security statement:
 
@@ -1056,7 +1252,7 @@ Security statement:
 
 - "For client-managed vaults, Clawdi servers cannot decrypt item values."
 
-### Phase 4: Hosted-Agent Proxy PoC
+### Phase 4: Hosted-Agent Proxy / Tool Gateway PoC
 
 Goal: evaluate Agent Vault-style credential brokering only where Clawdi controls
 the runtime enough to enforce it.
@@ -1072,6 +1268,9 @@ Deliver:
 - Request/response audit controls.
 - Human approval flow for new service access.
 - Explicit bypass analysis: what network paths can avoid the proxy?
+- Tool/capability gateway for one OAuth-backed integration, so Clawdi can test
+  whether "authorize an agent action" is a better UX than "give an agent a
+  token" for SaaS tools.
 - TEE/dstack proof-of-concept only if product wants verifiable runtime privacy.
 
 Security statement:
@@ -1092,7 +1291,9 @@ Recommended decision:
 4. Keep Agent Vault-style proxying as a first-class architecture slot, but defer
    implementation to a hosted-agent proof of concept where Clawdi can control
    egress and CA/proxy bootstrapping.
-5. Treat Phala/dstack or other TEE deployment as a separate high-trust hosted
+5. Treat OAuth connected accounts, delegated tool grants, and workload identity
+   as typed future credential modes, not as generic secret fields.
+6. Treat Phala/dstack or other TEE deployment as a separate high-trust hosted
    agent feasibility project.
 
 Rejected alternatives:
@@ -1163,6 +1364,10 @@ semantics, without turning every workflow into plaintext env sprawl."
 9. Which services are worth supporting first for proxy mode?
    - Anthropic and GitHub are the obvious candidates because they are central
      to coding agents and have straightforward HTTP APIs.
+10. Which connected-account flow should be first?
+   - GitHub App installation tokens may be the cleanest coding-agent wedge.
+   - Google/Gmail is a stronger proof of human delegated consent, but has more
+     review and compliance overhead.
 
 ## Source Notes
 
@@ -1193,6 +1398,12 @@ semantics, without turning every workflow into plaintext env sprawl."
   <https://docs.agent-vault.dev/learn/services>
   <https://docs.agent-vault.dev/learn/proposals>
   <https://docs.agent-vault.dev/agents/overview>
+- Authsome, Cred, and PassBox represent the newer agent-credential wave:
+  local-first HTTP proxy brokering, OAuth delegation with short-lived access
+  tokens, and zero-knowledge CLI/MCP workflows:
+  <https://authsome.ai/>
+  <https://www.cred.ninja/>
+  <https://www.passbox.dev/>
 - Keeper Secrets Manager CLI shows machine-oriented profiles, OS-native
   keychain storage, and environment substitution:
   <https://docs.keeper.io/en/keeperpam/secrets-manager/secrets-manager-command-line-interface>
@@ -1205,10 +1416,24 @@ semantics, without turning every workflow into plaintext env sprawl."
 - Akeyless is relevant as a SaaS secrets-manager proof point for
   customer-controlled cryptographic boundaries and gateway deployment patterns:
   <https://docs.akeyless.io/docs/universal-secrets-connector>
+- Secretless Broker, Boundary, and Teleport show the broader infrastructure
+  pattern: broker or inject credentials at a controlled boundary, and prefer
+  short-lived workload identity over stored static secrets when possible:
+  <https://www.conjur.org/api/secretless-broker/>
+  <https://developer.hashicorp.com/boundary/docs/concepts/credential-management>
+  <https://goteleport.com/docs/machine-workload-identity/>
 - Composio is relevant for agent OAuth / connected-account UX, where the agent
   platform manages Connect Links, OAuth, token refresh, and credential handling
   for tool calls:
   <https://docs.composio.dev/docs/authentication>
+- Arcade, MCP Authorization, Better Auth Agent Auth, and Grantex are relevant
+  to the "authorization instead of secret delivery" direction: OAuth-backed
+  tool calling, MCP authorization, agent capability discovery, user approval,
+  short-lived JWTs, and auditable grants:
+  <https://docs.arcade.dev/en/get-started/about-arcade>
+  <https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization>
+  <https://better-auth.com/docs/plugins/agent-auth>
+  <https://docs.grantex.dev/introduction>
 - OpenBao Transit is appropriate for encryption-as-a-service, key rotation,
   rewrap, ACLs, and audit, but not as the Clawdi product model:
   <https://openbao.org/docs/secrets/transit/>
@@ -1217,4 +1442,5 @@ semantics, without turning every workflow into plaintext env sprawl."
 - dstack/Phala is relevant for future attested hosted-agent runtimes, not as
   the immediate Vault replacement:
   <https://github.com/Dstack-TEE/dstack>
+  <https://phala.com/solutions/ai-agents>
   <https://phala.com/learn/Open-Source-Confidential-Computing-Tools>
