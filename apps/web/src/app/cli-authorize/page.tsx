@@ -105,12 +105,12 @@ function CliAuthorizeContent() {
 					? "This authorization code has expired. Run `clawdi auth login` again to get a new one."
 					: lookup.error instanceof Error
 						? lookup.error.message
-						: "Failed to load authorization request.";
+						: "Authorization request unavailable. Run `clawdi auth login` again.";
 		return (
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Can't load this request</AlertTitle>
+					<AlertTitle>Authorization Request Unavailable</AlertTitle>
 					<AlertDescription>{message}</AlertDescription>
 				</Alert>
 			</Shell>

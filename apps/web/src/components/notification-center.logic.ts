@@ -58,7 +58,7 @@ export function getNotificationCenterEmptyCopy(): { title: string; description: 
 }
 
 export function getProjectInvitationAccessCopy(): string {
-	return "Project invitations grant read-only viewer Project access. Use with agent is a separate explicit step.";
+	return "Project invitations grant read-only Viewer access. Attaching the Project to an agent is a separate step.";
 }
 
 export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
@@ -66,8 +66,8 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 	description: string;
 } {
 	return {
-		title: projectName ? `Joined ${projectName}` : "Project joined",
+		title: projectName ? `Joined ${projectName}` : "Project Joined",
 		description:
-			"read-only viewer Project access granted. Open project to review it, then Use with agent as a separate explicit step.",
+			"Read-only Viewer access granted. Open the Project to review shared resources, then attach it to an agent when needed.",
 	};
 }

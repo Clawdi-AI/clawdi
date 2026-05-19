@@ -45,10 +45,12 @@ export default function MemoryDetailPage() {
 				}),
 			),
 		onSuccess: () => {
-			toast.success("Memory deleted — your AI won't recall this on any agent.");
+			toast.success("Memory Deleted", {
+				description: "Your agents will no longer recall it.",
+			});
 			router.push(projectResourceHref("memories"));
 		},
-		onError: (e) => toast.error("Failed to delete", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
 	});
 
 	const onDelete = () => {

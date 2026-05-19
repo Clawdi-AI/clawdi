@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -120,7 +121,7 @@ export function ShareProjectDialog({
 	children,
 }: ShareProjectDialogProps) {
 	const [open, setOpen] = useState(false);
-	const isPersonalProject = projectKind === "personal";
+	const isShareableProject = isCustomProject({ kind: projectKind });
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
@@ -133,48 +134,53 @@ export function ShareProjectDialog({
 			</DialogTrigger>
 			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
-					<DialogTitle>Share {projectName}</DialogTitle>
+					<DialogTitle>
+						{isShareableProject ? `Share ${projectName}` : "Custom Projects Only"}
+					</DialogTitle>
 					<DialogDescription>
-						Manage people with access, invite by email, or create a share link. Accepting gives
-						project access only; using it with an agent is a separate choice.
+						{isShareableProject
+							? "Manage people with access, invite by email, or create a share link. Accepting gives project access only; using it with an agent is a separate choice."
+							: "Global and Agent Projects are managed by the system and cannot be shared. Create a Custom Project for collaboration."}
 					</DialogDescription>
 				</DialogHeader>
-				{isPersonalProject ? (
+				{isShareableProject ? (
+					<>
+						<PermissionSummary />
+						<Tabs defaultValue="members" className="w-full">
+							<TabsList className="grid w-full grid-cols-3">
+								<TabsTrigger value="members" className="min-w-0 px-2">
+									<Users className="mr-2 size-3.5" />
+									<span className="truncate">People</span>
+								</TabsTrigger>
+								<TabsTrigger value="invitations" className="min-w-0 px-2">
+									<MailPlus className="mr-2 size-3.5" />
+									<span className="truncate">Invites</span>
+								</TabsTrigger>
+								<TabsTrigger value="links" className="min-w-0 px-2">
+									<Link2 className="mr-2 size-3.5" />
+									<span className="truncate">Links</span>
+								</TabsTrigger>
+							</TabsList>
+							<TabsContent value="members" className="mt-4">
+								<MembersPanel projectId={projectId} />
+							</TabsContent>
+							<TabsContent value="invitations" className="mt-4">
+								<InvitationsPanel projectId={projectId} />
+							</TabsContent>
+							<TabsContent value="links" className="mt-4">
+								<ShareLinksPanel projectId={projectId} />
+							</TabsContent>
+						</Tabs>
+					</>
+				) : (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>Personal Project Sharing Needs Extra Care</AlertTitle>
+						<AlertTitle>Managed Projects are not shareable</AlertTitle>
 						<AlertDescription>
-							Personal Projects often mix experiments and one-off vault references. For cleaner
-							collaboration, consider sharing a dedicated Project.
+							Only Custom Projects can have members, invitations, and share links.
 						</AlertDescription>
 					</Alert>
-				) : null}
-				<PermissionSummary />
-				<Tabs defaultValue="members" className="w-full">
-					<TabsList className="grid w-full grid-cols-3">
-						<TabsTrigger value="members" className="min-w-0 px-2">
-							<Users className="mr-2 size-3.5" />
-							<span className="truncate">People / Access</span>
-						</TabsTrigger>
-						<TabsTrigger value="invitations" className="min-w-0 px-2">
-							<MailPlus className="mr-2 size-3.5" />
-							<span className="truncate">Invites</span>
-						</TabsTrigger>
-						<TabsTrigger value="links" className="min-w-0 px-2">
-							<Link2 className="mr-2 size-3.5" />
-							<span className="truncate">Links</span>
-						</TabsTrigger>
-					</TabsList>
-					<TabsContent value="members" className="mt-4">
-						<MembersPanel projectId={projectId} />
-					</TabsContent>
-					<TabsContent value="invitations" className="mt-4">
-						<InvitationsPanel projectId={projectId} />
-					</TabsContent>
-					<TabsContent value="links" className="mt-4">
-						<ShareLinksPanel projectId={projectId} />
-					</TabsContent>
-				</Tabs>
+				)}
 			</DialogContent>
 		</Dialog>
 	);
@@ -186,7 +192,7 @@ function PermissionSummary() {
 			<div>
 				<div className="font-medium text-foreground">Default role</div>
 				<p className="mt-1 text-muted-foreground">
-					Viewers can read project skills and vault reference names. They cannot edit content.
+					Viewers can read Project skills, vault names, and key names. They cannot edit content.
 				</p>
 			</div>
 			<div>
@@ -237,7 +243,9 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			if (typeof navigator !== "undefined" && navigator.clipboard) {
 				navigator.clipboard.writeText(body.url).catch(() => {});
 			}
-			toast.success("Share link created — copy it now");
+			toast.success("Share Link Created", {
+				description: "Copy it now. It will only be shown once.",
+			});
 		},
 		onError: (e) => {
 			toast.error(
@@ -245,7 +253,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					? "Set a display name on your profile before sharing."
 					: e instanceof Error
 						? e.message
-						: "Failed to create link",
+						: "Failed to Create Link",
 			);
 		},
 	});
@@ -258,10 +266,10 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
-			toast.success("Link revoked");
+			toast.success("Link Revoked");
 		},
 		onError: (e) => {
-			toast.error("Failed to revoke link", {
+			toast.error("Failed to Revoke Link", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -272,9 +280,9 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 	return (
 		<div className="space-y-3">
 			<div className="space-y-1">
-				<h3 className="text-sm font-semibold">Share links</h3>
+				<h3 className="text-sm font-semibold">Share Links</h3>
 				<p className="text-xs text-muted-foreground">
-					Create a link when you want someone to accept viewer access without a directed invite.
+					Create a link when someone needs read-only Viewer access without a directed invite.
 				</p>
 			</div>
 			<form
@@ -286,16 +294,19 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 					<Input
+						name="share-link-label"
 						value={label}
 						onChange={(e) => setLabel(e.target.value)}
 						maxLength={200}
-						placeholder="Link label, e.g. Bob onboarding"
+						placeholder="Bob onboarding…"
 						aria-label="Share link label"
+						autoComplete="off"
 						className="min-w-0 flex-1"
+						spellCheck={false}
 					/>
 					<Button type="submit" size="sm" disabled={create.isPending}>
 						<Plus className="mr-1.5 size-3.5" />
-						{create.isPending ? "Creating…" : "Create link"}
+						{create.isPending ? "Creating…" : "Create Link"}
 					</Button>
 				</div>
 				<p className="text-xs text-muted-foreground">
@@ -306,7 +317,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 
 			<div className="flex items-center justify-between gap-2">
 				<p className="text-xs text-muted-foreground">
-					Anyone with an active link can preview and join as a read-only viewer. Revoke anytime.
+					Anyone with an active link can preview this Project and join as a read-only Viewer. Revoke
+					anytime.
 				</p>
 				<Badge variant="secondary" className="text-xs">
 					{visibleLinks.filter((link) => link.revoked_at === null).length} active
@@ -352,9 +364,11 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 			navigator.clipboard
 				.writeText(value)
 				.then(() => toast.success(success))
-				.catch(() => toast.error("Couldn't copy — select the text and copy manually"));
+				.catch(() =>
+					toast.error("Couldn't Copy", { description: "Select the text and copy it manually." }),
+				);
 		} else {
-			toast.error("Couldn't copy — select the text and copy manually");
+			toast.error("Couldn't Copy", { description: "Select the text and copy it manually." });
 		}
 	};
 	const agentPrompt = buildShareAgentHandoffPrompt(link);
@@ -474,7 +488,7 @@ function LinkRow({
 								variant="ghost"
 								size="icon"
 								disabled={revoking}
-								title="Revoke link"
+								title="Revoke Link"
 								aria-label={`Revoke share link ${link.prefix}`}
 							>
 								<Trash2 className="size-3.5 text-destructive" />
@@ -485,7 +499,7 @@ function LinkRow({
 								<AlertDialogTitle>Revoke this share link?</AlertDialogTitle>
 								<AlertDialogDescription>
 									Anyone who has not already joined through this link will lose access to it.
-									Existing viewers stay connected until you remove them from People.
+									Existing Viewers stay connected until you remove them from People.
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							<AlertDialogFooter>
@@ -494,7 +508,7 @@ function LinkRow({
 									onClick={onRevoke}
 									className="bg-destructive text-white hover:bg-destructive/90"
 								>
-									Revoke link
+									Revoke Link
 								</AlertDialogAction>
 							</AlertDialogFooter>
 						</AlertDialogContent>
@@ -532,10 +546,10 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
-			toast.success("Invitation sent");
+			toast.success("Invitation Sent");
 		},
 		onError: (e) => {
-			toast.error("Failed to send invitation", {
+			toast.error("Failed to Send Invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -549,10 +563,10 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
-			toast.success("Invitation cancelled");
+			toast.success("Invitation Cancelled");
 		},
 		onError: (e) => {
-			toast.error("Failed to cancel invitation", {
+			toast.error("Failed to Cancel Invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -578,11 +592,13 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			>
 				<Input
 					type="email"
-					placeholder="email@example.com"
+					name="project-invite-email"
+					placeholder="email@example.com…"
 					value={email}
 					onChange={(e) => setEmail(e.target.value)}
 					autoComplete="email"
 					aria-label="Invitee email"
+					spellCheck={false}
 				/>
 				<Button
 					type="submit"
@@ -594,7 +610,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				They join as a read-only viewer. Using the project with an agent is a separate step.
+				They join as a read-only Viewer. Attaching this Project to an agent is a separate step.
 			</p>
 			<Separator />
 			{invites.isLoading ? (
@@ -700,10 +716,10 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		},
 		onSuccess: () => {
 			refreshSharingState();
-			toast.success("Member removed");
+			toast.success("Member Removed");
 		},
 		onError: (e) =>
-			toast.error("Failed to remove member", {
+			toast.error("Failed to Remove Member", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});
@@ -719,12 +735,12 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		},
 		onSuccess: (body) => {
 			refreshSharingState();
-			toast.success(
-				`Stopped sharing — revoked ${body.links_revoked} link(s), removed ${body.members_removed} member(s)`,
-			);
+			toast.success("Sharing Stopped", {
+				description: `Revoked ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
+			});
 		},
 		onError: (e) =>
-			toast.error("Failed to stop sharing", {
+			toast.error("Failed to Stop Sharing", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});
@@ -746,9 +762,9 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							variant="destructive"
 							size="sm"
 							disabled={unshare.isPending}
-							aria-label="Stop all sharing for this project"
+							aria-label="Stop All Sharing for this Project"
 						>
-							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
+							{unshare.isPending ? "Stopping…" : "Stop All Sharing"}
 						</Button>
 					</AlertDialogTrigger>
 					<AlertDialogContent>
@@ -756,16 +772,16 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							<AlertDialogTitle>Stop sharing this project?</AlertDialogTitle>
 							<AlertDialogDescription>
 								This revokes active links, cancels pending invitations, and removes accepted
-								viewers. Project content remains yours.
+								Viewers. Project content remains yours.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter>
-							<AlertDialogCancel>Keep sharing</AlertDialogCancel>
+							<AlertDialogCancel>Keep Sharing</AlertDialogCancel>
 							<AlertDialogAction
 								onClick={() => unshare.mutate()}
 								className="bg-destructive text-white hover:bg-destructive/90"
 							>
-								Stop all sharing
+								Stop All Sharing
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>
@@ -784,7 +800,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : rows.length === 0 ? (
-				<EmptyHint message="No accepted viewers yet. Invite someone or create a link." />
+				<EmptyHint message="No accepted Viewers yet. Invite someone or create a link." />
 			) : (
 				<ul className="space-y-2">
 					{rows.map((member) => {

@@ -151,7 +151,7 @@ export default function SharePage() {
 				<CardHeader>
 					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
 						<Sparkles className="size-4" />
-						You've been invited to a shared project
+						You've been invited to a Shared Custom Project
 					</div>
 					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
 					<p className="text-sm text-muted-foreground">
@@ -169,9 +169,9 @@ export default function SharePage() {
 						/>
 						<ContentTile
 							icon={<Lock className="size-5" />}
-							label="Vault refs"
+							label="Vaults"
 							count={data.vault_count}
-							hint="Key names only"
+							hint="Names only"
 							muted={data.vault_count === 0}
 						/>
 					</div>
@@ -181,16 +181,16 @@ export default function SharePage() {
 					{upgrade.isSuccess ? (
 						<Alert>
 							<CheckCircle2 />
-							<AlertTitle>You're in.</AlertTitle>
+							<AlertTitle>You're In</AlertTitle>
 							<AlertDescription>
-								Added to your projects as viewer access. Using it with an agent is separate.
-								Redirecting…
+								Added to your Projects with Viewer access. Attaching it to an agent is a separate
+								step. Redirecting…
 							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your own project.</AlertTitle>
+							<AlertTitle>This Is Your Project</AlertTitle>
 							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
@@ -202,19 +202,19 @@ export default function SharePage() {
 								size="lg"
 							>
 								<CheckCircle2 className="mr-2 size-4" />
-								{upgrade.isPending ? "Joining…" : "Accept project access"}
+								{upgrade.isPending ? "Joining…" : "Accept Project Access"}
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								You'll join as a <Badge variant="secondary">viewer</Badge> — read-only access to
-								skills{data.vault_count > 0 ? " and vault key references" : ""}. You can use it with
-								an agent later.
+								You'll join as a <Badge variant="secondary">Viewer</Badge> with read-only access to
+								skills{data.vault_count > 0 ? " and vault key names" : ""}. Attaching it to an agent
+								is a separate step.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member — check your dashboard and use this project with agents
-										as needed.
+										You're already a member. Open the Project from your dashboard, then attach it to
+										an agent when needed.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -231,7 +231,7 @@ export default function SharePage() {
 							<Button asChild className="w-full" size="lg">
 								<Link href={`/sign-in?redirect_url=/share/${token}`}>
 									<LogIn className="mr-2 size-4" />
-									Sign in to accept
+									Sign In to Accept
 								</Link>
 							</Button>
 							<div className="rounded-lg border bg-muted/30 p-4">
@@ -250,7 +250,7 @@ export default function SharePage() {
 				</CardContent>
 			</Card>
 			<p className="text-center text-xs text-muted-foreground">
-				Shared projects never grant write access. The owner can revoke this link anytime.
+				Shared Custom Projects never grant write access. The owner can revoke this link anytime.
 			</p>
 		</Shell>
 	);
@@ -295,10 +295,16 @@ function CopyableCommand({ command }: { command: string }) {
 					if (typeof navigator !== "undefined" && navigator.clipboard) {
 						navigator.clipboard
 							.writeText(command)
-							.then(() => toast.success("Command copied"))
-							.catch(() => toast.error("Couldn't copy — select the command and copy manually"));
+							.then(() => toast.success("Command Copied"))
+							.catch(() =>
+								toast.error("Couldn't Copy", {
+									description: "Select the command and copy it manually.",
+								}),
+							);
 					} else {
-						toast.error("Couldn't copy — select the command and copy manually");
+						toast.error("Couldn't Copy", {
+							description: "Select the command and copy it manually.",
+						});
 					}
 				}}
 			>
@@ -314,9 +320,11 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Something went wrong</AlertTitle>
+					<AlertTitle>Something Went Wrong</AlertTitle>
 					<AlertDescription>
-						{error instanceof Error ? error.message : "Failed to load share link."}
+						{error instanceof Error
+							? error.message
+							: "Share link unavailable. Ask the owner for a new link."}
 					</AlertDescription>
 				</Alert>
 			</Shell>
@@ -336,15 +344,15 @@ function ErrorView({ error }: { error: unknown }) {
 function titleForError(code: ShareErrorCode): string {
 	switch (code) {
 		case "not_found":
-			return "Share link not found";
+			return "Share Link Not Found";
 		case "revoked":
-			return "Share link revoked";
+			return "Share Link Revoked";
 		case "already_member":
-			return "Already a member";
+			return "Already a Member";
 		case "already_owner":
-			return "That's your own project";
+			return "That's Your Project";
 		default:
-			return "Couldn't load this share";
+			return "Couldn't Load This Share";
 	}
 }
 
@@ -355,9 +363,9 @@ function describeError(code: ShareErrorCode): string {
 		case "revoked":
 			return "The owner revoked this link. Ask them to send you a new one.";
 		case "already_member":
-			return "You already accepted this share — find it on your dashboard.";
+			return "You already accepted this share. Open it from your dashboard.";
 		case "already_owner":
-			return "You own this project — nothing to accept.";
+			return "You own this Project. There is nothing to accept.";
 		default:
 			return "Please try again. If the problem persists, ping the owner.";
 	}

@@ -24,9 +24,14 @@ import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashb
 import { PageHeader } from "@/components/page-header";
 import {
 	displayProjectName,
+	isCustomProject,
+	isManagedProject,
+	type ProjectAgentMetadata,
 	ProjectIdentity,
 	ProjectKindBadge,
+	projectAgentFor,
 	projectAlias,
+	projectKindMeta,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { formatApiError } from "@/components/sharing/vault-conflicts";
@@ -115,6 +120,8 @@ export default function ProjectDetailPage() {
 	const rows = projects.data ?? [];
 	const project = rows.find((row) => row.id === projectId) ?? null;
 	const isOwner = project?.is_owner !== false;
+	const isShareableProject = project ? isCustomProject(project) : false;
+	const isManaged = project ? isManagedProject(project) : false;
 
 	useEffect(() => {
 		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
@@ -132,6 +139,12 @@ export default function ProjectDetailPage() {
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
 		enabled: !!project,
 	});
+	const agentsById = useMemo(
+		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
+		[environments.data],
+	);
+	const projectAgent = project ? projectAgentFor(project, agentsById) : null;
+	const projectType = project ? projectKindMeta(project.kind) : null;
 
 	const skills = useQuery({
 		queryKey: ["skills", "project-detail", projectId],
@@ -169,11 +182,11 @@ export default function ProjectDetailPage() {
 		onSuccess: () => {
 			refresh();
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings"] });
-			toast.success("Left shared project", { description: "Membership removed." });
+			toast.success("Left Shared Project", { description: "Membership removed." });
 			router.push(projectResourceHref("projects"));
 		},
 		onError: (e) => {
-			toast.error("Failed to leave shared project", {
+			toast.error("Failed to Leave Shared Project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -236,11 +249,11 @@ export default function ProjectDetailPage() {
 
 			<PageHeader
 				title={displayProjectName(project)}
-				description={`${isOwner ? "Owned Project" : "Shared Project"} · ${project.slug}`}
+				description={projectDetailDescription(project, isOwner, projectType?.label ?? "Project")}
 				actions={
 					<div className="flex items-center gap-2">
 						<ProjectKindBadge kind={project.kind} />
-						{isOwner ? (
+						{isOwner && isShareableProject ? (
 							<ShareProjectDialog
 								projectId={project.id}
 								projectName={displayProjectName(project)}
@@ -258,6 +271,7 @@ export default function ProjectDetailPage() {
 
 			<OverviewCard
 				project={project}
+				agent={projectAgent}
 				skillCount={skills.data?.items.length ?? 0}
 				vaultCount={vaults.data?.items.length ?? 0}
 			/>
@@ -266,10 +280,10 @@ export default function ProjectDetailPage() {
 				<div className="space-y-6">
 					<section className="space-y-5 rounded-lg border bg-card/60 p-4">
 						<ContentHeader
-							title="Project Resources"
+							title="Resources in This Project"
 							description={
 								isOwner
-									? "Skills and vault references saved in this Project."
+									? "Skills and vaults saved in this Project."
 									: "Shared resources you can read from this Project."
 							}
 							action={<ProjectResourceLinks projectId={project.id} />}
@@ -312,11 +326,11 @@ export default function ProjectDetailPage() {
 
 							<div className="space-y-3">
 								<ContentHeader
-									title="Vault References"
+									title="Vaults"
 									description={
 										isOwner
-											? "Vault key references saved in this Project."
-											: "Read-only vault key names shared by the owner."
+											? "Vaults and key names saved in this Project."
+											: "Read-only vault and key names shared by the owner."
 									}
 								/>
 								{isOwner ? (
@@ -333,7 +347,7 @@ export default function ProjectDetailPage() {
 										))}
 									</div>
 								) : (
-									<EmptyLine message="No vault references are visible in this Project yet." />
+									<EmptyLine message="No vaults are visible in this Project yet." />
 								)}
 							</div>
 						</div>
@@ -341,7 +355,7 @@ export default function ProjectDetailPage() {
 				</div>
 
 				<aside className="space-y-4">
-					{isOwner ? (
+					{isOwner && isShareableProject ? (
 						<OwnerAccessPanel
 							project={project}
 							useWithAgentControl={
@@ -359,9 +373,12 @@ export default function ProjectDetailPage() {
 								</UseProjectWithAgentDialog>
 							}
 						/>
+					) : isOwner && isManaged ? (
+						<ManagedProjectPanel project={project} agent={projectAgent} />
 					) : (
 						<SharedAccessPanel
 							project={project}
+							agent={projectAgent}
 							isLeaving={leaveSharedProject.isPending}
 							onLeave={() => leaveSharedProject.mutate()}
 							useWithAgentControl={
@@ -388,10 +405,12 @@ export default function ProjectDetailPage() {
 
 function OverviewCard({
 	project,
+	agent,
 	skillCount,
 	vaultCount,
 }: {
 	project: ProjectRow;
+	agent?: ProjectAgentMetadata | null;
 	skillCount: number;
 	vaultCount: number;
 }) {
@@ -403,7 +422,7 @@ function OverviewCard({
 						<BookOpen className="size-4 text-muted-foreground" />
 						<h2 className="text-sm font-semibold">Overview</h2>
 					</div>
-					<ProjectIdentity project={project} titleClassName="text-base" />
+					<ProjectIdentity project={project} agent={agent} titleClassName="text-base" />
 				</div>
 				<div className="grid min-w-52 gap-2 rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
 					<div className="flex items-center justify-between gap-3">
@@ -411,7 +430,7 @@ function OverviewCard({
 						<span className="font-semibold text-foreground">{skillCount}</span>
 					</div>
 					<div className="flex items-center justify-between gap-3">
-						<span>Vault refs</span>
+						<span>Vaults</span>
 						<span className="font-semibold text-foreground">{vaultCount}</span>
 					</div>
 					<div className="truncate font-mono" translate="no">
@@ -421,6 +440,20 @@ function OverviewCard({
 			</div>
 		</section>
 	);
+}
+
+function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLabel: string) {
+	const access = isOwner ? "you own" : "shared with you";
+	if (project.kind === "workspace") {
+		return `${typeLabel} ${access}. Use it to share skills and vaults, then attach it to agents when needed.`;
+	}
+	if (project.kind === "environment") {
+		return `${typeLabel} ${access}. This is the Agent Project for one connected agent. It is managed for you and cannot be shared.`;
+	}
+	if (project.kind === "personal") {
+		return `${typeLabel} ${access}. This is your account default for resources that are not tied to one workflow or agent.`;
+	}
+	return `${typeLabel} ${access}. Slug: ${project.slug}`;
 }
 
 function OwnerAccessPanel({
@@ -436,17 +469,17 @@ function OwnerAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Users className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Collaborators and Access</h2>
+					<h2 className="text-sm font-semibold">Custom Project Sharing</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Manage people, pending invites, and share links for this Project. New members join as
-					viewers by default.
+					Manage people, pending invites, and share links for this Custom Project. New members join
+					as Viewers by default.
 				</p>
 			</div>
 			<div className="grid gap-2 text-xs text-muted-foreground">
 				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
 					<span>Default role</span>
-					<Badge variant="secondary">viewer</Badge>
+					<Badge variant="secondary">Viewer</Badge>
 				</div>
 				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
 					<span>Manage</span>
@@ -468,13 +501,45 @@ function OwnerAccessPanel({
 	);
 }
 
+function ManagedProjectPanel({
+	project,
+	agent,
+}: {
+	project: ProjectRow;
+	agent?: ProjectAgentMetadata | null;
+}) {
+	const description =
+		project.kind === "environment"
+			? "This Agent Project is managed by the connected agent and is not shareable. Create a Custom Project when you need collaboration or reusable resources."
+			: "This Global Project is your account default and is not shareable. Create a Custom Project when you need collaboration or reusable resources.";
+	return (
+		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+			<div className="space-y-1">
+				<div className="flex items-center gap-2">
+					<BookOpen className="size-4 text-muted-foreground" />
+					<h2 className="text-sm font-semibold">Managed Project</h2>
+				</div>
+				<p className="text-xs text-muted-foreground">{description}</p>
+			</div>
+			<div className="rounded-md border bg-background/60 p-3">
+				<ProjectIdentity project={project} agent={agent} showKind={false} />
+			</div>
+			<Button asChild variant="outline" size="sm" className="w-full">
+				<Link href={projectResourceHref("projects")}>Back to Projects</Link>
+			</Button>
+		</section>
+	);
+}
+
 function SharedAccessPanel({
 	project,
+	agent,
 	isLeaving,
 	onLeave,
 	useWithAgentControl,
 }: {
 	project: ProjectRow;
+	agent?: ProjectAgentMetadata | null;
 	isLeaving: boolean;
 	onLeave: () => void;
 	useWithAgentControl: ReactNode;
@@ -484,7 +549,7 @@ function SharedAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Eye className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">You have viewer access</h2>
+					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
 					You can read this Project. Attach it to an agent when you want it available during a run.
@@ -492,7 +557,7 @@ function SharedAccessPanel({
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
 				<div className="flex items-center justify-between gap-3">
-					<ProjectIdentity project={project} showKind={false} className="flex-1" />
+					<ProjectIdentity project={project} agent={agent} showKind={false} className="flex-1" />
 				</div>
 			</div>
 			{useWithAgentControl}
@@ -592,7 +657,7 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["vaults"] });
-			toast.success("Project attached", {
+			toast.success("Project Attached", {
 				description: `${projectName} is now available to ${agentName}.`,
 				action: {
 					label: "Open Agent",
@@ -602,7 +667,7 @@ function UseProjectWithAgentDialog({
 			onOpenChange(false);
 		},
 		onError: (e) => {
-			toast.error("Failed to attach project", {
+			toast.error("Failed to Attach Project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -613,10 +678,10 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Attach to Agent</DialogTitle>
+					<DialogTitle>Attach Project to Agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName} as an attached Project. The agent keeps its Home Project for writes
-						and reads this Project as extra context.
+						Add {projectName} to an agent&apos;s Attached Projects. The Agent Project stays the
+						writable default; this Project is read by the agent.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -627,7 +692,7 @@ function UseProjectWithAgentDialog({
 						<Bot className="size-4" />
 						<AlertTitle>No Agents Connected</AlertTitle>
 						<AlertDescription>
-							Add an agent from Overview first, then attach this Project from here or from the
+							Add an agent from Overview first, then attach this Project here or from the
 							agent&apos;s Projects tab.
 						</AlertDescription>
 					</Alert>
@@ -676,10 +741,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already this agent&apos;s Home Project</div>
+										<div className="font-medium">Already This Agent&apos;s Agent Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											No attach step is needed. Open the agent&apos;s Projects tab to review its
-											Project order.
+											read order.
 										</p>
 									</div>
 								</div>
@@ -689,7 +754,7 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Already Attached to This Agent</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Open the agent&apos;s Projects tab to review its Project order or detach it.
+											Open the agent&apos;s Projects tab to review its read order or detach it.
 										</p>
 									</div>
 								</div>
@@ -697,10 +762,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Attach as Readable Context</div>
+										<div className="font-medium">Attach as Extra Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Skills and vault reference names from this Project become available to the
-											selected agent. Writes still land in the agent&apos;s Home Project.
+											Skills and vaults from this Project become available to the selected agent.
+											Writes still land in the Agent Project.
 										</p>
 									</div>
 								</div>
@@ -746,7 +811,7 @@ function ProjectStatsStrip({ skillCount, vaultCount }: { skillCount: number; vau
 	return (
 		<div className="grid divide-y rounded-md bg-muted/20 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
 			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
-			<StatCell icon={KeyRound} label="Vault refs" value={vaultCount} />
+			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
 		</div>
 	);
 }
@@ -833,7 +898,7 @@ function InstallSkillInProjectForm({
 			setRepoInput("");
 			setError(null);
 			onChanged();
-			toast.success("Skill installed in this project");
+			toast.success("Skill Installed", { description: "Saved in this Project." });
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -857,37 +922,41 @@ function InstallSkillInProjectForm({
 	};
 
 	return (
-		<div className="flex max-w-3xl flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:flex-wrap sm:items-center">
-			<Label htmlFor={`project-skill-repo-${projectId}`} className="sr-only">
+		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/20 p-3">
+			<Label htmlFor={`project-skill-repo-${projectId}`} className="text-xs font-medium">
 				GitHub skill repository
 			</Label>
-			<Input
-				id={`project-skill-repo-${projectId}`}
-				name="project-skill-repo"
-				value={repoInput}
-				onChange={(e) => {
-					setRepoInput(e.target.value);
-					setError(null);
-				}}
-				onKeyDown={(e) => {
-					if (e.key === "Enter") submit();
-				}}
-				placeholder="owner/repo or owner/repo/path…"
-				autoComplete="off"
-				spellCheck={false}
-				aria-invalid={!!error || undefined}
-				className="min-w-0 flex-1"
-			/>
-			<Button
-				size="sm"
-				disabled={!repoInput.trim() || install.isPending}
-				onClick={submit}
-				className="w-full sm:w-auto"
-			>
-				{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-				Install skill
-			</Button>
-			{error ? <p className="text-xs text-destructive sm:basis-full">{error}</p> : null}
+			<div className="flex flex-col gap-2 sm:flex-row">
+				<Input
+					id={`project-skill-repo-${projectId}`}
+					name="project-skill-repo"
+					value={repoInput}
+					onChange={(e) => {
+						setRepoInput(e.target.value);
+						setError(null);
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") submit();
+					}}
+					placeholder="owner/repo or owner/repo/path…"
+					autoComplete="off"
+					spellCheck={false}
+					aria-invalid={!!error || undefined}
+					className="min-w-0 flex-1"
+				/>
+				<Button
+					size="sm"
+					disabled={!repoInput.trim() || install.isPending}
+					onClick={submit}
+					variant={repoInput.trim() ? "default" : "outline"}
+					className="w-full sm:w-auto"
+				>
+					{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+					Install Skill
+				</Button>
+			</div>
+			<p className="text-xs text-muted-foreground">Paste a GitHub skill path to add it here.</p>
+			{error ? <p className="text-xs text-destructive">{error}</p> : null}
 		</div>
 	);
 }
@@ -912,50 +981,58 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault created in this project");
+			toast.success("Vault Created", { description: "Saved in this Project." });
 		},
-		onError: (e) => toast.error("Failed to create vault", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
 
 	return (
-		<div className="flex max-w-3xl flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
-			<Label htmlFor={`project-vault-slug-${projectId}`} className="sr-only">
-				New vault name
+		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/20 p-3">
+			<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
+				Vault name
 			</Label>
-			<Input
-				id={`project-vault-slug-${projectId}`}
-				name="project-vault-slug"
-				value={slug}
-				onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-				onKeyDown={(e) => {
-					if (e.key === "Enter" && slug) create.mutate(slug);
-				}}
-				placeholder="New vault name…"
-				autoComplete="off"
-				spellCheck={false}
-				className="min-w-0 flex-1"
-			/>
-			<Button
-				size="sm"
-				disabled={!slug || create.isPending}
-				onClick={() => slug && create.mutate(slug)}
-				className="w-full sm:w-auto"
-			>
-				{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-				Create vault
-			</Button>
+			<div className="flex flex-col gap-2 sm:flex-row">
+				<Input
+					id={`project-vault-slug-${projectId}`}
+					name="project-vault-slug"
+					value={slug}
+					onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && slug) create.mutate(slug);
+					}}
+					placeholder="github…"
+					autoComplete="off"
+					spellCheck={false}
+					className="min-w-0 flex-1"
+				/>
+				<Button
+					size="sm"
+					disabled={!slug || create.isPending}
+					onClick={() => slug && create.mutate(slug)}
+					variant={slug ? "default" : "outline"}
+					className="w-full sm:w-auto"
+				>
+					{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+					Create Vault
+				</Button>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				Use lowercase letters, numbers, and hyphens. Add keys after the vault is created.
+			</p>
 		</div>
 	);
 }
 
 function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: string }) {
-	const direct = skill.project_id === ownProjectId;
+	const savedHere = skill.project_id === ownProjectId;
 	return (
 		<div className="flex items-center justify-between gap-3 p-3">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "linked"}</Badge>
+					<Badge variant={savedHere ? "secondary" : "outline"}>
+						{savedHere ? "Saved Here" : "Linked"}
+					</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
 					{skill.skill_key}
@@ -974,13 +1051,15 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 }
 
 function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: string }) {
-	const direct = vault.project_id === ownProjectId;
+	const savedHere = vault.project_id === ownProjectId;
 	return (
 		<div className="flex items-center justify-between gap-3 p-3">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={direct ? "secondary" : "outline"}>{direct ? "direct" : "linked"}</Badge>
+					<Badge variant={savedHere ? "secondary" : "outline"}>
+						{savedHere ? "Saved Here" : "Linked"}
+					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
 			</div>

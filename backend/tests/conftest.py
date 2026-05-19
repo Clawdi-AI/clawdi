@@ -202,6 +202,41 @@ async def seed_project(db_session: AsyncSession, seed_user: User):
 
 
 @pytest_asyncio.fixture
+async def workspace_project(db_session: AsyncSession, seed_user: User):
+    """A user-created Custom Project for sharing tests."""
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+
+    nonce = uuid.uuid4().hex[:8]
+    project = Project(
+        user_id=seed_user.id,
+        name=f"Workspace {nonce}",
+        slug=f"workspace-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.commit()
+    await db_session.refresh(project)
+    return project
+
+
+@pytest_asyncio.fixture
+async def environment_project(db_session: AsyncSession, seed_user: User):
+    """An Agent Project for non-shareable managed-project tests."""
+    from sqlalchemy import select
+
+    from app.models.project import Project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"test-agent-{uuid.uuid4().hex[:8]}",
+        machine_name="Test Agent",
+    )
+    result = await db_session.execute(select(Project).where(Project.id == env.default_project_id))
+    return result.scalar_one()
+
+
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[httpx.AsyncClient]:
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
         yield db_session

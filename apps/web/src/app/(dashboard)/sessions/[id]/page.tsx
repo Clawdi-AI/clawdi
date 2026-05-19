@@ -521,7 +521,7 @@ function ContentFetchError() {
 	return (
 		<EmptyState
 			fillHeight={false}
-			description="Failed to load session content. Check your connection and try refreshing."
+			description="Session content is unavailable. Check your connection and refresh this page."
 		/>
 	);
 }

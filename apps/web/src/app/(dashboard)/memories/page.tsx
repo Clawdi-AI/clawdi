@@ -75,7 +75,7 @@ export default function MemoriesPage() {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
-		onError: (e) => toast.error("Failed to update settings", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Update Settings", { description: errorMessage(e) }),
 	});
 
 	const { data, isLoading, error } = useQuery({
@@ -106,7 +106,7 @@ export default function MemoriesPage() {
 				}),
 			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
-		onError: (e) => toast.error("Failed to delete memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
 	});
 
 	const requestDeleteMemory = useCallback(
@@ -212,7 +212,7 @@ export default function MemoriesPage() {
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load memories</AlertTitle>
+					<AlertTitle>Failed to Load Memories</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
@@ -347,20 +347,27 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 				<p className="text-sm text-muted-foreground">
 					Enter your Mem0 API key to use semantic memory search.
 				</p>
+				<Label htmlFor="mem0-api-key" className="text-xs font-medium">
+					Mem0 API key
+				</Label>
 				<div className="flex gap-2">
 					<Input
+						id="mem0-api-key"
+						name="mem0-api-key"
 						type="password"
 						value={apiKey}
 						onChange={(e) => setApiKey(e.target.value)}
-						placeholder="m0-..."
+						placeholder="m0-…"
 						className="flex-1 font-mono"
+						autoComplete="off"
+						spellCheck={false}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" && apiKey) onSave(apiKey);
 						}}
 					/>
 					<Button onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
 						{isPending ? <Spinner /> : <Key />}
-						Save
+						Save API Key
 					</Button>
 				</div>
 			</CardContent>
@@ -387,7 +394,7 @@ function AddMemoryForm() {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
-		onError: (e) => toast.error("Failed to add memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Add Memory", { description: errorMessage(e) }),
 	});
 
 	if (!open) {
@@ -412,12 +419,12 @@ function AddMemoryForm() {
 					</Label>
 					<Textarea
 						id="memory-content"
+						name="memory-content"
 						value={content}
 						onChange={(e) => setContent(e.target.value)}
-						placeholder="What should your agents remember?"
+						placeholder="Prefer concise PR summaries…"
 						rows={3}
 						className="resize-none"
-						autoFocus
 					/>
 				</div>
 				<div className="flex items-center justify-between gap-2">
@@ -453,7 +460,7 @@ function AddMemoryForm() {
 							disabled={!content.trim() || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
-							Add
+							Add Memory
 						</Button>
 					</div>
 				</div>

@@ -212,7 +212,7 @@ function UserMessageBody({ content }: { content: string }) {
 		);
 	}
 	if (isSkillExpansion(content)) {
-		return <CollapsibleBlock label="Skill context" content={content} />;
+		return <CollapsibleBlock label="Skill Setup Text" content={content} />;
 	}
 	return <Markdown content={content} />;
 }

@@ -131,7 +131,7 @@ function SkillDetailPageInner() {
 
 	const startEdit = () => {
 		if (!skill?.content) {
-			toast.error("This skill has no content to edit yet.");
+			toast.error("No Skill Content Yet");
 			return;
 		}
 		setDraft(skill.content);
@@ -173,11 +173,11 @@ function SkillDetailPageInner() {
 			);
 		},
 		onSuccess: () => {
-			toast.success(
-				skill?.machine_name
-					? `Saved. ${skill.machine_name} picks up the new version within a couple seconds via sync.`
-					: "Saved. The change applies on this agent within a couple seconds via sync.",
-			);
+			toast.success("Skill Saved", {
+				description: skill?.machine_name
+					? `${skill.machine_name} picks up the new version within a couple seconds via sync.`
+					: "The change applies on this agent within a couple seconds via sync.",
+			});
 			setIsEditing(false);
 			setDraft("");
 			setEditingHash(null);
@@ -192,20 +192,20 @@ function SkillDetailPageInner() {
 			// says "Failed to save" and the user keeps clicking
 			// save against a hash the server keeps rejecting.
 			if (e instanceof ApiError && e.status === 412) {
-				toast.error("Skill changed elsewhere", {
+				toast.error("Skill Changed Elsewhere", {
 					description:
 						"Another edit landed while you were typing. Reload to see the latest, then re-apply your change.",
 				});
 				queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 				return;
 			}
-			toast.error("Failed to save", { description: errorMessage(e) });
+			toast.error("Failed to Save Skill", { description: errorMessage(e) });
 		},
 	});
 
 	const uninstall = useMutation({
 		mutationFn: async () => {
-			if (!targetProjectId) throw new Error("Default project not loaded yet");
+			if (!targetProjectId) throw new Error("Project not loaded yet");
 			return unwrap(
 				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
@@ -213,24 +213,24 @@ function SkillDetailPageInner() {
 			);
 		},
 		onSuccess: () => {
-			toast.success(
-				skill?.machine_name
-					? `Skill uninstalled from ${skill.machine_name}. Other agents keep their copies.`
-					: "Skill uninstalled from this agent. Other agents keep their copies.",
-			);
+			toast.success("Skill Uninstalled", {
+				description: skill?.machine_name
+					? `Removed from ${skill.machine_name}. Other agents keep their copies.`
+					: "Removed from this agent. Other agents keep their copies.",
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			router.push(projectResourceHref("skills"));
 		},
-		onError: (e) => toast.error("Failed to uninstall", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const onUninstall = () => {
 		if (!isProjectReady || !ownershipKnown) {
-			toast.error("Project access unavailable — try again in a moment.");
+			toast.error("Project Access Unavailable", { description: "Try again in a moment." });
 			return;
 		}
 		if (isReadOnly) {
-			toast.error("Shared skills are read-only.");
+			toast.error("Shared Skills Are Read-only");
 			return;
 		}
 		// Per-agent isolation: this DELETE only removes the skill
@@ -257,7 +257,7 @@ function SkillDetailPageInner() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			{error ? (
-				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
+				<DetailNotFound title="Skill Not Found" message={errorMessage(error)} />
 			) : isLoading ? (
 				<div className="space-y-3 py-2">
 					<Skeleton className="h-6 w-48" />
@@ -274,11 +274,11 @@ function SkillDetailPageInner() {
 										variant="secondary"
 										title={
 											sourceProjectName
-												? `Shared from "${sourceProjectName}" — viewer membership is read-only`
-												: "Shared from another project — viewer membership is read-only"
+												? `Shared from "${sourceProjectName}". Viewer access is read-only.`
+												: "Shared from another Project. Viewer access is read-only."
 										}
 									>
-										shared · read-only
+										Shared · Read-only
 									</Badge>
 								) : !isEditing ? (
 									<>
@@ -387,11 +387,10 @@ function SkillDetailPageInner() {
 						<>
 							<Separator />
 							<Alert>
-								<AlertTitle>Editing the source-of-truth file</AlertTitle>
+								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
-									Keep the YAML frontmatter (between the leading <code>---</code> markers) intact —
-									it's how the agent finds and titles this skill. Save lands instantly in the cloud
-									and reaches the agent within ~2 seconds.
+									Keep the YAML header at the top intact. It stores the skill name and description.
+									Save updates this Project and syncs to the agent.
 								</AlertDescription>
 							</Alert>
 							<Textarea

@@ -164,8 +164,8 @@ function SessionsListInner() {
 
 	const prFilterOptions = useMemo(
 		() => [
-			{ label: "Has PR refs", value: "true" },
-			{ label: "No PR refs", value: "false" },
+			{ label: "Has PR Links", value: "true" },
+			{ label: "No PR Links", value: "false" },
 		],
 		[],
 	);
@@ -205,7 +205,7 @@ function SessionsListInner() {
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load sessions</AlertTitle>
+					<AlertTitle>Failed to Load Sessions</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
@@ -273,7 +273,7 @@ function SessionsListInner() {
 													: params.sort,
 									});
 								}}
-								placeholder="Search summary, local folder, ID…"
+								placeholder="Search summary, folder, or session ID…"
 							>
 								{agentOptions.length > 0 ? (
 									<DataTableFacetedFilter
@@ -286,7 +286,7 @@ function SessionsListInner() {
 									/>
 								) : null}
 								<DataTableFacetedFilter
-									title="PR refs"
+									title="PR Links"
 									options={prFilterOptions}
 									selected={
 										params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []

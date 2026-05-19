@@ -11,23 +11,16 @@ import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashb
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
 import {
+	isCustomProject,
 	isProjectOwner,
 	ProjectIdentity,
-	projectAlias,
+	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
-import { Input } from "@/components/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
@@ -192,12 +185,12 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success(
-				`Uninstalled ${vars.skillKey} from this agent. Other agents keep their copies.`,
-			);
+			toast.success("Skill Uninstalled", {
+				description: `${vars.skillKey} was removed from this agent. Other agents keep their copies.`,
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(
@@ -246,7 +239,7 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: () => {
-			toast.success("Agent disconnected", {
+			toast.success("Agent Disconnected", {
 				description:
 					sessionTotal > 0
 						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (agent label dropped).`
@@ -264,7 +257,7 @@ export default function AgentDetailPage() {
 			});
 			router.push("/");
 		},
-		onError: (e) => toast.error("Failed to disconnect agent", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Disconnect Agent", { description: errorMessage(e) }),
 	});
 
 	const onDisconnect = () => {
@@ -438,9 +431,7 @@ function AgentProjectsPanel({
 	authedFetch: (path: string, init?: RequestInit) => Promise<Response>;
 	onChanged: () => void;
 }) {
-	const [primaryProjectId, setPrimaryProjectId] = useState("");
 	const [contextProjectId, setContextProjectId] = useState("");
-	const [contextPriority, setContextPriority] = useState("");
 	const primary = bindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = bindings
 		.filter((binding) => binding.binding_type === "context")
@@ -449,43 +440,25 @@ function AgentProjectsPanel({
 		() => new Map(projects.map((project) => [project.id, project])),
 		[projects],
 	);
-	const ownedProjects = projects.filter((project) => project.is_owner !== false);
 	const contextChoices = projects.filter(
-		(project) => !bindings.some((binding) => binding.project_id === project.id),
+		(project) =>
+			isCustomProject(project) && !bindings.some((binding) => binding.project_id === project.id),
 	);
-
-	const setPrimary = useMutation({
-		mutationFn: async (projectId: string) => {
-			await authedFetch(`/api/agents/${agentId}/project-bindings/primary`, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ project_id: projectId }),
-			});
-		},
-		onSuccess: () => {
-			setPrimaryProjectId("");
-			onChanged();
-			toast.success("Home Project updated");
-		},
-		onError: (e) => toast.error("Failed to set primary project", { description: errorMessage(e) }),
-	});
 
 	const addContext = useMutation({
 		mutationFn: async () => {
-			const priority = contextPriority ? Number.parseInt(contextPriority, 10) : undefined;
 			await authedFetch(`/api/agents/${agentId}/project-bindings/context`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ project_id: contextProjectId, priority }),
+				body: JSON.stringify({ project_id: contextProjectId }),
 			});
 		},
 		onSuccess: () => {
 			setContextProjectId("");
-			setContextPriority("");
 			onChanged();
-			toast.success("Project attached");
+			toast.success("Project Attached");
 		},
-		onError: (e) => toast.error("Failed to attach project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Attach Project", { description: errorMessage(e) }),
 	});
 
 	const removeBinding = useMutation({
@@ -496,9 +469,9 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Project detached");
+			toast.success("Project Detached");
 		},
-		onError: (e) => toast.error("Failed to detach project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Detach Project", { description: errorMessage(e) }),
 	});
 
 	const reorder = useMutation({
@@ -511,9 +484,9 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Project order updated");
+			toast.success("Project Order Updated");
 		},
-		onError: (e) => toast.error("Failed to reorder projects", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Reorder Projects", { description: errorMessage(e) }),
 	});
 
 	const moveContext = (bindingId: string, direction: -1 | 1) => {
@@ -534,8 +507,8 @@ function AgentProjectsPanel({
 			<div className="space-y-1">
 				<h2 className="text-base font-semibold">Projects Used by This Agent</h2>
 				<p className="text-xs text-muted-foreground">
-					The Home Project is the default writable context. Attached Projects add resources
-					according to your access; order affects lookup and provenance.
+					The Agent Project is fixed for this agent. Attach Custom or shared Projects when the agent
+					needs extra resources to read.
 				</p>
 			</div>
 			<div className="rounded-lg border bg-card/60 p-4">
@@ -543,37 +516,23 @@ function AgentProjectsPanel({
 					<div className="space-y-3">
 						<div className="flex items-center gap-2">
 							<Home className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Home Project</h2>
+							<h2 className="text-sm font-semibold">Agent Project</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							The Home Project is this agent&apos;s writable default. Shared viewer Projects can be
-							attached, but they cannot be Home.
+							This Project is created with the agent and is always its writable default. It cannot
+							be replaced, shared, or detached from here.
 						</p>
 						{primary ? (
 							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
 						) : (
 							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-								No explicit Home Project yet.
+								Agent Project is not loaded yet.
 							</div>
 						)}
 					</div>
-					<div className="space-y-2">
-						<div className="text-xs font-medium text-muted-foreground">Set Home</div>
-						<div className="flex flex-col gap-2 sm:flex-row">
-							<ProjectSelect
-								value={primaryProjectId}
-								onValueChange={setPrimaryProjectId}
-								projects={ownedProjects}
-								placeholder="Choose owned project…"
-							/>
-							<Button
-								size="sm"
-								disabled={!primaryProjectId || setPrimary.isPending}
-								onClick={() => setPrimary.mutate(primaryProjectId)}
-							>
-								Set Home
-							</Button>
-						</div>
+					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
+						Use Custom Projects for resources you want to share or attach across agents. This Agent
+						Project stays private to the agent&apos;s default writes.
 					</div>
 				</div>
 			</div>
@@ -583,37 +542,34 @@ function AgentProjectsPanel({
 					<div className="space-y-2">
 						<div className="flex items-center gap-2">
 							<Layers className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Attached projects</h2>
+							<h2 className="text-sm font-semibold">Attached Projects</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Attached projects are read after Home. When vault keys or skills conflict, the first
-							project in the order wins and later matches remain available by provenance.
+							Attached Projects are read after the Agent Project. Use the list below to adjust read
+							order after attaching.
 						</p>
 					</div>
-					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_auto]">
+					<div className="grid gap-3">
 						<ProjectSelect
 							value={contextProjectId}
 							onValueChange={setContextProjectId}
 							projects={contextChoices}
-							placeholder="Attach project…"
+							label="Project to Attach"
+							placeholder="Choose a Project…"
 						/>
-						<Input
-							value={contextPriority}
-							name="project-context-priority"
-							type="number"
-							min={1}
-							placeholder="Order…"
-							autoComplete="off"
-							aria-label="Attached project order"
-							onChange={(event) => setContextPriority(event.target.value)}
-						/>
+						{contextChoices.length === 0 ? (
+							<p className="text-xs text-muted-foreground">
+								No Custom or shared Projects are available to attach.
+							</p>
+						) : null}
 						<Button
 							size="sm"
 							disabled={!contextProjectId || addContext.isPending}
+							variant={contextProjectId ? "default" : "outline"}
 							onClick={() => addContext.mutate()}
 						>
 							<Plus className="size-3.5" />
-							Attach project
+							Attach Project
 						</Button>
 					</div>
 				</div>
@@ -621,12 +577,12 @@ function AgentProjectsPanel({
 
 			<section className="space-y-2">
 				<div className="flex items-center justify-between gap-2">
-					<h2 className="text-sm font-semibold">Order</h2>
+					<h2 className="text-sm font-semibold">Attached Project Order</h2>
 					<Badge variant="secondary">{contexts.length}</Badge>
 				</div>
 				{contexts.length === 0 ? (
 					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-						No attached projects yet. Attach an owned or shared project to make it available to this
+						No attached Projects yet. Attach a Custom or shared Project to make it available to this
 						agent.
 					</div>
 				) : (
@@ -690,26 +646,25 @@ function ProjectSelect({
 	value,
 	onValueChange,
 	projects,
+	label,
 	placeholder,
 }: {
 	value: string;
 	onValueChange: (value: string) => void;
 	projects: ProjectRow[];
+	label: string;
 	placeholder: string;
 }) {
 	return (
-		<Select value={value} onValueChange={onValueChange}>
-			<SelectTrigger className="w-full min-w-0" aria-label={placeholder}>
-				<SelectValue placeholder={placeholder} />
-			</SelectTrigger>
-			<SelectContent>
-				{projects.map((project) => (
-					<SelectItem key={project.id} value={project.id}>
-						{projectAlias(project)} {project.is_owner === false ? "(viewer)" : "(owner)"}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+		<ProjectScopePicker
+			projects={projects}
+			value={value}
+			onValueChange={onValueChange}
+			label={label}
+			placeholder={placeholder}
+			layout="stacked"
+			disabled={projects.length === 0}
+		/>
 	);
 }
 
@@ -720,7 +675,7 @@ function ProjectUseLine({
 	binding: ProjectBindingRow;
 	project: ProjectRow | undefined;
 }) {
-	const bindingLabel = binding.binding_type === "primary" ? "Home" : "Attached";
+	const bindingLabel = binding.binding_type === "primary" ? "Agent Project" : "Attached";
 	if (!project) {
 		return (
 			<div className="min-w-0">
@@ -731,7 +686,7 @@ function ProjectUseLine({
 					</Badge>
 				</div>
 				{binding.binding_type === "context" ? (
-					<div className="mt-1 text-xs text-muted-foreground">Order {binding.priority}</div>
+					<div className="mt-1 text-xs text-muted-foreground">Read order {binding.priority}</div>
 				) : null}
 			</div>
 		);
@@ -741,6 +696,7 @@ function ProjectUseLine({
 			<ProjectIdentity
 				project={project}
 				showKind={false}
+				showAccess={false}
 				badges={
 					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
 						{bindingLabel}
@@ -748,7 +704,7 @@ function ProjectUseLine({
 				}
 			/>
 			{binding.binding_type === "context" ? (
-				<div className="mt-0.5 text-xs text-muted-foreground">Order {binding.priority}</div>
+				<div className="mt-0.5 text-xs text-muted-foreground">Read order {binding.priority}</div>
 			) : null}
 		</div>
 	);

@@ -84,7 +84,7 @@ function ConnectorDetail() {
 		const failed =
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
-		toast.error("Connection failed", {
+		toast.error("Connection Failed", {
 			description: oauthState.error || "OAuth did not complete. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
@@ -148,7 +148,7 @@ function ConnectorDetail() {
 						return next;
 					});
 				},
-				onError: (e) => toast.error("Failed to disconnect", { description: errorMessage(e) }),
+				onError: (e) => toast.error("Failed to Disconnect", { description: errorMessage(e) }),
 			},
 		);
 	};
@@ -209,7 +209,7 @@ function ConnectorDetail() {
 			// Popup blocker rejected the open. Bail before firing the
 			// mutation so we don't leak a connection request the user
 			// can't complete — and tell them why nothing happened.
-			toast.error("Popup blocked", {
+			toast.error("Popup Blocked", {
 				description: "Allow popups for this site to continue with OAuth.",
 			});
 			return;
@@ -236,7 +236,7 @@ function ConnectorDetail() {
 				},
 				onError: (e) => {
 					popup.close();
-					toast.error("Failed to start connection", { description: errorMessage(e) });
+					toast.error("Failed to Start Connection", { description: errorMessage(e) });
 				},
 				onSettled: () => {
 					inflightConnectRef.current = false;
@@ -263,7 +263,7 @@ function ConnectorDetail() {
 			<div className="flex flex-col gap-4 px-4 lg:px-6">
 				<EmptyState
 					icon={Plug}
-					title="Connector unavailable"
+					title="Connector Unavailable"
 					description={errorMessage(appQ.error)}
 				/>
 			</div>
@@ -317,7 +317,7 @@ function ConnectorDetail() {
 					// just couldn't load the list.
 					<Alert variant="destructive">
 						<AlertCircle />
-						<AlertTitle>Failed to load connections</AlertTitle>
+						<AlertTitle>Failed to Load Connections</AlertTitle>
 						<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
 					</Alert>
 				) : activeConnections.length === 0 ? (
@@ -328,7 +328,7 @@ function ConnectorDetail() {
 						action={
 							<Button onClick={startConnect} disabled={isStarting}>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								{isStarting ? "Connecting..." : "Connect"}
+								{isStarting ? "Connecting…" : "Connect"}
 							</Button>
 						}
 					/>
@@ -467,7 +467,7 @@ function ConnectorToolsList({
 				</h2>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load tools</AlertTitle>
+					<AlertTitle>Failed to Load Tools</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			</section>
@@ -501,7 +501,7 @@ function ConnectorToolsList({
 								<span className="truncate text-sm font-medium">{tool.display_name}</span>
 								{tool.is_deprecated && (
 									<Badge variant="outline" className="shrink-0">
-										deprecated
+										Deprecated
 									</Badge>
 								)}
 							</div>

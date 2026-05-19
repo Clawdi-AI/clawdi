@@ -63,22 +63,22 @@ describe("project resource model", () => {
 	});
 
 	it("renders stable user-facing scope labels", () => {
-		expect(projectResourceScopeLabel("container")).toBe("Project registry");
-		expect(projectResourceScopeLabel("project-managed")).toBe("Project-managed");
-		expect(projectResourceScopeLabel("activity")).toBe("Activity history");
-		expect(projectResourceScopeLabel("account-wide")).toBe("Account-wide");
+		expect(projectResourceScopeLabel("container")).toBe("Project home");
+		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a Project");
+		expect(projectResourceScopeLabel("activity")).toBe("Agent activity");
+		expect(projectResourceScopeLabel("account-wide")).toBe("Account level");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
-			"selected Project context",
+			"Pick the Project",
 		);
 	});
 
 	it("renders resource paths from reusable path segments", () => {
 		expect(projectResourcePathLabel(getProjectResourceDefinition("projects"))).toBe("Projects");
 		expect(projectResourcePathLabel(getProjectResourceDefinition("skills"))).toBe(
-			"Projects / Project / Skills",
+			"Projects / Selected Project / Skills",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("vaults"))).toBe(
-			"Projects / Project / Vaults",
+			"Projects / Selected Project / Vaults",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("sessions"))).toBe(
 			"Agents / Sessions",

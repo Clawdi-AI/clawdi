@@ -10,6 +10,7 @@ const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? "")
 const nextConfig: NextConfig = {
 	transpilePackages: ["@clawdi/shared"],
 	...(allowedDevOrigins.length > 0 ? { allowedDevOrigins } : {}),
+	devIndicators: false,
 	// PostHog uses trailing slashes in capture endpoints (e.g. `/e/`).
 	// Redirecting these breaks payload delivery.
 	skipTrailingSlashRedirect: isHostedBuild,

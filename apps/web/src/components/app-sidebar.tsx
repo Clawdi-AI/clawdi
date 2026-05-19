@@ -127,12 +127,12 @@ export function AppSidebar() {
 							<SidebarMenu>
 								<SidebarMenuItem>
 									<SidebarMenuButton
-										tooltip="Add an agent"
+										tooltip="Add Agent"
 										onClick={() => setAddAgentOpen(true)}
 										className="bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
 									>
 										<CirclePlus />
-										<span>Add an agent</span>
+										<span>Add Agent</span>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
 							</SidebarMenu>

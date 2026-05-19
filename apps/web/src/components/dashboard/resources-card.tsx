@@ -60,7 +60,7 @@ export function ResourcesCard({
 			<CardHeader className="border-b">
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>
-					Every resource has one management path: Project-owned or user-level.
+					Start at Projects for shareable work. Account resources live separately.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">

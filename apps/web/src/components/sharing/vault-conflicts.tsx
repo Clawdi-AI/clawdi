@@ -59,12 +59,12 @@ export function VaultConflictsAlert({
 	return (
 		<Alert variant="destructive">
 			<AlertTriangle />
-			<AlertTitle>Vault key conflict</AlertTitle>
+			<AlertTitle>Vault Key Conflict</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					This shared project has vault key names that already exist earlier in the target agent's
-					project order. Existing values keep priority; the new shared values remain available but
-					are skipped on read.
+					This shared Project has vault keys with the same names as keys the selected agent already
+					reads earlier. Earlier Projects win; the new shared keys stay visible but are skipped when
+					the agent reads secrets.
 				</p>
 				{conflicts.length > 0 ? (
 					<ul className="max-h-28 space-y-1 overflow-auto rounded-md border bg-background/50 p-2 font-mono text-xs">
@@ -86,7 +86,7 @@ export function VaultConflictsAlert({
 					onClick={onAction}
 					disabled={actionPending}
 				>
-					{actionPending ? "Continuing..." : actionLabel}
+					{actionPending ? "Continuing…" : actionLabel}
 				</Button>
 			</AlertDescription>
 		</Alert>

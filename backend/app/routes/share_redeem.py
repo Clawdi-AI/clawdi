@@ -18,7 +18,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_share_link import ProjectShareLink
 from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.skill import Skill
@@ -164,6 +164,11 @@ async def _resolve_owner_for_link(
             status.HTTP_410_GONE,
             "share no longer available (project removed)",
         )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            "share no longer available",
+        )
     owner_result = await db.execute(select(User).where(User.id == project.user_id))
     owner = owner_result.scalar_one_or_none()
     if owner is None:
@@ -264,6 +269,8 @@ async def upgrade_share_token(
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(status.HTTP_410_GONE, "share no longer available")
     if project.user_id == auth.user_id:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

@@ -38,9 +38,9 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Projects",
 		singularLabel: "Project",
 		navLabel: "Projects",
-		description: "Project registry and access boundaries.",
+		description: "Create Custom Projects and review managed Projects.",
 		managementDescription:
-			"Create Projects, share access, and open a Project's internal resources.",
+			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you.",
 		href: "/projects",
 		emptyCta: "Create Project",
 		routeGroup: "project-registry",
@@ -54,13 +54,12 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		singularLabel: "Skill",
 		navLabel: "Skills",
 		description: "Reusable instructions installed inside a Project.",
-		managementDescription:
-			"Manage installed skills from a selected Project or from the Project detail page.",
+		managementDescription: "Pick a Project, then install or remove the skills saved there.",
 		href: "/skills",
 		emptyCta: "Browse Marketplace",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
-		pathSegments: ["Projects", "Project", "Skills"],
+		pathSegments: ["Projects", "Selected Project", "Skills"],
 		projectQueryParam: "project",
 		statsKey: "skills_count",
 		countLabel: "skills",
@@ -70,14 +69,14 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Secret references stored inside a Project.",
+		description: "Vaults and keys stored inside a Project.",
 		managementDescription:
-			"Create vaults and keys in owned Projects; shared Projects stay read-only.",
+			"Create vaults and keys in Projects you own. Shared Custom Projects stay read-only.",
 		href: "/vault",
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
-		pathSegments: ["Projects", "Project", "Vaults"],
+		pathSegments: ["Projects", "Selected Project", "Vaults"],
 		projectQueryParam: "project",
 		statsKey: "vault_keys_count",
 		countLabel: "keys",
@@ -89,7 +88,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Sessions",
 		description: "Activity history from connected agents.",
 		managementDescription:
-			"Browse agent activity; Project context comes from each agent's Home and attached Projects.",
+			"Browse conversations synced from agents. Each session shows which agent produced it.",
 		href: "/sessions",
 		emptyCta: "Start Syncing",
 		routeGroup: "user-resources",
@@ -103,8 +102,8 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Memories",
 		singularLabel: "Memory",
 		navLabel: "Memories",
-		description: "Account-wide context agents can recall.",
-		managementDescription: "Manage account memory separately from Project-owned resources.",
+		description: "Account-level notes agents can recall.",
+		managementDescription: "Manage memories separately from resources saved in Projects.",
 		href: "/memories",
 		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
@@ -120,7 +119,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Connectors",
 		description: "Account-wide app connections.",
 		managementDescription:
-			"Connect apps once at the account level; Projects use them through agents and tools.",
+			"Connect apps once at the account level. Agents can use them through tools.",
 		href: "/connectors",
 		emptyCta: "Connect App",
 		routeGroup: "user-resources",
@@ -134,17 +133,17 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 export const PROJECT_RESOURCE_GROUPS = [
 	{
 		id: "project-registry",
-		label: "Project Registry",
+		label: "Projects",
 		resourceIds: ["projects"],
 	},
 	{
 		id: "project-resources",
-		label: "Project Resources",
+		label: "In Projects",
 		resourceIds: ["skills", "vaults"],
 	},
 	{
 		id: "user-resources",
-		label: "User Resources",
+		label: "Account",
 		resourceIds: ["sessions", "memories", "connectors"],
 	},
 ] as const satisfies readonly {
@@ -223,26 +222,26 @@ export function connectorDetailHref(name: string): string {
 export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 	switch (scope) {
 		case "container":
-			return "Project registry";
+			return "Project home";
 		case "project-managed":
-			return "Project-managed";
+			return "Saved in a Project";
 		case "activity":
-			return "Activity history";
+			return "Agent activity";
 		case "account-wide":
-			return "Account-wide";
+			return "Account level";
 	}
 }
 
 export function projectResourceScopeDescription(resource: ProjectResourceDefinition): string {
 	switch (resource.projectScope) {
 		case "container":
-			return "Top-level Project and sharing surface.";
+			return "Start here to create Projects, share Custom Projects, or open Project resources.";
 		case "project-managed":
-			return "Stored in a Project and opened through the selected Project context.";
+			return "Saved in one Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":
-			return "User activity, with Project context inherited through agents.";
+			return "Activity from agents, shown with the agent that produced it.";
 		case "account-wide":
-			return "User-level resource, not Project-owned today.";
+			return "Managed for your account, not inside a specific Project.";
 	}
 }
 

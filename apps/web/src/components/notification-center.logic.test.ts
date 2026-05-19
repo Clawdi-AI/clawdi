@@ -13,7 +13,7 @@ const invitation = {
 	id: "inv_1",
 	project_id: "proj_1",
 	project_name: "Shared Workspace",
-	project_kind: "agent",
+	project_kind: "workspace",
 	owner_display: "Ada Lovelace",
 	owner_handle: "ada",
 	invitee_email: "viewer@example.com",
@@ -47,14 +47,15 @@ describe("notification center logic", () => {
 	});
 
 	test("keeps project invitation invariants as the first notification type", () => {
-		expect(getProjectInvitationAccessCopy()).toContain("read-only viewer Project access");
-		expect(getProjectInvitationAccessCopy()).toContain("Use with agent");
-		expect(getProjectInvitationAccessCopy()).toContain("separate explicit step");
+		expect(getProjectInvitationAccessCopy()).toContain("read-only Viewer access");
+		expect(getProjectInvitationAccessCopy()).toContain("Attaching the Project to an agent");
+		expect(getProjectInvitationAccessCopy()).toContain("separate step");
 
 		const accepted = getAcceptedProjectInvitationToastCopy("Shared Workspace");
 		expect(accepted.title).toBe("Joined Shared Workspace");
-		expect(accepted.description).toContain("read-only viewer Project access");
-		expect(accepted.description).toContain("Open project");
-		expect(accepted.description).toContain("Use with agent");
+		expect(getAcceptedProjectInvitationToastCopy().title).toBe("Project Joined");
+		expect(accepted.description).toContain("Read-only Viewer access");
+		expect(accepted.description).toContain("Open the Project");
+		expect(accepted.description).toContain("attach it to an agent");
 	});
 });

@@ -87,7 +87,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 			),
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public access enabled");
+			toast.success("Public Access Enabled");
 		},
 		onError: (err) => toast.error(errorMessage(err)),
 	});
@@ -103,7 +103,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 		},
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public access disabled");
+			toast.success("Public Access Disabled");
 		},
 		onError: (err) => toast.error(errorMessage(err)),
 	});

@@ -364,8 +364,8 @@ async def seed(clerk_id: str, agent_type: str) -> None:
                 _memory(
                     user_id=user.id,
                     content=(
-                        "Project resources are scoped by Project first, "
-                        "then filtered by agent binding."
+                        "Resources are saved in Projects first, then agents read attached "
+                        "Custom Projects in order."
                     ),
                     category="decision",
                     tags=["projects", "resources"],
@@ -382,8 +382,8 @@ async def seed(clerk_id: str, agent_type: str) -> None:
                 _memory(
                     user_id=user.id,
                     content=(
-                        "Shared projects are readable context and should never "
-                        "become an agent Home project."
+                        "Shared Custom Projects are read-only. Agent Projects stay the "
+                        "required writable default for each agent."
                     ),
                     category="decision",
                     tags=["sharing", "agents"],

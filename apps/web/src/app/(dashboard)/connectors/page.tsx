@@ -211,7 +211,7 @@ function ConnectedRail({
 				// the header with no way to find their connections.
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load connections</AlertTitle>
+					<AlertTitle>Failed to Load Connections</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading && apps.length === 0 ? (
@@ -262,7 +262,7 @@ function CatalogSection({
 		return (
 			<Alert variant="destructive">
 				<AlertCircle />
-				<AlertTitle>Failed to load connectors</AlertTitle>
+				<AlertTitle>Failed to Load Connectors</AlertTitle>
 				<AlertDescription>{errorMessage(error)}</AlertDescription>
 			</Alert>
 		);
@@ -284,7 +284,7 @@ function CatalogSection({
 				description={
 					query
 						? `Nothing matches "${query}".`
-						: "Configure COMPOSIO_API_KEY on the backend to enable connectors."
+						: "The connector catalog is not available yet. Ask an admin to configure COMPOSIO_API_KEY on the backend."
 				}
 			/>
 		);
@@ -293,7 +293,7 @@ function CatalogSection({
 		<section>
 			{labelled ? (
 				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					All
+					All Connectors
 				</h2>
 			) : null}
 			<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>

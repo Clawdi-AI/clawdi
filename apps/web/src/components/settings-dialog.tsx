@@ -232,7 +232,7 @@ function ApiKeysPanel() {
 			setNewLabel("");
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 		},
-		onError: (e: ApiError) => toast.error("Couldn't create key", { description: e.detail }),
+		onError: (e: ApiError) => toast.error("Couldn't Create Key", { description: e.detail }),
 	});
 
 	const revokeKey = useMutation({
@@ -244,9 +244,9 @@ function ApiKeysPanel() {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			toast.success("Key revoked");
+			toast.success("Key Revoked");
 		},
-		onError: (e: ApiError) => toast.error("Couldn't revoke key", { description: e.detail }),
+		onError: (e: ApiError) => toast.error("Couldn't Revoke Key", { description: e.detail }),
 	});
 
 	const columns = useMemo<ColumnDef<ApiKey>[]>(
@@ -362,8 +362,10 @@ function ApiKeysPanel() {
 					id="new-key-label"
 					value={newLabel}
 					onChange={(e) => setNewLabel(e.target.value)}
-					placeholder="Key label (e.g. my-laptop)"
+					placeholder="my-laptop…"
 					className="flex-1"
+					name="new-key-label"
+					autoComplete="off"
 				/>
 				<Button type="submit" disabled={!newLabel || createKey.isPending}>
 					<Plus />
@@ -387,7 +389,7 @@ function ApiKeysPanel() {
 							size="icon"
 							onClick={() => {
 								navigator.clipboard.writeText(createdKey);
-								toast.success("Copied to clipboard");
+								toast.success("Copied to Clipboard");
 							}}
 							aria-label="Copy key"
 						>

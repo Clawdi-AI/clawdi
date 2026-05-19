@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.user import User
 from app.schemas.sharing import InvitationAcceptResponse, InvitationResponse, UpgradeBody
@@ -38,7 +38,10 @@ async def list_my_invitations(
             .outerjoin(Inviter, Inviter.id == ProjectInvitation.invited_by)
             .join(Project, Project.id == ProjectInvitation.project_id)
             .join(Owner, Owner.id == Project.user_id)
-            .where(ProjectInvitation.invitee_user_id == auth.user_id)
+            .where(
+                ProjectInvitation.invitee_user_id == auth.user_id,
+                Project.kind == PROJECT_KIND_WORKSPACE,
+            )
             .order_by(ProjectInvitation.created_at.desc())
         )
     ).all()
@@ -98,6 +101,8 @@ async def accept_invitation_for_user(
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_410_GONE, "project no longer available")
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(status.HTTP_410_GONE, "invitation not available")
     if project.user_id == auth.user_id:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

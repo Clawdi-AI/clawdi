@@ -1,13 +1,29 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Bot, FolderOpen, type LucideIcon, Plus, Share2, Users } from "lucide-react";
+import {
+	ArrowRight,
+	Bot,
+	FolderKanban,
+	type LucideIcon,
+	Plus,
+	Settings2,
+	Share2,
+	Users,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import { displayProjectName, ProjectIdentity } from "@/components/projects/project-metadata";
+import {
+	displayProjectName,
+	isCustomProject,
+	isManagedProject,
+	type ProjectAgentMetadata,
+	ProjectIdentity,
+	projectAgentFor,
+} from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -22,10 +38,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, useAuthedFetch } from "@/lib/api";
+import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
+
+type Env = components["schemas"]["EnvironmentResponse"];
 
 interface ProjectRow {
 	id: string;
@@ -43,12 +63,14 @@ interface ProjectRow {
 const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export default function ProjectsPage() {
+	const api = useApi();
 	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectSlug, setNewProjectSlug] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
+	const [customProjectSearch, setCustomProjectSearch] = useState("");
 
 	const projects = useQuery({
 		queryKey: ["projects"],
@@ -59,13 +81,38 @@ export default function ProjectsPage() {
 	});
 
 	const rows = projects.data ?? [];
+	const environments = useQuery({
+		queryKey: ["environments"],
+		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/api/environments")),
+		enabled: rows.some((project) => project.kind === "environment"),
+	});
+	const agentsById = useMemo(
+		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
+		[environments.data],
+	);
 	const ownedProjects = useMemo(
 		() => rows.filter((s) => s.is_owner !== false).sort(compareProjectsForProductUse),
 		[rows],
 	);
 	const sharedProjects = useMemo(
-		() => rows.filter((s) => s.is_owner === false).sort(compareProjectsForProductUse),
+		() =>
+			rows
+				.filter((project) => project.is_owner === false && isCustomProject(project))
+				.sort(compareProjectsForProductUse),
 		[rows],
+	);
+	const customProjects = useMemo(() => ownedProjects.filter(isCustomProject), [ownedProjects]);
+	const managedProjects = useMemo(() => ownedProjects.filter(isManagedProject), [ownedProjects]);
+	const otherOwnedProjects = useMemo(
+		() =>
+			ownedProjects.filter(
+				(project) => !isCustomProject(project) && !isManagedProject(project) && !!project.kind,
+			),
+		[ownedProjects],
+	);
+	const filteredCustomProjects = useMemo(
+		() => filterProjects(customProjects, customProjectSearch, agentsById),
+		[customProjects, customProjectSearch, agentsById],
 	);
 
 	const createProject = useMutation({
@@ -85,17 +132,23 @@ export default function ProjectsPage() {
 			setNewProjectSlug("");
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["projects"] });
-			toast.success("Project created", {
-				description: `${project.name} is ready for skills, vault references, and sharing.`,
+			toast.success("Project Created", {
+				description: `${project.name} is ready for skills, vaults, and sharing.`,
 			});
 			router.push(projectDetailHref(project.id));
 		},
 		onError: (e) => {
-			toast.error("Failed to create project", {
+			toast.error("Failed to Create Project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
 	});
+
+	const openCreateDialog = () => {
+		setNewProjectName("");
+		setNewProjectSlug("");
+		setCreateOpen(true);
+	};
 
 	if (projects.isLoading) {
 		return (
@@ -109,24 +162,7 @@ export default function ProjectsPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Projects"
-				description={PROJECTS_RESOURCE.managementDescription}
-				actions={
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => {
-							setNewProjectName("");
-							setNewProjectSlug("");
-							setCreateOpen(true);
-						}}
-					>
-						<Plus className="size-3.5" />
-						New Project
-					</Button>
-				}
-			/>
+			<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
 
 			{projects.error ? (
 				<Alert variant="destructive">
@@ -149,8 +185,8 @@ export default function ProjectsPage() {
 					<DialogHeader>
 						<DialogTitle>New Project</DialogTitle>
 						<DialogDescription>
-							Create a Project for a team or workflow. Add skills, vault references, and access
-							settings from the Project detail page.
+							Create a Custom Project for a team, workflow, repo, or shareable resources. Add
+							skills, vaults, and sharing settings after it is created.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -192,7 +228,11 @@ export default function ProjectsPage() {
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
+							<Button
+								type="submit"
+								disabled={!newProjectName.trim() || createProject.isPending}
+								variant={newProjectName.trim() ? "default" : "outline"}
+							>
 								<Plus className="size-3.5" />
 								{createProject.isPending ? "Creating…" : "Create Project"}
 							</Button>
@@ -201,58 +241,88 @@ export default function ProjectsPage() {
 				</DialogContent>
 			</Dialog>
 
-			<ProjectSummaryCards
-				ownedCount={ownedProjects.length}
-				sharedCount={sharedProjects.length}
-				totalCount={rows.length}
-				onCreate={() => {
-					setNewProjectName("");
-					setNewProjectSlug("");
-					setCreateOpen(true);
-				}}
+			<ProjectGroupSection
+				icon={FolderKanban}
+				title="Custom Projects"
+				count={
+					customProjectSearch.trim()
+						? `${filteredCustomProjects.length}/${customProjects.length}`
+						: customProjects.length
+				}
+				description="Projects you create for workflows, teams, repos, or resources you want to share."
+				projects={filteredCustomProjects}
+				agentsById={agentsById}
+				emptyTitle={
+					customProjectSearch.trim()
+						? "No Matching Custom Projects"
+						: "Create Your First Custom Project"
+				}
+				emptyMessage={
+					customProjectSearch.trim()
+						? "Try a different Project name, slug, or owner."
+						: "Use Custom Projects for resources you want to share or reuse across people and agents."
+				}
+				toolbar={
+					<>
+						<SearchInput
+							value={customProjectSearch}
+							onChange={setCustomProjectSearch}
+							placeholder="Search custom projects…"
+							className="w-full sm:w-64"
+						/>
+						<NewProjectButton onClick={openCreateDialog} />
+					</>
+				}
+				priority="primary"
 			/>
 
-			<section className="space-y-3">
-				<SectionHeader
-					title="My Projects"
-					count={ownedProjects.length}
-					description="Projects you own. Add resources, invite people, and choose when agents use them."
-				/>
-				{ownedProjects.length === 0 ? (
-					<EmptyLine
-						title="Create Your First Collaboration Project"
-						message="Use Projects you want to share and reuse across people and agents."
-						action={
-							<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-								<Plus className="size-3.5" />
-								New Project
-							</Button>
-						}
-					/>
-				) : (
-					<div className="divide-y rounded-lg border bg-card/60">
-						{ownedProjects.map((project) => (
-							<OwnedProjectRow key={project.id} project={project} />
-						))}
-					</div>
-				)}
-			</section>
+			<ProjectGroupSection
+				icon={Settings2}
+				title="Managed Projects"
+				count={managedProjects.length}
+				description="Global and Agent Projects are managed for you. They are not shareable; use Custom Projects for collaboration."
+				projects={managedProjects}
+				agentsById={agentsById}
+				emptyTitle="No Managed Projects"
+				emptyMessage="Your Global Project and Agent Projects appear here when they exist."
+				priority="secondary"
+			/>
 
-			<section className="space-y-3">
+			{otherOwnedProjects.length > 0 ? (
+				<ProjectGroupSection
+					icon={FolderKanban}
+					title="Other Projects"
+					count={otherOwnedProjects.length}
+					description="Projects with a newer type that this UI does not classify yet."
+					projects={otherOwnedProjects}
+					agentsById={agentsById}
+					emptyTitle=""
+					emptyMessage=""
+					priority="quiet"
+				/>
+			) : null}
+
+			<section className="overflow-hidden rounded-lg border bg-card/60">
 				<SectionHeader
+					icon={Users}
 					title="Shared With Me"
 					count={sharedProjects.length}
-					description="Projects other people shared with you. Open them or use them with an agent when needed."
+					description="Custom Projects other people shared with you. Open one or attach it to an agent when needed."
+					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
 					<EmptyLine
 						title="No Shared Projects Yet"
-						message="Accepted invites and share links appear here with viewer access. Pending collaboration invites are available from the inbox in the top bar; using a shared Project with an agent is your choice."
+						message="Accepted invites and share links appear here with Viewer access. Pending invites are in the inbox in the top bar."
 					/>
 				) : (
-					<div className="divide-y rounded-lg border bg-card/60">
+					<div className="divide-y">
 						{sharedProjects.map((project) => (
-							<SharedProjectRow key={project.id} project={project} />
+							<SharedProjectRow
+								key={project.id}
+								project={project}
+								agent={projectAgentFor(project, agentsById)}
+							/>
 						))}
 					</div>
 				)}
@@ -261,16 +331,85 @@ export default function ProjectsPage() {
 	);
 }
 
-function OwnedProjectRow({ project }: { project: ProjectRow }) {
+function ProjectGroupSection({
+	icon,
+	title,
+	count,
+	description,
+	projects,
+	agentsById,
+	emptyTitle,
+	emptyMessage,
+	toolbar,
+	compact = false,
+	priority = "secondary",
+}: {
+	icon: LucideIcon;
+	title: string;
+	count: React.ReactNode;
+	description: string;
+	projects: ProjectRow[];
+	agentsById: ReadonlyMap<string, ProjectAgentMetadata>;
+	emptyTitle: string;
+	emptyMessage: string;
+	toolbar?: React.ReactNode;
+	compact?: boolean;
+	priority?: ProjectSectionPriority;
+}) {
+	return (
+		<section
+			className={cn(
+				"overflow-hidden rounded-lg border bg-card/60",
+				priority === "primary" && "border-foreground/15 bg-card",
+			)}
+		>
+			<SectionHeader
+				icon={icon}
+				title={title}
+				count={count}
+				description={description}
+				toolbar={toolbar}
+				priority={priority}
+			/>
+			{projects.length === 0 ? (
+				<EmptyLine title={emptyTitle} message={emptyMessage} />
+			) : (
+				<div className="divide-y">
+					{projects.map((project) => (
+						<OwnedProjectRow
+							key={project.id}
+							project={project}
+							agent={projectAgentFor(project, agentsById)}
+							compact={compact}
+						/>
+					))}
+				</div>
+			)}
+		</section>
+	);
+}
+
+function OwnedProjectRow({
+	project,
+	agent,
+	compact = false,
+}: {
+	project: ProjectRow;
+	agent?: ProjectAgentMetadata | null;
+	compact?: boolean;
+}) {
 	const projectName = displayProjectName(project);
+	const canShare = isCustomProject(project);
 	return (
 		<div className="group px-4 py-4 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<div className="min-w-0">
-					<ProjectIdentity project={project} />
-					<p className="mt-1 text-xs text-muted-foreground">
-						Owner access. Add resources, invite people, and share links.
-					</p>
+					<ProjectIdentity project={project} agent={agent} showOwner={false} showAccess={false} />
+					{compact ? null : (
+						<p className="mt-1 pl-9 text-xs text-muted-foreground">
+							{ownedProjectDescription(project)}
+						</p>
+					)}
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
 					<Button asChild variant="outline" size="sm">
@@ -279,29 +418,37 @@ function OwnedProjectRow({ project }: { project: ProjectRow }) {
 							<ArrowRight className="size-3.5" />
 						</Link>
 					</Button>
-					<ShareProjectDialog
-						projectId={project.id}
-						projectName={projectName}
-						projectKind={project.kind}
-					>
-						<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
-							<Share2 className="mr-1.5 size-3.5" />
-							Share
-						</Button>
-					</ShareProjectDialog>
+					{canShare ? (
+						<ShareProjectDialog
+							projectId={project.id}
+							projectName={projectName}
+							projectKind={project.kind}
+						>
+							<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
+								<Share2 className="mr-1.5 size-3.5" />
+								Share
+							</Button>
+						</ShareProjectDialog>
+					) : null}
 				</div>
 			</div>
 		</div>
 	);
 }
 
-function SharedProjectRow({ project }: { project: ProjectRow }) {
+function SharedProjectRow({
+	project,
+	agent,
+}: {
+	project: ProjectRow;
+	agent?: ProjectAgentMetadata | null;
+}) {
 	return (
 		<div className="group px-4 py-4 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/20">
 			<div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<div className="min-w-0">
-					<ProjectIdentity project={project} />
-					<p className="mt-1 text-xs text-muted-foreground">
+					<ProjectIdentity project={project} agent={agent} />
+					<p className="mt-1 pl-9 text-xs text-muted-foreground">
 						Viewer access is read-only. Attach it to an agent when you choose.
 					</p>
 				</div>
@@ -324,94 +471,58 @@ function SharedProjectRow({ project }: { project: ProjectRow }) {
 	);
 }
 
-function ProjectSummaryCards({
-	ownedCount,
-	sharedCount,
-	totalCount,
-	onCreate,
-}: {
-	ownedCount: number;
-	sharedCount: number;
-	totalCount: number;
-	onCreate: () => void;
-}) {
-	return (
-		<div className="grid gap-3 md:grid-cols-3">
-			<SummaryCard
-				icon={FolderOpen}
-				label="My Projects"
-				value={ownedCount}
-				description="Projects you own and can share."
-				action={
-					<Button variant="ghost" size="sm" onClick={onCreate} className="h-7 px-2">
-						<Plus className="size-3.5" />
-						New
-					</Button>
-				}
-			/>
-			<SummaryCard
-				icon={Users}
-				label="Shared With Me"
-				value={sharedCount}
-				description="Viewer access from other owners."
-			/>
-			<SummaryCard
-				icon={Bot}
-				label="Ready for Agents"
-				value={totalCount}
-				description="Available to use with agents when you choose."
-			/>
-		</div>
-	);
-}
-
-function SummaryCard({
-	icon: Icon,
-	label,
-	value,
-	description,
-	action,
-}: {
-	icon: LucideIcon;
-	label: string;
-	value: number;
-	description: string;
-	action?: React.ReactNode;
-}) {
-	return (
-		<div className="rounded-lg border bg-card/60 p-4">
-			<div className="flex items-start justify-between gap-3">
-				<div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-					<Icon className="size-4 text-muted-foreground" />
-					<span className="truncate">{label}</span>
-				</div>
-				{action}
-			</div>
-			<div className="mt-3 text-2xl font-semibold">{value}</div>
-			<p className="mt-1 text-xs text-muted-foreground">{description}</p>
-		</div>
-	);
-}
-
 function SectionHeader({
+	icon: Icon,
 	title,
 	count,
 	description,
+	toolbar,
+	priority = "secondary",
 }: {
+	icon: LucideIcon;
 	title: string;
-	count: number;
+	count: React.ReactNode;
 	description: string;
+	toolbar?: React.ReactNode;
+	priority?: ProjectSectionPriority;
 }) {
 	return (
-		<div className="space-y-1 px-1">
-			<div className="flex items-center gap-2">
-				<h2 className="text-base font-semibold">{title}</h2>
-				<Badge variant="secondary" className="text-xs">
-					{count}
-				</Badge>
+		<div
+			className={cn(
+				"flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-start sm:justify-between",
+				priority === "quiet" && "bg-muted/15",
+				priority === "primary" && "bg-muted/25",
+			)}
+		>
+			<div className="min-w-0 space-y-1">
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+						<Icon className="size-3.5" />
+					</span>
+					<h2 className="truncate text-base font-semibold">{title}</h2>
+					<Badge variant="secondary" className="text-xs">
+						{count}
+					</Badge>
+				</div>
+				<p className="max-w-3xl text-xs text-muted-foreground">{description}</p>
 			</div>
-			<p className="text-xs text-muted-foreground">{description}</p>
+			{toolbar ? (
+				<div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-0 sm:flex-row sm:items-center">
+					{toolbar}
+				</div>
+			) : null}
 		</div>
+	);
+}
+
+type ProjectSectionPriority = "primary" | "secondary" | "quiet";
+
+function NewProjectButton({ onClick }: { onClick: () => void }) {
+	return (
+		<Button size="sm" variant="outline" onClick={onClick}>
+			<Plus className="size-3.5" />
+			New Project
+		</Button>
 	);
 }
 
@@ -428,28 +539,56 @@ function normalizeSlugDraft(value: string) {
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {
-	const rank = (kind: string) => (kind === "workspace" ? 0 : kind === "personal" ? 1 : 2);
+	const rank = (kind: string) =>
+		kind === "workspace" ? 0 : kind === "personal" ? 1 : kind === "environment" ? 2 : 3;
 	const byRank = rank(a.kind) - rank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
 }
 
-function EmptyLine({
-	title,
-	message,
-	action,
-}: {
-	title: string;
-	message: string;
-	action?: React.ReactNode;
-}) {
+function filterProjects(
+	projects: ProjectRow[],
+	query: string,
+	agentsById: ReadonlyMap<string, ProjectAgentMetadata>,
+) {
+	const q = query.trim().toLowerCase();
+	if (!q) return projects;
+	return projects.filter((project) => {
+		const agent = projectAgentFor(project, agentsById);
+		return [
+			displayProjectName(project),
+			project.slug,
+			project.owner_display ?? "",
+			project.owner_handle ?? "",
+			agent?.machine_name ?? "",
+			agent?.agent_type ?? "",
+		]
+			.join(" ")
+			.toLowerCase()
+			.includes(q);
+	});
+}
+
+function ownedProjectDescription(project: ProjectRow) {
+	if (project.kind === "personal") {
+		return "Managed Project. Account default for resources that are not tied to one custom workflow or one agent.";
+	}
+	if (project.kind === "environment") {
+		return "Managed Project. Writable default for one connected agent.";
+	}
+	if (project.kind === "workspace") {
+		return "Custom Project. Add skills and vaults, invite people, share links, and attach it to agents.";
+	}
+	return "You own this Project. Open it to review resources.";
+}
+
+function EmptyLine({ title, message }: { title: string; message: string }) {
 	return (
-		<div className="flex flex-col gap-3 rounded-lg border border-dashed px-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+		<div className="rounded-lg border border-dashed px-4 py-6">
 			<div className="space-y-1">
 				<h3 className="text-sm font-medium">{title}</h3>
 				<p className="max-w-2xl text-sm text-muted-foreground">{message}</p>
 			</div>
-			{action ? <div className="shrink-0">{action}</div> : null}
 		</div>
 	);
 }

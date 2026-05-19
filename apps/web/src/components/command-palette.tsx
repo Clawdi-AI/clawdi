@@ -207,7 +207,7 @@ function CommandPalette({
 			open={open}
 			onOpenChange={onOpenChange}
 			title="Search"
-			description="Jump to resource paths or search sessions, memories, skills, and vaults."
+			description="Open a page or search sessions, memories, skills, and vaults."
 			// cmdk does its own filtering by default — we do server-side, so
 			// disable client filter and trust the API's ranking.
 			shouldFilter={false}
@@ -238,7 +238,7 @@ function CommandPalette({
 				) : null}
 
 				{navMatches.length > 0 ? (
-					<CommandGroup heading="Jump to resource path">
+					<CommandGroup heading="Open a Page">
 						{navMatches.map((s) => (
 							<CommandItem
 								key={s.href}

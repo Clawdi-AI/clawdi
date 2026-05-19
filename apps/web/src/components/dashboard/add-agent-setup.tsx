@@ -59,7 +59,7 @@ function useCopy(duration = 2000) {
 				setCopied(true);
 				setTimeout(() => setCopied(false), duration);
 			})
-			.catch((e) => toast.error("Copy failed", { description: errorMessage(e) }));
+			.catch((e) => toast.error("Copy Failed", { description: errorMessage(e) }));
 	};
 	return { copied, copy };
 }

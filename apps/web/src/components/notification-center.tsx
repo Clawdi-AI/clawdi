@@ -97,10 +97,10 @@ export function NotificationCenter() {
 		},
 		onSuccess: () => {
 			refetchMembershipDerived();
-			toast.success("Invitation declined");
+			toast.success("Invitation Declined");
 		},
 		onError: (e) => {
-			toast.error("Couldn't decline", {
+			toast.error("Couldn't Decline Invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -236,12 +236,12 @@ function NotificationCenterContent({
 										</div>
 									</div>
 									<Badge variant="outline" className="shrink-0">
-										viewer
+										Viewer
 									</Badge>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Open the project after accepting to review shared context. Attaching it to an
-									agent remains separate.
+									Open the Project after accepting to review shared resources. Attaching it to an
+									agent is a separate step.
 								</p>
 							</div>
 							<div className="flex justify-end gap-1.5">

@@ -277,6 +277,29 @@ async def test_agent_binding_attach_repairs_stale_primary_before_returning_conte
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
 
 
+async def test_agent_context_attach_rejects_managed_projects(
+    client,
+    db_session,
+    seed_user,
+    seed_project,
+    environment_project,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"reject-managed-{uuid.uuid4().hex[:8]}",
+        machine_name="atlas",
+    )
+
+    for project in (seed_project, environment_project):
+        response = await client.post(
+            f"/api/agents/{env.id}/project-bindings/context",
+            json={"project_id": str(project.id)},
+        )
+        assert response.status_code == 400, response.text
+        assert "Only Custom Projects" in response.text
+
+
 async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
     client,
     db_session,

@@ -2,7 +2,16 @@
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Sparkles } from "lucide-react";
+import {
+	AlertCircle,
+	Check,
+	Download,
+	ExternalLink,
+	FolderKanban,
+	Plus,
+	Search,
+	Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
@@ -12,6 +21,7 @@ import { PageHeader } from "@/components/page-header";
 import {
 	compareProjectsForUse,
 	displayProjectName,
+	isCustomProject,
 	isProjectOwner,
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
@@ -192,10 +202,12 @@ function SkillsPageInner() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success(`Uninstalled ${vars.skillKey} from ${targetProjectLabel}.`);
+			toast.success("Skill Uninstalled", {
+				description: `${vars.skillKey} was removed from ${targetProjectLabel}.`,
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(
@@ -269,7 +281,7 @@ function SkillsPageInner() {
 				title="Skills"
 				description={SKILLS_RESOURCE.managementDescription}
 				actions={
-					targetProject && isProjectOwner(targetProject) ? (
+					targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject) ? (
 						<ShareProjectDialog
 							projectId={targetProject.id}
 							projectName={displayProjectName(targetProject)}
@@ -308,14 +320,33 @@ function SkillsPageInner() {
 			) : null}
 
 			{orderedProjects.length > 0 ? (
-				<ProjectScopePicker
-					projects={orderedProjects}
-					value={targetProjectId ?? ""}
-					onValueChange={(projectId) => {
-						void setProjectParam(projectId);
-						void setTargetEnvId("");
-					}}
-				/>
+				<section className="rounded-lg border bg-card/60 p-4">
+					<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] lg:items-start">
+						<div className="flex items-start gap-2">
+							<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+								<FolderKanban className="size-3.5" />
+							</span>
+							<div className="min-w-0">
+								<h2 className="text-sm font-semibold">Current Project</h2>
+								<p className="mt-0.5 text-xs text-muted-foreground">
+									Skills are installed into one Project. Pick the Project first, then install or
+									remove skills below.
+								</p>
+							</div>
+						</div>
+						<ProjectScopePicker
+							projects={orderedProjects}
+							agents={envs ?? []}
+							value={targetProjectId ?? ""}
+							onValueChange={(projectId) => {
+								void setProjectParam(projectId);
+								void setTargetEnvId("");
+							}}
+							label="Project"
+							layout="stacked"
+						/>
+					</div>
+				</section>
 			) : null}
 
 			{!canWriteTargetProject && targetProject ? (
@@ -332,7 +363,7 @@ function SkillsPageInner() {
 			<section className="space-y-2">
 				<div className="flex items-baseline justify-between gap-3">
 					<h2 className="text-base font-semibold">
-						Skills in this Project
+						Installed Skills
 						{skillsForTarget ? (
 							<span className="ml-2 text-sm font-normal text-muted-foreground">
 								{skillsForTarget.length}
@@ -359,71 +390,73 @@ function SkillsPageInner() {
 				/>
 			</section>
 
-			{/* Install row. Custom GitHub repo on the left, install
-			    button on the right. The featured tiles below are
-			    one-click installs. Both routes hit the same
-			    install action. */}
-			<section className="space-y-3">
-				{/* "More on skills.sh" lives in the section heading
-				    rather than the page header — install is the only
-				    place that link is actually useful, so it sits with
-				    the other install controls instead of double-billing
-				    the page header. */}
-				<div className="flex items-baseline justify-between gap-3">
-					<h2 className="text-base font-semibold">Install more</h2>
+			<section className="rounded-lg border bg-card/60 p-4">
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+					<div className="min-w-0">
+						<h2 className="text-base font-semibold">Add a Skill</h2>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Installs into{" "}
+							{targetProject ? displayProjectName(targetProject) : "the selected Project"}. Use an
+							owner/repo path, or pick one of the suggested skills below.
+						</p>
+					</div>
 					<a
 						href="https://skills.sh"
 						target="_blank"
 						rel="noopener noreferrer"
-						className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
 					>
 						More on skills.sh <ExternalLink className="size-3" />
 					</a>
 				</div>
-				<div className="flex flex-wrap items-center gap-2">
-					<div className="relative min-w-[280px] flex-1">
-						<Label htmlFor="skill-custom-repo" className="sr-only">
-							GitHub skill repository
-						</Label>
-						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							id="skill-custom-repo"
-							name="skill-custom-repo"
-							value={customRepo}
-							onChange={(e) => {
-								setCustomRepo(e.target.value);
-								setCustomRepoError(null);
-								setInstallError(null);
-							}}
-							placeholder="owner/repo or owner/repo/path…"
-							autoComplete="off"
-							spellCheck={false}
-							className="pl-9"
-							onKeyDown={(e) => {
-								if (e.key === "Enter") handleCustom();
-							}}
-							aria-invalid={!!customRepoError || undefined}
-						/>
+				<div className="mt-3 grid gap-1.5">
+					<Label htmlFor="skill-custom-repo" className="text-xs font-medium">
+						GitHub skill repository
+					</Label>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<div className="relative min-w-0 flex-1">
+							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+							<Input
+								id="skill-custom-repo"
+								name="skill-custom-repo"
+								value={customRepo}
+								onChange={(e) => {
+									setCustomRepo(e.target.value);
+									setCustomRepoError(null);
+									setInstallError(null);
+								}}
+								placeholder="owner/repo or owner/repo/path…"
+								autoComplete="off"
+								spellCheck={false}
+								className="pl-9"
+								onKeyDown={(e) => {
+									if (e.key === "Enter") handleCustom();
+								}}
+								aria-invalid={!!customRepoError || undefined}
+							/>
+						</div>
+						<Button
+							onClick={handleCustom}
+							disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
+							variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
+							className="sm:w-auto"
+						>
+							{installing && customRepo ? <Spinner /> : <Plus />}
+							Install Skill
+						</Button>
 					</div>
-					<Button
-						onClick={handleCustom}
-						disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
-					>
-						{installing && customRepo ? <Spinner /> : <Plus />}
-						Install
-					</Button>
 				</div>
 				{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
 				{installError ? (
 					<Alert variant="destructive">
-						<AlertTitle>Install failed</AlertTitle>
+						<AlertTitle>Install Failed</AlertTitle>
 						<AlertDescription>{installError}</AlertDescription>
 					</Alert>
 				) : null}
 
-				<div className="space-y-2">
+				<div className="mt-4 space-y-2">
 					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Featured
+						Suggested Skills
 					</p>
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{FEATURED_SKILLS.map((skill) => {
