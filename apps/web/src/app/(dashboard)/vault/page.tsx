@@ -2,10 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, FolderKanban, Key, Lock, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Lock, Plus, Trash2, X } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -13,7 +18,7 @@ import {
 	displayProjectName,
 	isProjectOwner,
 	type ProjectAgentMetadata,
-	ProjectIcon,
+	ProjectCompactPicker,
 	ProjectIdentity,
 	ProjectScopePicker,
 	projectAgentFor,
@@ -34,13 +39,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
@@ -351,34 +349,31 @@ function VaultPageInner() {
 				}}
 			/>
 
-			<section className="overflow-hidden rounded-lg border bg-card/60">
-				<div className="flex flex-col gap-3 border-b bg-muted/20 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-					<div className="min-w-0 space-y-1">
-						<div className="flex min-w-0 items-center gap-2">
-							<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-								<Key className="size-3.5" />
-							</span>
-							<h2 className="truncate text-base font-semibold">Vault Inventory</h2>
-							{vaults ? (
-								<Badge variant="secondary" className="text-xs">
-									{ownedVaultCatalog.length} mine · {sharedVaultCatalog.length} shared
-								</Badge>
-							) : null}
-						</div>
-						<p className="max-w-3xl text-xs text-muted-foreground">
-							{filterProject
-								? `Showing Vaults attached to ${displayProjectName(filterProject)}.`
-								: "My Vaults are editable. Shared With Me is read-only."}
-						</p>
-					</div>
-				</div>
-				<div className="border-b bg-background/40 px-4 py-3">
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Key}
+					title="Vault Inventory"
+					count={
+						vaults
+							? `${ownedVaultCatalog.length} mine · ${sharedVaultCatalog.length} shared`
+							: undefined
+					}
+					description={
+						filterProject
+							? `Showing Vaults attached to ${displayProjectName(filterProject)}.`
+							: "My Vaults are editable. Shared With Me is read-only."
+					}
+				/>
+				<DashboardSectionToolbar>
 					<div className="grid gap-2 lg:grid-cols-[minmax(260px,360px)_minmax(220px,1fr)_auto] lg:items-center">
-						<VaultProjectFilter
+						<ProjectCompactPicker
 							projects={orderedProjects}
-							agentsById={agentsById}
+							agents={envs ?? []}
 							value={projectFilter}
 							onValueChange={(value) => void setProjectFilter(value)}
+							allowAll
+							allLabel="All Projects"
+							allDescription="Show every Vault you can read"
 							disabled={!orderedProjects.length}
 						/>
 						<SearchInput
@@ -398,7 +393,7 @@ function VaultPageInner() {
 							Create Vault
 						</Button>
 					</div>
-				</div>
+				</DashboardSectionToolbar>
 
 				{isLoading ? (
 					<div className="grid xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
@@ -451,7 +446,7 @@ function VaultPageInner() {
 						/>
 					</div>
 				)}
-			</section>
+			</DashboardSection>
 		</div>
 	);
 }
@@ -579,91 +574,6 @@ function CreateVaultDialog({
 	);
 }
 
-function VaultProjectFilter({
-	projects,
-	agentsById,
-	value,
-	onValueChange,
-	disabled,
-}: {
-	projects: VaultProjectMetadata[];
-	agentsById: ReadonlyMap<string, ProjectAgentMetadata>;
-	value: string;
-	onValueChange: (value: string) => void;
-	disabled?: boolean;
-}) {
-	const selectedProject = projects.find((project) => project.id === value) ?? null;
-	return (
-		<Select value={value} onValueChange={onValueChange} disabled={disabled}>
-			<SelectTrigger
-				aria-label="Project filter"
-				className="h-9 w-full min-w-0 justify-between border-border/80 bg-background/70 px-3 shadow-xs"
-			>
-				{selectedProject ? (
-					<span className="flex min-w-0 items-center gap-2 text-left">
-						<ProjectIcon project={selectedProject} className="mt-0 size-5 rounded-md" />
-						<span className="min-w-0 truncate font-medium">
-							{displayProjectName(selectedProject)}
-						</span>
-						<span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-							{projectFilterKindLabel(selectedProject)}
-						</span>
-					</span>
-				) : value === "all" ? (
-					<span className="flex min-w-0 items-center gap-2 text-left">
-						<span className="flex size-5 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-							<FolderKanban className="size-3" />
-						</span>
-						<span className="truncate font-medium">All Projects</span>
-					</span>
-				) : (
-					<SelectValue placeholder="Project" />
-				)}
-			</SelectTrigger>
-			<SelectContent
-				position="popper"
-				align="start"
-				className="w-[var(--radix-select-trigger-width)] min-w-[min(420px,calc(100vw-2rem))]"
-			>
-				<SelectItem value="all" className="py-2">
-					<div className="flex min-w-0 items-center gap-2">
-						<span className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-							<FolderKanban className="size-3.5" />
-						</span>
-						<div className="min-w-0">
-							<div className="truncate font-medium">All Projects</div>
-							<div className="truncate text-xs text-muted-foreground">
-								Show every vault you can read
-							</div>
-						</div>
-					</div>
-				</SelectItem>
-				{projects.map((project) =>
-					project.id ? (
-						<SelectItem key={project.id} value={project.id} className="py-2">
-							<ProjectIdentity
-								project={project}
-								agent={projectAgentFor(project, agentsById)}
-								showOwner={false}
-								showAccess
-								titleClassName="text-sm"
-							/>
-						</SelectItem>
-					) : null,
-				)}
-			</SelectContent>
-		</Select>
-	);
-}
-
-function projectFilterKindLabel(project: VaultProjectMetadata) {
-	if (project.is_owner === false) return "Shared";
-	if (project.kind === "workspace" || !project.kind) return "Custom";
-	if (project.kind === "personal") return "Global";
-	if (project.kind === "environment") return "Agent";
-	return "Project";
-}
-
 function VaultInventoryList({
 	ownedEntries,
 	sharedEntries,
@@ -678,9 +588,9 @@ function VaultInventoryList({
 	return (
 		<aside className="overflow-hidden border-b bg-background/20 xl:border-r xl:border-b-0">
 			<div className="border-b p-4">
-				<h3 className="text-sm font-semibold">Choose Vault</h3>
+				<h3 className="text-sm font-semibold">Vaults</h3>
 				<p className="mt-1 text-xs text-muted-foreground">
-					Editable Vaults are yours. Shared Vaults come from Projects shared with you.
+					Select a Vault to review its keys and Project availability.
 				</p>
 			</div>
 			<div className="divide-y">
@@ -1271,7 +1181,7 @@ function AttachedProjectsPanel({
 				) : null}
 			</div>
 			{visibleAttachments.length > 0 ? (
-				<div className="grid gap-2 md:grid-cols-2">
+				<div className={cn("grid gap-2", visibleAttachments.length > 1 && "md:grid-cols-2")}>
 					{visibleAttachments.map((attachment) => (
 						<VaultProjectAttachmentRow
 							key={attachment.projectId}

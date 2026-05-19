@@ -312,6 +312,100 @@ export function ProjectScopePicker({
 	);
 }
 
+export function ProjectCompactPicker({
+	projects,
+	agents,
+	value,
+	onValueChange,
+	allowAll = false,
+	allLabel = "All Projects",
+	allDescription = "Show every Project you can read",
+	placeholder = "Project",
+	ariaLabel = "Project filter",
+	disabled,
+	className,
+}: {
+	projects: ProjectMetadata[];
+	agents?: ProjectAgentMetadata[];
+	value: string;
+	onValueChange: (value: string) => void;
+	allowAll?: boolean;
+	allLabel?: string;
+	allDescription?: string;
+	placeholder?: string;
+	ariaLabel?: string;
+	disabled?: boolean;
+	className?: string;
+}) {
+	const selectedProject = projects.find((project) => project.id === value) ?? null;
+	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
+	return (
+		<Select value={value} onValueChange={onValueChange} disabled={disabled}>
+			<SelectTrigger
+				aria-label={ariaLabel}
+				className={cn(
+					"h-9 w-full min-w-0 justify-between border-border/80 bg-background/70 px-3 shadow-xs",
+					className,
+				)}
+			>
+				{selectedProject ? (
+					<span className="flex min-w-0 items-center gap-2 text-left">
+						<ProjectIcon project={selectedProject} className="mt-0 size-5 rounded-md" />
+						<span className="min-w-0 truncate font-medium">
+							{displayProjectName(selectedProject)}
+						</span>
+						<span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+							{projectCompactKindText(selectedProject)}
+						</span>
+					</span>
+				) : value === "all" && allowAll ? (
+					<span className="flex min-w-0 items-center gap-2 text-left">
+						<span className="flex size-5 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+							<FolderKanban className="size-3" />
+						</span>
+						<span className="truncate font-medium">{allLabel}</span>
+					</span>
+				) : (
+					<SelectValue placeholder={placeholder} />
+				)}
+			</SelectTrigger>
+			<SelectContent
+				position="popper"
+				align="start"
+				className="w-[var(--radix-select-trigger-width)] min-w-[min(420px,calc(100vw-2rem))]"
+			>
+				{allowAll ? (
+					<SelectItem value="all" className="py-2">
+						<div className="flex min-w-0 items-center gap-2">
+							<span className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+								<FolderKanban className="size-3.5" />
+							</span>
+							<div className="min-w-0">
+								<div className="truncate font-medium">{allLabel}</div>
+								<div className="truncate text-xs text-muted-foreground">{allDescription}</div>
+							</div>
+						</div>
+					</SelectItem>
+				) : null}
+				{allowAll && projects.length > 0 ? <SelectSeparator /> : null}
+				{projects.map((project) =>
+					project.id ? (
+						<SelectItem key={project.id} value={project.id} className="py-2">
+							<ProjectIdentity
+								project={project}
+								agent={projectAgentFor(project, agentsById)}
+								showOwner={false}
+								showAccess
+								titleClassName="text-sm"
+							/>
+						</SelectItem>
+					) : null,
+				)}
+			</SelectContent>
+		</Select>
+	);
+}
+
 function ProjectPickerValue({
 	project,
 	agent,
@@ -409,6 +503,14 @@ function projectPickerTypeText(project: ProjectMetadata) {
 	if (project.kind === "workspace" || !project.kind) return "Custom Project";
 	if (project.kind === "personal") return "Global Project";
 	if (project.kind === "environment") return "Agent Project";
+	return "Project";
+}
+
+function projectCompactKindText(project: ProjectMetadata) {
+	if (project.is_owner === false) return "Shared";
+	if (project.kind === "workspace" || !project.kind) return "Custom";
+	if (project.kind === "personal") return "Global";
+	if (project.kind === "environment") return "Agent";
 	return "Project";
 }
 

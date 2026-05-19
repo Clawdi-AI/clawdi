@@ -15,6 +15,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+	DashboardEmptyLine,
+	DashboardSection,
+	DashboardSectionHeader,
+	type DashboardSectionPriority,
+} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
 import {
 	displayProjectName,
@@ -27,7 +33,6 @@ import {
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -43,7 +48,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
-import { cn, errorMessage } from "@/lib/utils";
+import { errorMessage } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -302,8 +307,8 @@ export default function ProjectsPage() {
 				/>
 			) : null}
 
-			<section className="overflow-hidden rounded-lg border bg-card/60">
-				<SectionHeader
+			<DashboardSection>
+				<DashboardSectionHeader
 					icon={Users}
 					title="Shared With Me"
 					count={sharedProjects.length}
@@ -311,7 +316,7 @@ export default function ProjectsPage() {
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
-					<EmptyLine
+					<DashboardEmptyLine
 						title="No Shared Projects Yet"
 						message="Accepted invites and share links appear here with Viewer access. Pending invites are in the inbox in the top bar."
 					/>
@@ -326,7 +331,7 @@ export default function ProjectsPage() {
 						))}
 					</div>
 				)}
-			</section>
+			</DashboardSection>
 		</div>
 	);
 }
@@ -354,16 +359,11 @@ function ProjectGroupSection({
 	emptyMessage: string;
 	toolbar?: React.ReactNode;
 	compact?: boolean;
-	priority?: ProjectSectionPriority;
+	priority?: DashboardSectionPriority;
 }) {
 	return (
-		<section
-			className={cn(
-				"overflow-hidden rounded-lg border bg-card/60",
-				priority === "primary" && "border-foreground/15 bg-card",
-			)}
-		>
-			<SectionHeader
+		<DashboardSection priority={priority}>
+			<DashboardSectionHeader
 				icon={icon}
 				title={title}
 				count={count}
@@ -372,7 +372,7 @@ function ProjectGroupSection({
 				priority={priority}
 			/>
 			{projects.length === 0 ? (
-				<EmptyLine title={emptyTitle} message={emptyMessage} />
+				<DashboardEmptyLine title={emptyTitle} message={emptyMessage} />
 			) : (
 				<div className="divide-y">
 					{projects.map((project) => (
@@ -385,7 +385,7 @@ function ProjectGroupSection({
 					))}
 				</div>
 			)}
-		</section>
+		</DashboardSection>
 	);
 }
 
@@ -471,52 +471,6 @@ function SharedProjectRow({
 	);
 }
 
-function SectionHeader({
-	icon: Icon,
-	title,
-	count,
-	description,
-	toolbar,
-	priority = "secondary",
-}: {
-	icon: LucideIcon;
-	title: string;
-	count: React.ReactNode;
-	description: string;
-	toolbar?: React.ReactNode;
-	priority?: ProjectSectionPriority;
-}) {
-	return (
-		<div
-			className={cn(
-				"flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-start sm:justify-between",
-				priority === "quiet" && "bg-muted/15",
-				priority === "primary" && "bg-muted/25",
-			)}
-		>
-			<div className="min-w-0 space-y-1">
-				<div className="flex min-w-0 items-center gap-2">
-					<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-						<Icon className="size-3.5" />
-					</span>
-					<h2 className="truncate text-base font-semibold">{title}</h2>
-					<Badge variant="secondary" className="text-xs">
-						{count}
-					</Badge>
-				</div>
-				<p className="max-w-3xl text-xs text-muted-foreground">{description}</p>
-			</div>
-			{toolbar ? (
-				<div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-0 sm:flex-row sm:items-center">
-					{toolbar}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-type ProjectSectionPriority = "primary" | "secondary" | "quiet";
-
 function NewProjectButton({ onClick }: { onClick: () => void }) {
 	return (
 		<Button size="sm" variant="outline" onClick={onClick}>
@@ -580,15 +534,4 @@ function ownedProjectDescription(project: ProjectRow) {
 		return "Custom Project. Add skills and vaults, invite people, share links, and attach it to agents.";
 	}
 	return "You own this Project. Open it to review resources.";
-}
-
-function EmptyLine({ title, message }: { title: string; message: string }) {
-	return (
-		<div className="rounded-lg border border-dashed px-4 py-6">
-			<div className="space-y-1">
-				<h3 className="text-sm font-medium">{title}</h3>
-				<p className="max-w-2xl text-sm text-muted-foreground">{message}</p>
-			</div>
-		</div>
-	);
 }
