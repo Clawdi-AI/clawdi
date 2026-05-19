@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, Eye, Key, type LucideIcon, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Key, Plus, Trash2, X } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import {
 	compareProjectsForUse,
+	displayProjectName,
 	isProjectOwner,
 	ProjectIdentity,
 	ProjectScopePicker,
@@ -32,6 +33,17 @@ interface VaultField {
 	key: string;
 	name: string;
 	section: string;
+}
+
+interface VaultProjectMetadata {
+	id?: string;
+	name: string;
+	slug: string;
+	kind?: string;
+	origin_environment_id?: string | null;
+	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
 }
 
 const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
@@ -120,6 +132,28 @@ function VaultPageInner() {
 		if (createProjectId !== nextProjectId) setCreateProjectId(nextProjectId);
 	}, [createProjectId, filterProjectId, ownedProjects]);
 	const createProject = projectsById.get(createProjectId) ?? null;
+	const vaultGroups = useMemo(() => {
+		const byProject = new Map<string, Vault[]>();
+		for (const vault of vaults ?? []) {
+			const rows = byProject.get(vault.project_id) ?? [];
+			rows.push(vault);
+			byProject.set(vault.project_id, rows);
+		}
+
+		const orderedIds = orderedProjects
+			.map((project) => project.id)
+			.filter((projectId): projectId is string => !!projectId && byProject.has(projectId));
+		for (const projectId of byProject.keys()) {
+			if (!orderedIds.includes(projectId)) orderedIds.push(projectId);
+		}
+
+		return orderedIds.map((projectId) => ({
+			projectId,
+			project: projectsById.get(projectId),
+			vaults: byProject.get(projectId) ?? [],
+			readOnly: ownedProjectIds ? !ownedProjectIds.has(projectId) : true,
+		}));
+	}, [orderedProjects, ownedProjectIds, projectsById, vaults]);
 
 	const createVault = useMutation({
 		mutationFn: async ({ slug, projectId }: { slug: string; projectId: string }) =>
@@ -129,9 +163,13 @@ function VaultPageInner() {
 					body: { slug, name: slug },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (_created, variables) => {
 			setNewVaultSlug("");
 			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+			void setProjectFilter(variables.projectId);
+			const project = projectsById.get(variables.projectId);
+			const projectName = project ? displayProjectName(project) : "the selected Project";
+			toast.success("Vault Created", { description: `Saved in ${projectName}.` });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
@@ -148,7 +186,7 @@ function VaultPageInner() {
 	});
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className="mx-auto max-w-7xl space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Vaults"
 				description={VAULTS_RESOURCE.managementDescription}
@@ -161,71 +199,70 @@ function VaultPageInner() {
 				}
 			/>
 
-			<div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,460px)]">
-				<section className="rounded-lg border bg-card/60 p-4">
-					<TaskHeader
-						icon={Eye}
-						title="View Vaults"
-						description="Choose a Project to see the vaults and keys available there."
-					/>
-					<ProjectScopePicker
-						projects={orderedProjects}
-						agents={envs ?? []}
-						value={projectFilter}
-						onValueChange={(value) => void setProjectFilter(value)}
-						allowAll
-						allLabel="All Readable Projects"
-						allDescription="Show every vault you can read"
-						label="Project"
-						layout="stacked"
-						disabled={!orderedProjects.length}
-					/>
-					{filterProject ? (
-						<p className="mt-2 text-xs text-muted-foreground">
-							{isProjectOwner(filterProject)
-								? "You can create and edit vaults in this Project."
-								: "This shared Project is read-only for you."}
-						</p>
-					) : null}
-				</section>
+			<section className="rounded-lg border bg-card/60">
+				<div className="grid gap-5 p-4 lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)] lg:items-start">
+					<div className="grid gap-2">
+						<ProjectScopePicker
+							projects={orderedProjects}
+							agents={envs ?? []}
+							value={projectFilter}
+							onValueChange={(value) => void setProjectFilter(value)}
+							allowAll
+							allLabel="All Projects"
+							allDescription="Vaults you can read"
+							label="Project filter"
+							layout="stacked"
+							disabled={!orderedProjects.length}
+						/>
+						{filterProject ? (
+							<p className="text-xs text-muted-foreground">
+								{isProjectOwner(filterProject)
+									? "You own this Project, so vaults here can be edited."
+									: "This shared Project is read-only for you."}
+							</p>
+						) : (
+							<p className="text-xs text-muted-foreground">
+								All readable vaults appear below, grouped by Project.
+							</p>
+						)}
+					</div>
 
-				<section className="rounded-lg border bg-card/60 p-4">
-					<TaskHeader
-						icon={Plus}
-						title="New Vault"
-						description="Pick where to save it, then give the vault a short name."
-					/>
-					{ownedProjects.length > 0 ? (
-						<div className="grid gap-3">
-							{ownedProjects.length > 1 ? (
-								<ProjectScopePicker
-									projects={ownedProjects}
-									agents={envs ?? []}
-									value={createProjectId}
-									onValueChange={setCreateProjectId}
-									label="Save in Project"
-									layout="stacked"
-									disabled={!ownedProjects.length}
-								/>
-							) : createProject ? (
-								<div className="grid gap-1.5">
-									<Label className="text-xs font-medium">Save in Project</Label>
-									<div className="rounded-md border bg-background/60 px-3 py-2">
-										<ProjectIdentity
-											project={createProject}
-											agent={projectAgentFor(createProject, agentsById)}
-											showOwner={false}
-											showAccess={false}
-											titleClassName="text-sm"
-										/>
+					<div className="grid gap-3 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
+						<div className="grid gap-0.5">
+							<h2 className="text-sm font-semibold">Create Vault</h2>
+							<p className="text-xs text-muted-foreground">
+								Choose the owning Project, name the vault, then add keys inside it.
+							</p>
+						</div>
+						{ownedProjects.length > 0 ? (
+							<form
+								className="grid gap-3 2xl:grid-cols-[minmax(260px,360px)_minmax(220px,1fr)_auto] 2xl:items-start"
+								onSubmit={(event) => {
+									event.preventDefault();
+									if (!newVaultSlug || !createProjectId || createVault.isPending) return;
+									createVault.mutate({ slug: newVaultSlug, projectId: createProjectId });
+								}}
+							>
+								{ownedProjects.length > 1 ? (
+									<ProjectScopePicker
+										projects={ownedProjects}
+										agents={envs ?? []}
+										value={createProjectId}
+										onValueChange={setCreateProjectId}
+										label="Create vault in"
+										layout="stacked"
+										disabled={!ownedProjects.length}
+									/>
+								) : createProject ? (
+									<div className="grid gap-1.5">
+										<Label className="text-xs font-medium">Create vault in</Label>
+										<SelectedProjectTile project={createProject} agentsById={agentsById} />
 									</div>
-								</div>
-							) : null}
-							<div className="grid gap-1.5">
-								<Label htmlFor="new-vault-slug" className="text-xs font-medium">
-									Vault name
-								</Label>
-								<div className="flex flex-col gap-2 sm:flex-row">
+								) : null}
+								<div className="grid gap-1.5">
+									<Label htmlFor="new-vault-slug" className="text-xs font-medium">
+										Vault name
+									</Label>
 									<Input
 										id="new-vault-slug"
 										name="new-vault-slug"
@@ -233,47 +270,37 @@ function VaultPageInner() {
 										onChange={(e) =>
 											setNewVaultSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
 										}
-										placeholder="github…"
+										placeholder="github"
 										autoComplete="off"
 										spellCheck={false}
-										className="min-w-0 flex-1"
-										onKeyDown={(e) => {
-											if (e.key === "Enter" && newVaultSlug && createProjectId) {
-												createVault.mutate({ slug: newVaultSlug, projectId: createProjectId });
-											}
-										}}
+										className="min-w-0"
 									/>
-									<Button
-										onClick={() =>
-											newVaultSlug && createProjectId
-												? createVault.mutate({ slug: newVaultSlug, projectId: createProjectId })
-												: undefined
-										}
-										disabled={!newVaultSlug || !createProjectId || createVault.isPending}
-										variant={newVaultSlug && createProjectId ? "default" : "outline"}
-										className="sm:w-auto"
-									>
-										{createVault.isPending ? <Spinner /> : <Plus />}
-										{createVault.isPending ? "Creating…" : "Create Vault"}
-									</Button>
+									<p className="text-xs text-muted-foreground">
+										Use lowercase letters, numbers, and hyphens.
+									</p>
 								</div>
-								<p className="text-xs text-muted-foreground">
-									Use lowercase letters, numbers, and hyphens. Keys can be added after the vault is
-									created.
-								</p>
-							</div>
-						</div>
-					) : (
-						<Alert>
-							<AlertCircle />
-							<AlertTitle>No Writable Projects</AlertTitle>
-							<AlertDescription>
-								You need Owner access to a Project before you can create vaults.
-							</AlertDescription>
-						</Alert>
-					)}
-				</section>
-			</div>
+								<Button
+									type="submit"
+									disabled={!newVaultSlug || !createProjectId || createVault.isPending}
+									variant={newVaultSlug && createProjectId ? "default" : "outline"}
+									className="w-full 2xl:mt-5 2xl:w-auto"
+								>
+									{createVault.isPending ? <Spinner /> : <Plus />}
+									{createVault.isPending ? "Creating…" : "Create Vault"}
+								</Button>
+							</form>
+						) : (
+							<Alert>
+								<AlertCircle />
+								<AlertTitle>No Writable Projects</AlertTitle>
+								<AlertDescription>
+									You need Owner access to a Project before you can create vaults.
+								</AlertDescription>
+							</Alert>
+						)}
+					</div>
+				</div>
+			</section>
 
 			{error ? (
 				<Alert variant="destructive">
@@ -310,89 +337,155 @@ function VaultPageInner() {
 				</Alert>
 			) : null}
 
-			{/* Vault list — flat sections, no per-vault outer card. Skeleton
-			    mirrors the actual shape: heading line + 3 table-row bars. */}
-			{isLoading || (!vaultsEnabled && !isStaleProjectFilter) ? (
-				<div className="space-y-6">
-					{Array.from({ length: 2 }).map((_, i) => (
-						<div key={i} className="space-y-2">
-							<Skeleton className="h-4 w-24" />
-							<Skeleton className="h-24 w-full rounded-lg" />
-						</div>
-					))}
+			<section className="grid gap-3">
+				<div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<h2 className="text-base font-semibold">Vaults by Project</h2>
+						<p className="text-sm text-muted-foreground">
+							{filterProject
+								? `Showing vaults in ${displayProjectName(filterProject)}.`
+								: "Showing every vault you can read, grouped by Project."}
+						</p>
+					</div>
+					{vaults ? (
+						<Badge variant="secondary">
+							{vaults.length} vault{vaults.length === 1 ? "" : "s"}
+						</Badge>
+					) : null}
 				</div>
-			) : vaults?.length ? (
-				<div className="space-y-6">
-					{vaults.map((v) => {
-						const isReadOnly = !ownedProjectIds?.has(v.project_id);
-						return (
-							<VaultCard
-								key={v.id}
-								vault={v}
-								project={projectsById.get(v.project_id)}
-								showProject={!filterProjectId}
-								readOnly={isReadOnly}
-								onDelete={() => deleteVault.mutate({ slug: v.slug, project_id: v.project_id })}
+
+				{isLoading || (!vaultsEnabled && !isStaleProjectFilter) ? (
+					<div className="space-y-4">
+						{Array.from({ length: 2 }).map((_, i) => (
+							<div key={i} className="rounded-lg border bg-card/60 p-4">
+								<Skeleton className="h-12 w-full" />
+								<Skeleton className="mt-3 h-24 w-full rounded-lg" />
+							</div>
+						))}
+					</div>
+				) : vaults?.length ? (
+					<div className="space-y-4">
+						{vaultGroups.map((group) => (
+							<VaultProjectGroup
+								key={group.projectId}
+								project={group.project}
+								agent={group.project ? projectAgentFor(group.project, agentsById) : null}
+								vaults={group.vaults}
+								readOnly={group.readOnly}
+								onDelete={(vault) =>
+									deleteVault.mutate({ slug: vault.slug, project_id: vault.project_id })
+								}
 								isDeleting={deleteVault.isPending}
 							/>
-						);
-					})}
-				</div>
-			) : (
-				<EmptyState
-					icon={Key}
-					title={filterProject ? "No vaults in this Project yet" : "No vaults yet"}
-					description={
-						filterProject
-							? "Create one above to store API keys inside this Project."
-							: "Create one above to store API keys for your AI to use."
-					}
-				/>
-			)}
+						))}
+					</div>
+				) : (
+					<EmptyState
+						icon={Key}
+						title={filterProject ? "No vaults in this Project yet" : "No vaults yet"}
+						description={
+							filterProject
+								? "Create one above to store API keys inside this Project."
+								: "Create one above to store API keys for your AI to use."
+						}
+					/>
+				)}
+			</section>
 		</div>
 	);
 }
 
-function TaskHeader({
-	icon: Icon,
-	title,
-	description,
+function SelectedProjectTile({
+	project,
+	agentsById,
 }: {
-	icon: LucideIcon;
-	title: string;
-	description: string;
+	project: VaultProjectMetadata;
+	agentsById: ReadonlyMap<
+		string,
+		{ id: string; machine_name?: string | null; agent_type?: string | null }
+	>;
 }) {
 	return (
-		<div className="mb-3 flex items-start gap-2">
-			<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-				<Icon className="size-3.5" />
-			</span>
-			<div className="min-w-0">
-				<h2 className="text-sm font-semibold">{title}</h2>
-				<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-			</div>
+		<div className="rounded-[10px] border border-border/80 bg-background/70 px-3 py-2.5">
+			<ProjectIdentity
+				project={project}
+				agent={projectAgentFor(project, agentsById)}
+				showOwner={false}
+				showAccess={false}
+				titleClassName="text-sm"
+			/>
 		</div>
+	);
+}
+
+function VaultProjectGroup({
+	project,
+	agent,
+	vaults,
+	readOnly,
+	onDelete,
+	isDeleting,
+}: {
+	project?: VaultProjectMetadata;
+	agent?: { id: string; machine_name?: string | null; agent_type?: string | null } | null;
+	vaults: Vault[];
+	readOnly: boolean;
+	onDelete: (vault: Vault) => void;
+	isDeleting: boolean;
+}) {
+	return (
+		<section className="overflow-hidden rounded-lg border bg-card/60">
+			<div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+				{project ? (
+					<ProjectIdentity
+						project={project}
+						agent={agent}
+						showOwner={false}
+						showAccess={!isProjectOwner(project)}
+						titleClassName="text-sm"
+					/>
+				) : (
+					<div className="min-w-0">
+						<h3 className="text-sm font-semibold">Unknown Project</h3>
+						<p className="text-xs text-muted-foreground">
+							These vaults belong to a Project that is no longer listed.
+						</p>
+					</div>
+				)}
+				<div className="flex flex-wrap items-center gap-2">
+					<Badge variant="secondary">
+						{vaults.length} vault{vaults.length === 1 ? "" : "s"}
+					</Badge>
+					{readOnly ? (
+						<Badge variant="outline" title="Viewer access is read-only.">
+							Read-only
+						</Badge>
+					) : null}
+				</div>
+			</div>
+			<div className="divide-y">
+				{vaults.map((vault) => (
+					<div key={vault.id} className="p-4">
+						<VaultCard
+							vault={vault}
+							readOnly={readOnly}
+							onDelete={() => onDelete(vault)}
+							isDeleting={isDeleting}
+						/>
+					</div>
+				))}
+			</div>
+		</section>
 	);
 }
 
 function VaultCard({
 	vault,
-	project,
-	showProject = false,
 	readOnly = false,
 	onDelete,
 	isDeleting,
 }: {
 	vault: Vault;
-	project?: {
-		name: string;
-		slug: string;
-		kind?: string;
-		is_owner?: boolean;
-		owner_display?: string | null;
-		owner_handle?: string | null;
-	};
-	showProject?: boolean;
 	readOnly?: boolean;
 	onDelete: () => void;
 	isDeleting: boolean;
@@ -535,16 +628,6 @@ function VaultCard({
 							</Badge>
 						) : null}
 					</div>
-					{showProject && project ? (
-						<ProjectIdentity
-							project={project}
-							showKind={false}
-							showOwner={false}
-							showAccess={false}
-							titleClassName="text-xs font-medium"
-							className="mt-1"
-						/>
-					) : null}
 				</div>
 				{readOnly ? null : (
 					<div className="flex items-center gap-1">

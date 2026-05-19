@@ -61,10 +61,10 @@ export function makeSkillColumns(
 				const href = skillDetailHref(s.skill_key, s.project_id);
 				const access = resolveSkillProjectAccess(s, options);
 				return (
-					<div className="flex items-start gap-2">
+					<div className="flex min-w-0 items-start gap-2">
 						<Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
 						<div className="min-w-0 flex-1 space-y-0.5">
-							<div className="flex items-center gap-2">
+							<div className="flex min-w-0 items-center gap-2">
 								<Link
 									href={href}
 									onClick={(e) => e.stopPropagation()}
@@ -90,7 +90,9 @@ export function makeSkillColumns(
 								) : null}
 							</div>
 							{s.description ? (
-								<p className="line-clamp-1 text-xs text-muted-foreground">{s.description}</p>
+								<p className="max-w-[240px] truncate text-xs text-muted-foreground sm:max-w-none">
+									{s.description}
+								</p>
 							) : null}
 						</div>
 					</div>
