@@ -1,7 +1,7 @@
 """make vault project access explicit
 
 Revision ID: 4f7b2d9c8a11
-Revises: b8e4d1c6f23a
+Revises: e4f8a91c2d3b
 Create Date: 2026-05-19 21:30:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "4f7b2d9c8a11"
-down_revision: str | Sequence[str] | None = "b8e4d1c6f23a"
+down_revision: str | Sequence[str] | None = "e4f8a91c2d3b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
