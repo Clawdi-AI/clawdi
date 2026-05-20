@@ -171,7 +171,7 @@ Exact references include the Project ID and are the default Web/CLI copy UX. In 
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 
 - `/api/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**
-- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. Project membership grants read access to vault values, so members can resolve shared Project values through CLI/API-key flows. It can resolve a single readable Project via `project_id` or an Agent's ordered Project set via `agent_id`; env-bound Agent keys only read attached shared Projects through the matching Agent boundary.
+- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. User-level CLI/API keys can resolve plaintext only from Projects the caller owns. Shared Project vault values stay metadata-only for human CLI sessions; env-bound Agent keys can read attached shared Projects only through the matching Agent boundary.
 
 `clawdi run -- <cmd>` hits `/vault/resolve`, merges the returned env into the child process's environment, and `exec`s. `clawdi run --project <project> -- <cmd>` resolves from that explicit cloud Project. Without `--project`, a local `clawdi project folder link --project <project>` can select the Project for the current folder or a parent folder. Folder links are local CLI selection hints only: they do not grant Project access, attach Projects to Agents, or compose Projects.
 

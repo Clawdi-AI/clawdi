@@ -269,12 +269,12 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
 
 
 @pytest.mark.asyncio
-async def test_recipient_cli_resolves_shared_project_vault_plaintext(
+async def test_recipient_cli_cannot_resolve_shared_project_vault_plaintext(
     cli_client,
     db_session,
     seed_user,
 ):
-    """Unbound CLI keys may resolve shared Project vault plaintext."""
+    """User-level CLI keys can read shared metadata, but not shared plaintext."""
     from app.models.agent_project_binding import AgentProjectBinding
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.project_membership import ProjectMembership
@@ -350,20 +350,14 @@ async def test_recipient_cli_resolves_shared_project_vault_plaintext(
 
     try:
         explicit = await cli_client.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
-        assert explicit.status_code == 200, explicit.text
-        explicit_body = explicit.json()
-        assert explicit_body["value"] == "owner-secret-value"
-        assert explicit_body["source_project_id"] == str(shared.id)
+        assert explicit.status_code == 404, explicit.text
 
         attached_key = await cli_client.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
-        assert attached_key.status_code == 200, attached_key.text
-        attached_body = attached_key.json()
-        assert attached_body["value"] == "owner-secret-value"
-        assert attached_body["source_binding_type"] == "context"
+        assert attached_key.status_code == 404, attached_key.text
 
         attached_env = await cli_client.post(f"/api/vault/resolve?agent_id={env.id}")
         assert attached_env.status_code == 200, attached_env.text
-        assert attached_env.json()["TOKEN"] == "owner-secret-value"
+        assert "TOKEN" not in attached_env.json()
     finally:
         await db_session.delete(shared)
         await db_session.delete(owner)

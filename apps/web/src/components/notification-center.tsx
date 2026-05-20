@@ -33,7 +33,7 @@ import {
 	NOTIFICATION_CENTER_QUERY_KEY,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
-import { formatApiError } from "./sharing/vault-conflicts";
+import { formatApiError } from "./sharing/api-errors";
 
 export function NotificationCenter() {
 	const router = useRouter();

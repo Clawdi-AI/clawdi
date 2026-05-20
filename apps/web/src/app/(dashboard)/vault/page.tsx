@@ -81,6 +81,7 @@ interface VaultCatalogView {
 }
 
 const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
+const VAULT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$/;
 
 export default function VaultPage() {
 	return (
@@ -209,6 +210,7 @@ function VaultPageInner() {
 		() => visibleVaultCatalog.find((entry) => entry.vault.id === selectedVaultId) ?? null,
 		[visibleVaultCatalog, selectedVaultId],
 	);
+	const isNewVaultSlugValid = isValidVaultSlug(newVaultSlug);
 	const createProjectAlreadyHasSlug =
 		!!newVaultSlug &&
 		vaultCatalog.some((entry) => entry.vault.is_owner && entry.vault.slug === newVaultSlug);
@@ -360,8 +362,9 @@ function VaultPageInner() {
 				onProjectChange={setCreateProjectId}
 				slug={newVaultSlug}
 				onSlugChange={setNewVaultSlug}
+				isSlugValid={isNewVaultSlugValid}
 				onSubmit={() => {
-					if (!newVaultSlug || !createProjectId || createProjectAlreadyHasSlug) return;
+					if (!isNewVaultSlugValid || !createProjectId || createProjectAlreadyHasSlug) return;
 					createVault.mutate({ slug: newVaultSlug, projectId: createProjectId });
 				}}
 				isPending={createVault.isPending}
@@ -486,6 +489,7 @@ function CreateVaultDialog({
 	onProjectChange,
 	slug,
 	onSlugChange,
+	isSlugValid,
 	onSubmit,
 	isPending,
 	isDuplicate,
@@ -500,6 +504,7 @@ function CreateVaultDialog({
 	onProjectChange: (value: string) => void;
 	slug: string;
 	onSlugChange: (value: string) => void;
+	isSlugValid: boolean;
 	onSubmit: () => void;
 	isPending: boolean;
 	isDuplicate: boolean;
@@ -562,7 +567,8 @@ function CreateVaultDialog({
 								</p>
 							) : (
 								<p className="text-xs text-muted-foreground">
-									Use lowercase letters, numbers, and hyphens.
+									Use lowercase letters, numbers, and hyphens. Names cannot start or end with a
+									hyphen.
 								</p>
 							)}
 						</div>
@@ -587,7 +593,9 @@ function CreateVaultDialog({
 					</Button>
 					<Button
 						type="button"
-						disabled={!slug || !projectId || isDuplicate || isPending || ownedProjects.length === 0}
+						disabled={
+							!isSlugValid || !projectId || isDuplicate || isPending || ownedProjects.length === 0
+						}
 						onClick={onSubmit}
 					>
 						{isPending ? <Spinner /> : <Plus />}
@@ -1490,5 +1498,13 @@ function vaultItemsSectionKey(section: string) {
 }
 
 function normalizeVaultSlug(value: string) {
-	return value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9-]/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
+
+function isValidVaultSlug(value: string) {
+	return VAULT_SLUG_PATTERN.test(value);
 }

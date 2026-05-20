@@ -45,7 +45,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, useAuthedFetch } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
-import { formatApiError } from "./vault-conflicts";
+import { formatApiError } from "./api-errors";
 
 /**
  * Owner-side project-sharing surface.

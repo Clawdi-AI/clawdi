@@ -30,8 +30,8 @@ import {
 	ProjectIdentity,
 	projectAgentFor,
 } from "@/components/projects/project-metadata";
+import { formatApiError } from "@/components/sharing/api-errors";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { formatApiError } from "@/components/sharing/vault-conflicts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
