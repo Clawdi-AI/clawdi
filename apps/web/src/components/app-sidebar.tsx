@@ -89,7 +89,7 @@ function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 	);
 }
 
-export function AppSidebar() {
+export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	const pathname = usePathname();
 	const { user } = useCurrentUser();
 	const { isMobile } = useSidebar();
@@ -99,7 +99,7 @@ export function AppSidebar() {
 
 	return (
 		<>
-			<Sidebar collapsible="icon">
+			<Sidebar collapsible="icon" {...props}>
 				<SidebarHeader>
 					<SidebarMenu>
 						<SidebarMenuItem>

@@ -7,8 +7,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 
 /**
  * Dashboard chrome — the header bar above SidebarInset content.
- * Mirrors shadcn's dashboard-01 site-header block so the layout stays
- * aligned with the upstream reference.
+ * Keeps shadcn dashboard-01's trigger/separator/content/action shape,
+ * with Clawdi-specific breadcrumbs and notifications.
  */
 export function SiteHeader() {
 	return (
