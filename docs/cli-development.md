@@ -242,11 +242,13 @@ The monorepo has two GitHub Release lines:
   specific version/commit after an out-of-band production deploy.
 
 Use the release body as the changelog. GitHub's generated notes are
-categorized by `.github/release.yml`; add `skip-changelog` to PRs that
-should not show up. Keep release notes user-facing: include notable features,
-behavior changes, fixes, deprecations, removals, security notes, and user
-actions; omit migrations, CI, deployment steps, refactors, generated files, and
-other implementation-only details.
+categorized by `.github/release.yml`; only PRs with release-note labels such as
+`feature`, `fix`, `security`, or `documentation` are included. Add
+`skip-changelog` to explicitly suppress a PR that would otherwise appear. Keep
+release notes user-facing: include notable features, behavior changes, fixes,
+deprecations, removals, security notes, and user actions; omit migrations, CI,
+deployment steps, refactors, generated files, and other implementation-only
+details.
 
 Old preview releases can be deleted when their binaries and install links
 are no longer needed. Prefer leaving them as prereleases while they are
