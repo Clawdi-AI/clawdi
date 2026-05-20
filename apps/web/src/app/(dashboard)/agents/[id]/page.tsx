@@ -567,7 +567,7 @@ function AgentProjectsPanel({
 					</div>
 					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
 						Use Projects you create for resources you want to share or add across agents. This
-						agent&apos;s main Project stays private to its default writes.
+						agent&apos;s main Project stays private to this agent; other agents cannot see it.
 					</div>
 				</div>
 			</DetailPanel>

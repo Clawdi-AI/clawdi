@@ -96,7 +96,10 @@ function VaultPageInner() {
 	const [newVaultSlug, setNewVaultSlug] = useState("");
 	const [createProjectId, setCreateProjectId] = useState("");
 	const [createDialogOpen, setCreateDialogOpen] = useState(false);
-	const [searchQuery, setSearchQuery] = useState("");
+	const [searchQuery, setSearchQuery] = useQueryState(
+		"search",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
 	const [projectFilter, setProjectFilter] = useQueryState(
 		"project",
@@ -399,7 +402,7 @@ function VaultPageInner() {
 						/>
 						<SearchInput
 							value={searchQuery}
-							onChange={setSearchQuery}
+							onChange={(value) => void setSearchQuery(value)}
 							placeholder="Search vaults…"
 							className="w-full"
 						/>
@@ -905,8 +908,8 @@ function AddProjectToVaultControl({
 				<DialogHeader>
 					<DialogTitle>Add Vault to Project</DialogTitle>
 					<DialogDescription>
-						Add {vaultName} to another Project. Members can see key names; secret values stay hidden
-						and are only used when agents run.
+						Make {vaultName} available in another Project. Members can see key names; secret values
+						stay hidden and are only used when agents run.
 					</DialogDescription>
 				</DialogHeader>
 				<ProjectScopePicker
@@ -1220,6 +1223,13 @@ function VaultKeysPanel({
 					)}
 				</div>
 			</div>
+
+			{readOnly ? (
+				<div className="flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+					<Lock className="size-3.5 shrink-0" />
+					<span>Read-only: contact the owner to update keys.</span>
+				</div>
+			) : null}
 
 			{!readOnly && adding ? (
 				<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">

@@ -480,8 +480,8 @@ function OwnerAccessPanel({
 					<h2 className="text-sm font-semibold">Sharing and Collaboration</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Manage people, pending invites, and share links for this Custom Project. New members join
-					as Viewers by default.
+					Manage people, pending invites, and share links for this Project. New members join as
+					Viewers by default.
 				</p>
 			</div>
 			<div className="grid gap-2 rounded-md border bg-background/60 p-3 text-xs">
@@ -528,8 +528,8 @@ function ManagedProjectPanel({
 }) {
 	const description =
 		project.kind === "environment"
-			? "This Agent Project is managed by the connected agent and is not shareable. Create a Custom Project when you need collaboration or reusable resources."
-			: "This Global Project is your account default and is not shareable. Create a Custom Project when you need collaboration or reusable resources.";
+			? "This Agent Project is managed by the connected agent and is not shareable. Create a Project when you need collaboration or reusable resources."
+			: "This Global Project is your account default and is not shareable. Create a Project when you need collaboration or reusable resources.";
 	return (
 		<DetailPanel className="space-y-4">
 			<div className="space-y-1">

@@ -139,7 +139,7 @@ export function ShareProjectDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "Share this Custom Project without sharing ownership. People join as read-only Viewers; agent use is a separate choice they make later."
+							? "Share this Project without sharing ownership. People join as read-only Viewers; agent use is a separate choice they make later."
 							: "Projects you create are Custom Projects. Global Projects and Agent Projects are created automatically and cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>

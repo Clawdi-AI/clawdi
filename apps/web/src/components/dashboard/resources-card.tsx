@@ -99,8 +99,9 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Projects you create can be shared. Global Projects and Agent Projects are created
-						automatically and stay managed by Clawdi.
+						Projects you create can be shared. Global Projects and Agent Projects are created and
+						managed automatically. After choosing a Project, open Skills or Vaults below to add
+						resources to it.
 					</p>
 				</div>
 				<div className="divide-y">

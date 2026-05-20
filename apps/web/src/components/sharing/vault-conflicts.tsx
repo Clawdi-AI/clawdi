@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -45,6 +46,16 @@ export function formatApiError(detail: string): string {
 	return detail;
 }
 
+export function groupVaultConflicts(conflicts: VaultConflict[]) {
+	const groups = new Map<string, VaultConflict[]>();
+	for (const conflict of conflicts) {
+		const current = groups.get(conflict.vault_slug) ?? [];
+		current.push(conflict);
+		groups.set(conflict.vault_slug, current);
+	}
+	return Array.from(groups.entries()).map(([vaultSlug, items]) => ({ vaultSlug, items }));
+}
+
 export function VaultConflictsAlert({
 	detail,
 	actionLabel,
@@ -57,24 +68,46 @@ export function VaultConflictsAlert({
 	actionPending?: boolean;
 }) {
 	const conflicts = detail.conflicts ?? [];
+	const conflictGroups = groupVaultConflicts(conflicts);
+	const vaultCount = conflictGroups.length;
+	const conflictCountLabel =
+		conflicts.length === 1 ? "1 key name" : `${conflicts.length} key names`;
+	const conflictSourceLabel =
+		vaultCount > 0 ? `${vaultCount} Vault${vaultCount === 1 ? "" : "s"}` : "another Vault";
 	return (
 		<Alert variant="destructive">
 			<AlertTriangle />
 			<AlertTitle>Vault Key Conflict</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					Key name conflict: these key names already exist in another Vault used by this Project. We
-					keep the existing keys to avoid breaking agents and skip the new keys with the same names.
-					The skipped key names stay visible so you can rename or remove them later.
+					Key name conflict: {conflictCountLabel} already{" "}
+					{conflicts.length === 1 ? "exists" : "exist"} in {conflictSourceLabel} used by this
+					Project. We keep the existing keys to avoid breaking agents and skip the new keys with the
+					same names. The skipped key names stay visible so you can rename or remove them later.
 				</p>
-				{conflicts.length > 0 ? (
-					<ul className="max-h-28 space-y-1 overflow-auto rounded-md border bg-background/50 p-2 font-mono text-xs">
-						{conflicts.map((c) => {
-							const section = c.section ? `${c.section}/` : "";
+				{conflictGroups.length > 0 ? (
+					<ul className="max-h-40 space-y-2 overflow-auto rounded-md border bg-background/50 p-2 text-xs">
+						{conflictGroups.map(({ vaultSlug, items }) => {
 							return (
-								<li key={`${c.vault_slug}/${section}${c.item_name}`} className="truncate">
-									{c.vault_slug}/{section}
-									{c.item_name}
+								<li key={vaultSlug} className="space-y-1 rounded-sm bg-background/60 px-2 py-1.5">
+									<div className="flex items-center justify-between gap-2">
+										<span className="min-w-0 truncate font-medium text-foreground">
+											{vaultSlug} Vault
+										</span>
+										<Button asChild variant="ghost" size="xs">
+											<Link href={`/vault?search=${encodeURIComponent(vaultSlug)}`}>
+												Open Vault
+											</Link>
+										</Button>
+									</div>
+									<p className="truncate font-mono text-muted-foreground">
+										{items
+											.map((item) => {
+												const section = item.section ? `${item.section}/` : "";
+												return `${section}${item.item_name}`;
+											})
+											.join(", ")}
+									</p>
 								</li>
 							);
 						})}

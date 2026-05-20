@@ -36,7 +36,7 @@ export const PROJECT_CANONICAL_DEFINITION =
 	"A Project groups the skills and Vault access an agent or teammate can use.";
 
 export const PROJECT_FIRST_PATH =
-	"Create a Custom Project, add Skills or Vaults, then add it to an Agent when it should use them.";
+	"Create a Project, add Skills or Vaults, then add it to an Agent when it should use them.";
 
 export const PROJECT_RESOURCE_DEFINITIONS = [
 	{

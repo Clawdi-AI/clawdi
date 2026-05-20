@@ -151,7 +151,7 @@ export default function SharePage() {
 				<CardHeader>
 					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
 						<Sparkles className="size-4" />
-						You've been invited to a Shared Custom Project
+						You've been invited to a Shared Project
 					</div>
 					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
 					<p className="text-sm text-muted-foreground">

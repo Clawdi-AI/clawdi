@@ -283,7 +283,7 @@ export default function ProjectsPage() {
 				icon={Settings2}
 				title="Managed Projects"
 				count={managedProjects.length}
-				description="The Global Project is your account default. Agent Projects are created automatically for connected agents. They are not shareable."
+				description="Your main Project (Global) is the account default. Each connected agent gets its own Project automatically. They are not shareable."
 				projects={managedProjects}
 				agentsById={agentsById}
 				emptyTitle="No Managed Projects"
@@ -529,7 +529,7 @@ function ownedProjectDescription(project: ProjectRow) {
 		return "Managed Project. Writable default for one connected agent.";
 	}
 	if (project.kind === "workspace") {
-		return "Custom Project. Add skills and vaults, invite people, share links, and add it to agents.";
+		return "Project you create. Add skills and vaults, invite people, share links, and add it to agents.";
 	}
 	return "You own this Project. Open it to review resources.";
 }
