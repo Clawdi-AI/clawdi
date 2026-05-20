@@ -78,6 +78,67 @@ describe("RetryQueue", () => {
 		await q.flushPersist();
 	});
 
+	it("coalesces a burst of persists into one active flush", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		const originalFlushPending = Reflect.get(q, "flushPending");
+		let flushCalls = 0;
+		Reflect.set(q, "flushPending", async function (this: RetryQueue) {
+			flushCalls += 1;
+			return originalFlushPending.call(this);
+		});
+
+		for (let i = 0; i < 10_000; i++) {
+			q.enqueue({
+				kind: "skill_push",
+				project_id: "test-project",
+				skill_key: "alpha",
+				new_hash: `h${i}`,
+				enqueued_at: "2026-01-01T00:00:00Z",
+				attempts: 0,
+			});
+		}
+
+		await q.flushPersist();
+		expect(q.depth).toBe(1);
+		expect(flushCalls).toBe(1);
+	});
+
+	it("wakes waitForItem immediately when an item is enqueued", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		const abort = new AbortController();
+		let resolved = false;
+		const wait = q.waitForItem(abort.signal, 10_000).then(() => {
+			resolved = true;
+		});
+
+		q.enqueue({
+			kind: "skill_push",
+			project_id: "test-project",
+			skill_key: "alpha",
+			new_hash: "h1",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+
+		await wait;
+		expect(resolved).toBe(true);
+	});
+
+	it("waitForItem returns immediately when the queue already has work", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_push",
+			project_id: "test-project",
+			skill_key: "alpha",
+			new_hash: "h1",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+
+		await q.waitForItem(new AbortController().signal, 10_000);
+		expect(q.depth).toBe(1);
+	});
+
 	it("evicts oldest when over maxItems and counts the drop", async () => {
 		const q = new RetryQueue({ agentType: "claude_code", maxItems: 2 });
 		for (const k of ["a", "b", "c"]) {

@@ -41,7 +41,7 @@ Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
-  CLAWDI_NO_AUTO_UPDATE    Skip background auto-update (also disables via \`config set autoUpdate false\`)
+  CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -140,12 +140,13 @@ configCmd
 // ─────────────────────────────────────────────────────────────
 program
 	.command("setup")
-	.description("Detect installed agents and register this machine")
+	.description("Detect installed agents, register this machine, and install daemons")
 	.option("--agent <type>", "Agent type (claude_code, codex, openclaw, hermes)")
 	.option("-y, --yes", "Register every detected agent without prompting")
+	.option("--no-daemon", "Skip installing/starting background sync daemons")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi setup\n  $ clawdi setup --yes\n  $ clawdi setup --agent claude_code",
+		"\nExamples:\n  $ clawdi setup\n  $ clawdi setup --yes\n  $ clawdi setup --agent claude_code\n  $ clawdi setup --no-daemon",
 	)
 	.action(async (opts) => {
 		const { setup } = await import("./commands/setup.js");

@@ -3160,7 +3160,7 @@ export interface components {
         };
         /**
          * SyncHeartbeatRequest
-         * @description Daemon-emitted observability snapshot for `clawdi serve`.
+         * @description Daemon-emitted observability snapshot for `clawdi daemon`.
          *
          *     Sent every ~30s even on quiet cycles so the dashboard's
          *     "Last synced: X ago" indicator stays fresh and the operator

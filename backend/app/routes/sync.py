@@ -1,4 +1,4 @@
-"""SSE event channel for `clawdi serve` daemons.
+"""SSE event channel for `clawdi daemon` processes.
 
 Daemon opens a long-lived `GET /api/sync/events` connection authed
 with the same Bearer token it uses for any other API call; server
@@ -151,7 +151,7 @@ async def events(
         api_key_id=auth.api_key.id if auth.api_key is not None else None,
         # Per-key cap only applies to Agent API keys. Unbound
         # CLI keys are user-level (one key shared across N daemons
-        # via `clawdi serve install --all`), so the per-key cap of 2
+        # via `clawdi daemon install --all`), so the per-key cap of 2
         # would silently 429 the third local agent on a multi-agent
         # machine.
         is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),

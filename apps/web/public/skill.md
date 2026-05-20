@@ -56,7 +56,7 @@ If it prints "Still waiting for approval" (exit code 2), the user hasn't clicked
 clawdi setup
 ```
 
-Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw), registers each with the cloud, and installs the Clawdi MCP server in each agent's home. Without an `--agent` flag it picks up everything detected — which is what you want, so the next step can sync from all of them.
+Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw), registers each with the cloud, installs the Clawdi MCP server in each agent's home, and installs background sync daemons by default. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
 
 ## Sync the user's sessions
 
@@ -123,17 +123,21 @@ Resolve `~` to an absolute path before passing to the CLI.
 
 Note the "X new, Y updated, Z unchanged" total from the push output — you'll cite it next.
 
-## Turn on live sync (recommended)
+## Verify live sync (recommended)
 
-Without this step, the user has to remember to run `clawdi push` and `clawdi pull` by hand whenever they edit a skill. Most won't. Install the sync daemon so changes flow automatically in both directions — local edits show up on the dashboard within a second, dashboard installs land on the laptop within two.
+`clawdi setup` installs the sync daemon by default so changes flow automatically in both directions — local edits show up on the dashboard within a second, dashboard installs land on the laptop within two. Verify it is running:
 
 ```bash
-clawdi serve install --agent claude_code
+clawdi daemon status
 ```
 
-Replace `claude_code` with whichever agent the user has installed (you saw the list during `clawdi setup`). If they have multiple, run install once per agent — each gets its own supervised daemon.
+If the user opted out during setup, install it now:
 
-The command writes a launchd unit on macOS or a systemd `--user` service on Linux, then loads it. The daemon stays alive across reboots and respawns on crash. Ongoing logs:
+```bash
+clawdi daemon install --all
+```
+
+The install command writes a launchd unit on macOS or a systemd `--user` service on Linux, then loads it. The daemon stays alive across reboots and respawns on crash. Ongoing logs:
 
 - macOS: `tail -f ~/.clawdi/serve/logs/<agent>.stderr.log`
 - Linux: `journalctl --user -u clawdi-serve-<agent> -f`
@@ -150,7 +154,7 @@ Skip this step only if the user explicitly says they want manual sync. The CLI f
 If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
 
 ```bash
-clawdi serve --agent claude_code
+clawdi daemon run --agent claude_code
 ```
 
 ## Sync skills (optional one-time backup)

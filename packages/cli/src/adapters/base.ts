@@ -92,7 +92,7 @@ export interface AgentAdapter {
 
 	getSkillPath(key: string): string;
 	/** Directory containing one subdirectory per skill_key.
-	 * `clawdi serve` watches this for change events. Distinct from
+	 * `clawdi daemon` watches this for change events. Distinct from
 	 * `getSkillPath(key)` which points at the SKILL.md inside one
 	 * skill — empty-key callers were getting `<root>/skills//SKILL.md`
 	 * before this method existed. */
@@ -110,7 +110,7 @@ export interface AgentAdapter {
 	 * Personal project skills keep using `getSkillsRootDir() + key`
 	 * with no suffix. */
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
-	/** Path(s) `clawdi serve` should watch for session changes. May
+	/** Path(s) `clawdi daemon` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
 	 * files there) or a single file (Hermes uses a SQLite DB). The
 	 * daemon walks each path on a change event, then runs

@@ -1,9 +1,21 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { getCliVersion } from "../lib/version";
+import { listInstalledAgents, readHealth } from "../serve/installer";
+import { log } from "../serve/log";
+import { getServeStateDir } from "../serve/paths";
 
 const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
 // 1 hour: short enough that a fresh release reaches users within an hour of
@@ -12,11 +24,29 @@ const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
 // invisible to active users for a full day, which made `--auto-update`
 // feel broken whenever a fix shipped.
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const DAEMON_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
+const DAEMON_UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
+type Installer = "bun" | "npm";
 
 interface UpdateCache {
 	checkedAt: string;
 	latest: string;
 }
+
+type BackgroundInstallContext = {
+	current: string;
+	latest: string;
+	logFd: number;
+};
+
+type AutoUpdateRuntime = {
+	detectInstaller?: () => Installer | null;
+	spawnBackgroundInstall?: (
+		installer: Installer,
+		args: string[],
+		context: BackgroundInstallContext,
+	) => void;
+};
 
 function cachePath(): string {
 	return join(getClawdiDir(), "update.json");
@@ -175,11 +205,7 @@ function lastVersionPath(): string {
 	return join(getClawdiDir(), LAST_VERSION_FILE);
 }
 
-function isMajorBump(current: string, latest: string): boolean {
-	return parseVersion(latest).triple[0] > parseVersion(current).triple[0];
-}
-
-function detectInstaller(): "bun" | "npm" | null {
+function detectInstaller(): Installer | null {
 	for (const name of ["bun", "npm"] as const) {
 		try {
 			const r = spawnSync(name, ["--version"], { stdio: "ignore" });
@@ -189,6 +215,14 @@ function detectInstaller(): "bun" | "npm" | null {
 		}
 	}
 	return null;
+}
+
+function detectAutoUpdateInstaller(runtime: AutoUpdateRuntime): Installer | null {
+	return runtime.detectInstaller?.() ?? detectInstaller();
+}
+
+function installArgs(installer: Installer): string[] {
+	return installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
 }
 
 // `npx clawdi …` and `bunx clawdi …` install the package into a per-call
@@ -206,18 +240,240 @@ function isTransientInvocation(): boolean {
 	return /\/_npx\/|\/\.bunx-|\/bun\/install\/cache\//.test(argv1);
 }
 
+function isLongLivedDaemonInvocation(args = process.argv.slice(2)): boolean {
+	const commandIndex = args.findIndex((arg) => arg === "daemon" || arg === "serve");
+	if (commandIndex < 0) return false;
+	const rest = args.slice(commandIndex + 1);
+	for (let i = 0; i < rest.length; i++) {
+		const arg = rest[i];
+		if (arg === "--agent" || arg === "--environment-id") {
+			i += 1;
+			continue;
+		}
+		if (arg.startsWith("-")) continue;
+		return arg === "run";
+	}
+	return true;
+}
+
+function isAutoUpdateControlInvocation(args = process.argv.slice(2)): boolean {
+	const first = args.find((arg) => !arg.startsWith("-"));
+	return first === "update" || first === "config";
+}
+
+function isInformationalInvocation(args = process.argv.slice(2)): boolean {
+	return args.some(
+		(arg) => arg === "--version" || arg === "-V" || arg === "--help" || arg === "-h",
+	);
+}
+
+function outdatedDaemonAgents(current: string): string[] {
+	try {
+		return listInstalledAgents().filter((agent) => {
+			const health = readHealth(getServeStateDir(agent));
+			if (!health.exists) return false;
+			if (!health.version) return true;
+			return isNewer(current, health.version);
+		});
+	} catch {
+		return [];
+	}
+}
+
+function autoUpdateDisabled(): boolean {
+	if (process.env.CLAWDI_NO_AUTO_UPDATE) return true;
+	if (process.env.CLAWDI_NO_UPDATE_CHECK) return true;
+	if (isTransientInvocation()) return true;
+	const stored = getStoredConfig() as { autoUpdate?: unknown };
+	return stored.autoUpdate === false || stored.autoUpdate === "false";
+}
+
+async function latestFromCacheOrRegistry(): Promise<string | null> {
+	const cached = readCache();
+	const now = Date.now();
+	if (cached && now - new Date(cached.checkedAt).getTime() <= CACHE_TTL_MS) {
+		return cached.latest;
+	}
+	const latest = await fetchLatest();
+	if (latest) {
+		writeCache(latest);
+		return latest;
+	}
+	return cached?.latest ?? null;
+}
+
+function acquireDaemonUpdateLock(): (() => void) | null {
+	const root = getClawdiDir();
+	const lockDir = join(root, "daemon-auto-update.lock");
+	const acquire = () => {
+		mkdirSync(root, { recursive: true });
+		mkdirSync(lockDir, { mode: 0o700 });
+		writeFileSync(join(lockDir, "pid"), `${process.pid}\n`, { mode: 0o600 });
+		return () => {
+			rmSync(lockDir, { recursive: true, force: true });
+		};
+	};
+	try {
+		return acquire();
+	} catch {
+		try {
+			const age = Date.now() - statSync(lockDir).mtimeMs;
+			if (age > DAEMON_UPDATE_LOCK_STALE_MS) {
+				rmSync(lockDir, { recursive: true, force: true });
+				return acquire();
+			}
+		} catch {
+			// If stat/remove failed, treat as locked; another daemon
+			// will retry on the next cadence.
+		}
+		return null;
+	}
+}
+
+type InstallRunner = (
+	installer: Installer,
+	args: string[],
+	signal?: AbortSignal,
+) => Promise<number | null>;
+
+async function runInstall(installer: Installer, args: string[], signal?: AbortSignal) {
+	if (signal?.aborted) return null;
+	const logPath = join(getClawdiDir(), "auto-update.log");
+	let logFd: number;
+	try {
+		mkdirSync(getClawdiDir(), { recursive: true });
+		logFd = openSync(logPath, "a");
+	} catch {
+		logFd = -1;
+	}
+	try {
+		return await new Promise<number | null>((resolve) => {
+			const child = spawn(installer, args, {
+				stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+				env: process.env,
+			});
+			const onAbort = () => {
+				child.kill();
+			};
+			signal?.addEventListener("abort", onAbort, { once: true });
+			child.on("error", () => resolve(null));
+			child.on("close", (code) => {
+				signal?.removeEventListener("abort", onAbort);
+				resolve(code);
+			});
+		});
+	} finally {
+		if (logFd >= 0) {
+			try {
+				closeSync(logFd);
+			} catch {
+				// best-effort
+			}
+		}
+	}
+}
+
+export type DaemonAutoUpdateResult =
+	| "disabled"
+	| "no_update"
+	| "no_installer"
+	| "locked"
+	| "installed"
+	| "failed";
+
+export async function daemonAutoUpdateOnce(
+	opts: {
+		currentVersion?: string;
+		installer?: Installer | null;
+		installRunner?: InstallRunner;
+		signal?: AbortSignal;
+	} = {},
+): Promise<DaemonAutoUpdateResult> {
+	if (autoUpdateDisabled()) return "disabled";
+	if (opts.signal?.aborted) return "disabled";
+
+	const current = opts.currentVersion ?? getCliVersion();
+	const latest = await latestFromCacheOrRegistry();
+	if (!latest || !isNewer(latest, current)) return "no_update";
+
+	const installer = opts.installer === undefined ? detectInstaller() : opts.installer;
+	if (!installer) {
+		log.warn("daemon.auto_update_no_installer", { current, latest });
+		return "no_installer";
+	}
+
+	const release = acquireDaemonUpdateLock();
+	if (!release) return "locked";
+	try {
+		log.info("daemon.auto_update_installing", { current, latest, installer });
+		const status = await (opts.installRunner ?? runInstall)(
+			installer,
+			installArgs(installer),
+			opts.signal,
+		);
+		if (status !== 0) {
+			log.warn("daemon.auto_update_failed", { current, latest, installer, status });
+			return "failed";
+		}
+		try {
+			writeFileSync(lastVersionPath(), current, { mode: 0o644 });
+		} catch {
+			// best-effort; the installed binary still wins.
+		}
+		log.info("daemon.auto_update_installed", { from: current, to: latest, installer });
+		return "installed";
+	} finally {
+		release();
+	}
+}
+
+export function startDaemonAutoUpdate(opts: {
+	abort: AbortController;
+	intervalMs?: number;
+	initialDelayMs?: number;
+}): boolean {
+	if (autoUpdateDisabled()) return false;
+	const intervalMs = opts.intervalMs ?? DAEMON_UPDATE_INTERVAL_MS;
+	const initialDelayMs =
+		opts.initialDelayMs ?? Math.min(5 * 60_000, intervalMs) + Math.floor(Math.random() * 60_000);
+
+	void (async () => {
+		await sleep(initialDelayMs, opts.abort.signal);
+		while (!opts.abort.signal.aborted) {
+			const result = await daemonAutoUpdateOnce({ signal: opts.abort.signal });
+			if (result === "installed") {
+				opts.abort.abort();
+				return;
+			}
+			await sleep(intervalMs, opts.abort.signal);
+		}
+	})().catch((e) => {
+		log.warn("daemon.auto_update_loop_failed", {
+			error: e instanceof Error ? e.message : String(e),
+		});
+	});
+	return true;
+}
+
 /**
  * Default-on auto-updater. On startup:
  *   1. If the binary version differs from `last-version` on disk, print a
  *      one-line "updated to v…" notice (the previous run's spawn finished).
  *   2. If a newer release exists in the cache, kick off a detached
- *      `npm/bun add -g clawdi@latest` so the next invocation gets it. Only
- *      patch + minor — major bumps print a hint and require explicit opt-in.
+ *      `npm/bun add -g clawdi@latest` so the next invocation gets it.
  *
  * Opt-out: `CLAWDI_NO_AUTO_UPDATE=1` env, `clawdi config set autoUpdate
  * false`, non-TTY (CI), or running via npx/bunx.
  */
-export async function maybeAutoUpdate(): Promise<void> {
+export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<void> {
+	if (
+		isLongLivedDaemonInvocation() ||
+		isAutoUpdateControlInvocation() ||
+		isInformationalInvocation()
+	) {
+		return;
+	}
+
 	const current = getCliVersion();
 	const isHumanTerminal = !!process.stdout.isTTY;
 
@@ -237,6 +493,14 @@ export async function maybeAutoUpdate(): Promise<void> {
 				console.log(
 					`${chalk.green("✓")} ${chalk.gray(`Updated clawdi to v${current} (was v${last})`)}`,
 				);
+				const outdatedDaemons = outdatedDaemonAgents(current);
+				if (outdatedDaemons.length > 0) {
+					console.log(
+						chalk.gray(
+							`  Restart ${outdatedDaemons.length === 1 ? "the daemon" : "daemons"} to pick it up: clawdi daemon restart --all`,
+						),
+					);
+				}
 			}
 		}
 		writeFileSync(lastFile, current, { mode: 0o644 });
@@ -278,15 +542,7 @@ export async function maybeAutoUpdate(): Promise<void> {
 	if (!latest) return;
 	if (!isNewer(latest, current)) return;
 
-	if (isMajorBump(current, latest)) {
-		console.log();
-		console.log(
-			chalk.cyan(`Major release v${latest} available — run \`clawdi update\` to install.`),
-		);
-		return;
-	}
-
-	const installer = detectInstaller();
+	const installer = detectAutoUpdateInstaller(runtime);
 	if (!installer) return;
 
 	// No single-flight lock. Two concurrent CLIs both spawning `npm i -g
@@ -297,10 +553,10 @@ export async function maybeAutoUpdate(): Promise<void> {
 	// "Updating…" line); not worth it.
 	//
 	// `clawdi@latest` (not the pinned cache version) keeps installs
-	// idempotent — a newer patch landing between cache write and now is
+	// idempotent — a newer release landing between cache write and now is
 	// picked up automatically, and `last-version` on next invocation
 	// detects the change.
-	const args = installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+	const args = installArgs(installer);
 
 	// Redirect installer output to a logfile so silent failures (network
 	// flake, perms error, npm 4xx) leave a trail. `stdio: "ignore"` would
@@ -318,8 +574,27 @@ export async function maybeAutoUpdate(): Promise<void> {
 	}
 
 	console.log(chalk.gray(`Updating clawdi v${current} → v${latest} in background…`));
+	try {
+		const spawner = runtime.spawnBackgroundInstall ?? spawnBackgroundInstall;
+		spawner(installer, args, { current, latest, logFd });
+	} finally {
+		if (logFd >= 0) {
+			try {
+				closeSync(logFd);
+			} catch {
+				// best-effort
+			}
+		}
+	}
+}
+
+function spawnBackgroundInstall(
+	installer: Installer,
+	args: string[],
+	context: BackgroundInstallContext,
+): void {
 	const child = spawn(installer, args, {
-		stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+		stdio: context.logFd >= 0 ? ["ignore", context.logFd, context.logFd] : "ignore",
 		detached: true,
 		// Pass env explicitly so a future change to spawn defaults can't
 		// strip NPM_CONFIG_PREFIX / BUN_INSTALL and silently install into
@@ -331,4 +606,18 @@ export async function maybeAutoUpdate(): Promise<void> {
 		// `auto-update.log` if they care, and the next invocation retries.
 	});
 	child.unref();
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		const onAbort = () => {
+			clearTimeout(t);
+			resolve();
+		};
+		const t = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
 }

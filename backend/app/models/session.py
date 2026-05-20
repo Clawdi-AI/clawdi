@@ -50,7 +50,7 @@ class AgentEnvironment(Base, TimestampMixin):
     os: Mapped[str] = mapped_column(String(50), nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # `clawdi serve` daemon observability. last_seen_at is the
+    # `clawdi daemon` observability. last_seen_at is the
     # legacy "anything happened on this env" timestamp; sync_*
     # fields are specifically about the daemon's push/pull cycle.
     # Dashboard renders "Last synced: X ago" + "Daemon offline" red
@@ -61,7 +61,7 @@ class AgentEnvironment(Base, TimestampMixin):
     # lets server detect "missed events" if SSE drops mid-flight.
     last_revision_seen: Mapped[int | None] = mapped_column(Integer)
     # Peak retry-queue depth since the daemon last booted. Resets
-    # on `clawdi serve` start. NOT a 24h rolling window — that
+    # on `clawdi daemon` start. NOT a 24h rolling window — that
     # needs real time-series storage and is not part of v1.
     queue_depth_high_water_since_start: Mapped[int] = mapped_column(
         Integer, server_default="0", nullable=False

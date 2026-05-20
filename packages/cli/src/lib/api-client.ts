@@ -296,7 +296,7 @@ export class ApiClient {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 		// Mirror engine-wide abort onto this upload's controller so
-		// `clawdi serve` shutdown doesn't wait the full 30s timeout
+		// `clawdi daemon` shutdown doesn't wait the full 30s timeout
 		// for an in-flight upload to give up. Pre-fix the runtime
 		// would hang on the active multipart fetch even after the
 		// engine signalled abort, delaying SIGTERM cleanup and

@@ -1,4 +1,4 @@
-# Testing `clawdi serve`
+# Testing `clawdi daemon`
 
 How to verify the daemon works on your machine, end to end. Two
 paths: the **automated script** (one command, ~10 seconds) and
@@ -29,7 +29,7 @@ What it checks:
 | 1 | Backend boots and `/health` responds |
 | 2 | User + agent_environment + deploy api_key seeded |
 | 3 | CLI scratch dirs (`~/.clawdi/`, fake skills dir) exist |
-| 4 | `clawdi serve` reaches `engine.start` log line |
+| 4 | `clawdi daemon run` reaches `engine.start` log line |
 | 5 | Local SKILL.md edit → cloud row updates within 15s |
 | 6 | Cloud-side upload → local SKILL.md picks up the change |
 | 7 | Server-side DELETE → daemon removes local dir within 15s |
@@ -110,7 +110,7 @@ description: manual test
 EOF
 
 # CLAWDI_SERVE_DEBUG=1 prints debug-level events on stderr.
-CLAWDI_SERVE_DEBUG=1 bun run packages/cli/src/index.ts serve --agent claude_code
+CLAWDI_SERVE_DEBUG=1 bun run packages/cli/src/index.ts daemon run --agent claude_code
 ```
 
 You should see (filtered to the interesting events):
@@ -178,9 +178,9 @@ rm -rf /tmp/manual-claude
 If you want the daemon supervised by launchd / systemd:
 
 ```sh
-clawdi serve install --agent claude_code
-clawdi serve status --agent claude_code
-clawdi serve uninstall --agent claude_code  # when done
+clawdi daemon install --agent claude_code
+clawdi daemon status --agent claude_code
+clawdi daemon uninstall --agent claude_code  # when done
 ```
 
 Logs land at `~/.clawdi/serve/logs/<agent>.{stdout,stderr}.log`
@@ -204,7 +204,7 @@ with a delay. Forced by `CLAWDI_SERVE_MODE=container`.
 unknown. Check `CLAWDI_API_URL` and that the env still exists
 server-side.
 
-## Running `clawdi serve` inside an agent image (clawdi-monorepo)
+## Running `clawdi daemon` inside an agent image (clawdi-monorepo)
 
 The daemon was designed for laptops but works inside the clawdi
 agent container with three caveats. The clawdi.ai monorepo's
@@ -232,7 +232,7 @@ only conduit.
 
 ### What NOT to do
 
-- **Don't run `clawdi serve install`** inside the container. Install
+- **Don't run `clawdi daemon install`** inside the container. Install
   is for laptop / VPS users where launchd or systemd will respawn
   the daemon. The agent image's entrypoint (Docker / k8s) is
   already supervising; install would write a unit file inside
@@ -245,7 +245,7 @@ only conduit.
 ### Entrypoint shape
 
 ```sh
-exec clawdi serve --agent ${CLAWDI_AGENT_TYPE:-hermes}
+exec clawdi daemon run --agent ${CLAWDI_AGENT_TYPE:-hermes}
 ```
 
 `--agent` is required when `CLAWDI_ENVIRONMENT_ID` is set (the

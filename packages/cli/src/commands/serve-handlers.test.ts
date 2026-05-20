@@ -70,7 +70,7 @@ describe("rejectUnsupportedOpts", () => {
 		expect(captured.exitCode).toBe(1);
 		// Both offenders surfaced, kebab-cased, in the error.
 		const msg = captured.stderr.join("\n");
-		expect(msg).toMatch(/serve doctor/);
+		expect(msg).toMatch(/daemon doctor/);
 		expect(msg).toMatch(/--agent/);
 		expect(msg).toMatch(/--environment-id/);
 	});
@@ -112,7 +112,7 @@ describe("subcommand handler rejects parent-leaked options", () => {
 				environmentId: "00000000-0000-0000-0000-000000000001",
 			} as Record<string, unknown>),
 		).rejects.toThrow(ExitCalled);
-		expect(captured.stderr.join("\n")).toMatch(/serve uninstall.*--environment-id/);
+		expect(captured.stderr.join("\n")).toMatch(/daemon uninstall.*--environment-id/);
 	});
 
 	it("status rejects --environment-id", async () => {
@@ -122,7 +122,7 @@ describe("subcommand handler rejects parent-leaked options", () => {
 				environmentId: "00000000-0000-0000-0000-000000000001",
 			} as Record<string, unknown>),
 		).rejects.toThrow(ExitCalled);
-		expect(captured.stderr.join("\n")).toMatch(/serve status.*--environment-id/);
+		expect(captured.stderr.join("\n")).toMatch(/daemon status.*--environment-id/);
 	});
 
 	it("doctor rejects --agent", async () => {
@@ -130,6 +130,6 @@ describe("subcommand handler rejects parent-leaked options", () => {
 		await expect(serveDoctor({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
 			ExitCalled,
 		);
-		expect(captured.stderr.join("\n")).toMatch(/serve doctor.*--agent/);
+		expect(captured.stderr.join("\n")).toMatch(/daemon doctor.*--agent/);
 	});
 });

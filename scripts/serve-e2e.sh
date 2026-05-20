@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for `clawdi serve`.
+# End-to-end smoke test for `clawdi daemon`.
 #
 # Drives the whole sync pipeline against a real backend + DB
 # without involving Clerk auth. Roughly:
@@ -9,7 +9,7 @@
 #      (the seed script mints the key directly via the service
 #      layer — no HTTP roundtrip, no shared internal secret)
 #   3. point the CLI at a fresh ~/.clawdi/ + ~/.claude-test/ tree
-#   4. run `clawdi serve` for ~12s in the background
+#   4. run `clawdi daemon run` for ~12s in the background
 #   5. assert: a freshly-written local skill landed on the server
 #   6. assert: a server-side skill change lands back on disk
 #   7. tear down (kill daemon, delete seeded rows, stop backend)
@@ -108,10 +108,10 @@ description: e2e seed skill
 EOF
 ok "plant skill at $SKILL_DIR"
 
-bold "4) starting clawdi serve in background"
+bold "4) starting clawdi daemon in background"
 cd "$REPO_ROOT"
 CLAWDI_SERVE_DEBUG=1 \
-  bun run packages/cli/src/index.ts serve --agent claude_code \
+  bun run packages/cli/src/index.ts daemon run --agent claude_code \
   > "$LOG_DIR/serve.stderr.log" 2>&1 &
 DAEMON_PID=$!
 

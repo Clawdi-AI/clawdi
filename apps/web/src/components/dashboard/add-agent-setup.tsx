@@ -32,16 +32,16 @@ const CLI_STEPS = [
 		description: "Opens your browser to authorize this machine.",
 	},
 	{
-		title: "Connect this agent",
+		title: "Connect and enable sync",
 		code: "clawdi setup",
 		description:
-			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account.",
+			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account, and installs background daemons by default.",
 	},
 	{
-		title: "Turn on live sync",
-		code: "clawdi serve install --all",
+		title: "Check live sync",
+		code: "clawdi daemon status",
 		description:
-			"Installs a tiny background service per registered agent — Claude Code, Codex, OpenClaw, Hermes — so anything you change here lands on the machine in seconds, and vice versa. To install for one agent, replace `--all` with `--agent <name>`.",
+			"Shows the daemon state for every registered agent. If you opted out during setup, run `clawdi daemon install --all`.",
 	},
 	{
 		title: "One-time history backup (optional)",

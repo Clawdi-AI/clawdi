@@ -1,5 +1,5 @@
 /**
- * `clawdi serve` orchestrator.
+ * `clawdi daemon` orchestrator.
  *
  * Wires the background tasks that make up a sync daemon:
  *
@@ -82,10 +82,10 @@ const RECONCILE_INTERVAL_MS = 60_000;
 // last drain attempt failed. Keeps the daemon from hammering a
 // dead network. Per-item attempts counter caps the work too.
 const QUEUE_RETRY_INTERVAL_MS = 15_000;
-// Idle poll when the queue is empty. Short — we don't want a
-// fresh enqueue from the watcher to sit unnoticed for 15s. Tight
-// loop is fine; the queue.peek() is cheap (in-memory check).
-const QUEUE_EMPTY_POLL_MS = 500;
+// Safety wakeup for an idle queue. enqueue() wakes the drain loop
+// immediately; this timeout is only a backstop in case a wake signal
+// is missed.
+const QUEUE_IDLE_WAKEUP_MS = 30_000;
 const MAX_QUEUE_ATTEMPTS = 30;
 const SKILL_UPLOAD_ECHO_TTL_MS = 2 * 60_000;
 
@@ -991,7 +991,7 @@ async function drainQueueLoop(
 	while (!opts.abort.aborted) {
 		const item = queue.peek();
 		if (!item) {
-			await sleep(QUEUE_EMPTY_POLL_MS, opts.abort);
+			await queue.waitForItem(opts.abort, QUEUE_IDLE_WAKEUP_MS);
 			continue;
 		}
 		try {
@@ -2212,7 +2212,7 @@ async function heartbeatLoop(
 async function touchHealthFile(agentType: string): Promise<void> {
 	const p = join(getServeStateDir(agentType), "health");
 	try {
-		// JSON shape lets `serve status` / `serve doctor` surface
+		// JSON shape lets `daemon status` / `daemon doctor` surface
 		// "your daemon is running an older CLI version, restart to
 		// pick up the latest" without having to re-derive it from
 		// the launchd plist or process tree. Pre-fix this was a
@@ -2281,8 +2281,7 @@ export function releaseInFlight(m: Map<string, number>, key: string): void {
 function sleep(ms: number, abort: AbortSignal): Promise<void> {
 	return new Promise((resolve) => {
 		// Listener must be removed when the timer fires, otherwise
-		// long-running daemon code paths (the 500ms queue empty
-		// poll in particular) accumulate listeners on the shared
+		// long-running daemon code paths accumulate listeners on the shared
 		// AbortSignal and eventually trip
 		// MaxListenersExceededWarning. Same cleanup shape as
 		// sse-client.ts:sleep.

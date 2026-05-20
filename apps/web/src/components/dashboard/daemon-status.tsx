@@ -147,7 +147,7 @@ export function DaemonStatusBadge({
 	env: Env;
 	/** "on-clawdi" tiles change the dialog copy across every non-
 	 * live state: hosted users don't have a CLI to run
-	 * `clawdi serve install` / `clawdi serve status` / `clawdi auth login`
+	 * `clawdi daemon install` / `clawdi daemon status` / `clawdi auth login`
 	 * against — the supervised daemon ships in the pod image. All
 	 * remediation copy points back at the Clawdi dashboard
 	 * (`manageHref`) instead. Self-managed installs see the
@@ -364,14 +364,14 @@ function SyncHelpDialog({
 												<p className="text-xs text-muted-foreground">
 													Daemon stopped after this error. Inspect:
 												</p>
-												<CommandLine command="clawdi serve status" />
+												<CommandLine command="clawdi daemon status" />
 												<AuthLoginHint />
 											</>
 										)
 									) : isPermanentError(env.last_sync_error) ? (
 										// Same product story on both sides: permanent drop means the
 										// daemon is still healthy and will pick up the next edit.
-										// Self-managed offers `clawdi serve status` as a sanity check;
+										// Self-managed offers `clawdi daemon status` as a sanity check;
 										// hosted users have no CLI, so we just explain the daemon
 										// state and let the next file save do the rest.
 										<>
@@ -386,7 +386,7 @@ function SyncHelpDialog({
 												build output). Fix the source and re-save to retry — the daemon is still
 												healthy and will pick up the next edit.
 											</p>
-											{isHosted ? null : <CommandLine command="clawdi serve status" />}
+											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isRetryExhaustedError(env.last_sync_error) ? (
 										<>
@@ -396,7 +396,7 @@ function SyncHelpDialog({
 												automatically once connectivity is back; no source edit needed.
 												{isHosted ? null : " If your network looks fine, inspect:"}
 											</p>
-											{isHosted ? null : <CommandLine command="clawdi serve status" />}
+											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isHosted ? (
 										<>
@@ -411,7 +411,7 @@ function SyncHelpDialog({
 											<p className="text-xs text-muted-foreground">
 												It will keep retrying. If this persists:
 											</p>
-											<CommandLine command="clawdi serve status" />
+											<CommandLine command="clawdi daemon status" />
 											<AuthLoginHint />
 										</>
 									)}
@@ -432,9 +432,9 @@ function SyncHelpDialog({
 										<p className="text-sm text-muted-foreground">
 											Daemon isn&apos;t checking in. From the same terminal you set it up on:
 										</p>
-										<CommandLine command="clawdi serve status" />
+										<CommandLine command="clawdi daemon status" />
 										<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
-										<CommandLine command={`clawdi serve install --agent ${env.agent_type}`} />
+										<CommandLine command={`clawdi daemon install --agent ${env.agent_type}`} />
 									</div>
 								)
 							) : null}
@@ -503,15 +503,15 @@ function SyncSetupSnippet({ env }: { env: Env }) {
 }
 
 /** Hand-off prompt the user pastes into Claude / Codex / etc. The
- * agent reads the prompt, runs `clawdi serve install --all`, and
- * confirms with `clawdi serve status`. Mirrors the prose tone and
+ * agent reads the prompt, runs `clawdi daemon install --all`, and
+ * confirms with `clawdi daemon status`. Mirrors the prose tone and
  * structure of `useAgentPrompt` in add-agent-setup.tsx. */
 function useSyncAgentPrompt(env: Env): string {
 	const typeLabel = agentTypeLabel(env.agent_type);
 	return [
 		`Turn on Clawdi live sync on this machine for ${typeLabel}.`,
-		"Run `clawdi serve install --all` to install the per-user daemon for every Clawdi-registered agent on this machine.",
-		"Then confirm with `clawdi serve status` and report whether the daemon is live.",
+		"Run `clawdi daemon install --all` to install the per-user daemon for every Clawdi-registered agent on this machine.",
+		"Then confirm with `clawdi daemon status` and report whether the daemon is live.",
 	].join(" ");
 }
 
@@ -528,8 +528,8 @@ function SyncSetupAgentTab({ env }: { env: Env }) {
 }
 
 function SyncSetupCliTab({ env }: { env: Env }) {
-	const perAgentCmd = `clawdi serve install --agent ${env.agent_type}`;
-	const allCmd = "clawdi serve install --all";
+	const perAgentCmd = `clawdi daemon install --agent ${env.agent_type}`;
+	const allCmd = "clawdi daemon install --all";
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">In a terminal on this machine, run either:</p>

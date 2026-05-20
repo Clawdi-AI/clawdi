@@ -88,7 +88,7 @@ class SkillUploadResponse(BaseModel):
     name: str
     version: int
     file_count: int
-    # Echo the resulting content_hash so `clawdi serve` daemons
+    # Echo the resulting content_hash so `clawdi daemon` processes
     # can chain the next push with `If-Match: <this hash>` without
     # an extra round-trip. Empty (legacy) is fine for old callers
     # that don't read it.

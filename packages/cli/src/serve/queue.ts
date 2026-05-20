@@ -1,5 +1,5 @@
 /**
- * Bounded persistent retry queue for `clawdi serve`.
+ * Bounded persistent retry queue for `clawdi daemon`.
  *
  * Daemons need a queue because the network goes away. A skill
  * change happens at T0; the cloud is unreachable for the next 90
@@ -161,12 +161,13 @@ export class RetryQueue {
 	private readonly maxItems: number;
 	private readonly agentType: string;
 	private readonly onEvict?: (item: QueueItem) => void;
-	// Serialize on-disk writes through this chain so concurrent
-	// `persist()` calls don't race the rename. The chain is what
-	// tests await via `flushPersist()` — production callers are
+	// One active on-disk flush at a time. Production callers are
 	// fire-and-forget so the watcher's hot path doesn't block on
-	// disk I/O during a burst.
+	// disk I/O during a burst; tests await the current flush via
+	// `flushPersist()`.
 	private writeChain: Promise<void> = Promise.resolve();
+	private flushActive = false;
+	private readonly itemWaiters = new Set<() => void>();
 	// Latest snapshot waiting to be written. Multiple `persist()`
 	// calls within one tick coalesce into a single write because
 	// the flush loop reads this until it's null. Last-write-wins,
@@ -277,32 +278,44 @@ export class RetryQueue {
 		const blob = `${this.items.map((i) => JSON.stringify(i)).join("\n")}${this.items.length > 0 ? "\n" : ""}`;
 		this.pendingBlob = blob;
 		// If a flush is already running, it'll pick up the new
-		// `pendingBlob` on its next loop iteration. Only kick off
-		// a fresh flush when no chain exists yet (the chain is
-		// only ever resolved when the flush loop fully drained
-		// pendingBlob to null).
-		this.writeChain = this.writeChain.then(() => this.flushPending());
+		// `pendingBlob` on its next loop iteration. Pre-fix this
+		// appended one `.then(flushPending)` per enqueue; a watcher
+		// burst could hold thousands of no-op promise callbacks even
+		// though the queue itself is bounded.
+		if (this.flushActive) return;
+		this.flushActive = true;
+		this.writeChain = this.flushPending();
 	}
 
 	/** Drain `pendingBlob` to disk. Loops until it's null so that
 	 * a write that lands after this flush started picks up the
 	 * latest snapshot in the same flush. */
 	private async flushPending(): Promise<void> {
-		while (this.pendingBlob !== null) {
-			const blob = this.pendingBlob;
-			this.pendingBlob = null;
-			try {
-				ensureDir(this.persistPath);
-				const tmp = `${this.persistPath}.tmp`;
-				await writeFile(tmp, blob, { mode: 0o600 });
-				await rename(tmp, this.persistPath);
-			} catch (e) {
-				// Persist failures shouldn't crash the daemon — the
-				// in-memory queue is still authoritative for the
-				// running process. Log and continue; next persist
-				// retries.
-				log.error("queue.persist_failed", { error: toErrorMessage(e) });
+		while (true) {
+			while (this.pendingBlob !== null) {
+				const blob = this.pendingBlob;
+				this.pendingBlob = null;
+				try {
+					ensureDir(this.persistPath);
+					const tmp = `${this.persistPath}.tmp`;
+					await writeFile(tmp, blob, { mode: 0o600 });
+					await rename(tmp, this.persistPath);
+				} catch (e) {
+					// Persist failures shouldn't crash the daemon —
+					// the in-memory queue is still authoritative for
+					// the running process. Log and continue; next
+					// persist retries.
+					log.error("queue.persist_failed", { error: toErrorMessage(e) });
+				}
 			}
+			// Close the active window before returning. If another
+			// persist() lands after this point, it sees `flushActive`
+			// false and starts a new flush. If it landed earlier while
+			// this loop was active, `pendingBlob` is non-null and we
+			// keep draining in this same promise.
+			this.flushActive = false;
+			if (this.pendingBlob === null) return;
+			this.flushActive = true;
 		}
 	}
 
@@ -331,7 +344,38 @@ export class RetryQueue {
 		this.evictIfFull();
 		this.highWater = Math.max(this.highWater, this.items.length);
 		this.persist();
+		this.notifyItemWaiters();
 		return stamped.version;
+	}
+
+	/** Wait until an item is available, the timeout expires, or abort fires.
+	 * Used by the daemon drain loop so an idle queue can sleep until
+	 * enqueue() provides real work. */
+	waitForItem(abort: AbortSignal, timeoutMs: number): Promise<void> {
+		if (this.items.length > 0 || abort.aborted || timeoutMs <= 0) return Promise.resolve();
+		return new Promise((resolve) => {
+			let settled = false;
+			let timer: ReturnType<typeof setTimeout> | null = null;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				if (timer) clearTimeout(timer);
+				this.itemWaiters.delete(finish);
+				abort.removeEventListener("abort", finish);
+				resolve();
+			};
+			timer = setTimeout(finish, timeoutMs);
+			this.itemWaiters.add(finish);
+			abort.addEventListener("abort", finish, { once: true });
+			if (this.items.length > 0) finish();
+		});
+	}
+
+	private notifyItemWaiters(): void {
+		if (this.itemWaiters.size === 0) return;
+		const waiters = [...this.itemWaiters];
+		this.itemWaiters.clear();
+		for (const finish of waiters) finish();
 	}
 
 	private evictIfFull(): void {
@@ -363,7 +407,7 @@ export class RetryQueue {
 			// queue at cap silently shed N items before this commit
 			// — the heartbeat aggregator surfaces the count remotely
 			// but no local log fired. warn level + the per-item
-			// fields below let `clawdi serve doctor` and journalctl
+			// fields below let `clawdi daemon doctor` and journalctl
 			// piece together what was lost.
 			log.warn("queue.evicted", {
 				kind: evicted.kind,

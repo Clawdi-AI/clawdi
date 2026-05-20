@@ -1,4 +1,4 @@
-"""Skill revision counter + SSE fan-out for `clawdi serve` daemons.
+"""Skill revision counter + SSE fan-out for `clawdi daemon`.
 
 Single owner of two intertwined concerns:
 
@@ -11,7 +11,7 @@ Single owner of two intertwined concerns:
    short-circuit and as the safety-net catchup mechanism when
    SSE events are missed.
 
-2. Each running `clawdi serve` daemon has an open SSE connection
+2. Each running `clawdi daemon` process has an open SSE connection
    to `GET /api/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
    `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
@@ -130,7 +130,7 @@ async def try_subscribe(
     (one daemon + one debug session). Bypasses:
       - Clerk JWT (api_key_id=None)
       - Unbound personal CLI keys (`is_env_bound=False`) — multi-
-        agent setups run `clawdi serve install --all` which spawns
+        agent setups run `clawdi daemon install --all` which spawns
         N daemons, all sharing the user's device-flow auth key
         from `~/.clawdi/auth.json`. Capping that at 2 silently
         broke realtime sync for users with 3+ registered agents
