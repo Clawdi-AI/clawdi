@@ -48,12 +48,14 @@ jobs:
               - "package.json"
               - "bun.lock"
               - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/backend-ci.yml"
             test:
               - "backend/app/**"
               - "backend/tests/**"
               - "backend/alembic/**"
               - "backend/pyproject.toml"
               - "backend/uv.lock"
+              - ".github/workflows/backend-ci.yml"
 
   lint-and-typecheck:
     needs: changes

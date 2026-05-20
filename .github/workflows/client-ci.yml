@@ -109,10 +109,24 @@ jobs:
       - name: Guard — run only if this target changed
         id: guard
         env:
-          CHANGED: ${{ matrix.target == 'web' && needs.changes.outputs.web || matrix.target == 'cli' && needs.changes.outputs.cli || matrix.target == 'shared' && needs.changes.outputs.shared }}
+          TARGET: ${{ matrix.target }}
+          WEB: ${{ needs.changes.outputs.web }}
+          CLI: ${{ needs.changes.outputs.cli }}
+          SHARED: ${{ needs.changes.outputs.shared }}
           INFRA: ${{ needs.changes.outputs.infra }}
         run: |
-          if [ "$CHANGED" = "true" ] || [ "$INFRA" = "true" ]; then
+          run=false
+          if [ "$INFRA" = "true" ]; then
+            run=true
+          elif [ "$TARGET" = "web" ] && { [ "$WEB" = "true" ] || [ "$SHARED" = "true" ]; }; then
+            run=true
+          elif [ "$TARGET" = "cli" ] && { [ "$CLI" = "true" ] || [ "$SHARED" = "true" ]; }; then
+            run=true
+          elif [ "$TARGET" = "shared" ] && [ "$SHARED" = "true" ]; then
+            run=true
+          fi
+
+          if [ "$run" = "true" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -131,9 +145,31 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: bunx turbo typecheck --filter=${{ matrix.filter }}
 
+  cli-test:
+    needs: changes
+    if: >-
+      needs.changes.outputs.cli == 'true' ||
+      needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      # Smoke tests exercise the compiled bin wrapper, so build before testing.
+      - name: Build CLI
+        run: bun run --cwd packages/cli build
+      - name: Test CLI
+        run: bun test packages/cli
+
   build:
     needs: [changes, typecheck]
-    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.infra == 'true'
+    if: >-
+      needs.changes.outputs.web == 'true' ||
+      needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
