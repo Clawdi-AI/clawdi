@@ -15,6 +15,7 @@ interface ApiCall {
 	method: string;
 	path: string;
 	auth: string | null;
+	body?: unknown;
 }
 
 interface Fixture {
@@ -30,15 +31,36 @@ beforeAll(() => {
 	server = Bun.serve({
 		hostname: "127.0.0.1",
 		port: 0,
-		fetch(req) {
+		async fetch(req) {
 			const url = new URL(req.url);
+			const requestBody =
+				req.method === "POST" && url.pathname === "/api/vault/resolve/bulk"
+					? await readJsonBody(req)
+					: undefined;
 			apiCalls.push({
 				method: req.method,
 				path: `${url.pathname}${url.search}`,
 				auth: req.headers.get("authorization"),
+				body: requestBody,
 			});
 
-			if (req.method !== "POST" || url.pathname !== "/api/vault/resolve") {
+			if (req.method !== "POST") {
+				return json({ detail: "not found" }, 404);
+			}
+
+			if (url.pathname === "/api/vault/resolve/bulk") {
+				if (!isExpectedBulkRequest(requestBody)) {
+					return json({ detail: "unexpected reference" }, 404);
+				}
+				const body = referenceBody();
+				const result =
+					(requestBody as { preview?: unknown }).preview === true
+						? body
+						: { ...body, value: SECRET };
+				return json({ results: { [REFERENCE]: result } });
+			}
+
+			if (url.pathname !== "/api/vault/resolve") {
 				return json({ detail: "not found" }, 404);
 			}
 
@@ -51,14 +73,7 @@ beforeAll(() => {
 				return json({ detail: "unexpected reference" }, 404);
 			}
 
-			const body = {
-				reference: REFERENCE,
-				source_project_id: PROJECT_ID,
-				source_alias: "prod",
-				vault_slug: "prod",
-				section: "openai",
-				item_name: "api_key",
-			};
+			const body = referenceBody();
 			if (url.searchParams.get("preview") === "true") {
 				return json(body);
 			}
@@ -177,7 +192,7 @@ describe("vault reference process e2e", () => {
 			expect(result.stdout).not.toContain(SECRET);
 			expect(result.stderr).not.toContain(SECRET);
 			expect(apiCalls).toHaveLength(1);
-			expect(apiCalls[0].path).toContain("preview=true");
+			expect(apiCalls[0].body).toMatchObject({ preview: true });
 		} finally {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}
@@ -229,4 +244,37 @@ function json(data: unknown, status = 200): Response {
 		status,
 		headers: { "content-type": "application/json" },
 	});
+}
+
+async function readJsonBody(req: Request): Promise<unknown> {
+	try {
+		return await req.json();
+	} catch {
+		return undefined;
+	}
+}
+
+function isExpectedBulkRequest(body: unknown): boolean {
+	if (body === null || typeof body !== "object") return false;
+	const references = (body as { references?: unknown }).references;
+	if (!Array.isArray(references) || references.length !== 1) return false;
+	const ref = references[0] as Record<string, unknown>;
+	return (
+		ref.reference === REFERENCE &&
+		ref.vault_slug === "prod" &&
+		ref.section === "openai" &&
+		ref.field === "api_key" &&
+		ref.project_id === PROJECT_ID
+	);
+}
+
+function referenceBody() {
+	return {
+		reference: REFERENCE,
+		source_project_id: PROJECT_ID,
+		source_alias: "prod",
+		vault_slug: "prod",
+		section: "openai",
+		item_name: "api_key",
+	};
 }

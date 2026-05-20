@@ -1175,6 +1175,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/vault/resolve/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Vault Bulk
+         * @description Resolve many exact clawdi:// references in one CLI-auth call.
+         */
+        post: operations["resolve_vault_bulk_api_vault_resolve_bulk_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/vault/resolve": {
         parameters: {
             query?: never;
@@ -3205,6 +3225,39 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** VaultBulkResolveRequest */
+        VaultBulkResolveRequest: {
+            /** References */
+            references: components["schemas"]["VaultReferenceResolveInput"][];
+            /** Project Id */
+            project_id?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Allow Conflicts
+             * @default false
+             */
+            allow_conflicts: boolean;
+            /**
+             * Debug
+             * @default false
+             */
+            debug: boolean;
+            /**
+             * Preview
+             * @default false
+             */
+            preview: boolean;
+        };
+        /** VaultBulkResolveResponse */
+        VaultBulkResolveResponse: {
+            /** Results */
+            results: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** VaultCreate */
         VaultCreate: {
             /** Slug */
@@ -3324,6 +3377,22 @@ export interface components {
             status: "ok";
             /** Fields */
             fields: number;
+        };
+        /** VaultReferenceResolveInput */
+        VaultReferenceResolveInput: {
+            /** Reference */
+            reference: string;
+            /** Vault Slug */
+            vault_slug: string;
+            /**
+             * Section
+             * @default
+             */
+            section: string;
+            /** Field */
+            field: string;
+            /** Project Id */
+            project_id?: string | null;
         };
         /** VaultResolveResponse */
         VaultResolveResponse: {
@@ -5369,6 +5438,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultCredentialProfileResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_vault_bulk_api_vault_resolve_bulk_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultBulkResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultBulkResolveResponse"];
                 };
             };
             /** @description Validation Error */

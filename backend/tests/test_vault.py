@@ -89,6 +89,75 @@ async def test_vault_resolve_exact_clawdi_reference(cli_client: httpx.AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_vault_resolve_bulk_exact_clawdi_references(cli_client: httpx.AsyncClient):
+    await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    r = await cli_client.put(
+        "/api/vault/prod/items",
+        json={
+            "section": "openai",
+            "fields": {"api_key": "sk-live-xyz", "org_id": "org-secret"},
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    resolved = await cli_client.post(
+        "/api/vault/resolve/bulk",
+        json={
+            "references": [
+                {
+                    "reference": "clawdi://prod/openai/api_key",
+                    "vault_slug": "prod",
+                    "section": "openai",
+                    "field": "api_key",
+                },
+                {
+                    "reference": "clawdi://prod/openai/org_id",
+                    "vault_slug": "prod",
+                    "section": "openai",
+                    "field": "org_id",
+                },
+            ],
+            "debug": True,
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    results = resolved.json()["results"]
+    assert results["clawdi://prod/openai/api_key"]["value"] == "sk-live-xyz"
+    assert results["clawdi://prod/openai/org_id"]["value"] == "org-secret"
+    assert results["clawdi://prod/openai/api_key"]["precedence"][0]["reason"] == "match"
+
+
+@pytest.mark.asyncio
+async def test_vault_resolve_bulk_preview_omits_plaintext(cli_client: httpx.AsyncClient):
+    await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    r = await cli_client.put(
+        "/api/vault/prod/items",
+        json={"section": "database", "fields": {"url": "postgres://secret"}},
+    )
+    assert r.status_code == 200, r.text
+
+    resolved = await cli_client.post(
+        "/api/vault/resolve/bulk",
+        json={
+            "references": [
+                {
+                    "reference": "clawdi://prod/database/url",
+                    "vault_slug": "prod",
+                    "section": "database",
+                    "field": "url",
+                }
+            ],
+            "preview": True,
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    result = resolved.json()["results"]["clawdi://prod/database/url"]
+    assert result["vault_slug"] == "prod"
+    assert "value" not in result
+    assert "postgres://secret" not in resolved.text
+
+
+@pytest.mark.asyncio
 async def test_vault_resolve_preview_omits_plaintext(cli_client: httpx.AsyncClient):
     await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
     r = await cli_client.put(

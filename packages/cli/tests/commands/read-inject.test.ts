@@ -240,17 +240,30 @@ describe("injectCommand", () => {
 	it("renders references and redacts the summary", async () => {
 		const input = join(tmpRoot, "config.template");
 		const output = join(tmpRoot, "config");
-		writeFileSync(input, "token=clawdi://prod/stripe/secret_key\n");
-		const { restore } = mockFetch([
+		writeFileSync(
+			input,
+			["token=clawdi://prod/stripe/secret_key", "org=clawdi://prod/openai/org_id", ""].join("\n"),
+		);
+		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/stripe/secret_key",
-						value: "sk-live",
-						source_project_id: "project-prod",
-						source_alias: "prod",
+						results: {
+							"clawdi://prod/stripe/secret_key": {
+								reference: "clawdi://prod/stripe/secret_key",
+								value: "sk-live",
+								source_project_id: "project-prod",
+								source_alias: "prod",
+							},
+							"clawdi://prod/openai/org_id": {
+								reference: "clawdi://prod/openai/org_id",
+								value: "org-live",
+								source_project_id: "project-prod",
+								source_alias: "prod",
+							},
+						},
 					}),
 			},
 		]);
@@ -266,11 +279,19 @@ describe("injectCommand", () => {
 			restore();
 		}
 
-		expect(readFileSync(output, "utf8")).toBe("token=sk-live\n");
-		expect(err).toContain("Resolved 1 clawdi reference");
+		expect(readFileSync(output, "utf8")).toBe("token=sk-live\norg=org-live\n");
+		expect(captured).toHaveLength(1);
+		expect(captured[0].body).toMatchObject({
+			references: [
+				{ reference: "clawdi://prod/stripe/secret_key" },
+				{ reference: "clawdi://prod/openai/org_id" },
+			],
+		});
+		expect(err).toContain("Resolved 2 clawdi references");
 		expect(err).toContain("token line 1");
 		expect(err).toContain("redacted");
 		expect(err).not.toContain("sk-live");
+		expect(err).not.toContain("org-live");
 	});
 
 	it("uses the linked Project folder when resolving template references", async () => {
@@ -288,13 +309,17 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://default/OPENAI_API_KEY",
-						value: "sk-linked",
-						source_project_id: "project-linked",
-						source_alias: "engineering",
+						results: {
+							"clawdi://default/OPENAI_API_KEY": {
+								reference: "clawdi://default/OPENAI_API_KEY",
+								value: "sk-linked",
+								source_project_id: "project-linked",
+								source_alias: "engineering",
+							},
+						},
 					}),
 			},
 		]);
@@ -307,8 +332,46 @@ describe("injectCommand", () => {
 			restore();
 		}
 
-		expect(captured[0].path).toContain("project_id=project-linked");
+		expect(captured[0].body).toMatchObject({ project_id: "project-linked" });
 		expect(readFileSync(output, "utf8")).toBe("token=sk-linked\n");
+	});
+
+	it("falls back to single-reference resolve when the backend has no bulk endpoint", async () => {
+		const input = join(tmpRoot, "legacy.template");
+		const output = join(tmpRoot, "legacy.env");
+		writeFileSync(input, "token=clawdi://prod/stripe/secret_key\n");
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve/bulk",
+				response: () => jsonResponse({ detail: "Not Found" }, 404),
+			},
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://prod/stripe/secret_key",
+						value: "sk-legacy",
+						source_project_id: "project-prod",
+						source_alias: "prod",
+					}),
+			},
+		]);
+		const origErr = console.error;
+		console.error = () => {};
+		try {
+			await injectCommand({ in: input, out: output });
+		} finally {
+			console.error = origErr;
+			restore();
+		}
+
+		expect(captured.map((request) => request.path.split("?")[0])).toEqual([
+			"/api/vault/resolve/bulk",
+			"/api/vault/resolve",
+		]);
+		expect(readFileSync(output, "utf8")).toBe("token=sk-legacy\n");
 	});
 
 	it("refuses to overwrite output without --force", async () => {
@@ -341,15 +404,20 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/stripe/secret_key",
-						source_project_id: "project-prod",
-						source_alias: "prod",
-						vault_slug: "prod",
-						section: "stripe",
-						item_name: "secret_key",
+						results: {
+							"clawdi://prod/stripe/secret_key": {
+								reference: "clawdi://prod/stripe/secret_key",
+								value: "sk-live",
+								source_project_id: "project-prod",
+								source_alias: "prod",
+								vault_slug: "prod",
+								section: "stripe",
+								item_name: "secret_key",
+							},
+						},
 					}),
 			},
 		]);
@@ -367,7 +435,7 @@ describe("injectCommand", () => {
 
 		expect(readFileSync(output, "utf8")).toBe("existing");
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("preview=true");
+		expect(captured[0].body).toMatchObject({ preview: true });
 		expect(err).toContain("Dry run");
 		expect(err).toContain("token line 1");
 		expect(err).toContain("prod");
@@ -384,13 +452,17 @@ describe("injectCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/stripe/secret_key",
-						value: "sk-live",
-						source_project_id: "project-prod",
-						source_alias: "prod",
+						results: {
+							"clawdi://prod/stripe/secret_key": {
+								reference: "clawdi://prod/stripe/secret_key",
+								value: "sk-live",
+								source_project_id: "project-prod",
+								source_alias: "prod",
+							},
+						},
 					}),
 			},
 		]);

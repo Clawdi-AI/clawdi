@@ -56,6 +56,27 @@ class VaultResolveResponse(RootModel[dict[str, object]]):
     pass
 
 
+class VaultReferenceResolveInput(BaseModel):
+    reference: str = Field(min_length=1, max_length=1000)
+    vault_slug: str = Field(min_length=1, max_length=200)
+    section: str = Field(default="", max_length=200)
+    field: str = Field(min_length=1, max_length=200)
+    project_id: UUID | None = None
+
+
+class VaultBulkResolveRequest(BaseModel):
+    references: list[VaultReferenceResolveInput] = Field(min_length=1, max_length=200)
+    project_id: UUID | None = None
+    agent_id: UUID | None = None
+    allow_conflicts: bool = False
+    debug: bool = False
+    preview: bool = False
+
+
+class VaultBulkResolveResponse(BaseModel):
+    results: dict[str, dict[str, object]]
+
+
 class VaultCredentialProfileUpsert(BaseModel):
     tool: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     profile: str = Field(

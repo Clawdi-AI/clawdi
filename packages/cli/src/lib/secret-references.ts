@@ -4,6 +4,7 @@ import { resolveProjectId } from "./project-resolver";
 import { getEnvIdByAgent } from "./select-adapter";
 
 const CLAWDI_REF_RE = /clawdi:\/\/[A-Za-z0-9._~%-]+(?:\/[A-Za-z0-9._~%-]+)+/g;
+const MAX_BULK_REFERENCES = 200;
 
 export interface ClawdiReference {
 	raw: string;
@@ -61,6 +62,18 @@ export interface ResolveReferenceOptions {
 	agent?: string;
 	allowConflicts?: boolean;
 	debug?: boolean;
+}
+
+interface VaultReferenceResolveInput {
+	reference: string;
+	vault_slug: string;
+	section: string;
+	field: string;
+	project_id?: string;
+}
+
+interface VaultBulkResolveResponse<T extends VaultReferencePreview> {
+	results?: Record<string, T>;
 }
 
 export function parseClawdiReference(input: string): ClawdiReference {
@@ -250,8 +263,12 @@ export async function resolveReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferenceHit>> {
-	const unique = uniqueReferenceRaws(refs);
-	const hits = await Promise.all(unique.map((raw) => resolveClawdiReference(raw, opts)));
+	const hits = await requestClawdiReferenceBulk<VaultReferenceHit>(refs, opts, false);
+	for (const hit of hits) {
+		if (typeof hit.value !== "string") {
+			throw new Error(`vault resolve returned no value for ${hit.reference}.`);
+		}
+	}
 	return new Map(hits.map((hit) => [hit.reference, hit]));
 }
 
@@ -259,8 +276,7 @@ export async function previewReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferencePreview>> {
-	const unique = uniqueReferenceRaws(refs);
-	const hits = await Promise.all(unique.map((raw) => previewClawdiReference(raw, opts)));
+	const hits = await requestClawdiReferenceBulk<VaultReferencePreview>(refs, opts, true);
 	return new Map(hits.map((hit) => [hit.reference, hit]));
 }
 
@@ -324,15 +340,135 @@ function extractDetail(body: unknown): { message?: string } {
 	return typeof message === "string" ? { message } : {};
 }
 
-function uniqueReferenceRaws(refs: ClawdiReference[]): string[] {
+async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
+	refs: ClawdiReference[],
+	opts: ResolveReferenceOptions,
+	preview: boolean,
+): Promise<T[]> {
+	const unique = uniqueReferences(refs);
+	if (unique.length === 0) return [];
+	if (opts.project && opts.agent) {
+		throw new Error("Pass either --project or --agent, not both.");
+	}
+
+	const { apiUrl } = getConfig();
+	const auth = getAuth();
+	if (!auth?.apiKey) {
+		throw new Error("Not logged in. Run `clawdi auth login` first.");
+	}
+
+	const projectIdCache = new Map<string, string>();
+	const resolveCachedProjectId = async (project: string): Promise<string> => {
+		const cached = projectIdCache.get(project);
+		if (cached) return cached;
+		const projectId = await resolveProjectId(apiUrl, auth.apiKey, project);
+		projectIdCache.set(project, projectId);
+		return projectId;
+	};
+	const explicitProjectId = opts.project
+		? await resolveCachedProjectId(opts.project)
+		: opts.projectId;
+	const references: VaultReferenceResolveInput[] = [];
+	for (const ref of unique) {
+		let projectId: string | undefined;
+		if (ref.project) {
+			projectId = await resolveCachedProjectId(ref.project);
+			if (opts.project && explicitProjectId !== projectId) {
+				throw new Error(
+					`Reference points to Project ${projectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that Project.`,
+				);
+			}
+		}
+		references.push({
+			reference: ref.raw,
+			vault_slug: ref.vault,
+			section: ref.section,
+			field: ref.field,
+			project_id: projectId,
+		});
+	}
+
+	const results: Record<string, T> = {};
+	for (const chunk of chunkArray(references, MAX_BULK_REFERENCES)) {
+		const chunkProjectId = chunk.some((ref) => !ref.project_id) ? explicitProjectId : undefined;
+		const response = await fetch(`${apiUrl}/api/vault/resolve/bulk`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${auth.apiKey}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				references: chunk,
+				project_id: chunkProjectId,
+				agent_id: opts.agent ? resolveAgentId(opts.agent) : undefined,
+				allow_conflicts: Boolean(opts.allowConflicts),
+				debug: Boolean(opts.debug),
+				preview,
+			}),
+		});
+		const body = await readJson<VaultBulkResolveResponse<T> | { detail?: unknown }>(
+			response,
+			"/api/vault/resolve/bulk",
+		);
+		if (!response.ok) {
+			if (response.status === 404 && shouldFallbackToSingleResolve(body)) {
+				return await Promise.all(
+					unique.map((ref) => requestClawdiReference<T>(ref.raw, opts, preview)),
+				);
+			}
+			throw new VaultReferenceResolveError(response.status, body);
+		}
+		if (!isRecord(body)) {
+			throw new Error("vault resolve returned an invalid bulk response.");
+		}
+		const resultsValue = (body as Record<string, unknown>).results;
+		if (!isRecord(resultsValue)) {
+			throw new Error("vault resolve returned an invalid bulk response.");
+		}
+		Object.assign(results, resultsValue as Record<string, T>);
+	}
+
+	return unique.map((ref) => {
+		const hit = results[ref.raw];
+		if (!isRecord(hit)) {
+			throw new Error(`vault resolve returned no result for ${ref.raw}.`);
+		}
+		if (preview) {
+			return stripPreviewValue(hit as T, ref.raw);
+		}
+		return { ...(hit as T), reference: ref.raw };
+	});
+}
+
+function uniqueReferences(refs: ClawdiReference[]): ClawdiReference[] {
 	const seen = new Set<string>();
-	const unique: string[] = [];
+	const unique: ClawdiReference[] = [];
 	for (const ref of refs) {
 		if (seen.has(ref.raw)) continue;
 		seen.add(ref.raw);
-		unique.push(ref.raw);
+		unique.push(ref);
 	}
 	return unique;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function shouldFallbackToSingleResolve(body: unknown): boolean {
+	if (!isRecord(body)) return true;
+	const detail = body.detail;
+	if (!isRecord(detail)) return true;
+	const code = detail.code;
+	return code !== "vault_reference_not_found" && code !== "project_not_found";
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+	const chunks: T[][] = [];
+	for (let index = 0; index < items.length; index += size) {
+		chunks.push(items.slice(index, index + size));
+	}
+	return chunks;
 }
 
 function stripPreviewValue<T extends VaultReferencePreview>(body: T, reference: string): T {

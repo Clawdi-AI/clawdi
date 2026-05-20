@@ -200,16 +200,20 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/openai/api_key",
-						value: "sk-test",
-						source_project_id: "project-default",
-						source_alias: "project-default",
-						vault_slug: "prod",
-						section: "openai",
-						item_name: "api_key",
+						results: {
+							"clawdi://prod/openai/api_key": {
+								reference: "clawdi://prod/openai/api_key",
+								value: "sk-test",
+								source_project_id: "project-default",
+								source_alias: "project-default",
+								vault_slug: "prod",
+								section: "openai",
+								item_name: "api_key",
+							},
+						},
 					}),
 			},
 		]);
@@ -227,9 +231,17 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("vault_slug=prod");
-		expect(captured[0].path).toContain("section=openai");
-		expect(captured[0].path).toContain("field=api_key");
+		expect(captured[0].path).toContain("/api/vault/resolve/bulk");
+		expect(captured[0].body).toMatchObject({
+			references: [
+				{
+					reference: "clawdi://prod/openai/api_key",
+					vault_slug: "prod",
+					section: "openai",
+					field: "api_key",
+				},
+			],
+		});
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-test");
 		expect(calls[0].env.LITERAL_VALUE).toBe("kept");
@@ -244,15 +256,20 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/openai/api_key",
-						source_project_id: "project-default",
-						source_alias: "prod",
-						vault_slug: "prod",
-						section: "openai",
-						item_name: "api_key",
+						results: {
+							"clawdi://prod/openai/api_key": {
+								reference: "clawdi://prod/openai/api_key",
+								value: "sk-test",
+								source_project_id: "project-default",
+								source_alias: "prod",
+								vault_slug: "prod",
+								section: "openai",
+								item_name: "api_key",
+							},
+						},
 					}),
 			},
 		]);
@@ -281,7 +298,7 @@ describe("run command project folder selection", () => {
 		const out = lines.join("\n");
 		expect(calls).toHaveLength(0);
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("preview=true");
+		expect(captured[0].body).toMatchObject({ preview: true });
 		expect(out).toContain("Dry run: command will not be launched.");
 		expect(out).toContain("OPENAI_API_KEY");
 		expect(out).toContain("redacted");
@@ -295,16 +312,20 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve?vault_slug",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/openai/api_key",
-						value: "sk-explicit",
-						source_project_id: "project-default",
-						source_alias: "project-default",
-						vault_slug: "prod",
-						section: "openai",
-						item_name: "api_key",
+						results: {
+							"clawdi://prod/openai/api_key": {
+								reference: "clawdi://prod/openai/api_key",
+								value: "sk-explicit",
+								source_project_id: "project-default",
+								source_alias: "project-default",
+								vault_slug: "prod",
+								section: "openai",
+								item_name: "api_key",
+							},
+						},
 					}),
 			},
 			{
@@ -340,13 +361,17 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: "clawdi://prod/openai/api_key",
-						value: "sk-linked",
-						source_project_id: "project-linked",
-						source_alias: "engineering",
+						results: {
+							"clawdi://prod/openai/api_key": {
+								reference: "clawdi://prod/openai/api_key",
+								value: "sk-linked",
+								source_project_id: "project-linked",
+								source_alias: "engineering",
+							},
+						},
 					}),
 			},
 		]);
@@ -361,7 +386,7 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("project_id=project-linked");
+		expect(captured[0].body).toMatchObject({ project_id: "project-linked" });
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-linked");
 	});
 
@@ -375,13 +400,17 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: exact,
-						value: "sk-exact",
-						source_project_id: "00000000-0000-0000-0000-000000000123",
-						source_alias: "production",
+						results: {
+							[exact]: {
+								reference: exact,
+								value: "sk-exact",
+								source_project_id: "00000000-0000-0000-0000-000000000123",
+								source_alias: "production",
+							},
+						},
 					}),
 			},
 		]);
@@ -396,8 +425,10 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
-		expect(captured[0].path).not.toContain("project_id=project-linked");
+		expect(captured[0].body).toMatchObject({
+			references: [{ project_id: "00000000-0000-0000-0000-000000000123" }],
+		});
+		expect((captured[0].body as { project_id?: unknown }).project_id).toBeUndefined();
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-exact");
 	});
 
@@ -410,13 +441,17 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/api/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
-						reference: exact,
-						value: "sk-agent-exact",
-						source_project_id: "00000000-0000-0000-0000-000000000123",
-						source_alias: "attached-prod",
+						results: {
+							[exact]: {
+								reference: exact,
+								value: "sk-agent-exact",
+								source_project_id: "00000000-0000-0000-0000-000000000123",
+								source_alias: "attached-prod",
+							},
+						},
 					}),
 			},
 		]);
@@ -431,8 +466,10 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("agent_id=agent-123");
-		expect(captured[0].path).toContain("project_id=00000000-0000-0000-0000-000000000123");
+		expect(captured[0].body).toMatchObject({
+			agent_id: "agent-123",
+			references: [{ project_id: "00000000-0000-0000-0000-000000000123" }],
+		});
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-agent-exact");
 	});
 });
