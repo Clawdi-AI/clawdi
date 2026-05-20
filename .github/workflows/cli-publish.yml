@@ -128,8 +128,9 @@ jobs:
           - Install: \`npm i -g clawdi@${VERSION}\`
 
           ## Scope
-          This is the release for the published \`packages/cli\` package. Backend
-          and web changes are versioned separately as \`cloud-v...\` releases.
+          This is the release for the published \`packages/cli\` package.
+          Clawdi app/backend/web changes are versioned separately as
+          \`clawdi-v...\` releases.
           EOF
           )
 

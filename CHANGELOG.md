@@ -1,32 +1,30 @@
 # Changelog
 
-This changelog tracks user-facing Clawdi releases. GitHub Releases remain the
-canonical release artifacts:
+This changelog tracks notable user-facing Clawdi releases. It is written for
+people using or upgrading Clawdi, so it intentionally omits internal deployment,
+database migration, CI, and implementation details.
 
-- Cloud/backend/web releases use `cloud-vYYYY.MM.DD.<run_number>`.
+- Clawdi app/backend/web releases use `clawdi-vYYYY.MM.DD.<run_number>`.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
-## Clawdi Cloud 2026.05.20.1
+## Clawdi 2026.05.20.1
 
-Release: https://github.com/Clawdi-AI/clawdi/releases/tag/cloud-v2026.05.20.1
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-v2026.05.20.1
 
 ### Added
 
-- Added backend support for bulk exact `clawdi://` reference resolution.
-- Added `vault_credential_profiles` storage for personal local CLI credential sync.
-- Added plaintext-free preview resolution for vault references.
-- Added generated OpenAPI client updates for the new vault APIs.
+- Added first-class `clawdi://` secret references for project-scoped vault
+  secrets.
+- Added dry-run secret previews that show where a secret resolves from without
+  printing plaintext.
+- Added support for syncing local CLI credential profiles for Codex, Claude
+  Code, and GitHub CLI.
 
 ### Changed
 
-- Hardened shared Project and env-bound Agent credential boundaries.
-- Separated runtime vault secrets from local CLI credential profile backup/restore.
-
-### Migration
-
-- Applied Alembic migration `e4f8a91c2d3b`.
-- The migration creates `vault_credential_profiles` and indexes only; it does not
-  rewrite existing vault data.
+- Improved vault conflict and provenance handling for multi-project and agent
+  workflows.
+- Kept local CLI credential profiles separate from runtime vault secrets.
 
 ### Security
 
@@ -56,8 +54,8 @@ Package: `clawdi@0.7.0`
 - `clawdi run --env-file` can resolve explicit references without broad
   all-vault env injection.
 
-### Operational Notes
+### Security
 
-- `clawdi@0.7.0` expects hosted backend support for vault bulk resolve and
-  credential profile endpoints.
-- Vault storage remains server-managed encryption, not zero-knowledge.
+- Secret reference previews do not print secret values.
+- Local CLI credential profiles are restored only for the authenticated user
+  who stored them.

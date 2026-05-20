@@ -139,7 +139,7 @@ validate installation and adapter `detect()` but not session parsing.
 
 ## Running the backend
 
-Full-pipe commands need the Clawdi Cloud backend on `:8000`. PostgreSQL
+Full-pipe commands need the Clawdi backend on `:8000`. PostgreSQL
 (with `pgvector` + `pg_trgm`) must be running first — see the root
 README for setup details.
 
@@ -236,14 +236,17 @@ The monorepo has two GitHub Release lines:
 - `clawdi-cli-vX.Y.Z` for the published npm package. The CLI publish
   workflow creates this release after npm publish succeeds and prepends
   package/install notes to the generated changelog.
-- `cloud-vYYYY.MM.DD.<run_number>` for backend, web, and shared-client
-  changes. `.github/workflows/cloud-release.yml` creates this release
+- `clawdi-vYYYY.MM.DD.<run_number>` for Clawdi app/backend/web changes.
+  `.github/workflows/clawdi-release.yml` creates this release
   when relevant files land on `main`; it can also be run manually with a
   specific version/commit after an out-of-band production deploy.
 
 Use the release body as the changelog. GitHub's generated notes are
 categorized by `.github/release.yml`; add `skip-changelog` to PRs that
-should not show up.
+should not show up. Keep release notes user-facing: include notable features,
+behavior changes, fixes, deprecations, removals, security notes, and user
+actions; omit migrations, CI, deployment steps, refactors, generated files, and
+other implementation-only details.
 
 Old preview releases can be deleted when their binaries and install links
 are no longer needed. Prefer leaving them as prereleases while they are

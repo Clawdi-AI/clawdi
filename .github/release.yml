@@ -2,6 +2,10 @@ changelog:
   exclude:
     labels:
       - skip-changelog
+      - dependencies
+      - chore
+      - ci
+      - maintenance
     authors:
       - dependabot
   categories:
@@ -17,9 +21,10 @@ changelog:
       labels:
         - bug
         - fix
+    - title: Security
+      labels:
+        - security
     - title: Documentation
       labels:
         - documentation
-    - title: Maintenance
-      labels:
-        - "*"
+        - docs
