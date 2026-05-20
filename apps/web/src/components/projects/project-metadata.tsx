@@ -68,13 +68,17 @@ export function isManagedProject(project: Pick<ProjectMetadata, "kind">): boolea
 	return project.kind === "environment" || project.kind === "personal";
 }
 
+export function projectKindSortRank(kind?: string): number {
+	if (kind === "workspace" || !kind) return 0;
+	if (kind === "personal") return 1;
+	if (kind === "environment") return 2;
+	return 4;
+}
+
 export function compareProjectsForUse(a: ProjectMetadata, b: ProjectMetadata) {
 	const rank = (project: ProjectMetadata) => {
 		if (!isProjectOwner(project)) return 3;
-		if (project.kind === "workspace") return 0;
-		if (project.kind === "personal") return 1;
-		if (project.kind === "environment") return 2;
-		return 4;
+		return projectKindSortRank(project.kind);
 	};
 	const byRank = rank(a) - rank(b);
 	if (byRank !== 0) return byRank;
@@ -500,17 +504,24 @@ function ProjectPickerAllItem({
 
 function projectPickerTypeText(project: ProjectMetadata) {
 	if (project.is_owner === false) return "Shared Project";
-	if (project.kind === "workspace" || !project.kind) return "Custom Project";
-	if (project.kind === "personal") return "Global Project";
-	if (project.kind === "environment") return "Agent Project";
-	return "Project";
+	return ownedProjectKindText(project, "full");
 }
 
 function projectCompactKindText(project: ProjectMetadata) {
 	if (project.is_owner === false) return "Shared";
-	if (project.kind === "workspace" || !project.kind) return "Custom";
-	if (project.kind === "personal") return "Global";
-	if (project.kind === "environment") return "Agent";
+	return ownedProjectKindText(project, "compact");
+}
+
+function ownedProjectKindText(
+	project: Pick<ProjectMetadata, "kind">,
+	variant: "full" | "compact" | "badge",
+) {
+	if (project.kind === "workspace" || !project.kind) {
+		return variant === "full" ? "Custom Project" : "Custom";
+	}
+	if (project.kind === "personal") return variant === "full" ? "Global Project" : "Global";
+	if (project.kind === "environment") return variant === "full" ? "Agent Project" : "Agent";
+	if (variant === "badge" && project.kind) return project.kind;
 	return "Project";
 }
 
@@ -521,16 +532,7 @@ function ProjectTypeBadge({
 	project: ProjectMetadata;
 	compact?: boolean;
 }) {
-	const text =
-		project.is_owner === false
-			? "Shared"
-			: project.kind === "workspace" || !project.kind
-				? "Custom"
-				: project.kind === "personal"
-					? "Global"
-					: project.kind === "environment"
-						? "Agent"
-						: project.kind;
+	const text = project.is_owner === false ? "Shared" : ownedProjectKindText(project, "badge");
 	return (
 		<Badge
 			variant="outline"

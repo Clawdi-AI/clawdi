@@ -112,9 +112,9 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Use Custom Projects to share with teammates, the Global Project for defaults, and Agent
-						Projects stay private to one agent. Project resources live in Projects; everything else
-						applies account-wide.
+						Create Projects to share with teammates. Use the Global Project for defaults. Agent
+						Projects stay private to one agent. Skills and Vaults live in Projects; Sessions,
+						Memories, and Connectors apply account-wide.
 					</p>
 				</div>
 				<div className="divide-y">

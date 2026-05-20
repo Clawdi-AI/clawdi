@@ -247,6 +247,19 @@ async def validate_project_read_for_caller(
     return project_id
 
 
+async def project_ids_owned_by_user(
+    db: AsyncSession,
+    user_id: UUID,
+) -> list[UUID]:
+    """Return Project ids directly owned by a user.
+
+    Use this when user-level operations must exclude Projects the user
+    can only read through membership, such as vault plaintext resolution.
+    """
+    rows = await db.execute(select(Project.id).where(Project.user_id == user_id))
+    return list(rows.scalars().all())
+
+
 async def project_ids_readable_by_user(
     db: AsyncSession,
     user_id: UUID,
@@ -259,9 +272,7 @@ async def project_ids_readable_by_user(
     """
     from app.models.project_membership import ProjectMembership
 
-    owned_ids = list(
-        (await db.execute(select(Project.id).where(Project.user_id == user_id))).scalars().all()
-    )
+    owned_ids = await project_ids_owned_by_user(db, user_id)
     shared_ids = list(
         (
             await db.execute(

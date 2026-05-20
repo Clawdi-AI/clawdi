@@ -29,8 +29,8 @@ import {
 	type ProjectAgentMetadata,
 	ProjectIdentity,
 	projectAgentFor,
+	projectKindSortRank,
 } from "@/components/projects/project-metadata";
-import { formatApiError } from "@/components/sharing/api-errors";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { errorMessage } from "@/lib/utils";
@@ -491,9 +492,7 @@ function normalizeSlugDraft(value: string) {
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {
-	const rank = (kind: string) =>
-		kind === "workspace" ? 0 : kind === "personal" ? 1 : kind === "environment" ? 2 : 3;
-	const byRank = rank(a.kind) - rank(b.kind);
+	const byRank = projectKindSortRank(a.kind) - projectKindSortRank(b.kind);
 	if (byRank !== 0) return byRank;
 	return a.name.localeCompare(b.name);
 }

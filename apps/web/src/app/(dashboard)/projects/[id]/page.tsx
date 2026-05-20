@@ -32,7 +32,6 @@ import {
 	projectAlias,
 	projectKindMeta,
 } from "@/components/projects/project-metadata";
-import { formatApiError } from "@/components/sharing/api-errors";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -68,6 +67,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import {

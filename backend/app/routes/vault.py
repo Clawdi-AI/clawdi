@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
 from app.core.database import get_session
 from app.core.project import (
+    project_ids_owned_by_user,
     project_ids_readable_by_user,
     project_ids_visible_to,
     resolve_default_write_project,
@@ -390,8 +391,7 @@ async def _plaintext_project_ids(db: AsyncSession, auth: AuthContext) -> list[UU
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         return [await resolve_default_write_project(db, auth)]
 
-    rows = await db.execute(select(Project.id).where(Project.user_id == auth.user_id))
-    return list(rows.scalars().all())
+    return await project_ids_owned_by_user(db, auth.user_id)
 
 
 def _is_env_bound(auth: AuthContext) -> bool:
@@ -1098,11 +1098,7 @@ async def _get_vault_write(
     if _is_env_bound(auth):
         owned_project_ids = [await resolve_default_write_project(db, auth)]
     else:
-        owned_project_ids = (
-            (await db.execute(select(Project.id).where(Project.user_id == auth.user_id)))
-            .scalars()
-            .all()
-        )
+        owned_project_ids = await project_ids_owned_by_user(db, auth.user_id)
     base_q = select(Vault).where(Vault.user_id == auth.user_id, Vault.slug == slug)
     if project_id is not None:
         if project_id not in owned_project_ids:

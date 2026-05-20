@@ -19,6 +19,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, useAuthedFetch } from "@/lib/api";
+import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 import {
@@ -33,7 +34,6 @@ import {
 	NOTIFICATION_CENTER_QUERY_KEY,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
-import { formatApiError } from "./sharing/api-errors";
 
 export function NotificationCenter() {
 	const router = useRouter();
