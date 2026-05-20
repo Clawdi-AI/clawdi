@@ -3,7 +3,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle, MessageSquare } from "lucide-react";
-import Link from "next/link";
 import {
 	createParser,
 	parseAsBoolean,
@@ -13,13 +12,14 @@ import {
 } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { AgentLabel, agentTypeLabel } from "@/components/dashboard/agent-label";
+import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import {
 	DashboardSection,
 	DashboardSectionHeader,
 	DashboardSectionToolbar,
 } from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
+import { MobileSessionList } from "@/components/sessions/mobile-session-list";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -27,18 +27,11 @@ import { DataTable } from "@/components/ui/data-table";
 import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
-import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, sessionDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import {
-	cn,
-	errorMessage,
-	formatSessionSummary,
-	recencyBucketFor,
-	relativeTime,
-} from "@/lib/utils";
+import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
 // `relevance` (trgm similarity) joins the legacy date/count sorts.
 // Relevance is special-cased server-side: it's only meaningful when q
@@ -356,71 +349,6 @@ function SessionsListInner() {
 					</div>
 				</DashboardSection>
 			)}
-		</div>
-	);
-}
-
-function MobileSessionList({
-	sessions,
-	isLoading,
-	emptyMessage,
-}: {
-	sessions: SessionListItem[];
-	isLoading: boolean;
-	emptyMessage: string;
-}) {
-	if (isLoading) {
-		return (
-			<div className="divide-y">
-				{Array.from({ length: 3 }).map((_, index) => (
-					<div key={index} className="px-4 py-3">
-						<Skeleton className="h-4 w-4/5" />
-						<Skeleton className="mt-2 h-3 w-1/2" />
-						<Skeleton className="mt-3 h-3 w-2/3" />
-					</div>
-				))}
-			</div>
-		);
-	}
-
-	if (sessions.length === 0) {
-		return <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>;
-	}
-
-	return (
-		<div className="divide-y">
-			{sessions.map((session) => {
-				const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
-				const projectFolder = session.project_path?.split("/").pop();
-				const totalTokens = session.input_tokens + session.output_tokens;
-				return (
-					<article key={session.id} className="px-4 py-3">
-						<Link href={sessionDetailHref(session.id)} className="block min-w-0">
-							<div className="min-w-0">
-								<h3 className="truncate text-sm font-medium">{title}</h3>
-								{projectFolder ? (
-									<p className="mt-0.5 truncate text-xs text-muted-foreground">{projectFolder}</p>
-								) : null}
-							</div>
-							<div className="mt-3 flex items-center justify-between gap-3">
-								<AgentLabel
-									machineName={session.machine_name}
-									type={session.agent_type}
-									size="sm"
-								/>
-								<span className="shrink-0 text-xs text-muted-foreground">
-									{relativeTime(session.last_activity_at)}
-								</span>
-							</div>
-							<div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-								<span>{session.message_count} messages</span>
-								<span>{(totalTokens / 1000).toFixed(1)}k tokens</span>
-								<span>Started {relativeTime(session.started_at)}</span>
-							</div>
-						</Link>
-					</article>
-				);
-			})}
 		</div>
 	);
 }

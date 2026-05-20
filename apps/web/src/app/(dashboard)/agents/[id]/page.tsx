@@ -16,6 +16,7 @@ import {
 	ProjectIdentity,
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
+import { MobileSessionList } from "@/components/sessions/mobile-session-list";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Badge } from "@/components/ui/badge";
@@ -375,14 +376,23 @@ export default function AgentDetailPage() {
 						</div>
 
 						<TabsContent value="sessions" className="mt-0">
-							<DataTable
-								columns={sessionColumns}
-								data={sessionsPage?.items ?? []}
-								isLoading={sessionsLoading}
-								getRowHref={(s) => sessionDetailHref(s.id)}
-								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-								emptyMessage="No sessions synced from this agent yet."
-							/>
+							<div className="overflow-hidden rounded-lg border bg-card md:hidden">
+								<MobileSessionList
+									sessions={sessionsPage?.items ?? []}
+									isLoading={sessionsLoading}
+									emptyMessage="No sessions synced from this agent yet."
+								/>
+							</div>
+							<div className="hidden md:block">
+								<DataTable
+									columns={sessionColumns}
+									data={sessionsPage?.items ?? []}
+									isLoading={sessionsLoading}
+									getRowHref={(s) => sessionDetailHref(s.id)}
+									rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+									emptyMessage="No sessions synced from this agent yet."
+								/>
+							</div>
 						</TabsContent>
 
 						<TabsContent value="skills" className="mt-0">

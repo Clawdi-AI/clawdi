@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,81 +68,93 @@ export default function MemoryDetailPage() {
 				</div>
 			) : memory ? (
 				<>
-					<div className="space-y-2">
-						<div className="flex items-start justify-between gap-3">
+					<div className="flex items-start justify-between gap-3">
+						<div className="min-w-0 flex-1 space-y-2">
+							<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+								<Brain className="size-3.5" />
+								<span>Memory</span>
+							</div>
 							<DetailTitle className="whitespace-pre-wrap leading-snug">
 								{memory.content}
 							</DetailTitle>
-							<ConfirmAction
-								title="Delete this memory?"
-								description={
-									<>
-										<p>Your AI will stop recalling it across every agent within seconds.</p>
-										<p>You can tell it the same thing again later.</p>
-									</>
-								}
-								confirmLabel="Delete Memory"
-								destructive
-								onConfirm={onDelete}
-							>
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={deleteMemory.isPending}
-									className="shrink-0 text-destructive hover:text-destructive"
+							<DetailMeta>
+								<Badge
+									variant="secondary"
+									className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
 								>
-									<Trash2 />
-									Delete
-								</Button>
-							</ConfirmAction>
+									{memory.category}
+								</Badge>
+								<span>{memory.source}</span>
+								{memory.created_at ? (
+									<>
+										<span>·</span>
+										<span title={new Date(memory.created_at).toLocaleString()}>
+											{relativeTime(memory.created_at)}
+										</span>
+									</>
+								) : null}
+							</DetailMeta>
 						</div>
-						<DetailMeta>
-							<Badge
-								variant="secondary"
-								className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
-							>
-								{memory.category}
-							</Badge>
-							<span>{memory.source}</span>
-							{memory.created_at ? (
+						<ConfirmAction
+							title="Delete this memory?"
+							description={
 								<>
-									<span>·</span>
-									<span title={new Date(memory.created_at).toLocaleString()}>
-										{relativeTime(memory.created_at)}
-									</span>
+									<p>Your AI will stop recalling it across every agent within seconds.</p>
+									<p>You can tell it the same thing again later.</p>
 								</>
-							) : null}
-						</DetailMeta>
+							}
+							confirmLabel="Delete Memory"
+							destructive
+							onConfirm={onDelete}
+						>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={deleteMemory.isPending}
+								className="shrink-0 text-destructive hover:text-destructive"
+							>
+								<Trash2 />
+								Delete
+							</Button>
+						</ConfirmAction>
 					</div>
 
-					{memory.tags?.length ? (
-						<div className="flex flex-wrap items-center gap-1.5">
-							<span className="text-xs text-muted-foreground">Tags:</span>
-							{memory.tags.map((t) => (
-								<Badge key={t} variant="outline" className="font-normal">
-									#{t}
-								</Badge>
-							))}
+					<DetailPanel className="space-y-4">
+						<div className="space-y-1">
+							<h2 className="text-sm font-semibold">Availability</h2>
+							<p className="text-xs text-muted-foreground">
+								This is account-level context. It is not shared through Projects.
+							</p>
 						</div>
-					) : null}
+						{memory.tags?.length ? (
+							<div className="flex flex-wrap items-center gap-1.5">
+								<span className="text-xs text-muted-foreground">Tags:</span>
+								{memory.tags.map((t) => (
+									<Badge key={t} variant="outline" className="font-normal">
+										#{t}
+									</Badge>
+								))}
+							</div>
+						) : null}
 
-					{memory.source_session_id ? (
-						<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-							<Laptop className="size-3" />
-							<span>
-								{memory.source_machine_name
-									? `Learned on ${memory.source_machine_name}`
-									: "Learned from a session"}
-								{" · "}
-							</span>
-							<Link
-								href={sessionDetailHref(memory.source_session_id)}
-								className="underline hover:text-foreground"
-							>
-								view session
-							</Link>
-						</div>
-					) : null}
+						{memory.source_session_id ? (
+							<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+								<Laptop className="size-3" />
+								<span>
+									{memory.source_machine_name
+										? `Learned on ${memory.source_machine_name}`
+										: "Learned from a session"}
+									{" · "}
+								</span>
+								<Link
+									href={sessionDetailHref(memory.source_session_id)}
+									className="underline hover:text-foreground"
+								>
+									View session
+								</Link>
+							</div>
+						) : null}
+					</DetailPanel>
 				</>
 			) : (
 				<Alert>

@@ -1,12 +1,13 @@
 "use client";
 
-import { AlertCircle, Check, Link2Off, Plug } from "lucide-react";
+import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
+import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -284,95 +285,90 @@ function ConnectorDetail() {
 				</div>
 			</div>
 
-			{/* Connection Management — matches clawdi ConnectionManagement */}
-			<section>
-				<div className="mb-3 flex items-center justify-between gap-3">
-					<div>
-						<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-							Connected Accounts
-						</h2>
-						<p className="mt-1 text-xs text-muted-foreground">
-							{activeConnections.length} connected
-						</p>
-					</div>
-					{activeConnections.length > 0 && (
-						<Button variant="outline" size="xs" onClick={startConnect} disabled={isStarting}>
-							{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-							Connect
-						</Button>
+			<DashboardSection priority="primary">
+				<DashboardSectionHeader
+					icon={Plug}
+					title="Connected Accounts"
+					count={`${activeConnections.length} connected`}
+					description="Connect an account once. Approved tools become available to agents through this connector."
+					toolbar={
+						activeConnections.length > 0 ? (
+							<Button variant="outline" size="sm" onClick={startConnect} disabled={isStarting}>
+								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+								Connect Account
+							</Button>
+						) : null
+					}
+				/>
+				<div className="p-4">
+					{connectionsQ.error ? (
+						// Without this, a failed connections fetch silently renders
+						// the "No connected accounts yet" empty state — the user
+						// would think they have nothing connected when really we
+						// just couldn't load the list.
+						<Alert variant="destructive">
+							<AlertCircle />
+							<AlertTitle>Failed to Load Connections</AlertTitle>
+							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
+						</Alert>
+					) : activeConnections.length === 0 ? (
+						<EmptyState
+							fillHeight={false}
+							bordered
+							description="No connected accounts yet."
+							action={
+								<Button onClick={startConnect} disabled={isStarting}>
+									{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+									{isStarting ? "Connecting…" : "Connect Account"}
+								</Button>
+							}
+						/>
+					) : (
+						<div className="divide-y overflow-hidden rounded-lg border bg-background/60">
+							{activeConnections.map((c) => (
+								<div key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
+									<div className="min-w-0">
+										{/* Identity first — `account_display` (e.g. the user's Gmail
+										    address) is the only thing that tells two same-app rows
+										    apart. Falls back to a shortened connection id so OSS
+										    users (whose backend doesn't surface account_display
+										    yet) still see something distinct per row. */}
+										<p className="truncate text-sm font-medium">
+											{c.account_display || `Account ${c.id.slice(-6)}`}
+										</p>
+										<p className="mt-0.5 text-xs text-muted-foreground">
+											{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+										</p>
+									</div>
+									<ConfirmAction
+										title={`Disconnect ${c.account_display || "this account"}?`}
+										description={
+											<p>Your AI will lose access immediately. To get it back, sign in again.</p>
+										}
+										confirmLabel="Disconnect"
+										destructive
+										onConfirm={() => handleDisconnect(c.id)}
+									>
+										<Button
+											variant="ghost"
+											size="xs"
+											disabled={isDisconnecting(c.id)}
+											className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+										>
+											{isDisconnecting(c.id) ? (
+												<Spinner className="size-3.5" />
+											) : (
+												<Link2Off className="size-3.5" />
+											)}
+											Disconnect
+										</Button>
+									</ConfirmAction>
+								</div>
+							))}
+						</div>
 					)}
 				</div>
-
-				{connectionsQ.error ? (
-					// Without this, a failed connections fetch silently renders
-					// the "No connected accounts yet" empty state — the user
-					// would think they have nothing connected when really we
-					// just couldn't load the list.
-					<Alert variant="destructive">
-						<AlertCircle />
-						<AlertTitle>Failed to Load Connections</AlertTitle>
-						<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
-					</Alert>
-				) : activeConnections.length === 0 ? (
-					<EmptyState
-						fillHeight={false}
-						bordered
-						description="No connected accounts yet."
-						action={
-							<Button onClick={startConnect} disabled={isStarting}>
-								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								{isStarting ? "Connecting…" : "Connect"}
-							</Button>
-						}
-					/>
-				) : (
-					<div className="flex flex-col gap-2">
-						{activeConnections.map((c) => (
-							<div
-								key={c.id}
-								className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
-							>
-								<div className="min-w-0">
-									{/* Identity first — `account_display` (e.g. the user's Gmail
-									    address) is the only thing that tells two same-app rows
-									    apart. Falls back to a shortened connection id so OSS
-									    users (whose backend doesn't surface account_display
-									    yet) still see something distinct per row. */}
-									<p className="truncate text-sm font-medium">
-										{c.account_display || `Account ${c.id.slice(-6)}`}
-									</p>
-									<p className="mt-0.5 text-xs text-muted-foreground">
-										{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-									</p>
-								</div>
-								<ConfirmAction
-									title={`Disconnect ${c.account_display || "this account"}?`}
-									description={
-										<p>Your AI will lose access immediately. To get it back, sign in again.</p>
-									}
-									confirmLabel="Disconnect"
-									destructive
-									onConfirm={() => handleDisconnect(c.id)}
-								>
-									<Button
-										variant="ghost"
-										size="xs"
-										disabled={isDisconnecting(c.id)}
-										className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-									>
-										{isDisconnecting(c.id) ? (
-											<Spinner className="size-3.5" />
-										) : (
-											<Link2Off className="size-3.5" />
-										)}
-										Disconnect
-									</Button>
-								</ConfirmAction>
-							</div>
-						))}
-					</div>
-				)}
-			</section>
+			</DashboardSection>
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
 			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} error={toolsQ.error} />
@@ -448,14 +444,16 @@ function ConnectorToolsList({
 
 	if (isLoading) {
 		return (
-			<section>
-				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Available Tools
-				</h2>
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Wrench}
+					title="Available Tools"
+					description="Tools this connector exposes after an account is connected."
+				/>
 				<div className="flex items-center justify-center py-6">
 					<Spinner className="size-5 text-muted-foreground" />
 				</div>
-			</section>
+			</DashboardSection>
 		);
 	}
 
@@ -463,38 +461,56 @@ function ConnectorToolsList({
 	// doesn't masquerade as "this connector has no tools".
 	if (error) {
 		return (
-			<section>
-				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Available Tools
-				</h2>
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Failed to Load Tools</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
-			</section>
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Wrench}
+					title="Available Tools"
+					description="Tools this connector exposes after an account is connected."
+				/>
+				<div className="p-4">
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Failed to Load Tools</AlertTitle>
+						<AlertDescription>{errorMessage(error)}</AlertDescription>
+					</Alert>
+				</div>
+			</DashboardSection>
 		);
 	}
 
-	if (tools.length === 0) return null;
+	if (tools.length === 0) {
+		return (
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Wrench}
+					title="Available Tools"
+					count="0 tools"
+					description="Tools this connector exposes after an account is connected."
+				/>
+				<EmptyState fillHeight={false} description="No tools are available for this connector." />
+			</DashboardSection>
+		);
+	}
 
 	return (
-		<section>
-			<div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Available Tools{" "}
-					<span className="font-normal text-muted-foreground/60">({tools.length})</span>
-				</h2>
-				{tools.length > 8 && (
-					<SearchInput
-						value={search}
-						onChange={setSearch}
-						placeholder="Search…"
-						className="w-full sm:w-56"
-					/>
-				)}
-			</div>
-			<div className="max-h-[32rem] overflow-y-auto rounded-lg border">
+		<DashboardSection>
+			<DashboardSectionHeader
+				icon={Wrench}
+				title="Available Tools"
+				count={`${tools.length} tools`}
+				description="Review the actions agents can request through this connector."
+				toolbar={
+					tools.length > 8 ? (
+						<SearchInput
+							value={search}
+							onChange={setSearch}
+							placeholder="Search…"
+							className="w-full sm:w-56"
+						/>
+					) : null
+				}
+			/>
+			<div className="max-h-[32rem] overflow-y-auto">
 				{filtered.map((tool, i) => (
 					<div
 						key={tool.name}
@@ -526,6 +542,6 @@ function ConnectorToolsList({
 					</p>
 				)}
 			</div>
-		</section>
+		</DashboardSection>
 	);
 }

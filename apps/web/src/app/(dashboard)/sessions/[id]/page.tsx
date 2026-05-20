@@ -14,7 +14,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
-import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
@@ -331,7 +331,12 @@ export default function SessionDetailPage() {
 					<EmptyContent />
 				)
 			) : (
-				<EmptyState description="Conversation not uploaded yet. Refresh in a moment." />
+				<DetailPanel className="py-10">
+					<EmptyState
+						fillHeight={false}
+						description="Conversation not uploaded yet. Refresh in a moment."
+					/>
+				</DetailPanel>
 			)}
 
 			{/* Floating "jump to bottom" — only meaningful in asc mode
