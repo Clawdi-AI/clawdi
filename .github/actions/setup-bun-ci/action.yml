@@ -1,5 +1,5 @@
 # Reusable composite action: set up Bun + install workspace dependencies
-# with a shared cache. Used by every client-ci job so caching is consistent.
+# with a shared cache. Used by JS-dependent CI jobs so caching is consistent.
 name: Setup Bun CI
 description: Install Bun and run `bun install --frozen-lockfile` with lockfile-scoped cache
 
@@ -18,14 +18,14 @@ runs:
         bun-version: ${{ inputs.bun-version }}
 
     - name: Cache bun install
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ~/.bun/install/cache
           node_modules
-        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
         restore-keys: |
-          bun-${{ runner.os }}-
+          bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-
 
     - name: Install dependencies
       shell: bash
