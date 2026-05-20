@@ -46,7 +46,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create Projects to share with teammates. Global Projects come with your account; Agent Projects belong to one connected agent. Managed Projects cannot be shared.",
+			"Use Custom Projects to share resources with teammates. Use the Global Project for account defaults. Agent Projects belong to one connected agent and cannot be shared.",
 		href: "/projects",
 		emptyCta: "Create Project",
 		routeGroup: "project-registry",
@@ -146,7 +146,7 @@ export const PROJECT_RESOURCE_GROUPS = [
 	},
 	{
 		id: "project-resources",
-		label: "In Projects",
+		label: "Project Resources",
 		resourceIds: ["skills", "vaults"],
 	},
 	{

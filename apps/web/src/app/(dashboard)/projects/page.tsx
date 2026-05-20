@@ -310,7 +310,7 @@ export default function ProjectsPage() {
 					icon={Users}
 					title="Shared Projects"
 					count={sharedProjects.length}
-					description="Projects others shared with you. These are invites you already accepted. New invites stay in the Notification Center until you accept them."
+					description="Projects others shared with you. These are invites you already accepted. New invites stay under the top-right Notification Center bell until you accept them."
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (

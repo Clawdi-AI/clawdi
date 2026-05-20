@@ -159,7 +159,8 @@ export function VaultConflictsAlert({
 					</div>
 				) : null}
 				<p className="text-xs">
-					After fixing the key names, come back here and choose {actionLabel} to try again.
+					If you own the Vault, rename the conflicting keys there. If the Vault is read-only, ask
+					the owner to rename them. Then come back here and choose {actionLabel} to try again.
 				</p>
 				<Button
 					type="button"

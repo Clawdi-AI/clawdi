@@ -54,7 +54,7 @@ export function getNotificationCenterEmptyCopy(): { title: string; description: 
 	return {
 		title: "No Pending Notifications",
 		description:
-			"Project invitations and other action-required updates will appear here under the top-bar Notification Center icon.",
+			"Project invitations and other action-required updates will appear here under the top-right Notification Center bell.",
 	};
 }
 

@@ -221,7 +221,7 @@ function ShareMethodGuide() {
 				<div className="font-medium text-foreground">Email Invite</div>
 				<p className="mt-1 text-muted-foreground">
 					Best when you know the email they use to sign in. They accept from the Notification Center
-					icon in the top bar.
+					bell in the top-right.
 				</p>
 			</div>
 			<div>
@@ -590,7 +590,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			setEmail("");
 			toast.success("Invitation Sent", {
 				description:
-					"They will see it in the Notification Center after signing in with that email.",
+					"They will see it under the top-right Notification Center bell after signing in with that email.",
 			});
 		},
 		onError: (e) => {
@@ -657,7 +657,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			</form>
 			<p className="text-xs text-muted-foreground">
 				Invitees join as Viewers with read-only access to skills and Vault key names. Secret values
-				stay hidden. After signing in, they accept from the Notification Center icon in the top bar.
+				stay hidden. After signing in, they accept from the top-right Notification Center bell.
 			</p>
 			<Separator />
 			{invites.isLoading ? (

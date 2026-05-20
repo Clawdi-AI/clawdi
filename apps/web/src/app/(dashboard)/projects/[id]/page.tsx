@@ -285,7 +285,10 @@ export default function ProjectDetailPage() {
 					<CheckCircle2 className="size-4" />
 					<AlertTitle>Project Added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span>Next step: add this Project to an agent to use its skills and Vault access.</span>
+						<span>
+							Skills and Vault keys are used by agents. Add this Project to an agent to make them
+							available.
+						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
 							Add to Agent

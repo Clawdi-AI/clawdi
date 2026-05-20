@@ -112,9 +112,9 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Create Projects to share with teammates. Global Projects come with your account; Agent
-						Projects belong to one connected agent. Those managed Projects are automatic and cannot
-						be shared. After choosing a Project, open Skills or Vaults below to add resources to it.
+						Use Custom Projects to share resources with teammates. Use the Global Project for
+						account defaults. Agent Projects belong to one connected agent and cannot be shared.
+						Project resources are scoped to Projects; account resources are global to your account.
 					</p>
 				</div>
 				<div className="divide-y">
@@ -212,7 +212,7 @@ function ResourceRow({
 			<span className="flex shrink-0 items-center gap-2" title={scopeLabel}>
 				{count}
 				<span className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground">
-					Create Project
+					1. Create Project
 				</span>
 			</span>
 		) : (
