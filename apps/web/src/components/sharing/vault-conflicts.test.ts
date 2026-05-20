@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	formatApiError,
+	formatVaultConflictSummary,
 	groupVaultConflicts,
 	isVaultConflictDetail,
 	parseApiDetail,
@@ -79,5 +80,14 @@ describe("vault conflict API details", () => {
 				items: [{ vault_slug: "github-secrets", section: "deploy", item_name: "PAT" }],
 			},
 		]);
+	});
+
+	test("formats conflict summaries around source vault count", () => {
+		expect(formatVaultConflictSummary(1, 1)).toBe(
+			"Key name conflict: 1 key name already exists in another Vault used by this Project.",
+		);
+		expect(formatVaultConflictSummary(2, 2)).toBe(
+			"Key name conflict: 2 key names already exist across 2 other Vaults used by this Project.",
+		);
 	});
 });

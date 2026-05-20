@@ -176,6 +176,8 @@ export default function SharePage() {
 						/>
 					</div>
 
+					<ViewerAccessCard hasVaults={data.vault_count > 0} />
+
 					<Separator />
 
 					{upgrade.isSuccess ? (
@@ -257,6 +259,40 @@ export default function SharePage() {
 				Shared Projects never grant write access. The owner can turn off this link anytime.
 			</p>
 		</Shell>
+	);
+}
+
+function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
+	const vaultCopy = hasVaults ? "View Vault key names" : "View Vault key names if added later";
+	return (
+		<div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+			<div className="space-y-2">
+				<p className="font-medium">Viewer Can</p>
+				<ul className="space-y-1.5 text-muted-foreground">
+					<li className="flex items-center gap-2">
+						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
+						<span>View skills</span>
+					</li>
+					<li className="flex items-center gap-2">
+						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
+						<span>{vaultCopy}</span>
+					</li>
+				</ul>
+			</div>
+			<div className="space-y-2">
+				<p className="font-medium">Viewer Cannot</p>
+				<ul className="space-y-1.5 text-muted-foreground">
+					<li className="flex items-center gap-2">
+						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
+						<span>See key values</span>
+					</li>
+					<li className="flex items-center gap-2">
+						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
+						<span>Edit anything</span>
+					</li>
+				</ul>
+			</div>
+		</div>
 	);
 }
 

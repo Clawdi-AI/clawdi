@@ -14,6 +14,7 @@ import Link from "next/link";
 import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
@@ -34,6 +35,12 @@ type Resource = {
 	count: number;
 };
 
+export type ProjectTypeCounts = {
+	custom: number;
+	global: number;
+	agent: number;
+};
+
 const RESOURCE_ICONS = {
 	projects: FolderKanban,
 	skills: Sparkles,
@@ -44,6 +51,10 @@ const RESOURCE_ICONS = {
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
 const FIRST_PATH_STEPS = ["Create Project", "Add Skills or Vaults"];
+
+function formatProjectTypeCounts(counts: ProjectTypeCounts) {
+	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
+}
 
 function buildResources(stats: DashboardStats, projectCount: number): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
@@ -59,11 +70,13 @@ function buildResources(stats: DashboardStats, projectCount: number): Resource[]
 export function ResourcesCard({
 	stats,
 	projectCount,
+	projectTypeCounts,
 	projectCountLoading = false,
 	hasConnectedAgent,
 }: {
 	stats: DashboardStats | undefined;
 	projectCount: number | undefined;
+	projectTypeCounts?: ProjectTypeCounts;
 	projectCountLoading?: boolean;
 	hasConnectedAgent?: boolean;
 }) {
@@ -99,14 +112,17 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Projects you create can be shared. Global Projects and Agent Projects are created and
-						managed automatically. After choosing a Project, open Skills or Vaults below to add
-						resources to it.
+						Create Projects to share with teammates. Global and Agent Projects are created
+						automatically and cannot be shared. After choosing a Project, open Skills or Vaults
+						below to add resources to it.
 					</p>
 				</div>
 				<div className="divide-y">
 					{ready ? (
-						<ProjectResourceGroups resources={buildResources(stats, projectCount ?? 0)} />
+						<ProjectResourceGroups
+							resources={buildResources(stats, projectCount ?? 0)}
+							projectTypeCounts={projectTypeCounts}
+						/>
 					) : (
 						PROJECT_RESOURCE_GROUPS.map((group) => (
 							<div key={group.id}>
@@ -123,7 +139,13 @@ export function ResourcesCard({
 	);
 }
 
-function ProjectResourceGroups({ resources }: { resources: Resource[] }) {
+function ProjectResourceGroups({
+	resources,
+	projectTypeCounts,
+}: {
+	resources: Resource[];
+	projectTypeCounts?: ProjectTypeCounts;
+}) {
 	const byId = new Map(resources.map((resource) => [resource.definition.id, resource]));
 	return (
 		<>
@@ -132,7 +154,13 @@ function ProjectResourceGroups({ resources }: { resources: Resource[] }) {
 					<ResourceGroupLabel label={group.label} />
 					{projectResourceDefinitionsForGroup(group.id).map((definition) => {
 						const resource = byId.get(definition.id);
-						return resource ? <ResourceRow key={definition.id} resource={resource} /> : null;
+						return resource ? (
+							<ResourceRow
+								key={definition.id}
+								resource={resource}
+								projectTypeCounts={projectTypeCounts}
+							/>
+						) : null;
 					})}
 				</div>
 			))}
@@ -156,10 +184,28 @@ function ResourceRowSkeleton() {
 	);
 }
 
-function ResourceRow({ resource }: { resource: Resource }) {
+function ResourceRow({
+	resource,
+	projectTypeCounts,
+}: {
+	resource: Resource;
+	projectTypeCounts?: ProjectTypeCounts;
+}) {
 	const empty = resource.count === 0;
 	const Icon = resource.icon;
 	const { definition } = resource;
+	const scopeLabel =
+		definition.id === "projects" && projectTypeCounts
+			? formatProjectTypeCounts(projectTypeCounts)
+			: projectResourceScopeLabel(definition.projectScope);
+	const count = (
+		<span
+			className={cn("text-sm tabular-nums", empty ? "text-muted-foreground" : "font-semibold")}
+			title={scopeLabel}
+		>
+			{formatNumber(resource.count)}
+		</span>
+	);
 	return (
 		<Link
 			href={definition.href}
@@ -182,12 +228,14 @@ function ResourceRow({ resource }: { resource: Resource }) {
 					)}
 				</div>
 			</div>
-			<span
-				className={cn("text-sm tabular-nums", empty ? "text-muted-foreground" : "font-semibold")}
-				title={projectResourceScopeLabel(definition.projectScope)}
-			>
-				{formatNumber(resource.count)}
-			</span>
+			{definition.id === "projects" && projectTypeCounts ? (
+				<Tooltip>
+					<TooltipTrigger asChild>{count}</TooltipTrigger>
+					<TooltipContent side="left">{scopeLabel}</TooltipContent>
+				</Tooltip>
+			) : (
+				count
+			)}
 		</Link>
 	);
 }

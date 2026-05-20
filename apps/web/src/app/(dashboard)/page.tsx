@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
-import { ResourcesCard } from "@/components/dashboard/resources-card";
+import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumnsCompact } from "@/components/sessions/session-columns";
@@ -22,6 +22,22 @@ import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-m
 import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
+
+function countProjectTypes(
+	projects: Array<{ kind?: string | null }> | undefined,
+): ProjectTypeCounts {
+	const counts: ProjectTypeCounts = { custom: 0, global: 0, agent: 0 };
+	for (const project of projects ?? []) {
+		if (project.kind === "personal") {
+			counts.global += 1;
+		} else if (project.kind === "environment") {
+			counts.agent += 1;
+		} else {
+			counts.custom += 1;
+		}
+	}
+	return counts;
+}
 
 // Dynamic imports gated on a build-time-constant `IS_HOSTED`. When
 // the flag is false (OSS), the conditional collapses, the
@@ -118,6 +134,7 @@ export default function DashboardPage() {
 	const selfManagedCount = environments?.length ?? 0;
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
+	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -207,6 +224,7 @@ export default function DashboardPage() {
 					<ResourcesCard
 						stats={stats}
 						projectCount={projects?.length}
+						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
 						hasConnectedAgent={HostedAgentsSection || envsLoading ? undefined : hasAgents}
 					/>
