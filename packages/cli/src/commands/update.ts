@@ -64,6 +64,7 @@ function readCache(): UpdateCache | null {
 
 function writeCache(latest: string): void {
 	try {
+		mkdirSync(getClawdiDir(), { recursive: true });
 		writeFileSync(
 			cachePath(),
 			`${JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2)}\n`,
@@ -75,16 +76,17 @@ function writeCache(latest: string): void {
 }
 
 async function fetchLatest(timeoutMs = 3000): Promise<string | null> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
 		const res = await fetch(REGISTRY_URL, { signal: controller.signal });
-		clearTimeout(timer);
 		if (!res.ok) return null;
 		const data = (await res.json()) as { "dist-tags"?: { latest?: string } };
 		return data["dist-tags"]?.latest ?? null;
 	} catch {
 		return null;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -190,11 +192,7 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 		return;
 	}
 	// Update last-version so the post-install run prints "Updated to v…".
-	try {
-		writeFileSync(lastVersionPath(), current, { mode: 0o644 });
-	} catch {
-		// best-effort
-	}
+	writeLastVersion(current);
 	console.log();
 	console.log(chalk.green(`✓ clawdi v${latest} installed.`));
 }
@@ -203,6 +201,15 @@ const LAST_VERSION_FILE = "last-version";
 
 function lastVersionPath(): string {
 	return join(getClawdiDir(), LAST_VERSION_FILE);
+}
+
+function writeLastVersion(version: string): void {
+	try {
+		mkdirSync(getClawdiDir(), { recursive: true });
+		writeFileSync(lastVersionPath(), version, { mode: 0o644 });
+	} catch {
+		// best-effort
+	}
 }
 
 function detectInstaller(): Installer | null {
@@ -415,11 +422,7 @@ export async function daemonAutoUpdateOnce(
 			log.warn("daemon.auto_update_failed", { current, latest, installer, status });
 			return "failed";
 		}
-		try {
-			writeFileSync(lastVersionPath(), current, { mode: 0o644 });
-		} catch {
-			// best-effort; the installed binary still wins.
-		}
+		writeLastVersion(current);
 		log.info("daemon.auto_update_installed", { from: current, to: latest, installer });
 		return "installed";
 	} finally {
@@ -503,10 +506,10 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 				}
 			}
 		}
-		writeFileSync(lastFile, current, { mode: 0o644 });
 	} catch {
 		// best-effort
 	}
+	writeLastVersion(current);
 
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
@@ -567,6 +570,7 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	const logPath = join(getClawdiDir(), "auto-update.log");
 	let logFd: number;
 	try {
+		mkdirSync(getClawdiDir(), { recursive: true });
 		logFd = openSync(logPath, "a");
 	} catch {
 		// Fall back to ignore — best-effort. The install can still succeed.
@@ -609,6 +613,7 @@ function spawnBackgroundInstall(
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
 	return new Promise((resolve) => {
 		const onAbort = () => {
 			clearTimeout(t);
