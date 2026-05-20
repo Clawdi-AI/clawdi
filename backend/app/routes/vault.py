@@ -103,12 +103,26 @@ async def list_vaults(
         [v.id for v in rows],
         visible_project_ids=visible_project_ids,
     )
+    default_project_id = (
+        selected_project_id
+        if selected_project_id is not None
+        else await resolve_default_write_project(db, auth)
+    )
     return Paginated[VaultResponse](
         items=[
             VaultResponse(
                 id=str(v.id),
                 slug=v.slug,
                 name=v.name,
+                project_id=(
+                    str(default_project_id)
+                    if default_project_id in project_ids_by_vault.get(v.id, [])
+                    else (
+                        str(project_ids_by_vault[v.id][0])
+                        if project_ids_by_vault.get(v.id)
+                        else None
+                    )
+                ),
                 project_ids=[str(pid) for pid in project_ids_by_vault.get(v.id, [])],
                 is_owner=v.user_id == auth.user_id,
                 created_at=v.created_at,

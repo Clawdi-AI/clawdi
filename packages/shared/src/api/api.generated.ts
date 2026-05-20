@@ -3407,6 +3407,8 @@ export interface components {
             slug: string;
             /** Name */
             name: string;
+            /** Project Id */
+            project_id?: string | null;
             /** Project Ids */
             project_ids: string[];
             /**

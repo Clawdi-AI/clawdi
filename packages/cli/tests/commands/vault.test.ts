@@ -46,9 +46,13 @@ describe("vaultList", () => {
 		}
 
 		const rows = JSON.parse(out) as Array<{
+			project_id: string | null;
+			project_ids: string[];
 			items: Record<string, string[]>;
 			references: Array<{ key: string; section: string; field: string; reference: string }>;
 		}>;
+		expect(rows[0].project_id).toBe(PROJECT_ID);
+		expect(rows[0].project_ids).toEqual([PROJECT_ID]);
 		expect(rows[0].items["(default)"]).toEqual(["OPENAI_API_KEY"]);
 		expect(rows[0].references).toEqual([
 			{

@@ -85,6 +85,9 @@ class VaultResponse(BaseModel):
     id: str
     slug: str
     name: str
+    # Legacy single-Project field kept for older CLI versions and
+    # scripts. New clients should read `project_ids`.
+    project_id: str | None = None
     # Projects this vault is attached to and visible through for the
     # current caller. Key rows belong to the vault, not to Projects.
     project_ids: list[str]

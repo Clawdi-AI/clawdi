@@ -39,6 +39,7 @@ async def test_vault_create_list_and_slug_conflict(client: httpx.AsyncClient):
     matches = [v for v in listing["items"] if v["slug"] == "prod"]
     assert len(matches) == 1
     assert matches[0]["project_ids"]
+    assert matches[0]["project_id"] in matches[0]["project_ids"]
 
 
 @pytest.mark.asyncio
@@ -613,10 +614,13 @@ async def test_vault_attaches_one_vault_to_multiple_projects(client, db_session,
     listing = (await client.get("/api/vault")).json()
     [github] = [v for v in listing["items"] if v["slug"] == "github"]
     assert set(github["project_ids"]) == {str(project_a.id), str(project_b.id)}
+    assert github["project_id"] in github["project_ids"]
     filtered_a = (await client.get(f"/api/vault?project_id={project_a.id}")).json()
     assert [v["slug"] for v in filtered_a["items"]] == ["github"]
+    assert filtered_a["items"][0]["project_id"] == str(project_a.id)
     filtered_b = (await client.get(f"/api/vault?project_id={project_b.id}")).json()
     assert {v["slug"] for v in filtered_b["items"]} == {"figma", "github"}
+    assert {v["project_id"] for v in filtered_b["items"]} == {str(project_b.id)}
 
     # With `project_id` query param both vaults are reachable.
     a_resp = await client.get(f"/api/vault/github/items?project_id={project_a.id}")

@@ -16,7 +16,7 @@ function requireAuth() {
 
 interface VaultListRow {
 	project_ids?: string[];
-	project_id?: string;
+	project_id?: string | null;
 	slug: string;
 	name: string;
 }
@@ -171,6 +171,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		// where that vault is available.
 		const out: Array<{
 			slug: string;
+			project_id: string | null;
 			project_ids: string[];
 			name: string;
 			items: Awaited<ReturnType<typeof fetchItems>>;
@@ -182,6 +183,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			const items = await fetchItems(v.slug, attachedProjectId);
 			out.push({
 				slug: v.slug,
+				project_id: attachedProjectId ?? null,
 				project_ids: projectIds,
 				name: v.name,
 				items,
