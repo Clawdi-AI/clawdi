@@ -69,7 +69,7 @@ export function VaultKeyImportDialog({
 		<Dialog
 			open={open}
 			onOpenChange={(nextOpen) => {
-				if (isPending) return;
+				if (isPending && nextOpen) return;
 				setOpen(nextOpen);
 				if (!nextOpen) reset();
 			}}

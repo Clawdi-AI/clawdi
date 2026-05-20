@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -125,16 +126,8 @@ function ConnectorDetail() {
 	const disconnectMutation = useDisconnect();
 	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
 	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
-	const handleDisconnect = (connectionId: string, accountLabel?: string) => {
+	const handleDisconnect = (connectionId: string) => {
 		if (inflightDisconnectsRef.current.has(connectionId)) return;
-		// Disconnecting revokes the OAuth grant — your AI immediately
-		// loses access to this account, and re-connecting requires
-		// the full sign-in flow again.
-		const ok = window.confirm(
-			`Disconnect ${accountLabel || "this account"}?\n\n` +
-				"Your AI will lose access immediately. To get it back you'll need to sign in again.",
-		);
-		if (!ok) return;
 		inflightDisconnectsRef.current.add(connectionId);
 		setDisconnectingIds((s) => new Set(s).add(connectionId));
 		disconnectMutation.mutate(
@@ -352,20 +345,29 @@ function ConnectorDetail() {
 										{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
 									</p>
 								</div>
-								<Button
-									variant="ghost"
-									size="xs"
-									onClick={() => handleDisconnect(c.id, c.account_display ?? undefined)}
-									disabled={isDisconnecting(c.id)}
-									className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+								<ConfirmAction
+									title={`Disconnect ${c.account_display || "this account"}?`}
+									description={
+										<p>Your AI will lose access immediately. To get it back, sign in again.</p>
+									}
+									confirmLabel="Disconnect"
+									destructive
+									onConfirm={() => handleDisconnect(c.id)}
 								>
-									{isDisconnecting(c.id) ? (
-										<Spinner className="size-3.5" />
-									) : (
-										<Link2Off className="size-3.5" />
-									)}
-									Disconnect
-								</Button>
+									<Button
+										variant="ghost"
+										size="xs"
+										disabled={isDisconnecting(c.id)}
+										className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+									>
+										{isDisconnecting(c.id) ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<Link2Off className="size-3.5" />
+										)}
+										Disconnect
+									</Button>
+								</ConfirmAction>
 							</div>
 						))}
 					</div>

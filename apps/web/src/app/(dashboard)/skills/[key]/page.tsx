@@ -14,6 +14,7 @@ import { isProjectOwner } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -233,21 +234,11 @@ function SkillDetailPageInner() {
 			toast.error("Shared Skills Are Read-only");
 			return;
 		}
-		// Per-agent isolation: this DELETE only removes the skill
-		// from the current project (one agent's copy). The same
-		// skill_key on other agents stays untouched. Confirm copy
-		// has to make that project explicit so the user doesn't think
-		// they're nuking it everywhere.
-		const where = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
-		const ok = window.confirm(
-			`Uninstall "${skill?.name ?? skillKey}" ${where}?\n\n` +
-				"Your other agents keep their copies. To get it back here, " +
-				"re-install it from the marketplace.",
-		);
-		if (ok) uninstall.mutate();
+		uninstall.mutate();
 	};
 
 	const sourceProjectName = skill?.project_name ?? null;
+	const uninstallLocation = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
 	const agentCaption = skill?.machine_name
 		? `on ${skill.machine_name}`
 		: sourceProjectName
@@ -298,21 +289,36 @@ function SkillDetailPageInner() {
 											<Pencil />
 											Edit
 										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={onUninstall}
-											disabled={uninstall.isPending || !isProjectReady}
-											title={
-												projectError
-													? `Default project unavailable: ${errorMessage(projectError)}`
-													: undefined
+										<ConfirmAction
+											title={`Uninstall ${skill.name}?`}
+											description={
+												<>
+													<p>This removes the skill {uninstallLocation}.</p>
+													<p>
+														Your other agents keep their copies. To get it back here, re-install it
+														from the marketplace.
+													</p>
+												</>
 											}
-											className="text-destructive hover:text-destructive"
+											confirmLabel="Uninstall Skill"
+											destructive
+											onConfirm={onUninstall}
 										>
-											<Trash2 />
-											Uninstall
-										</Button>
+											<Button
+												variant="outline"
+												size="sm"
+												disabled={uninstall.isPending || !isProjectReady}
+												title={
+													projectError
+														? `Default project unavailable: ${errorMessage(projectError)}`
+														: undefined
+												}
+												className="text-destructive hover:text-destructive"
+											>
+												<Trash2 />
+												Uninstall
+											</Button>
+										</ConfirmAction>
 									</>
 								) : (
 									<>

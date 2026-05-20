@@ -37,6 +37,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -617,22 +618,25 @@ function MobileSkillList({
 								</div>
 							</div>
 							{canUninstall ? (
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									disabled={uninstallPending}
-									onClick={() => {
-										if (!skill.project_id) return;
-										const ok = window.confirm(
-											`Uninstall "${skill.name}" from this Project?\n\nOther Projects keep their copies.`,
-										);
-										if (ok) onUninstall(skill.skill_key, skill.project_id);
+								<ConfirmAction
+									title={`Uninstall ${skill.name}?`}
+									description={<p>Other Projects keep their copies.</p>}
+									confirmLabel="Uninstall Skill"
+									destructive
+									onConfirm={() => {
+										if (skill.project_id) onUninstall(skill.skill_key, skill.project_id);
 									}}
-									className="shrink-0 text-muted-foreground hover:text-destructive"
-									aria-label={`Uninstall ${skill.name}`}
 								>
-									<Trash2 className="size-3.5" />
-								</Button>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										disabled={uninstallPending}
+										className="shrink-0 text-muted-foreground hover:text-destructive"
+										aria-label={`Uninstall ${skill.name}`}
+									>
+										<Trash2 className="size-3.5" />
+									</Button>
+								</ConfirmAction>
 							) : null}
 						</div>
 					</article>

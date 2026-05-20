@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
@@ -296,27 +297,29 @@ function ApiKeysPanel() {
 				header: "",
 				cell: ({ row }) =>
 					!row.original.revoked_at ? (
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							onClick={() => {
-								// Revoking a key in-use stops sync on whichever
-								// machine holds it. Cannot be un-revoked, so
-								// confirm with explicit blast radius.
-								const ok = window.confirm(
-									`Revoke "${row.original.label}"?\n\n` +
-										"If a machine is still using this key, sync will stop on it within a minute. " +
-										"You'd need to log in again from that machine to resume.",
-								);
-								if (ok) revokeKey.mutate(row.original.id);
-							}}
-							disabled={revokeKey.isPending}
-							aria-label="Revoke key"
-							className="text-muted-foreground hover:text-destructive"
+						<ConfirmAction
+							title={`Revoke ${row.original.label}?`}
+							description={
+								<p>
+									If a machine is still using this key, sync will stop within a minute. Sign in
+									again from that machine to resume.
+								</p>
+							}
+							confirmLabel="Revoke Key"
+							destructive
+							onConfirm={() => revokeKey.mutate(row.original.id)}
 						>
-							<Trash2 className="size-3.5" />
-						</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								disabled={revokeKey.isPending}
+								aria-label="Revoke key"
+								className="text-muted-foreground hover:text-destructive"
+							>
+								<Trash2 className="size-3.5" />
+							</Button>
+						</ConfirmAction>
 					) : null,
 				size: 40,
 			},

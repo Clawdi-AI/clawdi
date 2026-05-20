@@ -16,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
@@ -114,17 +115,7 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
 	});
 
-	const requestDeleteMemory = useCallback(
-		(id: string) => {
-			// Memory deletion is account-wide and reflects on every machine via
-			// the daemon's live sync — gone in seconds, no undo from this UI.
-			const ok = window.confirm(
-				"Delete this memory?\n\nYour AI will stop recalling it on every agent within seconds.",
-			);
-			if (ok) deleteMemory.mutate(id);
-		},
-		[deleteMemory],
-	);
+	const requestDeleteMemory = useCallback((id: string) => deleteMemory.mutate(id), [deleteMemory]);
 
 	const columns = useMemo(() => makeMemoryColumns(requestDeleteMemory), [requestDeleteMemory]);
 
@@ -329,19 +320,25 @@ function MobileMemoryList({
 								) : null}
 							</div>
 						</div>
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							onClick={(event) => {
-								event.preventDefault();
-								event.stopPropagation();
-								onDelete(memory.id);
-							}}
-							className="pointer-events-auto shrink-0 text-muted-foreground hover:text-destructive"
-							aria-label="Delete memory"
+						<ConfirmAction
+							title="Delete this memory?"
+							description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
+							confirmLabel="Delete Memory"
+							destructive
+							onConfirm={() => onDelete(memory.id)}
 						>
-							<Trash2 className="size-3.5" />
-						</Button>
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								onClick={(event) => {
+									event.stopPropagation();
+								}}
+								className="pointer-events-auto shrink-0 text-muted-foreground hover:text-destructive"
+								aria-label="Delete memory"
+							>
+								<Trash2 className="size-3.5" />
+							</Button>
+						</ConfirmAction>
 					</div>
 				</article>
 			))}

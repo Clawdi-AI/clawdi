@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
-import { DetailNotFound } from "@/components/detail/layout";
+import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -20,6 +20,7 @@ import { sessionColumns } from "@/components/sessions/session-columns";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -261,17 +262,7 @@ export default function AgentDetailPage() {
 	});
 
 	const onDisconnect = () => {
-		// "Disconnect" not "Remove" — the API call only deletes the
-		// AgentEnvironment row. Sessions, skills, and memories all
-		// stay (backend `delete_environment` docstring spells this
-		// out: "Existing sessions remain (orphaned) so users don't
-		// lose history when removing a machine.")
-		const msg =
-			"Disconnect this agent from your account?\n\n" +
-			"Sessions and skills stay in your account, but this agent will stop syncing and " +
-			"sessions will no longer be tagged with it. If sync is still running there, " +
-			"reconnect from that agent to resume.";
-		if (window.confirm(msg)) disconnect.mutate();
+		disconnect.mutate();
 	};
 
 	return (
@@ -307,20 +298,30 @@ export default function AgentDetailPage() {
 							]}
 							className="min-w-0 flex-1"
 						/>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={onDisconnect}
-							disabled={disconnect.isPending}
-							// Neutral tone, amber icon — Disconnect is fully
-							// reversible (sessions/skills/memories all stay),
-							// so a red destructive button would lie about the
-							// consequences.
-							className="shrink-0"
+						<ConfirmAction
+							title="Disconnect this agent?"
+							description={
+								<>
+									<p>Sessions and skills stay in your account.</p>
+									<p>
+										This agent will stop syncing and sessions will no longer be tagged with it.
+										Reconnect from that agent to resume.
+									</p>
+								</>
+							}
+							confirmLabel="Disconnect Agent"
+							onConfirm={onDisconnect}
 						>
-							<Unplug className="text-amber-600 dark:text-amber-500" />
-							Disconnect
-						</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={disconnect.isPending}
+								className="shrink-0"
+							>
+								<Unplug className="text-amber-600 dark:text-amber-500" />
+								Disconnect
+							</Button>
+						</ConfirmAction>
 					</div>
 
 					{/* Tabs for the two large per-agent surfaces. Sessions
@@ -514,7 +515,7 @@ function AgentProjectsPanel({
 					needs extra resources to read.
 				</p>
 			</div>
-			<div className="rounded-lg border bg-card/60 p-4">
+			<DetailPanel>
 				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
 					<div className="space-y-3">
 						<div className="flex items-center gap-2">
@@ -538,9 +539,9 @@ function AgentProjectsPanel({
 						Project stays private to the agent&apos;s default writes.
 					</div>
 				</div>
-			</div>
+			</DetailPanel>
 
-			<div className="rounded-lg border bg-card/60 p-4">
+			<DetailPanel>
 				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
 					<div className="space-y-2">
 						<div className="flex items-center gap-2">
@@ -576,7 +577,7 @@ function AgentProjectsPanel({
 						</Button>
 					</div>
 				</div>
-			</div>
+			</DetailPanel>
 
 			<section className="space-y-2">
 				<div className="flex items-center justify-between gap-2">

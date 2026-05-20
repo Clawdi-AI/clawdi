@@ -10,6 +10,7 @@ import { DetailMeta, DetailNotFound, DetailTitle } from "@/components/detail/lay
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
@@ -53,17 +54,7 @@ export default function MemoryDetailPage() {
 		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
 	});
 
-	const onDelete = () => {
-		// Memory deletion is account-wide and reflects on every
-		// machine via the daemon's live sync — the AI loses this
-		// fact everywhere at once, and there's no undo from this page.
-		const ok = window.confirm(
-			"Delete this memory?\n\n" +
-				"Your AI will stop recalling it across every agent within seconds. " +
-				"You can always tell it the same thing again later.",
-		);
-		if (ok) deleteMemory.mutate();
-	};
+	const onDelete = () => deleteMemory.mutate();
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -82,16 +73,28 @@ export default function MemoryDetailPage() {
 							<DetailTitle className="whitespace-pre-wrap leading-snug">
 								{memory.content}
 							</DetailTitle>
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={onDelete}
-								disabled={deleteMemory.isPending}
-								className="shrink-0 text-destructive hover:text-destructive"
+							<ConfirmAction
+								title="Delete this memory?"
+								description={
+									<>
+										<p>Your AI will stop recalling it across every agent within seconds.</p>
+										<p>You can tell it the same thing again later.</p>
+									</>
+								}
+								confirmLabel="Delete Memory"
+								destructive
+								onConfirm={onDelete}
 							>
-								<Trash2 />
-								Delete
-							</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteMemory.isPending}
+									className="shrink-0 text-destructive hover:text-destructive"
+								>
+									<Trash2 />
+									Delete
+								</Button>
+							</ConfirmAction>
 						</div>
 						<DetailMeta>
 							<Badge

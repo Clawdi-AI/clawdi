@@ -6,6 +6,7 @@ import { Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { skillDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
 
@@ -143,24 +144,26 @@ export function makeSkillColumns(
 				// management still happens in the source project.
 				if (access !== "writable") return null;
 				return (
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						disabled={uninstallPending || !projectId}
-						onClick={(e) => {
-							e.stopPropagation();
-							if (!projectId) return;
-							const ok = window.confirm(
-								`Uninstall "${s.name}" from this agent?\n\n` +
-									"Your other agents keep their copies.",
-							);
-							if (ok) onUninstall(s.skill_key, projectId);
+					<ConfirmAction
+						title={`Uninstall ${s.name}?`}
+						description={<p>Your other agents keep their copies.</p>}
+						confirmLabel="Uninstall Skill"
+						destructive
+						onConfirm={() => {
+							if (projectId) onUninstall(s.skill_key, projectId);
 						}}
-						className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-						aria-label={`Uninstall ${s.name}`}
 					>
-						<Trash2 className="size-3.5" />
-					</Button>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							disabled={uninstallPending || !projectId}
+							onClick={(e) => e.stopPropagation()}
+							className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+							aria-label={`Uninstall ${s.name}`}
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</ConfirmAction>
 				);
 			},
 			size: 48,

@@ -22,6 +22,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import { DetailPanel } from "@/components/detail/layout";
 import { PageHeader } from "@/components/page-header";
 import {
 	displayProjectName,
@@ -281,7 +282,7 @@ export default function ProjectDetailPage() {
 
 			<div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
 				<div className="space-y-6">
-					<section className="space-y-5 rounded-lg border bg-card/60 p-4">
+					<DetailPanel className="space-y-5">
 						<ContentHeader
 							title="Resources in This Project"
 							description={
@@ -354,7 +355,7 @@ export default function ProjectDetailPage() {
 								)}
 							</div>
 						</div>
-					</section>
+					</DetailPanel>
 				</div>
 
 				<aside className="space-y-4">
@@ -418,7 +419,7 @@ function OverviewCard({
 	vaultCount: number;
 }) {
 	return (
-		<section className="rounded-lg border bg-card/60 p-4">
+		<DetailPanel>
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
 				<div className="min-w-0 space-y-3">
 					<div className="flex flex-wrap items-center gap-2">
@@ -441,7 +442,7 @@ function OverviewCard({
 					</div>
 				</div>
 			</div>
-		</section>
+		</DetailPanel>
 	);
 }
 
@@ -470,7 +471,7 @@ function OwnerAccessPanel({
 }) {
 	const projectName = displayProjectName(project);
 	return (
-		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+		<DetailPanel className="space-y-4">
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Users className="size-4 text-muted-foreground" />
@@ -502,7 +503,7 @@ function OwnerAccessPanel({
 				</Button>
 			</ShareProjectDialog>
 			{useWithAgentControl}
-		</section>
+		</DetailPanel>
 	);
 }
 
@@ -518,7 +519,7 @@ function ManagedProjectPanel({
 			? "This Agent Project is managed by the connected agent and is not shareable. Create a Custom Project when you need collaboration or reusable resources."
 			: "This Global Project is your account default and is not shareable. Create a Custom Project when you need collaboration or reusable resources.";
 	return (
-		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+		<DetailPanel className="space-y-4">
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<BookOpen className="size-4 text-muted-foreground" />
@@ -532,7 +533,7 @@ function ManagedProjectPanel({
 			<Button asChild variant="outline" size="sm" className="w-full">
 				<Link href={projectResourceHref("projects")}>Back to Projects</Link>
 			</Button>
-		</section>
+		</DetailPanel>
 	);
 }
 
@@ -550,7 +551,7 @@ function SharedAccessPanel({
 	useWithAgentControl: ReactNode;
 }) {
 	return (
-		<section className="space-y-4 rounded-lg border bg-card/60 p-4">
+		<DetailPanel className="space-y-4">
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Eye className="size-4 text-muted-foreground" />
@@ -597,7 +598,7 @@ function SharedAccessPanel({
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
-		</section>
+		</DetailPanel>
 	);
 }
 

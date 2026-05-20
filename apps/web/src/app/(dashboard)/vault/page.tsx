@@ -26,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
@@ -44,7 +45,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { VaultKeyImportDialog } from "@/components/vault/key-import";
 import type { KeyImportSummary } from "@/components/vault/key-import-parse";
 import { unwrap, useApi } from "@/lib/api";
-import type { Vault } from "@/lib/api-schemas";
+import type { Vault, VaultItems } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -201,7 +202,8 @@ function VaultPageInner() {
 		[visibleVaultCatalog, selectedVaultId],
 	);
 	const createProjectAlreadyHasSlug =
-		!!newVaultSlug && vaultCatalog.some((entry) => entry.vault.slug === newVaultSlug);
+		!!newVaultSlug &&
+		vaultCatalog.some((entry) => entry.vault.is_owner && entry.vault.slug === newVaultSlug);
 
 	useEffect(() => {
 		if (ownedProjects.length === 0) {
@@ -235,12 +237,12 @@ function VaultPageInner() {
 					body: { slug, name: slug },
 				}),
 			),
-		onSuccess: (_created, variables) => {
+		onSuccess: async (_created, variables) => {
 			setNewVaultSlug("");
 			setCreateDialogOpen(false);
 			setSearchQuery(variables.slug);
 			void setProjectFilter(variables.projectId);
-			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
 			toast.success("Vault Created", { description: `Attached to ${projectName}.` });
@@ -256,9 +258,9 @@ function VaultPageInner() {
 					body: { slug, name: slug },
 				}),
 			),
-		onSuccess: (_created, variables) => {
+		onSuccess: async (_created, variables) => {
 			setSearchQuery(variables.slug);
-			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
 			toast.success("Vault Added to Project", {
@@ -275,8 +277,8 @@ function VaultPageInner() {
 					params: { path: { slug: vault.slug }, query: { project_id: vault.projectId } },
 				}),
 			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			toast.success("Vault Removed from Project");
 		},
 		onError: (e) => toast.error("Failed to Remove from Project", { description: errorMessage(e) }),
@@ -289,8 +291,8 @@ function VaultPageInner() {
 					params: { path: { slug: vault.slug }, query: {} },
 				}),
 			),
-		onSuccess: (_result, variables) => {
-			queryClient.invalidateQueries({ queryKey: ["vaults"] });
+		onSuccess: async (_result, variables) => {
+			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			queryClient.removeQueries({ queryKey: ["vault-items"] });
 			toast.success("Vault Deleted", {
 				description: `${variables.slug} and its keys were removed.`,
@@ -348,6 +350,7 @@ function VaultPageInner() {
 				onOpenExisting={() => {
 					setSearchQuery(newVaultSlug);
 					void setProjectFilter("all");
+					setCreateDialogOpen(false);
 				}}
 			/>
 
@@ -423,7 +426,7 @@ function VaultPageInner() {
 								ownedProjects={ownedProjects}
 								agents={envs ?? []}
 								onAddProject={(projectId) =>
-									addVaultToProject.mutate({ slug: selectedVault.vault.slug, projectId })
+									addVaultToProject.mutateAsync({ slug: selectedVault.vault.slug, projectId })
 								}
 								isAddingProject={addVaultToProject.isPending}
 								onDetachProject={(projectId) =>
@@ -719,7 +722,7 @@ function VaultDetailPanel({
 	entry: VaultCatalogView;
 	ownedProjects: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
-	onAddProject: (projectId: string) => void;
+	onAddProject: (projectId: string) => Promise<unknown>;
 	isAddingProject: boolean;
 	onDetachProject: (projectId: string) => void;
 	isDetachingProject: boolean;
@@ -770,23 +773,29 @@ function VaultDetailPanel({
 								onAddProject={onAddProject}
 								isPending={isAddingProject}
 							/>
-							<Button
-								type="button"
-								size="sm"
-								variant="ghost"
-								onClick={() => {
-									const projectCount = attachments.length;
-									const ok = window.confirm(
-										`Delete ${vault.name || vault.slug}?\n\nThis permanently deletes every key in this vault and removes it from ${projectCount} Project${projectCount === 1 ? "" : "s"}.`,
-									);
-									if (ok) onDeleteVault();
-								}}
-								disabled={isDeletingVault}
-								className="w-fit text-muted-foreground hover:text-destructive"
+							<ConfirmAction
+								title={`Delete ${vault.name || vault.slug}?`}
+								description={
+									<p>
+										This permanently deletes every key in this vault and removes it from{" "}
+										{attachments.length} Project{attachments.length === 1 ? "" : "s"}.
+									</p>
+								}
+								confirmLabel="Delete Vault"
+								destructive
+								onConfirm={onDeleteVault}
 							>
-								<Trash2 className="size-3.5" />
-								Delete Vault
-							</Button>
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									disabled={isDeletingVault}
+									className="w-fit text-muted-foreground hover:text-destructive"
+								>
+									<Trash2 className="size-3.5" />
+									Delete Vault
+								</Button>
+							</ConfirmAction>
 						</div>
 					) : null}
 				</div>
@@ -825,7 +834,7 @@ function AddProjectToVaultControl({
 	vaultName: string;
 	options: VaultProjectMetadata[];
 	agents: ProjectAgentMetadata[];
-	onAddProject: (projectId: string) => void;
+	onAddProject: (projectId: string) => Promise<unknown>;
 	isPending: boolean;
 }) {
 	const [open, setOpen] = useState(false);
@@ -883,10 +892,14 @@ function AddProjectToVaultControl({
 					<Button
 						type="button"
 						disabled={!projectId || isPending}
-						onClick={() => {
+						onClick={async () => {
 							if (!projectId) return;
-							onAddProject(projectId);
-							setOpen(false);
+							try {
+								await onAddProject(projectId);
+								setOpen(false);
+							} catch {
+								// The mutation owns user-facing error handling.
+							}
 						}}
 					>
 						{isPending ? <Spinner /> : <Plus />}
@@ -947,10 +960,15 @@ function VaultKeysPanel({
 	const [newValue, setNewValue] = useState("");
 	const readOnly = !vault.is_owner;
 	const fieldDomId = `${vault.slug}-keys`;
-	const itemsCacheKey = ["vault-items", vault.id, accessProjectId] as const;
+	const vaultItemsCacheKey = ["vault-items", vault.id] as const;
+	const itemsCacheKey = [...vaultItemsCacheKey, accessProjectId] as const;
 	const queryParams = { project_id: accessProjectId ?? undefined };
 
-	const { data: items } = useQuery({
+	const {
+		data: items,
+		error: itemsError,
+		isLoading: itemsLoading,
+	} = useQuery({
 		queryKey: itemsCacheKey,
 		queryFn: async () =>
 			unwrap(
@@ -969,11 +987,14 @@ function VaultKeysPanel({
 					body: { section, fields: { [key]: value } },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (_result, variables) => {
 			setNewKey("");
 			setNewValue("");
 			setAdding(false);
-			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
+			queryClient.setQueriesData<VaultItems>({ queryKey: vaultItemsCacheKey }, (current) =>
+				addVaultItemNames(current, variables.section, [variables.key]),
+			);
+			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 		},
 		onError: (e) => toast.error("Failed to Save Key", { description: errorMessage(e) }),
 	});
@@ -994,8 +1015,11 @@ function VaultKeysPanel({
 			);
 			return summary;
 		},
-		onSuccess: (summary) => {
-			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
+		onSuccess: (summary, variables) => {
+			queryClient.setQueriesData<VaultItems>({ queryKey: vaultItemsCacheKey }, (current) =>
+				addVaultItemNames(current, "", Object.keys(variables.fields)),
+			);
+			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 			const changed = summary.created + summary.updated;
 			toast.success("Keys Imported", {
 				description: `${changed} key${changed === 1 ? "" : "s"} saved to ${vault.name || vault.slug}.`,
@@ -1012,8 +1036,11 @@ function VaultKeysPanel({
 					body: { section, fields: [name] },
 				}),
 			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: itemsCacheKey });
+		onSuccess: (_result, variables) => {
+			queryClient.setQueriesData<VaultItems>({ queryKey: vaultItemsCacheKey }, (current) =>
+				removeVaultItemNames(current, variables.section, [variables.name]),
+			);
+			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 		},
 		onError: (e) => toast.error("Failed to Delete Key", { description: errorMessage(e) }),
 	});
@@ -1051,23 +1078,26 @@ function VaultKeysPanel({
 							id: "actions",
 							header: "",
 							cell: ({ row }) => (
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									onClick={(event) => {
-										event.stopPropagation();
-										const ok = window.confirm(
-											`Delete "${row.original.key}"?\n\nAnything that resolves this key will start failing.`,
-										);
-										if (ok)
-											deleteItem.mutate({ section: row.original.section, name: row.original.name });
-									}}
-									disabled={deleteItem.isPending}
-									className="text-muted-foreground hover:text-destructive"
-									aria-label={`Delete ${row.original.key}`}
+								<ConfirmAction
+									title={`Delete ${row.original.key}?`}
+									description={<p>Anything that resolves this key will start failing.</p>}
+									confirmLabel="Delete Key"
+									destructive
+									onConfirm={() =>
+										deleteItem.mutate({ section: row.original.section, name: row.original.name })
+									}
 								>
-									<Trash2 className="size-3.5" />
-								</Button>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										onClick={(event) => event.stopPropagation()}
+										disabled={deleteItem.isPending}
+										className="text-muted-foreground hover:text-destructive"
+										aria-label={`Delete ${row.original.key}`}
+									>
+										<Trash2 className="size-3.5" />
+									</Button>
+								</ConfirmAction>
 							),
 							size: 40,
 						} satisfies ColumnDef<VaultField>,
@@ -1076,9 +1106,9 @@ function VaultKeysPanel({
 		[deleteItem, readOnly],
 	);
 
-	const keyCountLabel = items
-		? `${allFields.length} ${allFields.length === 1 ? "key" : "keys"}`
-		: "Loading keys";
+	const keyCountLabel = itemsLoading
+		? "Loading keys"
+		: `${allFields.length} ${allFields.length === 1 ? "key" : "keys"}`;
 
 	return (
 		<section className="space-y-3 p-4">
@@ -1103,6 +1133,7 @@ function VaultKeysPanel({
 								variant="ghost"
 								size="xs"
 								onClick={() => setAdding(!adding)}
+								disabled={itemsLoading || !!itemsError}
 								className="text-muted-foreground"
 							>
 								<Plus className="size-3.5" />
@@ -1110,7 +1141,7 @@ function VaultKeysPanel({
 							</Button>
 							<VaultKeyImportDialog
 								existingKeys={defaultKeyNames}
-								isPending={importItems.isPending}
+								isPending={importItems.isPending || itemsLoading || !!itemsError}
 								onImport={async (fields, summary) => {
 									try {
 										await importItems.mutateAsync({ fields, summary });
@@ -1182,7 +1213,25 @@ function VaultKeysPanel({
 				</div>
 			) : null}
 
-			{allFields.length > 0 ? (
+			{itemsError ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Failed to Load Keys</AlertTitle>
+					<AlertDescription>{errorMessage(itemsError)}</AlertDescription>
+				</Alert>
+			) : itemsLoading ? (
+				<div className="rounded-lg border bg-card">
+					<div className="grid grid-cols-[minmax(0,1fr)_120px_40px] gap-3 border-b bg-muted/40 px-3 py-2">
+						<Skeleton className="h-4 w-20" />
+						<Skeleton className="h-4 w-16" />
+						<span />
+					</div>
+					<div className="space-y-3 p-3">
+						<Skeleton className="h-4 w-2/3" />
+						<Skeleton className="h-4 w-1/2" />
+					</div>
+				</div>
+			) : allFields.length > 0 ? (
 				<DataTable columns={columns} data={allFields} />
 			) : !adding ? (
 				<p className="text-sm text-muted-foreground">
@@ -1279,25 +1328,72 @@ function VaultProjectAttachmentRow({
 				)}
 			</div>
 			{vault.is_owner ? (
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onClick={() => {
-						const ok = window.confirm(
-							`Remove from ${projectName}?\n\n${vault.slug} will no longer be available in that Project. The vault and its keys stay attached to other Projects.`,
-						);
-						if (ok) onDetachProject(attachment.projectId);
-					}}
-					disabled={isDetachingProject}
-					className="shrink-0 text-muted-foreground hover:text-destructive"
-					aria-label={`Remove ${vault.slug} from ${projectName}`}
-					title="Remove from Project"
+				<ConfirmAction
+					title={`Remove from ${projectName}?`}
+					description={
+						<p>
+							{vault.slug} will no longer be available in that Project. The vault and its keys stay
+							attached to other Projects.
+						</p>
+					}
+					confirmLabel="Remove from Project"
+					destructive
+					onConfirm={() => onDetachProject(attachment.projectId)}
 				>
-					<Trash2 className="size-3.5" />
-				</Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						disabled={isDetachingProject}
+						className="shrink-0 text-muted-foreground hover:text-destructive"
+						aria-label={`Remove ${vault.slug} from ${projectName}`}
+						title="Remove from Project"
+					>
+						<Trash2 className="size-3.5" />
+					</Button>
+				</ConfirmAction>
 			) : null}
 		</div>
 	);
+}
+
+function addVaultItemNames(
+	current: VaultItems | undefined,
+	section: string,
+	names: string[],
+): VaultItems {
+	const sectionKey = vaultItemsSectionKey(section);
+	const next = cloneVaultItems(current);
+	const merged = new Set(next[sectionKey] ?? []);
+	for (const name of names) merged.add(name);
+	next[sectionKey] = [...merged].sort();
+	return next;
+}
+
+function removeVaultItemNames(
+	current: VaultItems | undefined,
+	section: string,
+	names: string[],
+): VaultItems {
+	const sectionKey = vaultItemsSectionKey(section);
+	const next = cloneVaultItems(current);
+	const removing = new Set(names);
+	const remaining = (next[sectionKey] ?? []).filter((name) => !removing.has(name));
+	if (remaining.length > 0) {
+		next[sectionKey] = remaining;
+	} else {
+		delete next[sectionKey];
+	}
+	return next;
+}
+
+function cloneVaultItems(current: VaultItems | undefined): VaultItems {
+	return Object.fromEntries(
+		Object.entries(current ?? {}).map(([section, names]) => [section, [...names]]),
+	);
+}
+
+function vaultItemsSectionKey(section: string) {
+	return section || "(default)";
 }
 
 function normalizeVaultSlug(value: string) {
