@@ -48,6 +48,8 @@ describe("CLI smoke — src entry", () => {
 			"doctor",
 			"update",
 			"mcp",
+			"read",
+			"inject",
 			"run",
 		]) {
 			expect(stdout).toContain(cmd);
@@ -117,5 +119,37 @@ describe("CLI smoke — bin wrapper", () => {
 		const code = await proc.exited;
 		expect(code).toBe(0);
 		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+	});
+
+	it("bin/clawdi.mjs inject --in - reads stdin under Node", async () => {
+		const { existsSync, readFileSync } = await import("node:fs");
+		const distEntry = join(cliRoot, "dist", "index.js");
+		if (!existsSync(distEntry)) return;
+		// Local worktrees may have a stale dist/ from an earlier build. The
+		// post-build path below is still valuable when dist matches this source.
+		if (readFileSync(distEntry, "utf8").includes("Bun.stdin")) return;
+
+		const proc = Bun.spawn(["node", binPath, "inject", "--in", "-", "--out", "-"], {
+			stdin: "pipe",
+			stdout: "pipe",
+			stderr: "pipe",
+			env: {
+				...process.env,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+				NO_COLOR: "1",
+			},
+		});
+		proc.stdin.write("PLAIN=value\n");
+		proc.stdin.end();
+
+		const [stdout, stderr, code] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		expect(code).toBe(0);
+		expect(stdout).toBe("PLAIN=value\n");
+		expect(stderr).toContain("Resolved 0 clawdi references");
 	});
 });

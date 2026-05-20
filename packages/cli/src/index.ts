@@ -35,7 +35,7 @@ Examples:
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
   $ clawdi project folder link --project engineering  Use this folder with a Project
-  $ clawdi run -- npm run deploy    Run with this folder's Project vault env
+  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
@@ -286,7 +286,7 @@ vaultCmd
 
 vaultCmd
 	.command("list")
-	.description("List stored keys")
+	.description("List stored keys and exact references")
 	.option(
 		"-p, --project <id-or-slug>",
 		"List vaults in a specific project (default: all visible projects)",
@@ -324,6 +324,7 @@ vaultCmd
 	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--debug", "Show project precedence and skipped matches")
+	.option("--dry-run", "Check where the key resolves without printing the plaintext value")
 	.option("--json", "Output the full resolve response as JSON")
 	.addHelpText(
 		"after",
@@ -336,6 +337,50 @@ vaultCmd
 	.action(async (key, opts) => {
 		const { vaultResolveCommand } = await import("./commands/vault-resolve.js");
 		await vaultResolveCommand(key, { ...opts, project: opts.project });
+	});
+
+program
+	.command("read")
+	.description("Read one clawdi:// secret reference")
+	.argument("<reference>", "Reference to read")
+	.option("-p, --project <project>", "Project to resolve from")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("--debug", "Show project precedence without printing secrets in diagnostics")
+	.option("--dry-run", "Check the reference without printing the plaintext value")
+	.option("--json", "Output the full resolve response as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			"  $ clawdi read clawdi://project/<project-id>/vault/prod/section/stripe/field/secret_key\n" +
+			"  $ clawdi read clawdi://prod/db/url --project engineering --json",
+	)
+	.action(async (reference, opts) => {
+		const { readCommand } = await import("./commands/read.js");
+		await readCommand(reference, { ...opts, project: opts.project });
+	});
+
+program
+	.command("inject")
+	.description("Render clawdi:// references in a template")
+	.option("--in <file>", "Input template path, or - for stdin", "-")
+	.option("--out <file>", "Output path, or - for stdout", "-")
+	.option("--force", "Overwrite an existing output file")
+	.option("-p, --project <project>", "Project to resolve from")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
+	.option("--no-project-folder", "Skip linked-folder Project lookup")
+	.option("--dry-run", "Show references that would resolve without writing output")
+	.addHelpText(
+		"after",
+		"\nExamples:\n" +
+			"  $ clawdi inject --dry-run --in .env.clawdi --out .env.local\n" +
+			"  $ clawdi inject --force --in .env.clawdi --out .env.local\n" +
+			"  $ clawdi inject --in config.template.json --out -",
+	)
+	.action(async (opts) => {
+		const { injectCommand } = await import("./commands/inject.js");
+		await injectCommand({ ...opts, project: opts.project });
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -558,20 +603,32 @@ program
 
 program
 	.command("run")
-	.description("Run a command with vault secrets injected")
-	.option("-p, --project <id-or-slug>", "Use vault env from an explicit Project")
+	.description("Run a command with clawdi:// references resolved")
+	.option("-p, --project <id-or-slug>", "Resolve references from an explicit Project")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through Agent Project and attachments")
+	.option(
+		"--env-file <file>",
+		"Load dotenv-like file and resolve clawdi:// references",
+		(value, previous: string[]) => [...previous, value],
+		[],
+	)
+	.option("--no-inherit-env", "Do not inherit the parent process environment")
+	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected Project")
+	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
+	.option("--dry-run", "Show reference resolution plan without launching the command")
 	.argument("<command...>", "Command to run")
 	.addHelpText(
 		"after",
 		`
 Examples:
   $ clawdi project folder link --project engineering
-  $ clawdi run -- npm run deploy
-  ✓ Using Project engineering for vault env injection.
-  ✓ Injected 499 vault secrets
+  $ clawdi run --dry-run --env-file .env.clawdi -- npm run dev
+  $ clawdi run --env-file .env.clawdi -- npm run dev
+  ✓ Resolved 2 clawdi references
 
-  $ clawdi run --project @alice/engineering -- npm run deploy
+  $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev
+  $ clawdi run --all-vault-env -- npm run dev
   $ clawdi run --no-project-folder -- python main.py`,
 	)
 	.action(async (args, opts) => {
@@ -757,6 +814,62 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+const agentCredentialsCmd = agentCmd
+	.command("credentials")
+	.description("Sync local CLI credential profiles");
+
+agentCredentialsCmd
+	.command("import <tool>")
+	.description("Import a personal local CLI credential profile into Clawdi Vault")
+	.option("-p, --project <id-or-slug>", "Target a specific project")
+	.option("--profile <name>", "Profile name", "default")
+	.option("--source <source>", "Credential source: file or keychain", "file")
+	.option("--from <path>", "Credential file to import (required for tools without an adapter)")
+	.option("--to <path>", "Materialization target path to store with the profile")
+	.option("--keychain-service <service>", "macOS Keychain service name for --source keychain")
+	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--dry-run", "Show what would be imported without storing anything")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi agent credentials import codex
+  $ clawdi agent credentials import claude-code
+  $ clawdi agent credentials import claude-code --source keychain --keychain-service <service> --keychain-account <account>
+  $ clawdi agent credentials import gh
+  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials`,
+	)
+	.action(async (tool: string, opts) => {
+		const { agentCredentialsImportCommand } = await import("./commands/agent-credentials.js");
+		await agentCredentialsImportCommand(tool, opts);
+	});
+
+agentCredentialsCmd
+	.command("materialize <tool>")
+	.description("Restore a personal local CLI credential profile on this machine")
+	.option("-p, --project <id-or-slug>", "Read from a specific project")
+	.option("--profile <name>", "Profile name", "default")
+	.option("--to <path>", "Override destination path (only for single-file profiles)")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
+	.option("--dry-run", "Show what would be written without changing files")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi agent credentials materialize codex
+  $ clawdi agent credentials materialize claude-code
+  $ clawdi agent credentials materialize gh
+  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
+	)
+	.action(async (tool: string, opts) => {
+		const { agentCredentialsMaterializeCommand } = await import("./commands/agent-credentials.js");
+		await agentCredentialsMaterializeCommand(tool, opts);
+	});
+
 const agentProjectsCmd = agentCmd
 	.command("projects")
 	.description("View Agent Project and attachments");

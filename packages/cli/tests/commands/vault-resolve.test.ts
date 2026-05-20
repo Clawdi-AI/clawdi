@@ -25,6 +25,7 @@ afterEach(() => {
 	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
 	else delete process.env.CLAWDI_API_URL;
 	rmSync(tmpHome, { recursive: true, force: true });
+	process.exitCode = 0;
 });
 
 describe("vaultResolveCommand", () => {
@@ -143,5 +144,41 @@ describe("vaultResolveCommand", () => {
 		}
 
 		expect(JSON.parse(out).value).toBe("sk-test");
+	});
+
+	it("dry-runs a key lookup without printing plaintext", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () =>
+					jsonResponse({
+						key: "OPENAI_API_KEY",
+						source_project_id: "project-default",
+						source_alias: "project-default",
+						vault_slug: "default",
+						section: "",
+						item_name: "OPENAI_API_KEY",
+					}),
+			},
+		]);
+		const orig = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY", { dryRun: true });
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toContain("key=OPENAI_API_KEY");
+		expect(captured[0].path).toContain("preview=true");
+		expect(out).toContain("OPENAI_API_KEY resolves from project-default");
+		expect(out).toContain("redacted");
+		expect(out).not.toContain("sk-test");
 	});
 });

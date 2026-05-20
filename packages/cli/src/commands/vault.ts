@@ -3,7 +3,9 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
+import { parseDotenv } from "../lib/dotenv";
 import { sanitizeMetadata } from "../lib/sanitize";
+import { buildExactClawdiReference } from "../lib/secret-references";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -115,6 +117,13 @@ export async function vaultSet(key: string, opts: { project?: string } = {}) {
 	);
 
 	console.log(chalk.green(`✓ Stored ${key}`));
+	if (project_id) {
+		console.log(
+			chalk.gray(
+				`  Reference: ${buildExactClawdiReference(project_id, vaultSlug, section, field)}`,
+			),
+		);
+	}
 }
 
 export async function vaultList(opts: { json?: boolean; project?: string } = {}) {
@@ -174,13 +183,16 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			project_id: string;
 			name: string;
 			items: Awaited<ReturnType<typeof fetchItems>>;
+			references: VaultReferenceRow[];
 		}> = [];
 		for (const v of vaults) {
+			const items = await fetchItems(v.slug, v.project_id);
 			out.push({
 				slug: v.slug,
 				project_id: v.project_id,
 				name: v.name,
-				items: await fetchItems(v.slug, v.project_id),
+				items,
+				references: buildVaultReferenceRows(v.project_id, v.slug, items),
 			});
 		}
 		console.log(JSON.stringify(out, null, 2));
@@ -200,53 +212,47 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 
 	for (const v of vaults) {
 		const items = await fetchItems(v.slug, v.project_id);
-		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)}`));
-		for (const [section, fields] of Object.entries(items)) {
-			for (const field of fields) {
-				const display =
-					section === "(default)"
-						? sanitizeMetadata(field)
-						: `${sanitizeMetadata(section)}/${sanitizeMetadata(field)}`;
-				console.log(chalk.gray(`    ${display}`));
-			}
+		console.log(
+			chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(`project=${v.project_id}`)}`),
+		);
+		for (const row of buildVaultReferenceRows(v.project_id, v.slug, items)) {
+			console.log(chalk.gray(`    ${sanitizeMetadata(row.key)}`));
+			console.log(chalk.gray(`      ${row.reference}`));
 		}
 	}
+}
+
+interface VaultReferenceRow {
+	key: string;
+	section: string;
+	field: string;
+	reference: string;
+}
+
+function buildVaultReferenceRows(
+	projectId: string,
+	vaultSlug: string,
+	items: Record<string, string[]>,
+): VaultReferenceRow[] {
+	return Object.entries(items).flatMap(([section, fields]) =>
+		fields.map((field) => {
+			const normalizedSection = section === "(default)" ? "" : section;
+			return {
+				key: normalizedSection ? `${normalizedSection}/${field}` : field,
+				section: normalizedSection,
+				field,
+				reference: buildExactClawdiReference(projectId, vaultSlug, normalizedSection, field),
+			};
+		}),
+	);
 }
 
 export async function vaultImport(file: string, opts: { yes?: boolean; project?: string } = {}) {
 	requireAuth();
 
 	const content = readFileSync(file, "utf-8");
-	const lines = content.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
-	const api = new ApiClient();
-
-	let pinnedProjectId: string | undefined;
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	}
-
-	await ensureVault(api, "default", "Default", pinnedProjectId);
-
 	const fields: Record<string, string> = {};
-	for (const line of lines) {
-		const eqIdx = line.indexOf("=");
-		if (eqIdx === -1) continue;
-		const key = line.slice(0, eqIdx).trim();
-		let value = line.slice(eqIdx + 1).trim();
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
+	for (const [key, value] of parseDotenv(content)) {
 		fields[key] = value;
 	}
 
@@ -268,6 +274,22 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 		}
 	}
 
+	const api = new ApiClient();
+	let pinnedProjectId: string | undefined;
+	if (opts.project) {
+		const { resolveProjectId } = await import("../lib/project-resolver.js");
+		const { getAuth, getConfig } = await import("../lib/config.js");
+		const cfg = getConfig();
+		const auth = getAuth();
+		if (!auth?.apiKey) {
+			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+			process.exit(1);
+		}
+		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+	}
+
+	await ensureVault(api, "default", "Default", pinnedProjectId);
+
 	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, "default"));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
@@ -280,6 +302,16 @@ export async function vaultImport(file: string, opts: { yes?: boolean; project?:
 	);
 
 	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to vault "default"`));
+	if (project_id) {
+		console.log(chalk.gray("  References:"));
+		for (const field of Object.keys(fields).sort()) {
+			console.log(
+				chalk.gray(
+					`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(project_id, "default", "", field)}`,
+				),
+			);
+		}
+	}
 }
 
 function parseVaultKey(key: string): { vaultSlug: string; section: string; field: string } {

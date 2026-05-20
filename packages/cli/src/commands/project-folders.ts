@@ -31,7 +31,7 @@ export async function projectFolderLinkCommand(
 		console.log(chalk.gray(`  Project name: ${project.name}`));
 	}
 	console.log(chalk.gray(`  Folder: ${link.path}`));
-	console.log(chalk.gray("  clawdi run will use this Project for vault env injection."));
+	console.log(chalk.gray("  clawdi run/inject will use this Project for vault references."));
 }
 
 export async function projectFolderUnlinkCommand(folderPath: string | undefined): Promise<void> {
@@ -68,7 +68,7 @@ export async function projectFolderStatusCommand(folderPath: string | undefined)
 			`  Source: ${match.source === "exact" ? "linked folder (exact)" : "linked folder (parent)"}`,
 		);
 		console.log(`  Folder: ${match.link.path}`);
-		console.log(chalk.gray("  clawdi run will use this Project for vault env injection."));
+		console.log(chalk.gray("  clawdi run/inject will use this Project for vault references."));
 		return;
 	}
 

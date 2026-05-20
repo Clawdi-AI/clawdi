@@ -3,9 +3,10 @@ the `clawdi serve` e2e test.
 
 Companion to `scripts/serve-e2e.sh` at the repo root. Creates one
 test user, one agent_environment row, AND one api_key bound to
-that env, then prints `USER_ID=<uuid>`, `ENV_ID=<uuid>`, and
-`RAW_KEY=clawdi_<token>` to stdout. The shell script parses
-those out and feeds the raw key directly to `clawdi serve` —
+that env plus a user-level CLI key, then prints `USER_ID=<uuid>`,
+`ENV_ID=<uuid>`, `RAW_KEY=clawdi_<token>`, and
+`USER_RAW_KEY=clawdi_<token>` to stdout. The shell script parses
+those out and feeds the raw keys directly to CLI commands —
 bypasses any HTTP minting endpoint, so the e2e doesn't need a
 shared internal secret to operate.
 
@@ -121,6 +122,13 @@ async def main(label: str, agent_type: str) -> None:
             scopes=None,
             environment_id=env.id,
         )
+        user_minted = await mint_api_key(
+            db,
+            user_id=user.id,
+            label=f"e2e-{label}-user-cli",
+            scopes=None,
+            environment_id=None,
+        )
 
         # Stdout is the shell-script-parseable contract. Anything
         # else (warnings, sql echo) goes to stderr by convention so
@@ -129,6 +137,7 @@ async def main(label: str, agent_type: str) -> None:
         print(f"USER_ID={user.id}")
         print(f"ENV_ID={env.id}")
         print(f"RAW_KEY={minted.raw_key}")
+        print(f"USER_RAW_KEY={user_minted.raw_key}")
 
     await engine.dispose()
 

@@ -11,20 +11,29 @@ from app.core.project import (
     project_ids_visible_to,
     resolve_default_write_project,
     resolve_for_parent,
+    resolve_personal_project,
+    validate_project_for_caller,
 )
 from app.core.query_utils import like_needle
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultCredentialProfile, VaultItem
 from app.schemas.common import Paginated
 from app.schemas.vault import (
+    VaultBulkResolveRequest,
+    VaultBulkResolveResponse,
     VaultCreate,
     VaultCreatedResponse,
+    VaultCredentialProfileResolveRequest,
+    VaultCredentialProfileResolveResponse,
+    VaultCredentialProfileResponse,
+    VaultCredentialProfileUpsert,
     VaultDeleteResponse,
     VaultItemDelete,
     VaultItemsDeleteResponse,
     VaultItemsUpsertResponse,
     VaultItemUpsert,
+    VaultReferenceResolveInput,
     VaultResolveResponse,
     VaultResponse,
     VaultSectionsResponse,
@@ -33,6 +42,8 @@ from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
+VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
+ExactVaultReferenceFilter = tuple[str, str, str]
 
 
 # --- Vault CRUD ---
@@ -118,8 +129,6 @@ async def create_vault(
     # project via the explicit path.
     selected_project_id = project_id
     if selected_project_id is not None:
-        from app.core.project import validate_project_for_caller
-
         await validate_project_for_caller(db, auth, selected_project_id)
     else:
         selected_project_id = await resolve_default_write_project(db, auth)
@@ -261,6 +270,116 @@ async def delete_vault_items(
     return VaultItemsDeleteResponse(status="deleted")
 
 
+# --- Credential profiles (CLI auth/config file sync; not env injection) ---
+
+
+@router.post("/credential-profiles")
+async def upsert_credential_profile(
+    body: VaultCredentialProfileUpsert,
+    project_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_cli),
+    db: AsyncSession = Depends(get_session),
+) -> VaultCredentialProfileResponse:
+    """Store an encrypted local CLI credential profile.
+
+    Credential profiles are deliberately separate from `vault_items`: they
+    should not be returned by `/api/vault/resolve` all-env injection. The CLI
+    materializes them back to tool-specific local files instead.
+    """
+    _require_user_level_credential_profile_auth(auth)
+    if project_id is not None:
+        await validate_project_for_caller(db, auth, project_id)
+        selected_project_id = project_id
+    else:
+        selected_project_id = await resolve_personal_project(db, auth)
+
+    ciphertext, nonce = encrypt(body.payload)
+    existing = (
+        await db.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.user_id == auth.user_id,
+                VaultCredentialProfile.project_id == selected_project_id,
+                VaultCredentialProfile.tool == body.tool,
+                VaultCredentialProfile.profile == body.profile,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        existing.encrypted_payload = ciphertext
+        existing.nonce = nonce
+        profile = existing
+    else:
+        profile = VaultCredentialProfile(
+            user_id=auth.user_id,
+            project_id=selected_project_id,
+            tool=body.tool,
+            profile=body.profile,
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+        )
+        db.add(profile)
+
+    await db.commit()
+    await db.refresh(profile)
+    return VaultCredentialProfileResponse(
+        id=str(profile.id),
+        project_id=str(profile.project_id),
+        tool=profile.tool,
+        profile=profile.profile,
+        updated_at=profile.updated_at,
+    )
+
+
+@router.post("/credential-profiles/resolve")
+async def resolve_credential_profile(
+    body: VaultCredentialProfileResolveRequest,
+    auth: AuthContext = Depends(require_user_cli),
+    db: AsyncSession = Depends(get_session),
+) -> VaultCredentialProfileResolveResponse:
+    """Resolve one local CLI credential profile for materialization.
+
+    Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+    """
+    _require_user_level_credential_profile_auth(auth)
+    if body.project_id is not None:
+        await validate_project_for_caller(db, auth, body.project_id)
+        selected_project_id = body.project_id
+    else:
+        selected_project_id = await resolve_personal_project(db, auth)
+
+    profile = (
+        await db.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.user_id == auth.user_id,
+                VaultCredentialProfile.project_id == selected_project_id,
+                VaultCredentialProfile.tool == body.tool,
+                VaultCredentialProfile.profile == body.profile,
+            )
+        )
+    ).scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "credential profile not found")
+
+    return VaultCredentialProfileResolveResponse(
+        id=str(profile.id),
+        project_id=str(profile.project_id),
+        tool=profile.tool,
+        profile=profile.profile,
+        updated_at=profile.updated_at,
+        payload=decrypt(profile.encrypted_payload, profile.nonce),
+    )
+
+
+def _require_user_level_credential_profile_auth(auth: AuthContext) -> None:
+    """Credential profiles are personal backup/restore, not Agent runtime grants."""
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "credential profile sync requires user-level CLI authentication",
+        )
+
+
 # --- Resolve (CLI only — returns plaintext values) ---
 
 
@@ -390,22 +509,280 @@ async def _first_vault_key_hit(
     project_id: UUID,
     wanted: str,
 ) -> tuple[Vault | None, VaultItem | None]:
-    vaults = (await db.execute(select(Vault).where(Vault.project_id == project_id))).scalars().all()
-    for vault in vaults:
-        items = (
-            (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))
-            .scalars()
-            .all()
-        )
-        for item in items:
-            if _env_key(item.section, item.item_name) == wanted:
-                return vault, item
+    for vault, item in await _vault_item_rows_for_projects(db, [project_id]):
+        if _env_key(item.section, item.item_name) == wanted:
+            return vault, item
     return None, None
+
+
+async def _vault_item_rows_for_projects(
+    db: AsyncSession,
+    project_ids: list[UUID],
+) -> list[tuple[Vault, VaultItem]]:
+    if not project_ids:
+        return []
+    rows = (
+        await db.execute(
+            select(Vault, VaultItem)
+            .join(VaultItem, VaultItem.vault_id == Vault.id)
+            .where(Vault.project_id.in_(project_ids))
+            .order_by(
+                Vault.project_id.asc(),
+                Vault.created_at.asc(),
+                Vault.id.asc(),
+                VaultItem.created_at.asc(),
+                VaultItem.id.asc(),
+            )
+        )
+    ).all()
+    return [(vault, item) for vault, item in rows]
+
+
+async def _vault_item_rows_for_exact_references(
+    db: AsyncSession,
+    project_ids: list[UUID],
+    references: list[ExactVaultReferenceFilter],
+) -> list[tuple[Vault, VaultItem]]:
+    if not project_ids or not references:
+        return []
+
+    vault_slugs = {vault_slug for vault_slug, _section, _field in references}
+    sections = {section for _vault_slug, section, _field in references}
+    fields = {field for _vault_slug, _section, field in references}
+    rows = (
+        await db.execute(
+            select(Vault, VaultItem)
+            .join(VaultItem, VaultItem.vault_id == Vault.id)
+            .where(
+                Vault.project_id.in_(project_ids),
+                Vault.slug.in_(vault_slugs),
+                VaultItem.section.in_(sections),
+                VaultItem.item_name.in_(fields),
+            )
+            .order_by(
+                Vault.project_id.asc(),
+                Vault.created_at.asc(),
+                Vault.id.asc(),
+                VaultItem.created_at.asc(),
+                VaultItem.id.asc(),
+            )
+        )
+    ).all()
+    return [(vault, item) for vault, item in rows]
+
+
+def _vault_item_index(rows: list[tuple[Vault, VaultItem]]) -> VaultItemIndex:
+    return {
+        (vault.project_id, vault.slug, item.section, item.item_name): (vault, item)
+        for vault, item in rows
+    }
+
+
+def _format_vault_reference(vault_slug: str, section: str, field: str) -> str:
+    return (
+        f"clawdi://{vault_slug}/{section}/{field}" if section else f"clawdi://{vault_slug}/{field}"
+    )
+
+
+def _resolve_exact_vault_reference_from_index(
+    *,
+    item_index: VaultItemIndex,
+    ordered: list[dict],
+    reference: str,
+    vault_slug: str,
+    section: str,
+    field: str,
+    preview: bool,
+    allow_conflicts: bool,
+    debug: bool,
+) -> dict:
+    precedence: list[dict] = []
+    winner: dict | None = None
+    conflicts: list[dict] = []
+    for entry in ordered:
+        hit = item_index.get((entry["project_id"], vault_slug, section, field))
+        hit_vault, hit_item = hit if hit is not None else (None, None)
+        entry_debug = {
+            "project_id": str(entry["project_id"]),
+            "alias": entry["alias"],
+            "display": entry["display"],
+            "binding_type": entry["binding_type"],
+            "priority": entry["priority"],
+            "hit": hit_item is not None,
+            "reason": "match" if hit_item is not None and winner is None else "not-found",
+        }
+        if hit_item is not None and winner is not None:
+            entry_debug["reason"] = "conflict"
+            conflicts.append(
+                {
+                    "project_id": str(entry["project_id"]),
+                    "alias": entry["alias"],
+                    "display": entry["display"],
+                    "binding_type": entry["binding_type"],
+                    "priority": entry["priority"],
+                    "vault_slug": hit_vault.slug if hit_vault else None,
+                    "section": hit_item.section,
+                    "item_name": hit_item.item_name,
+                }
+            )
+        precedence.append(entry_debug)
+        if hit_item is not None and winner is None:
+            winner = {
+                "source_project_id": str(entry["project_id"]),
+                "source_alias": entry["alias"],
+                "source_display": entry["display"],
+                "source_binding_type": entry["binding_type"],
+                "source_priority": entry["priority"],
+                "vault_slug": hit_vault.slug if hit_vault else None,
+                "section": hit_item.section,
+                "item_name": hit_item.item_name,
+            }
+            if not preview:
+                winner["value"] = decrypt(hit_item.encrypted_value, hit_item.nonce)
+
+    if winner is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "vault_reference_not_found",
+                "reference": reference,
+                "precedence": precedence,
+            },
+        )
+    if conflicts and not allow_conflicts:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "vault_conflicts_blocked",
+                "reference": reference,
+                "message": (
+                    "Vault reference exists in multiple attached Projects; "
+                    "pass allow_conflicts=true to use the first Project in Agent order."
+                ),
+                "winner": {
+                    "source_project_id": winner["source_project_id"],
+                    "source_alias": winner["source_alias"],
+                    "source_display": winner["source_display"],
+                    "source_binding_type": winner["source_binding_type"],
+                    "source_priority": winner["source_priority"],
+                    "vault_slug": winner["vault_slug"],
+                    "section": winner["section"],
+                    "item_name": winner["item_name"],
+                },
+                "conflicts": conflicts,
+                "precedence": precedence,
+            },
+        )
+    response = {"reference": reference, **winner}
+    if debug:
+        response["precedence"] = precedence
+    if conflicts:
+        response["conflicts"] = conflicts
+    return response
+
+
+async def _resolve_bulk_reference_order(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    request: VaultBulkResolveRequest,
+) -> tuple[list[tuple[VaultReferenceResolveInput, list[dict]]], list[UUID]]:
+    ordered_references: list[tuple[VaultReferenceResolveInput, list[dict]]] = []
+    project_ids: list[UUID] = []
+    seen_project_ids: set[UUID] = set()
+
+    def remember_projects(ordered: list[dict]) -> None:
+        for entry in ordered:
+            project_id = entry["project_id"]
+            if project_id in seen_project_ids:
+                continue
+            seen_project_ids.add(project_id)
+            project_ids.append(project_id)
+
+    if request.agent_id is not None:
+        agent_ordered = await _agent_project_precedence(db, auth, request.agent_id)
+        for ref in request.references:
+            selected_project_id = ref.project_id or request.project_id
+            ordered = agent_ordered
+            if selected_project_id is not None:
+                ordered = [
+                    entry for entry in agent_ordered if entry["project_id"] == selected_project_id
+                ]
+            if not ordered:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    detail={"code": "project_not_found", "reference": ref.reference},
+                )
+            ordered_references.append((ref, ordered))
+            remember_projects(ordered)
+        return ordered_references, project_ids
+
+    default_project_id: UUID | None = None
+    project_precedence: dict[UUID, list[dict]] = {}
+    for ref in request.references:
+        selected_project_id = ref.project_id or request.project_id
+        if selected_project_id is None:
+            if default_project_id is None:
+                default_project_id = await resolve_default_write_project(db, auth)
+            selected_project_id = default_project_id
+        ordered = project_precedence.get(selected_project_id)
+        if ordered is None:
+            ordered = await _project_precedence(db, auth, selected_project_id)
+            project_precedence[selected_project_id] = ordered
+        if not ordered:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail={"code": "project_not_found", "reference": ref.reference},
+            )
+        ordered_references.append((ref, ordered))
+        remember_projects(ordered)
+
+    return ordered_references, project_ids
+
+
+@router.post("/resolve/bulk")
+async def resolve_vault_bulk(
+    request: VaultBulkResolveRequest,
+    auth: AuthContext = Depends(require_user_cli),
+    db: AsyncSession = Depends(get_session),
+) -> VaultBulkResolveResponse:
+    """Resolve many exact clawdi:// references in one CLI-auth call."""
+    ordered_references, project_ids = await _resolve_bulk_reference_order(
+        db=db,
+        auth=auth,
+        request=request,
+    )
+    exact_filters = [
+        (ref.vault_slug, ref.section, ref.field) for ref, _ordered in ordered_references
+    ]
+    item_index = _vault_item_index(
+        await _vault_item_rows_for_exact_references(db, project_ids, exact_filters)
+    )
+    results: dict[str, dict[str, object]] = {}
+    for ref, ordered in ordered_references:
+        results[ref.reference] = _resolve_exact_vault_reference_from_index(
+            item_index=item_index,
+            ordered=ordered,
+            reference=ref.reference,
+            vault_slug=ref.vault_slug,
+            section=ref.section,
+            field=ref.field,
+            preview=request.preview,
+            allow_conflicts=request.allow_conflicts,
+            debug=request.debug,
+        )
+    return VaultBulkResolveResponse(results=results)
 
 
 @router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
 async def resolve_vault(
     key: str | None = Query(default=None),
+    vault_slug: str | None = Query(
+        default=None,
+        description="Exact clawdi:// vault slug to resolve.",
+    ),
+    section: str = Query(default="", description="Exact clawdi:// section to resolve."),
+    field: str | None = Query(default=None, description="Exact clawdi:// field to resolve."),
     project_id: UUID | None = Query(
         default=None,
         description="Project to resolve from (default: caller write project).",
@@ -419,6 +796,10 @@ async def resolve_vault(
         description="Allow first-match wins when attached Projects contain the same key.",
     ),
     debug: bool = Query(default=False),
+    preview: bool = Query(
+        default=False,
+        description="Return provenance only for single-key/reference resolution; do not decrypt.",
+    ),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -429,16 +810,52 @@ async def resolve_vault(
     resolving through its own `agent_id`, where the Agent Project plus explicit
     attached Projects define runtime reads.
     """
-    if project_id is not None and agent_id is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "pass project_id or agent_id, not both")
+    if preview and key is None and vault_slug is None and field is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "preview requires key or vault_slug/field",
+        )
+
     if agent_id is not None:
         ordered = await _agent_project_precedence(db, auth, agent_id)
+        if project_id is not None:
+            ordered = [entry for entry in ordered if entry["project_id"] == project_id]
     else:
         selected_project_id = project_id or await resolve_default_write_project(db, auth)
         ordered = await _project_precedence(db, auth, selected_project_id)
     if not ordered:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     effective_project_ids = [entry["project_id"] for entry in ordered]
+
+    if vault_slug is not None or field is not None:
+        if key is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "pass key or vault_slug/field, not both",
+            )
+        if not vault_slug or not field:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "vault_slug and field are required for reference resolve",
+            )
+        item_index = _vault_item_index(
+            await _vault_item_rows_for_exact_references(
+                db,
+                effective_project_ids,
+                [(vault_slug, section, field)],
+            )
+        )
+        return _resolve_exact_vault_reference_from_index(
+            item_index=item_index,
+            ordered=ordered,
+            reference=_format_vault_reference(vault_slug, section, field),
+            vault_slug=vault_slug,
+            section=section,
+            field=field,
+            preview=preview,
+            allow_conflicts=allow_conflicts,
+            debug=debug,
+        )
 
     if key is not None:
         wanted = key.upper()
@@ -479,7 +896,6 @@ async def resolve_vault(
 
             if hit_item is not None and winner is None:
                 winner = {
-                    "value": decrypt(hit_item.encrypted_value, hit_item.nonce),
                     "source_project_id": str(entry["project_id"]),
                     "source_alias": entry["alias"],
                     "source_display": entry["display"],
@@ -489,6 +905,8 @@ async def resolve_vault(
                     "section": hit_item.section,
                     "item_name": hit_item.item_name,
                 }
+                if not preview:
+                    winner["value"] = decrypt(hit_item.encrypted_value, hit_item.nonce)
 
         if winner is None:
             raise HTTPException(
@@ -533,39 +951,33 @@ async def resolve_vault(
         env: dict[str, str] = {}
         seen: dict[str, dict] = {}
         conflicts: list[dict] = []
+        rows_by_project: dict[UUID, list[tuple[Vault, VaultItem]]] = {}
+        for vault, item in await _vault_item_rows_for_projects(db, effective_project_ids):
+            rows_by_project.setdefault(vault.project_id, []).append((vault, item))
         for entry in ordered:
-            vaults = (
-                (await db.execute(select(Vault).where(Vault.project_id == entry["project_id"])))
-                .scalars()
-                .all()
-            )
-            for vault in vaults:
-                items_result = await db.execute(
-                    select(VaultItem).where(VaultItem.vault_id == vault.id)
-                )
-                for item in items_result.scalars().all():
-                    env_key = _env_key(item.section, item.item_name)
-                    source = {
-                        "project_id": str(entry["project_id"]),
-                        "alias": entry["alias"],
-                        "display": entry["display"],
-                        "binding_type": entry["binding_type"],
-                        "priority": entry["priority"],
-                        "vault_slug": vault.slug,
-                        "section": item.section,
-                        "item_name": item.item_name,
-                    }
-                    if env_key in env:
-                        conflicts.append(
-                            {
-                                "key": env_key,
-                                "winner": seen[env_key],
-                                "conflict": source,
-                            }
-                        )
-                        continue
-                    env[env_key] = decrypt(item.encrypted_value, item.nonce)
-                    seen[env_key] = source
+            for vault, item in rows_by_project.get(entry["project_id"], []):
+                env_key = _env_key(item.section, item.item_name)
+                source = {
+                    "project_id": str(entry["project_id"]),
+                    "alias": entry["alias"],
+                    "display": entry["display"],
+                    "binding_type": entry["binding_type"],
+                    "priority": entry["priority"],
+                    "vault_slug": vault.slug,
+                    "section": item.section,
+                    "item_name": item.item_name,
+                }
+                if env_key in env:
+                    conflicts.append(
+                        {
+                            "key": env_key,
+                            "winner": seen[env_key],
+                            "conflict": source,
+                        }
+                    )
+                    continue
+                env[env_key] = decrypt(item.encrypted_value, item.nonce)
+                seen[env_key] = source
         if conflicts and not allow_conflicts:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -582,20 +994,10 @@ async def resolve_vault(
             return {"env": env, "precedence": ordered, "conflicts": conflicts}
         return env
 
-    result = await db.execute(
-        select(Vault).where(
-            Vault.project_id.in_(effective_project_ids),
-        )
-    )
-    vaults = result.scalars().all()
-
     env: dict[str, str] = {}
-    for vault in vaults:
-        items_result = await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id))
-        for item in items_result.scalars().all():
-            plaintext = decrypt(item.encrypted_value, item.nonce)
-            # Build env var name: SECTION_FIELDNAME (uppercase)
-            env[_env_key(item.section, item.item_name)] = plaintext
+    for _vault, item in await _vault_item_rows_for_projects(db, effective_project_ids):
+        plaintext = decrypt(item.encrypted_value, item.nonce)
+        env[_env_key(item.section, item.item_name)] = plaintext
 
     return env
 

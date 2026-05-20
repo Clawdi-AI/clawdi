@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
@@ -26,6 +26,7 @@
 		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
+		"test:e2e": "bun test tests/e2e",
 		"test:watch": "bun test --watch",
 		"prepublishOnly": "bun run build"
 	},

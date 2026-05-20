@@ -345,6 +345,32 @@ export class ApiClient {
 		return await readJson<T>(res, path);
 	}
 
+	async postJsonBody<T>(
+		path: string,
+		body: unknown,
+		query?: Record<string, string | undefined>,
+	): Promise<T> {
+		const url = new URL(`${this.baseUrl}${path}`);
+		for (const [key, value] of Object.entries(query ?? {})) {
+			if (value !== undefined) url.searchParams.set(key, value);
+		}
+		const req = new Request(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiKey}`,
+				"Content-Type": "application/json",
+				"X-Request-ID": randomUUID(),
+			},
+			body: JSON.stringify(body),
+		});
+		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
+		if (!res.ok) {
+			const responseBody = await res.text();
+			throw new ApiError({ status: res.status, body: responseBody, hint: hintFor(res.status) });
+		}
+		return await readJson<T>(res, path);
+	}
+
 	async getBytes(path: string): Promise<Buffer> {
 		const req = new Request(`${this.baseUrl}${path}`, {
 			headers: { Authorization: `Bearer ${this.apiKey}` },

@@ -108,19 +108,23 @@ function checkRegisteredEnvs(): Check {
 
 async function checkVault(): Promise<Check> {
 	if (!isLoggedIn()) {
-		return { name: "Vault resolve", ok: false, detail: "skipped (not logged in)" };
+		return { name: "Vault metadata", ok: false, detail: "skipped (not logged in)" };
 	}
 	try {
 		const api = new ApiClient();
-		const env = unwrap(await api.POST("/api/vault/resolve", {}));
+		const page = unwrap(
+			await api.GET("/api/vault", {
+				params: { query: { page_size: 1 } },
+			}),
+		);
 		return {
-			name: "Vault resolve",
+			name: "Vault metadata",
 			ok: true,
-			detail: `${Object.keys(env).length} secrets resolved`,
+			detail: `${page.total} vault${page.total === 1 ? "" : "s"} reachable`,
 		};
 	} catch (e) {
 		return {
-			name: "Vault resolve",
+			name: "Vault metadata",
 			ok: false,
 			detail: e instanceof ApiError ? `status ${e.status}` : String(e),
 			hint: e instanceof ApiError ? e.hint : undefined,

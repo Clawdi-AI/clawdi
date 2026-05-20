@@ -1129,6 +1129,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/vault/credential-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upsert Credential Profile
+         * @description Store an encrypted local CLI credential profile.
+         *
+         *     Credential profiles are deliberately separate from `vault_items`: they
+         *     should not be returned by `/api/vault/resolve` all-env injection. The CLI
+         *     materializes them back to tool-specific local files instead.
+         */
+        post: operations["upsert_credential_profile_api_vault_credential_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/vault/credential-profiles/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Credential Profile
+         * @description Resolve one local CLI credential profile for materialization.
+         *
+         *     Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+         */
+        post: operations["resolve_credential_profile_api_vault_credential_profiles_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/vault/resolve/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Vault Bulk
+         * @description Resolve many exact clawdi:// references in one CLI-auth call.
+         */
+        post: operations["resolve_vault_bulk_api_vault_resolve_bulk_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/vault/resolve": {
         parameters: {
             query?: never;
@@ -3159,6 +3225,39 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** VaultBulkResolveRequest */
+        VaultBulkResolveRequest: {
+            /** References */
+            references: components["schemas"]["VaultReferenceResolveInput"][];
+            /** Project Id */
+            project_id?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Allow Conflicts
+             * @default false
+             */
+            allow_conflicts: boolean;
+            /**
+             * Debug
+             * @default false
+             */
+            debug: boolean;
+            /**
+             * Preview
+             * @default false
+             */
+            preview: boolean;
+        };
+        /** VaultBulkResolveResponse */
+        VaultBulkResolveResponse: {
+            /** Results */
+            results: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** VaultCreate */
         VaultCreate: {
             /** Slug */
@@ -3172,6 +3271,64 @@ export interface components {
             id: string;
             /** Slug */
             slug: string;
+        };
+        /** VaultCredentialProfileResolveRequest */
+        VaultCredentialProfileResolveRequest: {
+            /** Tool */
+            tool: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Project Id */
+            project_id?: string | null;
+        };
+        /** VaultCredentialProfileResolveResponse */
+        VaultCredentialProfileResolveResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Tool */
+            tool: string;
+            /** Profile */
+            profile: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Payload */
+            payload: string;
+        };
+        /** VaultCredentialProfileResponse */
+        VaultCredentialProfileResponse: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Tool */
+            tool: string;
+            /** Profile */
+            profile: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** VaultCredentialProfileUpsert */
+        VaultCredentialProfileUpsert: {
+            /** Tool */
+            tool: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Payload */
+            payload: string;
         };
         /** VaultDeleteResponse */
         VaultDeleteResponse: {
@@ -3221,9 +3378,25 @@ export interface components {
             /** Fields */
             fields: number;
         };
+        /** VaultReferenceResolveInput */
+        VaultReferenceResolveInput: {
+            /** Reference */
+            reference: string;
+            /** Vault Slug */
+            vault_slug: string;
+            /**
+             * Section
+             * @default
+             */
+            section: string;
+            /** Field */
+            field: string;
+            /** Project Id */
+            project_id?: string | null;
+        };
         /** VaultResolveResponse */
         VaultResolveResponse: {
-            [key: string]: string;
+            [key: string]: unknown;
         };
         /** VaultResponse */
         VaultResponse: {
@@ -5210,10 +5383,117 @@ export interface operations {
             };
         };
     };
+    upsert_credential_profile_api_vault_credential_profiles_post: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultCredentialProfileUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCredentialProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_credential_profile_api_vault_credential_profiles_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultCredentialProfileResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCredentialProfileResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_vault_bulk_api_vault_resolve_bulk_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultBulkResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultBulkResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     resolve_vault_api_vault_resolve_post: {
         parameters: {
             query?: {
                 key?: string | null;
+                /** @description Exact clawdi:// vault slug to resolve. */
+                vault_slug?: string | null;
+                /** @description Exact clawdi:// section to resolve. */
+                section?: string;
+                /** @description Exact clawdi:// field to resolve. */
+                field?: string | null;
                 /** @description Project to resolve from (default: caller write project). */
                 project_id?: string | null;
                 /** @description Resolve through an Agent Project and attached Project order. */
@@ -5221,6 +5501,8 @@ export interface operations {
                 /** @description Allow first-match wins when attached Projects contain the same key. */
                 allow_conflicts?: boolean;
                 debug?: boolean;
+                /** @description Return provenance only for single-key/reference resolution; do not decrypt. */
+                preview?: boolean;
             };
             header?: never;
             path?: never;
