@@ -34,10 +34,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
+            "user_id",
             "project_id",
             "tool",
             "profile",
-            name="uq_vault_credential_profiles_project_tool_profile",
+            name="uq_vault_credential_profiles_user_project_tool_profile",
         ),
     )
     op.create_index(

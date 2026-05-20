@@ -74,9 +74,10 @@ class VaultCredentialProfile(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint(
+            "user_id",
             "project_id",
             "tool",
             "profile",
-            name="uq_vault_credential_profiles_project_tool_profile",
+            name="uq_vault_credential_profiles_user_project_tool_profile",
         ),
     )

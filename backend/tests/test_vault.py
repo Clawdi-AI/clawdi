@@ -328,6 +328,81 @@ async def test_vault_credential_profile_shared_project_viewer_cannot_resolve(
 
 
 @pytest.mark.asyncio
+async def test_vault_credential_profile_shared_project_viewer_cannot_store(
+    cli_client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    from datetime import UTC, datetime
+
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.user import User
+    from app.services.vault_crypto import encrypt
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"credential_unique_owner_{nonce}",
+        email=f"credential_unique_owner_{nonce}@test.dev",
+        name="Credential Unique Owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    shared = Project(
+        user_id=owner.id,
+        name="shared credential uniqueness",
+        slug=f"shared-credential-unique-{nonce}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=f"credential-unique-owner-{nonce}",
+        )
+    )
+    ciphertext, nonce_bytes = encrypt('{"kind":"local_agent_profile","files":[]}')
+    db_session.add(
+        VaultCredentialProfile(
+            user_id=owner.id,
+            project_id=shared.id,
+            tool="codex",
+            profile="default",
+            encrypted_payload=ciphertext,
+            nonce=nonce_bytes,
+        )
+    )
+    await db_session.commit()
+
+    try:
+        stored = await cli_client.post(
+            "/api/vault/credential-profiles",
+            params={"project_id": str(shared.id)},
+            json={"tool": "codex", "profile": "default", "payload": "{}"},
+        )
+        assert stored.status_code == 404, stored.text
+
+        profiles_result = await db_session.execute(
+            select(VaultCredentialProfile).where(
+                VaultCredentialProfile.project_id == shared.id,
+                VaultCredentialProfile.tool == "codex",
+                VaultCredentialProfile.profile == "default",
+            )
+        )
+        profiles = profiles_result.scalars().all()
+        assert {profile.user_id for profile in profiles} == {owner.id}
+    finally:
+        await db_session.delete(shared)
+        await db_session.delete(owner)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_vault_credential_profile_resolve_requires_cli_auth(client: httpx.AsyncClient):
     r = await client.post(
         "/api/vault/credential-profiles/resolve",
