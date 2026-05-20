@@ -26,13 +26,15 @@ jobs:
     # trusted-publisher OIDC so no NPM_TOKEN secret is needed.
     environment: npm
     permissions:
-      contents: read
+      contents: write
       id-token: write
     defaults:
       run:
         working-directory: packages/cli
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -100,3 +102,46 @@ jobs:
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
         run: npm publish --access public --provenance --ignore-scripts
+
+      - name: Create GitHub release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="clawdi-cli-v${VERSION}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub release $TAG already exists; skipping."
+            exit 0
+          fi
+
+          PREVIOUS=$(
+            git tag --list 'clawdi-cli-v*' --sort=-v:refname \
+              | grep -v "^${TAG}$" \
+              | head -n 1 || true
+          )
+
+          NOTES=$(cat <<EOF
+          ## npm
+          - Package: \`clawdi@${VERSION}\`
+          - Install: \`npm i -g clawdi@${VERSION}\`
+
+          ## Scope
+          This is the release for the published \`packages/cli\` package. Backend
+          and web changes are versioned separately as \`cloud-v...\` releases.
+          EOF
+          )
+
+          args=(
+            release create "$TAG"
+            --target "$GITHUB_SHA"
+            --title "Clawdi CLI v${VERSION}"
+            --notes "$NOTES"
+            --generate-notes
+            --latest=false
+          )
+          if [ -n "$PREVIOUS" ]; then
+            args+=(--notes-start-tag "$PREVIOUS")
+          fi
+          gh "${args[@]}"
