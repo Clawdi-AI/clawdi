@@ -1,15 +1,15 @@
-name: Release Cloud
+name: Release Clawdi
 
 # Creates a GitHub Release for backend/web/shared changes that land on main.
 # This repo is a monorepo: the npm package has its own `clawdi-cli-vX.Y.Z`
-# release, while the hosted backend + web app use calendar-versioned
-# `cloud-vYYYY.MM.DD.<run_number>` releases.
+# release, while the Clawdi app/backend/web line uses calendar-versioned
+# `clawdi-vYYYY.MM.DD.<run_number>` releases.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without the cloud-v prefix. Defaults to YYYY.MM.DD.<run_number>."
+        description: "Release version without the clawdi-v prefix. Defaults to YYYY.MM.DD.<run_number>."
         required: false
       target:
         description: "Commit SHA to release. Defaults to the workflow SHA."
@@ -30,7 +30,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: cloud-release
+  group: clawdi-release
   cancel-in-progress: false
 
 jobs:
@@ -41,7 +41,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create cloud release
+      - name: Create Clawdi release
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
@@ -49,11 +49,11 @@ jobs:
         run: |
           TARGET="${INPUT_TARGET:-$GITHUB_SHA}"
           if [ -n "$INPUT_VERSION" ]; then
-            VERSION="${INPUT_VERSION#cloud-v}"
+            VERSION="${INPUT_VERSION#clawdi-v}"
           else
             VERSION="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
           fi
-          TAG="cloud-v${VERSION}"
+          TAG="clawdi-v${VERSION}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub release $TAG already exists; skipping."
@@ -61,28 +61,23 @@ jobs:
           fi
 
           PREVIOUS=$(
-            git tag --list 'cloud-v*' --sort=-creatordate \
+            git tag --list 'clawdi-v*' --sort=-creatordate \
               | grep -v "^${TAG}$" \
               | head -n 1 || true
           )
 
           NOTES=$(cat <<EOF
           ## Scope
-          This is the release for Clawdi Cloud: backend API, web dashboard, and
-          shared generated clients.
+          This is the release for Clawdi app/backend/web changes.
 
-          ## Deployment
-          - Commit: \`${TARGET}\`
-          - Production backend deploy still runs through \`/opt/clawdi-cloud\`
-            with Alembic migrations and supervisor restart.
-          - CLI/npm releases are versioned separately as \`clawdi-cli-v...\`.
+          CLI/npm releases are versioned separately as \`clawdi-cli-v...\`.
           EOF
           )
 
           args=(
             release create "$TAG"
             --target "$TARGET"
-            --title "Clawdi Cloud ${VERSION}"
+            --title "Clawdi ${VERSION}"
             --notes "$NOTES"
             --generate-notes
             --latest
