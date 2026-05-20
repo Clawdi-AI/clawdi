@@ -88,8 +88,8 @@ export function ResourcesCard({
 			<CardHeader className="border-b">
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>
-					{PROJECT_CANONICAL_DEFINITION} Agents run on your machines. Account resources live outside
-					Projects.
+					{PROJECT_CANONICAL_DEFINITION} Agents run on your machines. Account resources (Sessions,
+					Memories, Connectors) apply across all Projects.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
@@ -112,9 +112,9 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Use Custom Projects to share resources with teammates. Use the Global Project for
-						account defaults. Agent Projects belong to one connected agent and cannot be shared.
-						Project resources are scoped to Projects; account resources are global to your account.
+						Use Custom Projects to share with teammates, the Global Project for defaults, and Agent
+						Projects stay private to one agent. Project resources live in Projects; everything else
+						applies account-wide.
 					</p>
 				</div>
 				<div className="divide-y">

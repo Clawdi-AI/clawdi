@@ -694,7 +694,7 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			toast.success("Project Added", {
-				description: `${projectName} is now available to ${agentName}.`,
+				description: `Done. ${agentName} can now use ${projectName}'s skills and Vault keys.`,
 				action: {
 					label: "Open Agent",
 					onClick: () => router.push(`/agents/${selectedAgentId}?tab=projects`),
