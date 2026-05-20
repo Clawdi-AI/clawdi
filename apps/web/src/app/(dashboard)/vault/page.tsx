@@ -433,6 +433,7 @@ function VaultPageInner() {
 									detachVaultProject.mutate({ slug: selectedVault.vault.slug, projectId })
 								}
 								isDetachingProject={detachVaultProject.isPending}
+								detachingProjectId={detachVaultProject.variables?.projectId ?? null}
 								onDeleteVault={() => deleteVault.mutate({ slug: selectedVault.vault.slug })}
 								isDeletingVault={deleteVault.isPending}
 							/>
@@ -716,6 +717,7 @@ function VaultDetailPanel({
 	isAddingProject,
 	onDetachProject,
 	isDetachingProject,
+	detachingProjectId,
 	onDeleteVault,
 	isDeletingVault,
 }: {
@@ -726,6 +728,7 @@ function VaultDetailPanel({
 	isAddingProject: boolean;
 	onDetachProject: (projectId: string) => void;
 	isDetachingProject: boolean;
+	detachingProjectId: string | null;
 	onDeleteVault: () => void;
 	isDeletingVault: boolean;
 }) {
@@ -790,10 +793,18 @@ function VaultDetailPanel({
 									size="sm"
 									variant="ghost"
 									disabled={isDeletingVault}
-									className="w-fit text-muted-foreground hover:text-destructive"
+									aria-busy={isDeletingVault}
+									className={cn(
+										"w-fit text-muted-foreground hover:text-destructive",
+										isDeletingVault && "disabled:opacity-100",
+									)}
 								>
-									<Trash2 className="size-3.5" />
-									Delete Vault
+									{isDeletingVault ? (
+										<Spinner className="size-3.5" />
+									) : (
+										<Trash2 className="size-3.5" />
+									)}
+									{isDeletingVault ? "Deleting..." : "Delete Vault"}
 								</Button>
 							</ConfirmAction>
 						</div>
@@ -818,6 +829,7 @@ function VaultDetailPanel({
 				visibleAttachments={visibleAttachments}
 				onDetachProject={onDetachProject}
 				isDetachingProject={isDetachingProject}
+				detachingProjectId={detachingProjectId}
 			/>
 			<VaultKeysPanel vault={vault} accessProjectId={accessProjectId} />
 		</section>
@@ -1077,28 +1089,47 @@ function VaultKeysPanel({
 						{
 							id: "actions",
 							header: "",
-							cell: ({ row }) => (
-								<ConfirmAction
-									title={`Delete ${row.original.key}?`}
-									description={<p>Anything that resolves this key will start failing.</p>}
-									confirmLabel="Delete Key"
-									destructive
-									onConfirm={() =>
-										deleteItem.mutate({ section: row.original.section, name: row.original.name })
-									}
-								>
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										onClick={(event) => event.stopPropagation()}
-										disabled={deleteItem.isPending}
-										className="text-muted-foreground hover:text-destructive"
-										aria-label={`Delete ${row.original.key}`}
+							cell: ({ row }) => {
+								const isDeletingThisKey =
+									deleteItem.isPending &&
+									deleteItem.variables?.section === row.original.section &&
+									deleteItem.variables?.name === row.original.name;
+
+								return (
+									<ConfirmAction
+										title={`Delete ${row.original.key}?`}
+										description={<p>Anything that resolves this key will start failing.</p>}
+										confirmLabel="Delete Key"
+										destructive
+										onConfirm={() =>
+											deleteItem.mutate({ section: row.original.section, name: row.original.name })
+										}
 									>
-										<Trash2 className="size-3.5" />
-									</Button>
-								</ConfirmAction>
-							),
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											onClick={(event) => event.stopPropagation()}
+											disabled={deleteItem.isPending}
+											aria-busy={isDeletingThisKey}
+											className={cn(
+												"text-muted-foreground hover:text-destructive",
+												isDeletingThisKey && "disabled:opacity-100",
+											)}
+											aria-label={
+												isDeletingThisKey
+													? `Deleting ${row.original.key}`
+													: `Delete ${row.original.key}`
+											}
+										>
+											{isDeletingThisKey ? (
+												<Spinner className="size-3.5" />
+											) : (
+												<Trash2 className="size-3.5" />
+											)}
+										</Button>
+									</ConfirmAction>
+								);
+							},
 							size: 40,
 						} satisfies ColumnDef<VaultField>,
 					]),
@@ -1250,12 +1281,14 @@ function AttachedProjectsPanel({
 	visibleAttachments,
 	onDetachProject,
 	isDetachingProject,
+	detachingProjectId,
 }: {
 	vault: Vault;
 	attachments: VaultAttachmentView[];
 	visibleAttachments: VaultAttachmentView[];
 	onDetachProject: (projectId: string) => void;
 	isDetachingProject: boolean;
+	detachingProjectId: string | null;
 }) {
 	return (
 		<section className="space-y-3 border-b bg-muted/10 p-4">
@@ -1283,6 +1316,7 @@ function AttachedProjectsPanel({
 							attachment={attachment}
 							onDetachProject={onDetachProject}
 							isDetachingProject={isDetachingProject}
+							detachingProjectId={detachingProjectId}
 						/>
 					))}
 				</div>
@@ -1300,13 +1334,16 @@ function VaultProjectAttachmentRow({
 	attachment,
 	onDetachProject,
 	isDetachingProject,
+	detachingProjectId,
 }: {
 	vault: Vault;
 	attachment: VaultAttachmentView;
 	onDetachProject: (projectId: string) => void;
 	isDetachingProject: boolean;
+	detachingProjectId: string | null;
 }) {
 	const projectName = attachment.project ? displayProjectName(attachment.project) : "this Project";
+	const isRemovingThisProject = isDetachingProject && detachingProjectId === attachment.projectId;
 	return (
 		<div className="flex items-start justify-between gap-3 rounded-md border bg-background/70 p-3">
 			<div className="min-w-0">
@@ -1344,11 +1381,23 @@ function VaultProjectAttachmentRow({
 						variant="ghost"
 						size="icon-sm"
 						disabled={isDetachingProject}
-						className="shrink-0 text-muted-foreground hover:text-destructive"
-						aria-label={`Remove ${vault.slug} from ${projectName}`}
-						title="Remove from Project"
+						aria-busy={isRemovingThisProject}
+						className={cn(
+							"shrink-0 text-muted-foreground hover:text-destructive",
+							isRemovingThisProject && "disabled:opacity-100",
+						)}
+						aria-label={
+							isRemovingThisProject
+								? `Removing ${vault.slug} from ${projectName}`
+								: `Remove ${vault.slug} from ${projectName}`
+						}
+						title={isRemovingThisProject ? "Removing from Project" : "Remove from Project"}
 					>
-						<Trash2 className="size-3.5" />
+						{isRemovingThisProject ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<Trash2 className="size-3.5" />
+						)}
 					</Button>
 				</ConfirmAction>
 			) : null}
