@@ -232,24 +232,21 @@ export default function AgentDetailPage() {
 		activeTab === "skills"
 			? {
 					icon: Sparkles,
-					title: "Skills",
-					count: skillsForThisEnv?.length,
+					title: "Installed Skills",
 					description:
 						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
 				}
 			: activeTab === "projects"
 				? {
 						icon: Layers,
-						title: "Projects",
-						count: projectBindings?.length,
+						title: "Project Access",
 						description:
-							"The Agent Project is fixed. Attach Custom or shared Projects here when this agent needs extra read access.",
+							"The Agent Project is fixed. Attached Custom or shared Projects add read-only context.",
 					}
 				: {
 						icon: MessageSquare,
-						title: "Sessions",
-						count: sessionTotal,
-						description: "Recent sessions synced by this agent.",
+						title: "Session History",
+						description: "Review sessions synced by this agent.",
 					};
 
 	useEffect(() => {
@@ -366,25 +363,6 @@ export default function AgentDetailPage() {
 
 					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
 						<DashboardSection priority="primary">
-							<DashboardSectionHeader
-								icon={activeTabMeta.icon}
-								title={activeTabMeta.title}
-								count={activeTabMeta.count}
-								description={activeTabMeta.description}
-								toolbar={
-									activeTab === "skills" ? (
-										<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-											<Link
-												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
-											>
-												<Plus />
-												Install Skills
-											</Link>
-										</Button>
-									) : null
-								}
-								priority="primary"
-							/>
 							<DashboardSectionToolbar>
 								<TabsList className="grid w-full grid-cols-3 sm:w-fit">
 									<TabsTrigger value="sessions" className="min-w-0 px-2">
@@ -409,6 +387,24 @@ export default function AgentDetailPage() {
 									</TabsTrigger>
 								</TabsList>
 							</DashboardSectionToolbar>
+							<DashboardSectionHeader
+								icon={activeTabMeta.icon}
+								title={activeTabMeta.title}
+								description={activeTabMeta.description}
+								toolbar={
+									activeTab === "skills" ? (
+										<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
+											<Link
+												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
+											>
+												<Plus />
+												Install Skills
+											</Link>
+										</Button>
+									) : null
+								}
+								priority="primary"
+							/>
 
 							<div className="p-4">
 								<TabsContent value="sessions" className="m-0">
