@@ -1,7 +1,15 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { Brain, FolderKanban, Key, MessageSquare, Plug, Sparkles } from "lucide-react";
+import {
+	Brain,
+	CheckCircle2,
+	FolderKanban,
+	Key,
+	MessageSquare,
+	Plug,
+	Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +17,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
+	PROJECT_CANONICAL_DEFINITION,
+	PROJECT_FIRST_PATH,
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
@@ -60,16 +70,13 @@ export function ResourcesCard({
 			<CardHeader className="border-b">
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>
-					Projects hold reusable work. Agents run on your machines. Account resources live outside
+					{PROJECT_CANONICAL_DEFINITION} Agents run on your machines. Account resources live outside
 					Projects.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
 				<div className="grid gap-2 border-b bg-muted/15 px-6 py-4 text-xs text-muted-foreground">
-					<p>
-						First path: create a Custom Project, add Skills or Vaults, then attach that Project to
-						an Agent when it should use them.
-					</p>
+					<p>First path: {PROJECT_FIRST_PATH}</p>
 					<p>Global and Agent Projects are managed for you. Only Custom Projects can be shared.</p>
 				</div>
 				<div className="divide-y">
@@ -140,9 +147,14 @@ function ResourceRow({ resource }: { resource: Resource }) {
 					<ProjectResourcePath resource={definition} />
 					{empty ? (
 						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-							{definition.emptyCta}
+							Start: {definition.emptyCta}
 						</span>
-					) : null}
+					) : (
+						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+							<CheckCircle2 className="size-3" />
+							Active
+						</span>
+					)}
 				</div>
 			</div>
 			<span

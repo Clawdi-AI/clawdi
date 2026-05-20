@@ -235,20 +235,20 @@ export default function SharePage() {
 								</Link>
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								Sign in so this Project can be added to your account and stay available across
-								devices. If you do not have an account, you can create one on the next screen.
+								If you do not have an account, you can create one on the next screen. Sign in so
+								this Project can be added to your account and stay available across devices.
 							</p>
-							<div className="rounded-lg border bg-muted/30 p-4">
-								<div className="flex items-center gap-2 text-sm font-medium">
-									<KeyRound className="size-4" />
-									Advanced CLI Option
-								</div>
+							<details className="group rounded-lg border bg-muted/30 p-4">
+								<summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium marker:hidden">
+									<KeyRound className="size-4 shrink-0" />
+									<span>Advanced CLI Option</span>
+								</summary>
 								<p className="mt-1 text-xs text-muted-foreground">
-									Use this only if you already work from the terminal. The browser flow above is the
-									normal path.
+									Use this if you're already familiar with command line tools. The browser flow
+									above is the normal path.
 								</p>
 								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
-							</div>
+							</details>
 						</div>
 					)}
 				</CardContent>

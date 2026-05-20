@@ -18,7 +18,12 @@ import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
-import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
+import {
+	PROJECT_CANONICAL_DEFINITION,
+	PROJECT_FIRST_PATH,
+	projectResourceHref,
+	sessionDetailHref,
+} from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
@@ -123,7 +128,7 @@ export default function DashboardPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Overview"
-				description="Start by connecting an agent. Use Custom Projects to share skills and Vault keys with people or agents."
+				description={`Start by connecting an agent. ${PROJECT_CANONICAL_DEFINITION} ${PROJECT_FIRST_PATH}`}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">

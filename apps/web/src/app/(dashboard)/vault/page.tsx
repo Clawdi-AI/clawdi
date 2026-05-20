@@ -699,6 +699,7 @@ function VaultInventoryRow({
 			className={cn(
 				"flex w-full items-start gap-3 rounded-md border border-transparent px-3 py-2.5 text-left transition-colors",
 				"hover:border-border hover:bg-muted/30",
+				!vault.is_owner && "border-l-2 border-l-muted-foreground/40 bg-muted/10",
 				selected && "border-border bg-background shadow-xs",
 			)}
 		>
@@ -760,7 +761,12 @@ function VaultDetailPanel({
 	const accessProjectId = visibleAttachments[0]?.projectId ?? attachments[0]?.projectId ?? null;
 
 	return (
-		<section className="min-w-0 overflow-hidden">
+		<section
+			className={cn(
+				"min-w-0 overflow-hidden",
+				!canManageVault && "border-l-2 border-l-muted-foreground/40 bg-muted/10",
+			)}
+		>
 			<div className="border-b p-4">
 				<div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
 					<div className="flex min-w-0 items-start gap-3">
@@ -829,7 +835,7 @@ function VaultDetailPanel({
 				</div>
 			</div>
 			{canManageVault ? null : (
-				<div className="flex gap-3 border-b bg-muted/20 px-4 py-3 text-sm">
+				<div className="flex gap-3 border-b bg-muted/25 px-4 py-3 text-sm">
 					<Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 					<div>
 						<p className="font-medium">Read-only Vault</p>

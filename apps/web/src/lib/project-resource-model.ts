@@ -32,13 +32,19 @@ export interface ProjectResourceDefinition {
 	countLabel?: string;
 }
 
+export const PROJECT_CANONICAL_DEFINITION =
+	"A Project groups the skills and Vault access an agent or teammate can use.";
+
+export const PROJECT_FIRST_PATH =
+	"Create a Custom Project, add Skills or Vaults, then attach it to an Agent when it should use them.";
+
 export const PROJECT_RESOURCE_DEFINITIONS = [
 	{
 		id: "projects",
 		label: "Projects",
 		singularLabel: "Project",
 		navLabel: "Projects",
-		description: "Workspaces that group skills and Vault access for people and agents.",
+		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
 			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you and cannot be shared.",
 		href: "/projects",

@@ -1,6 +1,7 @@
 import { Rocket } from "lucide-react";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PROJECT_CANONICAL_DEFINITION } from "@/lib/project-resource-model";
 
 /**
  * Overview hero card for connecting a new agent. Rendered in the Overview
@@ -17,9 +18,7 @@ export function OnboardingCard() {
 					<Rocket className="size-5 text-primary" />
 					Connect your AI to Clawdi
 				</CardTitle>
-				<CardDescription>
-					Connect an agent first. Then use Projects to give it reusable skills and Vault keys.
-				</CardDescription>
+				<CardDescription>Connect an agent first. {PROJECT_CANONICAL_DEFINITION}</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<AddAgentSetup />

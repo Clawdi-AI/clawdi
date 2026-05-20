@@ -318,7 +318,7 @@ export default function ProjectsPage() {
 				{sharedProjects.length === 0 ? (
 					<DashboardEmptyLine
 						title="No Shared Projects Yet"
-						message="Accepted invites and share links appear here with Viewer access. Pending email invites appear under the Notification Center icon in the top bar."
+						message="Accepted invites and share links appear here with Viewer access."
 					/>
 				) : (
 					<div className="divide-y">

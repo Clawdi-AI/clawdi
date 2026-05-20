@@ -194,7 +194,7 @@ function PermissionSummary() {
 				<div className="font-medium text-foreground">Viewer Access</div>
 				<p className="mt-1 text-muted-foreground">
 					Invites and links add people as Viewers. They can read skills, see Vault names, and see
-					key names.
+					key names, but never see key values.
 				</p>
 			</div>
 			<div>
