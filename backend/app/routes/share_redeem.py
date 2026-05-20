@@ -23,7 +23,7 @@ from app.models.project_share_link import ProjectShareLink
 from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.skill import Skill
 from app.models.user import User
-from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.models.vault import Vault, VaultProjectAttachment
 from app.schemas.sharing import ShareRedeemResponse, ShareUpgradeResponse, UpgradeBody
 from app.services.agent_bindings import attach_project_to_owned_agents
 from app.services.sharing import ensure_viewer_membership, safe_owner_display
@@ -195,8 +195,7 @@ async def _build_redeem_payload(ctx: ShareTokenContext, db: AsyncSession) -> Sha
     ).scalar_one() or 0
     vault_count = (
         await db.execute(
-            select(func.count(VaultItem.id))
-            .join(Vault, Vault.id == VaultItem.vault_id)
+            select(func.count(func.distinct(Vault.id)))
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .where(VaultProjectAttachment.project_id == ctx.project_id)
         )

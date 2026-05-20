@@ -14,6 +14,20 @@ function requireAuth() {
 	}
 }
 
+interface VaultListRow {
+	project_ids?: string[];
+	project_id?: string;
+	slug: string;
+	name: string;
+}
+
+interface VaultListPage {
+	items: VaultListRow[];
+	total: number;
+	page: number;
+	page_size: number;
+}
+
 /**
  * Create a vault if it doesn't exist, and attach it to the selected
  * Project when the caller pins one. The endpoint is idempotent for an
@@ -24,16 +38,52 @@ async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?
 		body: { slug, name },
 		params: projectId ? { query: { project_id: projectId } } : { query: {} },
 	});
+	if (created.error !== undefined && created.response.status === 409) return;
 	unwrap(created);
 }
 
+function vaultProjectIds(vault: VaultListRow): string[] {
+	return vault.project_ids ?? (vault.project_id ? [vault.project_id] : []);
+}
+
+async function fetchAllVaults(api: ApiClient, projectId?: string): Promise<VaultListPage> {
+	const VAULT_PAGE_SIZE = 200;
+	const items: VaultListRow[] = [];
+	let page = 1;
+	let total = 0;
+	while (page <= 50) {
+		const result = unwrap(
+			await api.GET("/api/vault", {
+				params: {
+					query: projectId
+						? {
+								...(page === 1 ? {} : { page }),
+								page_size: VAULT_PAGE_SIZE,
+								project_id: projectId,
+							}
+						: { ...(page === 1 ? {} : { page }), page_size: VAULT_PAGE_SIZE },
+				},
+			}),
+		);
+		items.push(...result.items);
+		total = result.total ?? items.length;
+		if (items.length >= total || result.items.length === 0) {
+			return { items, total, page: 1, page_size: VAULT_PAGE_SIZE };
+		}
+		page += 1;
+	}
+	throw new Error("Too many vault pages to load safely. Use --project to narrow the listing.");
+}
+
 async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<string | null> {
-	const list = unwrap(await api.GET("/api/vault", { params: { query: { page_size: 100 } } }));
+	const list = await fetchAllVaults(api);
 	const candidate = list.items.find((v) => v.slug === slug);
 	if (!candidate) return null;
-	const def = unwrap(await api.GET("/api/projects/default")).project_id ?? "";
-	if (def && candidate.project_ids.includes(def)) return def;
-	return candidate.project_ids[0] ?? null;
+	const defaultProject = await api.GET("/api/projects/default");
+	const def = defaultProject.error === undefined ? (unwrap(defaultProject).project_id ?? "") : "";
+	const projectIds = vaultProjectIds(candidate);
+	if (def && projectIds.includes(def)) return def;
+	return projectIds[0] ?? null;
 }
 
 export async function vaultSet(key: string, opts: { project?: string } = {}) {
@@ -102,18 +152,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		}
 		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
 	}
-	// `page_size=100` covers ~all realistic tenants; if someone crosses it we
-	// surface the overflow below rather than silently dropping vaults.
-	const VAULT_PAGE_SIZE = 100;
-	const page = unwrap(
-		await api.GET("/api/vault", {
-			params: {
-				query: projectId
-					? { page_size: VAULT_PAGE_SIZE, project_id: projectId }
-					: { page_size: VAULT_PAGE_SIZE },
-			},
-		}),
-	);
+	const page = await fetchAllVaults(api, projectId);
 	const vaults = page.items;
 
 	const fetchItems = (slug: string, attachedProjectId?: string) =>
@@ -138,11 +177,12 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			references: VaultReferenceRow[];
 		}> = [];
 		for (const v of vaults) {
-			const attachedProjectId = projectId ?? v.project_ids[0];
+			const projectIds = vaultProjectIds(v);
+			const attachedProjectId = projectId ?? projectIds[0];
 			const items = await fetchItems(v.slug, attachedProjectId);
 			out.push({
 				slug: v.slug,
-				project_ids: v.project_ids,
+				project_ids: projectIds,
 				name: v.name,
 				items,
 				references: attachedProjectId
@@ -159,14 +199,8 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		return;
 	}
 
-	if (page.total > vaults.length) {
-		console.log(
-			chalk.yellow(`  Showing ${vaults.length} of ${page.total} vaults (first page only).`),
-		);
-	}
-
 	for (const v of vaults) {
-		const attachedProjectId = projectId ?? v.project_ids[0];
+		const attachedProjectId = projectId ?? vaultProjectIds(v)[0];
 		const items = await fetchItems(v.slug, attachedProjectId);
 		const projectLabel = attachedProjectId ? `project=${attachedProjectId}` : "project=unattached";
 		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(projectLabel)}`));

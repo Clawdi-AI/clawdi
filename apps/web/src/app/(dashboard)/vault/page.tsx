@@ -45,6 +45,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { VaultKeyImportDialog } from "@/components/vault/key-import";
 import type { KeyImportSummary } from "@/components/vault/key-import-parse";
 import { unwrap, useApi } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { Vault, VaultItems } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
@@ -113,10 +114,14 @@ function VaultPageInner() {
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/vault", {
-					params: { query: { page_size: 200 } },
-				}),
+			fetchAllPages<Vault>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/vault", {
+							params: { query: { page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "vaults" },
 			),
 	});
 
@@ -804,7 +809,7 @@ function VaultDetailPanel({
 									) : (
 										<Trash2 className="size-3.5" />
 									)}
-									{isDeletingVault ? "Deleting..." : "Delete Vault"}
+									{isDeletingVault ? "Deleting…" : "Delete Vault"}
 								</Button>
 							</ConfirmAction>
 						</div>

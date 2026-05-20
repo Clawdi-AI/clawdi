@@ -68,6 +68,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import {
 	projectDetailHref,
@@ -148,10 +149,14 @@ export default function ProjectDetailPage() {
 	const skills = useQuery({
 		queryKey: ["skills", "project-detail", projectId],
 		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/skills", {
-					params: { query: { project_id: projectId, page_size: 100 } },
-				}),
+			fetchAllPages<SkillSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/skills", {
+							params: { query: { project_id: projectId, page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "project skills" },
 			),
 		enabled: !!project,
 	});
@@ -159,10 +164,14 @@ export default function ProjectDetailPage() {
 	const vaults = useQuery({
 		queryKey: ["vaults", "project-detail", projectId],
 		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/vault", {
-					params: { query: { project_id: projectId, page_size: 100 } },
-				}),
+			fetchAllPages<VaultSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/vault", {
+							params: { query: { project_id: projectId, page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "project vaults" },
 			),
 		enabled: !!project,
 	});

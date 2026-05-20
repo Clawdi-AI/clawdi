@@ -104,6 +104,26 @@ async def test_preview_rate_limit_blocks_token_probe_flood(client_unauth, monkey
 async def test_preview_valid_token_returns_summary(
     client_unauth, db_session, seed_user, workspace_project
 ):
+    from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+    from app.services.vault_crypto import encrypt
+
+    vault = Vault(user_id=seed_user.id, slug="deploy", name="Deploy")
+    db_session.add(vault)
+    await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=workspace_project.id))
+    for item_name in ("VERCEL_TOKEN", "SENTRY_DSN"):
+        ciphertext, nonce = encrypt(f"value-for-{item_name.lower()}")
+        db_session.add(
+            VaultItem(
+                vault_id=vault.id,
+                section="",
+                item_name=item_name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+        )
+    await db_session.commit()
+
     raw = await _make_share_link(db_session, workspace_project, seed_user)
     r = await client_unauth.get(f"/api/share/{raw}/preview")
     assert r.status_code == 200, r.text
@@ -114,7 +134,7 @@ async def test_preview_valid_token_returns_summary(
     assert body["owner_handle"] == "alice-a3b4"
     assert body["vault_locked"] is True
     assert isinstance(body["skill_count"], int)
-    assert isinstance(body["vault_count"], int)
+    assert body["vault_count"] == 1
 
 
 @pytest.mark.asyncio

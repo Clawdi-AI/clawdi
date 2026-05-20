@@ -42,6 +42,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
@@ -157,34 +158,25 @@ export default function AgentDetailPage() {
 	// page-1 cap. Same loop pattern the cross-agent /skills
 	// page uses; hard cap at 50 pages = 10k skills as a
 	// runaway-listing guard.
-	const SKILLS_PAGE_SIZE = 200;
 	const agentProjectId = agent?.default_project_id;
 	const { data: skillsData, isLoading: skillsLoading } = useQuery({
 		queryKey: ["skills", agentProjectId, "all-pages"],
-		queryFn: async () => {
-			const items: SkillSummary[] = [];
-			let page = 1;
-			let total = 0;
-			while (true) {
-				const result = unwrap(
-					await api.GET("/api/skills", {
-						params: {
-							query: {
-								page,
-								page_size: SKILLS_PAGE_SIZE,
-								project_id: agentProjectId,
+		queryFn: async () =>
+			fetchAllPages<SkillSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/skills", {
+							params: {
+								query: {
+									page,
+									page_size: pageSize,
+									project_id: agentProjectId,
+								},
 							},
-						},
-					}),
-				);
-				items.push(...result.items);
-				total = result.total ?? items.length;
-				if (items.length >= total || result.items.length === 0) break;
-				page += 1;
-				if (page > 50) break;
-			}
-			return { items, total, page: 1, page_size: SKILLS_PAGE_SIZE };
-		},
+						}),
+					),
+				{ pageSize: 200, resourceName: "agent skills" },
+			),
 		enabled: !!agentProjectId,
 	});
 	const skillsForThisEnv = useMemo(() => {

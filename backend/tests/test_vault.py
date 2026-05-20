@@ -42,6 +42,37 @@ async def test_vault_create_list_and_slug_conflict(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_vault_rejects_invalid_slugs_and_item_names(client: httpx.AsyncClient):
+    invalid_slug = await client.post("/api/vault", json={"slug": "Bad Vault", "name": "Bad"})
+    assert invalid_slug.status_code == 422, invalid_slug.text
+
+    trailing_hyphen = await client.post("/api/vault", json={"slug": "prod-", "name": "Bad"})
+    assert trailing_hyphen.status_code == 422, trailing_hyphen.text
+
+    created = await client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    assert created.status_code == 200, created.text
+
+    empty_key = await client.put(
+        "/api/vault/prod/items",
+        json={"section": "", "fields": {"": "secret"}},
+    )
+    assert empty_key.status_code == 422, empty_key.text
+
+    bad_section = await client.put(
+        "/api/vault/prod/items",
+        json={"section": "api/keys", "fields": {"TOKEN": "secret"}},
+    )
+    assert bad_section.status_code == 422, bad_section.text
+
+    empty_delete = await client.request(
+        "DELETE",
+        "/api/vault/prod/items",
+        json={"section": "", "fields": []},
+    )
+    assert empty_delete.status_code == 422, empty_delete.text
+
+
+@pytest.mark.asyncio
 async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.AsyncClient):
     """Secrets round-trip through AES-GCM storage.
 

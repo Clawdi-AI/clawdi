@@ -33,6 +33,26 @@ async function fetchAllSkills(apiUrl: string, bearer: string): Promise<SkillRow[
 		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;
 		page += 1;
 	}
+	if (page > 50) throw new Error("Too many skill pages to load safely.");
+	return items;
+}
+
+async function fetchAllVaults(apiUrl: string, bearer: string): Promise<VaultRow[]> {
+	const items: VaultRow[] = [];
+	let page = 1;
+	const pageSize = 200;
+	while (page <= 50) {
+		const pageParam = page === 1 ? "" : `page=${page}&`;
+		const body = await authedJson<{ items: VaultRow[]; total?: number }>(
+			apiUrl,
+			bearer,
+			`/api/vault?${pageParam}page_size=${pageSize}`,
+		);
+		items.push(...body.items);
+		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;
+		page += 1;
+	}
+	if (page > 50) throw new Error("Too many vault pages to load safely.");
 	return items;
 }
 
@@ -53,14 +73,12 @@ export async function projectShowCommand(
 		return;
 	}
 
-	const [skills, vaultsPage] = await Promise.all([
-		fetchAllSkills(apiUrl, apiKey).catch(() => []),
-		authedJson<{ items: VaultRow[] }>(apiUrl, apiKey, "/api/vault?page_size=200").catch(() => ({
-			items: [],
-		})),
+	const [skills, vaults] = await Promise.all([
+		fetchAllSkills(apiUrl, apiKey),
+		fetchAllVaults(apiUrl, apiKey),
 	]);
 	const ownSkills = skills.filter((s) => s.project_id === projectId);
-	const ownVaults = vaultsPage.items.filter((v) => v.project_ids.includes(projectId));
+	const ownVaults = vaults.filter((v) => v.project_ids.includes(projectId));
 
 	const payload = {
 		project: {

@@ -206,8 +206,8 @@ export default function SharePage() {
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">Viewer</Badge> with read-only access to
-								skills{data.vault_count > 0 ? " and vault key names" : ""}. Attaching it to an agent
-								is a separate step.
+								skills{data.vault_count > 0 ? " and vault names" : ""}. Attaching it to an agent is
+								a separate step.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>

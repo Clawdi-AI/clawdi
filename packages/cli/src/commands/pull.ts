@@ -249,12 +249,7 @@ async function scanOneAgent(
 		}
 
 		if (adapter && skillProjectId) {
-			const page = unwrap(
-				await api.GET("/api/skills", {
-					params: { query: { page_size: 200, project_id: skillProjectId } },
-				}),
-			);
-			for (const skill of page.items) {
+			for (const skill of await fetchCloudSkills(api, skillProjectId)) {
 				// A skill is "in sync" iff its cloud content_hash matches
 				// our cached hash AND a local file exists — the local
 				// check restores skills the user wiped but kept the lock.
@@ -381,6 +376,24 @@ async function downloadOneAgent(
 	}
 
 	return { skillsPulled, sessionsNew, sessionsUpdated };
+}
+
+/** Page through every cloud skill for one Project. */
+async function fetchCloudSkills(api: ApiClient, projectId: string): Promise<SkillSummary[]> {
+	const all: SkillSummary[] = [];
+	const pageSize = 200;
+	for (let page = 1; page <= 50; page++) {
+		const result = unwrap(
+			await api.GET("/api/skills", {
+				params: {
+					query: { ...(page === 1 ? {} : { page }), page_size: pageSize, project_id: projectId },
+				},
+			}),
+		);
+		all.push(...result.items);
+		if (all.length >= (result.total ?? all.length) || result.items.length === 0) return all;
+	}
+	throw new Error("Too many skill pages to load safely.");
 }
 
 /** Page through every cloud session for one agent. */

@@ -12,6 +12,7 @@ export interface VaultConflict {
 
 export interface VaultConflictDetail {
 	error?: string;
+	code?: string;
 	message?: string;
 	conflicts?: VaultConflict[];
 }
@@ -29,8 +30,8 @@ export function isVaultConflictDetail(detail: unknown): detail is VaultConflictD
 	return (
 		typeof detail === "object" &&
 		detail !== null &&
-		"error" in detail &&
-		(detail as { error?: unknown }).error === "vault_conflicts_blocked"
+		((detail as { error?: unknown }).error === "vault_conflicts_blocked" ||
+			(detail as { code?: unknown }).code === "vault_conflicts_blocked")
 	);
 }
 

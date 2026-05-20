@@ -457,7 +457,7 @@ async function acceptAnonymousUrl(
 	console.log(
 		chalk.gray(
 			`  ${body.skill_count} skill${body.skill_count === 1 ? "" : "s"}, ` +
-				`${body.vault_count} vault secret${body.vault_count === 1 ? "" : "s"} (sign in to unlock).`,
+				`${body.vault_count} vault${body.vault_count === 1 ? "" : "s"} (sign in to unlock names).`,
 		),
 	);
 	console.log();

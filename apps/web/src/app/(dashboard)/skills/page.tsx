@@ -44,6 +44,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
@@ -151,28 +152,16 @@ function SkillsPageInner() {
 		error: skillsError,
 	} = useQuery({
 		queryKey: ["skills", "all-projects"],
-		queryFn: async () => {
-			const PAGE_SIZE = 200;
-			const items: SkillSummary[] = [];
-			let page = 1;
-			let total = 0;
-			while (true) {
-				const result = unwrap(
-					await api.GET("/api/skills", {
-						params: { query: { page, page_size: PAGE_SIZE } },
-					}),
-				);
-				items.push(...result.items);
-				total = result.total ?? items.length;
-				if (items.length >= total || result.items.length === 0) break;
-				page += 1;
-				// Defense-in-depth: bail at 50 pages = 10k skills, far
-				// above any plausible account today. Hitting this would
-				// suggest a backend pagination bug.
-				if (page > 50) break;
-			}
-			return { items, total, page: 1, page_size: PAGE_SIZE };
-		},
+		queryFn: async () =>
+			fetchAllPages<SkillSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/skills", {
+							params: { query: { page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "skills" },
+			),
 		enabled: !isResolvingTarget,
 	});
 	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;

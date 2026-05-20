@@ -6,7 +6,7 @@ describe("vault conflict API details", () => {
 		const detail = parseApiDetail(
 			JSON.stringify({
 				detail: {
-					error: "vault_conflicts_blocked",
+					code: "vault_conflicts_blocked",
 					message: "Source project has 1 vault key that already exists.",
 					conflicts: [{ vault_slug: "prod", section: "api", item_name: "TOKEN" }],
 				},
@@ -21,6 +21,19 @@ describe("vault conflict API details", () => {
 				item_name: "TOKEN",
 			});
 		}
+	});
+
+	test("keeps recognizing older conflict details that used error", () => {
+		const detail = parseApiDetail(
+			JSON.stringify({
+				detail: {
+					error: "vault_conflicts_blocked",
+					message: "Source project has 1 vault key that already exists.",
+				},
+			}),
+		);
+
+		expect(isVaultConflictDetail(detail)).toBe(true);
 	});
 
 	test("formats structured API errors without exposing raw JSON", () => {
