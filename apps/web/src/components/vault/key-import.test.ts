@@ -64,7 +64,7 @@ describe("parseVaultKeyImport", () => {
 
 		expect(result.entries).toEqual([]);
 		expect(result.errors).toEqual([
-			'Line 3: invalid key "API-KEY".',
+			'Line 3: invalid key "API-KEY". Key names can use only letters, numbers, and underscores (_). Hyphens, spaces, and other characters aren\'t allowed.',
 			'Line 4: duplicate key "api_key" (same as "API_KEY" after normalization to "API_KEY").',
 		]);
 	});

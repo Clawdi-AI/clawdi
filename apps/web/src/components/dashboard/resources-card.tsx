@@ -18,7 +18,6 @@ import type { DashboardStats } from "@/lib/api-schemas";
 import {
 	getProjectResourceDefinition,
 	PROJECT_CANONICAL_DEFINITION,
-	PROJECT_FIRST_PATH,
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
@@ -43,6 +42,8 @@ const RESOURCE_ICONS = {
 	memories: Brain,
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
+
+const FIRST_PATH_STEPS = ["Create Custom Project", "Add Skills or Vaults", "Attach to Agent"];
 
 function buildResources(stats: DashboardStats, projectCount: number): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
@@ -75,9 +76,22 @@ export function ResourcesCard({
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
-				<div className="grid gap-2 border-b bg-muted/15 px-6 py-4 text-xs text-muted-foreground">
-					<p>First path: {PROJECT_FIRST_PATH}</p>
-					<p>Global and Agent Projects are managed for you. Only Custom Projects can be shared.</p>
+				<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
+					<div className="flex flex-wrap items-center gap-2">
+						<span className="font-medium text-foreground">First path</span>
+						{FIRST_PATH_STEPS.map((step, index) => (
+							<span
+								key={step}
+								className="inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground"
+							>
+								<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
+								{step}
+							</span>
+						))}
+					</div>
+					<p className="text-muted-foreground">
+						Global and Agent Projects are managed for you. Only Custom Projects can be shared.
+					</p>
 				</div>
 				<div className="divide-y">
 					{ready ? (

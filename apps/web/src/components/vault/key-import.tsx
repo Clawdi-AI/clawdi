@@ -138,11 +138,11 @@ export function VaultKeyImportDialog({
 							/>
 							<div className="space-y-1">
 								<Label htmlFor="vault-import-update-existing" className="text-sm font-medium">
-									Update existing keys
+									Overwrite existing keys
 								</Label>
 								<p className="text-xs text-muted-foreground">
-									{conflicts.length} key{conflicts.length === 1 ? "" : "s"} already exist. Leave
-									this off to skip them.
+									{conflicts.length} key{conflicts.length === 1 ? "" : "s"} already exist. By
+									default, keys that already exist won&apos;t be changed.
 								</p>
 							</div>
 						</div>

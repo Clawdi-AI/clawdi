@@ -657,8 +657,8 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				They join as a read-only Viewer. After signing in, they accept from the Notification Center
-				icon in the top bar.
+				Invitees join as Viewers with read-only access to skills and Vault key names. Secret values
+				stay hidden. After signing in, they accept from the Notification Center icon in the top bar.
 			</p>
 			<Separator />
 			{invites.isLoading ? (

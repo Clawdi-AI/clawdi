@@ -65,8 +65,8 @@ describe("project resource model", () => {
 	it("renders stable user-facing scope labels", () => {
 		expect(projectResourceScopeLabel("container")).toBe("Project home");
 		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a Project");
-		expect(projectResourceScopeLabel("activity")).toBe("Agent activity");
-		expect(projectResourceScopeLabel("account-wide")).toBe("Account level");
+		expect(projectResourceScopeLabel("activity")).toBe("Account resources");
+		expect(projectResourceScopeLabel("account-wide")).toBe("Account resources");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
 			"Pick the Project",
 		);
@@ -81,13 +81,13 @@ describe("project resource model", () => {
 			"Projects / Selected Project / Vaults",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("sessions"))).toBe(
-			"Agents / Sessions",
+			"Account resources / Sessions",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("memories"))).toBe(
-			"Account / Memory",
+			"Account resources / Memory",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("connectors"))).toBe(
-			"Account / Connectors",
+			"Account resources / Connectors",
 		);
 		expect(getProjectResourceDefinition("vaults").navLabel).toBe("Vaults");
 	});

@@ -100,7 +100,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		emptyCta: "Start Syncing",
 		routeGroup: "user-resources",
 		projectScope: "activity",
-		pathSegments: ["Agents", "Sessions"],
+		pathSegments: ["Account resources", "Sessions"],
 		statsKey: "total_sessions",
 		countLabel: "sessions",
 	},
@@ -116,7 +116,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
-		pathSegments: ["Account", "Memory"],
+		pathSegments: ["Account resources", "Memory"],
 		statsKey: "memories_count",
 		countLabel: "memories",
 	},
@@ -132,7 +132,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		emptyCta: "Connect App",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
-		pathSegments: ["Account", "Connectors"],
+		pathSegments: ["Account resources", "Connectors"],
 		statsKey: "connectors_count",
 		countLabel: "connectors",
 	},
@@ -151,7 +151,7 @@ export const PROJECT_RESOURCE_GROUPS = [
 	},
 	{
 		id: "user-resources",
-		label: "Account",
+		label: "Account resources",
 		resourceIds: ["sessions", "memories", "connectors"],
 	},
 ] as const satisfies readonly {
@@ -234,9 +234,9 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 		case "project-managed":
 			return "Saved in a Project";
 		case "activity":
-			return "Agent activity";
+			return "Account resources";
 		case "account-wide":
-			return "Account level";
+			return "Account resources";
 	}
 }
 

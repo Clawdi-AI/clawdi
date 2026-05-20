@@ -62,7 +62,7 @@ const NAV_SHORTCUTS: {
 			label: definition.navLabel,
 			href: definition.href,
 			icon: RESOURCE_ICONS[definition.id],
-			subtitle: `${group.label} - ${projectResourcePathLabel(definition)}`,
+			subtitle: projectResourcePathLabel(definition),
 			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
 				definition.projectScope,
 			)} ${projectResourcePathLabel(definition)}`,

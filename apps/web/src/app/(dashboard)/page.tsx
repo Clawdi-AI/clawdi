@@ -207,7 +207,7 @@ export default function DashboardPage() {
 							cloudEnvs={environments ?? []}
 						/>
 					) : hasAgents ? (
-						<OnboardingCard />
+						<OnboardingCard variant="additional-agent" />
 					) : null}
 					<ResourcesCard
 						stats={stats}

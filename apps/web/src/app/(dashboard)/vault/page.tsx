@@ -801,10 +801,10 @@ function VaultDetailPanel({
 								title={`Delete ${vault.name || vault.slug}?`}
 								description={
 									<p>
-										This cannot be restored. It permanently deletes every key in this Vault, removes
-										it from {attachments.length} Project
-										{attachments.length === 1 ? "" : "s"}, and any agent run that uses those keys
-										may fail until you add replacements.
+										This cannot be undone. Agents using these keys will fail until you create the
+										keys again in another Vault. This permanently deletes every key in this Vault
+										and removes it from {attachments.length} Project
+										{attachments.length === 1 ? "" : "s"}.
 									</p>
 								}
 								confirmLabel="Delete Vault"
@@ -840,8 +840,9 @@ function VaultDetailPanel({
 					<div>
 						<p className="font-medium">Read-only Vault</p>
 						<p className="text-xs text-muted-foreground">
-							You can inspect key names because this Vault is attached to a shared Project. Only the
-							owner can edit keys or Project access. Secret values are not shown to Viewers.
+							You can inspect key names because this Vault is attached to a shared Project. Secret
+							values stay hidden; only the owner can see them. Only the owner can edit keys or
+							Project access.
 						</p>
 					</div>
 				</div>
@@ -1127,8 +1128,8 @@ function VaultKeysPanel({
 										title={`Delete ${row.original.key}?`}
 										description={
 											<p>
-												This cannot be restored. Any app, workflow, or agent run that uses this key
-												may stop working until you add a replacement.
+												This cannot be undone. Apps, workflows, or agent runs using this key will
+												fail until you add it again.
 											</p>
 										}
 										confirmLabel="Delete Key"
@@ -1401,8 +1402,8 @@ function VaultProjectAttachmentRow({
 					title={`Remove from ${projectName}?`}
 					description={
 						<p>
-							{vault.slug} will no longer be available in that Project. The vault and its keys stay
-							attached to other Projects.
+							{vault.slug} will no longer be available in {projectName}. The Vault and its keys stay
+							in your account; only this Project loses access.
 						</p>
 					}
 					confirmLabel="Remove from Project"

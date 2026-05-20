@@ -17,6 +17,8 @@ export interface ParsedKeyImport {
 }
 
 const KEY_NAME_RE = /^[A-Z0-9_]+$/;
+const KEY_NAME_RULE =
+	"Key names can use only letters, numbers, and underscores (_). Hyphens, spaces, and other characters aren't allowed.";
 
 export function parseVaultKeyImport(raw: string): ParsedKeyImport {
 	const text = raw.trim();
@@ -39,7 +41,7 @@ function parseJsonKeyImport(text: string): ParsedKeyImport {
 		for (const [rawKey, rawValue] of Object.entries(parsed)) {
 			const key = normalizeImportKey(rawKey);
 			if (!KEY_NAME_RE.test(key)) {
-				errors.push(`Invalid key "${rawKey}". Use letters, numbers, and underscores.`);
+				errors.push(`Invalid key "${rawKey}". ${KEY_NAME_RULE}`);
 				continue;
 			}
 			if (rawValue !== null && typeof rawValue === "object") {
@@ -70,7 +72,7 @@ function parseEnvKeyImport(raw: string): ParsedKeyImport {
 		const rawKey = source.slice(0, equalsIndex).trim();
 		const key = normalizeImportKey(rawKey);
 		if (!KEY_NAME_RE.test(key)) {
-			errors.push(`Line ${lineNumber}: invalid key "${rawKey}".`);
+			errors.push(`Line ${lineNumber}: invalid key "${rawKey}". ${KEY_NAME_RULE}`);
 			return;
 		}
 		entries.push({
