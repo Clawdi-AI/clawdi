@@ -118,7 +118,19 @@ function describeLine(line: string, lineNumber: number): string {
 
 async function readInput(path: string): Promise<string> {
 	if (path === "-") {
-		return await new Response(Bun.stdin.stream()).text();
+		return await readStdin();
 	}
 	return readFileSync(path, "utf8");
+}
+
+async function readStdin(): Promise<string> {
+	return await new Promise((resolve, reject) => {
+		let input = "";
+		process.stdin.setEncoding("utf8");
+		process.stdin.on("data", (chunk) => {
+			input += chunk;
+		});
+		process.stdin.once("end", () => resolve(input));
+		process.stdin.once("error", reject);
+	});
 }

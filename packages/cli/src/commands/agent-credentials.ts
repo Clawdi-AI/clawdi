@@ -309,6 +309,10 @@ async function snapshotKeychain(plan: FilePlan): Promise<CredentialFileSnapshot>
 		"-w",
 	]);
 	const content = stdout.replace(/\n$/, "");
+	const size = Buffer.byteLength(content);
+	if (size > MAX_PROFILE_FILE_BYTES) {
+		throw new Error("Keychain credential is too large.");
+	}
 	return {
 		logicalName: plan.logicalName,
 		sourcePath: plan.sourcePath,
@@ -317,7 +321,7 @@ async function snapshotKeychain(plan: FilePlan): Promise<CredentialFileSnapshot>
 		sourceKind: "keychain",
 		content,
 		mode: plan.mode,
-		size: Buffer.byteLength(content),
+		size,
 	};
 }
 
@@ -354,7 +358,7 @@ function parseEnvelope(payload: string): CredentialProfileEnvelope {
 	if (typeof parsed.tool !== "string" || typeof parsed.profile !== "string") {
 		throw new Error("Stored credential profile is missing tool metadata.");
 	}
-	if (!Array.isArray(parsed.files)) {
+	if (!Array.isArray(parsed.files) || parsed.files.length === 0) {
 		throw new Error("Stored credential profile is missing files.");
 	}
 	const files: CredentialFileSnapshot[] = [];
@@ -569,6 +573,9 @@ export async function agentCredentialsMaterializeCommand(
 		},
 	);
 	const envelope = parseEnvelope(resolved.payload);
+	if (envelope.tool !== tool || envelope.profile !== profile) {
+		throw new Error("Stored credential profile metadata does not match the requested profile.");
+	}
 	if (opts.to && envelope.files.length !== 1) {
 		throw new Error("--to can only be used with single-file credential profiles.");
 	}

@@ -328,4 +328,46 @@ describe("agent credential profiles", () => {
 		expect(backups).toHaveLength(1);
 		expect(existsSync(join(tmpHome, ".config", "gh", backups[0]))).toBe(true);
 	});
+
+	it("rejects stored credential payloads that do not match the requested profile", async () => {
+		const payload = {
+			schemaVersion: 1,
+			kind: "local_agent_profile",
+			tool: "gh",
+			profile: "default",
+			importedAt: new Date().toISOString(),
+			files: [
+				{
+					logicalName: "hosts.yml",
+					sourcePath: "/source/.config/gh/hosts.yml",
+					targetStrategy: "adapter_default",
+					content: "github.com:\n  oauth_token: gh-secret\n",
+					mode: 0o600,
+					size: 37,
+				},
+			],
+		};
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/credential-profiles/resolve",
+				response: () =>
+					jsonResponse({
+						id: "profile-1",
+						project_id: "project-1",
+						tool: "codex",
+						profile: "default",
+						updated_at: new Date().toISOString(),
+						payload: JSON.stringify(payload),
+					}),
+			},
+		]);
+		try {
+			await expect(
+				agentCredentialsMaterializeCommand("codex", { yes: true, json: true }),
+			).rejects.toThrow("metadata does not match");
+		} finally {
+			restore();
+		}
+	});
 });

@@ -504,16 +504,9 @@ async def _first_vault_key_hit(
     project_id: UUID,
     wanted: str,
 ) -> tuple[Vault | None, VaultItem | None]:
-    vaults = (await db.execute(select(Vault).where(Vault.project_id == project_id))).scalars().all()
-    for vault in vaults:
-        items = (
-            (await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id)))
-            .scalars()
-            .all()
-        )
-        for item in items:
-            if _env_key(item.section, item.item_name) == wanted:
-                return vault, item
+    for vault, item in await _vault_item_rows_for_projects(db, [project_id]):
+        if _env_key(item.section, item.item_name) == wanted:
+            return vault, item
     return None, None
 
 
@@ -525,23 +518,44 @@ async def _exact_vault_reference_hit(
     section: str,
     field: str,
 ) -> tuple[Vault | None, VaultItem | None]:
-    vault = (
+    row = (
         await db.execute(
-            select(Vault).where(Vault.project_id == project_id, Vault.slug == vault_slug)
-        )
-    ).scalar_one_or_none()
-    if vault is None:
-        return None, None
-    item = (
-        await db.execute(
-            select(VaultItem).where(
-                VaultItem.vault_id == vault.id,
+            select(Vault, VaultItem)
+            .join(VaultItem, VaultItem.vault_id == Vault.id)
+            .where(
+                Vault.project_id == project_id,
+                Vault.slug == vault_slug,
                 VaultItem.section == section,
                 VaultItem.item_name == field,
             )
         )
-    ).scalar_one_or_none()
-    return vault, item
+    ).first()
+    if row is None:
+        return None, None
+    return row[0], row[1]
+
+
+async def _vault_item_rows_for_projects(
+    db: AsyncSession,
+    project_ids: list[UUID],
+) -> list[tuple[Vault, VaultItem]]:
+    if not project_ids:
+        return []
+    rows = (
+        await db.execute(
+            select(Vault, VaultItem)
+            .join(VaultItem, VaultItem.vault_id == Vault.id)
+            .where(Vault.project_id.in_(project_ids))
+            .order_by(
+                Vault.project_id.asc(),
+                Vault.created_at.asc(),
+                Vault.id.asc(),
+                VaultItem.created_at.asc(),
+                VaultItem.id.asc(),
+            )
+        )
+    ).all()
+    return [(vault, item) for vault, item in rows]
 
 
 @router.post("/resolve", responses={200: {"model": VaultResolveResponse}})
@@ -796,39 +810,33 @@ async def resolve_vault(
         env: dict[str, str] = {}
         seen: dict[str, dict] = {}
         conflicts: list[dict] = []
+        rows_by_project: dict[UUID, list[tuple[Vault, VaultItem]]] = {}
+        for vault, item in await _vault_item_rows_for_projects(db, effective_project_ids):
+            rows_by_project.setdefault(vault.project_id, []).append((vault, item))
         for entry in ordered:
-            vaults = (
-                (await db.execute(select(Vault).where(Vault.project_id == entry["project_id"])))
-                .scalars()
-                .all()
-            )
-            for vault in vaults:
-                items_result = await db.execute(
-                    select(VaultItem).where(VaultItem.vault_id == vault.id)
-                )
-                for item in items_result.scalars().all():
-                    env_key = _env_key(item.section, item.item_name)
-                    source = {
-                        "project_id": str(entry["project_id"]),
-                        "alias": entry["alias"],
-                        "display": entry["display"],
-                        "binding_type": entry["binding_type"],
-                        "priority": entry["priority"],
-                        "vault_slug": vault.slug,
-                        "section": item.section,
-                        "item_name": item.item_name,
-                    }
-                    if env_key in env:
-                        conflicts.append(
-                            {
-                                "key": env_key,
-                                "winner": seen[env_key],
-                                "conflict": source,
-                            }
-                        )
-                        continue
-                    env[env_key] = decrypt(item.encrypted_value, item.nonce)
-                    seen[env_key] = source
+            for vault, item in rows_by_project.get(entry["project_id"], []):
+                env_key = _env_key(item.section, item.item_name)
+                source = {
+                    "project_id": str(entry["project_id"]),
+                    "alias": entry["alias"],
+                    "display": entry["display"],
+                    "binding_type": entry["binding_type"],
+                    "priority": entry["priority"],
+                    "vault_slug": vault.slug,
+                    "section": item.section,
+                    "item_name": item.item_name,
+                }
+                if env_key in env:
+                    conflicts.append(
+                        {
+                            "key": env_key,
+                            "winner": seen[env_key],
+                            "conflict": source,
+                        }
+                    )
+                    continue
+                env[env_key] = decrypt(item.encrypted_value, item.nonce)
+                seen[env_key] = source
         if conflicts and not allow_conflicts:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -845,20 +853,10 @@ async def resolve_vault(
             return {"env": env, "precedence": ordered, "conflicts": conflicts}
         return env
 
-    result = await db.execute(
-        select(Vault).where(
-            Vault.project_id.in_(effective_project_ids),
-        )
-    )
-    vaults = result.scalars().all()
-
     env: dict[str, str] = {}
-    for vault in vaults:
-        items_result = await db.execute(select(VaultItem).where(VaultItem.vault_id == vault.id))
-        for item in items_result.scalars().all():
-            plaintext = decrypt(item.encrypted_value, item.nonce)
-            # Build env var name: SECTION_FIELDNAME (uppercase)
-            env[_env_key(item.section, item.item_name)] = plaintext
+    for _vault, item in await _vault_item_rows_for_projects(db, effective_project_ids):
+        plaintext = decrypt(item.encrypted_value, item.nonce)
+        env[_env_key(item.section, item.item_name)] = plaintext
 
     return env
 
