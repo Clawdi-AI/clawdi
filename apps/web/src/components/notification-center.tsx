@@ -83,7 +83,7 @@ export function NotificationCenter() {
 		onError: (e) => {
 			toast.error(
 				e instanceof ApiError && e.status === 410
-					? "This invitation was revoked. Ask the owner to send a new one."
+					? "This invitation was canceled. Ask the owner to send a new one."
 					: e instanceof ApiError
 						? formatApiError(e.detail)
 						: errorMessage(e),
@@ -235,9 +235,10 @@ function NotificationCenterContent({
 											<span>{formatInvitationDate(invitation.created_at)}</span>
 										</div>
 									</div>
-									<Badge variant="outline" className="shrink-0">
-										Viewer
-									</Badge>
+									<div className="flex shrink-0 flex-col items-end gap-1">
+										<Badge variant="secondary">Project Invite</Badge>
+										<Badge variant="outline">Viewer</Badge>
+									</div>
 								</div>
 								<p className="text-xs text-muted-foreground">
 									Open the Project after accepting to review shared resources. Attaching it to an

@@ -18,7 +18,7 @@ export function OnboardingCard() {
 					Connect your AI to Clawdi
 				</CardTitle>
 				<CardDescription>
-					Long-term memory and live sync for Claude Code, Codex, OpenClaw, and Hermes.
+					Connect an agent first. Then use Projects to give it reusable skills and Vault keys.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>

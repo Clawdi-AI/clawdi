@@ -60,10 +60,18 @@ export function ResourcesCard({
 			<CardHeader className="border-b">
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>
-					Start at Projects for shareable work. Account resources live separately.
+					Projects hold reusable work. Agents run on your machines. Account resources live outside
+					Projects.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
+				<div className="grid gap-2 border-b bg-muted/15 px-6 py-4 text-xs text-muted-foreground">
+					<p>
+						First path: create a Custom Project, add Skills or Vaults, then attach that Project to
+						an Agent when it should use them.
+					</p>
+					<p>Global and Agent Projects are managed for you. Only Custom Projects can be shared.</p>
+				</div>
 				<div className="divide-y">
 					{ready ? (
 						<ProjectResourceGroups resources={buildResources(stats, projectCount ?? 0)} />

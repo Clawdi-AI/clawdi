@@ -54,7 +54,7 @@ import { formatApiError } from "./vault-conflicts";
  *   - People tab: accepted members and owner-side removal.
  *   - Invitations tab: email-based invitations (in-dashboard "you've been
  *     added" entries on the invitee's side, no public token).
- *   - Links tab: share-links with redeem counts + revoke buttons.
+ *   - Links tab: share-links with redeem counts + turn-off buttons.
  *
  * Backend endpoints:
  *   GET    /api/projects/{project_id}/share-links
@@ -139,13 +139,14 @@ export function ShareProjectDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "Manage people with access, invite by email, or create a share link. Accepting gives Project access only; using it with an agent is a separate choice."
+							? "Share this Custom Project without sharing ownership. People join as read-only Viewers; agent use is a separate choice they make later."
 							: "Global and Agent Projects are managed by the system and cannot be shared. Create a Custom Project for collaboration."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
 					<>
 						<PermissionSummary />
+						<ShareMethodGuide />
 						<Tabs defaultValue="members" className="w-full">
 							<TabsList className="grid w-full grid-cols-3">
 								<TabsTrigger value="members" className="min-w-0 px-2">
@@ -188,18 +189,47 @@ export function ShareProjectDialog({
 
 function PermissionSummary() {
 	return (
-		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2">
+		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-3">
 			<div>
-				<div className="font-medium text-foreground">Default Role</div>
+				<div className="font-medium text-foreground">Viewer Access</div>
 				<p className="mt-1 text-muted-foreground">
-					Viewers can read Project skills, vault names, and key names. They cannot edit content.
+					Invites and links add people as Viewers. They can read skills, see Vault names, and see
+					key names.
 				</p>
 			</div>
 			<div>
-				<div className="font-medium text-foreground">Agent Use</div>
+				<div className="font-medium text-foreground">Secret Values</div>
 				<p className="mt-1 text-muted-foreground">
-					Accepting gives Project access only. The recipient can attach the Project to an agent
-					later.
+					Viewers never see key values. Secret values are decrypted only when an attached agent
+					needs them during a run.
+				</p>
+			</div>
+			<div>
+				<div className="font-medium text-foreground">Roles</div>
+				<p className="mt-1 text-muted-foreground">
+					Viewer reads only. Owner edits resources and sharing. Editor is not available for Project
+					sharing yet.
+				</p>
+			</div>
+		</div>
+	);
+}
+
+function ShareMethodGuide() {
+	return (
+		<div className="grid gap-2 rounded-md border bg-background/60 p-3 text-xs sm:grid-cols-2">
+			<div>
+				<div className="font-medium text-foreground">Email Invite</div>
+				<p className="mt-1 text-muted-foreground">
+					Best when you know their Clawdi account email. They accept from the Notification Center
+					icon in the top bar.
+				</p>
+			</div>
+			<div>
+				<div className="font-medium text-foreground">Share Link</div>
+				<p className="mt-1 text-muted-foreground">
+					Best when you want to paste a link in chat or the person may need to create an account
+					first.
 				</p>
 			</div>
 		</div>
@@ -244,7 +274,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 				navigator.clipboard.writeText(body.url).catch(() => {});
 			}
 			toast.success("Share Link Created", {
-				description: "Copy it now. It will only be shown once.",
+				description: "Copy it before closing this dialog. You can turn it off later.",
 			});
 		},
 		onError: (e) => {
@@ -266,10 +296,10 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
-			toast.success("Link Revoked");
+			toast.success("Share Link Turned Off");
 		},
 		onError: (e) => {
-			toast.error("Failed to Revoke Link", {
+			toast.error("Failed to Turn Off Link", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -282,7 +312,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			<div className="space-y-1">
 				<h3 className="text-sm font-semibold">Share Links</h3>
 				<p className="text-xs text-muted-foreground">
-					Create a link when someone needs read-only Viewer access without a directed invite.
+					Create a link when you want to send access yourself, or when the person may not have a
+					Clawdi account yet.
 				</p>
 			</div>
 			<form
@@ -311,14 +342,14 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 				</div>
 				<p className="text-xs text-muted-foreground">
 					The full URL is shown once after creation. Labels stay visible so you can recognize links
-					before revoking them.
+					before turning them off.
 				</p>
 			</form>
 
 			<div className="flex items-center justify-between gap-2">
 				<p className="text-xs text-muted-foreground">
-					Anyone with an active link can preview this Project and join as a read-only Viewer. Revoke
-					anytime.
+					Anyone with an active link can preview this Project and join as a read-only Viewer. Turn
+					off a link anytime to stop new accepts.
 				</p>
 				<Badge variant="secondary" className="text-xs">
 					{visibleLinks.filter((link) => link.revoked_at === null).length} Active
@@ -378,7 +409,11 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 			<AlertTitle>Copy This Link Now</AlertTitle>
 			<AlertDescription>
 				<p className="text-xs text-muted-foreground">
-					This is the only time the full URL is visible. After this, only the prefix{" "}
+					Send this URL to the person you want to invite. They sign in or create an account, accept
+					as a read-only Viewer, then open the Project from their dashboard.
+				</p>
+				<p className="mt-1 text-xs text-muted-foreground">
+					This is the only time the full URL is visible here. After this, only the prefix{" "}
 					<span className="font-mono">{link.prefix}</span> remains available.
 				</p>
 				{link.label ? (
@@ -459,7 +494,7 @@ function LinkRow({
 						)}
 						{revoked ? (
 							<Badge variant="secondary" className="text-xs">
-								Revoked
+								Off
 							</Badge>
 						) : null}
 					</div>
@@ -496,15 +531,15 @@ function LinkRow({
 								variant="ghost"
 								size="icon"
 								disabled={revoking}
-								title="Revoke Link"
-								aria-label={`Revoke share link ${link.prefix}`}
+								title="Turn off link"
+								aria-label={`Turn off share link ${link.prefix}`}
 							>
 								<Trash2 className="size-3.5 text-destructive" />
 							</Button>
 						</AlertDialogTrigger>
 						<AlertDialogContent>
 							<AlertDialogHeader>
-								<AlertDialogTitle>Revoke this share link?</AlertDialogTitle>
+								<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 								<AlertDialogDescription>
 									Anyone who has not already joined through this link will lose access to it.
 									Existing Viewers stay connected until you remove them from People.
@@ -516,7 +551,7 @@ function LinkRow({
 									onClick={onRevoke}
 									className="bg-destructive text-white hover:bg-destructive/90"
 								>
-									Revoke Link
+									Turn Off Link
 								</AlertDialogAction>
 							</AlertDialogFooter>
 						</AlertDialogContent>
@@ -554,7 +589,10 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
-			toast.success("Invitation Sent");
+			toast.success("Invitation Sent", {
+				description:
+					"They will see it in the Notification Center after signing in with that email.",
+			});
 		},
 		onError: (e) => {
 			toast.error("Failed to Send Invitation", {
@@ -587,7 +625,8 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			<div className="space-y-1">
 				<h3 className="text-sm font-semibold">Invite people</h3>
 				<p className="text-xs text-muted-foreground">
-					Send a direct invite to someone who already has a Clawdi account.
+					Use email when you know the person&apos;s Clawdi account email. If they may be new to
+					Clawdi, create a share link instead.
 				</p>
 			</div>
 			<form
@@ -618,7 +657,8 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				They join as a read-only Viewer. Attaching this Project to an agent is a separate step.
+				They join as a read-only Viewer. After signing in, they accept from the Notification Center
+				icon in the top bar.
 			</p>
 			<Separator />
 			{invites.isLoading ? (
@@ -635,7 +675,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? (
-				<EmptyHint message="No pending invites. Invite a person when you know their account email." />
+				<EmptyHint message="No pending invites. Invite by email when you know the person's Clawdi account email." />
 			) : (
 				<ul className="space-y-2">
 					{invites.data?.map((inv) => (
@@ -744,7 +784,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		onSuccess: (body) => {
 			refreshSharingState();
 			toast.success("Sharing Stopped", {
-				description: `Revoked ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
+				description: `Turned off ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
 			});
 		},
 		onError: (e) =>
@@ -779,7 +819,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 						<AlertDialogHeader>
 							<AlertDialogTitle>Stop Sharing This Project?</AlertDialogTitle>
 							<AlertDialogDescription>
-								This revokes active links, cancels pending invitations, and removes accepted
+								This turns off active links, cancels pending invitations, and removes accepted
 								Viewers. Project content remains yours.
 							</AlertDialogDescription>
 						</AlertDialogHeader>

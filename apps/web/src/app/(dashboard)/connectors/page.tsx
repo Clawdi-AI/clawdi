@@ -155,7 +155,7 @@ function ConnectorsList() {
 					icon={Plug}
 					title="Connector Catalog"
 					count={total > 0 ? `${total.toLocaleString()} available` : undefined}
-					description="Account-level app connections. Connect once, then agents can use approved tools."
+					description="Connectors let agents use outside apps after you approve access. They are account-level, not tied to one Project."
 					toolbar={
 						connected.activeConnections.length > 0 ? (
 							<Badge>{connected.activeConnections.length} active</Badge>

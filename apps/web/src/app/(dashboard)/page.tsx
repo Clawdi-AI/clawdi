@@ -121,7 +121,10 @@ export default function DashboardPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Overview" />
+			<PageHeader
+				title="Overview"
+				description="Start by connecting an agent. Use Custom Projects to share skills and Vault keys with people or agents."
+			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity. `min-w-0` is load-bearing:

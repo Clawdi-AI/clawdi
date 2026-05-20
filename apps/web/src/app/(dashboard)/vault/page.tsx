@@ -310,6 +310,16 @@ function VaultPageInner() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
 
+			<Alert>
+				<Lock className="size-4" />
+				<AlertTitle>Vault Privacy</AlertTitle>
+				<AlertDescription>
+					Vaults own keys. Projects attach to a Vault so agents know which keys to use. Project
+					members can see Vault names and key names, but secret values stay hidden and are decrypted
+					only when an agent runs.
+				</AlertDescription>
+			</Alert>
+
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
@@ -371,7 +381,7 @@ function VaultPageInner() {
 					description={
 						filterProject
 							? `Showing Vaults attached to ${displayProjectName(filterProject)}.`
-							: "My Vaults are editable. Shared With Me is read-only."
+							: "My Vaults are editable. Vaults shared by other Project owners are read-only."
 					}
 				/>
 				<DashboardSectionToolbar>
@@ -498,8 +508,8 @@ function CreateVaultDialog({
 				<DialogHeader>
 					<DialogTitle>Create Vault</DialogTitle>
 					<DialogDescription>
-						Create the vault once, then attach it to each Project where agents should use it. Start
-						with one Project here.
+						Create the Vault once, then attach it to each Project where agents should use those
+						keys. Start with one Project here.
 					</DialogDescription>
 				</DialogHeader>
 				{ownedProjects.length > 0 ? (
@@ -614,7 +624,7 @@ function VaultInventoryList({
 					onSelect={onSelect}
 				/>
 				<VaultInventorySection
-					title="Shared With Me"
+					title="Shared by Others"
 					count={sharedEntries.length}
 					emptyText="No read-only vaults in this view."
 					entries={sharedEntries}
@@ -785,8 +795,10 @@ function VaultDetailPanel({
 								title={`Delete ${vault.name || vault.slug}?`}
 								description={
 									<p>
-										This permanently deletes every key in this vault and removes it from{" "}
-										{attachments.length} Project{attachments.length === 1 ? "" : "s"}.
+										This cannot be restored. It permanently deletes every key in this Vault, removes
+										it from {attachments.length} Project
+										{attachments.length === 1 ? "" : "s"}, and any agent run that uses those keys
+										may fail until you add replacements.
 									</p>
 								}
 								confirmLabel="Delete Vault"
@@ -823,7 +835,7 @@ function VaultDetailPanel({
 						<p className="font-medium">Read-only Vault</p>
 						<p className="text-xs text-muted-foreground">
 							You can inspect key names because this Vault is attached to a shared Project. Only the
-							owner can edit keys or Project access.
+							owner can edit keys or Project access. Secret values are not shown to Viewers.
 						</p>
 					</div>
 				</div>
@@ -883,9 +895,10 @@ function AddProjectToVaultControl({
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-xl">
 				<DialogHeader>
-					<DialogTitle>Add {vaultName} to Project</DialogTitle>
+					<DialogTitle>Add Vault to Project</DialogTitle>
 					<DialogDescription>
-						Attach this vault to another Project so agents using that Project can read its keys.
+						Attach {vaultName} to another Project. Members can see key names; secret values stay
+						hidden and are decrypted only for agent runs.
 					</DialogDescription>
 				</DialogHeader>
 				<ProjectScopePicker
@@ -1039,7 +1052,10 @@ function VaultKeysPanel({
 			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 			const changed = summary.created + summary.updated;
 			toast.success("Keys Imported", {
-				description: `${changed} key${changed === 1 ? "" : "s"} saved to ${vault.name || vault.slug}.`,
+				description:
+					summary.updated > 0 || summary.skipped > 0
+						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped.`
+						: `${changed} key${changed === 1 ? "" : "s"} added to ${vault.name || vault.slug}.`,
 			});
 		},
 		onError: (e) => toast.error("Failed to Import Keys", { description: errorMessage(e) }),
@@ -1103,7 +1119,12 @@ function VaultKeysPanel({
 								return (
 									<ConfirmAction
 										title={`Delete ${row.original.key}?`}
-										description={<p>Anything that resolves this key will start failing.</p>}
+										description={
+											<p>
+												This cannot be restored. Any app, workflow, or agent run that uses this key
+												may stop working until you add a replacement.
+											</p>
+										}
 										confirmLabel="Delete Key"
 										destructive
 										onConfirm={() =>
@@ -1154,7 +1175,7 @@ function VaultKeysPanel({
 					<p className="text-xs text-muted-foreground">
 						{readOnly
 							? "Key names are visible; secret values stay hidden."
-							: "Stored once here; every attached Project uses this same set."}
+							: "Keys live in this Vault, not inside a Project. Every attached Project uses this same set."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -1302,8 +1323,8 @@ function AttachedProjectsPanel({
 					<h4 className="text-sm font-semibold">Project Availability</h4>
 					<p className="text-xs text-muted-foreground">
 						{vault.is_owner
-							? "Projects where agents can use this Vault."
-							: "Shared Projects that include this Vault."}
+							? "Projects attached to this Vault. Members see key names only; values stay hidden."
+							: "Projects shared by other owners that include this Vault. You can read names only."}
 					</p>
 				</div>
 				{visibleAttachments.length !== attachments.length ? (

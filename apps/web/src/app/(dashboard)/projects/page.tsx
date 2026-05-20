@@ -310,15 +310,15 @@ export default function ProjectsPage() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Users}
-					title="Shared With Me"
+					title="Shared Projects"
 					count={sharedProjects.length}
-					description="Custom Projects other people shared with you. Open one or attach it to an agent when needed."
+					description="Custom Projects other people shared with you. Pending email invites appear under the Notification Center icon in the top bar."
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
 					<DashboardEmptyLine
 						title="No Shared Projects Yet"
-						message="Accepted invites and share links appear here with Viewer access. Pending invites are in the inbox in the top bar."
+						message="Accepted invites and share links appear here with Viewer access. Pending email invites appear under the Notification Center icon in the top bar."
 					/>
 				) : (
 					<div className="divide-y">

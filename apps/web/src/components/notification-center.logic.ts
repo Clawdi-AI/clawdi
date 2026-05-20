@@ -53,7 +53,8 @@ export function getNotificationCenterTitle(count: number): string {
 export function getNotificationCenterEmptyCopy(): { title: string; description: string } {
 	return {
 		title: "No Pending Notifications",
-		description: "Project invitations and other action-required updates will appear here.",
+		description:
+			"Project invitations and other action-required updates will appear here under the top-bar Notification Center icon.",
 	};
 }
 

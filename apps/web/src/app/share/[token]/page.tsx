@@ -171,7 +171,7 @@ export default function SharePage() {
 							icon={<Lock className="size-5" />}
 							label="Vaults"
 							count={data.vault_count}
-							hint="Names only"
+							hint="Key names only; values stay private"
 							muted={data.vault_count === 0}
 						/>
 					</div>
@@ -206,8 +206,8 @@ export default function SharePage() {
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">Viewer</Badge> with read-only access to
-								skills{data.vault_count > 0 ? " and vault names" : ""}. Attaching it to an agent is
-								a separate step.
+								skills{data.vault_count > 0 ? " and Vault key names" : ""}. Secret values stay
+								private; agents can use them only after you attach the Project.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
@@ -231,17 +231,21 @@ export default function SharePage() {
 							<Button asChild className="w-full" size="lg">
 								<Link href={`/sign-in?redirect_url=/share/${token}`}>
 									<LogIn className="mr-2 size-4" />
-									Sign In to Accept
+									Continue in Browser
 								</Link>
 							</Button>
+							<p className="text-xs text-muted-foreground">
+								Sign in so this Project can be added to your account and stay available across
+								devices. If you do not have an account, you can create one on the next screen.
+							</p>
 							<div className="rounded-lg border bg-muted/30 p-4">
 								<div className="flex items-center gap-2 text-sm font-medium">
 									<KeyRound className="size-4" />
-									Prefer the CLI?
+									Advanced CLI Option
 								</div>
 								<p className="mt-1 text-xs text-muted-foreground">
-									Run this in your terminal — skills sync immediately; sign in later to keep the
-									membership across devices.
+									Use this only if you already work from the terminal. The browser flow above is the
+									normal path.
 								</p>
 								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
 							</div>
@@ -250,7 +254,7 @@ export default function SharePage() {
 				</CardContent>
 			</Card>
 			<p className="text-center text-xs text-muted-foreground">
-				Shared Custom Projects never grant write access. The owner can revoke this link anytime.
+				Shared Custom Projects never grant write access. The owner can turn off this link anytime.
 			</p>
 		</Shell>
 	);
@@ -346,7 +350,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "not_found":
 			return "Share Link Not Found";
 		case "revoked":
-			return "Share Link Revoked";
+			return "Share Link Turned Off";
 		case "already_member":
 			return "Already a Member";
 		case "already_owner":
@@ -361,7 +365,7 @@ function describeError(code: ShareErrorCode): string {
 		case "not_found":
 			return "This link doesn't exist. Ask the owner to send you a fresh one.";
 		case "revoked":
-			return "The owner revoked this link. Ask them to send you a new one.";
+			return "The owner turned off this link. Ask them to send you a new one.";
 		case "already_member":
 			return "You already accepted this share. Open it from your dashboard.";
 		case "already_owner":

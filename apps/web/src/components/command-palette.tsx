@@ -207,7 +207,7 @@ function CommandPalette({
 			open={open}
 			onOpenChange={onOpenChange}
 			title="Search"
-			description="Open a page or search sessions, memories, skills, and vaults."
+			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 			// cmdk does its own filtering by default — we do server-side, so
 			// disable client filter and trust the API's ranking.
 			shouldFilter={false}

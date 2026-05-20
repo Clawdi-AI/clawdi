@@ -245,9 +245,9 @@ function ApiKeysPanel() {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			toast.success("Key Revoked");
+			toast.success("Key Turned Off");
 		},
-		onError: (e: ApiError) => toast.error("Couldn't Revoke Key", { description: e.detail }),
+		onError: (e: ApiError) => toast.error("Couldn't Turn Off Key", { description: e.detail }),
 	});
 
 	const columns = useMemo<ColumnDef<ApiKey>[]>(
@@ -258,7 +258,7 @@ function ApiKeysPanel() {
 				cell: ({ row }) => (
 					<div className="flex items-center gap-2">
 						<span className="font-medium">{row.original.label}</span>
-						{row.original.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
+						{row.original.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
 					</div>
 				),
 			},
@@ -298,14 +298,14 @@ function ApiKeysPanel() {
 				cell: ({ row }) =>
 					!row.original.revoked_at ? (
 						<ConfirmAction
-							title={`Revoke ${row.original.label}?`}
+							title={`Turn off ${row.original.label}?`}
 							description={
 								<p>
 									If a machine is still using this key, sync will stop within a minute. Sign in
 									again from that machine to resume.
 								</p>
 							}
-							confirmLabel="Revoke Key"
+							confirmLabel="Turn Off Key"
 							destructive
 							onConfirm={() => revokeKey.mutate(row.original.id)}
 						>
@@ -314,7 +314,7 @@ function ApiKeysPanel() {
 								variant="ghost"
 								size="icon-sm"
 								disabled={revokeKey.isPending}
-								aria-label="Revoke key"
+								aria-label="Turn off key"
 								className="text-muted-foreground hover:text-destructive"
 							>
 								<Trash2 className="size-3.5" />

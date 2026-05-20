@@ -119,9 +119,9 @@ export function VaultKeyImportDialog({
 							<AlertCircle />
 							<AlertTitle>Fix Import Text</AlertTitle>
 							<AlertDescription>
-								<ul className="list-disc space-y-1 pl-4">
-									{parsed.errors.slice(0, 5).map((error) => (
-										<li key={error}>{error}</li>
+								<ul className="max-h-40 list-disc space-y-1 overflow-auto pl-4">
+									{parsed.errors.map((error, index) => (
+										<li key={`${index}-${error}`}>{error}</li>
 									))}
 								</ul>
 							</AlertDescription>

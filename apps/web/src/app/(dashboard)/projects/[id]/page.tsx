@@ -477,21 +477,31 @@ function OwnerAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Users className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Custom Project Sharing</h2>
+					<h2 className="text-sm font-semibold">Sharing and Collaboration</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
 					Manage people, pending invites, and share links for this Custom Project. New members join
 					as Viewers by default.
 				</p>
 			</div>
-			<div className="grid gap-2 text-xs text-muted-foreground">
-				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
-					<span>Default role</span>
-					<Badge variant="secondary">Viewer</Badge>
+			<div className="grid gap-2 rounded-md border bg-background/60 p-3 text-xs">
+				<div className="grid grid-cols-[80px_minmax(0,1fr)] gap-2">
+					<span className="font-medium text-foreground">Viewer</span>
+					<span className="text-muted-foreground">
+						Reads skills, Vault names, and key names. Cannot see secret values or edit.
+					</span>
 				</div>
-				<div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
-					<span>Manage</span>
-					<span className="font-medium text-foreground">People, Invites, Links</span>
+				<div className="grid grid-cols-[80px_minmax(0,1fr)] gap-2">
+					<span className="font-medium text-foreground">Editor</span>
+					<span className="text-muted-foreground">
+						Not available for Project sharing yet. Invites and links create Viewers.
+					</span>
+				</div>
+				<div className="grid grid-cols-[80px_minmax(0,1fr)] gap-2">
+					<span className="font-medium text-foreground">Owner</span>
+					<span className="text-muted-foreground">
+						Edits resources, adds Vaults, manages people, invites, and links.
+					</span>
 				</div>
 			</div>
 			<ShareProjectDialog

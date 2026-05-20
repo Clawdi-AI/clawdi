@@ -38,9 +38,9 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Projects",
 		singularLabel: "Project",
 		navLabel: "Projects",
-		description: "Create Custom Projects and review managed Projects.",
+		description: "Workspaces that group skills and Vault access for people and agents.",
 		managementDescription:
-			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you.",
+			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you and cannot be shared.",
 		href: "/projects",
 		emptyCta: "Create Custom Project",
 		routeGroup: "project-registry",
@@ -53,7 +53,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Skills",
 		singularLabel: "Skill",
 		navLabel: "Skills",
-		description: "Reusable instructions installed inside a Project.",
+		description: "Reusable instructions agents can read from a Project.",
 		managementDescription:
 			"Skills are Project resources. Choose a Project, then install or remove its skills.",
 		href: "/skills",
@@ -70,7 +70,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Vaults that can be attached to one or more Projects.",
+		description: "Encrypted key collections that can be attached to one or more Projects.",
 		managementDescription:
 			"Vaults own the keys. Attach a vault to every Project where agents should use those keys.",
 		href: "/vault",
@@ -87,7 +87,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Sessions",
 		singularLabel: "Session",
 		navLabel: "Sessions",
-		description: "Activity history from connected agents.",
+		description: "Conversation history synced from connected agents.",
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: "/sessions",
@@ -103,7 +103,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Memories",
 		singularLabel: "Memory",
 		navLabel: "Memories",
-		description: "Account-level notes agents can recall.",
+		description: "Account-level notes agents can recall when they run.",
 		managementDescription:
 			"Memories are account-level context agents can recall. Project resources stay in Projects.",
 		href: "/memories",
@@ -119,7 +119,7 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Connectors",
 		singularLabel: "Connector",
 		navLabel: "Connectors",
-		description: "Account-wide app connections.",
+		description: "Account-wide app connections that agents can use after approval.",
 		managementDescription:
 			"Connect apps once at the account level. Agents can use approved connectors through tools.",
 		href: "/connectors",

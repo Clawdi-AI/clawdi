@@ -582,7 +582,7 @@ function PromptBlock({ text }: { text: string }) {
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
-			Token revoked? Log in again with{" "}
+			Token turned off or expired? Log in again with{" "}
 			<code className="rounded bg-muted px-1 py-0.5 text-[11px]">clawdi auth login</code>.
 		</p>
 	);

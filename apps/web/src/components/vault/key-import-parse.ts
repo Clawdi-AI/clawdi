@@ -2,6 +2,7 @@ export interface ParsedKey {
 	key: string;
 	value: string;
 	line?: number;
+	rawKey?: string;
 }
 
 export interface KeyImportSummary {
@@ -45,7 +46,7 @@ function parseJsonKeyImport(text: string): ParsedKeyImport {
 				errors.push(`Key "${rawKey}" has a nested value. Use a string, number, or boolean.`);
 				continue;
 			}
-			entries.push({ key, value: rawValue == null ? "" : String(rawValue) });
+			entries.push({ key, rawKey, value: rawValue == null ? "" : String(rawValue) });
 		}
 		return withDuplicateErrors(entries, errors);
 	} catch {
@@ -74,6 +75,7 @@ function parseEnvKeyImport(raw: string): ParsedKeyImport {
 		}
 		entries.push({
 			key,
+			rawKey,
 			value: parseEnvValue(source.slice(equalsIndex + 1)),
 			line: lineNumber,
 		});
@@ -82,7 +84,7 @@ function parseEnvKeyImport(raw: string): ParsedKeyImport {
 }
 
 function parseEnvValue(rawValue: string) {
-	const value = rawValue.trim();
+	const value = stripEnvInlineComment(rawValue).trim();
 	if (
 		(value.startsWith('"') && value.endsWith('"')) ||
 		(value.startsWith("'") && value.endsWith("'"))
@@ -98,7 +100,23 @@ function parseEnvValue(rawValue: string) {
 		}
 		return unquoted;
 	}
-	return value.replace(/\s+#.*$/, "").trim();
+	return value;
+}
+
+function stripEnvInlineComment(rawValue: string) {
+	let quote: '"' | "'" | null = null;
+	for (let i = 0; i < rawValue.length; i++) {
+		const char = rawValue[i];
+		const prev = i > 0 ? rawValue[i - 1] : "";
+		if ((char === '"' || char === "'") && prev !== "\\") {
+			quote = quote === char ? null : (quote ?? char);
+			continue;
+		}
+		if (char === "#" && quote === null && /\s/.test(prev)) {
+			return rawValue.slice(0, i).trimEnd();
+		}
+	}
+	return rawValue;
 }
 
 function normalizeImportKey(rawKey: string) {
@@ -106,21 +124,20 @@ function normalizeImportKey(rawKey: string) {
 }
 
 function withDuplicateErrors(entries: ParsedKey[], errors: string[]): ParsedKeyImport {
-	const seen = new Map<string, number | "json">();
+	const seen = new Map<string, ParsedKey>();
 	const unique: ParsedKey[] = [];
 	for (const entry of entries) {
 		const firstSeen = seen.get(entry.key);
 		if (firstSeen !== undefined) {
-			const where =
-				entry.line !== undefined
-					? `Line ${entry.line}`
-					: firstSeen === "json"
-						? "JSON import"
-						: `Line ${firstSeen}`;
-			errors.push(`${where}: duplicate key "${entry.key}".`);
+			const where = entry.line !== undefined ? `Line ${entry.line}` : "JSON import";
+			const firstName = firstSeen.rawKey ?? firstSeen.key;
+			const duplicateName = entry.rawKey ?? entry.key;
+			errors.push(
+				`${where}: duplicate key "${duplicateName}" (same as "${firstName}" after normalization to "${entry.key}").`,
+			);
 			continue;
 		}
-		seen.set(entry.key, entry.line ?? "json");
+		seen.set(entry.key, entry);
 		unique.push(entry);
 	}
 	return { entries: errors.length > 0 ? [] : unique, errors };
