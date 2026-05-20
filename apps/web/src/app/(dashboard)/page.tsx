@@ -20,7 +20,6 @@ import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
 	PROJECT_CANONICAL_DEFINITION,
-	PROJECT_FIRST_PATH,
 	projectResourceHref,
 	sessionDetailHref,
 } from "@/lib/project-resource-model";
@@ -128,7 +127,7 @@ export default function DashboardPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Overview"
-				description={`Start by connecting an agent. ${PROJECT_CANONICAL_DEFINITION} ${PROJECT_FIRST_PATH}`}
+				description={`Connect agents, then create Custom Projects to organize reusable skills and credentials you can share with teammates. ${PROJECT_CANONICAL_DEFINITION}`}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
@@ -213,6 +212,7 @@ export default function DashboardPage() {
 						stats={stats}
 						projectCount={projects?.length}
 						projectCountLoading={projectsLoading}
+						hasConnectedAgent={HostedAgentsSection || envsLoading ? undefined : hasAgents}
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>

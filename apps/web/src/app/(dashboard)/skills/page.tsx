@@ -244,7 +244,7 @@ function SkillsPageInner() {
 				);
 			} else {
 				toast.success(`Installed in ${projectName}`, {
-					description: "Attach this Project to an agent when you want it available during a run.",
+					description: "Add this Project to an agent when you want it available during a run.",
 				});
 			}
 			return true;
@@ -367,7 +367,7 @@ function SkillsPageInner() {
 					<AlertCircle />
 					<AlertTitle>Read-only Project</AlertTitle>
 					<AlertDescription>
-						You can inspect skills in {displayProjectName(targetProject)}, but only the owner can
+						You can view skills in {displayProjectName(targetProject)}, but only the owner can
 						install or remove them.
 					</AlertDescription>
 				</Alert>

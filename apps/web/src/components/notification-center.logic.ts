@@ -59,7 +59,7 @@ export function getNotificationCenterEmptyCopy(): { title: string; description: 
 }
 
 export function getProjectInvitationAccessCopy(): string {
-	return "Project invitations grant read-only Viewer access. Attaching the Project to an agent is a separate step.";
+	return "Project invitations give read-only access (view, not edit). Adding the Project to an agent is a separate step.";
 }
 
 export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
@@ -69,6 +69,6 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 	return {
 		title: projectName ? `Joined ${projectName}` : "Project Joined",
 		description:
-			"Read-only Viewer access granted. Open the Project to review shared resources, then attach it to an agent when needed.",
+			"Read-only access granted. Open the Project to review shared resources, then add it to an agent when needed.",
 	};
 }

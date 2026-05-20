@@ -241,8 +241,8 @@ function NotificationCenterContent({
 									</div>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Open the Project after accepting to review shared resources. Attaching it to an
-									agent is a separate step.
+									Open the Project after accepting to review shared resources. Adding it to an agent
+									is a separate step.
 								</p>
 							</div>
 							<div className="flex justify-end gap-1.5">

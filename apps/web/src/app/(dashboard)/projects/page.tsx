@@ -312,7 +312,7 @@ export default function ProjectsPage() {
 					icon={Users}
 					title="Shared Projects"
 					count={sharedProjects.length}
-					description="Custom Projects other people shared with you. Pending email invites appear under the Notification Center icon in the top bar."
+					description="Custom Projects others shared with you. These are invites you already accepted. New invites stay in the Notification Center until you accept them."
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
@@ -449,7 +449,7 @@ function SharedProjectRow({
 				<div className="min-w-0">
 					<ProjectIdentity project={project} agent={agent} />
 					<p className="mt-1 pl-9 text-xs text-muted-foreground">
-						Viewer access is read-only. Attach it to an agent when you choose.
+						Viewer access is read-only. Add it to an agent when you choose.
 					</p>
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -462,7 +462,7 @@ function SharedProjectRow({
 					<Button asChild variant="outline" size="sm">
 						<Link href={`${projectDetailHref(project.id)}?useWithAgent=1`}>
 							<Bot className="mr-1.5 size-3.5" />
-							Attach to Agent
+							Add to Agent
 						</Link>
 					</Button>
 				</div>
@@ -531,7 +531,7 @@ function ownedProjectDescription(project: ProjectRow) {
 		return "Managed Project. Writable default for one connected agent.";
 	}
 	if (project.kind === "workspace") {
-		return "Custom Project. Add skills and vaults, invite people, share links, and attach it to agents.";
+		return "Custom Project. Add skills and vaults, invite people, share links, and add it to agents.";
 	}
 	return "You own this Project. Open it to review resources.";
 }

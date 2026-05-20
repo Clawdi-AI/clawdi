@@ -47,15 +47,15 @@ describe("notification center logic", () => {
 	});
 
 	test("keeps project invitation invariants as the first notification type", () => {
-		expect(getProjectInvitationAccessCopy()).toContain("read-only Viewer access");
-		expect(getProjectInvitationAccessCopy()).toContain("Attaching the Project to an agent");
+		expect(getProjectInvitationAccessCopy()).toContain("read-only access");
+		expect(getProjectInvitationAccessCopy()).toContain("Adding the Project to an agent");
 		expect(getProjectInvitationAccessCopy()).toContain("separate step");
 
 		const accepted = getAcceptedProjectInvitationToastCopy("Shared Workspace");
 		expect(accepted.title).toBe("Joined Shared Workspace");
 		expect(getAcceptedProjectInvitationToastCopy().title).toBe("Project Joined");
-		expect(accepted.description).toContain("Read-only Viewer access");
+		expect(accepted.description).toContain("Read-only access");
 		expect(accepted.description).toContain("Open the Project");
-		expect(accepted.description).toContain("attach it to an agent");
+		expect(accepted.description).toContain("add it to an agent");
 	});
 });

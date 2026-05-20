@@ -75,7 +75,7 @@ export function HostedAgentsSection({
 	return (
 		<div data-hosted="true">
 			{isEmptyState ? (
-				<OnboardingCard />
+				<OnboardingCard variant="first-agent" />
 			) : (
 				<AgentsCard
 					agents={agentTiles}

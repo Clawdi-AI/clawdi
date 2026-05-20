@@ -200,8 +200,7 @@ function PermissionSummary() {
 			<div>
 				<div className="font-medium text-foreground">Secret Values</div>
 				<p className="mt-1 text-muted-foreground">
-					Viewers never see key values. Secret values are decrypted only when an attached agent
-					needs them during a run.
+					Viewers never see key values. Secret values stay hidden and are only used when agents run.
 				</p>
 			</div>
 			<div>
@@ -450,7 +449,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						<div className="min-w-0">
 							<div className="text-xs font-medium">Agent Handoff Prompt</div>
 							<div className="truncate font-mono text-[11px] text-muted-foreground">
-								Viewer access · attach to an agent later · {link.prefix}
+								Viewer access · add to an agent later · {link.prefix}
 							</div>
 						</div>
 						<Button

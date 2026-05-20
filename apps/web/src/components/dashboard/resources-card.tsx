@@ -43,7 +43,7 @@ const RESOURCE_ICONS = {
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
-const FIRST_PATH_STEPS = ["Create Custom Project", "Add Skills or Vaults", "Attach to Agent"];
+const FIRST_PATH_STEPS = ["Create Custom Project", "Add Skills or Vaults"];
 
 function buildResources(stats: DashboardStats, projectCount: number): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
@@ -60,12 +60,16 @@ export function ResourcesCard({
 	stats,
 	projectCount,
 	projectCountLoading = false,
+	hasConnectedAgent,
 }: {
 	stats: DashboardStats | undefined;
 	projectCount: number | undefined;
 	projectCountLoading?: boolean;
+	hasConnectedAgent?: boolean;
 }) {
 	const ready = stats && (!projectCountLoading || projectCount !== undefined);
+	const waitingForAgent = hasConnectedAgent === false;
+	const finalStep = waitingForAgent ? "Ready to Add to Agent" : "Add to Agent";
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -78,11 +82,16 @@ export function ResourcesCard({
 			<CardContent className="p-0">
 				<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
 					<div className="flex flex-wrap items-center gap-2">
-						<span className="font-medium text-foreground">First path</span>
-						{FIRST_PATH_STEPS.map((step, index) => (
+						<span className="font-medium text-foreground">
+							{waitingForAgent ? "After connecting an agent" : "First path"}
+						</span>
+						{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
 							<span
 								key={step}
-								className="inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground"
+								className={cn(
+									"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
+									waitingForAgent && index === 2 && "border-dashed opacity-60",
+								)}
 							>
 								<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
 								{step}

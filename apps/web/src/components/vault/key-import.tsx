@@ -112,6 +112,9 @@ export function VaultKeyImportDialog({
 							<Badge variant="outline">env KEY=value</Badge>
 							<Badge variant="outline">flat JSON</Badge>
 						</div>
+						<p className="text-xs text-muted-foreground">
+							Key names will be normalized to uppercase, for example api_key becomes API_KEY.
+						</p>
 					</div>
 
 					{parsed.errors.length > 0 ? (
@@ -165,7 +168,10 @@ export function VaultKeyImportDialog({
 								{preview.slice(0, 12).map((entry) => (
 									<div
 										key={`${entry.line ?? "json"}-${entry.key}`}
-										className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm"
+										className={cn(
+											"grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm",
+											entry.action === "skip" && "opacity-50",
+										)}
 									>
 										<span className="truncate font-mono text-xs" translate="no">
 											{entry.key}
@@ -224,7 +230,7 @@ function KeyImportActionBadge({ action }: { action: PreviewRow["action"] }) {
 			className={cn(action === "skip" && "text-muted-foreground")}
 		>
 			{action === "create" ? <Check className="size-3" /> : null}
-			{action === "create" ? "New" : action === "update" ? "Update" : "Skip"}
+			{action === "create" ? "New" : action === "update" ? "Update" : "Skip - Already Exists"}
 		</Badge>
 	);
 }

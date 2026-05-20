@@ -250,7 +250,7 @@ function VaultPageInner() {
 			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
-			toast.success("Vault Created", { description: `Attached to ${projectName}.` });
+			toast.success("Vault Created", { description: `Added to ${projectName}.` });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
@@ -269,7 +269,7 @@ function VaultPageInner() {
 			const project = projectsById.get(variables.projectId);
 			const projectName = project ? displayProjectName(project) : "the selected Project";
 			toast.success("Vault Added to Project", {
-				description: `${variables.slug} is now attached to ${projectName}.`,
+				description: `${variables.slug} is now available in ${projectName}.`,
 			});
 		},
 		onError: (e) => toast.error("Failed to Add to Project", { description: errorMessage(e) }),
@@ -314,9 +314,9 @@ function VaultPageInner() {
 				<Lock className="size-4" />
 				<AlertTitle>Vault Privacy</AlertTitle>
 				<AlertDescription>
-					Vaults own keys. Projects attach to a Vault so agents know which keys to use. Project
-					members can see Vault names and key names, but secret values stay hidden and are decrypted
-					only when an agent runs.
+					A Vault is a shared bundle of API keys and secrets. Add a Vault to each Project where
+					agents should use those keys. Project members can see Vault names and key names, but
+					secret values stay hidden and are only used when agents run.
 				</AlertDescription>
 			</Alert>
 
@@ -330,9 +330,10 @@ function VaultPageInner() {
 			{projectsError ? (
 				<Alert>
 					<AlertCircle />
-					<AlertTitle>Project Access Unavailable</AlertTitle>
+					<AlertTitle>Project List Unavailable</AlertTitle>
 					<AlertDescription>
-						Vault write actions are hidden until Project access can be verified. Refresh to retry.
+						Vault write actions are hidden until your Project list can be verified. Refresh to
+						retry.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -380,7 +381,7 @@ function VaultPageInner() {
 					}
 					description={
 						filterProject
-							? `Showing Vaults attached to ${displayProjectName(filterProject)}.`
+							? `Showing Vaults available in ${displayProjectName(filterProject)}.`
 							: "My Vaults are editable. Vaults shared by other Project owners are read-only."
 					}
 				/>
@@ -461,7 +462,7 @@ function VaultPageInner() {
 							title={vaultCatalog.length === 0 ? "No vaults yet" : "No vaults match this view"}
 							description={
 								vaultCatalog.length === 0
-									? "Create a vault, attach it to a Project, then add the keys that agents should use."
+									? "Create a vault, add it to a Project, then add the keys that agents should use."
 									: "Change the Project filter or search term to see more vaults."
 							}
 						/>
@@ -508,8 +509,8 @@ function CreateVaultDialog({
 				<DialogHeader>
 					<DialogTitle>Create Vault</DialogTitle>
 					<DialogDescription>
-						Create the Vault once, then attach it to each Project where agents should use those
-						keys. Start with one Project here.
+						Create the Vault once, then add it to each Project where agents should use those keys.
+						Start with one Project here.
 					</DialogDescription>
 				</DialogHeader>
 				{ownedProjects.length > 0 ? (
@@ -520,14 +521,14 @@ function CreateVaultDialog({
 								agents={agents}
 								value={projectId}
 								onValueChange={onProjectChange}
-								label="Attach to Project"
+								label="Add to Project"
 								layout="stacked"
 								disabled={!ownedProjects.length}
 								triggerClassName="min-h-14 py-2"
 							/>
 						) : selectedProject ? (
 							<div className="grid gap-1.5">
-								<Label className="text-xs font-medium">Attach to Project</Label>
+								<Label className="text-xs font-medium">Add to Project</Label>
 								<SelectedProjectTile project={selectedProject} agentsById={agentsById} />
 							</div>
 						) : null}
@@ -840,9 +841,9 @@ function VaultDetailPanel({
 					<div>
 						<p className="font-medium">Read-only Vault</p>
 						<p className="text-xs text-muted-foreground">
-							You can inspect key names because this Vault is attached to a shared Project. Secret
-							values stay hidden; only the owner can see them. Only the owner can edit keys or
-							Project access.
+							You can view key names because this Vault is available through a shared Project.
+							Secret values stay hidden; only the owner can see them. Only the owner can edit keys
+							or change who has access.
 						</p>
 					</div>
 				</div>
@@ -904,8 +905,8 @@ function AddProjectToVaultControl({
 				<DialogHeader>
 					<DialogTitle>Add Vault to Project</DialogTitle>
 					<DialogDescription>
-						Attach {vaultName} to another Project. Members can see key names; secret values stay
-						hidden and are decrypted only for agent runs.
+						Add {vaultName} to another Project. Members can see key names; secret values stay hidden
+						and are only used when agents run.
 					</DialogDescription>
 				</DialogHeader>
 				<ProjectScopePicker
@@ -1182,7 +1183,7 @@ function VaultKeysPanel({
 					<p className="text-xs text-muted-foreground">
 						{readOnly
 							? "Key names are visible; secret values stay hidden."
-							: "Keys live in this Vault, not inside a Project. Every attached Project uses this same set."}
+							: "Keys live in this Vault, not inside a Project. Every Project using this Vault gets the same key set."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -1330,7 +1331,7 @@ function AttachedProjectsPanel({
 					<h4 className="text-sm font-semibold">Project Availability</h4>
 					<p className="text-xs text-muted-foreground">
 						{vault.is_owner
-							? "Projects attached to this Vault. Members see key names only; values stay hidden."
+							? "Projects using this Vault. Members see key names only; values stay hidden."
 							: "Projects shared by other owners that include this Vault. You can read names only."}
 					</p>
 				</div>
@@ -1355,7 +1356,7 @@ function AttachedProjectsPanel({
 				</div>
 			) : (
 				<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-					This vault is not attached to any Project in the current view.
+					This Vault is not available in any Project in the current view.
 				</p>
 			)}
 		</section>

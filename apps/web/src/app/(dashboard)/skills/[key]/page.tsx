@@ -428,7 +428,8 @@ function SkillDetailPageInner() {
 									<h2 className="text-sm font-semibold">Project Availability</h2>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Skills live in a Project. Agents can use this Skill when that Project is attached.
+									Skills live in a Project. Agents can use this Skill when that Project is added to
+									an agent.
 								</p>
 							</div>
 							<Badge variant={isReadOnly ? "secondary" : "outline"}>

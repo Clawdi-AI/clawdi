@@ -183,8 +183,8 @@ export default function SharePage() {
 							<CheckCircle2 />
 							<AlertTitle>You're In</AlertTitle>
 							<AlertDescription>
-								Added to your Projects with Viewer access. Attaching it to an agent is a separate
-								step. Redirecting…
+								Added to your Projects with Viewer access. Adding it to an agent is a separate step.
+								Redirecting…
 							</AlertDescription>
 						</Alert>
 					) : isOwner ? (
@@ -207,14 +207,14 @@ export default function SharePage() {
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">Viewer</Badge> with read-only access to
 								skills{data.vault_count > 0 ? " and Vault key names" : ""}. Secret values stay
-								private; agents can use them only after you attach the Project.
+								private; agents can use them only after you add the Project to an agent.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member. Open the Project from your dashboard, then attach it to
-										an agent when needed.
+										You're already a member. Open the Project from your dashboard, then add it to an
+										agent when needed.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -235,8 +235,8 @@ export default function SharePage() {
 								</Link>
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								If you do not have an account, you can create one on the next screen. Sign in so
-								this Project can be added to your account and stay available across devices.
+								Sign in or create a free account. After signing in, click Accept here to join the
+								Project.
 							</p>
 							<details className="group rounded-lg border bg-muted/30 p-4">
 								<summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium marker:hidden">

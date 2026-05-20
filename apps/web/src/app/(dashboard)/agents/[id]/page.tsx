@@ -233,7 +233,7 @@ export default function AgentDetailPage() {
 						icon: Layers,
 						title: "Project Access",
 						description:
-							"The Agent Project is fixed. Attached Custom or shared Projects add read-only context.",
+							"The Agent Project is fixed. Added Custom or shared Projects add read-only context.",
 					}
 				: {
 						icon: MessageSquare,
@@ -498,9 +498,9 @@ function AgentProjectsPanel({
 		onSuccess: () => {
 			setContextProjectId("");
 			onChanged();
-			toast.success("Project Attached");
+			toast.success("Project Added");
 		},
-		onError: (e) => toast.error("Failed to Attach Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Add Project", { description: errorMessage(e) }),
 	});
 
 	const removeBinding = useMutation({
@@ -511,9 +511,9 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Project Detached");
+			toast.success("Project Removed");
 		},
-		onError: (e) => toast.error("Failed to Detach Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Remove Project", { description: errorMessage(e) }),
 	});
 
 	const reorder = useMutation({
@@ -555,7 +555,7 @@ function AgentProjectsPanel({
 						</div>
 						<p className="text-xs text-muted-foreground">
 							This Project is created with the agent and is always its writable default. It cannot
-							be replaced, shared, or detached from here.
+							be replaced, shared, or removed from here.
 						</p>
 						{primary ? (
 							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
@@ -566,7 +566,7 @@ function AgentProjectsPanel({
 						)}
 					</div>
 					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
-						Use Custom Projects for resources you want to share or attach across agents. This Agent
+						Use Custom Projects for resources you want to share or add across agents. This Agent
 						Project stays private to the agent&apos;s default writes.
 					</div>
 				</div>
@@ -577,11 +577,11 @@ function AgentProjectsPanel({
 					<div className="space-y-2">
 						<div className="flex items-center gap-2">
 							<Layers className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Attached Projects</h2>
+							<h2 className="text-sm font-semibold">Added Projects</h2>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Attached Projects are read after the Agent Project. Use the list below to adjust read
-							order after attaching.
+							Added Projects are read after the Agent Project. Use the list below to adjust read
+							order after adding one.
 						</p>
 					</div>
 					<div className="grid gap-3">
@@ -589,12 +589,12 @@ function AgentProjectsPanel({
 							value={contextProjectId}
 							onValueChange={setContextProjectId}
 							projects={contextChoices}
-							label="Project to Attach"
+							label="Project to Add"
 							placeholder="Choose a Project…"
 						/>
 						{contextChoices.length === 0 ? (
 							<p className="text-xs text-muted-foreground">
-								No Custom or shared Projects are available to attach.
+								No Custom or shared Projects are available to add.
 							</p>
 						) : null}
 						<Button
@@ -608,7 +608,7 @@ function AgentProjectsPanel({
 							) : (
 								<Plus className="size-3.5" />
 							)}
-							Attach Project
+							Add Project
 						</Button>
 					</div>
 				</div>
@@ -616,12 +616,12 @@ function AgentProjectsPanel({
 
 			<section className="space-y-2">
 				<div className="flex items-center justify-between gap-2">
-					<h2 className="text-sm font-semibold">Attached Project Order</h2>
+					<h2 className="text-sm font-semibold">Added Project Order</h2>
 					<Badge variant="secondary">{contexts.length}</Badge>
 				</div>
 				{contexts.length === 0 ? (
 					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-						No attached Projects yet. Attach a Custom or shared Project to make it available to this
+						No added Projects yet. Add a Custom or shared Project to make it available to this
 						agent.
 					</div>
 				) : (
@@ -663,14 +663,14 @@ function AgentProjectsPanel({
 											<ArrowDown className="size-3.5" />
 										</Button>
 										<ConfirmAction
-											title="Detach this Project?"
+											title="Remove this Project?"
 											description={
 												<>
 													<p>{projectName} will no longer be available to this agent.</p>
 													<p>The Project and its resources are not deleted.</p>
 												</>
 											}
-											confirmLabel="Detach Project"
+											confirmLabel="Remove Project"
 											destructive
 											onConfirm={() => removeBinding.mutate(binding.id)}
 										>
@@ -678,8 +678,8 @@ function AgentProjectsPanel({
 												variant="ghost"
 												size="icon-sm"
 												disabled={isRemoving}
-												title="Detach"
-												aria-label={`Detach ${projectName}`}
+												title="Remove"
+												aria-label={`Remove ${projectName}`}
 											>
 												{isRemoving ? (
 													<Spinner className="size-3.5" />
@@ -732,7 +732,7 @@ function ProjectUseLine({
 	binding: ProjectBindingRow;
 	project: ProjectRow | undefined;
 }) {
-	const bindingLabel = binding.binding_type === "primary" ? "Agent Project" : "Attached";
+	const bindingLabel = binding.binding_type === "primary" ? "Agent Project" : "Added";
 	if (!project) {
 		return (
 			<div className="min-w-0">

@@ -374,7 +374,7 @@ export default function ProjectDetailPage() {
 								>
 									<Button variant="outline" className="w-full" size="sm">
 										<Bot className="mr-1.5 size-3.5" />
-										Attach to Agent
+										Add to Agent
 									</Button>
 								</UseProjectWithAgentDialog>
 							}
@@ -397,7 +397,7 @@ export default function ProjectDetailPage() {
 								>
 									<Button size="sm" className="w-full">
 										<Bot className="mr-1.5 size-3.5" />
-										Attach to Agent
+										Add to Agent
 									</Button>
 								</UseProjectWithAgentDialog>
 							}
@@ -452,8 +452,8 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Add skills and vaults here, share the Project, then attach it to agents when needed.`
-			: `${typeLabel} shared with you. You can read its skills and vaults and attach it to agents when needed.`;
+			? `${typeLabel} you own. Add skills and vaults here, share the Project, then add it to agents when needed.`
+			: `${typeLabel} shared with you. You can read its skills and vaults and add it to agents when needed.`;
 	}
 	if (project.kind === "environment") {
 		return `${typeLabel} ${access}. This is the Agent Project for one connected agent. It is managed for you and cannot be shared.`;
@@ -570,7 +570,7 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project. Attach it to an agent when you want it available during a run.
+					You can read this Project. Add it to an agent when you want it available during a run.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -660,7 +660,7 @@ function UseProjectWithAgentDialog({
 		setSelectedAgentId(orderedEnvironments[0]?.id ?? "");
 	}, [open, orderedEnvironments, selectedAgentId]);
 
-	const attach = useMutation({
+	const addProjectToAgent = useMutation({
 		mutationFn: async () => {
 			if (!selectedAgentId) throw new Error("Choose an agent first");
 			return unwrap(
@@ -675,7 +675,7 @@ function UseProjectWithAgentDialog({
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["vaults"] });
-			toast.success("Project Attached", {
+			toast.success("Project Added", {
 				description: `${projectName} is now available to ${agentName}.`,
 				action: {
 					label: "Open Agent",
@@ -685,7 +685,7 @@ function UseProjectWithAgentDialog({
 			onOpenChange(false);
 		},
 		onError: (e) => {
-			toast.error("Failed to Attach Project", {
+			toast.error("Failed to Add Project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -696,11 +696,11 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Attach Project to Agent</DialogTitle>
+					<DialogTitle>Add Project to Agent</DialogTitle>
 					<DialogDescription>
 						Add {projectName}
 						{" to "}
-						an agent&apos;s Attached Projects. The Agent Project stays the writable default; this
+						an agent&apos;s Added Projects. The Agent Project stays the writable default; this
 						Project is read by the agent.
 					</DialogDescription>
 				</DialogHeader>
@@ -712,8 +712,8 @@ function UseProjectWithAgentDialog({
 						<Bot className="size-4" />
 						<AlertTitle>No Agents Connected</AlertTitle>
 						<AlertDescription>
-							Add an agent from Overview first, then attach this Project here or from the
-							agent&apos;s Projects tab.
+							Add an agent from Overview first, then add this Project here or from the agent&apos;s
+							Projects tab.
 						</AlertDescription>
 					</Alert>
 				) : (
@@ -722,7 +722,7 @@ function UseProjectWithAgentDialog({
 							<div className="text-sm font-medium">Agent</div>
 							<Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
 								<SelectTrigger
-									aria-label="Agent to attach this Project to"
+									aria-label="Agent to add this Project to"
 									className="h-auto min-h-9 w-full justify-between py-2"
 								>
 									{selectedEnv ? (
@@ -763,8 +763,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Already This Agent&apos;s Agent Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											No attach step is needed. Open the agent&apos;s Projects tab to review its
-											read order.
+											No extra step is needed. Open the agent&apos;s Projects tab to review its read
+											order.
 										</p>
 									</div>
 								</div>
@@ -772,9 +772,9 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already Attached to This Agent</div>
+										<div className="font-medium">Already Added to This Agent</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Open the agent&apos;s Projects tab to review its read order or detach it.
+											Open the agent&apos;s Projects tab to review its read order or remove it.
 										</p>
 									</div>
 								</div>
@@ -782,7 +782,7 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Attach as Extra Project</div>
+										<div className="font-medium">Add as Extra Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Skills and vaults from this Project become available to the selected agent.
 											Writes still land in the Agent Project.
@@ -806,17 +806,17 @@ function UseProjectWithAgentDialog({
 								</Button>
 							) : (
 								<Button
-									onClick={() => attach.mutate()}
+									onClick={() => addProjectToAgent.mutate()}
 									disabled={
 										!selectedAgentId ||
-										attach.isPending ||
+										addProjectToAgent.isPending ||
 										selectedBindings.isLoading ||
 										selectedBindings.isError ||
 										projectIsAlreadyAvailable
 									}
 								>
-									{attach.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-									{attach.isPending ? "Attaching…" : "Attach Project"}
+									{addProjectToAgent.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+									{addProjectToAgent.isPending ? "Adding…" : "Add Project"}
 								</Button>
 							)}
 						</div>
@@ -972,7 +972,7 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault Created", { description: "Attached to this Project." });
+			toast.success("Vault Created", { description: "Added to this Project." });
 		},
 		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
 	});
@@ -1049,7 +1049,7 @@ function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
 					<Badge variant={attachedHere ? "secondary" : "outline"}>
-						{attachedHere ? "Attached Here" : "Linked"}
+						{attachedHere ? "Added Here" : "Linked"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>

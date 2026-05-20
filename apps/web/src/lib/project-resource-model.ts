@@ -36,7 +36,7 @@ export const PROJECT_CANONICAL_DEFINITION =
 	"A Project groups the skills and Vault access an agent or teammate can use.";
 
 export const PROJECT_FIRST_PATH =
-	"Create a Custom Project, add Skills or Vaults, then attach it to an Agent when it should use them.";
+	"Create a Custom Project, add Skills or Vaults, then add it to an Agent when it should use them.";
 
 export const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -76,9 +76,9 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Encrypted key collections that can be attached to one or more Projects.",
+		description: "Encrypted key collections that can be added to one or more Projects.",
 		managementDescription:
-			"Vaults own the keys. Attach a vault to every Project where agents should use those keys.",
+			"Store API keys once, then add Vaults to the Projects where agents should use those keys.",
 		href: "/vault",
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
