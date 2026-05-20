@@ -46,9 +46,9 @@ export const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Use Custom Projects for shareable work. Global and Agent Projects are managed for you and cannot be shared.",
+			"Projects you create can be shared. Global Projects and Agent Projects are created automatically and cannot be shared.",
 		href: "/projects",
-		emptyCta: "Create Custom Project",
+		emptyCta: "Create Project",
 		routeGroup: "project-registry",
 		projectScope: "container",
 		pathSegments: ["Projects"],
@@ -243,7 +243,7 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 export function projectResourceScopeDescription(resource: ProjectResourceDefinition): string {
 	switch (resource.projectScope) {
 		case "container":
-			return "Start here to create Projects, share Custom Projects, or open Project resources.";
+			return "Start here to create shareable Projects or open Project resources.";
 		case "project-managed":
 			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":

@@ -332,8 +332,8 @@ function VaultPageInner() {
 					<AlertCircle />
 					<AlertTitle>Project List Unavailable</AlertTitle>
 					<AlertDescription>
-						Vault write actions are hidden until your Project list can be verified. Refresh to
-						retry.
+						Vault write actions are hidden until we can reload your Project list. Please refresh or
+						try again later.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -382,7 +382,7 @@ function VaultPageInner() {
 					description={
 						filterProject
 							? `Showing Vaults available in ${displayProjectName(filterProject)}.`
-							: "My Vaults are editable. Vaults shared by other Project owners are read-only."
+							: "My Vaults are editable. Vaults shared by other users are read-only."
 					}
 				/>
 				<DashboardSectionToolbar>
@@ -691,7 +691,7 @@ function VaultInventoryRow({
 	const attachmentLabel =
 		visibleAttachments.length === 1
 			? attachmentName(visibleAttachments[0])
-			: `${visibleAttachments.length || attachments.length} Projects`;
+			: `Used by ${visibleAttachments.length || attachments.length} Projects`;
 	return (
 		<button
 			type="button"
@@ -781,7 +781,7 @@ function VaultDetailPanel({
 								</h3>
 								<VaultAccessBadge isOwner={vault.is_owner} />
 								<Badge variant="secondary">
-									{attachments.length} Project{attachments.length === 1 ? "" : "s"}
+									{`Used by ${attachments.length} Project${attachments.length === 1 ? "" : "s"}`}
 								</Badge>
 							</div>
 							<div className="truncate font-mono text-xs text-muted-foreground" translate="no">
@@ -1183,7 +1183,7 @@ function VaultKeysPanel({
 					<p className="text-xs text-muted-foreground">
 						{readOnly
 							? "Key names are visible; secret values stay hidden."
-							: "Keys live in this Vault, not inside a Project. Every Project using this Vault gets the same key set."}
+							: "Keys live in this Vault, not inside a Project. Every Project using this Vault sees the same keys; key updates here apply everywhere."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -1328,11 +1328,11 @@ function AttachedProjectsPanel({
 		<section className="space-y-3 border-b bg-muted/10 p-4">
 			<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
 				<div>
-					<h4 className="text-sm font-semibold">Project Availability</h4>
+					<h4 className="text-sm font-semibold">Used by Projects</h4>
 					<p className="text-xs text-muted-foreground">
 						{vault.is_owner
-							? "Projects using this Vault. Members see key names only; values stay hidden."
-							: "Projects shared by other owners that include this Vault. You can read names only."}
+							? "Used by these Projects. Members see key names only; values stay hidden."
+							: "Used by Projects shared by other users. You can read names only."}
 					</p>
 				</div>
 				{visibleAttachments.length !== attachments.length ? (
@@ -1356,7 +1356,7 @@ function AttachedProjectsPanel({
 				</div>
 			) : (
 				<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-					This Vault is not available in any Project in the current view.
+					This Vault is not used by any Project in the current view.
 				</p>
 			)}
 		</section>

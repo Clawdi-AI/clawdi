@@ -135,12 +135,12 @@ export function ShareProjectDialog({
 			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
-						{isShareableProject ? `Share ${projectName}` : "Custom Projects Only"}
+						{isShareableProject ? `Share ${projectName}` : "Only Projects You Create Can Be Shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
 							? "Share this Custom Project without sharing ownership. People join as read-only Viewers; agent use is a separate choice they make later."
-							: "Global and Agent Projects are managed by the system and cannot be shared. Create a Custom Project for collaboration."}
+							: "Projects you create are Custom Projects. Global Projects and Agent Projects are created automatically and cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -178,7 +178,7 @@ export function ShareProjectDialog({
 						<AlertCircle />
 						<AlertTitle>Managed Projects are not shareable</AlertTitle>
 						<AlertDescription>
-							Only Custom Projects can have members, invitations, and share links.
+							Only Projects you create can have members, invitations, and share links.
 						</AlertDescription>
 					</Alert>
 				)}

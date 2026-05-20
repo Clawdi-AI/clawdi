@@ -43,7 +43,7 @@ const RESOURCE_ICONS = {
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
-const FIRST_PATH_STEPS = ["Create Custom Project", "Add Skills or Vaults"];
+const FIRST_PATH_STEPS = ["Create Project", "Add Skills or Vaults"];
 
 function buildResources(stats: DashboardStats, projectCount: number): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
@@ -99,7 +99,8 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Global and Agent Projects are managed for you. Only Custom Projects can be shared.
+						Projects you create can be shared. Global Projects and Agent Projects are created
+						automatically and stay managed by Clawdi.
 					</p>
 				</div>
 				<div className="divide-y">

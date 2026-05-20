@@ -698,10 +698,8 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Add Project to Agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName}
-						{" to "}
-						an agent&apos;s Added Projects. The Agent Project stays the writable default; this
-						Project is read by the agent.
+						Add {projectName} as an extra Project for an agent. The agent&apos;s main Project stays
+						the writable default; this Project is read by the agent.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -761,7 +759,7 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already This Agent&apos;s Agent Project</div>
+										<div className="font-medium">This Is the Agent&apos;s Main Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											No extra step is needed. Open the agent&apos;s Projects tab to review its read
 											order.
@@ -772,7 +770,7 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already Added to This Agent</div>
+										<div className="font-medium">Already Added as Extra</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Open the agent&apos;s Projects tab to review its read order or remove it.
 										</p>
@@ -782,10 +780,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Add as Extra Project</div>
+										<div className="font-medium">Add as Extra</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											Skills and vaults from this Project become available to the selected agent.
-											Writes still land in the Agent Project.
+											Writes still land in the agent&apos;s main Project.
 										</p>
 									</div>
 								</div>
@@ -1022,7 +1020,7 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
 					<Badge variant={savedHere ? "secondary" : "outline"}>
-						{savedHere ? "Saved Here" : "Linked"}
+						{savedHere ? "Saved Here" : "From Another Project"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
@@ -1049,7 +1047,7 @@ function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
 					<Badge variant={attachedHere ? "secondary" : "outline"}>
-						{attachedHere ? "Added Here" : "Linked"}
+						{attachedHere ? "Used Here" : "Used Elsewhere"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>

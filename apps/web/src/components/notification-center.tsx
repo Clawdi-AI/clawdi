@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -150,6 +151,15 @@ export function NotificationCenter() {
 					acceptingId={accept.isPending ? accept.variables?.id : undefined}
 					decliningId={decline.isPending ? decline.variables : undefined}
 				/>
+				<Separator />
+				<div className="flex items-center justify-between gap-3 px-4 py-3">
+					<p className="text-xs text-muted-foreground">
+						Accepted invites appear under Shared Projects.
+					</p>
+					<Button asChild variant="ghost" size="sm" onClick={() => setOpen(false)}>
+						<Link href="/projects">View Accepted Invites</Link>
+					</Button>
+				</div>
 			</PopoverContent>
 		</Popover>
 	);

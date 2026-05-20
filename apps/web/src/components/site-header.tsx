@@ -34,8 +34,8 @@ export function SiteHeader() {
 					onClick={() => setPaletteOpen(true)}
 				>
 					<Search className="size-4" aria-hidden="true" />
-					<span className="hidden sm:inline">Search</span>
-					<KbdGroup className="hidden sm:inline-flex">
+					<span className="hidden md:inline">Search</span>
+					<KbdGroup className="hidden md:inline-flex">
 						<Kbd>⌘</Kbd>
 						<Kbd>K</Kbd>
 					</KbdGroup>

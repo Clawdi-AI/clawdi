@@ -254,7 +254,7 @@ export default function SharePage() {
 				</CardContent>
 			</Card>
 			<p className="text-center text-xs text-muted-foreground">
-				Shared Custom Projects never grant write access. The owner can turn off this link anytime.
+				Shared Projects never grant write access. The owner can turn off this link anytime.
 			</p>
 		</Shell>
 	);

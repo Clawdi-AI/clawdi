@@ -188,10 +188,10 @@ export default function ProjectsPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New Custom Project</DialogTitle>
+						<DialogTitle>New Project</DialogTitle>
 						<DialogDescription>
-							Create a Custom Project for a team, workflow, repo, or shareable resources. Add
-							skills, vaults, and sharing settings after it is created.
+							Create a Project for a team, workflow, repo, or shareable resources. Add skills,
+							vaults, and sharing settings after it is created.
 						</DialogDescription>
 					</DialogHeader>
 					<form
@@ -239,7 +239,7 @@ export default function ProjectsPage() {
 								variant={newProjectName.trim() ? "default" : "outline"}
 							>
 								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create Custom Project"}
+								{createProject.isPending ? "Creating…" : "Create Project"}
 							</Button>
 						</div>
 					</form>
@@ -258,21 +258,19 @@ export default function ProjectsPage() {
 				projects={filteredCustomProjects}
 				agentsById={agentsById}
 				emptyTitle={
-					customProjectSearch.trim()
-						? "No Matching Custom Projects"
-						: "Create Your First Custom Project"
+					customProjectSearch.trim() ? "No Matching Projects" : "Create Your First Project"
 				}
 				emptyMessage={
 					customProjectSearch.trim()
 						? "Try a different Project name, slug, or owner."
-						: "Use Custom Projects for resources you want to share or reuse across people and agents."
+						: "Use Projects you create for resources you want to share or reuse across people and agents."
 				}
 				toolbar={
 					<>
 						<SearchInput
 							value={customProjectSearch}
 							onChange={setCustomProjectSearch}
-							placeholder="Search custom projects…"
+							placeholder="Search projects…"
 							className="w-full sm:w-64"
 						/>
 						<NewProjectButton onClick={openCreateDialog} />
@@ -285,7 +283,7 @@ export default function ProjectsPage() {
 				icon={Settings2}
 				title="Managed Projects"
 				count={managedProjects.length}
-				description="Global and Agent Projects are managed for you. They are not shareable; use Custom Projects for collaboration."
+				description="The Global Project is your account default. Agent Projects are created automatically for connected agents. They are not shareable."
 				projects={managedProjects}
 				agentsById={agentsById}
 				emptyTitle="No Managed Projects"
@@ -312,7 +310,7 @@ export default function ProjectsPage() {
 					icon={Users}
 					title="Shared Projects"
 					count={sharedProjects.length}
-					description="Custom Projects others shared with you. These are invites you already accepted. New invites stay in the Notification Center until you accept them."
+					description="Projects others shared with you. These are invites you already accepted. New invites stay in the Notification Center until you accept them."
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
@@ -475,7 +473,7 @@ function NewProjectButton({ onClick }: { onClick: () => void }) {
 	return (
 		<Button size="sm" variant="outline" onClick={onClick}>
 			<Plus className="size-3.5" />
-			New Custom Project
+			New Project
 		</Button>
 	);
 }

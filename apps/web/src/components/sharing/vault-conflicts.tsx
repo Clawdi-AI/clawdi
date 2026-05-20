@@ -63,9 +63,9 @@ export function VaultConflictsAlert({
 			<AlertTitle>Vault Key Conflict</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>
-					Key name conflict: this Project has keys with names your agent can already read. We keep
-					the keys your agent already uses and skip the new keys with the same names. The skipped
-					key names stay visible so you can rename or remove them later.
+					Key name conflict: these key names already exist in another Vault used by this Project. We
+					keep the existing keys to avoid breaking agents and skip the new keys with the same names.
+					The skipped key names stay visible so you can rename or remove them later.
 				</p>
 				{conflicts.length > 0 ? (
 					<ul className="max-h-28 space-y-1 overflow-auto rounded-md border bg-background/50 p-2 font-mono text-xs">
