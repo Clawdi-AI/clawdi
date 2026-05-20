@@ -8,12 +8,9 @@ import {
 	CheckCircle2,
 	ExternalLink,
 	Eye,
-	KeyRound,
 	LogOut,
-	type LucideIcon,
 	Plus,
 	Share2,
-	Sparkles,
 	Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -291,10 +288,6 @@ export default function ProjectDetailPage() {
 									: "Shared resources you can read from this Project."
 							}
 							action={<ProjectResourceLinks projectId={project.id} />}
-						/>
-						<ProjectStatsStrip
-							skillCount={skills.data?.items.length ?? 0}
-							vaultCount={vaults.data?.items.length ?? 0}
 						/>
 						<div className="space-y-5">
 							<div className="space-y-3">
@@ -812,35 +805,6 @@ function UseProjectWithAgentDialog({
 				)}
 			</DialogContent>
 		</Dialog>
-	);
-}
-
-function ProjectStatsStrip({ skillCount, vaultCount }: { skillCount: number; vaultCount: number }) {
-	return (
-		<div className="grid divide-y rounded-md bg-muted/20 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-			<StatCell icon={Sparkles} label="Skills" value={skillCount} />
-			<StatCell icon={KeyRound} label="Vaults" value={vaultCount} />
-		</div>
-	);
-}
-
-function StatCell({
-	icon: Icon,
-	label,
-	value,
-}: {
-	icon: LucideIcon;
-	label: string;
-	value: number;
-}) {
-	return (
-		<div className="flex items-center justify-between gap-3 px-4 py-3">
-			<div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-				<Icon className="size-4 shrink-0" />
-				<span className="truncate">{label}</span>
-			</div>
-			<div className="text-xl font-semibold">{value}</div>
-		</div>
 	);
 }
 

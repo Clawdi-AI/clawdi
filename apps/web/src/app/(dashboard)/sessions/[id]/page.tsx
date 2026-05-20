@@ -331,11 +331,17 @@ export default function SessionDetailPage() {
 					<EmptyContent />
 				)
 			) : (
-				<DetailPanel className="py-10">
-					<EmptyState
-						fillHeight={false}
-						description="Conversation not uploaded yet. Refresh in a moment."
-					/>
+				<DetailPanel className="space-y-4">
+					<div className="space-y-1">
+						<div className="flex items-center gap-2">
+							<MessageSquare className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Conversation</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Messages appear here after the agent uploads this session.
+						</p>
+					</div>
+					<EmptyState fillHeight={false} description="Conversation not uploaded yet." />
 				</DetailPanel>
 			)}
 

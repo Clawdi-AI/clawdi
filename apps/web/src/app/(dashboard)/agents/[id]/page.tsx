@@ -1,7 +1,17 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Home, Layers, Plus, Trash2, Unplug } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	Home,
+	Layers,
+	MessageSquare,
+	Plus,
+	Sparkles,
+	Trash2,
+	Unplug,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -9,6 +19,11 @@ import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import {
 	isCustomProject,
@@ -24,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
@@ -212,6 +228,29 @@ export default function AgentDetailPage() {
 	// what the user is looking at, instead of floating an Install CTA
 	// over a Sessions list it has nothing to do with.
 	const [activeTab, setActiveTab] = useState<AgentTab>(requestedTab);
+	const activeTabMeta =
+		activeTab === "skills"
+			? {
+					icon: Sparkles,
+					title: "Skills",
+					count: skillsForThisEnv?.length,
+					description:
+						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
+				}
+			: activeTab === "projects"
+				? {
+						icon: Layers,
+						title: "Projects",
+						count: projectBindings?.length,
+						description:
+							"The Agent Project is fixed. Attach Custom or shared Projects here when this agent needs extra read access.",
+					}
+				: {
+						icon: MessageSquare,
+						title: "Sessions",
+						count: sessionTotal,
+						description: "Recent sessions synced by this agent.",
+					};
 
 	useEffect(() => {
 		setActiveTab(requestedTab);
@@ -325,99 +364,100 @@ export default function AgentDetailPage() {
 						</ConfirmAction>
 					</div>
 
-					{/* Tabs for the two large per-agent surfaces. Sessions
-					    is the primary view (history is what the user
-					    usually came to see); Skills is one click away
-					    when they want to manage what's installed. Both
-					    use shared <DataTable> + ColumnDef<T>[] pattern,
-					    same as /sessions and /memories — one list
-					    primitive everywhere. */}
-					<Tabs
-						value={activeTab}
-						onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}
-						className="gap-4"
-					>
-						{/* Tab strip + contextual action on the same row.
-						    "Install skills" lives next to the Skills tab,
-						    not below the table — keeps the CTA visible
-						    above the fold when the table is empty, and
-						    avoids a lonely button taking its own row. */}
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-							<TabsList className="grid w-full grid-cols-3 sm:w-fit">
-								<TabsTrigger value="sessions" className="min-w-0 px-2">
-									Sessions
-									<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
-								</TabsTrigger>
-								<TabsTrigger value="skills" className="min-w-0 px-2">
-									Skills
-									{skillsForThisEnv ? (
-										<span className="ml-1.5 text-xs text-muted-foreground">
-											{skillsForThisEnv.length}
-										</span>
-									) : null}
-								</TabsTrigger>
-								<TabsTrigger value="projects" className="min-w-0 px-2">
-									Projects
-									{projectBindings ? (
-										<span className="ml-1.5 text-xs text-muted-foreground">
-											{projectBindings.length}
-										</span>
-									) : null}
-								</TabsTrigger>
-							</TabsList>
-							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
-										<Plus />
-										Install Skills
-									</Link>
-								</Button>
-							) : null}
-						</div>
-
-						<TabsContent value="sessions" className="mt-0">
-							<div className="overflow-hidden rounded-lg border bg-card md:hidden">
-								<MobileSessionList
-									sessions={sessionsPage?.items ?? []}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-								/>
-							</div>
-							<div className="hidden md:block">
-								<DataTable
-									columns={sessionColumns}
-									data={sessionsPage?.items ?? []}
-									isLoading={sessionsLoading}
-									getRowHref={(s) => sessionDetailHref(s.id)}
-									rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-									emptyMessage="No sessions synced from this agent yet."
-								/>
-							</div>
-						</TabsContent>
-
-						<TabsContent value="skills" className="mt-0">
-							<DataTable
-								columns={skillColumns}
-								data={skillsForThisEnv ?? []}
-								isLoading={skillsLoading}
-								rowAriaLabel={(s) => `Open ${s.name}`}
-								emptyMessage="No skills installed on this agent yet."
+					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
+						<DashboardSection priority="primary">
+							<DashboardSectionHeader
+								icon={activeTabMeta.icon}
+								title={activeTabMeta.title}
+								count={activeTabMeta.count}
+								description={activeTabMeta.description}
+								toolbar={
+									activeTab === "skills" ? (
+										<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
+											<Link
+												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
+											>
+												<Plus />
+												Install Skills
+											</Link>
+										</Button>
+									) : null
+								}
+								priority="primary"
 							/>
-						</TabsContent>
+							<DashboardSectionToolbar>
+								<TabsList className="grid w-full grid-cols-3 sm:w-fit">
+									<TabsTrigger value="sessions" className="min-w-0 px-2">
+										Sessions
+										<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
+									</TabsTrigger>
+									<TabsTrigger value="skills" className="min-w-0 px-2">
+										Skills
+										{skillsForThisEnv ? (
+											<span className="ml-1.5 text-xs text-muted-foreground">
+												{skillsForThisEnv.length}
+											</span>
+										) : null}
+									</TabsTrigger>
+									<TabsTrigger value="projects" className="min-w-0 px-2">
+										Projects
+										{projectBindings ? (
+											<span className="ml-1.5 text-xs text-muted-foreground">
+												{projectBindings.length}
+											</span>
+										) : null}
+									</TabsTrigger>
+								</TabsList>
+							</DashboardSectionToolbar>
 
-						<TabsContent value="projects" className="mt-0">
-							<AgentProjectsPanel
-								agentId={id}
-								bindings={projectBindings ?? []}
-								projects={projects ?? []}
-								isLoading={projectBindingsLoading}
-								authedFetch={authedFetch}
-								onChanged={() => {
-									queryClient.invalidateQueries({ queryKey: ["agent-project-bindings", id] });
-									queryClient.invalidateQueries({ queryKey: ["projects"] });
-								}}
-							/>
-						</TabsContent>
+							<div className="p-4">
+								<TabsContent value="sessions" className="m-0">
+									<div className="overflow-hidden rounded-lg border bg-card md:hidden">
+										<MobileSessionList
+											sessions={sessionsPage?.items ?? []}
+											isLoading={sessionsLoading}
+											emptyMessage="No sessions synced from this agent yet."
+										/>
+									</div>
+									<div className="hidden md:block">
+										<DataTable
+											columns={sessionColumns}
+											data={sessionsPage?.items ?? []}
+											isLoading={sessionsLoading}
+											getRowHref={(s) => sessionDetailHref(s.id)}
+											rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+											emptyMessage="No sessions synced from this agent yet."
+										/>
+									</div>
+								</TabsContent>
+
+								<TabsContent value="skills" className="m-0">
+									<DataTable
+										columns={skillColumns}
+										data={skillsForThisEnv ?? []}
+										isLoading={skillsLoading}
+										rowAriaLabel={(s) => `Open ${s.name}`}
+										emptyMessage="No skills installed on this agent yet."
+									/>
+								</TabsContent>
+
+								<TabsContent value="projects" className="m-0">
+									<AgentProjectsPanel
+										agentId={id}
+										bindings={projectBindings ?? []}
+										projects={projects ?? []}
+										isLoading={projectBindingsLoading}
+										authedFetch={authedFetch}
+										onChanged={() => {
+											queryClient.invalidateQueries({
+												queryKey: ["agent-project-bindings", id],
+											});
+											queryClient.invalidateQueries({ queryKey: ["projects"] });
+										}}
+									/>
+								</TabsContent>
+							</div>
+						</DashboardSection>
 					</Tabs>
 				</>
 			) : null}
@@ -518,13 +558,6 @@ function AgentProjectsPanel({
 
 	return (
 		<div className="space-y-4">
-			<div className="space-y-1">
-				<h2 className="text-base font-semibold">Projects Used by This Agent</h2>
-				<p className="text-xs text-muted-foreground">
-					The Agent Project is fixed for this agent. Attach Custom or shared Projects when the agent
-					needs extra resources to read.
-				</p>
-			</div>
 			<DetailPanel>
 				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
 					<div className="space-y-3">
@@ -582,7 +615,11 @@ function AgentProjectsPanel({
 							variant={contextProjectId ? "default" : "outline"}
 							onClick={() => addContext.mutate()}
 						>
-							<Plus className="size-3.5" />
+							{addContext.isPending ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<Plus className="size-3.5" />
+							)}
 							Attach Project
 						</Button>
 					</div>
@@ -601,54 +638,72 @@ function AgentProjectsPanel({
 					</div>
 				) : (
 					<div className="divide-y rounded-lg border bg-card/60">
-						{contexts.map((binding, index) => (
-							<div
-								key={binding.id}
-								className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-							>
-								<div className="flex min-w-0 items-start gap-3">
-									<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
-										{index + 1}
+						{contexts.map((binding, index) => {
+							const project = projectsById.get(binding.project_id);
+							const projectName = project?.name || binding.project_id;
+							const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
+							return (
+								<div
+									key={binding.id}
+									className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+								>
+									<div className="flex min-w-0 items-start gap-3">
+										<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
+											{index + 1}
+										</div>
+										<ProjectUseLine binding={binding} project={project} />
 									</div>
-									<ProjectUseLine
-										binding={binding}
-										project={projectsById.get(binding.project_id)}
-									/>
+									<div className="flex items-center justify-end gap-1">
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											disabled={index === 0 || reorder.isPending}
+											onClick={() => moveContext(binding.id, -1)}
+											title="Move up"
+											aria-label="Move project up"
+										>
+											<ArrowUp className="size-3.5" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											disabled={index === contexts.length - 1 || reorder.isPending}
+											onClick={() => moveContext(binding.id, 1)}
+											title="Move down"
+											aria-label="Move project down"
+										>
+											<ArrowDown className="size-3.5" />
+										</Button>
+										<ConfirmAction
+											title="Detach this Project?"
+											description={
+												<>
+													<p>{projectName} will no longer be available to this agent.</p>
+													<p>The Project and its resources are not deleted.</p>
+												</>
+											}
+											confirmLabel="Detach Project"
+											destructive
+											onConfirm={() => removeBinding.mutate(binding.id)}
+										>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												disabled={isRemoving}
+												title="Detach"
+												aria-label={`Detach ${projectName}`}
+											>
+												{isRemoving ? (
+													<Spinner className="size-3.5" />
+												) : (
+													<Trash2 className="size-3.5 text-destructive" />
+												)}
+											</Button>
+										</ConfirmAction>
+									</div>
 								</div>
-								<div className="flex items-center justify-end gap-1">
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										disabled={index === 0 || reorder.isPending}
-										onClick={() => moveContext(binding.id, -1)}
-										title="Move up"
-										aria-label="Move project up"
-									>
-										<ArrowUp className="size-3.5" />
-									</Button>
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										disabled={index === contexts.length - 1 || reorder.isPending}
-										onClick={() => moveContext(binding.id, 1)}
-										title="Move down"
-										aria-label="Move project down"
-									>
-										<ArrowDown className="size-3.5" />
-									</Button>
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										disabled={removeBinding.isPending && removeBinding.variables === binding.id}
-										onClick={() => removeBinding.mutate(binding.id)}
-										title="Detach"
-										aria-label="Detach project"
-									>
-										<Trash2 className="size-3.5 text-destructive" />
-									</Button>
-								</div>
-							</div>
-						))}
+							);
+						})}
 					</div>
 				)}
 			</section>
