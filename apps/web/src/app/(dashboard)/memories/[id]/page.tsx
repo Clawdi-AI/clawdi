@@ -68,7 +68,7 @@ export default function MemoryDetailPage() {
 				</div>
 			) : memory ? (
 				<>
-					<div className="flex items-start justify-between gap-3">
+					<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 						<div className="min-w-0 flex-1 space-y-2">
 							<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
 								<Brain className="size-3.5" />
@@ -111,7 +111,7 @@ export default function MemoryDetailPage() {
 								variant="outline"
 								size="sm"
 								disabled={deleteMemory.isPending}
-								className="shrink-0 text-destructive hover:text-destructive"
+								className="w-fit shrink-0 text-destructive hover:text-destructive"
 							>
 								<Trash2 />
 								Delete
@@ -121,9 +121,10 @@ export default function MemoryDetailPage() {
 
 					<DetailPanel className="space-y-4">
 						<div className="space-y-1">
-							<h2 className="text-sm font-semibold">Availability</h2>
+							<h2 className="text-sm font-semibold">Recall Scope</h2>
 							<p className="text-xs text-muted-foreground">
-								This is account-level context. It is not shared through Projects.
+								This is account-level context. Agents can recall it across runs; it is not shared
+								through Projects.
 							</p>
 						</div>
 						{memory.tags?.length ? (
@@ -135,7 +136,9 @@ export default function MemoryDetailPage() {
 									</Badge>
 								))}
 							</div>
-						) : null}
+						) : (
+							<p className="text-xs text-muted-foreground">No tags saved for this memory.</p>
+						)}
 
 						{memory.source_session_id ? (
 							<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">

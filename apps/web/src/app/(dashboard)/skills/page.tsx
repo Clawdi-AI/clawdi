@@ -292,6 +292,16 @@ function SkillsPageInner() {
 				: isProjectReady
 					? "No skills in this Project yet. Install one from the marketplace below."
 					: "Pick a Project to see its skills.";
+	const canShareTargetProject =
+		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
+	const renderShareProjectAction = () =>
+		canShareTargetProject && targetProject ? (
+			<ShareProjectDialog
+				projectId={targetProject.id}
+				projectName={displayProjectName(targetProject)}
+				projectKind={targetProject.kind}
+			/>
+		) : null;
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -333,12 +343,8 @@ function SkillsPageInner() {
 						count={targetProject ? displayProjectName(targetProject) : undefined}
 						description="Choose the Project whose skills you want to view or change."
 						toolbar={
-							targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject) ? (
-								<ShareProjectDialog
-									projectId={targetProject.id}
-									projectName={displayProjectName(targetProject)}
-									projectKind={targetProject.kind}
-								/>
+							canShareTargetProject ? (
+								<div className="hidden sm:block">{renderShareProjectAction()}</div>
 							) : null
 						}
 						priority="primary"
@@ -359,6 +365,9 @@ function SkillsPageInner() {
 							<p className="text-xs text-muted-foreground">
 								Installs, removals, and marketplace choices apply only to this Project.
 							</p>
+							{canShareTargetProject ? (
+								<div className="sm:hidden [&_button]:w-full">{renderShareProjectAction()}</div>
+							) : null}
 						</div>
 					</DashboardSectionToolbar>
 				</DashboardSection>

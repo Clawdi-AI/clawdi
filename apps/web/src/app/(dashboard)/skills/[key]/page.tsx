@@ -1,21 +1,38 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FileText, Laptop, Pencil, Save, Tag, Trash2, X } from "lucide-react";
+import {
+	BookOpen,
+	ExternalLink,
+	FileText,
+	FolderKanban,
+	Laptop,
+	Pencil,
+	Save,
+	Sparkles,
+	Tag,
+	Trash2,
+	X,
+} from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailMeta, DetailNotFound, DetailStats, DetailTitle } from "@/components/detail/layout";
+import {
+	DetailMeta,
+	DetailNotFound,
+	DetailPanel,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
-import { isProjectOwner } from "@/components/projects/project-metadata";
+import { isProjectOwner, ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, unwrap, useApi } from "@/lib/api";
@@ -244,6 +261,14 @@ function SkillDetailPageInner() {
 		: sourceProjectName
 			? `in ${sourceProjectName}`
 			: null;
+	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
+	const skillProject = useMemo(
+		() =>
+			skill?.project_id
+				? (ownedProjects?.find((project) => project.id === skill.project_id) ?? null)
+				: null,
+		[ownedProjects, skill?.project_id],
+	);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -257,9 +282,15 @@ function SkillDetailPageInner() {
 			) : skill ? (
 				<>
 					<div className="space-y-2">
-						<div className="flex items-start justify-between gap-3">
-							<DetailTitle className="truncate">{skill.name}</DetailTitle>
-							<div className="flex shrink-0 gap-2">
+						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+							<div className="min-w-0 space-y-2">
+								<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+									<Sparkles className="size-3.5" />
+									<span>Skill</span>
+								</div>
+								<DetailTitle className="truncate">{skill.name}</DetailTitle>
+							</div>
+							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
 								{!ownershipKnown ? null : isReadOnly ? (
 									<Badge
 										variant="secondary"
@@ -389,9 +420,44 @@ function SkillDetailPageInner() {
 						<p className="text-sm text-muted-foreground">{skill.description}</p>
 					) : null}
 
+					<DetailPanel className="space-y-3">
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+							<div className="space-y-1">
+								<div className="flex items-center gap-2">
+									<FolderKanban className="size-4 text-muted-foreground" />
+									<h2 className="text-sm font-semibold">Project Availability</h2>
+								</div>
+								<p className="text-xs text-muted-foreground">
+									Skills live in a Project. Agents can use this Skill when that Project is attached.
+								</p>
+							</div>
+							<Badge variant={isReadOnly ? "secondary" : "outline"}>
+								{isReadOnly ? "Read-only" : "Editable"}
+							</Badge>
+						</div>
+						{skillProject ? (
+							<ProjectIdentity
+								project={skillProject}
+								showOwner
+								showAccess
+								titleClassName="text-sm"
+							/>
+						) : sourceProjectName ? (
+							<div className="rounded-md border bg-background/70 px-3 py-2.5">
+								<div className="text-sm font-medium">{sourceProjectName}</div>
+								<p className="mt-1 text-xs text-muted-foreground">
+									Project details are still loading.
+								</p>
+							</div>
+						) : (
+							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+								No Project information is available for this Skill.
+							</p>
+						)}
+					</DetailPanel>
+
 					{isEditing ? (
-						<>
-							<Separator />
+						<DetailPanel className="space-y-4">
 							<Alert>
 								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
@@ -410,15 +476,56 @@ function SkillDetailPageInner() {
 								spellCheck={false}
 								disabled={saveEdit.isPending}
 							/>
-						</>
+						</DetailPanel>
 					) : skill.content ? (
-						<>
-							<Separator />
-							<div className="prose prose-sm max-w-none dark:prose-invert">
-								<Markdown content={stripFrontmatter(skill.content)} />
+						<DetailPanel className="space-y-4">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2">
+										<BookOpen className="size-4 text-muted-foreground" />
+										<h2 className="text-sm font-semibold">Instruction File</h2>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										Agents read this file when the Project provides the Skill.
+									</p>
+								</div>
+								<Badge variant="secondary">
+									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
+								</Badge>
 							</div>
-						</>
-					) : null}
+							{skillBody ? (
+								<div className="prose prose-sm max-w-none dark:prose-invert">
+									<Markdown content={skillBody} />
+								</div>
+							) : (
+								<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+									No additional instruction body is stored for this Skill.
+								</p>
+							)}
+						</DetailPanel>
+					) : (
+						<DetailPanel className="space-y-4">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2">
+										<BookOpen className="size-4 text-muted-foreground" />
+										<h2 className="text-sm font-semibold">Instruction File</h2>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										The Skill is installed, but no editable instruction body is available from the
+										current sync.
+									</p>
+								</div>
+								<Badge variant="secondary">
+									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
+								</Badge>
+							</div>
+							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+								When the agent uploads the Skill file content, the preview and editor will appear
+								here.
+							</p>
+						</DetailPanel>
+					)}
 				</>
 			) : null}
 		</div>
