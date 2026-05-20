@@ -307,7 +307,7 @@ function ApiKeysPanel() {
 							CLAWDI_AUTH_TOKEN
 						</code>{" "}
 						(this is the env var the CLI and{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi serve</code>{" "}
+						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi daemon</code>{" "}
 						actually read).
 					</>
 				}

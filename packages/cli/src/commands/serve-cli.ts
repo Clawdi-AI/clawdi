@@ -1,8 +1,8 @@
 /**
- * `clawdi serve` command tree registration.
+ * `clawdi daemon` command tree registration.
  *
  * Extracted from `index.ts` so tests can import the real wiring
- * (parent `serveCmd` + 6 subcommands) onto a test-local Commander
+ * (parent daemon command + subcommands) onto a test-local Commander
  * tree and exercise option scoping end-to-end. Pre-fix, the test
  * file built a parallel mock tree which silently drifted from the
  * real one — codex's review of PR #73 flagged this as the test's
@@ -12,7 +12,7 @@
 import type { Command } from "commander";
 
 /**
- * Handlers that the serve command tree dispatches to. Production
+ * Handlers that the daemon command tree dispatches to. Production
  * callers leave this undefined; tests pass stub handlers to
  * intercept dispatch without having to `mock.module` the whole
  * `./serve.js` module (which bleeds across test files in bun:test).
@@ -43,9 +43,10 @@ async function defaultHandlers(): Promise<ServeHandlers> {
 export function registerServeCommand(program: Command, handlers?: ServeHandlers): Command {
 	const get = handlers ? () => Promise.resolve(handlers) : defaultHandlers;
 	const serveCmd = program
-		.command("serve")
+		.command("daemon")
+		.alias("serve")
 		.description(
-			"Run the long-lived sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE within seconds",
+			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
 		)
 		.option("--agent <type>", "Agent to service (claude_code, codex, hermes, openclaw)")
 		.option("--environment-id <id>", "Environment id (overrides ~/.clawdi/environments/*.json)")
@@ -60,25 +61,34 @@ Environment:
   CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
 
 Examples:
-  $ clawdi serve --agent claude_code
-  $ CLAWDI_SERVE_MODE=container clawdi serve --agent claude_code
-  $ clawdi serve install --agent claude_code   # set up launchd / systemd unit
-  $ clawdi serve status --agent claude_code    # health + supervisor state`,
+  $ clawdi daemon run --agent claude_code
+  $ CLAWDI_SERVE_MODE=container clawdi daemon run --agent claude_code
+  $ clawdi daemon install --agent claude_code   # set up launchd / systemd unit
+  $ clawdi daemon status --agent claude_code    # health + supervisor state
+  $ clawdi serve status --agent claude_code     # legacy alias`,
 		)
 		.action(async (opts) => {
-			// `clawdi serve` with no subcommand runs the daemon in
-			// the foreground. Subcommands (install/uninstall/status)
-			// are handled below — Commander dispatches them before
-			// this action fires.
+			// `clawdi daemon` (or legacy `clawdi serve`) with no
+			// subcommand still runs the daemon in the foreground for
+			// backward compatibility. `daemon run` is the clearer
+			// spelling for new users.
 			const h = await get();
 			await h.serve(opts);
 		});
 
 	serveCmd
+		.command("run")
+		.description("Run the sync daemon in the foreground")
+		.option("--agent <type>", "Agent to service (claude_code, codex, hermes, openclaw)")
+		.option("--environment-id <id>", "Environment id (overrides ~/.clawdi/environments/*.json)")
+		.action(async (_opts, cmd) => {
+			const h = await get();
+			await h.serve(cmd.optsWithGlobals());
+		});
+
+	serveCmd
 		.command("install")
-		.description(
-			"Install clawdi serve as a per-user OS service (launchd on macOS, systemd on Linux)",
-		)
+		.description("Install the daemon as a per-user OS service (launchd on macOS, systemd on Linux)")
 		.option(
 			"--agent <type>",
 			"Agent to service (auto-picked when only one is registered; required when multiple)",
@@ -90,9 +100,9 @@ Examples:
 		)
 		// `optsWithGlobals` merges parent (`serveCmd`) options with this
 		// subcommand's. Without it, `--agent` defined on both the parent
-		// (`clawdi serve --agent X`) and the child (`clawdi serve install
+		// (`clawdi daemon --agent X`) and the child (`clawdi daemon install
 		// --agent X`) makes commander hand the child action ONLY the
-		// child-scoped opts, so `clawdi serve install --agent codex` lost
+		// child-scoped opts, so `clawdi daemon install --agent codex` lost
 		// the agent and silently installed the default. Same fix applied
 		// to uninstall + status below.
 		.action(async (_opts, cmd) => {

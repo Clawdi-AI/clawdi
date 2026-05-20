@@ -396,7 +396,7 @@ async def delete_environment(
 
 
 class SyncHeartbeatRequest(BaseModel):
-    """Daemon-emitted observability snapshot for `clawdi serve`.
+    """Daemon-emitted observability snapshot for `clawdi daemon`.
 
     Sent every ~30s even on quiet cycles so the dashboard's
     "Last synced: X ago" indicator stays fresh and the operator
@@ -499,7 +499,7 @@ async def sync_heartbeat(
         env.dropped_count_since_start = (
             env.dropped_count_since_start or 0
         ) + body.dropped_count_delta
-    # A heartbeat IS the user opting in: they ran `clawdi serve` (or
+    # A heartbeat IS the user opting in: they ran `clawdi daemon` (or
     # installed the launchd / systemd unit) and the daemon is
     # successfully posting liveness. The `sync_enabled` flag was a
     # canary toggle so existing envs wouldn't auto-pick-up sync at

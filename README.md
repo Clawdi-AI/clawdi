@@ -52,6 +52,7 @@ That gets you:
 - Agent auto-detection for Claude Code, Codex, Hermes, and OpenClaw
 - MCP registration so your agent can call Clawdi tools
 - The bundled `clawdi` skill installed into each detected agent
+- Background sync daemons installed and started for every registered agent
 - A health check that verifies auth, agent paths, vault access, and MCP config
 
 By default the CLI talks to hosted Clawdi Cloud. Want to run your own backend? See [Own the Stack](#own-the-stack).
@@ -207,7 +208,7 @@ Local self-hosting currently expects:
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
 - Two generated encryption keys for vault data and MCP proxy JWTs
-- **One backend process** until v1.5. The `clawdi serve` realtime SSE fan-out lives in process memory (`backend/app/services/sync_events.py`), so a broadcast on worker A doesn't reach a daemon attached to worker B. Run a single uvicorn worker (or one gunicorn worker with `--workers 1`) behind your reverse proxy. Multi-process fan-out via Postgres LISTEN/NOTIFY ships in v1.5.
+- **One backend process** until v1.5. The `clawdi daemon` realtime SSE fan-out lives in process memory (`backend/app/services/sync_events.py`), so a broadcast on worker A doesn't reach a daemon attached to worker B. Run a single uvicorn worker (or one gunicorn worker with `--workers 1`) behind your reverse proxy. Multi-process fan-out via Postgres LISTEN/NOTIFY ships in v1.5.
 
 See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`](apps/web/.env.example) for the exact environment variables.
 
@@ -249,8 +250,9 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | --- | --- |
 | `clawdi auth login` / `logout` | Authenticate this machine |
 | `clawdi status [--json]` | Show auth and sync state |
-| `clawdi setup [--agent <type>]` | Register local agents, install MCP, install the bundled skill |
+| `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start daemons by default |
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
+| `clawdi daemon run/install/status/logs/doctor/restart/uninstall` | Run and manage the background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
 | `clawdi pull` | Download cloud skills into registered agents |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
@@ -265,7 +267,9 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
 | `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
-| `clawdi update` | Check for a newer CLI version |
+| `clawdi update` | Install the latest CLI version (`--check` only reports) |
+
+Auto-update is enabled by default for all newer releases, including majors. Human CLI invocations update the global CLI in the background; installed daemons check on their own cadence, install silently, then let launchd/systemd restart them onto the new code. Disable both with `CLAWDI_NO_AUTO_UPDATE=1` or `clawdi config set autoUpdate false`.
 | `clawdi mcp` | Start the MCP stdio server used by agents |
 
 Every command supports `--help`.
@@ -333,7 +337,7 @@ Common issues:
 - **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, or `--agent openclaw`.
 - **Memory search is empty** - Add a memory first with `clawdi memory add "..."`, then verify with `clawdi memory search "..."`.
 - **Local backend cannot start because `vector` is missing** - Install `pgvector` for your PostgreSQL 16 instance, or use the included Docker Compose database.
-- **Agent MCP tools look stale** - Run `clawdi setup --agent <type>` again and restart the agent.
+- **Agent MCP tools look stale** - Run `clawdi setup --agent <type>` again, then `clawdi daemon restart --all`.
 
 ## License
 

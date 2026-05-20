@@ -17,9 +17,18 @@ import {
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
+import { install as installDaemonService } from "../serve/installer";
 
-export async function setup(opts: { agent?: string; yes?: boolean }) {
+interface SetupOpts {
+	agent?: string;
+	yes?: boolean;
+	/** Commander sets this to false for --no-daemon. Undefined means default-on. */
+	daemon?: boolean;
+}
+
+export async function setup(opts: SetupOpts) {
 	if (!isLoggedIn()) {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exitCode = 1;
@@ -41,9 +50,13 @@ export async function setup(opts: { agent?: string; yes?: boolean }) {
 			return;
 		}
 		const type = opts.agent as AgentType;
-		await registerEnv(api, type, null, machineId, machineName);
+		if (!(await registerEnv(api, type, null, machineId, machineName))) {
+			process.exitCode = 1;
+			return;
+		}
 		await registerMcpServer(type);
 		await installBuiltinSkill(type);
+		if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents();
 		return;
 	}
 
@@ -102,11 +115,21 @@ export async function setup(opts: { agent?: string; yes?: boolean }) {
 	}
 
 	console.log();
+	let registeredCount = 0;
+	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
-		await registerEnv(api, adapter.agentType, version, machineId, machineName);
+		if (!(await registerEnv(api, adapter.agentType, version, machineId, machineName))) {
+			failedCount += 1;
+			continue;
+		}
+		registeredCount += 1;
 		await registerMcpServer(adapter.agentType);
 		await installBuiltinSkill(adapter.agentType);
 	}
+	if (registeredCount > 0 && (await shouldInstallDaemons(opts))) {
+		installDaemonsForRegisteredAgents();
+	}
+	if (failedCount > 0) process.exitCode = 1;
 }
 
 async function registerEnv(
@@ -115,7 +138,7 @@ async function registerEnv(
 	agentVersion: string | null,
 	machineId: string,
 	machineName: string,
-) {
+): Promise<boolean> {
 	try {
 		const env = unwrap(
 			await api.POST("/api/environments", {
@@ -138,10 +161,59 @@ async function registerEnv(
 		);
 
 		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
+		return true;
 	} catch (e) {
 		console.log(
 			chalk.red(`  Failed to register ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`),
 		);
+		return false;
+	}
+}
+
+function installDaemon(agentType: AgentType) {
+	try {
+		const result = installDaemonService({ agent: agentType });
+		const verb = result.replaced ? "updated" : "installed";
+		console.log(chalk.green(`✓ Daemon ${verb} for ${adapterRegistry[agentType].displayName}`));
+		console.log(chalk.gray(`  ${result.instructions}`));
+	} catch (e) {
+		console.log(
+			chalk.yellow(
+				`⚠ Could not install daemon for ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`,
+			),
+		);
+		console.log(chalk.gray(`  Run manually: clawdi daemon install --agent ${agentType}`));
+	}
+}
+
+async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
+	if (opts.daemon === false) {
+		console.log(chalk.gray("Daemon install skipped (--no-daemon)."));
+		return false;
+	}
+	if (opts.yes || !isInteractive()) return true;
+
+	const result = await p.confirm({
+		message: "Install and start background sync daemons for all registered agents?",
+		initialValue: true,
+	});
+	if (p.isCancel(result)) {
+		console.log(chalk.gray("Daemon install skipped."));
+		return false;
+	}
+	return result === true;
+}
+
+function installDaemonsForRegisteredAgents() {
+	const registered = listRegisteredAgentTypes();
+	if (registered.length === 0) {
+		console.log(chalk.gray("No registered agents available for daemon install."));
+		return;
+	}
+	console.log();
+	console.log(chalk.cyan("Installing background sync daemons..."));
+	for (const agentType of registered) {
+		installDaemon(agentType);
 	}
 }
 

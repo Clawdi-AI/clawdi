@@ -11,7 +11,7 @@
 #      mean full account access
 #      (read + write across sessions / skills / memories / vault), same
 #      as a user-self-minted key. Hosted pods need this parity.
-#   3. Prints env vars for running `clawdi serve` against the local
+#   3. Prints env vars for running `clawdi daemon run` against the local
 #      cloud-api so you can push real Claude Code sessions through the
 #      live-sync path locally and watch them land in `cloud.clawdi.ai`'s
 #      Postgres.
@@ -95,18 +95,18 @@ PGPASSWORD=clawdi_dev psql -h localhost -p 5433 -U clawdi -d clawdi_cloud -t -c 
 echo
 
 echo "============================================================"
-echo "Now run \`clawdi serve\` in a SEPARATE terminal with:"
+echo "Now run \`clawdi daemon run\` in a SEPARATE terminal with:"
 echo "============================================================"
 cat <<EOF
 
   export CLAWDI_AUTH_TOKEN="$RAW_KEY"
   export CLAWDI_API_URL="$API"
   export CLAWDI_ENVIRONMENT_ID="$ENV_ID"
-  clawdi serve --agent claude_code
+  clawdi daemon run --agent claude_code
 
 EOF
 echo "============================================================"
-echo "After \`serve\` is running:"
+echo "After \`daemon run\` is running:"
 echo "  - Backfill is automatic; daemon scans ~/.claude/projects/ on startup"
 echo "  - Open or continue any Claude Code conversation → new session JSONL appears"
 echo "  - Daemon picks it up via fs watcher, pushes to cloud-api"
@@ -132,4 +132,4 @@ export CLAWDI_LOCAL_E2E_CLERK_ID="$NOVEL_CLERK_ID"
 EOF
 echo
 echo "Or skip the copy-paste — env vars saved to $ENV_FILE:"
-echo "  source $ENV_FILE && clawdi serve --agent claude_code"
+echo "  source $ENV_FILE && clawdi daemon run --agent claude_code"

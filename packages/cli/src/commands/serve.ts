@@ -1,13 +1,13 @@
 /**
- * `clawdi serve` daemon entry.
+ * `clawdi daemon` entry.
  *
  * Long-lived process. Watches local skill directories, mirrors
  * cloud changes back to the local agent, posts heartbeats, and
  * keeps a bounded retry queue to survive transient outages.
  *
  * Three deploy contexts share this same code:
- *   - laptop: started by the user via `clawdi serve install`
- *     (launchd / systemd unit) or `clawdi serve` in a tmux pane
+ *   - laptop: started by the user via `clawdi daemon install`
+ *     (launchd / systemd unit) or `clawdi daemon run` in a tmux pane
  *   - VPS: same as laptop (systemd unit)
  *   - hosted pod: pid-1 in a sidecar container; auth via
  *     CLAWDI_AUTH_TOKEN env, env id passed via flag or env var
@@ -39,6 +39,7 @@ import {
 import { log, toErrorMessage } from "../serve/log";
 import { getServeLogPath, getServeStateDir } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
+import { startDaemonAutoUpdate } from "./update";
 
 interface ServeOpts {
 	agent?: string;
@@ -46,9 +47,9 @@ interface ServeOpts {
 }
 
 /**
- * Reject parent (`serveCmd`) global options that bled into a
- * subcommand which doesn't use them. Pre-fix `clawdi serve doctor
- * --agent codex` and `clawdi serve status --environment-id <id>`
+ * Reject parent (`daemonCmd`) global options that bled into a
+ * subcommand which doesn't use them. Pre-fix `clawdi daemon doctor
+ * --agent codex` and `clawdi daemon status --environment-id <id>`
  * silently accepted those flags (because parent defines them for the
  * foreground daemon's use) but ignored them — leaving users with no
  * signal that their command had no effect. Codex flagged this as
@@ -66,7 +67,8 @@ export function rejectUnsupportedOpts(
 	if (offenders.length > 0) {
 		const flags = offenders.map(camelToFlag).join(", ");
 		console.error(
-			`\`serve ${cmdName}\` does not accept ${flags}. ` + `See \`clawdi serve ${cmdName} --help\`.`,
+			`\`daemon ${cmdName}\` does not accept ${flags}. ` +
+				`See \`clawdi daemon ${cmdName} --help\`.`,
 		);
 		process.exit(1);
 	}
@@ -141,6 +143,9 @@ export async function serve(opts: ServeOpts): Promise<void> {
 		if (watching) {
 			log.info("serve.auto_restart_armed", { entry: watching });
 		}
+		if (startDaemonAutoUpdate({ abort })) {
+			log.info("serve.auto_update_armed", {});
+		}
 	}
 
 	try {
@@ -185,7 +190,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		if (opts.agent) {
 			// Mutex: --all targets every registered agent; --agent
 			// targets one. Both at once is contradictory and pre-fix
-			// --all silently won, e.g. `serve uninstall --all --agent
+			// --all silently won, e.g. `daemon uninstall --all --agent
 			// codex` looked like "uninstall codex with extras" but
 			// actually nuked everything.
 			console.error(
@@ -285,7 +290,7 @@ export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 	if (opts.all) {
 		// Symmetric with `install --all` — one invocation, every
 		// daemon gone. Pre-fix users had to loop in the shell
-		// (`for a in claude_code codex; do clawdi serve uninstall --agent $a`),
+		// (`for a in claude_code codex; do clawdi daemon uninstall --agent $a`),
 		// which is exactly the friction `install --all` exists to
 		// remove.
 		if (opts.agent) {
@@ -384,7 +389,7 @@ export async function serveRestart(opts: ServeInstallOpts): Promise<void> {
 
 export async function serveStatus(opts: ServeInstallOpts): Promise<void> {
 	rejectUnsupportedOpts("status", opts as Record<string, unknown>, STATUS_ALLOWED);
-	// Without --agent, list every registered daemon — `serve install
+	// Without --agent, list every registered daemon — `daemon install
 	// --all` is the recommended path on multi-agent machines and
 	// status should mirror that. Falling through `pickAgent` here used
 	// to silently hide all-but-one daemon's state behind a warning,
@@ -427,7 +432,7 @@ function printAgentStatus(agentType: AgentType): void {
 		if (health.version !== cliVersion) {
 			console.log(
 				`version: daemon=${health.version}, CLI=${cliVersion} ` +
-					"⚠ drift — run `clawdi serve restart --all` to pick up the latest",
+					"⚠ drift — run `clawdi daemon restart --all` to pick up the latest",
 			);
 		} else {
 			console.log(`version: ${health.version}`);
@@ -472,14 +477,14 @@ export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 		if (!existsSync(path)) {
 			console.error(
 				`No log file at ${path} ` +
-					`(daemon for ${agentType} hasn't started yet — run \`clawdi serve install --agent ${agentType}\`).`,
+					`(daemon for ${agentType} hasn't started yet — run \`clawdi daemon install --agent ${agentType}\`).`,
 			);
 			process.exit(1);
 		}
 		cmd = "tail";
 		args = opts.follow ? ["-n", "200", "-F", path] : ["-n", "200", path];
 	} else {
-		console.error(`unsupported platform for serve logs: ${platform}`);
+		console.error(`unsupported platform for daemon logs: ${platform}`);
 		process.exit(1);
 	}
 	const proc = spawn(cmd, args, { stdio: "inherit" });
@@ -492,7 +497,7 @@ interface ServeDoctorOpts {
 
 export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	rejectUnsupportedOpts("doctor", opts as Record<string, unknown>, DOCTOR_ALLOWED);
-	// `clawdi serve doctor` — single-call snapshot of every
+	// `clawdi daemon doctor` — single-call snapshot of every
 	// daemon's runtime state, designed for support handoff and
 	// for the dashboard's "What's wrong with my sync?" panel
 	// (round-5 must-have #3). Shows per-agent: registration,
@@ -566,7 +571,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	if (anyDrift) {
 		console.log(
 			"⚠ One or more daemons are running an older CLI version. " +
-				"Run `clawdi serve restart --all` to pick up the latest.",
+				"Run `clawdi daemon restart --all` to pick up the latest.",
 		);
 	}
 }
@@ -602,8 +607,8 @@ function pickAgent(explicit: string | undefined): {
 	if (registered.length > 1) {
 		// Fail-fast on multi-agent without an explicit pick. Pre-fix
 		// we picked `registered[0]` and emitted a warn-level event,
-		// which let `serve install --agent` (silently using default)
-		// and `serve uninstall` (silently nuking the wrong daemon)
+		// which let `daemon install --agent` (silently using default)
+		// and `daemon uninstall` (silently nuking the wrong daemon)
 		// hit production. Codex flagged: warn-and-pick is one of
 		// those things that "works on a single-agent laptop"
 		// (correct by accident) and bites multi-agent users in

@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { maybeAutoUpdate, update } from "../../src/commands/update";
+import { dirname, join } from "node:path";
+import { daemonAutoUpdateOnce, maybeAutoUpdate, update } from "../../src/commands/update";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
 let origNoCheck: string | undefined;
+let origNoAuto: string | undefined;
+let origArgv: string[];
 
 async function withStdoutTty<T>(fn: () => Promise<T>): Promise<T> {
 	const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
@@ -23,17 +25,23 @@ async function withStdoutTty<T>(fn: () => Promise<T>): Promise<T> {
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origNoCheck = process.env.CLAWDI_NO_UPDATE_CHECK;
+	origNoAuto = process.env.CLAWDI_NO_AUTO_UPDATE;
+	origArgv = [...process.argv];
 	delete process.env.CLAWDI_NO_UPDATE_CHECK;
+	delete process.env.CLAWDI_NO_AUTO_UPDATE;
 	tmpHome = join(tmpdir(), `clawdi-update-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	process.env.HOME = tmpHome;
 });
 
 afterEach(() => {
+	process.argv.splice(0, process.argv.length, ...origArgv);
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
 	if (origNoCheck) process.env.CLAWDI_NO_UPDATE_CHECK = origNoCheck;
 	else delete process.env.CLAWDI_NO_UPDATE_CHECK;
+	if (origNoAuto) process.env.CLAWDI_NO_AUTO_UPDATE = origNoAuto;
+	else delete process.env.CLAWDI_NO_AUTO_UPDATE;
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
@@ -120,6 +128,98 @@ describe("update --json", () => {
 	});
 });
 
+describe("daemonAutoUpdateOnce", () => {
+	it("installs updates and leaves last-version for the next human CLI notice", async () => {
+		const calls: { installer: string; args: string[] }[] = [];
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+			},
+		]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "1.2.3",
+				installer: "npm",
+				installRunner: async (installer, args) => {
+					calls.push({ installer, args });
+					return 0;
+				},
+			});
+
+			expect(result).toBe("installed");
+			expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", "clawdi@latest"] }]);
+			expect(readFileSync(join(tmpHome, ".clawdi", "last-version"), "utf-8").trim()).toBe("1.2.3");
+		} finally {
+			restore();
+		}
+	});
+
+	it("auto-installs major updates from daemon context", async () => {
+		const calls: { installer: string; args: string[] }[] = [];
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () => jsonResponse({ "dist-tags": { latest: "2.0.0" } }),
+			},
+		]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "1.9.9",
+				installer: "npm",
+				installRunner: async (installer, args) => {
+					calls.push({ installer, args });
+					return 0;
+				},
+			});
+			expect(result).toBe("installed");
+			expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", "clawdi@latest"] }]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("respects autoUpdate=false for daemon auto-update", async () => {
+		writeFileSync(join(tmpHome, ".clawdi", "config.json"), JSON.stringify({ autoUpdate: "false" }));
+		const { captured: fetches, restore } = mockFetch([]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "1.2.3",
+				installer: "npm",
+			});
+			expect(result).toBe("disabled");
+			expect(fetches).toHaveLength(0);
+		} finally {
+			restore();
+		}
+	});
+
+	it("uses a cross-daemon lock so only one daemon installs at a time", async () => {
+		mkdirSync(join(tmpHome, ".clawdi", "daemon-auto-update.lock"), { recursive: true });
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+			},
+		]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "1.2.3",
+				installer: "npm",
+				installRunner: async () => {
+					throw new Error("should not install while locked");
+				},
+			});
+			expect(result).toBe("locked");
+		} finally {
+			restore();
+		}
+	});
+});
+
 describe("maybeAutoUpdate", () => {
 	it("writes last-version on first run; no notice", async () => {
 		const orig = console.log;
@@ -158,6 +258,27 @@ describe("maybeAutoUpdate", () => {
 		}
 		expect(captured).toContain("Updated clawdi to");
 		expect(captured).toContain("(was v0.0.1)");
+	});
+
+	it("nudges daemon restart after CLI update when an installed daemon reports an older version", async () => {
+		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
+		writeInstalledDaemon("codex");
+		writeDaemonHealth("codex", "0.0.1");
+
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured += `${args.map(String).join(" ")}\n`;
+		};
+		const { restore } = mockFetch([]);
+		try {
+			await withStdoutTty(() => maybeAutoUpdate());
+		} finally {
+			console.log = orig;
+			restore();
+		}
+		expect(captured).toContain("Updated clawdi to");
+		expect(captured).toContain("Restart the daemon to pick it up: clawdi daemon restart --all");
 	});
 
 	it("keeps post-update notice out of non-TTY stdout", async () => {
@@ -205,15 +326,20 @@ describe("maybeAutoUpdate", () => {
 		expect(fetches).toHaveLength(0);
 	});
 
-	it("major bump prints hint, does not spawn install", async () => {
+	it("auto-installs major updates from human CLI startup", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
-		// Plant cache showing a major bump available (1.x → 2.x style).
-		// Our binary version is whatever the package.json says; pick something
-		// way higher to guarantee a major-bump diff.
+		// Plant cache with a version way higher than package.json so this
+		// remains a major-bump test regardless of the fixture version.
 		writeFileSync(
 			join(tmpHome, ".clawdi", "update.json"),
 			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
 		);
+		const installs: {
+			installer: string;
+			args: string[];
+			latest: string;
+			logFd: number;
+		}[] = [];
 		const orig = console.log;
 		let captured = "";
 		console.log = (...args: unknown[]) => {
@@ -221,14 +347,26 @@ describe("maybeAutoUpdate", () => {
 		};
 		const { restore } = mockFetch([]);
 		try {
-			await withStdoutTty(() => maybeAutoUpdate());
+			await withStdoutTty(() =>
+				maybeAutoUpdate({
+					detectInstaller: () => "npm",
+					spawnBackgroundInstall: (installer, args, context) => {
+						installs.push({ installer, args, latest: context.latest, logFd: context.logFd });
+					},
+				}),
+			);
 		} finally {
 			console.log = orig;
 			restore();
 		}
-		// Hint about manual upgrade, NOT the in-background spawn line.
-		expect(captured).toContain("Major release v999.0.0");
-		expect(captured).not.toContain("in background");
+		expect(captured).toContain("Updating clawdi v");
+		expect(captured).toContain("→ v999.0.0 in background");
+		expect(captured).not.toContain("Major release");
+		expect(installs).toHaveLength(1);
+		expect(installs[0]?.installer).toBe("npm");
+		expect(installs[0]?.args).toEqual(["i", "-g", "clawdi@latest"]);
+		expect(installs[0]?.latest).toBe("999.0.0");
+		expect(installs[0]?.logFd ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
 	it("respects autoUpdate=false config — skips install path", async () => {
@@ -253,4 +391,59 @@ describe("maybeAutoUpdate", () => {
 		// No "Updating in background…" line — the install path is skipped.
 		expect(captured).not.toContain("in background");
 	});
+
+	it("skips long-lived daemon invocations so daemons do not consume update notices", async () => {
+		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
+		process.argv.splice(2, process.argv.length - 2, "daemon", "run", "--agent", "codex");
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured += `${args.map(String).join(" ")}\n`;
+		};
+		const { captured: fetches, restore } = mockFetch([]);
+		try {
+			await withStdoutTty(() => maybeAutoUpdate());
+		} finally {
+			console.log = orig;
+			restore();
+		}
+		expect(captured).not.toContain("Updated clawdi to");
+		expect(fetches).toHaveLength(0);
+		expect(readFileSync(join(tmpHome, ".clawdi", "last-version"), "utf-8").trim()).toBe("0.0.1");
+	});
+
+	it("skips update/config/help startup invocations", async () => {
+		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
+		const cases = [["update", "--check"], ["config", "set", "autoUpdate", "false"], ["--version"]];
+
+		for (const argv of cases) {
+			process.argv.splice(2, process.argv.length - 2, ...argv);
+			const { captured: fetches, restore } = mockFetch([]);
+			try {
+				await withStdoutTty(() => maybeAutoUpdate());
+			} finally {
+				restore();
+			}
+			expect(fetches).toHaveLength(0);
+			expect(readFileSync(join(tmpHome, ".clawdi", "last-version"), "utf-8").trim()).toBe("0.0.1");
+		}
+	});
 });
+
+function writeInstalledDaemon(agent: string): void {
+	const path =
+		process.platform === "darwin"
+			? join(tmpHome, "Library", "LaunchAgents", `ai.clawdi.serve.${agent}.plist`)
+			: join(tmpHome, ".config", "systemd", "user", `clawdi-serve-${agent}.service`);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, "test daemon unit\n");
+}
+
+function writeDaemonHealth(agent: string, version: string): void {
+	const dir = join(tmpHome, ".clawdi", "serve", agent);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(
+		join(dir, "health"),
+		`${JSON.stringify({ timestamp: new Date().toISOString(), version })}\n`,
+	);
+}

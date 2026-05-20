@@ -7,6 +7,34 @@ database migration, CI, and implementation details.
 - Clawdi app/backend/web releases use `clawdi-vYYYY.MM.DD.<run_number>`.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.0
+
+Package: `clawdi@0.8.0`
+
+### Added
+
+- Added `clawdi daemon` as the primary command for managing background sync.
+  The old `clawdi serve` command remains available as a legacy alias.
+- Added default daemon installation during `clawdi setup`, so every registered
+  local agent gets live sync unless setup is run with `--no-daemon`.
+- Added background auto-update for installed daemons. Daemons check for newer
+  CLI releases, install them silently, and let launchd/systemd restart onto the
+  new version.
+
+### Changed
+
+- CLI and daemon auto-update now install the latest available release, including
+  major versions.
+- `clawdi update` installs by default; use `--check` to report only.
+
+### Fixed
+
+- Reduced daemon idle and burst overhead by coalescing retry-queue persistence,
+  waking the queue only when work arrives, and debouncing skill watcher events.
+- Closed background auto-update log descriptors in the parent CLI process.
+
 ## Clawdi 2026.05.20.1
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-v2026.05.20.1

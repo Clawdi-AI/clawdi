@@ -1,5 +1,5 @@
 /**
- * Generate / load / unload `clawdi serve` as a per-user OS
+ * Generate / load / unload `clawdi daemon` as a per-user OS
  * service.
  *
  * Two backends, one shape:
@@ -41,7 +41,7 @@ interface InstallOpts {
 	/** Pinned environment id baked into the unit's
 	 * `--environment-id <id>` flag. Use ONLY when the caller
 	 * explicitly opts a single agent into a non-default env (e.g.
-	 * `clawdi serve install --agent codex --environment-id <id>`).
+	 * `clawdi daemon install --agent codex --environment-id <id>`).
 	 * Must not be derived from `process.env.CLAWDI_ENVIRONMENT_ID`
 	 * during multi-agent install (`--all`); a shell-set env var
 	 * would otherwise pin every agent unit to the same env. */
@@ -53,13 +53,13 @@ function home(): string {
 }
 
 /** Root of the clawdi state tree (auth, environments, locks,
- * serve queue, serve logs). Honors `CLAWDI_HOME` so test harnesses
+ * daemon queue, daemon logs). Honors `CLAWDI_HOME` so test harnesses
  * + the `clawdi-dev` wrapper get isolated state. Pre-fix
  * `installLaunchd`'s logDir hardcoded `$HOME/.clawdi`, so a
- * `CLAWDI_HOME=/foo clawdi serve install` would bake
- * `$HOME/.clawdi/serve/logs/...` into the plist while `serve logs`
+ * `CLAWDI_HOME=/foo clawdi daemon install` would bake
+ * `$HOME/.clawdi/serve/logs/...` into the plist while `daemon logs`
  * (which DID honor CLAWDI_HOME via `getServeLogPath`) looked at
- * `/foo/serve/logs/...` — `serve logs` couldn't find the file.
+ * `/foo/serve/logs/...` — `daemon logs` couldn't find the file.
  * Codex flagged this as P2 in PR-#74 review. */
 function clawdiRoot(): string {
 	const homeOverride = process.env.CLAWDI_HOME;
@@ -79,7 +79,7 @@ function unitName(agent: string): string {
  * reboot. Capturing these at install time matches "the daemon
  * runs the same way it ran when I installed it" — the user's
  * mental model. Without this, an env-only auth setup
- * (`CLAWDI_AUTH_TOKEN=… clawdi serve install`) silently breaks
+ * (`CLAWDI_AUTH_TOKEN=… clawdi daemon install`) silently breaks
  * after the first reboot because the supervisor strips the
  * shell env and `~/.clawdi/auth.json` was never written.
  *
@@ -97,7 +97,7 @@ function unitName(agent: string): string {
  * It's per-agent state and lives in `~/.clawdi/environments/<agent>.json`
  * (written by `clawdi setup`). Capturing the shell env var would let a
  * single env id leak into every agent's unit during
- * `clawdi serve install --all` — at runtime `resolveEnvironmentId`
+ * `clawdi daemon install --all` — at runtime `resolveEnvironmentId`
  * prefers the env var over the per-agent file, so all daemons would
  * pin to the same env. Single-agent installs that need an explicit
  * pin pass `--environment-id` via `InstallOpts.environmentId`, which
@@ -113,7 +113,7 @@ const PERSISTED_ENV_KEYS = [
 	// directory; honored by `lib/config.ts:clawdiDir()` and
 	// `serve/paths.ts:getServeStateDir()`. Without persisting it
 	// in the supervisor unit, an install run via
-	// `CLAWDI_HOME=… clawdi serve install` would foreground-work
+	// `CLAWDI_HOME=… clawdi daemon install` would foreground-work
 	// but the supervised daemon would fall back to the real
 	// `~/.clawdi/` after the user logs out — splitting state
 	// across two directories and breaking the isolation guarantee.
@@ -175,7 +175,7 @@ function currentClawdiCommand(): string[] {
 		);
 	}
 	// Reject TypeScript source paths. A common dev-mode footgun:
-	// running `bun run packages/cli/src/index.ts serve install`
+	// running `bun run packages/cli/src/index.ts daemon install`
 	// from a clone bakes the .ts source path into the launchd /
 	// systemd unit. After reboot, the supervisor launches that
 	// unit via the system `node` binary which can't execute raw
@@ -237,7 +237,7 @@ function restartLaunchd(opts: InstallOpts): void {
 	if (!existsSync(path)) {
 		throw new Error(
 			`no daemon unit installed for ${opts.agent} ` +
-				`(run \`clawdi serve install --agent ${opts.agent}\` first)`,
+				`(run \`clawdi daemon install --agent ${opts.agent}\` first)`,
 		);
 	}
 	const label = unitName(opts.agent);
@@ -323,7 +323,8 @@ function installLaunchd(opts: InstallOpts): {
   <array>
     <string>${escapeXml(node)}</string>
     <string>${escapeXml(entry)}</string>
-    <string>serve</string>
+    <string>daemon</string>
+    <string>run</string>
     <string>--agent</string>
     <string>${escapeXml(opts.agent)}</string>${envIdArgs}
   </array>
@@ -514,13 +515,13 @@ function installSystemd(opts: InstallOpts): {
 	// of "start at user login"; requires `loginctl enable-linger
 	// <user>` to fire on boot rather than first login session.
 	const unit = `[Unit]
-Description=clawdi serve daemon (${opts.agent})
+Description=clawdi daemon (${opts.agent})
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${shellEscape(node)} ${shellEscape(entry)} serve --agent ${shellEscape(opts.agent)}${
+ExecStart=${shellEscape(node)} ${shellEscape(entry)} daemon run --agent ${shellEscape(opts.agent)}${
 		opts.environmentId ? ` --environment-id ${shellEscape(opts.environmentId)}` : ""
 	}
 Restart=always
@@ -614,7 +615,7 @@ function tryRunCapture(argv: string[]): string | null {
 		// Pipe stdout (we want it), discard stdin/stderr — pre-fix
 		// stderr leaked through, e.g. `launchctl list <label>`
 		// failing with "Could not find service ..." printed during
-		// `serve restart`'s liveness probe.
+		// `daemon restart`'s liveness probe.
 		return execFileSync(argv[0], argv.slice(1), {
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "ignore"],
@@ -660,7 +661,7 @@ function shellEscape(s: string): string {
 }
 
 /** Scan the OS supervisor for every clawdi daemon unit installed
- * by `clawdi serve install`, regardless of whether its agent is
+ * by `clawdi daemon install`, regardless of whether its agent is
  * still registered in `~/.clawdi/environments/`. Used by callers
  * that need to act on the actual installed surface (e.g. `serve
  * restart --all`, `auth logout`'s warn-about-residual-daemons
@@ -685,12 +686,12 @@ export function listInstalledAgents(): KnownAgent[] {
 	return installed;
 }
 
-/** Health-file age check, used by `clawdi serve status` even
+/** Health-file age check, used by `clawdi daemon status` even
  * before the unit framework reports anything. The daemon writes
  * `<state-dir>/health` after every successful heartbeat as a JSON
  * payload (`{"timestamp", "version"}`); file mtime within ~90s
  * means the daemon is alive and reaching the cloud. The `version`
- * field lets `serve status` flag drift after a CLI upgrade
+ * field lets `daemon status` flag drift after a CLI upgrade
  * (daemon needs a restart to pick up the new bundle). Older
  * daemons wrote a bare ISO timestamp; the parser falls back to
  * that shape and reports `version: null`.

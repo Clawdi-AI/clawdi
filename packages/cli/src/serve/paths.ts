@@ -1,5 +1,5 @@
 /**
- * Resolves on-disk locations for `clawdi serve`.
+ * Resolves on-disk locations for `clawdi daemon`.
  *
  * Two override knobs, in precedence order:
  *

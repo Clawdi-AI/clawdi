@@ -1,5 +1,5 @@
 /**
- * Structured JSON logger for `clawdi serve`.
+ * Structured JSON logger for `clawdi daemon`.
  *
  * Daemon logs are NEVER for humans reading a TTY — they get
  * redirected by launchd / systemd / the pod's stdout collector

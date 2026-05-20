@@ -1,5 +1,5 @@
 """Seed a synthetic user + agent environment + deploy api_key for
-the `clawdi serve` e2e test.
+the daemon e2e test.
 
 Companion to `scripts/serve-e2e.sh` at the repo root. Creates one
 test user, one agent_environment row, AND one api_key bound to

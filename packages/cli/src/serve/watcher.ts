@@ -30,6 +30,7 @@ import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 
 const POLL_INTERVAL_MS = 30_000;
+const CHANGE_DEBOUNCE_MS = 500;
 
 /** Sentinel: thrown out of `watchEvents` when recursive fs.watch
  * isn't supported. The outer `watchSkills` catches it and falls
@@ -91,6 +92,42 @@ export async function watchSkills(opts: Opts): Promise<void> {
 	}
 }
 
+export function createDebouncedSkillChangeEmitter(
+	onSkillChanged: (skillKey: string) => void,
+	opts: { abort?: AbortSignal; debounceMs?: number } = {},
+): { emit: (skillKey: string) => void; flush: () => void; dispose: () => void } {
+	const debounceMs = opts.debounceMs ?? CHANGE_DEBOUNCE_MS;
+	const pending = new Set<string>();
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let disposed = false;
+
+	const flush = () => {
+		if (disposed) return;
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+		}
+		const keys = [...pending];
+		pending.clear();
+		for (const key of keys) onSkillChanged(key);
+	};
+	const dispose = () => {
+		disposed = true;
+		if (timer) clearTimeout(timer);
+		timer = null;
+		pending.clear();
+		opts.abort?.removeEventListener("abort", dispose);
+	};
+	const emit = (skillKey: string) => {
+		if (disposed || opts.abort?.aborted) return;
+		pending.add(skillKey);
+		if (timer) return;
+		timer = setTimeout(flush, debounceMs);
+	};
+	opts.abort?.addEventListener("abort", dispose, { once: true });
+	return { emit, flush, dispose };
+}
+
 /** fs.watch-based mode. The Node API requires us to fan out a
  * single recursive watch ourselves on platforms where recursive
  * watch isn't supported (Linux). We handle both cases in one
@@ -110,9 +147,12 @@ async function watchEvents(opts: Opts): Promise<void> {
 
 	const skillWatchers = new Map<string, { close(): void }>();
 	let rootWatcher: { close(): void } | null = null;
+	const changeEmitter = createDebouncedSkillChangeEmitter(opts.onSkillChanged, {
+		abort: opts.abort,
+	});
 
 	const on = (skillKey: string) => {
-		opts.onSkillChanged(skillKey);
+		changeEmitter.emit(skillKey);
 	};
 
 	const attachSubWatcher = (key: string) => {
@@ -243,6 +283,7 @@ async function watchEvents(opts: Opts): Promise<void> {
 		}
 		skillWatchers.clear();
 		rootWatcher = null;
+		changeEmitter.dispose();
 		throw e;
 	}
 
@@ -264,6 +305,7 @@ async function watchEvents(opts: Opts): Promise<void> {
 						/* already closed */
 					}
 				}
+				changeEmitter.dispose();
 				resolve();
 			},
 			{ once: true },

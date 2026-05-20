@@ -14,6 +14,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createDebouncedSkillChangeEmitter } from "./watcher";
 
 const SKILL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 
@@ -80,3 +81,40 @@ describe("listLocalSkillKeys filters dotfile dirs", () => {
 		}
 	});
 });
+
+describe("createDebouncedSkillChangeEmitter", () => {
+	it("coalesces a burst of events by skill_key", async () => {
+		const seen: string[] = [];
+		const emitter = createDebouncedSkillChangeEmitter((key) => seen.push(key), {
+			debounceMs: 5,
+		});
+
+		for (let i = 0; i < 100; i++) {
+			emitter.emit("frontend-design");
+			emitter.emit("webapp-testing");
+		}
+
+		await sleep(20);
+		expect(seen).toEqual(["frontend-design", "webapp-testing"]);
+		emitter.dispose();
+	});
+
+	it("drops pending events on abort", async () => {
+		const abort = new AbortController();
+		const seen: string[] = [];
+		const emitter = createDebouncedSkillChangeEmitter((key) => seen.push(key), {
+			abort: abort.signal,
+			debounceMs: 20,
+		});
+
+		emitter.emit("frontend-design");
+		abort.abort();
+		await sleep(30);
+
+		expect(seen).toEqual([]);
+	});
+});
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}

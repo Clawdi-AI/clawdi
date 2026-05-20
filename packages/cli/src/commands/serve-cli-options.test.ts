@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { registerServeCommand, type ServeHandlers } from "./serve-cli";
 
 /**
- * Regression tests for the `clawdi serve` command tree wiring.
+ * Regression tests for the `clawdi daemon` command tree wiring.
  *
  * `index.ts` and this test both call `registerServeCommand` —
  * earlier rounds maintained a parallel mock tree, which silently
@@ -36,6 +36,40 @@ function buildTree(): { program: Command; captured: { last: Record<string, unkno
 }
 
 describe("registerServeCommand", () => {
+	it("daemon install --agent codex reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "install", "--agent", "codex"]);
+		expect(captured.last?.agent).toBe("codex");
+	});
+
+	it("daemon run --agent codex --environment-id <uuid> reaches the foreground action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"run",
+			"--agent",
+			"codex",
+			"--environment-id",
+			"00000000-0000-0000-0000-000000000001",
+		]);
+		expect(captured.last?.agent).toBe("codex");
+		expect(captured.last?.environmentId).toBe("00000000-0000-0000-0000-000000000001");
+	});
+
+	it("daemon with no subcommand still runs the foreground action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "--agent", "codex"]);
+		expect(captured.last?.agent).toBe("codex");
+	});
+
+	it("legacy serve with no subcommand still runs the foreground action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "--agent", "codex"]);
+		expect(captured.last?.agent).toBe("codex");
+	});
+
 	it("install --agent codex (child-side) reaches the action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "install", "--agent", "codex"]);

@@ -129,7 +129,7 @@ class EnvironmentResponse(BaseModel):
     agent_version: str | None
     os: str
     last_seen_at: datetime | None
-    # `clawdi serve` daemon liveness / observability — populated by
+    # `clawdi daemon` liveness / observability — populated by
     # the heartbeat endpoint. NULL on environments whose daemon
     # has never checked in (legacy laptops, freshly created
     # envs). Dashboard renders "offline" red when last_sync_at is

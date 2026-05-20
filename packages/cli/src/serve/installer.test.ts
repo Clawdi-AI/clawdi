@@ -5,7 +5,7 @@
  * We intentionally do NOT exercise launchctl / systemctl here.
  * Those side effects depend on the host's user session, log
  * out / log in state, etc. — flaky in CI. The integration test
- * (running `clawdi serve install` against a real shell) lives
+ * (running `clawdi daemon install` against a real shell) lives
  * in /tmp manual smoke tests, not in `bun test`.
  */
 
@@ -140,7 +140,7 @@ describe("installer.install (macOS plist)", () => {
 			const content = readFileSync(result.unit, "utf-8");
 			// Both keys baked into the plist so the daemon spawned by
 			// launchd after reboot still sees them. Without this, env-
-			// only auth (`CLAWDI_AUTH_TOKEN=… clawdi serve install`)
+			// only auth (`CLAWDI_AUTH_TOKEN=… clawdi daemon install`)
 			// silently lost the token after the next login.
 			expect(content).toContain("<key>CLAWDI_AUTH_TOKEN</key>");
 			expect(content).toContain("clawdi_test_capture_token_value");
@@ -161,7 +161,7 @@ describe("installer.install (macOS plist)", () => {
 		// daemon's `resolveEnvironmentId` prefers env vars over the
 		// per-agent file, so a captured CLAWDI_ENVIRONMENT_ID would
 		// pin every installed agent to that one env id during
-		// `clawdi serve install --all` — all daemons trampling the
+		// `clawdi daemon install --all` — all daemons trampling the
 		// same project.
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;

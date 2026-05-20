@@ -304,10 +304,10 @@ async def project_ids_visible_to(
       * api_key WITHOUT env binding (the device-flow CLI key from
         `clawdi auth login`) → ALL the user's projects, same as
         Clerk JWT. The user authenticated as themselves; multi-
-        agent setups need `clawdi serve --agent <other>` and
+        agent setups need `clawdi daemon run --agent <other>` and
         `clawdi push --all` to operate on any of the user's envs,
         not just whichever was touched last. An earlier "single
-        most-recently-active project" policy broke `serve --agent`
+        most-recently-active project" policy broke `daemon run --agent`
         when its project wasn't the default, since the daemon's
         explicit `?project_id=...` listing intersected to empty.
     """

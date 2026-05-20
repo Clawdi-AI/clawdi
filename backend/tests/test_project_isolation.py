@@ -352,7 +352,7 @@ async def test_unbound_cli_key_can_pin_any_project(
     `?project_id=...`. Pre-fix `project_ids_visible_to` returned only
     the most-recently-active project for ALL is_cli auth, which
     intersected to empty when the daemon pinned a different project
-    (e.g. `clawdi serve --agent codex` with claude_code as the
+    (e.g. `clawdi daemon run --agent codex` with claude_code as the
     default) — daemon got zero skills.
 
     Bound deploy keys are still pinned to their env's project; this
