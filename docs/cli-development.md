@@ -231,6 +231,24 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
+The monorepo has two GitHub Release lines:
+
+- `clawdi-cli-vX.Y.Z` for the published npm package. The CLI publish
+  workflow creates this release after npm publish succeeds and prepends
+  package/install notes to the generated changelog.
+- `cloud-vYYYY.MM.DD.<run_number>` for backend, web, and shared-client
+  changes. `.github/workflows/cloud-release.yml` creates this release
+  when relevant files land on `main`; it can also be run manually with a
+  specific version/commit after an out-of-band production deploy.
+
+Use the release body as the changelog. GitHub's generated notes are
+categorized by `.github/release.yml`; add `skip-changelog` to PRs that
+should not show up.
+
+Old preview releases can be deleted when their binaries and install links
+are no longer needed. Prefer leaving them as prereleases while they are
+still useful for reproducing old preview environments.
+
 ### Bootstrap (one-time, before the workflow can do anything)
 
 npm's trusted-publisher OIDC requires the package to already exist on the
@@ -256,7 +274,8 @@ onward releases are automatic.
 3. The workflow runs typecheck → `bun run build` → `bun test` →
    `npm publish --access public --provenance`. Each step is a separate
    job so a failing test doesn't pollute the publish log.
-4. Watch the Actions tab; on green, `npm view clawdi version` will
+4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
+5. Watch the Actions tab; on green, `npm view clawdi version` will
    reflect the new number within ~60s.
 
 A manual run is available under `workflow_dispatch` if the auto-run
