@@ -112,9 +112,9 @@ export function ResourcesCard({
 						))}
 					</div>
 					<p className="text-muted-foreground">
-						Create Projects to share with teammates. Global and Agent Projects are created
-						automatically and cannot be shared. After choosing a Project, open Skills or Vaults
-						below to add resources to it.
+						Create Projects to share with teammates. Global Projects come with your account; Agent
+						Projects belong to one connected agent. Those managed Projects are automatic and cannot
+						be shared. After choosing a Project, open Skills or Vaults below to add resources to it.
 					</p>
 				</div>
 				<div className="divide-y">
@@ -198,6 +198,7 @@ function ResourceRow({
 		definition.id === "projects" && projectTypeCounts
 			? formatProjectTypeCounts(projectTypeCounts)
 			: projectResourceScopeLabel(definition.projectScope);
+	const isProjectRow = definition.id === "projects";
 	const count = (
 		<span
 			className={cn("text-sm tabular-nums", empty ? "text-muted-foreground" : "font-semibold")}
@@ -206,6 +207,17 @@ function ResourceRow({
 			{formatNumber(resource.count)}
 		</span>
 	);
+	const countCluster =
+		isProjectRow && empty ? (
+			<span className="flex shrink-0 items-center gap-2" title={scopeLabel}>
+				{count}
+				<span className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground">
+					Create Project
+				</span>
+			</span>
+		) : (
+			count
+		);
 	return (
 		<Link
 			href={definition.href}
@@ -216,9 +228,12 @@ function ResourceRow({
 				<div className="text-sm font-medium">{definition.label}</div>
 				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
 					<ProjectResourcePath resource={definition} />
+					{isProjectRow && projectTypeCounts ? (
+						<ProjectTypeBreakdown counts={projectTypeCounts} />
+					) : null}
 					{empty ? (
 						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-							Start: {definition.emptyCta}
+							{isProjectRow ? "Start here" : `Start: ${definition.emptyCta}`}
 						</span>
 					) : (
 						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
@@ -228,14 +243,37 @@ function ResourceRow({
 					)}
 				</div>
 			</div>
-			{definition.id === "projects" && projectTypeCounts ? (
+			{isProjectRow && projectTypeCounts ? (
 				<Tooltip>
-					<TooltipTrigger asChild>{count}</TooltipTrigger>
+					<TooltipTrigger asChild>{countCluster}</TooltipTrigger>
 					<TooltipContent side="left">{scopeLabel}</TooltipContent>
 				</Tooltip>
 			) : (
-				count
+				countCluster
 			)}
 		</Link>
+	);
+}
+
+function ProjectTypeBreakdown({ counts }: { counts: ProjectTypeCounts }) {
+	const items = [
+		{ label: "Custom", count: counts.custom },
+		{ label: "Global", count: counts.global },
+		{ label: "Agent", count: counts.agent },
+	];
+	return (
+		<span
+			className="inline-flex min-w-0 flex-wrap items-center gap-1"
+			title={`Project types: ${formatProjectTypeCounts(counts)}`}
+		>
+			{items.map((item) => (
+				<span
+					key={item.label}
+					className="rounded-sm border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+				>
+					<span className="tabular-nums">{formatNumber(item.count)}</span> {item.label}
+				</span>
+			))}
+		</span>
 	);
 }

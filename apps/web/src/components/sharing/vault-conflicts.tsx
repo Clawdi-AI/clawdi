@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -62,9 +62,13 @@ export function formatVaultConflictSummary(conflictCount: number, vaultCount: nu
 		return "Key name conflict: this Project already uses keys with the same names.";
 	}
 	const conflictCountLabel = conflictCount === 1 ? "1 key name" : `${conflictCount} key names`;
-	const verb = conflictCount === 1 ? "exists" : "exist";
-	const source = vaultCount > 1 ? `across ${vaultCount} other Vaults` : "in another Vault";
-	return `Key name conflict: ${conflictCountLabel} already ${verb} ${source} used by this Project.`;
+	const verb = conflictCount === 1 ? "conflicts" : "conflict";
+	const source = vaultCount > 1 ? `keys from ${vaultCount} other Vaults` : "a key in another Vault";
+	return `Key name conflict: ${conflictCountLabel} already ${verb} with ${source} used by this Project.`;
+}
+
+function formatVaultConflictName(conflict: VaultConflict) {
+	return `${conflict.section ? `${conflict.section}/` : ""}${conflict.item_name}`;
 }
 
 export function VaultConflictsAlert({
@@ -113,19 +117,27 @@ export function VaultConflictsAlert({
 													href={`/vault?search=${encodeURIComponent(vaultSlug)}`}
 													target="_blank"
 													rel="noreferrer"
+													className="gap-1"
 												>
 													Open Vault
+													<ExternalLink aria-hidden="true" className="size-3" />
 												</Link>
 											</Button>
 										</div>
-										<p className="truncate font-mono text-muted-foreground">
-											{items
-												.map((item) => {
-													const section = item.section ? `${item.section}/` : "";
-													return `${section}${item.item_name}`;
-												})
-												.join(", ")}
-										</p>
+										<ul className="flex flex-wrap gap-1 font-mono text-muted-foreground">
+											{items.map((item, index) => {
+												const label = formatVaultConflictName(item);
+												return (
+													<li
+														key={`${label}:${index}`}
+														className="max-w-full break-all rounded-sm bg-muted px-1.5 py-0.5"
+														title={label}
+													>
+														{label}
+													</li>
+												);
+											})}
+										</ul>
 									</li>
 								);
 							})}
@@ -146,7 +158,9 @@ export function VaultConflictsAlert({
 						) : null}
 					</div>
 				) : null}
-				<p className="text-xs">After fixing the key names, come back here to continue.</p>
+				<p className="text-xs">
+					After fixing the key names, come back here and choose {actionLabel} to try again.
+				</p>
 				<Button
 					type="button"
 					variant="outline"

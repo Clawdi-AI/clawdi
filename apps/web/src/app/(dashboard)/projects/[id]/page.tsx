@@ -108,6 +108,7 @@ export default function ProjectDetailPage() {
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
+	const joinedFromShare = searchParams.get("joined") === "share";
 
 	const projects = useQuery({
 		queryKey: ["projects"],
@@ -278,6 +279,20 @@ export default function ProjectDetailPage() {
 					</div>
 				}
 			/>
+
+			{joinedFromShare ? (
+				<Alert>
+					<CheckCircle2 className="size-4" />
+					<AlertTitle>Project Added</AlertTitle>
+					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+						<span>Next step: add this Project to an agent to use its skills and Vault access.</span>
+						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
+							<Bot className="mr-1.5 size-3.5" />
+							Add to Agent
+						</Button>
+					</AlertDescription>
+				</Alert>
+			) : null}
 
 			<OverviewCard
 				project={project}

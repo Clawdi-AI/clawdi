@@ -220,7 +220,7 @@ function ShareMethodGuide() {
 			<div>
 				<div className="font-medium text-foreground">Email Invite</div>
 				<p className="mt-1 text-muted-foreground">
-					Best when you know their Clawdi account email. They accept from the Notification Center
+					Best when you know the email they use to sign in. They accept from the Notification Center
 					icon in the top bar.
 				</p>
 			</div>
@@ -624,7 +624,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			<div className="space-y-1">
 				<h3 className="text-sm font-semibold">Invite people</h3>
 				<p className="text-xs text-muted-foreground">
-					Use email when you know the person&apos;s Clawdi account email. If they may be new to
+					Use email when the person already signs in with this address. If they may be new to
 					Clawdi, create a share link instead.
 				</p>
 			</div>
@@ -674,7 +674,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? (
-				<EmptyHint message="No pending invites. Invite by email when you know the person's Clawdi account email." />
+				<EmptyHint message="No pending invites." />
 			) : (
 				<ul className="space-y-2">
 					{invites.data?.map((inv) => (

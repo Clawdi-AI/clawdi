@@ -84,10 +84,10 @@ describe("vault conflict API details", () => {
 
 	test("formats conflict summaries around source vault count", () => {
 		expect(formatVaultConflictSummary(1, 1)).toBe(
-			"Key name conflict: 1 key name already exists in another Vault used by this Project.",
+			"Key name conflict: 1 key name already conflicts with a key in another Vault used by this Project.",
 		);
 		expect(formatVaultConflictSummary(2, 2)).toBe(
-			"Key name conflict: 2 key names already exist across 2 other Vaults used by this Project.",
+			"Key name conflict: 2 key names already conflict with keys from 2 other Vaults used by this Project.",
 		);
 	});
 });

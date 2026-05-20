@@ -119,7 +119,7 @@ export default function SharePage() {
 			return upgradeShare(token, bearer);
 		},
 		onSuccess: (result) => {
-			router.push(projectDetailHref(result.project_id));
+			router.push(`${projectDetailHref(result.project_id)}?joined=share`);
 		},
 	});
 
