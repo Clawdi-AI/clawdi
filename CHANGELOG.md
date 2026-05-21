@@ -69,8 +69,8 @@ Package: `clawdi@0.8.1`
 - `clawdi project show`, `clawdi skill list`, `clawdi pull`, and
   `clawdi vault list` now page through cloud results instead of showing only
   the first page.
-- Share-link preview copy now says Vault names unlock after sign-in, avoiding
-  the implication that shared secret values are exposed to human viewers.
+- Share-link preview copy now says Vault metadata unlocks after sign-in while
+  keeping plaintext out of web preview flows.
 
 ## Clawdi 2026.05.21.2
 
@@ -83,7 +83,7 @@ Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-v2026.05.21.2
 - Added dashboard Project sharing flows, including share links, direct invites,
   member management, public share acceptance, and notifications.
 - Added Vault import and Project attachment controls in the dashboard, including
-  read-only Vault views for shared Project viewers.
+  Vault metadata views for shared Project viewers.
 
 ### Changed
 
@@ -96,9 +96,10 @@ Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-v2026.05.21.2
 
 ### Security
 
-- Shared Project recipients remain read-only Viewers. Vault plaintext stays
-  hidden in web and human shared-access flows; bound Agent keys can use shared
-  Vault values only through explicit Agent Project attachments.
+- Shared Project recipients remain Viewers without write access. Vault
+  plaintext stays hidden in web flows; CLI/API-key runtime reads can use shared
+  Vault values, while bound Agent keys use shared values through explicit Agent
+  Project attachments.
 
 ## Clawdi CLI v0.8.0
 

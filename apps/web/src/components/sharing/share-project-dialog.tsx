@@ -139,7 +139,7 @@ export function ShareProjectDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "Share this Project without sharing ownership. People join as read-only Viewers; agent use is a separate choice they make later."
+							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
 							: "Only Projects you create can be shared with people. Global Projects and Agent Projects are created automatically and cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
@@ -193,14 +193,15 @@ function PermissionSummary() {
 			<div>
 				<div className="font-medium text-foreground">Viewer Access</div>
 				<p className="mt-1 text-muted-foreground">
-					Invites and links add people as Viewers. They can read skills, see Vault names, and see
-					key names, but never see key values.
+					Invites and links add people as Viewers. They can read skills, Vault names, key names, and
+					Vault values through CLI runtime reads.
 				</p>
 			</div>
 			<div>
 				<div className="font-medium text-foreground">Secret Values</div>
 				<p className="mt-1 text-muted-foreground">
-					Viewers never see key values. Secret values stay hidden and are only used when agents run.
+					The dashboard never reveals key values. CLI/API-key runtime reads can resolve values for
+					Projects a Viewer can read.
 				</p>
 			</div>
 			<div>
@@ -656,8 +657,8 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 				</Button>
 			</form>
 			<p className="text-xs text-muted-foreground">
-				Invitees join as Viewers with read-only access to skills and Vault key names. Secret values
-				stay hidden. After signing in, they accept from the top-right Notification Center bell.
+				Invitees join as Viewers with read access to skills and Vault values through CLI runtime
+				reads. After signing in, they accept from the top-right Notification Center bell.
 			</p>
 			<Separator />
 			{invites.isLoading ? (

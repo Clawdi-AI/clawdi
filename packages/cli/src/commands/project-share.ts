@@ -85,7 +85,7 @@ export async function projectShareCommand(
 
 	console.log();
 	console.log(
-		`${chalk.green("✓")} Read-only project link ready` +
+		`${chalk.green("✓")} Viewer project link ready` +
 			(projectSlug ? chalk.gray(` for ${chalk.bold(projectSlug)}`) : ""),
 	);
 	console.log();
@@ -96,7 +96,8 @@ export async function projectShareCommand(
 			`Save this URL now — only the prefix ${chalk.bold(body.prefix)} remains visible later.`,
 		),
 	);
-	console.log(chalk.gray("Access: viewer role, read-only project membership."));
+	console.log(chalk.gray("Access: viewer role, no write access."));
+	console.log(chalk.gray("Viewers can resolve shared Vault values through CLI runtime reads."));
 	console.log(chalk.gray("Attaching it to an Agent is separate and explicit after accept."));
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
