@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, LargeBinary, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, LargeBinary, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +37,31 @@ class VaultProjectAttachment(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("vault_id", "project_id", name="uq_vault_project_attachment"),
+    )
+
+
+class VaultProjectSlugAlias(Base, TimestampMixin):
+    __tablename__ = "vault_project_slug_aliases"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vault_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vaults.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    slug: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_legacy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # Compatibility for pre-sharing clawdi://project/.../vault/<slug>/...
+    # references after Vault slugs become account-scoped.
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_vault_project_slug_alias_project_slug"),
     )
 
 

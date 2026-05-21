@@ -18,7 +18,13 @@ from app.core.project import (
 from app.core.query_utils import like_needle
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
-from app.models.vault import Vault, VaultCredentialProfile, VaultItem, VaultProjectAttachment
+from app.models.vault import (
+    Vault,
+    VaultCredentialProfile,
+    VaultItem,
+    VaultProjectAttachment,
+    VaultProjectSlugAlias,
+)
 from app.schemas.common import Paginated
 from app.schemas.vault import (
     VaultBulkResolveRequest,
@@ -44,6 +50,7 @@ from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
 VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
+VaultItemLookupRow = tuple[UUID, str, Vault, VaultItem]
 ExactVaultReferenceFilter = tuple[str, str, str]
 
 
@@ -419,6 +426,16 @@ def _vault_visibility_clause(auth: AuthContext, project_ids: list[UUID], *, incl
     return or_(*clauses)
 
 
+def _vault_project_slug_alias_condition():
+    return (VaultProjectSlugAlias.vault_id == Vault.id) & (
+        VaultProjectSlugAlias.project_id == VaultProjectAttachment.project_id
+    )
+
+
+def _vault_slug_or_alias_clause(slug: str):
+    return or_(Vault.slug == slug, VaultProjectSlugAlias.slug == slug)
+
+
 async def _attached_project_ids_for_vaults(
     db: AsyncSession,
     vault_ids: list[UUID],
@@ -606,16 +623,16 @@ async def _vault_item_rows_for_exact_references(
     db: AsyncSession,
     project_ids: list[UUID],
     references: list[ExactVaultReferenceFilter],
-) -> list[tuple[UUID, Vault, VaultItem]]:
+) -> list[VaultItemLookupRow]:
     if not project_ids or not references:
         return []
 
     vault_slugs = {vault_slug for vault_slug, _section, _field in references}
     sections = {section for _vault_slug, section, _field in references}
     fields = {field for _vault_slug, _section, field in references}
-    rows = (
+    canonical_rows = (
         await db.execute(
-            select(VaultProjectAttachment.project_id, Vault, VaultItem)
+            select(VaultProjectAttachment.project_id, Vault.slug, Vault, VaultItem)
             .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
             .join(VaultItem, VaultItem.vault_id == Vault.id)
             .where(
@@ -633,13 +650,40 @@ async def _vault_item_rows_for_exact_references(
             )
         )
     ).all()
-    return [(project_id, vault, item) for project_id, vault, item in rows]
+    alias_rows = (
+        await db.execute(
+            select(VaultProjectAttachment.project_id, VaultProjectSlugAlias.slug, Vault, VaultItem)
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .join(VaultItem, VaultItem.vault_id == Vault.id)
+            .join(
+                VaultProjectSlugAlias,
+                _vault_project_slug_alias_condition(),
+            )
+            .where(
+                VaultProjectAttachment.project_id.in_(project_ids),
+                VaultProjectSlugAlias.slug.in_(vault_slugs),
+                VaultItem.section.in_(sections),
+                VaultItem.item_name.in_(fields),
+            )
+            .order_by(
+                VaultProjectAttachment.project_id.asc(),
+                Vault.created_at.asc(),
+                Vault.id.asc(),
+                VaultItem.created_at.asc(),
+                VaultItem.id.asc(),
+            )
+        )
+    ).all()
+    return [
+        (project_id, lookup_slug, vault, item)
+        for project_id, lookup_slug, vault, item in [*canonical_rows, *alias_rows]
+    ]
 
 
-def _vault_item_index(rows: list[tuple[UUID, Vault, VaultItem]]) -> VaultItemIndex:
+def _vault_item_index(rows: list[VaultItemLookupRow]) -> VaultItemIndex:
     return {
-        (project_id, vault.slug, item.section, item.item_name): (vault, item)
-        for project_id, vault, item in rows
+        (project_id, lookup_slug, item.section, item.item_name): (vault, item)
+        for project_id, lookup_slug, vault, item in rows
     }
 
 
@@ -1117,15 +1161,41 @@ async def _get_vault_write(
     if project_id is not None:
         if project_id not in owned_project_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = base_q.join(
-            VaultProjectAttachment,
-            VaultProjectAttachment.vault_id == Vault.id,
-        ).where(VaultProjectAttachment.project_id == project_id)
+        base_q = (
+            select(Vault)
+            .join(
+                VaultProjectAttachment,
+                VaultProjectAttachment.vault_id == Vault.id,
+            )
+            .outerjoin(
+                VaultProjectSlugAlias,
+                _vault_project_slug_alias_condition(),
+            )
+            .where(
+                Vault.user_id == auth.user_id,
+                VaultProjectAttachment.project_id == project_id,
+                _vault_slug_or_alias_clause(slug),
+            )
+            .distinct()
+        )
     elif _is_env_bound(auth):
-        base_q = base_q.join(
-            VaultProjectAttachment,
-            VaultProjectAttachment.vault_id == Vault.id,
-        ).where(VaultProjectAttachment.project_id.in_(owned_project_ids))
+        base_q = (
+            select(Vault)
+            .join(
+                VaultProjectAttachment,
+                VaultProjectAttachment.vault_id == Vault.id,
+            )
+            .outerjoin(
+                VaultProjectSlugAlias,
+                _vault_project_slug_alias_condition(),
+            )
+            .where(
+                Vault.user_id == auth.user_id,
+                VaultProjectAttachment.project_id.in_(owned_project_ids),
+                _vault_slug_or_alias_clause(slug),
+            )
+            .distinct()
+        )
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -1176,10 +1246,15 @@ async def _get_vault(
         base_q = (
             select(Vault)
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
-            .where(
-                Vault.slug == slug,
-                VaultProjectAttachment.project_id == project_id,
+            .outerjoin(
+                VaultProjectSlugAlias,
+                _vault_project_slug_alias_condition(),
             )
+            .where(
+                VaultProjectAttachment.project_id == project_id,
+                _vault_slug_or_alias_clause(slug),
+            )
+            .distinct()
         )
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:

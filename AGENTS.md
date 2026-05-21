@@ -53,8 +53,9 @@ pdm format               # Ruff format
 
 ## Release Management
 
-Release instructions live in `docs/cli-development.md#releasing`; the
-user-facing changelog lives in `CHANGELOG.md`.
+Release operations live in `docs/runbooks/release.md`; CLI-specific release
+details live in `docs/cli-development.md#releasing`; the user-facing changelog
+lives in `CHANGELOG.md`.
 
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`; bump `packages/cli/package.json`
   and let `.github/workflows/cli-publish.yml` publish.

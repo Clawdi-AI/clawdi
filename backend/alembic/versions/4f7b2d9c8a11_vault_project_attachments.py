@@ -68,6 +68,56 @@ def upgrade() -> None:
         "vault_project_attachments",
         ["project_id"],
     )
+    op.create_table(
+        "vault_project_slug_aliases",
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
+        sa.Column(
+            "vault_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("vaults.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "project_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("slug", sa.String(length=200), nullable=False),
+        sa.Column("is_legacy", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+        sa.UniqueConstraint(
+            "project_id",
+            "slug",
+            name="uq_vault_project_slug_alias_project_slug",
+        ),
+    )
+    op.create_index(
+        "ix_vault_project_slug_aliases_vault_id",
+        "vault_project_slug_aliases",
+        ["vault_id"],
+    )
+    op.create_index(
+        "ix_vault_project_slug_aliases_project_id",
+        "vault_project_slug_aliases",
+        ["project_id"],
+    )
 
     op.execute(
         """
@@ -75,6 +125,14 @@ def upgrade() -> None:
         SELECT id, project_id
         FROM vaults
         ON CONFLICT (vault_id, project_id) DO NOTHING
+        """
+    )
+    op.execute(
+        """
+        INSERT INTO vault_project_slug_aliases (vault_id, project_id, slug, is_legacy)
+        SELECT id, project_id, slug, true
+        FROM vaults
+        ON CONFLICT (project_id, slug) DO NOTHING
         """
     )
 
@@ -135,6 +193,41 @@ def downgrade() -> None:
           AND projects.kind = 'personal'
         """
     )
+    op.execute(
+        """
+        UPDATE vaults
+        SET project_id = fallback_project.id
+        FROM (
+            SELECT DISTINCT ON (user_id) user_id, id
+            FROM projects
+            ORDER BY user_id, created_at NULLS LAST, id
+        ) AS fallback_project
+        WHERE vaults.project_id IS NULL
+          AND fallback_project.user_id = vaults.user_id
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM vaults
+        WHERE project_id IS NULL
+        """
+    )
+    op.execute(
+        """
+        UPDATE vaults
+        SET slug = legacy_alias.slug
+        FROM (
+            SELECT DISTINCT ON (vault_id, project_id)
+                vault_id,
+                project_id,
+                slug
+            FROM vault_project_slug_aliases
+            ORDER BY vault_id, project_id, is_legacy DESC, created_at ASC, slug
+        ) AS legacy_alias
+        WHERE legacy_alias.vault_id = vaults.id
+          AND legacy_alias.project_id = vaults.project_id
+        """
+    )
     op.alter_column("vaults", "project_id", nullable=False)
     op.create_foreign_key(
         "fk_vaults_project_id",
@@ -151,6 +244,9 @@ def downgrade() -> None:
         "vaults",
         ["user_id", "project_id", "slug"],
     )
+    op.execute("DROP INDEX IF EXISTS ix_vault_project_slug_aliases_project_id")
+    op.execute("DROP INDEX IF EXISTS ix_vault_project_slug_aliases_vault_id")
+    op.execute("DROP TABLE IF EXISTS vault_project_slug_aliases")
     op.drop_index("ix_vault_project_attachments_project_id", table_name="vault_project_attachments")
     op.drop_index("ix_vault_project_attachments_vault_id", table_name="vault_project_attachments")
     op.drop_table("vault_project_attachments")

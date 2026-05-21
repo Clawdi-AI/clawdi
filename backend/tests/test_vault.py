@@ -22,7 +22,12 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
-from app.models.vault import Vault, VaultCredentialProfile, VaultProjectAttachment
+from app.models.vault import (
+    Vault,
+    VaultCredentialProfile,
+    VaultProjectAttachment,
+    VaultProjectSlugAlias,
+)
 
 
 @pytest.mark.asyncio
@@ -120,6 +125,60 @@ async def test_vault_resolve_exact_clawdi_reference(cli_client: httpx.AsyncClien
     assert body["section"] == "database"
     assert body["item_name"] == "url"
     assert body["precedence"][0]["reason"] == "match"
+
+
+@pytest.mark.asyncio
+async def test_vault_resolve_exact_reference_accepts_legacy_project_slug_alias(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_project,
+):
+    created = await cli_client.post(
+        f"/api/vault?project_id={seed_project.id}",
+        json={"slug": "prod-legacy123", "name": "Production"},
+    )
+    assert created.status_code == 200, created.text
+    r = await cli_client.put(
+        f"/api/vault/prod-legacy123/items?project_id={seed_project.id}",
+        json={"section": "database", "fields": {"url": "postgres://legacy-secret"}},
+    )
+    assert r.status_code == 200, r.text
+
+    db_session.add(
+        VaultProjectSlugAlias(
+            vault_id=uuid.UUID(created.json()["id"]),
+            project_id=seed_project.id,
+            slug="prod",
+        )
+    )
+    await db_session.commit()
+
+    alias_items = await cli_client.get(f"/api/vault/prod/items?project_id={seed_project.id}")
+    assert alias_items.status_code == 200, alias_items.text
+    assert alias_items.json() == {"database": ["url"]}
+
+    alias_write = await cli_client.put(
+        f"/api/vault/prod/items?project_id={seed_project.id}",
+        json={"section": "database", "fields": {"user": "legacy-user"}},
+    )
+    assert alias_write.status_code == 200, alias_write.text
+
+    resolved = await cli_client.post(
+        f"/api/vault/resolve?project_id={seed_project.id}"
+        "&vault_slug=prod&section=database&field=url&debug=true"
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["value"] == "postgres://legacy-secret"
+    assert body["vault_slug"] == "prod-legacy123"
+    assert body["precedence"][0]["reason"] == "match"
+
+    resolved_user = await cli_client.post(
+        f"/api/vault/resolve?project_id={seed_project.id}"
+        "&vault_slug=prod&section=database&field=user"
+    )
+    assert resolved_user.status_code == 200, resolved_user.text
+    assert resolved_user.json()["value"] == "legacy-user"
 
 
 @pytest.mark.asyncio

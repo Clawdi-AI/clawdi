@@ -455,6 +455,12 @@ def downgrade() -> None:
     op.drop_table("project_memberships")
 
     op.drop_constraint("ck_projects_kind_v2", "projects", type_="check")
+    op.execute(
+        """
+        DELETE FROM projects
+        WHERE kind NOT IN ('personal', 'environment')
+        """
+    )
     op.create_check_constraint(
         "ck_projects_kind_v1",
         "projects",
