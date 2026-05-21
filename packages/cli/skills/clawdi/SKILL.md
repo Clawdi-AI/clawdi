@@ -88,8 +88,11 @@ Connected service tools (Gmail, GitHub, Notion, etc.) are dynamically registered
 
 When the user asks to migrate secrets into Clawdi Vault or script secret writes, prefer the CLI over raw HTTP calls:
 
-- Use `clawdi vault set KEY --stdin` for piped values, or `clawdi vault set KEY --value <value>` only when shell history exposure is acceptable.
-- Use `clawdi vault import --vault <slug> --section <name> --project <project> --yes <file>` for non-interactive `.env` migrations into a section.
+- Use `clawdi vault set KEY --prompt` for one-off manual secret entry; it prompts without echoing input.
+- Use `clawdi vault set KEY --stdin` for piped values. Empty stdin is rejected unless `--allow-empty` is passed intentionally.
+- Use `clawdi vault set KEY --value <value>` only when shell history exposure is acceptable.
+- Use service-specific vault slugs such as `api-service/env/KEY`; avoid broad slugs such as `prod/KEY`.
+- Use `clawdi vault import --vault <service-slug> --section <name> --project <project> --yes <file>` for non-interactive `.env` migrations into a section.
 - Keep `.env` import keys as POSIX environment identifiers such as `OPENAI_API_KEY`; section names belong in `--section`, not inside the key name.
 - Use `clawdi vault rm <vault>/<section>/<field> --yes` or `clawdi vault delete ...` to clean up misplaced keys.
 - Prefer exact `clawdi://project/...` references printed by the CLI. Do not print plaintext secret values unless the user explicitly asks for them.

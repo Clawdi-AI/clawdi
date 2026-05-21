@@ -90,8 +90,9 @@ Later, in a different agent or a fresh session, ask "what package manager should
 Run a fullstack dev command with vault references without putting plaintext secrets on disk:
 
 ```bash
-printf '%s\n' "$OPENAI_API_KEY" | clawdi vault set OPENAI_API_KEY --stdin
-clawdi vault import --vault prod --section stripe --project personal --yes .env.stripe
+clawdi vault set OPENAI_API_KEY --prompt
+printf '%s\n' "$OPENAI_API_KEY" | clawdi vault set api-service/env/OPENAI_API_KEY --stdin
+clawdi vault import --vault api-service --section stripe --project personal --yes .env.stripe
 echo "OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY" > .env.clawdi
 clawdi run --dry-run --env-file .env.clawdi -- npm run dev
 clawdi run --env-file .env.clawdi -- npm run dev
@@ -100,7 +101,7 @@ clawdi inject --dry-run --in .env.clawdi --out .env.local
 clawdi inject --force --in .env.clawdi --out .env.local
 ```
 
-`clawdi vault set`, `clawdi vault import`, `clawdi vault rm`, and `clawdi vault list` print the concrete Project target or exact references that include the Project ID. `vault set` supports `--value` and `--stdin` for scripts; `vault import` supports `--vault`, `--section`, `--project`, and warns about skipped invalid dotenv identifiers. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
+`clawdi vault set`, `clawdi vault import`, `clawdi vault rm`, and `clawdi vault list` print the concrete Project target or exact references that include the Project ID. `vault set` supports `--prompt` for secure one-off entry, `--stdin` for scripts, and `--value` when shell history exposure is acceptable; empty stdin is rejected unless `--allow-empty` is passed intentionally. `vault import` supports `--vault`, `--section`, `--project`, and warns about skipped invalid dotenv identifiers. Prefer service-specific vault slugs such as `api-service` over broad environment slugs such as `prod`. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
 
 Agents should prefer `clawdi run --env-file .env.clawdi -- <command>` when they can launch the tool themselves. Use `clawdi inject` only for tools that must read a physical `.env.local`; generated files are written owner-only and should stay gitignored.
 

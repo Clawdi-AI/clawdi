@@ -618,7 +618,7 @@ Examples:
 
 ```text
 clawdi://project/00000000-0000-0000-0000-000000000123/vault/default/field/OPENAI_API_KEY
-clawdi://project/00000000-0000-0000-0000-000000000123/vault/prod/section/openai/field/api_key
+clawdi://project/00000000-0000-0000-0000-000000000123/vault/api-service/section/openai/field/api_key
 ```
 
 Keep project-relative syntax for portable templates and environment switching:
@@ -632,15 +632,15 @@ Examples:
 
 ```text
 clawdi://default/OPENAI_API_KEY
-clawdi://prod/openai/api_key
-clawdi://prod/database/url
-clawdi://prod/stripe/secret_key
+clawdi://api-service/openai/api_key
+clawdi://api-service/database/url
+clawdi://payments/stripe/secret_key
 ```
 
 Fields imported from `.env` files or stored with `clawdi vault set OPENAI_API_KEY`
 use no section by default, so they resolve as `clawdi://default/OPENAI_API_KEY`.
 Sectioned paths remain available for manually structured vault fields.
-In these examples `default`, `prod`, and any other first path component are
+In these examples `default`, `api-service`, and any other first path component are
 vault slugs, not Projects. Project selection is deliberately kept outside the
 portable reference.
 
@@ -686,7 +686,7 @@ model.
 Add 1Password-like general commands:
 
 ```bash
-clawdi read clawdi://project/<project-id>/vault/prod/section/stripe/field/secret_key
+clawdi read clawdi://project/<project-id>/vault/payments/section/stripe/field/secret_key
 
 clawdi run --env-file .env -- npm run dev
 
@@ -698,7 +698,7 @@ clawdi inject --in config.template.json
 Support `.env` files like:
 
 ```env
-STRIPE_SECRET_KEY=clawdi://prod/stripe/secret_key
+STRIPE_SECRET_KEY=clawdi://payments/stripe/secret_key
 OPENAI_API_KEY=clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
 ```
 
@@ -718,7 +718,7 @@ Add quality-of-life flags:
 ```bash
 clawdi run --env-file .env --no-inherit-env -- npm run dev
 clawdi run --agent codex --env-file .env -- npm run test
-clawdi read clawdi://project/<project-id>/vault/prod/section/db/field/url --json
+clawdi read clawdi://project/<project-id>/vault/api-service/section/db/field/url --json
 clawdi inject --in .env.template --out -    # stdout
 ```
 

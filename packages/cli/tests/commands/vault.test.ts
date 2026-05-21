@@ -70,6 +70,48 @@ describe("vaultList", () => {
 		]);
 	});
 
+	it("hides empty vaults in JSON output", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/vault/default/items",
+				response: () => jsonResponse({ "(default)": ["OPENAI_API_KEY"] }),
+			},
+			{
+				method: "GET",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({}),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID },
+							{ id: "vault-2", slug: "prod", name: "prod", project_id: PROJECT_ID },
+						],
+						total: 2,
+					}),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out = args.map(String).join(" ");
+		};
+
+		try {
+			await vaultList({ json: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const rows = JSON.parse(out) as Array<{ slug: string }>;
+		expect(rows.map((row) => row.slug)).toEqual(["default"]);
+	});
+
 	it("prints copyable exact references in human output", async () => {
 		const { restore } = mockVaultListFetch();
 		const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
@@ -143,6 +185,44 @@ describe("vaultList", () => {
 		expect(out.match(/Project personal/g)?.length).toBe(1);
 		expect(out).toContain("Vault default");
 		expect(out).toContain("Vault prod");
+	});
+
+	it("hides empty vaults in human output", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({}),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+		]);
+		const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultList({});
+		} finally {
+			console.log = origLog;
+			if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(out).toContain("No vaults.");
+		expect(out).not.toContain("Vault prod");
 	});
 });
 
@@ -438,6 +518,76 @@ describe("vaultSet", () => {
 		});
 	});
 
+	it("rejects empty --stdin before writing", async () => {
+		const { captured, restore } = mockFetch([]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+		try {
+			const run = vaultSet("SECRET_KEY", { stdin: true });
+			queueMicrotask(() => {
+				process.stdin.emit("end");
+			});
+			await expect(run).rejects.toThrow(
+				"Refusing to store an empty secret from --stdin. Pass --allow-empty to store an empty value intentionally.",
+			);
+		} finally {
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
+
+	it("allows empty --stdin only when explicitly requested", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ detail: "already exists" }, 409),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+			{
+				method: "PUT",
+				path: "/api/vault/default/items",
+				response: () => jsonResponse({ status: "ok", fields: 1 }),
+			},
+		]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			const run = vaultSet("SECRET_KEY", { stdin: true, allowEmpty: true });
+			queueMicrotask(() => {
+				process.stdin.emit("end");
+			});
+			await run;
+		} finally {
+			console.log = origLog;
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		const put = captured.find((request) => request.method === "PUT");
+		expect(put?.body).toEqual({
+			section: "",
+			fields: { SECRET_KEY: "" },
+		});
+	});
+
 	it("rejects --stdin from an interactive TTY before writing", async () => {
 		const { captured, restore } = mockFetch([]);
 		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
@@ -450,6 +600,28 @@ describe("vaultSet", () => {
 		} finally {
 			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
 			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
+
+	it("rejects --prompt outside an interactive TTY before writing", async () => {
+		const { captured, restore } = mockFetch([]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		const stdoutTtyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+		Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+
+		try {
+			await expect(vaultSet("SECRET_KEY", { prompt: true })).rejects.toThrow(
+				"Cannot prompt for a vault value in a non-interactive shell. Use --stdin with piped input.",
+			);
+		} finally {
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			if (stdoutTtyDesc) Object.defineProperty(process.stdout, "isTTY", stdoutTtyDesc);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
 			restore();
 		}
 
@@ -508,13 +680,58 @@ describe("vaultSet", () => {
 
 		try {
 			await expect(vaultSet("SECRET_KEY", { value: "sk-live", stdin: true })).rejects.toThrow(
-				"Pass either --value or --stdin, not both.",
+				"Pass only one of --value, --stdin, or --prompt.",
+			);
+			await expect(vaultSet("SECRET_KEY", { value: "sk-live", prompt: true })).rejects.toThrow(
+				"Pass only one of --value, --stdin, or --prompt.",
 			);
 		} finally {
 			restore();
 		}
 
 		expect(captured).toHaveLength(0);
+	});
+
+	it("prints a non-blocking hint for broad vault slugs", async () => {
+		const { restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ detail: "already exists" }, 409),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+			{
+				method: "PUT",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "ok", fields: 1 }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultSet("prod/stripe/SECRET_KEY", { value: "sk-live" });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(out).toContain(
+			'Hint: consider using a service-specific vault slug instead of "prod" for shared project secrets.',
+		);
+		expect(out).toContain("Stored prod/stripe/SECRET_KEY");
 	});
 });
 

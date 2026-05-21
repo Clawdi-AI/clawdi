@@ -7,9 +7,20 @@ import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { buildExactClawdiReference } from "../lib/secret-references";
+import { isInteractive } from "../lib/tty";
 
 const VAULT_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$/;
 const VAULT_ITEM_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
+const BROAD_VAULT_SLUGS = new Set([
+	"dev",
+	"development",
+	"prod",
+	"production",
+	"stage",
+	"staging",
+	"test",
+	"testing",
+]);
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -83,6 +94,8 @@ interface VaultSetOptions {
 	project?: string;
 	value?: string;
 	stdin?: boolean;
+	prompt?: boolean;
+	allowEmpty?: boolean;
 }
 
 export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
@@ -90,6 +103,7 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
 	const normalizedKey = formatVaultKey(vaultSlug, section, field);
+	warnIfBroadVaultSlug(vaultSlug);
 
 	const value = await readVaultSetValue(key, opts);
 	if (value === null) {
@@ -165,6 +179,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			const projectIds = vaultProjectIds(v);
 			const attachedProjectId = projectId ?? projectIds[0];
 			const items = await fetchItems(v.slug, attachedProjectId);
+			if (!hasVaultItems(items)) continue;
 			out.push({
 				slug: v.slug,
 				project_id: attachedProjectId ?? null,
@@ -185,12 +200,6 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		return;
 	}
 
-	const projects = await listProjects(api.baseUrl, api.apiKey).catch(() => []);
-	const projectLabel = (projectId: string | undefined) => {
-		if (!projectId) return "unattached";
-		const project = projects.find((item) => item.id === projectId);
-		return project ? `${formatProjectLabel(project)} (${projectId})` : projectId;
-	};
 	const groups = new Map<
 		string,
 		{
@@ -201,11 +210,23 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	for (const v of vaults) {
 		const attachedProjectId = projectId ?? vaultProjectIds(v)[0];
 		const items = await fetchItems(v.slug, attachedProjectId);
+		if (!hasVaultItems(items)) continue;
 		const key = attachedProjectId ?? "(unattached)";
 		const group = groups.get(key) ?? { projectId: attachedProjectId, rows: [] };
 		group.rows.push({ vault: v, items });
 		groups.set(key, group);
 	}
+	if (groups.size === 0) {
+		console.log(chalk.gray("No vaults."));
+		return;
+	}
+
+	const projects = await listProjects(api.baseUrl, api.apiKey).catch(() => []);
+	const projectLabel = (projectId: string | undefined) => {
+		if (!projectId) return "unattached";
+		const project = projects.find((item) => item.id === projectId);
+		return project ? `${formatProjectLabel(project)} (${projectId})` : projectId;
+	};
 
 	for (const group of groups.values()) {
 		console.log(chalk.white(`Project ${projectLabel(group.projectId)}`));
@@ -258,6 +279,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 
 	const vaultSlug = cleanVaultSlug(opts.vault ?? "default");
 	const section = cleanVaultSection(opts.section ?? "");
+	warnIfBroadVaultSlug(vaultSlug);
 	const content = readFileSync(file, "utf-8");
 	const fields: Record<string, string> = {};
 	const parsed = parseDotenvDetailed(content);
@@ -364,22 +386,52 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 }
 
 async function readVaultSetValue(key: string, opts: VaultSetOptions): Promise<string | null> {
-	if (opts.value !== undefined && opts.stdin) {
-		throw new Error("Pass either --value or --stdin, not both.");
+	const selectedSources = [
+		opts.value !== undefined,
+		Boolean(opts.stdin),
+		Boolean(opts.prompt),
+	].filter(Boolean).length;
+	if (selectedSources > 1) {
+		throw new Error("Pass only one of --value, --stdin, or --prompt.");
 	}
-	if (opts.value !== undefined) return opts.value;
+	if (opts.value !== undefined) {
+		assertNonEmptyVaultValue(opts.value, "--value", opts);
+		return opts.value;
+	}
 	if (opts.stdin) {
 		if (process.stdin.isTTY) {
 			throw new Error("Refusing to read --stdin from an interactive TTY.");
 		}
-		return stripFinalNewline(await readStdin());
+		const value = stripFinalNewline(await readStdin());
+		assertNonEmptyVaultValue(value, "--stdin", opts);
+		return value;
+	}
+	if ((opts.prompt || selectedSources === 0) && !isInteractive()) {
+		throw new Error(
+			"Cannot prompt for a vault value in a non-interactive shell. Use --stdin with piped input.",
+		);
 	}
 	const value = await p.password({ message: `Value for ${key}:` });
-	if (p.isCancel(value) || !value) {
+	if (p.isCancel(value)) {
+		p.cancel("Cancelled.");
+		return null;
+	}
+	if (!value && !opts.allowEmpty) {
 		p.cancel("Cancelled.");
 		return null;
 	}
 	return value;
+}
+
+function assertNonEmptyVaultValue(
+	value: string,
+	source: "--value" | "--stdin",
+	opts: VaultSetOptions,
+) {
+	if (value.length > 0 || opts.allowEmpty) return;
+	throw new Error(
+		`Refusing to store an empty secret from ${source}. Pass --allow-empty to store an empty value intentionally.`,
+	);
 }
 
 async function readStdin(): Promise<string> {
@@ -410,6 +462,19 @@ async function readStdin(): Promise<string> {
 
 function stripFinalNewline(value: string): string {
 	return value.replace(/\r?\n$/, "");
+}
+
+function hasVaultItems(items: Record<string, string[]>): boolean {
+	return Object.values(items).some((fields) => fields.length > 0);
+}
+
+function warnIfBroadVaultSlug(vaultSlug: string) {
+	if (!BROAD_VAULT_SLUGS.has(vaultSlug)) return;
+	console.log(
+		chalk.yellow(
+			`Hint: consider using a service-specific vault slug instead of "${sanitizeMetadata(vaultSlug)}" for shared project secrets.`,
+		),
+	);
 }
 
 function cleanVaultSlug(value: string): string {

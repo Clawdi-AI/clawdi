@@ -158,11 +158,11 @@ Three-level layout: vault → section → field. A vault owns the key rows once;
 
 ```
 clawdi://project/<project-id>/vault/default/field/OPENAI_API_KEY
-clawdi://project/<project-id>/vault/prod/section/openai/field/api_key
+clawdi://project/<project-id>/vault/api-service/section/openai/field/api_key
 clawdi://default/OPENAI_API_KEY
-clawdi://prod/openai/api_key
-clawdi://prod/stripe/secret_key
-clawdi://prod/database/url
+clawdi://api-service/openai/api_key
+clawdi://payments/stripe/secret_key
+clawdi://api-service/database/url
 ```
 
 `.env` imports and `clawdi vault set OPENAI_API_KEY` store fields without a section by default, so that key resolves as `clawdi://default/OPENAI_API_KEY`. Use `clawdi vault import --section openai ...` or `clawdi vault set default/openai/api_key` for sectioned fields.

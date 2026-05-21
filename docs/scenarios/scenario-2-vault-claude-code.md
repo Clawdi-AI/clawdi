@@ -41,21 +41,21 @@ Current pain points:
 
 ```bash
 # Add a single key interactively
-clawdi vault set OPENAI_API_KEY
+clawdi vault set OPENAI_API_KEY --prompt
 > Enter value: ****
 ✓ Stored OPENAI_API_KEY
 
 # Add non-interactively
-printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set prod/stripe/STRIPE_SECRET_KEY --stdin
-✓ Stored prod/stripe/STRIPE_SECRET_KEY
+printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set payments/env/STRIPE_SECRET_KEY --stdin
+✓ Stored payments/env/STRIPE_SECRET_KEY
 
 # Import from existing .env file
 clawdi vault import .env --yes
 ✓ Imported 6 keys to vault "default" in default-write project "personal" (...)
 
 # Import into a vault section
-clawdi vault import --vault prod --section stripe --project personal --yes .env.stripe
-✓ Imported 6 keys to vault "prod" section "stripe" in explicit project "personal" (...)
+clawdi vault import --vault payments --section stripe --project personal --yes .env.stripe
+✓ Imported 6 keys to vault "payments" section "stripe" in explicit project "personal" (...)
 
 # List stored keys (values never shown)
 clawdi vault list
@@ -63,13 +63,13 @@ Project personal (...)
   Vault default
     OPENAI_API_KEY
       clawdi://project/.../vault/default/field/OPENAI_API_KEY
-  Vault prod
+  Vault payments
     stripe/STRIPE_SECRET_KEY
-      clawdi://project/.../vault/prod/section/stripe/field/STRIPE_SECRET_KEY
+      clawdi://project/.../vault/payments/section/stripe/field/STRIPE_SECRET_KEY
 
 # Remove a key
-clawdi vault rm prod/database/DATABASE_URL --yes
-✓ Deleted prod/database/DATABASE_URL from vault "prod" section "database" in default-write project "personal" (...)
+clawdi vault rm api-service/database/DATABASE_URL --yes
+✓ Deleted api-service/database/DATABASE_URL from vault "api-service" section "database" in default-write project "personal" (...)
 ```
 
 **Via Dashboard (for visual management):**
@@ -164,7 +164,7 @@ jobs:
   deploy:
     steps:
       - run: |
-          clawdi run --keys prod/* -- ./deploy.sh
+          clawdi run --keys api-service/* -- ./deploy.sh
         env:
           CLAWDI_AUTH_TOKEN: ${{ secrets.CLAWDI_AUTH_TOKEN }}
 ```

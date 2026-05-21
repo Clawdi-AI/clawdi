@@ -286,11 +286,13 @@ vaultCmd
 		"-p, --project <id-or-slug>",
 		"Target a specific project (default: your default-write project)",
 	)
-	.option("--value <value>", "Secret value; use --stdin to avoid shell history")
+	.option("--value <value>", "Secret value; use --prompt or --stdin to avoid shell history")
 	.option("--stdin", "Read the secret value from stdin")
+	.option("--prompt", "Prompt for the secret value without echoing input")
+	.option("--allow-empty", "Allow storing an empty secret value intentionally")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set DEPLOY_KEY --project engineering\n  $ printf 'secret' | clawdi vault set prod/api/DEPLOY_KEY --stdin",
+		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY --prompt\n  $ clawdi vault set DEPLOY_KEY --project engineering --prompt\n  $ printf 'secret' | clawdi vault set api-service/env/DEPLOY_KEY --stdin",
 	)
 	.action(async (key, opts) => {
 		const { vaultSet } = await import("./commands/vault.js");
@@ -299,6 +301,8 @@ vaultCmd
 			project: opts.project,
 			value: opts.value,
 			stdin: opts.stdin,
+			prompt: opts.prompt,
+			allowEmpty: opts.allowEmpty,
 		});
 	});
 
