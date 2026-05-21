@@ -1,15 +1,17 @@
 name: Release Clawdi
 
-# Creates a GitHub Release for backend/web/shared changes that land on main.
+# Creates a GitHub Release for backend/web/shared/root-config changes that
+# land on main.
 # This repo is a monorepo: the npm package has its own `clawdi-cli-vX.Y.Z`
 # release, while the Clawdi app/backend/web line uses calendar-versioned
-# `clawdi-vYYYY.MM.DD.<run_number>` releases.
+# `clawdi-YYYY-MM-DD` releases, with `-2`, `-3`, ... appended only for
+# additional releases on the same UTC day.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without the clawdi-v prefix. Defaults to YYYY.MM.DD.<run_number>."
+        description: "Release version without the clawdi- prefix. Defaults to YYYY-MM-DD, or YYYY-MM-DD-N for additional releases on the same UTC day."
         required: false
       target:
         description: "Commit SHA to release. Defaults to the workflow SHA."
@@ -50,10 +52,63 @@ jobs:
           TARGET="${INPUT_TARGET:-$GITHUB_SHA}"
           if [ -n "$INPUT_VERSION" ]; then
             VERSION="${INPUT_VERSION#clawdi-v}"
+            VERSION="${VERSION#clawdi-}"
           else
-            VERSION="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+            BASE_VERSION="$(date -u +%Y-%m-%d)"
+            LEGACY_BASE_VERSION="$(date -u +%Y.%m.%d)"
+            MAX_SEQUENCE=0
+            while IFS= read -r existing_tag; do
+              case "$existing_tag" in
+                clawdi-v*) existing_version="${existing_tag#clawdi-v}" ;;
+                clawdi-*) existing_version="${existing_tag#clawdi-}" ;;
+                *) continue ;;
+              esac
+              if [ "$existing_version" = "$BASE_VERSION" ]; then
+                sequence=1
+              elif [[ "$existing_version" == "$BASE_VERSION"-* ]]; then
+                suffix="${existing_version#"$BASE_VERSION-"}"
+                if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+                  sequence="$suffix"
+                else
+                  continue
+                fi
+              elif [ "$existing_version" = "$LEGACY_BASE_VERSION" ]; then
+                sequence=1
+              elif [[ "$existing_version" == "$LEGACY_BASE_VERSION".* ]]; then
+                suffix="${existing_version#"$LEGACY_BASE_VERSION."}"
+                if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+                  sequence="$suffix"
+                else
+                  continue
+                fi
+              else
+                continue
+              fi
+
+              if (( sequence > MAX_SEQUENCE )); then
+                MAX_SEQUENCE="$sequence"
+              fi
+            done < <(
+              {
+                git tag --list "clawdi-${BASE_VERSION}*"
+                git tag --list "clawdi-v${BASE_VERSION}*"
+                git tag --list "clawdi-v${LEGACY_BASE_VERSION}*"
+              } | sort -u
+            )
+
+            if (( MAX_SEQUENCE == 0 )); then
+              VERSION="$BASE_VERSION"
+            else
+              VERSION="${BASE_VERSION}-$((MAX_SEQUENCE + 1))"
+            fi
           fi
-          TAG="clawdi-v${VERSION}"
+
+          if [[ ! "$VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]+)?$ ]]; then
+            echo "Invalid release version: $VERSION"
+            echo "Expected YYYY-MM-DD or YYYY-MM-DD-N, optionally prefixed with clawdi-."
+            exit 1
+          fi
+          TAG="clawdi-${VERSION}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub release $TAG already exists; skipping."
@@ -61,7 +116,8 @@ jobs:
           fi
 
           PREVIOUS=$(
-            git tag --list 'clawdi-v*' --sort=-creatordate \
+            git tag --list 'clawdi-*' --sort=-creatordate \
+              | grep -v '^clawdi-cli-v' \
               | grep -v "^${TAG}$" \
               | head -n 1 || true
           )

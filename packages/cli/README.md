@@ -73,7 +73,7 @@ Clawdi is the shared layer underneath:
 
 - **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
 - **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
-- **Project sharing** — Share read-only Project access, accept it from the CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
+- **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
@@ -128,7 +128,7 @@ clawdi skill install anthropics/skills/artifacts-builder
 
 ## Roadmap
 
-Today Clawdi gives one person a shared layer across their agents. Two bigger bets come next.
+Today Clawdi gives individuals and read-only Project collaborators a shared layer across their agents. Two bigger bets come next.
 
 The first is autonomy. Agents should work without you at the keyboard.
 
@@ -136,9 +136,10 @@ The first is autonomy. Agents should work without you at the keyboard.
 - Remote control for agents on any of your machines.
 - Automatic memory built from session history.
 
-The second is making Clawdi multi-player. Project sharing now covers read-only Project access in the CLI/backend; dashboard surfaces and richer team roles come next.
+The second is deepening multi-player workflows beyond read-only Project sharing.
 
-- Shared memory, skills, and connections, with broader access controls.
+- Richer team roles and broader access controls.
+- Shared memory, skills, and connections.
 - An agent-to-agent channel for handoff and ask-for-help.
 - Task tracking that every connected agent can use.
 
@@ -261,9 +262,9 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
 | `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
+| `clawdi mcp` | Start the MCP stdio server used by agents |
 
 Auto-update is enabled by default for all newer releases, including majors. Human CLI invocations update the global CLI in the background; installed daemons check on their own cadence, install silently, then let launchd/systemd restart them onto the new code. Disable both with `CLAWDI_NO_AUTO_UPDATE=1` or `clawdi config set autoUpdate false`.
-| `clawdi mcp` | Start the MCP stdio server used by agents |
 
 Every command supports `--help`.
 

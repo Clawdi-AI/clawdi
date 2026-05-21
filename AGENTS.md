@@ -59,12 +59,14 @@ lives in `CHANGELOG.md`.
 
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`; bump `packages/cli/package.json`
   and let `.github/workflows/cli-publish.yml` publish.
-- Clawdi app/backend/web releases use `clawdi-vYYYY.MM.DD.<run_number>` and
-  are created by `.github/workflows/clawdi-release.yml`.
-- Release notes should be user-facing only. Include notable features, behavior
-  changes, fixes, deprecations, removals, security notes, and user actions.
-  Omit migrations, CI, deployment steps, refactors, generated files, and other
-  implementation-only details.
+- Clawdi app/backend/web releases use `clawdi-YYYY-MM-DD` for the first UTC
+  release of a day, then `clawdi-YYYY-MM-DD-2`, `-3`, and so on for
+  additional releases that same day. They are created by
+  `.github/workflows/clawdi-release.yml`.
+- Release notes and `CHANGELOG.md` entries should be user-facing only. Include
+  notable features, behavior changes, fixes, deprecations, removals, security
+  notes, and user actions. Omit migrations, CI, deployment steps, refactors,
+  generated files, and other implementation-only details.
 
 ## Tech Stack
 
