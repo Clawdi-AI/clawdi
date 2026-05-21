@@ -267,22 +267,39 @@ registerServeCommand(program);
 // ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
-const vaultCmd = program.command("vault").description("Manage secrets");
+const vaultCmd = program
+	.command("vault")
+	.description("Manage secrets")
+	.addHelpText(
+		"after",
+		`
+Scope:
+  Write commands (set/import/rm) use --project first; otherwise they write to
+  your default-write project. The selected project is printed before writing.
+  Key paths are KEY, vault/KEY, or vault/section/KEY.`,
+	);
 
 vaultCmd
 	.command("set <key>")
-	.description("Store a secret (prompted for value)")
+	.description("Store a secret")
 	.option(
 		"-p, --project <id-or-slug>",
 		"Target a specific project (default: your default-write project)",
 	)
+	.option("--value <value>", "Secret value; use --stdin to avoid shell history")
+	.option("--stdin", "Read the secret value from stdin")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set DEPLOY_KEY --project engineering",
+		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY\n  $ clawdi vault set DEPLOY_KEY --project engineering\n  $ printf 'secret' | clawdi vault set prod/api/DEPLOY_KEY --stdin",
 	)
 	.action(async (key, opts) => {
 		const { vaultSet } = await import("./commands/vault.js");
-		await vaultSet(key, { ...opts, project: opts.project });
+		await vaultSet(key, {
+			...opts,
+			project: opts.project,
+			value: opts.value,
+			stdin: opts.stdin,
+		});
 	});
 
 vaultCmd
@@ -302,17 +319,42 @@ vaultCmd
 	.command("import <file>")
 	.description("Import from .env file")
 	.option("-y, --yes", "Skip the confirmation prompt (for CI / scripted imports)")
+	.option("--vault <slug>", "Target vault slug", "default")
+	.option("--section <name>", "Target vault section")
 	.option(
 		"-p, --project <id-or-slug>",
 		"Target a specific project (default: your default-write project)",
 	)
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault import .env.production\n  $ clawdi vault import .env.staging --project engineering --yes",
+		"\nExamples:\n  $ clawdi vault import .env.production\n  $ clawdi vault import .env.staging --project engineering --yes\n  $ clawdi vault import --vault prod --section stripe --project engineering --yes .env.stripe",
 	)
 	.action(async (file, opts) => {
 		const { vaultImport } = await import("./commands/vault.js");
-		await vaultImport(file, { ...opts, project: opts.project });
+		await vaultImport(file, {
+			...opts,
+			project: opts.project,
+			section: opts.section,
+			vault: opts.vault,
+		});
+	});
+
+vaultCmd
+	.command("rm <key>")
+	.alias("delete")
+	.description("Delete a secret")
+	.option(
+		"-p, --project <id-or-slug>",
+		"Target a specific project (default: your default-write project)",
+	)
+	.option("-y, --yes", "Skip the confirmation prompt")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes",
+	)
+	.action(async (key, opts) => {
+		const { vaultRm } = await import("./commands/vault.js");
+		await vaultRm(key, { ...opts, project: opts.project, yes: opts.yes });
 	});
 
 vaultCmd
@@ -630,7 +672,11 @@ Examples:
 
   $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev
   $ clawdi run --all-vault-env -- npm run dev
-  $ clawdi run --no-project-folder -- python main.py`,
+  $ clawdi run --no-project-folder -- python main.py
+
+Scope resolution:
+  Exact clawdi://project/... references carry their own project.
+  Otherwise --project wins, then --agent, then linked folder, then default-write project.`,
 	)
 	.action(async (args, opts) => {
 		const { run } = await import("./commands/run.js");
@@ -646,7 +692,11 @@ const projectCmd = program
 Folder-link workflow:
   $ clawdi project folder link --project engineering
   $ clawdi project folder status
-  $ clawdi run -- npm run deploy`,
+  $ clawdi run -- npm run deploy
+
+Notes:
+  project list hides auto-created machine/environment projects by default.
+  Use project list --include-envs to inspect those scopes.`,
 	);
 
 projectCmd
@@ -671,14 +721,22 @@ projectCmd
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option("--shared-with-me", "Show only projects shared with you")
 	.option("--owned", "Show only projects you own")
+	.option("--include-envs", "Include auto-created machine/environment projects")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --shared-with-me --json",
+		"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --include-envs\n  $ clawdi project list --shared-with-me --json",
 	)
-	.action(async (opts: { json?: boolean; sharedWithMe?: boolean; owned?: boolean }) => {
-		const { projectListCommand } = await import("./commands/project-list.js");
-		await projectListCommand(opts);
-	});
+	.action(
+		async (opts: {
+			json?: boolean;
+			sharedWithMe?: boolean;
+			owned?: boolean;
+			includeEnvs?: boolean;
+		}) => {
+			const { projectListCommand } = await import("./commands/project-list.js");
+			await projectListCommand(opts);
+		},
+	);
 
 projectCmd
 	.command("show <project>")

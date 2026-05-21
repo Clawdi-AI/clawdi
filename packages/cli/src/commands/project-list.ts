@@ -12,6 +12,7 @@ export async function projectListCommand(opts: {
 	json?: boolean;
 	sharedWithMe?: boolean;
 	owned?: boolean;
+	includeEnvs?: boolean;
 }): Promise<void> {
 	const ctx = projectAuthOrExit();
 	if (!ctx) return;
@@ -23,9 +24,19 @@ export async function projectListCommand(opts: {
 	}
 
 	const projects = await listProjects(apiUrl, apiKey);
-	const owned = projects.filter((s) => s.is_owner !== false);
-	const shared = projects.filter((s) => s.is_owner === false);
+	const environmentProjects = projects.filter((s) => s.kind === "environment");
+	const defaultProjects = opts.includeEnvs
+		? projects
+		: projects.filter((s) => s.kind !== "environment");
+	const owned = defaultProjects.filter((s) => s.is_owner !== false && s.kind !== "environment");
+	const shared = defaultProjects.filter((s) => s.is_owner === false);
+	const machines = opts.includeEnvs
+		? projects.filter((s) => s.kind === "environment" && s.is_owner !== false)
+		: [];
 	const visibleProjects = opts.sharedWithMe ? shared : opts.owned ? owned : projects;
+	const filteredVisibleProjects = opts.includeEnvs
+		? visibleProjects
+		: visibleProjects.filter((s) => s.kind !== "environment");
 
 	if (opts.json) {
 		const ownedProjects = owned.map((s) => ({
@@ -49,7 +60,7 @@ export async function projectListCommand(opts: {
 		console.log(
 			JSON.stringify(
 				{
-					projects: visibleProjects.map((s) => ({
+					projects: filteredVisibleProjects.map((s) => ({
 						id: s.id,
 						slug: s.slug,
 						name: s.name,
@@ -60,6 +71,18 @@ export async function projectListCommand(opts: {
 					})),
 					owned_projects: ownedProjects,
 					shared_projects: sharedProjects,
+					environment_projects: opts.includeEnvs
+						? environmentProjects.map((s) => ({
+								id: s.id,
+								slug: s.slug,
+								name: s.name,
+								kind: s.kind,
+								is_owner: s.is_owner !== false,
+								owner_display: s.owner_display ?? null,
+								owner_handle: s.owner_handle ?? null,
+							}))
+						: [],
+					hidden_environment_project_count: opts.includeEnvs ? 0 : environmentProjects.length,
 				},
 				null,
 				2,
@@ -68,7 +91,7 @@ export async function projectListCommand(opts: {
 		return;
 	}
 
-	if (visibleProjects.length === 0) {
+	if (filteredVisibleProjects.length === 0) {
 		if (opts.sharedWithMe) {
 			console.log("No shared projects yet.");
 			console.log(chalk.gray("Accept an invite with `clawdi inbox`, or accept a link with:"));
@@ -79,6 +102,13 @@ export async function projectListCommand(opts: {
 		} else {
 			console.log("No projects yet.");
 			console.log(`Create one: ${chalk.cyan('clawdi project create "Engineering"')}`);
+		}
+		if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
+			console.log(
+				chalk.gray(
+					`Hidden machine projects: ${environmentProjects.length}. Show them with \`clawdi project list --include-envs\`.`,
+				),
+			);
 		}
 		return;
 	}
@@ -99,6 +129,22 @@ export async function projectListCommand(opts: {
 		}
 	}
 
+	if (!opts.sharedWithMe && machines.length > 0) {
+		if (owned.length > 0) console.log();
+		console.log(chalk.bold(`Machines (${machines.length}):`));
+		console.log(chalk.gray("  Auto-created environment projects for registered local agents."));
+		for (const s of machines) {
+			const alias = projectAlias(s);
+			console.log(
+				`  ${chalk.cyan(alias.padEnd(24))} ${chalk.gray("machine")}  ${chalk.gray(s.id.slice(0, 8))}`,
+			);
+			if (s.name && s.name !== s.slug) {
+				console.log(`    ${chalk.dim(s.name)}`);
+			}
+			console.log(`    ${chalk.gray(`Open: clawdi project show ${alias}`)}`);
+		}
+	}
+
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
@@ -116,5 +162,14 @@ export async function projectListCommand(opts: {
 				`    ${chalk.gray(`Attach to Agent: clawdi agent projects attach <agent-id> --project ${alias}`)}`,
 			);
 		}
+	}
+
+	if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
+		if (owned.length > 0 || shared.length > 0) console.log();
+		console.log(
+			chalk.gray(
+				`Hidden machine projects: ${environmentProjects.length}. Show them with \`clawdi project list --include-envs\`.`,
+			),
+		);
 	}
 }

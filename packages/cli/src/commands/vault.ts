@@ -3,9 +3,13 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
-import { parseDotenv } from "../lib/dotenv";
+import { parseDotenvDetailed } from "../lib/dotenv";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { buildExactClawdiReference } from "../lib/secret-references";
+
+const VAULT_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$/;
+const VAULT_ITEM_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -75,66 +79,46 @@ async function fetchAllVaults(api: ApiClient, projectId?: string): Promise<Vault
 	throw new Error("Too many vault pages to load safely. Use --project to narrow the listing.");
 }
 
-async function resolveVaultProjectId(api: ApiClient, slug: string): Promise<string | null> {
-	const list = await fetchAllVaults(api);
-	const candidate = list.items.find((v) => v.slug === slug);
-	if (!candidate) return null;
-	const defaultProject = await api.GET("/api/projects/default");
-	const def = defaultProject.error === undefined ? (unwrap(defaultProject).project_id ?? "") : "";
-	const projectIds = vaultProjectIds(candidate);
-	if (def && projectIds.includes(def)) return def;
-	return projectIds[0] ?? null;
+interface VaultSetOptions {
+	project?: string;
+	value?: string;
+	stdin?: boolean;
 }
 
-export async function vaultSet(key: string, opts: { project?: string } = {}) {
+export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 	requireAuth();
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
+	const normalizedKey = formatVaultKey(vaultSlug, section, field);
 
-	const value = await p.password({ message: `Value for ${key}:` });
-	if (p.isCancel(value) || !value) {
-		p.cancel("Cancelled.");
+	const value = await readVaultSetValue(key, opts);
+	if (value === null) {
 		return;
 	}
 
 	const api = new ApiClient();
 
-	// Resolve --project to a concrete UUID up front so both
-	// ensureVault (create) AND the items PUT land in the same project.
-	let pinnedProjectId: string | undefined;
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	}
+	const targetProject = await resolveVaultWriteProject(api, opts.project);
+	console.log(chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`));
 
-	await ensureVault(api, vaultSlug, vaultSlug, pinnedProjectId);
+	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
 
-	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, vaultSlug));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: project_id ? { project_id } : {},
+				query: { project_id: targetProject.projectId },
 			},
 			body: { section, fields: { [field]: value } },
 		}),
 	);
 
-	console.log(chalk.green(`✓ Stored ${key}`));
-	if (project_id) {
-		console.log(
-			chalk.gray(
-				`  Reference: ${buildExactClawdiReference(project_id, vaultSlug, section, field)}`,
-			),
-		);
-	}
+	console.log(chalk.green(`✓ Stored ${normalizedKey}`));
+	console.log(
+		chalk.gray(
+			`  Reference: ${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
+		),
+	);
 }
 
 export async function vaultList(opts: { json?: boolean; project?: string } = {}) {
@@ -201,16 +185,38 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		return;
 	}
 
+	const projects = await listProjects(api.baseUrl, api.apiKey).catch(() => []);
+	const projectLabel = (projectId: string | undefined) => {
+		if (!projectId) return "unattached";
+		const project = projects.find((item) => item.id === projectId);
+		return project ? `${formatProjectLabel(project)} (${projectId})` : projectId;
+	};
+	const groups = new Map<
+		string,
+		{
+			projectId: string | undefined;
+			rows: Array<{ vault: VaultListRow; items: Record<string, string[]> }>;
+		}
+	>();
 	for (const v of vaults) {
 		const attachedProjectId = projectId ?? vaultProjectIds(v)[0];
 		const items = await fetchItems(v.slug, attachedProjectId);
-		const projectLabel = attachedProjectId ? `project=${attachedProjectId}` : "project=unattached";
-		console.log(chalk.white(`  ${sanitizeMetadata(v.slug)} ${chalk.gray(projectLabel)}`));
-		for (const row of attachedProjectId
-			? buildVaultReferenceRows(attachedProjectId, v.slug, items)
-			: []) {
-			console.log(chalk.gray(`    ${sanitizeMetadata(row.key)}`));
-			console.log(chalk.gray(`      ${row.reference}`));
+		const key = attachedProjectId ?? "(unattached)";
+		const group = groups.get(key) ?? { projectId: attachedProjectId, rows: [] };
+		group.rows.push({ vault: v, items });
+		groups.set(key, group);
+	}
+
+	for (const group of groups.values()) {
+		console.log(chalk.white(`Project ${projectLabel(group.projectId)}`));
+		for (const { vault, items } of group.rows) {
+			console.log(chalk.gray(`  Vault ${sanitizeMetadata(vault.slug)}`));
+			for (const row of group.projectId
+				? buildVaultReferenceRows(group.projectId, vault.slug, items)
+				: []) {
+				console.log(chalk.gray(`    ${sanitizeMetadata(row.key)}`));
+				console.log(chalk.gray(`      ${row.reference}`));
+			}
 		}
 	}
 }
@@ -240,77 +246,283 @@ function buildVaultReferenceRows(
 	);
 }
 
-export async function vaultImport(file: string, opts: { yes?: boolean; project?: string } = {}) {
+interface VaultImportOptions {
+	yes?: boolean;
+	project?: string;
+	section?: string;
+	vault?: string;
+}
+
+export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	requireAuth();
 
+	const vaultSlug = cleanVaultSlug(opts.vault ?? "default");
+	const section = cleanVaultSection(opts.section ?? "");
 	const content = readFileSync(file, "utf-8");
 	const fields: Record<string, string> = {};
-	for (const [key, value] of parseDotenv(content)) {
+	const parsed = parseDotenvDetailed(content);
+	for (const [key, value] of parsed.entries) {
 		fields[key] = value;
 	}
 
+	if (parsed.skippedInvalidIdentifiers.length > 0) {
+		console.log(chalk.yellow(formatSkippedInvalidIdentifiers(parsed.skippedInvalidIdentifiers)));
+	}
+
 	if (Object.keys(fields).length === 0) {
-		console.log(chalk.gray("No keys found in file."));
+		console.log(
+			chalk.gray(
+				parsed.skippedInvalidIdentifiers.length > 0
+					? "No valid keys found in file."
+					: "No keys found in file.",
+			),
+		);
 		return;
 	}
+
+	const api = new ApiClient();
+	const targetProject = await resolveVaultWriteProject(api, opts.project);
+	const target = formatVaultTarget(vaultSlug, section, targetProject);
 
 	// Skip the confirmation prompt under `--yes` so CI / scripted
 	// imports (demos, .env bootstrap) don't hang on stdin. The
 	// preview banner still renders so the operator can see what
 	// just landed.
-	p.note(Object.keys(fields).join("\n"), `${Object.keys(fields).length} keys from ${file}`);
+	p.note(
+		Object.keys(fields).join("\n"),
+		`${Object.keys(fields).length} keys from ${file} -> ${target}`,
+	);
 	if (!opts.yes) {
-		const ok = await p.confirm({ message: "Import these keys?" });
+		const ok = await p.confirm({ message: `Import these keys to ${target}?` });
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");
 			return;
 		}
 	}
 
-	const api = new ApiClient();
-	let pinnedProjectId: string | undefined;
-	if (opts.project) {
-		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
-		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		pinnedProjectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
-	}
+	await ensureVault(
+		api,
+		vaultSlug,
+		vaultSlug === "default" ? "Default" : vaultSlug,
+		targetProject.projectId,
+	);
 
-	await ensureVault(api, "default", "Default", pinnedProjectId);
-
-	const project_id = pinnedProjectId ?? (await resolveVaultProjectId(api, "default"));
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
 			params: {
-				path: { slug: "default" },
-				query: project_id ? { project_id } : {},
+				path: { slug: vaultSlug },
+				query: { project_id: targetProject.projectId },
 			},
-			body: { section: "", fields },
+			body: { section, fields },
 		}),
 	);
 
-	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to vault "default"`));
-	if (project_id) {
-		console.log(chalk.gray("  References:"));
-		for (const field of Object.keys(fields).sort()) {
-			console.log(
-				chalk.gray(
-					`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(project_id, "default", "", field)}`,
-				),
-			);
-		}
+	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to ${target}`));
+	console.log(chalk.gray("  References:"));
+	for (const field of Object.keys(fields).sort()) {
+		console.log(
+			chalk.gray(
+				`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
+			),
+		);
 	}
 }
 
+interface VaultRmOptions {
+	project?: string;
+	yes?: boolean;
+}
+
+export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
+	requireAuth();
+
+	const { vaultSlug, section, field } = parseVaultKey(key);
+	const normalizedKey = formatVaultKey(vaultSlug, section, field);
+	const api = new ApiClient();
+	const targetProject = await resolveVaultWriteProject(api, opts.project);
+	const target = formatVaultTarget(vaultSlug, section, targetProject);
+
+	if (!opts.yes) {
+		const ok = await p.confirm({ message: `Delete ${normalizedKey} from ${target}?` });
+		if (p.isCancel(ok) || !ok) {
+			p.cancel("Cancelled.");
+			return;
+		}
+	}
+
+	unwrap(
+		await api.DELETE("/api/vault/{slug}/items", {
+			params: {
+				path: { slug: vaultSlug },
+				query: { project_id: targetProject.projectId },
+			},
+			body: { section, fields: [field] },
+		}),
+	);
+
+	console.log(chalk.green(`✓ Deleted ${normalizedKey} from ${target}`));
+}
+
+async function readVaultSetValue(key: string, opts: VaultSetOptions): Promise<string | null> {
+	if (opts.value !== undefined && opts.stdin) {
+		throw new Error("Pass either --value or --stdin, not both.");
+	}
+	if (opts.value !== undefined) return opts.value;
+	if (opts.stdin) {
+		if (process.stdin.isTTY) {
+			throw new Error("Refusing to read --stdin from an interactive TTY.");
+		}
+		return stripFinalNewline(await readStdin());
+	}
+	const value = await p.password({ message: `Value for ${key}:` });
+	if (p.isCancel(value) || !value) {
+		p.cancel("Cancelled.");
+		return null;
+	}
+	return value;
+}
+
+async function readStdin(): Promise<string> {
+	return await new Promise((resolve, reject) => {
+		let input = "";
+		const cleanup = () => {
+			process.stdin.off("data", onData);
+			process.stdin.off("end", onEnd);
+			process.stdin.off("error", onError);
+		};
+		const onData = (chunk: string) => {
+			input += chunk;
+		};
+		const onEnd = () => {
+			cleanup();
+			resolve(input);
+		};
+		const onError = (error: Error) => {
+			cleanup();
+			reject(error);
+		};
+		process.stdin.setEncoding("utf8");
+		process.stdin.on("data", onData);
+		process.stdin.once("end", onEnd);
+		process.stdin.once("error", onError);
+	});
+}
+
+function stripFinalNewline(value: string): string {
+	return value.replace(/\r?\n$/, "");
+}
+
+function cleanVaultSlug(value: string): string {
+	const slug = value.trim();
+	if (!VAULT_SLUG_RE.test(slug)) {
+		throw new Error(
+			"Vault slug must use lowercase letters, numbers, and hyphens, without leading or trailing hyphens.",
+		);
+	}
+	return slug;
+}
+
+function cleanVaultSection(value: string): string {
+	const section = value.trim();
+	if (!section) return "";
+	if (section.length > 200) throw new Error("Vault section must be at most 200 characters.");
+	if (!VAULT_ITEM_SEGMENT_RE.test(section)) {
+		throw new Error(
+			"Vault section may contain only letters, numbers, dots, underscores, and hyphens.",
+		);
+	}
+	return section;
+}
+
+function cleanVaultField(value: string): string {
+	const field = value.trim();
+	if (!field) throw new Error("Vault field cannot be empty.");
+	if (field.length > 200) throw new Error("Vault field must be at most 200 characters.");
+	if (!VAULT_ITEM_SEGMENT_RE.test(field)) {
+		throw new Error(
+			"Vault field may contain only letters, numbers, dots, underscores, and hyphens.",
+		);
+	}
+	return field;
+}
+
+interface VaultWriteProject {
+	projectId: string;
+	label: string;
+	source: "explicit" | "default";
+}
+
+async function resolveVaultWriteProject(
+	api: ApiClient,
+	projectArg: string | undefined,
+): Promise<VaultWriteProject> {
+	const projectId = await resolveProjectId(api.baseUrl, api.apiKey, projectArg);
+	const project = (await listProjects(api.baseUrl, api.apiKey).catch(() => [])).find(
+		(item) => item.id === projectId,
+	);
+	return {
+		projectId,
+		label: project ? formatProjectLabel(project) : projectArg || projectId,
+		source: projectArg ? "explicit" : "default",
+	};
+}
+
+function formatVaultTarget(vaultSlug: string, section: string, project: VaultWriteProject): string {
+	const target = section ? `vault "${vaultSlug}" section "${section}"` : `vault "${vaultSlug}"`;
+	const source = project.source === "explicit" ? "explicit project" : "default-write project";
+	return `${target} in ${source} "${sanitizeMetadata(project.label)}" (${project.projectId})`;
+}
+
+function formatProjectLabel(project: {
+	slug: string;
+	is_owner?: boolean;
+	owner_handle?: string | null;
+}) {
+	if (project.is_owner === false && project.owner_handle) {
+		return `@${project.owner_handle}/${project.slug}`;
+	}
+	return project.slug;
+}
+
+function formatVaultKey(vaultSlug: string, section: string, field: string): string {
+	if (vaultSlug === "default" && !section) return field;
+	return [vaultSlug, section, field].filter(Boolean).join("/");
+}
+
+function formatSkippedInvalidIdentifiers(identifiers: string[]): string {
+	const maxShown = 10;
+	const shown = identifiers.slice(0, maxShown).map(sanitizeMetadata).join(", ");
+	const more = identifiers.length > maxShown ? `, +${identifiers.length - maxShown} more` : "";
+	return `Skipped ${identifiers.length} ${pluralize(
+		"key",
+		identifiers.length,
+	)} with invalid identifiers: ${shown}${more}`;
+}
+
+function pluralize(word: string, count: number): string {
+	return count === 1 ? word : `${word}s`;
+}
+
 function parseVaultKey(key: string): { vaultSlug: string; section: string; field: string } {
-	const cleaned = key.replace(/^clawdi:\/\//, "");
-	const [a = "", b = "", c = ""] = cleaned.split("/");
-	if (c) return { vaultSlug: a, section: b, field: c };
-	if (b) return { vaultSlug: a, section: "", field: b };
-	return { vaultSlug: "default", section: "", field: a };
+	const cleaned = key.replace(/^clawdi:\/\//, "").trim();
+	const parts = cleaned.split("/");
+	if (parts.length === 1) {
+		return { vaultSlug: "default", section: "", field: cleanVaultField(parts[0] ?? "") };
+	}
+	if (parts.length === 2) {
+		return {
+			vaultSlug: cleanVaultSlug(parts[0] ?? ""),
+			section: "",
+			field: cleanVaultField(parts[1] ?? ""),
+		};
+	}
+	if (parts.length === 3) {
+		if (!(parts[1] ?? "").trim()) throw new Error("Vault section cannot be empty.");
+		return {
+			vaultSlug: cleanVaultSlug(parts[0] ?? ""),
+			section: cleanVaultSection(parts[1] ?? ""),
+			field: cleanVaultField(parts[2] ?? ""),
+		};
+	}
+	throw new Error("Vault key must be KEY, vault/KEY, or vault/section/KEY.");
 }

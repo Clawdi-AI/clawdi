@@ -1,13 +1,29 @@
+const DOTENV_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export interface ParsedDotenv {
+	entries: Array<[string, string]>;
+	skippedInvalidIdentifiers: string[];
+}
+
 export function parseDotenv(content: string): Array<[string, string]> {
+	return parseDotenvDetailed(content).entries;
+}
+
+export function parseDotenvDetailed(content: string): ParsedDotenv {
 	const entries: Array<[string, string]> = [];
+	const skippedInvalidIdentifiers: string[] = [];
 	for (const line of content.split(/\r?\n/)) {
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
-		const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed);
+		const match = /^(?:export\s+)?([^=\s]+)\s*=\s*(.*)$/.exec(trimmed);
 		if (!match) continue;
+		if (!DOTENV_IDENTIFIER_RE.test(match[1])) {
+			skippedInvalidIdentifiers.push(match[1]);
+			continue;
+		}
 		entries.push([match[1], parseDotenvValue(match[2].trim())]);
 	}
-	return entries;
+	return { entries, skippedInvalidIdentifiers };
 }
 
 function parseDotenvValue(value: string): string {

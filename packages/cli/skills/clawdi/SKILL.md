@@ -83,3 +83,13 @@ Connected service tools (Gmail, GitHub, Notion, etc.) are dynamically registered
 - If a tool call fails with "No connected account", tell the user to connect the service in the Clawdi Cloud dashboard
 - File downloads from connectors return signed URLs — download them with `curl` or `fetch` before processing
 - Confirm with the user before side-effecting operations (sending email, creating issues, etc.)
+
+## Vault CLI
+
+When the user asks to migrate secrets into Clawdi Vault or script secret writes, prefer the CLI over raw HTTP calls:
+
+- Use `clawdi vault set KEY --stdin` for piped values, or `clawdi vault set KEY --value <value>` only when shell history exposure is acceptable.
+- Use `clawdi vault import --vault <slug> --section <name> --project <project> --yes <file>` for non-interactive `.env` migrations into a section.
+- Keep `.env` import keys as POSIX environment identifiers such as `OPENAI_API_KEY`; section names belong in `--section`, not inside the key name.
+- Use `clawdi vault rm <vault>/<section>/<field> --yes` or `clawdi vault delete ...` to clean up misplaced keys.
+- Prefer exact `clawdi://project/...` references printed by the CLI. Do not print plaintext secret values unless the user explicitly asks for them.

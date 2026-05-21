@@ -148,6 +148,12 @@ Store a secret once:
 $ clawdi vault set OPENAI_API_KEY
 Value for OPENAI_API_KEY: ••••••••••
 ✓ Stored OPENAI_API_KEY
+
+$ printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set prod/stripe/STRIPE_SECRET_KEY --stdin
+✓ Stored prod/stripe/STRIPE_SECRET_KEY
+
+$ clawdi vault import --vault prod --section stripe --project personal --yes .env.stripe
+✓ Imported 3 keys to vault "prod" section "stripe"
 ```
 
 List what's stored (values never leave the CLI unmasked):
@@ -317,7 +323,7 @@ $ clawdi push --agent codex
 | `clawdi push` | Push sessions + skills to the cloud |
 | `clawdi pull` | Pull skills from the cloud into Claude Code's skills dir |
 | `clawdi memory list / search / add / rm` | Inspect or edit cross-agent memory (alias: `mem`) |
-| `clawdi vault set / list / import` | Manage runtime secrets |
+| `clawdi vault set / list / import / rm` | Manage runtime secrets |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |
 | `clawdi skill list / add / install / rm` | Manage skills |
 | `clawdi mcp` | Start MCP stdio server (invoked by Claude Code automatically) |

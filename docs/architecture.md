@@ -165,7 +165,7 @@ clawdi://prod/stripe/secret_key
 clawdi://prod/database/url
 ```
 
-`.env` imports and `clawdi vault set OPENAI_API_KEY` store fields without a section by default, so that key resolves as `clawdi://default/OPENAI_API_KEY`. Sectioned references are for manually structured fields.
+`.env` imports and `clawdi vault set OPENAI_API_KEY` store fields without a section by default, so that key resolves as `clawdi://default/OPENAI_API_KEY`. Use `clawdi vault import --section openai ...` or `clawdi vault set default/openai/api_key` for sectioned fields.
 Exact references include the Project ID and are the default Web/CLI copy UX. In project-relative references, `default` is the vault slug, not the Project; Project selection happens outside the URI through `--project`, `--agent`, local folder links, or the caller's default Project.
 
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
