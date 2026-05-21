@@ -77,7 +77,7 @@ async def list_vaults(
     # here pre-sharing — it would have blocked viewer members from
     # seeing shared-project vault slugs (and the key names inside).
     # Plaintext resolution (`/api/vault/resolve`) keeps the CLI/API-key
-    # gate so a leaked anonymous share-token can't exfiltrate secrets.
+    # gate so web/JWT and anonymous share-token flows never return secrets.
     selected_project_id = project_id
     visible_project_ids = (
         list(await resolve_for_parent(db, auth, selected_project_id))
@@ -403,16 +403,16 @@ def _env_key(section: str, item_name: str) -> str:
 async def _plaintext_project_ids(db: AsyncSession, auth: AuthContext) -> list[UUID]:
     """Projects whose vault plaintext may be resolved by this CLI caller.
 
-    User-level CLI auth can read vault plaintext only for Projects the
-    caller owns. Shared Projects remain metadata-only for human CLI/API-key
-    callers. Env-bound Agent keys stay capped to their default Project
-    unless the caller resolves through the matching Agent runtime boundary
-    (`agent_id`), where explicit Project attachments define the read set.
+    User-level CLI auth can read Vault plaintext for every Project the caller
+    can read, including viewer memberships. Env-bound Agent keys stay capped
+    to their default Project unless the caller resolves through the matching
+    Agent runtime boundary (`agent_id`), where explicit Project attachments
+    define the read set.
     """
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         return [await resolve_default_write_project(db, auth)]
 
-    return await project_ids_owned_by_user(db, auth.user_id)
+    return await project_ids_readable_by_user(db, auth.user_id)
 
 
 def _is_env_bound(auth: AuthContext) -> bool:
@@ -519,10 +519,10 @@ async def _agent_project_precedence(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "api key bound to a different agent")
 
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
-    # Agent runtime reads are computed at the Agent boundary. Only a key bound
-    # to this exact Agent may decrypt shared Project vault values; user-level
-    # CLI/API keys stay limited to owned Projects so shared secrets are not
-    # revealed to a human CLI session.
+    # Agent runtime reads are computed at the Agent boundary. A key bound to
+    # this exact Agent may decrypt attached shared Project values; user-level
+    # CLI/API keys may also read shared viewer Projects because membership is
+    # a Vault plaintext read grant.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id == agent_id:
         allowed = set(await project_ids_readable_by_user(db, auth.user_id))
     else:
@@ -921,11 +921,11 @@ async def resolve_vault(
 ) -> dict:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
-    User-level CLI/API-key callers may resolve plaintext only from Projects
-    they own. Shared Project vault values are metadata-only outside the Agent
-    runtime boundary. A bound Agent API key is capped to its default-write
-    Project unless resolving through its own `agent_id`, where the Agent
-    Project plus explicit attached Projects define runtime reads.
+    User-level CLI/API-key callers may resolve plaintext from Projects they
+    can read, including shared viewer Projects. A bound Agent API key is
+    capped to its default-write Project unless resolving through its own
+    `agent_id`, where the Agent Project plus explicit attached Projects define
+    runtime reads.
     """
     if preview and key is None and vault_slug is None and field is None:
         raise HTTPException(

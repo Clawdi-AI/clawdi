@@ -803,7 +803,7 @@ Examples:
 
 projectCmd
 	.command("share [project]")
-	.description("Create a read-only project share link")
+	.description("Create a viewer project share link")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
 	.action(async (project: string | undefined, opts: { label?: string }) => {
 		const { projectShareCommand } = await import("./commands/project-share.js");
@@ -812,7 +812,7 @@ projectCmd
 
 projectCmd
 	.command("share-links <project>")
-	.description("List or revoke read-only project links")
+	.description("List or revoke viewer project links")
 	.option("--revoke <id-or-prefix>", "Revoke a specific link")
 	.action(async (project: string, opts: { revoke?: string }) => {
 		const { projectShareLinksCommand } = await import("./commands/project-share-links.js");
@@ -821,7 +821,7 @@ projectCmd
 
 projectCmd
 	.command("invite <project>")
-	.description("Invite a person to read-only project access")
+	.description("Invite a person to viewer project access")
 	.requiredOption("-e, --email <addr>", "Email address to invite")
 	.action(async (project: string, opts: { email: string }) => {
 		const { projectInviteCommand } = await import("./commands/project-invite.js");
@@ -998,7 +998,7 @@ const inboxCmd = program
 
 inboxCmd
 	.command("accept [id-or-url]")
-	.description("Accept read-only project access from an invite or share link")
+	.description("Accept viewer project access from an invite or share link")
 	.option("--invite <id>", "Explicit invitation UUID (bypass shape detection)")
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(

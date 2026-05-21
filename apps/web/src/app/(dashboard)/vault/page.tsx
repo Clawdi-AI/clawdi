@@ -320,8 +320,8 @@ function VaultPageInner() {
 				<AlertTitle>Vault Privacy</AlertTitle>
 				<AlertDescription>
 					A Vault is a shared bundle of API keys and secrets. Add a Vault to each Project where
-					agents should use those keys. Project members can see Vault names and key names, but
-					secret values stay hidden and are only used when agents run.
+					members or agents should use those keys. Project members can see Vault names and key names
+					in the dashboard and resolve values through CLI runtime reads.
 				</AlertDescription>
 			</Alert>
 
@@ -852,9 +852,9 @@ function VaultDetailPanel({
 					<div>
 						<p className="font-medium">Read-only Vault</p>
 						<p className="text-xs text-muted-foreground">
-							You can view key names because this Vault is available through a shared Project.
-							Secret values stay hidden; only the owner can see them. Only the owner can edit keys
-							or change who has access.
+							You can view key names because this Vault is available through a shared Project. The
+							dashboard hides values, but CLI runtime reads can resolve them. Only the owner can
+							edit keys or change who has access.
 						</p>
 					</div>
 				</div>
@@ -916,8 +916,8 @@ function AddProjectToVaultControl({
 				<DialogHeader>
 					<DialogTitle>Add Vault to Project</DialogTitle>
 					<DialogDescription>
-						Make {vaultName} available in another Project. Members can see key names; secret values
-						stay hidden and are only used when agents run.
+						Make {vaultName} available in another Project. Members can see key names in the
+						dashboard and resolve values through CLI runtime reads.
 					</DialogDescription>
 				</DialogHeader>
 				<ProjectScopePicker
@@ -1193,7 +1193,7 @@ function VaultKeysPanel({
 					<h4 className="text-sm font-semibold">Keys</h4>
 					<p className="text-xs text-muted-foreground">
 						{readOnly
-							? "Key names are visible; secret values stay hidden."
+							? "Key names are visible here; CLI runtime reads can resolve values."
 							: "Keys live in this Vault, not inside a Project. Every Project using this Vault sees the same keys; key updates here apply everywhere."}
 					</p>
 				</div>

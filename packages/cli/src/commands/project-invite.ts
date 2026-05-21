@@ -80,7 +80,9 @@ export async function projectInviteCommand(
 
 	const body = await readJson<InvitationResponse>(r, "create project invitation");
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
-	console.log(chalk.gray("  They will join as a read-only viewer after accepting."));
+	console.log(
+		chalk.gray("  They will join as a viewer with read access, including CLI Vault runtime reads."),
+	);
 	console.log(chalk.gray("  Attaching it to an Agent is separate; after accept they can run:"));
 	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
 	console.log(`  ${chalk.cyan("clawdi agent projects attach <agent-id> --project <project>")}`);

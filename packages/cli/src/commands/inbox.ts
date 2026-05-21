@@ -487,7 +487,7 @@ async function acceptedProjectAlias(
 
 function renderJoinedSuccess(body: JoinedProject, _opts: AcceptOpts, projectAlias: string): void {
 	console.log(`${chalk.green("✓")} Accepted project access for ${projectAlias}.`);
-	console.log(chalk.gray("  Role: viewer (read-only)."));
+	console.log(chalk.gray("  Role: viewer (read access)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
 		console.log(chalk.gray(`  Attached to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));

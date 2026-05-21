@@ -253,8 +253,9 @@ async def project_ids_owned_by_user(
 ) -> list[UUID]:
     """Return Project ids directly owned by a user.
 
-    Use this when user-level operations must exclude Projects the user
-    can only read through membership, such as vault plaintext resolution.
+    Use this for owner-only operations such as writes and credential profile
+    materialization. Runtime Vault plaintext reads use the broader readable
+    set because viewer membership is a read grant for Vault values too.
     """
     rows = await db.execute(select(Project.id).where(Project.user_id == user_id))
     return list(rows.scalars().all())

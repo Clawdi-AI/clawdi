@@ -506,7 +506,7 @@ function OwnerAccessPanel({
 				<div className="grid grid-cols-[80px_minmax(0,1fr)] gap-2">
 					<span className="font-medium text-foreground">Viewer</span>
 					<span className="text-muted-foreground">
-						Reads skills, Vault names, and key names. Cannot see secret values or edit.
+						Reads skills and Vault values through CLI runtime reads. Cannot edit.
 					</span>
 				</div>
 				<div className="grid grid-cols-[80px_minmax(0,1fr)] gap-2">

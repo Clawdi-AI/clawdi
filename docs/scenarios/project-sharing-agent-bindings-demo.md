@@ -59,7 +59,7 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
 | Security | Agent API keys cannot manage sharing | sharing routes reject Agent API keys | API guard display |
-| Security | Shared Vault plaintext stays hidden from human sessions | web/JWT cannot call `vault resolve`; user-level CLI keys cannot resolve shared Project values; bound Agent keys can resolve attached shared Projects through their Agent boundary | API guard display |
+| Security | Shared Vault plaintext stays out of web/JWT flows | web/JWT cannot call `vault resolve`; user-level CLI keys can resolve shared Project values; bound Agent keys can resolve attached shared Projects through their Agent boundary | API guard display |
 | Revoke/conflict | Conflict block/allow and access cleanup | `vault resolve --agent`, unshare/leave/remove | Error copy / stale attachment cleanup |
 
 ## Role Logic Review
@@ -88,11 +88,11 @@ Expected:
 
 - The project appears under My projects.
 - CLI/API listings expose People / Access, Invites, and Links state.
-- The generated share URL is shown once and clearly marked as read-only viewer access.
+- The generated share URL is shown once and clearly marked as viewer read access.
 - Link listings show the prefix, label, timestamps, accepts, and revoke affordance.
 - Revoking a share link stops future accepts only; accepted viewers stay members until
   `project members --remove`, `project leave`, or `project unshare` changes membership.
-- Secret plaintext is not shown in dashboard/web flows. User-level CLI keys cannot resolve shared Project vault values; bound Agent keys can resolve them only through the matching Agent boundary.
+- Secret plaintext is not shown in dashboard/web flows. User-level CLI keys can resolve shared Project vault values; bound Agent keys can resolve them only through the matching Agent boundary.
 
 Web PR follow-up: Projects list/detail and Share dialog should mirror
 the same People / Access, Invites, and Links state.
@@ -266,7 +266,7 @@ Security branch:
 
 - Web/JWT auth cannot call `vault resolve`.
 - Agent API keys cannot manage sharing or invitations.
-- Plaintext vault resolution remains CLI/API-key only. User-level CLI keys can resolve only owned Project values; shared Project values require a bound Agent key resolving through its own Agent boundary.
+- Plaintext vault resolution remains CLI/API-key only. User-level CLI keys can resolve owned and shared Project values; bound Agent keys resolve shared values through their own Agent boundary.
 
 ## Flow 8: Skills, Pull, And Push Project Flags
 

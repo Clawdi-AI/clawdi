@@ -207,9 +207,10 @@ export default function SharePage() {
 								{upgrade.isPending ? "Joining…" : "Accept Project Access"}
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								You'll join as a <Badge variant="secondary">Viewer</Badge> with read-only access to
-								skills{data.vault_count > 0 ? " and Vault key names" : ""}. Secret values stay
-								private; agents can use them only after you add the Project to an agent.
+								You'll join as a <Badge variant="secondary">Viewer</Badge> with read access to
+								skills
+								{data.vault_count > 0 ? " and Vault values through CLI runtime reads" : ""}. The
+								dashboard does not reveal key values.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
@@ -263,7 +264,9 @@ export default function SharePage() {
 }
 
 function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
-	const vaultCopy = hasVaults ? "View Vault key names" : "View Vault key names if added later";
+	const vaultCopy = hasVaults
+		? "Use Vault values through CLI runtime reads"
+		: "Use Vault values through CLI runtime reads if added later";
 	return (
 		<div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
 			<div className="space-y-2">
@@ -284,7 +287,7 @@ function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
 				<ul className="space-y-1.5 text-muted-foreground">
 					<li className="flex items-center gap-2">
 						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>See key values</span>
+						<span>Reveal key values in the dashboard</span>
 					</li>
 					<li className="flex items-center gap-2">
 						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />

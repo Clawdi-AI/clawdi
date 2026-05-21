@@ -2,6 +2,11 @@ import { readJson } from "./api-client";
 import { getAuth, getConfig } from "./config";
 import { resolveProjectId } from "./project-resolver";
 import { getEnvIdByAgent } from "./select-adapter";
+import {
+	isVaultProjectNotFoundBody,
+	VAULT_PROJECT_ACCESS_ERROR,
+	VAULT_PROJECT_ACCESS_HINT,
+} from "./vault-errors";
 
 const CLAWDI_REF_RE = /clawdi:\/\/[A-Za-z0-9._~%-]+(?:\/[A-Za-z0-9._~%-]+)+/g;
 const MAX_BULK_REFERENCES = 200;
@@ -324,6 +329,9 @@ export class VaultReferenceResolveError extends Error {
 
 function resolveErrorMessage(status: number, body: unknown): string {
 	const detail = extractDetail(body);
+	if (status === 404 && isVaultProjectNotFoundBody(body)) {
+		return `${VAULT_PROJECT_ACCESS_ERROR} ${VAULT_PROJECT_ACCESS_HINT}`;
+	}
 	if (status === 404) return detail.message ?? "No vault value found for reference.";
 	if (status === 403) return detail.message ?? "vault resolve requires CLI authentication.";
 	if (status === 409) return detail.message ?? "Vault conflict blocked.";

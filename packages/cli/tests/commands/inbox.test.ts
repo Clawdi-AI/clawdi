@@ -211,7 +211,7 @@ describe("inboxAcceptCommand", () => {
 
 		const out = lines.join("\n");
 		expect(out).toContain("Accepted project access for @alice-a3b4/shared-toolkit.");
-		expect(out).toContain("Role: viewer (read-only).");
+		expect(out).toContain("Role: viewer (read access).");
 		expect(out).toContain(
 			"Attach to Agent: clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
 		);

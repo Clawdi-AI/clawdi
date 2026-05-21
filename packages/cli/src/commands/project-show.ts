@@ -116,9 +116,7 @@ export async function projectShowCommand(
 	console.log(`  Project: ${chalk.cyan(alias)}`);
 	console.log(`  Role: ${isOwner ? "owner" : "viewer"}`);
 	console.log(`  Owner: ${owner}`);
-	console.log(
-		`  Access: ${isOwner ? "edit resources and manage sharing" : "read-only project access"}`,
-	);
+	console.log(`  Access: ${isOwner ? "edit resources and manage sharing" : "viewer read access"}`);
 	console.log(`  Type: ${project.kind}`);
 	console.log(`  ID: ${chalk.gray(project.id)}`);
 	console.log();

@@ -18,6 +18,11 @@ import {
 	type VaultReferencePreview,
 } from "../lib/secret-references";
 import { getEnvIdByAgent } from "../lib/select-adapter";
+import {
+	isVaultProjectNotFoundBody,
+	VAULT_PROJECT_ACCESS_ERROR,
+	VAULT_PROJECT_ACCESS_HINT,
+} from "../lib/vault-errors";
 
 interface RunOpts {
 	project?: string;
@@ -81,7 +86,12 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 				console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
 				process.exit(1);
 			}
-			console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
+			if (e instanceof ApiError && e.status === 404 && isVaultProjectNotFoundBody(e.body)) {
+				console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${VAULT_PROJECT_ACCESS_ERROR}`));
+				console.log(chalk.gray(`  ${VAULT_PROJECT_ACCESS_HINT}`));
+			} else {
+				console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
+			}
 			console.log(chalk.gray("  Running without vault injection."));
 		}
 

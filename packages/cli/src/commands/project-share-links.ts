@@ -100,11 +100,15 @@ export async function projectShareLinksCommand(
 	if (links.length === 0) {
 		console.log("No share links on this project yet.");
 		console.log();
-		console.log(`Create a read-only link: ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
+		console.log(`Create a viewer link: ${chalk.cyan(`clawdi project share ${projectArg}`)}`);
 		return;
 	}
 	console.log(chalk.bold(`Project share links (${links.length})`));
-	console.log(chalk.gray("  Links grant viewer access after accept. Agent use stays separate."));
+	console.log(
+		chalk.gray(
+			"  Links grant viewer read access after accept, including CLI Vault runtime reads. Agent use stays separate.",
+		),
+	);
 	for (const link of links) {
 		console.log(formatRow(link));
 	}

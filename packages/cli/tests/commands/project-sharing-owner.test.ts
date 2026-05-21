@@ -118,7 +118,8 @@ describe("owner project sharing commands", () => {
 		]);
 		expect(captured[2].body).toEqual({ label: "client review" });
 		const out = consoleCapture.lines.join("\n");
-		expect(out).toContain("Read-only project link ready");
+		expect(out).toContain("Viewer project link ready");
+		expect(out).toContain("Viewers can resolve shared Vault values through CLI runtime reads.");
 		expect(out).toContain("https://clawdi.test/share/tok_raw_secret");
 		expect(out).toContain("clawdi inbox accept https://clawdi.test/share/tok_raw_secret");
 		expect(out).toContain(
@@ -317,7 +318,7 @@ describe("owner project sharing commands", () => {
 		expect(captured[1].body).toEqual({ email: "bob@example.test" });
 		const out = consoleCapture.lines.join("\n");
 		expect(out).toContain("Invitation sent to bob@example.test");
-		expect(out).toContain("read-only viewer");
+		expect(out).toContain("viewer with read access");
 		expect(out).toContain("clawdi agent projects attach <agent-id> --project <project>");
 	});
 
