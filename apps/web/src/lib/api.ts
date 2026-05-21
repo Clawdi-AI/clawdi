@@ -1,9 +1,9 @@
 "use client";
 
 import { extractApiDetail, type paths } from "@clawdi/shared/api";
-import { useAuth } from "@clerk/nextjs";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
 export const API_URL = env.NEXT_PUBLIC_API_URL;
@@ -26,7 +26,7 @@ export class ApiError extends Error {
  * in the browser tree.
  */
 export function useApi() {
-	const { getToken } = useAuth();
+	const { getToken } = useAuthToken();
 	return useMemo(() => {
 		const client = createClient<paths>({ baseUrl: API_URL });
 		client.use({
@@ -55,4 +55,27 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 		throw new ApiError(result.response.status, extractApiDetail(result.error));
 	}
 	return result.data as T;
+}
+
+/**
+ * Raw-fetch helper bound to the current Clerk session. Use when the
+ * typed openapi-fetch client doesn't yet cover the endpoint (e.g.
+ * generated paths are temporarily stale) — the typed `useApi()` client is still the default
+ * for everything in the OpenAPI surface.
+ *
+ * Throws ApiError on non-2xx, mirroring `unwrap()`'s shape so a
+ * useQuery / useMutation error path routes through the same channel.
+ */
+export function useAuthedFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+	const { getToken } = useAuthToken();
+	return useMemo(() => {
+		return async (path: string, init?: RequestInit) => {
+			const headers = new Headers(init?.headers);
+			const token = await getToken();
+			if (token) headers.set("Authorization", `Bearer ${token}`);
+			const r = await fetch(`${API_URL}${path}`, { ...init, headers });
+			if (!r.ok) throw new ApiError(r.status, await r.text());
+			return r;
+		};
+	}, [getToken]);
 }

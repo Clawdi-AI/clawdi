@@ -27,10 +27,10 @@ export default function RootError({
 			<div className="max-w-md w-full text-center space-y-4">
 				<AlertTriangle className="size-10 text-destructive mx-auto" />
 				<div>
-					<h1 className="text-lg font-semibold">Something broke</h1>
+					<h1 className="text-lg font-semibold">Page Unavailable</h1>
 					<p className="text-sm text-muted-foreground mt-1">
-						The page couldn't render. Retry — if it keeps failing, check the browser console and
-						backend logs for the request ID.
+						The page couldn&apos;t render. Try again. If it keeps failing, check the browser console
+						and backend logs for the request ID.
 					</p>
 				</div>
 				{process.env.NODE_ENV !== "production" && (
@@ -41,7 +41,7 @@ export default function RootError({
 				)}
 				<Button onClick={reset} variant="default">
 					<RotateCcw className="size-4" />
-					Try again
+					Try Again
 				</Button>
 			</div>
 		</div>

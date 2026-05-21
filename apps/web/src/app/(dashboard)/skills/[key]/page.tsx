@@ -1,21 +1,42 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FileText, Laptop, Pencil, Save, Tag, Trash2, X } from "lucide-react";
+import {
+	BookOpen,
+	ExternalLink,
+	FileText,
+	FolderKanban,
+	Laptop,
+	Pencil,
+	Save,
+	Sparkles,
+	Tag,
+	Trash2,
+	X,
+} from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailMeta, DetailNotFound, DetailStats, DetailTitle } from "@/components/detail/layout";
+import {
+	DetailMeta,
+	DetailNotFound,
+	DetailPanel,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
+import { isProjectOwner, ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
@@ -41,7 +62,8 @@ export default function SkillDetailPage() {
 }
 
 function SkillDetailPageInner() {
-	const { key } = useParams<{ key: string }>();
+	const { key: routeKey } = useParams<{ key: string }>();
+	const skillKey = useMemo(() => decodeResourceRouteParam(routeKey), [routeKey]);
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -56,28 +78,29 @@ function SkillDetailPageInner() {
 	// to the legacy endpoint for single-machine accounts (where
 	// there's only one row, so the resolver is unambiguous).
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
+	const selectedProjectId = projectIdParam;
 
 	const {
 		data: skill,
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["skill", key, projectIdParam],
+		queryKey: ["skill", skillKey, selectedProjectId],
 		queryFn: async () => {
-			if (projectIdParam) {
+			if (selectedProjectId) {
 				return unwrap(
 					await api.GET("/api/projects/{project_id}/skills/{skill_key}", {
-						params: { path: { project_id: projectIdParam, skill_key: key } },
+						params: { path: { project_id: selectedProjectId, skill_key: skillKey } },
 					}),
 				);
 			}
 			return unwrap(
-				await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: key } } }),
+				await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: skillKey } } }),
 			);
 		},
 	});
 
-	useSetBreadcrumbTitle(skill?.name || (skill ? key : null));
+	useSetBreadcrumbTitle(skill?.name || (skill ? skillKey : null));
 
 	const { data: defaultProject, error: projectError } = useQuery({
 		queryKey: ["projects", "default"],
@@ -90,6 +113,27 @@ function SkillDetailPageInner() {
 	// path does, so the editor stays consistent with uninstall.
 	const targetProjectId = skill?.project_id ?? defaultProject?.project_id ?? null;
 	const isProjectReady = !!targetProjectId;
+
+	// Shared-project skills are read-only from this viewer's perspective:
+	// hide Edit/Uninstall (would 403 from the backend), surface a
+	// "shared" badge with the owner's project as the source. Re-uses the
+	// same is_owner cross-reference pattern as /vault and /skills.
+	const { data: ownedProjects } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
+	});
+	const ownedProjectIds = useMemo(
+		() =>
+			new Set(
+				(ownedProjects ?? [])
+					.filter((project) => isProjectOwner(project))
+					.map((project) => project.id),
+			),
+		[ownedProjects],
+	);
+	const ownershipKnown = !skill?.project_id || ownedProjects !== undefined;
+	const isReadOnly =
+		ownershipKnown && !!skill?.project_id && !ownedProjectIds.has(skill.project_id);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -105,7 +149,7 @@ function SkillDetailPageInner() {
 
 	const startEdit = () => {
 		if (!skill?.content) {
-			toast.error("This skill has no content to edit yet.");
+			toast.error("No Skill Content Yet");
 			return;
 		}
 		setDraft(skill.content);
@@ -141,21 +185,21 @@ function SkillDetailPageInner() {
 			// upload short-circuit as "unchanged".
 			return unwrap(
 				await api.PUT("/api/projects/{project_id}/skills/{skill_key}/content", {
-					params: { path: { project_id: targetProjectId, skill_key: key } },
+					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 					body: { content: draft, content_hash: editingHash ?? undefined },
 				}),
 			);
 		},
 		onSuccess: () => {
-			toast.success(
-				skill?.machine_name
-					? `Saved. ${skill.machine_name} picks up the new version within a couple seconds via sync.`
-					: "Saved. The change applies on this agent within a couple seconds via sync.",
-			);
+			toast.success("Skill Saved", {
+				description: skill?.machine_name
+					? `${skill.machine_name} picks up the new version within a couple seconds via sync.`
+					: "The change applies on this agent within a couple seconds via sync.",
+			});
 			setIsEditing(false);
 			setDraft("");
 			setEditingHash(null);
-			queryClient.invalidateQueries({ queryKey: ["skill", key] });
+			queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
 		onError: (e) => {
@@ -166,67 +210,70 @@ function SkillDetailPageInner() {
 			// says "Failed to save" and the user keeps clicking
 			// save against a hash the server keeps rejecting.
 			if (e instanceof ApiError && e.status === 412) {
-				toast.error("Skill changed elsewhere", {
+				toast.error("Skill Changed Elsewhere", {
 					description:
 						"Another edit landed while you were typing. Reload to see the latest, then re-apply your change.",
 				});
-				queryClient.invalidateQueries({ queryKey: ["skill", key] });
+				queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 				return;
 			}
-			toast.error("Failed to save", { description: errorMessage(e) });
+			toast.error("Failed to Save Skill", { description: errorMessage(e) });
 		},
 	});
 
 	const uninstall = useMutation({
 		mutationFn: async () => {
-			if (!targetProjectId) throw new Error("Default project not loaded yet");
+			if (!targetProjectId) throw new Error("Project not loaded yet");
 			return unwrap(
 				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: targetProjectId, skill_key: key } },
+					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 				}),
 			);
 		},
 		onSuccess: () => {
-			toast.success(
-				skill?.machine_name
-					? `Skill uninstalled from ${skill.machine_name}. Other agents keep their copies.`
-					: "Skill uninstalled from this agent. Other agents keep their copies.",
-			);
+			toast.success("Skill Uninstalled", {
+				description: skill?.machine_name
+					? `Removed from ${skill.machine_name}. Other agents keep their copies.`
+					: "Removed from this agent. Other agents keep their copies.",
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			router.push("/skills");
+			router.push(projectResourceHref("skills"));
 		},
-		onError: (e) => toast.error("Failed to uninstall", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const onUninstall = () => {
-		if (!isProjectReady) {
-			toast.error("Account project unavailable — try again in a moment.");
+		if (!isProjectReady || !ownershipKnown) {
+			toast.error("Project Access Unavailable", { description: "Try again in a moment." });
 			return;
 		}
-		// Per-agent isolation: this DELETE only removes the skill
-		// from the current project (one agent's copy). The same
-		// skill_key on other agents stays untouched. Confirm copy
-		// has to make that project explicit so the user doesn't think
-		// they're nuking it everywhere.
-		const where = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
-		const ok = window.confirm(
-			`Uninstall "${skill?.name ?? key}" ${where}?\n\n` +
-				"Your other agents keep their copies. To get it back here, " +
-				"re-install it from the marketplace.",
-		);
-		if (ok) uninstall.mutate();
+		if (isReadOnly) {
+			toast.error("Shared Skills Are Read-only");
+			return;
+		}
+		uninstall.mutate();
 	};
 
+	const sourceProjectName = skill?.project_name ?? null;
+	const uninstallLocation = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
 	const agentCaption = skill?.machine_name
 		? `on ${skill.machine_name}`
-		: skill?.project_name
-			? `in ${skill.project_name}`
+		: sourceProjectName
+			? `in ${sourceProjectName}`
 			: null;
+	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
+	const skillProject = useMemo(
+		() =>
+			skill?.project_id
+				? (ownedProjects?.find((project) => project.id === skill.project_id) ?? null)
+				: null,
+		[ownedProjects, skill?.project_id],
+	);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			{error ? (
-				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
+				<DetailNotFound title="Skill Not Found" message={errorMessage(error)} />
 			) : isLoading ? (
 				<div className="space-y-3 py-2">
 					<Skeleton className="h-6 w-48" />
@@ -235,10 +282,27 @@ function SkillDetailPageInner() {
 			) : skill ? (
 				<>
 					<div className="space-y-2">
-						<div className="flex items-start justify-between gap-3">
-							<DetailTitle className="truncate">{skill.name}</DetailTitle>
-							<div className="flex shrink-0 gap-2">
-								{!isEditing ? (
+						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+							<div className="min-w-0 space-y-2">
+								<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+									<Sparkles className="size-3.5" />
+									<span>Skill</span>
+								</div>
+								<DetailTitle className="truncate">{skill.name}</DetailTitle>
+							</div>
+							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
+								{!ownershipKnown ? null : isReadOnly ? (
+									<Badge
+										variant="secondary"
+										title={
+											sourceProjectName
+												? `Shared from "${sourceProjectName}". Viewer access is read-only.`
+												: "Shared from another Project. Viewer access is read-only."
+										}
+									>
+										Shared · Read-only
+									</Badge>
+								) : !isEditing ? (
 									<>
 										<Button
 											variant="outline"
@@ -249,28 +313,43 @@ function SkillDetailPageInner() {
 												!skill.content
 													? "No content stored for this skill yet"
 													: projectError
-														? `Account project unavailable: ${errorMessage(projectError)}`
+														? `Default project unavailable: ${errorMessage(projectError)}`
 														: undefined
 											}
 										>
 											<Pencil />
 											Edit
 										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={onUninstall}
-											disabled={uninstall.isPending || !isProjectReady}
-											title={
-												projectError
-													? `Account project unavailable: ${errorMessage(projectError)}`
-													: undefined
+										<ConfirmAction
+											title={`Uninstall ${skill.name}?`}
+											description={
+												<>
+													<p>This removes the skill {uninstallLocation}.</p>
+													<p>
+														Your other agents keep their copies. To get it back here, re-install it
+														from the marketplace.
+													</p>
+												</>
 											}
-											className="text-destructive hover:text-destructive"
+											confirmLabel="Uninstall Skill"
+											destructive
+											onConfirm={onUninstall}
 										>
-											<Trash2 />
-											Uninstall
-										</Button>
+											<Button
+												variant="outline"
+												size="sm"
+												disabled={uninstall.isPending || !isProjectReady}
+												title={
+													projectError
+														? `Default project unavailable: ${errorMessage(projectError)}`
+														: undefined
+												}
+												className="text-destructive hover:text-destructive"
+											>
+												<Trash2 />
+												Uninstall
+											</Button>
+										</ConfirmAction>
 									</>
 								) : (
 									<>
@@ -341,34 +420,113 @@ function SkillDetailPageInner() {
 						<p className="text-sm text-muted-foreground">{skill.description}</p>
 					) : null}
 
+					<DetailPanel className="space-y-3">
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+							<div className="space-y-1">
+								<div className="flex items-center gap-2">
+									<FolderKanban className="size-4 text-muted-foreground" />
+									<h2 className="text-sm font-semibold">Project Availability</h2>
+								</div>
+								<p className="text-xs text-muted-foreground">
+									Skills live in a Project. Agents can use this Skill when that Project is added to
+									an agent.
+								</p>
+							</div>
+							<Badge variant={isReadOnly ? "secondary" : "outline"}>
+								{isReadOnly ? "Read-only" : "Editable"}
+							</Badge>
+						</div>
+						{skillProject ? (
+							<ProjectIdentity
+								project={skillProject}
+								showOwner
+								showAccess
+								titleClassName="text-sm"
+							/>
+						) : sourceProjectName ? (
+							<div className="rounded-md border bg-background/70 px-3 py-2.5">
+								<div className="text-sm font-medium">{sourceProjectName}</div>
+								<p className="mt-1 text-xs text-muted-foreground">
+									Project details are still loading.
+								</p>
+							</div>
+						) : (
+							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+								No Project information is available for this Skill.
+							</p>
+						)}
+					</DetailPanel>
+
 					{isEditing ? (
-						<>
-							<Separator />
+						<DetailPanel className="space-y-4">
 							<Alert>
-								<AlertTitle>Editing the source-of-truth file</AlertTitle>
+								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
-									Keep the YAML frontmatter (between the leading <code>---</code> markers) intact —
-									it's how the agent finds and titles this skill. Save lands instantly in the cloud
-									and reaches the agent within ~2 seconds.
+									Keep the YAML header at the top intact. It stores the skill name and description.
+									Save updates this Project and syncs to the agent.
 								</AlertDescription>
 							</Alert>
 							<Textarea
 								ref={textareaRef}
+								name="skill-content"
+								aria-label="Skill content"
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
 								className="min-h-[480px] font-mono text-sm leading-relaxed"
+								autoComplete="off"
 								spellCheck={false}
 								disabled={saveEdit.isPending}
 							/>
-						</>
+						</DetailPanel>
 					) : skill.content ? (
-						<>
-							<Separator />
-							<div className="prose prose-sm max-w-none dark:prose-invert">
-								<Markdown content={stripFrontmatter(skill.content)} />
+						<DetailPanel className="space-y-4">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2">
+										<BookOpen className="size-4 text-muted-foreground" />
+										<h2 className="text-sm font-semibold">Instruction File</h2>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										Agents read this file when the Project provides the Skill.
+									</p>
+								</div>
+								<Badge variant="secondary">
+									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
+								</Badge>
 							</div>
-						</>
-					) : null}
+							{skillBody ? (
+								<div className="prose prose-sm max-w-none dark:prose-invert">
+									<Markdown content={skillBody} />
+								</div>
+							) : (
+								<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+									No additional instruction body is stored for this Skill.
+								</p>
+							)}
+						</DetailPanel>
+					) : (
+						<DetailPanel className="space-y-4">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2">
+										<BookOpen className="size-4 text-muted-foreground" />
+										<h2 className="text-sm font-semibold">Instruction File</h2>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										The Skill is installed, but no editable instruction body is available from the
+										current sync.
+									</p>
+								</div>
+								<Badge variant="secondary">
+									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
+								</Badge>
+							</div>
+							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+								When the agent uploads the Skill file content, the preview and editor will appear
+								here.
+							</p>
+						</DetailPanel>
+					)}
 				</>
 			) : null}
 		</div>

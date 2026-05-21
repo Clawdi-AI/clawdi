@@ -11,6 +11,9 @@ const httpsOrHttp = () =>
 			message: "URL must start with http:// or https://",
 		});
 
+const isLocalDevAuthBypass =
+	process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true" && process.env.NODE_ENV !== "production";
+
 /**
  * Typed, validated environment variables.
  *
@@ -43,8 +46,11 @@ export const env = createEnv({
 		// dashboards without a code change.
 		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: httpsOrHttp().default("https://www.clawdi.ai/dashboard"),
 
-		// Clerk publishable key — required, no sensible default.
-		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
+		// Clerk publishable key. Local `next dev` auth bypass can run without
+		// Clerk; every normal dashboard run still requires a real key.
+		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: isLocalDevAuthBypass
+			? z.string().min(1).optional()
+			: z.string().min(1),
 
 		// Hosted-only build flag, transformed to a real boolean. `"true"`
 		// enables clawdi.ai cross-origin surfaces (deploy listing,
@@ -53,6 +59,16 @@ export const env = createEnv({
 			.string()
 			.optional()
 			.transform((v) => v === "true"),
+
+		// Local-only browser testing bypass. When true in `next dev`, the
+		// dashboard skips Clerk route protection and sends a fixed dev bearer
+		// token to the local backend. Backend-side `DEV_AUTH_BYPASS=true`
+		// must also be enabled, and rejects non-development environments.
+		NEXT_PUBLIC_DEV_AUTH_BYPASS: z
+			.string()
+			.optional()
+			.transform((v) => v === "true" && process.env.NODE_ENV !== "production"),
+		NEXT_PUBLIC_DEV_AUTH_TOKEN: z.string().min(1).default("dev-bypass"),
 
 		// Hosted-only analytics token. Optional so OSS and hosted-without-
 		// analytics both validate cleanly.
@@ -67,6 +83,8 @@ export const env = createEnv({
 		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
+		NEXT_PUBLIC_DEV_AUTH_BYPASS: process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS,
+		NEXT_PUBLIC_DEV_AUTH_TOKEN: process.env.NEXT_PUBLIC_DEV_AUTH_TOKEN,
 		NEXT_PUBLIC_POSTHOG_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_TOKEN,
 	},
 	// `bun test` preloads `test-setup.ts` to seed required vars, so

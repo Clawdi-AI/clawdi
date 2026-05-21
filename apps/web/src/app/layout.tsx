@@ -1,7 +1,6 @@
-import { ClerkProvider } from "@clerk/nextjs";
-import { shadcn } from "@clerk/themes";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
@@ -83,18 +82,14 @@ export default function RootLayout({
 	children: React.ReactNode;
 }>) {
 	return (
-		<ClerkProvider appearance={{ baseTheme: shadcn }}>
-			<html lang="en" className="h-full" suppressHydrationWarning>
-				<body
-					className={cn(
-						fontSans.variable,
-						fontMono.variable,
-						"flex min-h-full flex-col antialiased",
-					)}
-				>
+		<html lang="en" className="h-full" suppressHydrationWarning>
+			<body
+				className={cn(fontSans.variable, fontMono.variable, "flex min-h-full flex-col antialiased")}
+			>
+				<AuthProvider>
 					<Providers>{children}</Providers>
-				</body>
-			</html>
-		</ClerkProvider>
+				</AuthProvider>
+			</body>
+		</html>
 	);
 }

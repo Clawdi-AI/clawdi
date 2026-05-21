@@ -2,35 +2,62 @@
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Sparkles } from "lucide-react";
+import {
+	AlertCircle,
+	Check,
+	Download,
+	ExternalLink,
+	FolderKanban,
+	Plus,
+	Search,
+	Sparkles,
+	Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
-import { AgentTargetPicker } from "@/components/skills/agent-target-picker";
-import { makeSkillColumns } from "@/components/skills/skill-columns";
+import {
+	compareProjectsForUse,
+	displayProjectName,
+	isCustomProject,
+	isProjectOwner,
+	ProjectCompactPicker,
+} from "@/components/projects/project-metadata";
+import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
+import { makeSkillColumns, resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { errorMessage } from "@/lib/utils";
+import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
+import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-// /skills is the cross-agent skill control center. Pick an agent
-// at the top, manage that agent's installed skills below, and use
-// the install bar + featured tiles at the bottom to add new ones.
-// Same DataTable + skillColumns the agent detail page uses, so
-// the two surfaces stay in lockstep.
+// /skills is the Project skill control center. Pick a Project at
+// the top, manage its installed skills below, and use the install
+// bar + featured tiles to add new ones. Agent pages deep-link here
+// through their Agent Project.
 
 const FALLBACK_TARGET_LABEL = "Active agent";
+const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
 // Next 16 prerender bails out unless `useSearchParams()` lives
 // inside a Suspense boundary. Wrap the whole page so static
@@ -47,133 +74,99 @@ export default function SkillsPage() {
 function SkillsPageInner() {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	// `?target=<env_id>` lives in nuqs — shareable, refresh-stable,
-	// and round-trippable from the agent detail page's "Install
-	// skills" deep link. `clearOnDefault` keeps `/skills` clean when
-	// no target is set.
+	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
+	// remains supported for older deep links from agent detail pages.
+	const [projectParam, setProjectParam] = useQueryState(
+		"project",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
 	const [targetEnvId, setTargetEnvId] = useQueryState(
 		"target",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
 	);
+	const hasProjectParam = projectParam.trim().length > 0;
+	const hasTargetParam = targetEnvId.trim().length > 0;
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 	const [customRepo, setCustomRepo] = useState("");
 	const [customRepoError, setCustomRepoError] = useState<string | null>(null);
 
-	const { data: defaultProject, error: projectError } = useQuery({
-		queryKey: ["projects", "default"],
-		queryFn: async () => unwrap(await api.GET("/api/projects/default")),
+	const { data: projects, error: projectsError } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
 	});
+	const orderedProjects = useMemo(
+		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
+		[projects],
+	);
+	const writableProjectIds = useMemo(
+		() =>
+			projects
+				? new Set(
+						projects.filter((project) => isProjectOwner(project)).map((project) => project.id),
+					)
+				: null,
+		[projects],
+	);
 
 	const { data: envs } = useQuery({
 		queryKey: ["environments"],
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
 	});
 
-	const agentCount = envs?.length ?? 0;
-
-	const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-	useEffect(() => {
-		if (!targetEnvId || !envs) return;
-		const env = envs.find((e) => e.id === targetEnvId);
-		if (env?.default_project_id) setSelectedProjectId(env.default_project_id);
-	}, [targetEnvId, envs]);
-
-	const onPickProject = useCallback(
-		(projectId: string) => {
-			setSelectedProjectId(projectId);
-			const env = envs?.find((e) => e.default_project_id === projectId);
-			if (!env) return;
-			void setTargetEnvId(env.id);
-		},
-		[envs, setTargetEnvId],
-	);
-
-	// Resolve the target project synchronously from `targetEnvId` +
-	// `envs` so a deep-link `?target=X` never falls through to
-	// the account-default during the brief render window where
-	// `selectedProjectId` hasn't been populated by its useEffect
-	// yet. Pre-fix that window (and stale/deleted target ids
-	// permanently) exposed install/uninstall actions wired to
-	// the WRONG agent's project.
-	//
 	// Resolution order:
-	//   - URL has ?target=X and envs loaded:
-	//       env found → that env's project
-	//       env not found (stale/deleted) → null (block actions)
-	//   - URL has ?target=X but envs still loading → null
-	//   - No ?target=, picker selection (post-mount) → that project
-	//   - No ?target=, no picker → account default project
+	//   - URL has ?project=X and projects loaded:
+	//       project found → that Project
+	//       project missing → stale link, block writes
+	//   - Legacy URL has ?target=X and envs loaded:
+	//       env found → its Agent Project
+	//       env missing → stale link, block writes
+	//   - No URL scope → first visible Project, ordered for common use
 	const targetEnvFromUrl = useMemo(() => {
-		if (!targetEnvId) return null;
+		if (!hasTargetParam || hasProjectParam) return null;
 		if (!envs) return undefined; // still loading
 		return envs.find((e) => e.id === targetEnvId) ?? null; // null = stale id
-	}, [targetEnvId, envs]);
-	const isResolvingTarget = targetEnvFromUrl === undefined;
+	}, [hasProjectParam, hasTargetParam, targetEnvId, envs]);
+	const projectFromUrl = useMemo(() => {
+		if (!hasProjectParam) return null;
+		if (!projects) return undefined; // still loading
+		return orderedProjects.find((project) => project.id === projectParam) ?? null;
+	}, [hasProjectParam, projectParam, projects, orderedProjects]);
+	const isResolvingTarget =
+		projects === undefined || targetEnvFromUrl === undefined || projectFromUrl === undefined;
 	const targetProjectId = (() => {
-		if (targetEnvId) {
-			// URL-driven target: only resolve once envs say
-			// whether it's valid.
-			if (targetEnvFromUrl === undefined) return null; // loading
-			return targetEnvFromUrl?.default_project_id ?? null; // null = stale
-		}
-		// No URL target. If the account has zero envs registered,
-		// `defaultProject.project_id` resolves to Personal — but
-		// installing into Personal is silent harm: a future
-		// connected agent gets its own env project and won't see
-		// the Personal install. Block installs until an env exists
-		// (envs still loading: `envs === undefined` → null too).
-		if (!envs || envs.length === 0) return null;
-		return selectedProjectId ?? defaultProject?.project_id ?? null;
+		if (hasProjectParam) return projectFromUrl?.id ?? null;
+		if (hasTargetParam) return targetEnvFromUrl?.default_project_id ?? null;
+		return orderedProjects[0]?.id ?? null;
 	})();
+	const targetProject = orderedProjects.find((project) => project.id === targetProjectId) ?? null;
+	const isStaleProject = hasProjectParam && projectFromUrl === null;
+	const isStaleTarget = !hasProjectParam && hasTargetParam && targetEnvFromUrl === null;
 
-	// Always fetch account-wide. Earlier shape pinned project_id
-	// to the resolved target, but that hid two real cases the
-	// page MUST surface:
-	//   1. Personal-project skills that pre-dated agent envs.
-	//   2. Orphaned projects whose origin env was disconnected
-	//      (backend keeps the project + skills; the env is gone).
-	// Both produce skills with a project_id that no active env
-	// references; client-side filtering handles the per-agent
-	// view + a separate orphan section below.
-	//
-	// Walk every page server-side: the backend caps page_size
-	// at 200, so an account with > 200 skills across projects
-	// would lose page 2+ rows under a single-page fetch. The
-	// loop runs inside the queryFn so React only sees one
-	// completed result; a hard cap of 50 pages (10k skills)
-	// guards against a server bug or runaway listing.
+	// Fetch account-wide, then filter client-side by the selected
+	// Project. That keeps one inventory cache for Project switching
+	// while preserving exact project_id writes for install/uninstall.
 	const {
 		data: skillsData,
 		isLoading: skillsLoading,
 		error: skillsError,
 	} = useQuery({
 		queryKey: ["skills", "all-projects"],
-		queryFn: async () => {
-			const PAGE_SIZE = 200;
-			const items: SkillSummary[] = [];
-			let page = 1;
-			let total = 0;
-			while (true) {
-				const result = unwrap(
-					await api.GET("/api/skills", {
-						params: { query: { page, page_size: PAGE_SIZE } },
-					}),
-				);
-				items.push(...result.items);
-				total = result.total ?? items.length;
-				if (items.length >= total || result.items.length === 0) break;
-				page += 1;
-				// Defense-in-depth: bail at 50 pages = 10k skills, far
-				// above any plausible account today. Hitting this would
-				// suggest a backend pagination bug.
-				if (page > 50) break;
-			}
-			return { items, total, page: 1, page_size: PAGE_SIZE };
-		},
+		queryFn: async () =>
+			fetchAllPages<SkillSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/skills", {
+							params: { query: { page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "skills" },
+			),
 		enabled: !isResolvingTarget,
 	});
-	const isProjectReady = !!targetProjectId;
+	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;
+	const canWriteTargetProject = !!targetProject && isProjectReady && isProjectOwner(targetProject);
+	const targetProjectLabel = targetProject ? displayProjectName(targetProject) : "Project";
 	const targetEnv = envs?.find((e) => e.default_project_id === targetProjectId);
 
 	const targetAgentLabel = useMemo(() => {
@@ -186,80 +179,11 @@ function SkillsPageInner() {
 		return baseName;
 	}, [envs, targetEnv]);
 
-	// A URL `?target=X` that points at an env that doesn't
-	// exist (deleted on another machine, never registered, copy-
-	// pasted from a different account) is a stale deep link.
-	// We MUST NOT show ANY skills in that case — the row's
-	// uninstall button would otherwise wire to whatever project
-	// the row carries, hitting an arbitrary agent's skill
-	// instead of the one the user thought they were operating
-	// on. Pre-fix the round-46 fallback rendered the account-
-	// wide listing here and the buttons stayed enabled.
-	const isStaleTarget = targetEnvId !== null && targetEnvFromUrl === null;
-
-	// Set of project_ids that belong to currently-connected envs.
-	// Anything outside this set is either Personal project, or an
-	// orphaned project whose env was disconnected (backend
-	// preserves both the project and its skills).
-	const envProjectIds = useMemo(
-		() =>
-			new Set(
-				(envs ?? [])
-					.map((e) => e.default_project_id)
-					.filter((s): s is string => typeof s === "string"),
-			),
-		[envs],
-	);
-
 	const skillsForTarget = useMemo(() => {
 		if (!skillsData?.items) return undefined;
-		if (isStaleTarget) return [];
-		// All-skills fallback is ONLY for the "user has zero
-		// connected agents AND zero URL pin" state — where
-		// Personal-project or orphan-project skills (pre-env-
-		// deployment leftovers) need a place to live so the
-		// user can still manage them. Pre-fix this branch fired
-		// whenever `targetProjectId` was falsy, including the
-		// brief window while the default-project query is
-		// resolving AND the permanent state when it errors.
-		// During those states the page would expose every
-		// project's skills with active uninstall buttons —
-		// uninstalling a row would target whatever project the
-		// row carries instead of the agent the user thought
-		// they'd selected. Gate strictly on `agentCount === 0`
-		// to avoid that footgun.
-		if (!targetProjectId) {
-			// All-skills fallback ONLY when envs have RESOLVED
-			// AND are confirmed empty. Pre-fix `agentCount === 0`
-			// also fired during the loading window when
-			// `envs === undefined` — the skills query could
-			// resolve from cache faster than envs and briefly
-			// expose every project's rows with row-level uninstall
-			// buttons. Distinguish "still loading" from
-			// "confirmed empty" before unlocking the fallback.
-			if (envs !== undefined && envs.length === 0) return skillsData.items;
-			// envs still loading OR has agents but the
-			// default-project hasn't resolved yet (or errored) —
-			// return undefined so the table shows its loading
-			// skeleton / empty-state instead of a misrouted
-			// action surface.
-			return undefined;
-		}
+		if (isStaleProject || isStaleTarget || !targetProjectId) return [];
 		return skillsData.items.filter((s) => s.project_id === targetProjectId);
-	}, [skillsData, targetProjectId, isStaleTarget, envs]);
-
-	// Orphan-project skills: rows whose project_id is NOT one of the
-	// currently-connected envs' projects. Surfaces preserved skills
-	// from disconnected agents so they remain manageable; without
-	// this they'd disappear entirely whenever the user has any
-	// active env (the picker only shows connected envs, the
-	// project query filtered the rest out). Excluded from the
-	// list when the user is viewing the orphan-only "no envs"
-	// state above (`!targetProjectId` already shows everything).
-	const orphanSkills = useMemo(() => {
-		if (!skillsData?.items || !targetProjectId) return [];
-		return skillsData.items.filter((s) => !s.project_id || !envProjectIds.has(s.project_id));
-	}, [skillsData, envProjectIds, targetProjectId]);
+	}, [skillsData, targetProjectId, isStaleProject, isStaleTarget]);
 
 	const installedKeysOnTarget = useMemo(() => {
 		const items = skillsForTarget;
@@ -275,12 +199,12 @@ function SkillsPageInner() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success(
-				`Uninstalled ${vars.skillKey} from ${targetAgentLabel}. Other agents keep their copies.`,
-			);
+			toast.success("Skill Uninstalled", {
+				description: `${vars.skillKey} was removed from ${targetProjectLabel}.`,
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(
@@ -288,8 +212,9 @@ function SkillsPageInner() {
 			makeSkillColumns(
 				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
 				uninstallSkill.isPending,
+				{ currentProjectId: targetProjectId, writableProjectIds },
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending],
+		[uninstallSkill.mutate, uninstallSkill.isPending, targetProjectId, writableProjectIds],
 	);
 
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
@@ -297,7 +222,8 @@ function SkillsPageInner() {
 		setInstalling(key);
 		setInstallError(null);
 		try {
-			if (!targetProjectId) throw new Error("No target agent selected");
+			if (!targetProjectId || !targetProject) throw new Error("Choose a Project first");
+			if (!canWriteTargetProject) throw new Error("This Project is read-only");
 			unwrap(
 				await api.POST("/api/projects/{project_id}/skills/install", {
 					params: { path: { project_id: targetProjectId } },
@@ -309,11 +235,18 @@ function SkillsPageInner() {
 				targetEnv?.sync_enabled && targetEnv?.last_sync_at
 					? Date.now() - new Date(targetEnv.last_sync_at).getTime() < 90_000
 					: false;
-			toast.success(
-				daemonHealthy
-					? `Installed. Will appear on ${targetAgentLabel} within a couple seconds.`
-					: `Installed. Will apply on ${targetAgentLabel} when its daemon reconnects.`,
-			);
+			const projectName = displayProjectName(targetProject);
+			if (targetEnv) {
+				toast.success(
+					daemonHealthy
+						? `Installed. Will appear on ${targetAgentLabel} within a couple seconds.`
+						: `Installed. Will apply on ${targetAgentLabel} when its daemon reconnects.`,
+				);
+			} else {
+				toast.success(`Installed in ${projectName}`, {
+					description: "Add this Project to an agent when you want it available during a run.",
+				});
+			}
 			return true;
 		} catch (e: unknown) {
 			setInstallError(errorMessage(e));
@@ -339,16 +272,37 @@ function SkillsPageInner() {
 		if (ok) setCustomRepo("");
 	};
 
+	const installedSkillsEmptyMessage = isStaleProject
+		? "This link points to a Project that is no longer available. Pick another Project."
+		: isStaleTarget
+			? "This link points to an agent that no longer exists. Pick a Project above."
+			: orderedProjects.length === 0
+				? "Create a Project first, then install skills into it."
+				: isProjectReady
+					? "No skills in this Project yet. Install one from the marketplace below."
+					: "Pick a Project to see its skills.";
+	const canShareTargetProject =
+		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);
+	const renderShareProjectAction = () =>
+		canShareTargetProject && targetProject ? (
+			<ShareProjectDialog
+				projectId={targetProject.id}
+				projectName={displayProjectName(targetProject)}
+				projectKind={targetProject.kind}
+			/>
+		) : null;
+
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Skills" />
+			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
 
-			{projectError ? (
+			{projectsError ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Couldn&apos;t reach your account project</AlertTitle>
+					<AlertTitle>Couldn&apos;t load Projects</AlertTitle>
 					<AlertDescription>
-						Install and uninstall are temporarily disabled. {errorMessage(projectError)}
+						Project-scoped install and uninstall are temporarily disabled.{" "}
+						{errorMessage(projectsError)}
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -370,145 +324,162 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			{/* Project picker — primary control. Single agent accounts
-			    skip the picker entirely (one option, no choice to
-			    make); the page just operates on that agent. */}
-			{agentCount >= 2 ? (
-				<AgentTargetPicker
-					envs={envs ?? []}
-					selectedProjectId={selectedProjectId}
-					targetEnv={targetEnv}
-					targetAgentLabel={targetAgentLabel}
-					onChange={onPickProject}
-				/>
+			{orderedProjects.length > 0 ? (
+				<DashboardSection priority="primary">
+					<DashboardSectionHeader
+						icon={FolderKanban}
+						title="Project Scope"
+						count={targetProject ? displayProjectName(targetProject) : undefined}
+						description="Choose the Project whose skills you want to view or change."
+						toolbar={
+							canShareTargetProject ? (
+								<div className="hidden sm:block">{renderShareProjectAction()}</div>
+							) : null
+						}
+						priority="primary"
+					/>
+					<DashboardSectionToolbar>
+						<div className="grid gap-2 sm:grid-cols-[minmax(260px,420px)_auto] sm:items-center sm:justify-start">
+							<ProjectCompactPicker
+								projects={orderedProjects}
+								agents={envs ?? []}
+								value={targetProjectId ?? ""}
+								onValueChange={(projectId) => {
+									void setProjectParam(projectId);
+									void setTargetEnvId("");
+								}}
+								placeholder="Choose Project…"
+								ariaLabel="Choose Project for skills"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Installs, removals, and marketplace choices apply only to this Project.
+							</p>
+							{canShareTargetProject ? (
+								<div className="sm:hidden [&_button]:w-full">{renderShareProjectAction()}</div>
+							) : null}
+						</div>
+					</DashboardSectionToolbar>
+				</DashboardSection>
 			) : null}
 
-			{/* Installed-on-this-agent table. Same DataTable +
-			    ColumnDef pattern Sessions and the agent detail
-			    page use, so a row reads identically across
-			    surfaces. Inline uninstall lives in the Actions
-			    column on hover. */}
-			<section className="space-y-2">
-				<div className="flex items-baseline justify-between gap-3">
-					<h2 className="text-base font-semibold">
-						Installed
-						{/* Just the count — the agent label is already in the
-						    picker right above. Repeating "44 on
-						    Jings-MacBook-Pro.local · Hermes" duplicates info
-						    the eye just read in the picker chip. */}
-						{skillsForTarget ? (
-							<span className="ml-2 text-sm font-normal text-muted-foreground">
-								{skillsForTarget.length}
-							</span>
-						) : null}
-					</h2>
-				</div>
-				<DataTable
-					columns={skillColumns}
-					data={skillsForTarget ?? []}
-					isLoading={skillsLoading}
-					rowAriaLabel={(s) => `Open ${s.name}`}
-					emptyMessage={
-						isStaleTarget
-							? "This link points to an agent that no longer exists. Pick a current agent above to manage its skills."
-							: agentCount === 0
-								? "Connect an agent first to install skills. Open the dashboard to add one."
-								: isProjectReady
-									? "No skills installed on this agent yet. Install one from the marketplace below."
-									: "Pick an agent to see its skills."
+			{!canWriteTargetProject && targetProject ? (
+				<Alert>
+					<AlertCircle />
+					<AlertTitle>Read-only Project</AlertTitle>
+					<AlertDescription>
+						You can view skills in {displayProjectName(targetProject)}, but only the owner can
+						install or remove them.
+					</AlertDescription>
+				</Alert>
+			) : null}
+
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Sparkles}
+					title="Installed Skills"
+					count={skillsForTarget ? skillsForTarget.length : undefined}
+					description={
+						targetProject
+							? `Skills saved in ${displayProjectName(targetProject)}.`
+							: "Pick a Project above to see its skills."
 					}
 				/>
-			</section>
-
-			{/* Orphan-project skills. Surfaces preserved skills whose
-			    origin agent has been disconnected (backend keeps
-			    the project + skills; the env is gone). Pre-fix the
-			    page filtered to a single connected env's project so
-			    these rows disappeared after a disconnect. The
-			    uninstall column still works because each row
-			    carries its own project_id and the DELETE route is
-			    project-explicit. */}
-			{orphanSkills.length > 0 ? (
-				<section className="space-y-2">
-					<div className="flex items-baseline justify-between gap-3">
-						<h2 className="text-base font-semibold">
-							From disconnected agents
-							<span className="ml-2 text-sm font-normal text-muted-foreground">
-								{orphanSkills.length}
-							</span>
-						</h2>
-					</div>
-					<p className="text-xs text-muted-foreground">
-						These skills belong to projects whose original agent is no longer connected.
-						They&apos;re kept here so you can uninstall them or re-connect the agent on another
-						machine.
-					</p>
+				<div className="md:hidden">
+					<MobileSkillList
+						skills={skillsForTarget ?? []}
+						isLoading={skillsLoading || isResolvingTarget}
+						emptyMessage={installedSkillsEmptyMessage}
+						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
+						uninstallPending={uninstallSkill.isPending}
+						currentProjectId={targetProjectId}
+						writableProjectIds={writableProjectIds}
+					/>
+				</div>
+				<div className="hidden md:block">
 					<DataTable
 						columns={skillColumns}
-						data={orphanSkills}
+						data={skillsForTarget ?? []}
+						isLoading={skillsLoading || isResolvingTarget}
 						rowAriaLabel={(s) => `Open ${s.name}`}
+						emptyMessage={installedSkillsEmptyMessage}
+						className="space-y-0"
+						tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
 					/>
-				</section>
-			) : null}
+				</div>
+			</DashboardSection>
 
-			{/* Install row. Custom GitHub repo on the left, install
-			    button on the right. The featured tiles below are
-			    one-click installs. Both routes hit the same
-			    install action. */}
-			<section className="space-y-3">
-				{/* "More on skills.sh" lives in the section heading
-				    rather than the page header — install is the only
-				    place that link is actually useful, so it sits with
-				    the other install controls instead of double-billing
-				    the page header. */}
-				<div className="flex items-baseline justify-between gap-3">
-					<h2 className="text-base font-semibold">Install more</h2>
-					<a
-						href="https://skills.sh"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-					>
-						More on skills.sh <ExternalLink className="size-3" />
-					</a>
-				</div>
-				<div className="flex flex-wrap items-center gap-2">
-					<div className="relative min-w-[280px] flex-1">
-						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							value={customRepo}
-							onChange={(e) => {
-								setCustomRepo(e.target.value);
-								setCustomRepoError(null);
-								setInstallError(null);
-							}}
-							placeholder="Install from GitHub: owner/repo or owner/repo/path"
-							className="pl-9"
-							onKeyDown={(e) => {
-								if (e.key === "Enter") handleCustom();
-							}}
-							aria-invalid={!!customRepoError || undefined}
-						/>
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Download}
+					title="Add a Skill"
+					description={
+						targetProject
+							? `Install into ${displayProjectName(targetProject)} by repository path or from suggested skills.`
+							: "Pick a Project before installing a skill."
+					}
+					toolbar={
+						<a
+							href="https://skills.sh"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						>
+							More on skills.sh <ExternalLink className="size-3" />
+						</a>
+					}
+				/>
+				<div className="grid gap-1.5 border-b px-4 py-3">
+					<Label htmlFor="skill-custom-repo" className="text-xs font-medium">
+						GitHub skill repository
+					</Label>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<div className="relative min-w-0 flex-1">
+							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+							<Input
+								id="skill-custom-repo"
+								name="skill-custom-repo"
+								value={customRepo}
+								onChange={(e) => {
+									setCustomRepo(e.target.value);
+									setCustomRepoError(null);
+									setInstallError(null);
+								}}
+								placeholder="owner/repo or owner/repo/path…"
+								autoComplete="off"
+								spellCheck={false}
+								className="pl-9"
+								onKeyDown={(e) => {
+									if (e.key === "Enter") handleCustom();
+								}}
+								aria-invalid={!!customRepoError || undefined}
+							/>
+						</div>
+						<Button
+							onClick={handleCustom}
+							disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
+							variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
+							className="sm:w-auto"
+						>
+							{installing && customRepo ? <Spinner /> : <Plus />}
+							Install Skill
+						</Button>
 					</div>
-					<Button
-						onClick={handleCustom}
-						disabled={!customRepo.trim() || !!installing || !isProjectReady}
-					>
-						{installing && customRepo ? <Spinner /> : <Plus />}
-						Install
-					</Button>
 				</div>
-				{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
+				{customRepoError ? (
+					<p className="px-4 pt-3 text-xs text-destructive">{customRepoError}</p>
+				) : null}
 				{installError ? (
-					<Alert variant="destructive">
-						<AlertTitle>Install failed</AlertTitle>
-						<AlertDescription>{installError}</AlertDescription>
-					</Alert>
+					<div className="px-4 pt-3">
+						<Alert variant="destructive">
+							<AlertTitle>Install Failed</AlertTitle>
+							<AlertDescription>{installError}</AlertDescription>
+						</Alert>
+					</div>
 				) : null}
 
-				<div className="space-y-2">
+				<div className="space-y-2 p-4">
 					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Featured
+						Suggested Skills
 					</p>
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{FEATURED_SKILLS.map((skill) => {
@@ -521,14 +492,16 @@ function SkillsPageInner() {
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2">
 												<Sparkles className="size-4 shrink-0 text-primary" />
-												<Link
-													href={`/skills/${encodeURIComponent(skill.skillKey)}${
-														targetProjectId ? `?project=${encodeURIComponent(targetProjectId)}` : ""
-													}`}
-													className="truncate text-sm font-medium hover:underline"
-												>
-													{skill.name}
-												</Link>
+												{isInstalled && targetProjectId ? (
+													<Link
+														href={skillDetailHref(skill.skillKey, targetProjectId)}
+														className="truncate text-sm font-medium hover:underline"
+													>
+														{skill.name}
+													</Link>
+												) : (
+													<span className="truncate text-sm font-medium">{skill.name}</span>
+												)}
 											</div>
 											<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
 												{skill.description}
@@ -548,7 +521,7 @@ function SkillsPageInner() {
 												variant="outline"
 												size="sm"
 												onClick={() => installSkill(skill.repo, skill.path)}
-												disabled={isInstalling || !isProjectReady}
+												disabled={isInstalling || !canWriteTargetProject}
 												className="shrink-0"
 											>
 												{isInstalling ? <Spinner /> : <Download />}
@@ -561,7 +534,112 @@ function SkillsPageInner() {
 						})}
 					</div>
 				</div>
-			</section>
+			</DashboardSection>
+		</div>
+	);
+}
+
+function MobileSkillList({
+	skills,
+	isLoading,
+	emptyMessage,
+	onUninstall,
+	uninstallPending,
+	currentProjectId,
+	writableProjectIds,
+}: {
+	skills: SkillSummary[];
+	isLoading: boolean;
+	emptyMessage: ReactNode;
+	onUninstall: (skillKey: string, projectId: string) => void;
+	uninstallPending: boolean;
+	currentProjectId?: string | null;
+	writableProjectIds?: ReadonlySet<string> | null;
+}) {
+	if (isLoading) {
+		return (
+			<div className="divide-y">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<div key={index} className="px-4 py-3">
+						<Skeleton className="h-4 w-3/4" />
+						<Skeleton className="mt-2 h-3 w-full" />
+						<Skeleton className="mt-2 h-3 w-1/2" />
+					</div>
+				))}
+			</div>
+		);
+	}
+
+	if (skills.length === 0) {
+		return <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>;
+	}
+
+	return (
+		<div className="divide-y">
+			{skills.map((skill) => {
+				const access = resolveSkillProjectAccess(skill, { currentProjectId, writableProjectIds });
+				const canUninstall = access === "writable" && !!skill.project_id;
+				return (
+					<article
+						key={`${skill.project_id ?? "unknown"}-${skill.skill_key}`}
+						className="px-4 py-3"
+					>
+						<div className="flex items-start justify-between gap-3">
+							<div className="min-w-0 flex-1">
+								<div className="flex min-w-0 items-center gap-2">
+									<Sparkles className="size-4 shrink-0 text-primary" />
+									<Link
+										href={skillDetailHref(skill.skill_key, skill.project_id)}
+										className="truncate text-sm font-medium hover:underline"
+									>
+										{skill.name}
+									</Link>
+									<Badge variant="outline" className="shrink-0">
+										v{skill.version}
+									</Badge>
+									{access === "read-only" ? (
+										<Badge variant="secondary" className="shrink-0">
+											Shared
+										</Badge>
+									) : null}
+								</div>
+								{skill.description ? (
+									<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+										{skill.description}
+									</p>
+								) : null}
+								<div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+									<span className="truncate" translate="no">
+										{skill.source_repo ?? skill.source}
+									</span>
+									{skill.updated_at ? <span>{relativeTime(skill.updated_at)}</span> : null}
+								</div>
+							</div>
+							{canUninstall ? (
+								<ConfirmAction
+									title={`Uninstall ${skill.name}?`}
+									description={<p>Other Projects keep their copies.</p>}
+									confirmLabel="Uninstall Skill"
+									destructive
+									onConfirm={() => {
+										if (skill.project_id) onUninstall(skill.skill_key, skill.project_id);
+									}}
+								>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										disabled={uninstallPending}
+										className="shrink-0 text-muted-foreground hover:text-destructive"
+										aria-label={`Uninstall ${skill.name}`}
+									>
+										<Trash2 className="size-3.5" />
+									</Button>
+								</ConfirmAction>
+							) : null}
+						</div>
+					</article>
+				);
+			})}
 		</div>
 	);
 }

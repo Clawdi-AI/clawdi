@@ -6,6 +6,7 @@ import { Stat } from "@/components/meta/stat";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { sessionDetailHref } from "@/lib/project-resource-model";
 import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export function SessionRow({ session }: { session: SessionListItem }) {
@@ -13,7 +14,7 @@ export function SessionRow({ session }: { session: SessionListItem }) {
 	const totalTokens = s.input_tokens + s.output_tokens;
 	return (
 		<Link
-			href={`/sessions/${s.id}`}
+			href={sessionDetailHref(s.id)}
 			className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-accent/40"
 		>
 			<div className="min-w-0 flex-1">

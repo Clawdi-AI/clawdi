@@ -73,7 +73,7 @@ async def test_recipient_can_read_shared_project_skill_detail_and_search(
     from app.models.project_membership import ProjectMembership
     from app.models.skill import Skill
     from app.models.user import User
-    from app.models.vault import Vault
+    from app.models.vault import Vault, VaultProjectAttachment
 
     nonce = uuid.uuid4().hex[:8]
     owner = User(
@@ -116,14 +116,14 @@ async def test_recipient_can_read_shared_project_skill_detail_and_search(
             is_active=True,
         )
     )
-    db_session.add(
-        Vault(
-            user_id=owner.id,
-            project_id=shared.id,
-            slug=f"shared-vault-{nonce}",
-            name=f"Shared Vault {nonce}",
-        )
+    vault = Vault(
+        user_id=owner.id,
+        slug=f"shared-vault-{nonce}",
+        name=f"Shared Vault {nonce}",
     )
+    db_session.add(vault)
+    await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=shared.id))
     await db_session.commit()
 
     try:
@@ -164,7 +164,7 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
     from app.models.project_membership import ProjectMembership
     from app.models.skill import Skill
     from app.models.user import User
-    from app.models.vault import Vault
+    from app.models.vault import Vault, VaultProjectAttachment
     from app.services.tar_utils import tar_from_content
 
     nonce = uuid.uuid4().hex[:8]
@@ -206,14 +206,10 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
             is_active=True,
         )
     )
-    db_session.add(
-        Vault(
-            user_id=owner.id,
-            project_id=shared.id,
-            slug=f"owner-vault-{nonce}",
-            name="Owner Vault",
-        )
-    )
+    vault = Vault(user_id=owner.id, slug=f"owner-vault-{nonce}", name="Owner Vault")
+    db_session.add(vault)
+    await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=shared.id))
     await db_session.commit()
 
     try:
@@ -263,12 +259,7 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
         assert leaked_skill is None
 
         leaked_vault = (
-            await db_session.execute(
-                select(Vault).where(
-                    Vault.project_id == shared.id,
-                    Vault.user_id == seed_user.id,
-                )
-            )
+            await db_session.execute(select(Vault).where(Vault.user_id == seed_user.id))
         ).scalar_one_or_none()
         assert leaked_vault is None
     finally:
@@ -278,17 +269,17 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
 
 
 @pytest.mark.asyncio
-async def test_recipient_cli_resolves_shared_project_vault_plaintext(
+async def test_recipient_cli_cannot_resolve_shared_project_vault_plaintext(
     cli_client,
     db_session,
     seed_user,
 ):
-    """Unbound CLI keys may resolve shared Project vault plaintext."""
+    """User-level CLI keys can read shared metadata, but not shared plaintext."""
     from app.models.agent_project_binding import AgentProjectBinding
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.project_membership import ProjectMembership
     from app.models.user import User
-    from app.models.vault import Vault, VaultItem
+    from app.models.vault import Vault, VaultItem, VaultProjectAttachment
     from app.services.vault_crypto import encrypt
     from tests.conftest import create_env_with_project
 
@@ -321,12 +312,12 @@ async def test_recipient_cli_resolves_shared_project_vault_plaintext(
     )
     vault = Vault(
         user_id=owner.id,
-        project_id=shared.id,
         slug=f"owner-secret-{nonce}",
         name="Owner Secret",
     )
     db_session.add(vault)
     await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=shared.id))
     ciphertext, nonce_bytes = encrypt("owner-secret-value")
     db_session.add(
         VaultItem(
@@ -359,20 +350,14 @@ async def test_recipient_cli_resolves_shared_project_vault_plaintext(
 
     try:
         explicit = await cli_client.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
-        assert explicit.status_code == 200, explicit.text
-        explicit_body = explicit.json()
-        assert explicit_body["value"] == "owner-secret-value"
-        assert explicit_body["source_project_id"] == str(shared.id)
+        assert explicit.status_code == 404, explicit.text
 
         attached_key = await cli_client.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
-        assert attached_key.status_code == 200, attached_key.text
-        attached_body = attached_key.json()
-        assert attached_body["value"] == "owner-secret-value"
-        assert attached_body["source_binding_type"] == "context"
+        assert attached_key.status_code == 404, attached_key.text
 
         attached_env = await cli_client.post(f"/api/vault/resolve?agent_id={env.id}")
         assert attached_env.status_code == 200, attached_env.text
-        assert attached_env.json()["TOKEN"] == "owner-secret-value"
+        assert "TOKEN" not in attached_env.json()
     finally:
         await db_session.delete(shared)
         await db_session.delete(owner)
@@ -397,7 +382,7 @@ async def test_env_bound_agent_key_resolves_attached_shared_project_vault_plaint
     from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.project_membership import ProjectMembership
     from app.models.user import User
-    from app.models.vault import Vault, VaultItem
+    from app.models.vault import Vault, VaultItem, VaultProjectAttachment
     from app.services.vault_crypto import encrypt
     from tests.conftest import create_env_with_project
 
@@ -431,12 +416,12 @@ async def test_env_bound_agent_key_resolves_attached_shared_project_vault_plaint
 
     vault = Vault(
         user_id=owner.id,
-        project_id=shared.id,
         slug=f"owner-agent-secret-{nonce}",
         name="Owner Agent Secret",
     )
     db_session.add(vault)
     await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=shared.id))
     ciphertext, nonce_bytes = encrypt("attached-secret-value")
     db_session.add(
         VaultItem(

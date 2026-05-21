@@ -8,6 +8,11 @@ import {
 	ConnectorCard,
 	ConnectorCardSkeleton,
 } from "@/components/connectors/connector-card";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -16,12 +21,14 @@ import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
+import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
 // always full at every viewport — no orphan cards on the bottom.
 const PAGE_SIZE = 24;
+const CONNECTORS_RESOURCE = getProjectResourceDefinition("connectors");
 
 // 1-indexed page parser. Rejects non-integer / 0 / negative URL values
 // so `?page=-5` or `?page=2junk` doesn't reach the slicer. `Number()`
@@ -141,45 +148,52 @@ function ConnectorsList() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Connectors"
-				description="Sign in once; your AI can read and act in Gmail, GitHub, Notion, Drive, Calendar."
-				actions={
-					<>
-						{total > 0 ? (
-							<Badge variant="secondary">{total.toLocaleString()} available</Badge>
-						) : null}
-						{connected.activeConnections.length > 0 ? (
+			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
+
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Plug}
+					title="Connector Catalog"
+					count={total > 0 ? `${total.toLocaleString()} available` : undefined}
+					description="Connectors let agents use outside apps after you approve access. They are account-level, not tied to one Project."
+					toolbar={
+						connected.activeConnections.length > 0 ? (
 							<Badge>{connected.activeConnections.length} active</Badge>
-						) : null}
-					</>
-				}
-			/>
-
-			<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
-
-			{showConnectedRail ? (
-				<ConnectedRail
-					apps={connected.data}
-					isLoading={connected.isLoading}
-					error={connected.error}
+						) : null
+					}
 				/>
-			) : null}
+				<DashboardSectionToolbar>
+					<SearchInput
+						value={query}
+						onChange={handleQueryChange}
+						placeholder="Search connectors…"
+					/>
+				</DashboardSectionToolbar>
+				<div className="space-y-5 p-4">
+					{showConnectedRail ? (
+						<ConnectedRail
+							apps={connected.data}
+							isLoading={connected.isLoading}
+							error={connected.error}
+						/>
+					) : null}
 
-			<CatalogSection
-				items={items}
-				total={total}
-				page={page}
-				totalPages={totalPages}
-				connectedNames={connectedNames}
-				isLoading={isCatalogLoading}
-				isFetching={isCatalogFetching}
-				error={catalogError}
-				query={query}
-				labelled={showConnectedRail}
-				onPrev={() => setPage((p) => Math.max(1, p - 1))}
-				onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-			/>
+					<CatalogSection
+						items={items}
+						total={total}
+						page={page}
+						totalPages={totalPages}
+						connectedNames={connectedNames}
+						isLoading={isCatalogLoading}
+						isFetching={isCatalogFetching}
+						error={catalogError}
+						query={query}
+						labelled={showConnectedRail}
+						onPrev={() => setPage((p) => Math.max(1, p - 1))}
+						onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+					/>
+				</div>
+			</DashboardSection>
 		</div>
 	);
 }
@@ -209,7 +223,7 @@ function ConnectedRail({
 				// the header with no way to find their connections.
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load connections</AlertTitle>
+					<AlertTitle>Failed to Load Connections</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading && apps.length === 0 ? (
@@ -260,7 +274,7 @@ function CatalogSection({
 		return (
 			<Alert variant="destructive">
 				<AlertCircle />
-				<AlertTitle>Failed to load connectors</AlertTitle>
+				<AlertTitle>Failed to Load Connectors</AlertTitle>
 				<AlertDescription>{errorMessage(error)}</AlertDescription>
 			</Alert>
 		);
@@ -282,7 +296,7 @@ function CatalogSection({
 				description={
 					query
 						? `Nothing matches "${query}".`
-						: "Configure COMPOSIO_API_KEY on the backend to enable connectors."
+						: "The connector catalog is not available yet. Ask an admin to configure COMPOSIO_API_KEY on the backend."
 				}
 			/>
 		);
@@ -291,7 +305,7 @@ function CatalogSection({
 		<section>
 			{labelled ? (
 				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					All
+					All Connectors
 				</h2>
 			) : null}
 			<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>

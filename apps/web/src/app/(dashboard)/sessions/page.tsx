@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, MessageSquare } from "lucide-react";
 import {
 	createParser,
 	parseAsBoolean,
@@ -13,10 +13,15 @@ import {
 import { Suspense, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
+import { MobileSessionList } from "@/components/sessions/mobile-session-list";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
@@ -24,6 +29,7 @@ import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { getProjectResourceDefinition, sessionDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
@@ -41,6 +47,7 @@ const SORT_KEYS = [
 	"relevance",
 ] as const;
 type SortKey = (typeof SORT_KEYS)[number];
+const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
 
 // 1-indexed strict integer parser. `Number()` (unlike `parseInt`)
 // rejects mixed input like "3junk", so a malformed `?page=3junk`
@@ -162,8 +169,8 @@ function SessionsListInner() {
 
 	const prFilterOptions = useMemo(
 		() => [
-			{ label: "Has PR refs", value: "true" },
-			{ label: "No PR refs", value: "false" },
+			{ label: "Has PR Links", value: "true" },
+			{ label: "No PR Links", value: "false" },
 		],
 		[],
 	);
@@ -185,147 +192,162 @@ function SessionsListInner() {
 	) {
 		setPaginationState({ pageIndex: params.page - 1, pageSize: params.pageSize });
 	}
+	const emptyMessage = isFiltered
+		? "No sessions match your filters."
+		: "No sessions yet. Once your agent has a conversation, it'll show up here.";
+	const sessionToolbar = (
+		<DashboardSectionToolbar>
+			<DataTableToolbar
+				value={params.q}
+				onChange={(v) => {
+					// Switch sort to relevance the moment the user
+					// starts typing — mirrors Amp's "type and rank by
+					// match quality" UX. Restore the date sort if the
+					// box is cleared so the empty-search default goes
+					// back to the activity timeline.
+					void setParams({
+						q: v,
+						page: 1,
+						sort:
+							v && params.sort === "last_activity_at"
+								? "relevance"
+								: !v && params.sort === "relevance"
+									? "last_activity_at"
+									: params.sort,
+					});
+				}}
+				placeholder="Search summary, folder, or session ID…"
+			>
+				{agentOptions.length > 0 ? (
+					<DataTableFacetedFilter
+						title="Agent"
+						options={agentOptions}
+						selected={params.agent ? [params.agent] : []}
+						onChange={(arr) => {
+							void setParams({ agent: arr[0] ?? "", page: 1 });
+						}}
+					/>
+				) : null}
+				<DataTableFacetedFilter
+					title="PR Links"
+					options={prFilterOptions}
+					selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
+					onChange={(arr) => {
+						const v = arr[0];
+						void setParams({
+							has_pr: v === "true" ? true : v === "false" ? false : null,
+							page: 1,
+						});
+					}}
+				/>
+				{isFiltered ? (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-8 px-2"
+						onClick={() =>
+							void setParams({
+								q: "",
+								agent: "",
+								has_pr: null,
+								page: 1,
+							})
+						}
+					>
+						Reset
+					</Button>
+				) : null}
+			</DataTableToolbar>
+		</DashboardSectionToolbar>
+	);
+	const sessionFooter = (
+		<div className="border-t px-4 py-3">
+			<DataTablePagination
+				page={params.page}
+				pageSize={params.pageSize}
+				total={total}
+				onPageChange={(p) => void setParams({ page: p })}
+				onPageSizeChange={(size) => void setParams({ pageSize: size, page: 1 })}
+			/>
+		</div>
+	);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Sessions"
-				actions={
-					data ? (
-						<Badge variant="secondary">
-							{total} session{total === 1 ? "" : "s"}
-						</Badge>
-					) : null
-				}
-			/>
+			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
 
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to load sessions</AlertTitle>
+					<AlertTitle>Failed to Load Sessions</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
-				<div
-					className={cn(
-						"transition-opacity",
-						isFetching && !isLoading ? "opacity-60" : "opacity-100",
-					)}
-				>
-					<DataTable
-						columns={sessionColumns}
-						data={data?.items ?? []}
-						isLoading={isLoading}
-						emptyMessage={
-							isFiltered
-								? "No sessions match your filters."
-								: "No sessions yet. Once your agent has a conversation, it'll show up here."
-						}
-						getRowHref={(s) => `/sessions/${s.id}`}
-						rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-						sorting={sorting}
-						onSortingChange={(updater) => {
-							const next = typeof updater === "function" ? updater(sorting) : updater;
-							const first = next[0];
-							void setParams({
-								sort: (first?.id as SortKey) ?? "last_activity_at",
-								order: first?.desc === false ? "asc" : "desc",
-								page: 1,
-							});
-						}}
-						pagination={paginationState}
-						onPaginationChange={(updater) => {
-							const next = typeof updater === "function" ? updater(paginationState) : updater;
-							void setParams({
-								page: next.pageIndex + 1,
-								pageSize: next.pageSize,
-							});
-						}}
-						pageCount={pageCount}
-						getRowGroup={
-							groupable
-								? (s: SessionListItem) =>
-										recencyBucketFor(
-											params.sort === "started_at" ? s.started_at : s.last_activity_at,
-										)
-								: undefined
-						}
-						toolbar={
-							<DataTableToolbar
-								value={params.q}
-								onChange={(v) => {
-									// Switch sort to relevance the moment the user
-									// starts typing — mirrors Amp's "type and rank by
-									// match quality" UX. Restore the date sort if the
-									// box is cleared so the empty-search default goes
-									// back to the activity timeline.
+				<DashboardSection>
+					<DashboardSectionHeader
+						icon={MessageSquare}
+						title="Session History"
+						count={data ? `${total} session${total === 1 ? "" : "s"}` : undefined}
+						description="Agent conversations and activity. Use filters when you need a specific agent, PR, or summary."
+					/>
+					<div
+						className={cn(
+							"transition-opacity",
+							isFetching && !isLoading ? "opacity-60" : "opacity-100",
+						)}
+					>
+						<div className="md:hidden">
+							{sessionToolbar}
+							<MobileSessionList
+								sessions={data?.items ?? []}
+								isLoading={isLoading}
+								emptyMessage={emptyMessage}
+							/>
+							{sessionFooter}
+						</div>
+						<div className="hidden md:block">
+							<DataTable
+								columns={sessionColumns}
+								data={data?.items ?? []}
+								isLoading={isLoading}
+								emptyMessage={emptyMessage}
+								getRowHref={(s) => sessionDetailHref(s.id)}
+								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+								sorting={sorting}
+								onSortingChange={(updater) => {
+									const next = typeof updater === "function" ? updater(sorting) : updater;
+									const first = next[0];
 									void setParams({
-										q: v,
+										sort: (first?.id as SortKey) ?? "last_activity_at",
+										order: first?.desc === false ? "asc" : "desc",
 										page: 1,
-										sort:
-											v && params.sort === "last_activity_at"
-												? "relevance"
-												: !v && params.sort === "relevance"
-													? "last_activity_at"
-													: params.sort,
 									});
 								}}
-								placeholder="Search summary, project, ID…"
-							>
-								{agentOptions.length > 0 ? (
-									<DataTableFacetedFilter
-										title="Agent"
-										options={agentOptions}
-										selected={params.agent ? [params.agent] : []}
-										onChange={(arr) => {
-											void setParams({ agent: arr[0] ?? "", page: 1 });
-										}}
-									/>
-								) : null}
-								<DataTableFacetedFilter
-									title="PR refs"
-									options={prFilterOptions}
-									selected={
-										params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []
-									}
-									onChange={(arr) => {
-										const v = arr[0];
-										void setParams({
-											has_pr: v === "true" ? true : v === "false" ? false : null,
-											page: 1,
-										});
-									}}
-								/>
-								{isFiltered ? (
-									<Button
-										variant="ghost"
-										size="sm"
-										className="h-8 px-2"
-										onClick={() =>
-											void setParams({
-												q: "",
-												agent: "",
-												has_pr: null,
-												page: 1,
-											})
-										}
-									>
-										Reset
-									</Button>
-								) : null}
-							</DataTableToolbar>
-						}
-						footer={
-							<DataTablePagination
-								page={params.page}
-								pageSize={params.pageSize}
-								total={total}
-								onPageChange={(p) => void setParams({ page: p })}
-								onPageSizeChange={(size) => void setParams({ pageSize: size, page: 1 })}
+								pagination={paginationState}
+								onPaginationChange={(updater) => {
+									const next = typeof updater === "function" ? updater(paginationState) : updater;
+									void setParams({
+										page: next.pageIndex + 1,
+										pageSize: next.pageSize,
+									});
+								}}
+								pageCount={pageCount}
+								getRowGroup={
+									groupable
+										? (s: SessionListItem) =>
+												recencyBucketFor(
+													params.sort === "started_at" ? s.started_at : s.last_activity_at,
+												)
+										: undefined
+								}
+								toolbar={sessionToolbar}
+								footer={sessionFooter}
+								className="space-y-0"
+								tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
 							/>
-						}
-					/>
-				</div>
+						</div>
+					</div>
+				</DashboardSection>
 			)}
 		</div>
 	);

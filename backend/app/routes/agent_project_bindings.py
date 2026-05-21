@@ -12,6 +12,7 @@ from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.project import PROJECT_KIND_WORKSPACE
 from app.schemas.sharing import (
     AgentProjectBindingResponse,
     BindingCreate,
@@ -119,11 +120,16 @@ async def add_context_project_binding(
     except ValueError as err:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid project_id") from err
 
-    await assert_project_visible_to_user(db, user_id=auth.user_id, project_id=project_id)
+    project = await assert_project_visible_to_user(db, user_id=auth.user_id, project_id=project_id)
     if project_id == agent.default_project_id:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Project is already this Agent Project",
+        )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Custom Projects can be attached to an agent",
         )
     if body.priority is not None:
         priority_conflict = (

@@ -2,6 +2,10 @@ import { Rocket } from "lucide-react";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+type OnboardingCardProps = {
+	variant?: "first-agent" | "additional-agent";
+};
+
 /**
  * Overview hero card for connecting a new agent. Rendered in the Overview
  * primary slot when the user has zero agents, and as a secondary
@@ -9,17 +13,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  * Tabs + steps body with the sidebar Quick Create affordance — see
  * `AddAgentSetup`.
  */
-export function OnboardingCard() {
+export function OnboardingCard({ variant = "first-agent" }: OnboardingCardProps) {
+	const isAdditionalAgent = variant === "additional-agent";
+	const title = isAdditionalAgent ? "Add another agent" : "Let's connect your first agent";
+	const description = isAdditionalAgent
+		? "Manage multiple agents from one place. Projects help each agent use the right skills and credentials."
+		: "Connect an agent first. Then create a Project to organize reusable skills and credentials you can share with teammates.";
+
 	return (
 		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
 					<Rocket className="size-5 text-primary" />
-					Connect your AI to Clawdi
+					{title}
 				</CardTitle>
-				<CardDescription>
-					Long-term memory and live sync for Claude Code, Codex, OpenClaw, and Hermes.
-				</CardDescription>
+				<CardDescription>{description}</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<AddAgentSetup />

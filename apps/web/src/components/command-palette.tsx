@@ -2,11 +2,12 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-	BarChart3,
 	Brain,
+	FolderKanban,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
+	MessageSquare,
 	Plug,
 	Sparkles,
 } from "lucide-react";
@@ -24,19 +25,53 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
+import {
+	PROJECT_RESOURCE_GROUPS,
+	type ProjectResourceId,
+	projectResourceDefinitionsForGroup,
+	projectResourcePathLabel,
+	projectResourceScopeLabel,
+} from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
-const NAV_SHORTCUTS: { label: string; href: string; icon: LucideIcon }[] = [
-	{ label: "Overview", href: "/", icon: LayoutDashboard },
-	{ label: "Sessions", href: "/sessions", icon: BarChart3 },
-	{ label: "Memories", href: "/memories", icon: Brain },
-	{ label: "Skills", href: "/skills", icon: Sparkles },
-	{ label: "Vault", href: "/vault", icon: Key },
-	{ label: "Connectors", href: "/connectors", icon: Plug },
+const RESOURCE_ICONS = {
+	projects: FolderKanban,
+	skills: Sparkles,
+	vaults: Key,
+	sessions: MessageSquare,
+	memories: Brain,
+	connectors: Plug,
+} satisfies Record<ProjectResourceId, LucideIcon>;
+
+const NAV_SHORTCUTS: {
+	label: string;
+	href: string;
+	icon: LucideIcon;
+	subtitle: string;
+	searchText: string;
+}[] = [
+	{
+		label: "Overview",
+		href: "/",
+		icon: LayoutDashboard,
+		subtitle: "Dashboard",
+		searchText: "overview dashboard",
+	},
+	...PROJECT_RESOURCE_GROUPS.flatMap((group) =>
+		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
+			label: definition.navLabel,
+			href: definition.href,
+			icon: RESOURCE_ICONS[definition.id],
+			subtitle: projectResourcePathLabel(definition),
+			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
+				definition.projectScope,
+			)} ${projectResourcePathLabel(definition)}`,
+		})),
+	),
 ];
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
-	session: BarChart3,
+	session: MessageSquare,
 	memory: Brain,
 	skill: Sparkles,
 	vault: Key,
@@ -144,6 +179,14 @@ function CommandPalette({
 	}, [data]);
 
 	const hasQuery = debounced.trim().length > 0;
+	const normalizedQuery = debounced.trim().toLowerCase();
+	const navMatches = useMemo(
+		() =>
+			normalizedQuery
+				? NAV_SHORTCUTS.filter((s) => s.searchText.toLowerCase().includes(normalizedQuery))
+				: NAV_SHORTCUTS,
+		[normalizedQuery],
+	);
 
 	// Whether we have a stale results payload we can keep showing while a
 	// new debounced query is in flight.
@@ -153,14 +196,18 @@ function CommandPalette({
 	// fetching is finished, (c) we don't have any results. Previously we
 	// flashed through an in-between state each keystroke.
 	const showEmpty =
-		hasQuery && !isFetching && !hasStaleResults && (data?.results.length ?? 0) === 0;
+		hasQuery &&
+		!isFetching &&
+		!hasStaleResults &&
+		navMatches.length === 0 &&
+		(data?.results.length ?? 0) === 0;
 
 	return (
 		<CommandDialog
 			open={open}
 			onOpenChange={onOpenChange}
 			title="Search"
-			description="Search across sessions, memories, skills, and vaults."
+			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 			// cmdk does its own filtering by default — we do server-side, so
 			// disable client filter and trust the API's ranking.
 			shouldFilter={false}
@@ -190,17 +237,20 @@ function CommandPalette({
 					</div>
 				) : null}
 
-				{!hasQuery ? (
-					<CommandGroup heading="Jump to">
-						{NAV_SHORTCUTS.map((s) => (
+				{navMatches.length > 0 ? (
+					<CommandGroup heading="Open a Page">
+						{navMatches.map((s) => (
 							<CommandItem
 								key={s.href}
-								value={s.label}
+								value={s.searchText}
 								onSelect={() => jump(s.href)}
 								className="gap-2"
 							>
-								<s.icon className="size-4" />
-								{s.label}
+								<s.icon className="size-4 shrink-0" />
+								<div className="flex min-w-0 flex-col">
+									<span className="truncate">{s.label}</span>
+									<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
+								</div>
 							</CommandItem>
 						))}
 					</CommandGroup>

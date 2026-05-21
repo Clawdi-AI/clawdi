@@ -75,7 +75,7 @@ export function HostedAgentsSection({
 	return (
 		<div data-hosted="true">
 			{isEmptyState ? (
-				<OnboardingCard />
+				<OnboardingCard variant="first-agent" />
 			) : (
 				<AgentsCard
 					agents={agentTiles}
@@ -113,5 +113,5 @@ export function HostedSecondaryCTA({
 	// sources to settle before deciding whether to show the CTA.
 	if (envsLoading || hosted.isLoading) return null;
 	const hasAnyAgent = selfManagedCount > 0 || hosted.tiles.length > 0;
-	return hasAnyAgent ? <OnboardingCard /> : null;
+	return hasAnyAgent ? <OnboardingCard variant="additional-agent" /> : null;
 }

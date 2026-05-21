@@ -1,31 +1,80 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Unplug } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	Home,
+	Layers,
+	MessageSquare,
+	Plus,
+	Sparkles,
+	Trash2,
+	Unplug,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
-import { DetailNotFound } from "@/components/detail/layout";
+import {
+	DashboardSection,
+	DashboardSectionHeader,
+	DashboardSectionToolbar,
+} from "@/components/dashboard/section";
+import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import {
+	isCustomProject,
+	isProjectOwner,
+	ProjectIdentity,
+	ProjectScopePicker,
+} from "@/components/projects/project-metadata";
+import { MobileSessionList } from "@/components/sessions/mobile-session-list";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { makeSkillColumns } from "@/components/skills/skill-columns";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
+import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type AgentTab = "sessions" | "skills" | "projects";
+
+interface ProjectRow {
+	id: string;
+	name: string;
+	slug: string;
+	kind: string;
+	is_owner?: boolean;
+	owner_display?: string | null;
+	owner_handle?: string | null;
+}
+
+interface ProjectBindingRow {
+	id: string;
+	agent_id: string;
+	project_id: string;
+	binding_type: "primary" | "context";
+	priority: number;
+	default_write_enabled: boolean;
+	created_at: string;
+}
 
 export default function AgentDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const router = useRouter();
 	const api = useApi();
+	const authedFetch = useAuthedFetch();
 	const queryClient = useQueryClient();
 	// Hosted tiles navigate here with `?source=on-clawdi` so the sync
 	// badge can render hosted-aware remediation copy (no CLI snippets,
@@ -34,6 +83,7 @@ export default function AgentDetailPage() {
 	// "self-managed" behavior — same shape as the overview-grid badge.
 	const searchParams = useSearchParams();
 	const badgeSource = searchParams.get("source") === "on-clawdi" ? "on-clawdi" : "self-managed";
+	const requestedTab = parseAgentTab(searchParams.get("tab")) ?? "sessions";
 
 	const {
 		data: agent,
@@ -54,6 +104,33 @@ export default function AgentDetailPage() {
 		// away and back. 10s matches the heartbeat-cadence ÷ 3,
 		// so the badge transitions within ~one missed beat.
 		refetchInterval: 10_000,
+	});
+
+	const { data: projects } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async (): Promise<ProjectRow[]> => {
+			const r = await authedFetch("/api/projects");
+			return r.json();
+		},
+		enabled: !!agent,
+	});
+	const writableProjectIds = useMemo(
+		() =>
+			projects
+				? new Set(
+						projects.filter((project) => isProjectOwner(project)).map((project) => project.id),
+					)
+				: null,
+		[projects],
+	);
+
+	const { data: projectBindings, isLoading: projectBindingsLoading } = useQuery({
+		queryKey: ["agent-project-bindings", id],
+		queryFn: async (): Promise<ProjectBindingRow[]> => {
+			const r = await authedFetch(`/api/agents/${id}/project-bindings`);
+			return r.json();
+		},
+		enabled: !!agent,
 	});
 
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
@@ -81,42 +158,33 @@ export default function AgentDetailPage() {
 	// page-1 cap. Same loop pattern the cross-agent /skills
 	// page uses; hard cap at 50 pages = 10k skills as a
 	// runaway-listing guard.
-	const SKILLS_PAGE_SIZE = 200;
 	const agentProjectId = agent?.default_project_id;
 	const { data: skillsData, isLoading: skillsLoading } = useQuery({
 		queryKey: ["skills", agentProjectId, "all-pages"],
-		queryFn: async () => {
-			const items: SkillSummary[] = [];
-			let page = 1;
-			let total = 0;
-			while (true) {
-				const result = unwrap(
-					await api.GET("/api/skills", {
-						params: {
-							query: {
-								page,
-								page_size: SKILLS_PAGE_SIZE,
-								project_id: agentProjectId,
+		queryFn: async () =>
+			fetchAllPages<SkillSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/api/skills", {
+							params: {
+								query: {
+									page,
+									page_size: pageSize,
+									project_id: agentProjectId,
+								},
 							},
-						},
-					}),
-				);
-				items.push(...result.items);
-				total = result.total ?? items.length;
-				if (items.length >= total || result.items.length === 0) break;
-				page += 1;
-				if (page > 50) break;
-			}
-			return { items, total, page: 1, page_size: SKILLS_PAGE_SIZE };
-		},
+						}),
+					),
+				{ pageSize: 200, resourceName: "agent skills" },
+			),
 		enabled: !!agentProjectId,
 	});
 	const skillsForThisEnv = useMemo(() => {
-		// `project_id=...` filtered server-side, but defense-in-depth:
-		// drop anything the server didn't filter (would be a backend
-		// bug). Same shape downstream code expects.
+		// `?project_id=<agentProjectId>` narrows the listing to the
+		// selected project. Row actions still resolve writability from
+		// the shared project ownership map in `skill-columns`.
 		if (!skillsData?.items || !agentProjectId) return undefined;
-		return skillsData.items.filter((s) => s.project_id === agentProjectId);
+		return skillsData.items;
 	}, [skillsData, agentProjectId]);
 
 	const uninstallSkill = useMutation({
@@ -127,12 +195,12 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success(
-				`Uninstalled ${vars.skillKey} from this agent. Other agents keep their copies.`,
-			);
+			toast.success("Skill Uninstalled", {
+				description: `${vars.skillKey} was removed from this agent. Other agents keep their copies.`,
+			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to uninstall skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(
@@ -140,8 +208,9 @@ export default function AgentDetailPage() {
 			makeSkillColumns(
 				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
 				uninstallSkill.isPending,
+				{ currentProjectId: agentProjectId, writableProjectIds },
 			),
-		[uninstallSkill.mutate, uninstallSkill.isPending],
+		[uninstallSkill.mutate, uninstallSkill.isPending, agentProjectId, writableProjectIds],
 	);
 
 	const sessionTotal = sessionsPage?.total ?? 0;
@@ -150,7 +219,40 @@ export default function AgentDetailPage() {
 	// render only on the Skills tab — keeping the action contextual to
 	// what the user is looking at, instead of floating an Install CTA
 	// over a Sessions list it has nothing to do with.
-	const [activeTab, setActiveTab] = useState<"sessions" | "skills">("sessions");
+	const [activeTab, setActiveTab] = useState<AgentTab>(requestedTab);
+	const activeTabMeta =
+		activeTab === "skills"
+			? {
+					icon: Sparkles,
+					title: "Installed Skills",
+					description:
+						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
+				}
+			: activeTab === "projects"
+				? {
+						icon: Layers,
+						title: "Project Access",
+						description:
+							"The Agent Project is fixed. Added Custom or shared Projects add read-only context.",
+					}
+				: {
+						icon: MessageSquare,
+						title: "Session History",
+						description: "Review sessions synced by this agent.",
+					};
+
+	useEffect(() => {
+		setActiveTab(requestedTab);
+	}, [requestedTab]);
+
+	const setTab = (tab: AgentTab) => {
+		setActiveTab(tab);
+		const next = new URLSearchParams(searchParams.toString());
+		if (tab === "sessions") next.delete("tab");
+		else next.set("tab", tab);
+		const query = next.toString();
+		router.replace(query ? `/agents/${id}?${query}` : `/agents/${id}`, { scroll: false });
+	};
 
 	// Wait until `agent` is loaded — otherwise `agentTypeLabel(undefined)`
 	// returns the literal "Unknown", which would briefly flash in the
@@ -167,7 +269,7 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: () => {
-			toast.success("Agent disconnected", {
+			toast.success("Agent Disconnected", {
 				description:
 					sessionTotal > 0
 						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (agent label dropped).`
@@ -185,21 +287,11 @@ export default function AgentDetailPage() {
 			});
 			router.push("/");
 		},
-		onError: (e) => toast.error("Failed to disconnect agent", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Failed to Disconnect Agent", { description: errorMessage(e) }),
 	});
 
 	const onDisconnect = () => {
-		// "Disconnect" not "Remove" — the API call only deletes the
-		// AgentEnvironment row. Sessions, skills, and memories all
-		// stay (backend `delete_environment` docstring spells this
-		// out: "Existing sessions remain (orphaned) so users don't
-		// lose history when removing a machine.")
-		const msg =
-			"Disconnect this agent from your account?\n\n" +
-			"Sessions and skills stay in your account, but this agent will stop syncing and " +
-			"sessions will no longer be tagged with it. If sync is still running there, " +
-			"reconnect from that agent to resume.";
-		if (window.confirm(msg)) disconnect.mutate();
+		disconnect.mutate();
 	};
 
 	return (
@@ -218,6 +310,9 @@ export default function AgentDetailPage() {
 					    flex-wrap subtitle (agent_type, version, os,
 					    last seen, sync badge). Icon vertically centers
 					    against the text block — items-center. */}
+					<h1 className="sr-only">
+						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
+					</h1>
 					<div className="flex items-center justify-between gap-4">
 						<AgentLabel
 							machineName={agent.machine_name}
@@ -232,86 +327,441 @@ export default function AgentDetailPage() {
 							]}
 							className="min-w-0 flex-1"
 						/>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={onDisconnect}
-							disabled={disconnect.isPending}
-							// Neutral tone, amber icon — Disconnect is fully
-							// reversible (sessions/skills/memories all stay),
-							// so a red destructive button would lie about the
-							// consequences.
-							className="shrink-0"
+						<ConfirmAction
+							title="Disconnect this agent?"
+							description={
+								<>
+									<p>Sessions and skills stay in your account.</p>
+									<p>
+										This agent will stop syncing and sessions will no longer be tagged with it.
+										Reconnect from that agent to resume.
+									</p>
+								</>
+							}
+							confirmLabel="Disconnect Agent"
+							onConfirm={onDisconnect}
 						>
-							<Unplug className="text-amber-600 dark:text-amber-500" />
-							Disconnect
-						</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={disconnect.isPending}
+								className="shrink-0"
+							>
+								<Unplug className="text-amber-600 dark:text-amber-500" />
+								Disconnect
+							</Button>
+						</ConfirmAction>
 					</div>
 
-					{/* Tabs for the two large per-agent surfaces. Sessions
-					    is the primary view (history is what the user
-					    usually came to see); Skills is one click away
-					    when they want to manage what's installed. Both
-					    use shared <DataTable> + ColumnDef<T>[] pattern,
-					    same as /sessions and /memories — one list
-					    primitive everywhere. */}
-					<Tabs
-						value={activeTab}
-						onValueChange={(v) => setActiveTab(v as "sessions" | "skills")}
-						className="gap-4"
-					>
-						{/* Tab strip + contextual action on the same row.
-						    "Install skills" lives next to the Skills tab,
-						    not below the table — keeps the CTA visible
-						    above the fold when the table is empty, and
-						    avoids a lonely button taking its own row. */}
-						<div className="flex items-center justify-between gap-3">
-							<TabsList>
-								<TabsTrigger value="sessions">
-									Sessions
-									<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
-								</TabsTrigger>
-								<TabsTrigger value="skills">
-									Skills
-									{skillsForThisEnv ? (
-										<span className="ml-1.5 text-xs text-muted-foreground">
-											{skillsForThisEnv.length}
-										</span>
-									) : null}
-								</TabsTrigger>
-							</TabsList>
-							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm">
-									<Link href={`/skills?target=${encodeURIComponent(id)}`}>
-										<Plus />
-										Install skills
-									</Link>
-								</Button>
-							) : null}
-						</div>
-
-						<TabsContent value="sessions" className="mt-0">
-							<DataTable
-								columns={sessionColumns}
-								data={sessionsPage?.items ?? []}
-								isLoading={sessionsLoading}
-								getRowHref={(s) => `/sessions/${s.id}`}
-								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-								emptyMessage="No sessions synced from this agent yet."
+					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
+						<DashboardSection priority="primary">
+							<DashboardSectionToolbar>
+								<TabsList className="grid w-full grid-cols-3 sm:w-fit">
+									<TabsTrigger value="sessions" className="min-w-0 px-2">
+										Sessions
+										<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
+									</TabsTrigger>
+									<TabsTrigger value="skills" className="min-w-0 px-2">
+										Skills
+										{skillsForThisEnv ? (
+											<span className="ml-1.5 text-xs text-muted-foreground">
+												{skillsForThisEnv.length}
+											</span>
+										) : null}
+									</TabsTrigger>
+									<TabsTrigger value="projects" className="min-w-0 px-2">
+										Projects
+										{projectBindings ? (
+											<span className="ml-1.5 text-xs text-muted-foreground">
+												{projectBindings.length}
+											</span>
+										) : null}
+									</TabsTrigger>
+								</TabsList>
+							</DashboardSectionToolbar>
+							<DashboardSectionHeader
+								icon={activeTabMeta.icon}
+								title={activeTabMeta.title}
+								description={activeTabMeta.description}
+								toolbar={
+									activeTab === "skills" ? (
+										<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
+											<Link
+												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
+											>
+												<Plus />
+												Install Skills
+											</Link>
+										</Button>
+									) : null
+								}
+								priority="primary"
 							/>
-						</TabsContent>
 
-						<TabsContent value="skills" className="mt-0">
-							<DataTable
-								columns={skillColumns}
-								data={skillsForThisEnv ?? []}
-								isLoading={skillsLoading}
-								rowAriaLabel={(s) => `Open ${s.name}`}
-								emptyMessage="No skills installed on this agent yet."
-							/>
-						</TabsContent>
+							<div className="p-4">
+								<TabsContent value="sessions" className="m-0">
+									<div className="overflow-hidden rounded-lg border bg-card md:hidden">
+										<MobileSessionList
+											sessions={sessionsPage?.items ?? []}
+											isLoading={sessionsLoading}
+											emptyMessage="No sessions synced from this agent yet."
+										/>
+									</div>
+									<div className="hidden md:block">
+										<DataTable
+											columns={sessionColumns}
+											data={sessionsPage?.items ?? []}
+											isLoading={sessionsLoading}
+											getRowHref={(s) => sessionDetailHref(s.id)}
+											rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+											emptyMessage="No sessions synced from this agent yet."
+										/>
+									</div>
+								</TabsContent>
+
+								<TabsContent value="skills" className="m-0">
+									<DataTable
+										columns={skillColumns}
+										data={skillsForThisEnv ?? []}
+										isLoading={skillsLoading}
+										rowAriaLabel={(s) => `Open ${s.name}`}
+										emptyMessage="No skills installed on this agent yet."
+									/>
+								</TabsContent>
+
+								<TabsContent value="projects" className="m-0">
+									<AgentProjectsPanel
+										agentId={id}
+										bindings={projectBindings ?? []}
+										projects={projects ?? []}
+										isLoading={projectBindingsLoading}
+										authedFetch={authedFetch}
+										onChanged={() => {
+											queryClient.invalidateQueries({
+												queryKey: ["agent-project-bindings", id],
+											});
+											queryClient.invalidateQueries({ queryKey: ["projects"] });
+										}}
+									/>
+								</TabsContent>
+							</div>
+						</DashboardSection>
 					</Tabs>
 				</>
+			) : null}
+		</div>
+	);
+}
+
+function parseAgentTab(value: string | null): AgentTab | null {
+	if (value === "sessions" || value === "skills" || value === "projects") return value;
+	return null;
+}
+
+function AgentProjectsPanel({
+	agentId,
+	bindings,
+	projects,
+	isLoading,
+	authedFetch,
+	onChanged,
+}: {
+	agentId: string;
+	bindings: ProjectBindingRow[];
+	projects: ProjectRow[];
+	isLoading: boolean;
+	authedFetch: (path: string, init?: RequestInit) => Promise<Response>;
+	onChanged: () => void;
+}) {
+	const [contextProjectId, setContextProjectId] = useState("");
+	const primary = bindings.find((binding) => binding.binding_type === "primary") ?? null;
+	const contexts = bindings
+		.filter((binding) => binding.binding_type === "context")
+		.sort((a, b) => a.priority - b.priority);
+	const projectsById = useMemo(
+		() => new Map(projects.map((project) => [project.id, project])),
+		[projects],
+	);
+	const contextChoices = projects.filter(
+		(project) =>
+			isCustomProject(project) && !bindings.some((binding) => binding.project_id === project.id),
+	);
+
+	const addContext = useMutation({
+		mutationFn: async () => {
+			await authedFetch(`/api/agents/${agentId}/project-bindings/context`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ project_id: contextProjectId }),
+			});
+		},
+		onSuccess: () => {
+			setContextProjectId("");
+			onChanged();
+			toast.success("Project Added");
+		},
+		onError: (e) => toast.error("Failed to Add Project", { description: errorMessage(e) }),
+	});
+
+	const removeBinding = useMutation({
+		mutationFn: async (bindingId: string) => {
+			await authedFetch(`/api/agents/${agentId}/project-bindings/${bindingId}`, {
+				method: "DELETE",
+			});
+		},
+		onSuccess: () => {
+			onChanged();
+			toast.success("Project Removed");
+		},
+		onError: (e) => toast.error("Failed to Remove Project", { description: errorMessage(e) }),
+	});
+
+	const reorder = useMutation({
+		mutationFn: async (items: Array<{ binding_id: string; priority: number }>) => {
+			await authedFetch(`/api/agents/${agentId}/project-bindings/context/reorder`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ items }),
+			});
+		},
+		onSuccess: () => {
+			onChanged();
+			toast.success("Project Order Updated");
+		},
+		onError: (e) => toast.error("Failed to Reorder Projects", { description: errorMessage(e) }),
+	});
+
+	const moveContext = (bindingId: string, direction: -1 | 1) => {
+		const index = contexts.findIndex((binding) => binding.id === bindingId);
+		const targetIndex = index + direction;
+		if (index < 0 || targetIndex < 0 || targetIndex >= contexts.length) return;
+		const next = contexts.slice();
+		const [item] = next.splice(index, 1);
+		if (!item) return;
+		next.splice(targetIndex, 0, item);
+		reorder.mutate(next.map((binding, idx) => ({ binding_id: binding.id, priority: idx + 1 })));
+	};
+
+	if (isLoading) return <Skeleton className="h-40 w-full" />;
+
+	return (
+		<div className="space-y-4">
+			<DetailPanel>
+				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
+					<div className="space-y-3">
+						<div className="flex items-center gap-2">
+							<Home className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Agent Project</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							This Project is created with the agent and is always its writable default. It cannot
+							be replaced, shared, or removed from here.
+						</p>
+						{primary ? (
+							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
+						) : (
+							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+								Agent Project is not loaded yet.
+							</div>
+						)}
+					</div>
+					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
+						Create Projects to share resources with teammates and across agents. This agent&apos;s
+						main Project stays private to this agent; other agents cannot see it.
+					</div>
+				</div>
+			</DetailPanel>
+
+			<DetailPanel>
+				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
+					<div className="space-y-2">
+						<div className="flex items-center gap-2">
+							<Layers className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Added Projects</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Added Projects are read after the Agent Project. Use the list below to adjust read
+							order after adding one.
+						</p>
+					</div>
+					<div className="grid gap-3">
+						<ProjectSelect
+							value={contextProjectId}
+							onValueChange={setContextProjectId}
+							projects={contextChoices}
+							label="Project to Add"
+							placeholder="Choose a Project…"
+						/>
+						{contextChoices.length === 0 ? (
+							<p className="text-xs text-muted-foreground">
+								No Custom or shared Projects are available to add.
+							</p>
+						) : null}
+						<Button
+							size="sm"
+							disabled={!contextProjectId || addContext.isPending}
+							variant={contextProjectId ? "default" : "outline"}
+							onClick={() => addContext.mutate()}
+						>
+							{addContext.isPending ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<Plus className="size-3.5" />
+							)}
+							Add Project
+						</Button>
+					</div>
+				</div>
+			</DetailPanel>
+
+			<section className="space-y-2">
+				<div className="flex items-center justify-between gap-2">
+					<h2 className="text-sm font-semibold">Added Project Order</h2>
+					<Badge variant="secondary">{contexts.length}</Badge>
+				</div>
+				{contexts.length === 0 ? (
+					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
+						No added Projects yet. Add a Custom or shared Project to make it available to this
+						agent.
+					</div>
+				) : (
+					<div className="divide-y rounded-lg border bg-card/60">
+						{contexts.map((binding, index) => {
+							const project = projectsById.get(binding.project_id);
+							const projectName = project?.name || binding.project_id;
+							const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
+							return (
+								<div
+									key={binding.id}
+									className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+								>
+									<div className="flex min-w-0 items-start gap-3">
+										<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
+											{index + 1}
+										</div>
+										<ProjectUseLine binding={binding} project={project} />
+									</div>
+									<div className="flex items-center justify-end gap-1">
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											disabled={index === 0 || reorder.isPending}
+											onClick={() => moveContext(binding.id, -1)}
+											title="Move up"
+											aria-label="Move project up"
+										>
+											<ArrowUp className="size-3.5" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											disabled={index === contexts.length - 1 || reorder.isPending}
+											onClick={() => moveContext(binding.id, 1)}
+											title="Move down"
+											aria-label="Move project down"
+										>
+											<ArrowDown className="size-3.5" />
+										</Button>
+										<ConfirmAction
+											title="Remove this Project?"
+											description={
+												<>
+													<p>{projectName} will no longer be available to this agent.</p>
+													<p>The Project and its resources are not deleted.</p>
+												</>
+											}
+											confirmLabel="Remove Project"
+											destructive
+											onConfirm={() => removeBinding.mutate(binding.id)}
+										>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												disabled={isRemoving}
+												title="Remove"
+												aria-label={`Remove ${projectName}`}
+											>
+												{isRemoving ? (
+													<Spinner className="size-3.5" />
+												) : (
+													<Trash2 className="size-3.5 text-destructive" />
+												)}
+											</Button>
+										</ConfirmAction>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				)}
+			</section>
+		</div>
+	);
+}
+
+function ProjectSelect({
+	value,
+	onValueChange,
+	projects,
+	label,
+	placeholder,
+}: {
+	value: string;
+	onValueChange: (value: string) => void;
+	projects: ProjectRow[];
+	label: string;
+	placeholder: string;
+}) {
+	return (
+		<ProjectScopePicker
+			projects={projects}
+			value={value}
+			onValueChange={onValueChange}
+			label={label}
+			placeholder={placeholder}
+			layout="stacked"
+			disabled={projects.length === 0}
+		/>
+	);
+}
+
+function ProjectUseLine({
+	binding,
+	project,
+}: {
+	binding: ProjectBindingRow;
+	project: ProjectRow | undefined;
+}) {
+	const bindingLabel = binding.binding_type === "primary" ? "Agent Project" : "Added";
+	if (!project) {
+		return (
+			<div className="min-w-0">
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="truncate text-sm font-medium">{binding.project_id}</span>
+					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
+						{bindingLabel}
+					</Badge>
+				</div>
+				{binding.binding_type === "context" ? (
+					<div className="mt-1 text-xs text-muted-foreground">Read order {binding.priority}</div>
+				) : null}
+			</div>
+		);
+	}
+	return (
+		<div className="min-w-0">
+			<ProjectIdentity
+				project={project}
+				showKind={false}
+				showAccess={false}
+				badges={
+					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
+						{bindingLabel}
+					</Badge>
+				}
+			/>
+			{binding.binding_type === "context" ? (
+				<div className="mt-0.5 text-xs text-muted-foreground">Read order {binding.priority}</div>
 			) : null}
 		</div>
 	);

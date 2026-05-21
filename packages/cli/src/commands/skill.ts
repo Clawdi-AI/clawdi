@@ -16,6 +16,7 @@ import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -35,6 +36,28 @@ function requireAuth() {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
+}
+
+async function fetchAllSkills(api: ApiClient, projectId?: string): Promise<SkillSummary[]> {
+	const items: SkillSummary[] = [];
+	let page = 1;
+	const pageSize = 200;
+	while (page <= 50) {
+		const result = unwrap(
+			await api.GET("/api/skills", {
+				params: {
+					query: projectId
+						? { ...(page === 1 ? {} : { page }), page_size: pageSize, project_id: projectId }
+						: { ...(page === 1 ? {} : { page }), page_size: pageSize },
+				},
+			}),
+		);
+		items.push(...result.items);
+		if (items.length >= (result.total ?? items.length) || result.items.length === 0) break;
+		page += 1;
+	}
+	if (page > 50) throw new Error("Too many skill pages to load safely.");
+	return items;
 }
 
 function getRegisteredAdapters(): AgentAdapter[] {
@@ -74,12 +97,7 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 		}
 		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
 	}
-	const page = unwrap(
-		await api.GET("/api/skills", {
-			params: { query: projectId ? { page_size: 200, project_id: projectId } : { page_size: 200 } },
-		}),
-	);
-	const skills = page.items;
+	const skills = await fetchAllSkills(api, projectId);
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(skills, null, 2));
@@ -98,11 +116,7 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 		const files = s.file_count ? chalk.gray(` ${s.file_count} files`) : "";
 		console.log(`  ${chalk.white(key)}  v${s.version ?? "?"}  ${chalk.gray(src)}${repo}${files}`);
 	}
-	const summary =
-		page.total > skills.length
-			? `${skills.length} of ${page.total} skills (first ${skills.length})`
-			: `${skills.length} skill${skills.length === 1 ? "" : "s"} total`;
-	console.log(chalk.gray(`\n  ${summary}`));
+	console.log(chalk.gray(`\n  ${skills.length} skill${skills.length === 1 ? "" : "s"} total`));
 }
 
 export async function skillAdd(

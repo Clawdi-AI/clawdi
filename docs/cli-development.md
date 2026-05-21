@@ -225,6 +225,9 @@ bun run test:watch                    # watch mode
 
 ## Releasing
 
+Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
+checklist. This section covers the CLI/npm release line in detail.
+
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
 for changes under `packages/cli/` and publishes to npm when it sees a
 version bump. A merge with no version change is a no-op — the workflow

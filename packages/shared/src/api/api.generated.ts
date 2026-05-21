@@ -1208,10 +1208,11 @@ export interface paths {
          * Resolve Vault
          * @description Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
          *
-         *     Project membership grants CLI/API-key callers read access to vault values.
-         *     A bound Agent API key is capped to its default-write Project unless
-         *     resolving through its own `agent_id`, where the Agent Project plus explicit
-         *     attached Projects define runtime reads.
+         *     User-level CLI/API-key callers may resolve plaintext only from Projects
+         *     they own. Shared Project vault values are metadata-only outside the Agent
+         *     runtime boundary. A bound Agent API key is capped to its default-write
+         *     Project unless resolving through its own `agent_id`, where the Agent
+         *     Project plus explicit attached Projects define runtime reads.
          */
         post: operations["resolve_vault_api_vault_resolve_post"];
         delete?: never;
@@ -3407,7 +3408,14 @@ export interface components {
             /** Name */
             name: string;
             /** Project Id */
-            project_id: string;
+            project_id?: string | null;
+            /** Project Ids */
+            project_ids: string[];
+            /**
+             * Is Owner
+             * @default true
+             */
+            is_owner: boolean;
             /**
              * Created At
              * Format: date-time

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
@@ -60,6 +60,29 @@ async def _assert_project_owner(
     return project
 
 
+def _assert_project_shareable(project: Project) -> None:
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "error": "project_not_shareable",
+                "message": "Only Custom Projects can be shared.",
+            },
+        )
+
+
+async def _assert_shareable_project_owner(
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    *,
+    for_update: bool = False,
+) -> Project:
+    project = await _assert_project_owner(db, auth, project_id, for_update=for_update)
+    _assert_project_shareable(project)
+    return project
+
+
 def _share_url(raw_token: str) -> str:
     base = settings.web_origin.rstrip("/") if settings.web_origin else "https://example.invalid"
     return f"{base}/share/{raw_token}"
@@ -72,7 +95,7 @@ async def create_share_link(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> ShareLinkCreated:
-    await _assert_project_owner(db, auth, project_id)
+    await _assert_shareable_project_owner(db, auth, project_id)
 
     try:
         owner_handle = resolve_owner_handle(auth.user)
@@ -128,7 +151,7 @@ async def list_share_links(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[ShareLinkResponse]:
-    await _assert_project_owner(db, auth, project_id)
+    await _assert_shareable_project_owner(db, auth, project_id)
     result = await db.execute(
         select(ProjectShareLink)
         .where(ProjectShareLink.project_id == project_id)
@@ -156,7 +179,7 @@ async def revoke_share_link(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    await _assert_project_owner(db, auth, project_id, for_update=True)
+    await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
     result = await db.execute(
         select(ProjectShareLink).where(
             ProjectShareLink.id == link_id,
@@ -197,7 +220,7 @@ async def create_invitation(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> InvitationResponse:
-    project = await _assert_project_owner(db, auth, project_id)
+    project = await _assert_shareable_project_owner(db, auth, project_id)
     display, handle = _owner_view(auth)
     target_email = body.email
 
@@ -285,7 +308,7 @@ async def list_invitations(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[InvitationResponse]:
-    project = await _assert_project_owner(db, auth, project_id)
+    project = await _assert_shareable_project_owner(db, auth, project_id)
     display = safe_owner_display(auth.user)
     rows = (
         await db.execute(
@@ -319,7 +342,7 @@ async def cancel_invitation(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    await _assert_project_owner(db, auth, project_id, for_update=True)
+    await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
     row = (
         await db.execute(
             select(ProjectInvitation).where(
@@ -341,7 +364,7 @@ async def list_members(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[MemberResponse]:
-    await _assert_project_owner(db, auth, project_id)
+    await _assert_shareable_project_owner(db, auth, project_id)
     rows = (
         await db.execute(
             select(ProjectMembership, User)
@@ -372,7 +395,7 @@ async def remove_member(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str | int]:
-    project = await _assert_project_owner(db, auth, project_id)
+    project = await _assert_shareable_project_owner(db, auth, project_id)
     if member_user_id == project.user_id:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -442,7 +465,7 @@ async def unshare_project(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> UnshareResponse:
-    await _assert_project_owner(db, auth, project_id, for_update=True)
+    await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
     now = datetime.now(UTC)
 
     active_links = (

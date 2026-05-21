@@ -61,7 +61,7 @@ describe("projectShowCommand", () => {
 				path: "/api/vault?page_size=200",
 				response: () =>
 					jsonResponse({
-						items: [{ project_id: "project-shared", slug: "prod", name: "Production" }],
+						items: [{ project_ids: ["project-shared"], slug: "prod", name: "Production" }],
 					}),
 			},
 		]);
@@ -124,8 +124,8 @@ describe("projectShowCommand", () => {
 				response: () =>
 					jsonResponse({
 						items: [
-							{ project_id: "project-parent", slug: "prod", name: "Production" },
-							{ project_id: "project-source", slug: "shared", name: "Shared" },
+							{ project_ids: ["project-parent"], slug: "prod", name: "Production" },
+							{ project_ids: ["project-source"], slug: "shared", name: "Shared" },
 						],
 					}),
 			},

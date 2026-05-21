@@ -21,7 +21,7 @@ from app.services.sharing import resolve_owner_handle
 
 async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
     """Create an owner, a project, and an invite for `invitee_user`."""
-    from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.user import User
 
     nonce = uuid.uuid4().hex[:8]
@@ -38,7 +38,7 @@ async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
         user_id=owner.id,
         name=f"Owner Project {nonce}",
         slug=f"owner-project-{nonce}",
-        kind=PROJECT_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_WORKSPACE,
     )
     db_session.add(project)
     await db_session.commit()
@@ -60,7 +60,7 @@ async def _seed_owner_and_invite(db_session, invitee_user, *, name="Alice"):
 
 @pytest.mark.asyncio
 async def test_me_invitations_lists_only_addressed_to_me(client, db_session, seed_user):
-    from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
     from app.models.user import User
 
     owner, project, my_invitation_id = await _seed_owner_and_invite(db_session, seed_user)
@@ -78,7 +78,7 @@ async def test_me_invitations_lists_only_addressed_to_me(client, db_session, see
         user_id=owner.id,
         name="other-project",
         slug=f"other-project-{other_nonce}",
-        kind=PROJECT_KIND_ENVIRONMENT,
+        kind=PROJECT_KIND_WORKSPACE,
     )
     db_session.add(other_project)
     await db_session.commit()
@@ -241,6 +241,99 @@ async def test_accept_invitation_rejects_owner_self_invite(client, db_session, s
         if leftover is not None:
             await db_session.delete(leftover)
         await db_session.delete(project)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_managed_project_invitations_are_not_acceptible(client, db_session, seed_user):
+    """Defense in depth for bad/manual rows: Global and Agent
+    Projects are managed contexts, so inbox/accept ignores them.
+    """
+    from app.models.project import PROJECT_KIND_ENVIRONMENT, PROJECT_KIND_PERSONAL, Project
+    from app.models.user import User
+
+    nonce = uuid.uuid4().hex[:8]
+    owner = User(
+        clerk_id=f"managed_owner_{nonce}",
+        email=f"managed_owner_{nonce}@test.dev",
+        name="Managed Owner",
+    )
+    db_session.add(owner)
+    await db_session.commit()
+    await db_session.refresh(owner)
+
+    projects = [
+        Project(
+            user_id=owner.id,
+            name=f"Managed Personal {nonce}",
+            slug=f"managed-personal-{nonce}",
+            kind=PROJECT_KIND_PERSONAL,
+        ),
+        Project(
+            user_id=owner.id,
+            name=f"Managed Agent {nonce}",
+            slug=f"managed-agent-{nonce}",
+            kind=PROJECT_KIND_ENVIRONMENT,
+        ),
+    ]
+    db_session.add_all(projects)
+    await db_session.commit()
+    for project in projects:
+        await db_session.refresh(project)
+
+    invitations = [
+        ProjectInvitation(
+            project_id=project.id,
+            invitee_user_id=seed_user.id,
+            invitee_email=seed_user.email.lower() if seed_user.email else "seed@test.dev",
+            invited_by=owner.id,
+            resolved_owner_handle=resolve_owner_handle(owner),
+            created_at=datetime.now(UTC),
+        )
+        for project in projects
+    ]
+    db_session.add_all(invitations)
+    await db_session.commit()
+    for invitation in invitations:
+        await db_session.refresh(invitation)
+
+    try:
+        inbox = await client.get("/api/me/invitations")
+        assert inbox.status_code == 200, inbox.text
+        listed_ids = {item["id"] for item in inbox.json()}
+        assert listed_ids.isdisjoint({str(invitation.id) for invitation in invitations})
+
+        for invitation in invitations:
+            response = await client.post(f"/api/me/invitations/{invitation.id}/accept")
+            assert response.status_code == 410, response.text
+
+        memberships = (
+            (
+                await db_session.execute(
+                    select(ProjectMembership).where(
+                        ProjectMembership.member_user_id == seed_user.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert all(
+            membership.project_id not in {project.id for project in projects}
+            for membership in memberships
+        )
+    finally:
+        for invitation in invitations:
+            leftover = (
+                await db_session.execute(
+                    select(ProjectInvitation).where(ProjectInvitation.id == invitation.id)
+                )
+            ).scalar_one_or_none()
+            if leftover is not None:
+                await db_session.delete(leftover)
+        for project in projects:
+            await db_session.delete(project)
+        await db_session.delete(owner)
         await db_session.commit()
 
 

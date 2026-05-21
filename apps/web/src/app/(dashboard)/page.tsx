@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
-import { ResourcesCard } from "@/components/dashboard/resources-card";
+import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { PageHeader } from "@/components/page-header";
 import { sessionColumnsCompact } from "@/components/sessions/session-columns";
@@ -18,9 +18,26 @@ import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { IS_HOSTED } from "@/lib/hosted";
+import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
+
+function countProjectTypes(
+	projects: Array<{ kind?: string | null }> | undefined,
+): ProjectTypeCounts {
+	const counts: ProjectTypeCounts = { custom: 0, global: 0, agent: 0 };
+	for (const project of projects ?? []) {
+		if (project.kind === "personal") {
+			counts.global += 1;
+		} else if (project.kind === "environment") {
+			counts.agent += 1;
+		} else {
+			counts.custom += 1;
+		}
+	}
+	return counts;
+}
 
 // Dynamic imports gated on a build-time-constant `IS_HOSTED`. When
 // the flag is false (OSS), the conditional collapses, the
@@ -55,6 +72,11 @@ export default function DashboardPage() {
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: async () => unwrap(await api.GET("/api/dashboard/stats")),
+	});
+
+	const { data: projects, isLoading: projectsLoading } = useQuery({
+		queryKey: ["projects"],
+		queryFn: async () => unwrap(await api.GET("/api/projects")),
 	});
 
 	const { data: environments, isLoading: envsLoading } = useQuery({
@@ -112,10 +134,14 @@ export default function DashboardPage() {
 	const selfManagedCount = environments?.length ?? 0;
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
+	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Overview" />
+			<PageHeader
+				title="Overview"
+				description="Connect agents first. Then create Projects to organize reusable skills and credentials you can share with teammates."
+			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity. `min-w-0` is load-bearing:
@@ -162,7 +188,7 @@ export default function DashboardPage() {
 								<p className="text-sm text-muted-foreground">Latest syncs from your agents.</p>
 							</div>
 							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
-								<Link href="/sessions">
+								<Link href={projectResourceHref("sessions")}>
 									View all
 									<ArrowRight />
 								</Link>
@@ -172,7 +198,7 @@ export default function DashboardPage() {
 							columns={sessionColumnsCompact}
 							data={sessions ?? []}
 							isLoading={sessionsLoading}
-							getRowHref={(s) => `/sessions/${s.id}`}
+							getRowHref={(s) => sessionDetailHref(s.id)}
 							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
 						/>
@@ -193,9 +219,15 @@ export default function DashboardPage() {
 							cloudEnvs={environments ?? []}
 						/>
 					) : hasAgents ? (
-						<OnboardingCard />
+						<OnboardingCard variant="additional-agent" />
 					) : null}
-					<ResourcesCard stats={stats} />
+					<ResourcesCard
+						stats={stats}
+						projectCount={projects?.length}
+						projectTypeCounts={projectTypeCounts}
+						projectCountLoading={projectsLoading}
+						hasConnectedAgent={HostedAgentsSection || envsLoading ? undefined : hasAgents}
+					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>

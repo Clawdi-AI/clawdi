@@ -19,7 +19,7 @@ from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
 from app.models.user import User
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.services.sharing import generate_share_token, hash_share_token, resolve_owner_handle
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
@@ -277,6 +277,29 @@ async def test_agent_binding_attach_repairs_stale_primary_before_returning_conte
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
 
 
+async def test_agent_context_attach_rejects_managed_projects(
+    client,
+    db_session,
+    seed_user,
+    seed_project,
+    environment_project,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"reject-managed-{uuid.uuid4().hex[:8]}",
+        machine_name="atlas",
+    )
+
+    for project in (seed_project, environment_project):
+        response = await client.post(
+            f"/api/agents/{env.id}/project-bindings/context",
+            json={"project_id": str(project.id)},
+        )
+        assert response.status_code == 400, response.text
+        assert "Only Custom Projects" in response.text
+
+
 async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
     client,
     db_session,
@@ -516,9 +539,14 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
         (env.default_project_id, "primary-secret"),
         (context_project.id, "context-secret"),
     ):
-        vault = Vault(user_id=seed_user.id, project_id=project_id, slug="default", name="Default")
+        vault = Vault(
+            user_id=seed_user.id,
+            slug=f"default-{str(project_id)[:8]}",
+            name="Default",
+        )
         db_session.add(vault)
         await db_session.flush()
+        db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=project_id))
         ciphertext, nonce = encrypt(value)
         db_session.add(
             VaultItem(

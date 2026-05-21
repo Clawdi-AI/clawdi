@@ -1,15 +1,16 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, Key, Plus, Settings, Trash2, User } from "lucide-react";
+import { Copy, Key, Plus, Settings, Trash2, User, Workflow } from "lucide-react";
+import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
@@ -29,15 +30,19 @@ import {
 } from "@/components/ui/select";
 import { type ApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
+import { useCurrentUser } from "@/lib/auth-client";
+import { getProjectResourceDefinition, projectResourceHref } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
 
-type Section = "general" | "profile" | "api-keys";
+type Section = "general" | "profile" | "projects" | "api-keys";
 
 const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
 	{ id: "general", label: "General", icon: Settings },
 	{ id: "profile", label: "Profile", icon: User },
+	{ id: "projects", label: "Projects", icon: Workflow },
 	{ id: "api-keys", label: "API Keys", icon: Key },
 ];
+const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export function SettingsDialog({
 	open,
@@ -94,6 +99,7 @@ export function SettingsDialog({
 						<div className="flex flex-col gap-6 px-6 py-6">
 							{section === "general" ? <GeneralPanel /> : null}
 							{section === "profile" ? <ProfilePanel /> : null}
+							{section === "projects" ? <ProjectsPanel onClose={onClose} /> : null}
 							{section === "api-keys" ? <ApiKeysPanel /> : null}
 						</div>
 					</div>
@@ -149,11 +155,40 @@ function GeneralPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Projects — link to shared Projects and access management.
+// ---------------------------------------------------------------------------
+
+function ProjectsPanel({ onClose }: { onClose: () => void }) {
+	return (
+		<>
+			<PanelHeader title="Projects" description={PROJECTS_RESOURCE.description} />
+			<div className="rounded-lg border p-4">
+				<div className="flex items-start gap-3">
+					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
+					<div className="min-w-0 flex-1 space-y-2">
+						<div className="text-sm font-medium">Manage project access</div>
+						<p className="text-sm text-muted-foreground">
+							Use the Projects page to review owned projects, shared memberships, share links,
+							invitations, and member access in one place.
+						</p>
+						<Button asChild size="sm" variant="outline">
+							<Link href={projectResourceHref("projects")} onClick={onClose}>
+								Open Projects
+							</Link>
+						</Button>
+					</div>
+				</div>
+			</div>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Profile — read-only for now; Clerk owns account editing.
 // ---------------------------------------------------------------------------
 
 function ProfilePanel() {
-	const { user } = useUser();
+	const { user } = useCurrentUser();
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 
 	return (
@@ -198,7 +233,7 @@ function ApiKeysPanel() {
 			setNewLabel("");
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 		},
-		onError: (e: ApiError) => toast.error("Couldn't create key", { description: e.detail }),
+		onError: (e: ApiError) => toast.error("Couldn't Create Key", { description: e.detail }),
 	});
 
 	const revokeKey = useMutation({
@@ -210,9 +245,9 @@ function ApiKeysPanel() {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			toast.success("Key revoked");
+			toast.success("Key Turned Off");
 		},
-		onError: (e: ApiError) => toast.error("Couldn't revoke key", { description: e.detail }),
+		onError: (e: ApiError) => toast.error("Couldn't Turn Off Key", { description: e.detail }),
 	});
 
 	const columns = useMemo<ColumnDef<ApiKey>[]>(
@@ -223,7 +258,7 @@ function ApiKeysPanel() {
 				cell: ({ row }) => (
 					<div className="flex items-center gap-2">
 						<span className="font-medium">{row.original.label}</span>
-						{row.original.revoked_at ? <Badge variant="destructive">Revoked</Badge> : null}
+						{row.original.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
 					</div>
 				),
 			},
@@ -262,27 +297,29 @@ function ApiKeysPanel() {
 				header: "",
 				cell: ({ row }) =>
 					!row.original.revoked_at ? (
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							onClick={() => {
-								// Revoking a key in-use stops sync on whichever
-								// machine holds it. Cannot be un-revoked, so
-								// confirm with explicit blast radius.
-								const ok = window.confirm(
-									`Revoke "${row.original.label}"?\n\n` +
-										"If a machine is still using this key, sync will stop on it within a minute. " +
-										"You'd need to log in again from that machine to resume.",
-								);
-								if (ok) revokeKey.mutate(row.original.id);
-							}}
-							disabled={revokeKey.isPending}
-							aria-label="Revoke key"
-							className="text-muted-foreground hover:text-destructive"
+						<ConfirmAction
+							title={`Turn off ${row.original.label}?`}
+							description={
+								<p>
+									If a machine is still using this key, sync will stop within a minute. Sign in
+									again from that machine to resume.
+								</p>
+							}
+							confirmLabel="Turn Off Key"
+							destructive
+							onConfirm={() => revokeKey.mutate(row.original.id)}
 						>
-							<Trash2 className="size-3.5" />
-						</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								disabled={revokeKey.isPending}
+								aria-label="Turn off key"
+								className="text-muted-foreground hover:text-destructive"
+							>
+								<Trash2 className="size-3.5" />
+							</Button>
+						</ConfirmAction>
 					) : null,
 				size: 40,
 			},
@@ -328,8 +365,10 @@ function ApiKeysPanel() {
 					id="new-key-label"
 					value={newLabel}
 					onChange={(e) => setNewLabel(e.target.value)}
-					placeholder="Key label (e.g. my-laptop)"
+					placeholder="my-laptop…"
 					className="flex-1"
+					name="new-key-label"
+					autoComplete="off"
 				/>
 				<Button type="submit" disabled={!newLabel || createKey.isPending}>
 					<Plus />
@@ -353,7 +392,7 @@ function ApiKeysPanel() {
 							size="icon"
 							onClick={() => {
 								navigator.clipboard.writeText(createdKey);
-								toast.success("Copied to clipboard");
+								toast.success("Copied to Clipboard");
 							}}
 							aria-label="Copy key"
 						>

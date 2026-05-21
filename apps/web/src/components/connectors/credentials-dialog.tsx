@@ -144,11 +144,13 @@ export function ConnectorCredentialsDialog({
 										</Label>
 										<Input
 											id={id}
+											name={f.name}
 											type={f.is_secret ? "password" : "text"}
 											value={values[f.name] ?? ""}
 											onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
-											autoComplete={f.is_secret ? "off" : undefined}
+											autoComplete="off"
 											required={f.required}
+											spellCheck={false}
 										/>
 										{f.description ? (
 											<p className="text-xs text-muted-foreground">{f.description}</p>

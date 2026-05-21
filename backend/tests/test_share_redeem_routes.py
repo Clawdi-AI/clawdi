@@ -63,10 +63,10 @@ async def client_unauth(db_session: AsyncSession) -> AsyncIterator[httpx.AsyncCl
         app.dependency_overrides.clear()
 
 
-async def _make_share_link(db_session, seed_project, seed_user) -> str:
+async def _make_share_link(db_session, project, seed_user) -> str:
     raw = generate_share_token()
     link = ProjectShareLink(
-        project_id=seed_project.id,
+        project_id=project.id,
         token_hash=hash_share_token(raw),
         token_prefix=raw[:8],
         resolved_owner_handle="alice-a3b4",
@@ -102,26 +102,60 @@ async def test_preview_rate_limit_blocks_token_probe_flood(client_unauth, monkey
 
 @pytest.mark.asyncio
 async def test_preview_valid_token_returns_summary(
-    client_unauth, db_session, seed_user, seed_project
+    client_unauth, db_session, seed_user, workspace_project
 ):
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+    from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+    from app.services.vault_crypto import encrypt
+
+    vault = Vault(user_id=seed_user.id, slug="deploy", name="Deploy")
+    db_session.add(vault)
+    await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=workspace_project.id))
+    for item_name in ("VERCEL_TOKEN", "SENTRY_DSN"):
+        ciphertext, nonce = encrypt(f"value-for-{item_name.lower()}")
+        db_session.add(
+            VaultItem(
+                vault_id=vault.id,
+                section="",
+                item_name=item_name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+        )
+    await db_session.commit()
+
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
     r = await client_unauth.get(f"/api/share/{raw}/preview")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["project_id"] == str(seed_project.id)
-    assert body["project_name"] == seed_project.name
+    assert body["project_id"] == str(workspace_project.id)
+    assert body["project_name"] == workspace_project.name
     assert body["owner_display"] in (seed_user.name, seed_user.email)
     assert body["owner_handle"] == "alice-a3b4"
     assert body["vault_locked"] is True
     assert isinstance(body["skill_count"], int)
-    assert isinstance(body["vault_count"], int)
+    assert body["vault_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_managed_project_link_returns_gone(
+    client_unauth, db_session, seed_user, seed_project, environment_project
+):
+    """Defense in depth for legacy/bad rows: even if a managed
+    Project somehow has a share-link row, public preview/redeem
+    won't expose it.
+    """
+    for project in (seed_project, environment_project):
+        raw = await _make_share_link(db_session, project, seed_user)
+        r = await client_unauth.get(f"/api/share/{raw}/preview")
+        assert r.status_code == 410, r.text
 
 
 @pytest.mark.asyncio
 async def test_preview_does_not_bump_redeem_count(
-    client_unauth, db_session, seed_user, seed_project
+    client_unauth, db_session, seed_user, workspace_project
 ):
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
     await client_unauth.get(f"/api/share/{raw}/preview")
     await client_unauth.get(f"/api/share/{raw}/preview")
     db_session.expire_all()
@@ -135,8 +169,8 @@ async def test_preview_does_not_bump_redeem_count(
 
 
 @pytest.mark.asyncio
-async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, seed_project):
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, workspace_project):
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
     await client_unauth.post(f"/api/share/{raw}/redeem")
     await client_unauth.post(f"/api/share/{raw}/redeem")
     db_session.expire_all()
@@ -151,9 +185,9 @@ async def test_redeem_bumps_redeem_count(client_unauth, db_session, seed_user, s
 
 @pytest.mark.asyncio
 async def test_redeem_idempotency_key_dedupes_counter(
-    client_unauth, db_session, seed_user, seed_project
+    client_unauth, db_session, seed_user, workspace_project
 ):
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
     headers = {"Idempotency-Key": "retry-1"}
     first = await client_unauth.post(f"/api/share/{raw}/redeem", headers=headers)
     second = await client_unauth.post(f"/api/share/{raw}/redeem", headers=headers)
@@ -171,12 +205,12 @@ async def test_redeem_idempotency_key_dedupes_counter(
 
 @pytest.mark.asyncio
 async def test_redeem_rate_limit_blocks_valid_token_flood(
-    client_unauth, db_session, monkeypatch, seed_user, seed_project
+    client_unauth, db_session, monkeypatch, seed_user, workspace_project
 ):
     from app.routes import share_redeem as share_redeem_routes
 
     monkeypatch.setattr(share_redeem_routes, "_REDEEM_RATE_LIMIT", 2)
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
 
     assert (await client_unauth.post(f"/api/share/{raw}/redeem")).status_code == 200
     assert (await client_unauth.post(f"/api/share/{raw}/redeem")).status_code == 200
@@ -199,9 +233,9 @@ async def test_redeem_rate_limit_blocks_valid_token_flood(
 
 @pytest.mark.asyncio
 async def test_redeem_attempts_are_persistent_and_prune_stale(
-    client_unauth, db_session, seed_user, seed_project
+    client_unauth, db_session, seed_user, workspace_project
 ):
-    raw = await _make_share_link(db_session, seed_project, seed_user)
+    raw = await _make_share_link(db_session, workspace_project, seed_user)
     link = (
         await db_session.execute(
             select(ProjectShareLink).where(ProjectShareLink.token_hash == hash_share_token(raw))
@@ -232,10 +266,10 @@ async def test_redeem_attempts_are_persistent_and_prune_stale(
 
 
 @pytest.mark.asyncio
-async def test_upgrade_owner_returns_409(db_session, seed_user, seed_project):
+async def test_upgrade_owner_returns_409(db_session, seed_user, workspace_project):
     """Owner upgrades their own project -> 409 already_owner. Uses an
     authed client (not client_unauth) since /upgrade requires
-    require_user_auth_unbound. The owner of the seed_project IS
+    require_user_auth_unbound. The owner of the workspace_project IS
     seed_user, so this is the self-share case."""
 
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
@@ -249,7 +283,7 @@ async def test_upgrade_owner_returns_409(db_session, seed_user, seed_project):
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            raw = await _make_share_link(db_session, seed_project, seed_user)
+            raw = await _make_share_link(db_session, workspace_project, seed_user)
             r = await ac.post(f"/api/share/{raw}/upgrade")
             assert r.status_code == 409, r.text
             assert r.json()["detail"]["error"] == "already_owner"
@@ -258,7 +292,7 @@ async def test_upgrade_owner_returns_409(db_session, seed_user, seed_project):
 
 
 @pytest.mark.asyncio
-async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed_project):
+async def test_upgrade_other_user_creates_membership(db_session, seed_user, workspace_project):
     """A different authed user upgrading creates a viewer membership
     with the frozen owner_handle. Idempotent on repeat call."""
     import uuid as _uuid
@@ -288,11 +322,11 @@ async def test_upgrade_other_user_creates_membership(db_session, seed_user, seed
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            raw = await _make_share_link(db_session, seed_project, seed_user)
+            raw = await _make_share_link(db_session, workspace_project, seed_user)
             r = await ac.post(f"/api/share/{raw}/upgrade")
             assert r.status_code == 200, r.text
             body = r.json()
-            assert body["project_id"] == str(seed_project.id)
+            assert body["project_id"] == str(workspace_project.id)
             assert body["resolved_owner_handle"] == "alice-a3b4"
             assert "mount_id" not in body  # capability-only
             # Idempotent repeat call returns the same row (and same

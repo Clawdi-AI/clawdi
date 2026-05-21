@@ -394,7 +394,7 @@ function SyncHelpDialog({
 												The daemon retried for a few minutes and gave up — usually a network outage
 												or backend hiccup. The next 5-minute rescan re-queues the change
 												automatically once connectivity is back; no source edit needed.
-												{isHosted ? null : " If your network looks fine, inspect:"}
+												{isHosted ? null : " If your network looks fine, check:"}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
@@ -582,7 +582,7 @@ function PromptBlock({ text }: { text: string }) {
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
-			Token revoked? Log in again with{" "}
+			Token turned off or expired? Log in again with{" "}
 			<code className="rounded bg-muted px-1 py-0.5 text-[11px]">clawdi auth login</code>.
 		</p>
 	);
@@ -598,7 +598,7 @@ function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (
 			<p className="text-xs text-muted-foreground">
-				Use the Clawdi dashboard to restart or inspect the pod.
+				Use the Clawdi dashboard to restart or check the pod.
 			</p>
 		);
 	}

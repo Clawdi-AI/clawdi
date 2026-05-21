@@ -1,6 +1,5 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
@@ -15,7 +14,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
-import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
+import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
@@ -27,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
+import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import {
 	cn,
@@ -39,7 +39,7 @@ import {
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const api = useApi();
-	const { user } = useUser();
+	const { user } = useCurrentUser();
 
 	const { data: session, isLoading: isSessionLoading } = useQuery({
 		queryKey: ["session", id],
@@ -331,7 +331,18 @@ export default function SessionDetailPage() {
 					<EmptyContent />
 				)
 			) : (
-				<EmptyState description="Conversation not uploaded yet. Refresh in a moment." />
+				<DetailPanel className="space-y-4">
+					<div className="space-y-1">
+						<div className="flex items-center gap-2">
+							<MessageSquare className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Conversation</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Messages appear here after the agent uploads this session.
+						</p>
+					</div>
+					<EmptyState fillHeight={false} description="Conversation not uploaded yet." />
+				</DetailPanel>
 			)}
 
 			{/* Floating "jump to bottom" — only meaningful in asc mode
@@ -521,7 +532,7 @@ function ContentFetchError() {
 	return (
 		<EmptyState
 			fillHeight={false}
-			description="Failed to load session content. Check your connection and try refreshing."
+			description="Session content is unavailable. Check your connection and refresh this page."
 		/>
 	);
 }

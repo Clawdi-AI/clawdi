@@ -18,7 +18,9 @@ from app.models.project_invitation import ProjectInvitation
 
 
 @pytest.mark.asyncio
-async def test_invite_existing_user_creates_invitation(client, db_session, seed_user, seed_project):
+async def test_invite_existing_user_creates_invitation(
+    client, db_session, seed_user, workspace_project
+):
     """Owner invites a registered user → 200 with response body
     carrying the project+owner+invitee context the recipient's
     dashboard renders."""
@@ -38,16 +40,16 @@ async def test_invite_existing_user_creates_invitation(client, db_session, seed_
 
     try:
         r = await client.post(
-            f"/api/projects/{seed_project.id}/invitations",
+            f"/api/projects/{workspace_project.id}/invitations",
             json={"email": invitee.email},
         )
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["invitee_email"] == invitee.email.lower()
-        assert body["project_id"] == str(seed_project.id)
+        assert body["project_id"] == str(workspace_project.id)
         assert body["owner_handle"].startswith("alice-")
         # Verify via list endpoint (avoids cross-pool greenlet issue).
-        listing = await client.get(f"/api/projects/{seed_project.id}/invitations")
+        listing = await client.get(f"/api/projects/{workspace_project.id}/invitations")
         assert listing.status_code == 200
         items = listing.json()
         assert any(it["invitee_email"] == invitee.email.lower() for it in items)
@@ -70,7 +72,9 @@ async def test_invite_existing_user_creates_invitation(client, db_session, seed_
 
 
 @pytest.mark.asyncio
-async def test_invite_email_is_trimmed_and_lowercased(client, db_session, seed_user, seed_project):
+async def test_invite_email_is_trimmed_and_lowercased(
+    client, db_session, seed_user, workspace_project
+):
     from app.models.user import User
 
     seed_user.name = "Alice"
@@ -85,7 +89,7 @@ async def test_invite_email_is_trimmed_and_lowercased(client, db_session, seed_u
     invitee_id = invitee.id
     try:
         response = await client.post(
-            f"/api/projects/{seed_project.id}/invitations",
+            f"/api/projects/{workspace_project.id}/invitations",
             json={"email": f"  {invitee.email.upper()}  "},
         )
         assert response.status_code == 200, response.text
@@ -107,12 +111,12 @@ async def test_invite_email_is_trimmed_and_lowercased(client, db_session, seed_u
 
 
 @pytest.mark.asyncio
-async def test_invite_unregistered_email_returns_404(client, seed_user, seed_project):
+async def test_invite_unregistered_email_returns_404(client, seed_user, workspace_project):
     """No matching User row → 404 user_not_found. The dialog copy
     points the owner at the share-link path instead."""
     seed_user.name = "Alice"
     r = await client.post(
-        f"/api/projects/{seed_project.id}/invitations",
+        f"/api/projects/{workspace_project.id}/invitations",
         json={"email": f"ghost_{uuid.uuid4().hex[:8]}@nowhere.test"},
     )
     assert r.status_code == 404
@@ -120,11 +124,11 @@ async def test_invite_unregistered_email_returns_404(client, seed_user, seed_pro
 
 
 @pytest.mark.asyncio
-async def test_invite_self_rejected(client, seed_user, seed_project):
+async def test_invite_self_rejected(client, seed_user, workspace_project):
     """You can't invite your own email — already the owner."""
     seed_user.name = "Alice"
     r = await client.post(
-        f"/api/projects/{seed_project.id}/invitations",
+        f"/api/projects/{workspace_project.id}/invitations",
         json={"email": seed_user.email},
     )
     assert r.status_code == 400
@@ -132,7 +136,7 @@ async def test_invite_self_rejected(client, seed_user, seed_project):
 
 
 @pytest.mark.asyncio
-async def test_invite_existing_pending_409(client, db_session, seed_user, seed_project):
+async def test_invite_existing_pending_409(client, db_session, seed_user, workspace_project):
     """Second invite to the same user → 409 already_invited
     (FK uniqueness on (project_id, invitee_user_id))."""
     from app.models.user import User
@@ -149,12 +153,12 @@ async def test_invite_existing_pending_409(client, db_session, seed_user, seed_p
     invitee_id = invitee.id
     try:
         first = await client.post(
-            f"/api/projects/{seed_project.id}/invitations",
+            f"/api/projects/{workspace_project.id}/invitations",
             json={"email": invitee.email},
         )
         assert first.status_code == 200, first.text
         second = await client.post(
-            f"/api/projects/{seed_project.id}/invitations",
+            f"/api/projects/{workspace_project.id}/invitations",
             json={"email": invitee.email},
         )
         assert second.status_code == 409
@@ -176,7 +180,7 @@ async def test_invite_existing_pending_409(client, db_session, seed_user, seed_p
 
 
 @pytest.mark.asyncio
-async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_project):
+async def test_list_then_cancel_invitation(client, db_session, seed_user, workspace_project):
     """Create → list → cancel → re-list shows it gone."""
     from app.models.user import User
 
@@ -192,21 +196,21 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_p
     invitee_id = invitee.id
     try:
         created = await client.post(
-            f"/api/projects/{seed_project.id}/invitations",
+            f"/api/projects/{workspace_project.id}/invitations",
             json={"email": invitee.email},
         )
         assert created.status_code == 200
         inv_id = created.json()["id"]
 
-        listing = await client.get(f"/api/projects/{seed_project.id}/invitations")
+        listing = await client.get(f"/api/projects/{workspace_project.id}/invitations")
         assert listing.status_code == 200
         assert any(it["id"] == inv_id for it in listing.json())
 
-        cancel = await client.delete(f"/api/projects/{seed_project.id}/invitations/{inv_id}")
+        cancel = await client.delete(f"/api/projects/{workspace_project.id}/invitations/{inv_id}")
         assert cancel.status_code == 200
         assert cancel.json()["status"] == "cancelled"
 
-        relist = await client.get(f"/api/projects/{seed_project.id}/invitations")
+        relist = await client.get(f"/api/projects/{workspace_project.id}/invitations")
         assert relist.status_code == 200
         assert all(it["id"] != inv_id for it in relist.json())
     finally:
@@ -226,9 +230,23 @@ async def test_list_then_cancel_invitation(client, db_session, seed_user, seed_p
 
 
 @pytest.mark.asyncio
-async def test_cancel_unknown_invitation_404(client, seed_user, seed_project):
+async def test_cancel_unknown_invitation_404(client, seed_user, workspace_project):
     seed_user.name = "Alice"
     r = await client.delete(
-        f"/api/projects/{seed_project.id}/invitations/00000000-0000-0000-0000-000000000000"
+        f"/api/projects/{workspace_project.id}/invitations/00000000-0000-0000-0000-000000000000"
     )
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_invite_rejects_managed_projects(
+    client, seed_user, seed_project, environment_project
+):
+    seed_user.name = "Alice"
+    for project in (seed_project, environment_project):
+        r = await client.post(
+            f"/api/projects/{project.id}/invitations",
+            json={"email": "someone@example.com"},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["error"] == "project_not_shareable"

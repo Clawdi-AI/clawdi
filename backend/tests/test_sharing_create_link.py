@@ -10,7 +10,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_share_link_returns_raw_token_once(client, seed_user, seed_project):
+async def test_create_share_link_returns_raw_token_once(client, seed_user, workspace_project):
     """Owner creates a link → 200 with raw_token + url + prefix.
     Plan B.2 contract: raw_token shown ONCE; subsequent reads see
     only the prefix."""
@@ -19,7 +19,7 @@ async def test_create_share_link_returns_raw_token_once(client, seed_user, seed_
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/projects/{seed_project.id}/share-links",
+        f"/api/projects/{workspace_project.id}/share-links",
         json={"label": "team link"},
     )
     assert r.status_code == 200, r.text
@@ -34,7 +34,7 @@ async def test_create_share_link_returns_raw_token_once(client, seed_user, seed_
 
 
 @pytest.mark.asyncio
-async def test_create_share_link_persists_hash_not_raw(client, seed_user, seed_project):
+async def test_create_share_link_persists_hash_not_raw(client, seed_user, workspace_project):
     """Server stores only the SHA-256 hash + prefix — never the
     raw_token. We verify by re-using the raw_token in a follow-up
     /preview call: if the hash were stored wrong, /preview would
@@ -43,7 +43,7 @@ async def test_create_share_link_persists_hash_not_raw(client, seed_user, seed_p
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/projects/{seed_project.id}/share-links",
+        f"/api/projects/{workspace_project.id}/share-links",
         json={},
     )
     assert r.status_code == 200
@@ -53,8 +53,28 @@ async def test_create_share_link_persists_hash_not_raw(client, seed_user, seed_p
     preview = await client.get(f"/api/share/{raw}/preview")
     assert preview.status_code == 200, preview.text
     body = preview.json()
-    assert body["project_id"] == str(seed_project.id)
+    assert body["project_id"] == str(workspace_project.id)
     assert body["owner_handle"].startswith("alice-")
+
+
+@pytest.mark.asyncio
+async def test_create_share_link_rejects_managed_projects(
+    client, seed_user, seed_project, environment_project
+):
+    """Only user-created workspace/custom Projects are shareable.
+
+    Personal/Global and Agent Projects are managed contexts, not
+    collaboration containers.
+    """
+    seed_user.name = "Alice Example"
+
+    for project in (seed_project, environment_project):
+        r = await client.post(
+            f"/api/projects/{project.id}/share-links",
+            json={},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["error"] == "project_not_shareable"
 
 
 @pytest.mark.asyncio
@@ -97,14 +117,14 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
 
 
 @pytest.mark.asyncio
-async def test_create_share_link_requires_display_name(client, seed_user, seed_project):
+async def test_create_share_link_requires_display_name(client, seed_user, workspace_project):
     """Owner without a display name → 409 display_name_required.
     Falling back to email local-part would leak PII to recipients;
     sharing requires a stable owner handle, so we hard-block instead."""
     seed_user.name = None
 
     r = await client.post(
-        f"/api/projects/{seed_project.id}/share-links",
+        f"/api/projects/{workspace_project.id}/share-links",
         json={},
     )
     assert r.status_code == 409, r.text

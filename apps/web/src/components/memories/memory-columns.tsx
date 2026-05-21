@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Laptop, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { cn, relativeTime } from "@/lib/utils";
@@ -95,18 +96,23 @@ export function makeMemoryColumns(onDelete: (id: string) => void): ColumnDef<Mem
 			id: "actions",
 			header: () => <span className="sr-only">Actions</span>,
 			cell: ({ row }) => (
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onClick={(e) => {
-						e.stopPropagation();
-						onDelete(row.original.id);
-					}}
-					className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-					aria-label="Delete memory"
+				<ConfirmAction
+					title="Delete this memory?"
+					description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
+					confirmLabel="Delete Memory"
+					destructive
+					onConfirm={() => onDelete(row.original.id)}
 				>
-					<Trash2 className="size-3.5" />
-				</Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onClick={(e) => e.stopPropagation()}
+						className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+						aria-label="Delete memory"
+					>
+						<Trash2 className="size-3.5" />
+					</Button>
+				</ConfirmAction>
 			),
 			size: 40,
 		},

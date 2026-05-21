@@ -2,9 +2,15 @@ import type { NextConfig } from "next";
 
 const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 const posthogProxyPath = "/_cdi/px";
+const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? "")
+	.split(",")
+	.map((origin) => origin.trim())
+	.filter(Boolean);
 
 const nextConfig: NextConfig = {
 	transpilePackages: ["@clawdi/shared"],
+	...(allowedDevOrigins.length > 0 ? { allowedDevOrigins } : {}),
+	devIndicators: false,
 	// PostHog uses trailing slashes in capture endpoints (e.g. `/e/`).
 	// Redirecting these breaks payload delivery.
 	skipTrailingSlashRedirect: isHostedBuild,

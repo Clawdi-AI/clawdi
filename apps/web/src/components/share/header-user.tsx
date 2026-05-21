@@ -1,6 +1,6 @@
 "use client";
 
-import { SignInButton, useUser } from "@clerk/nextjs";
+import { SignInButton } from "@clerk/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { UserMenuItems } from "@/components/user-menu";
+import { useCurrentUser } from "@/lib/auth-client";
 
 /**
  * Top-right user affordance for the public share header.
@@ -22,7 +23,7 @@ import { UserMenuItems } from "@/components/user-menu";
  * affordance; matches Clerk's own `<UserButton>` behavior.
  */
 export function ShareHeaderUser() {
-	const { isLoaded, isSignedIn, user } = useUser();
+	const { isLoaded, isSignedIn, user } = useCurrentUser();
 	if (!isLoaded) {
 		return <div className="size-8" />;
 	}

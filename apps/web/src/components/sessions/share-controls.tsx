@@ -24,7 +24,7 @@ import { cn, errorMessage, relativeTime } from "@/lib/utils";
  * Notion / Drive convention, so the icon needs zero backend interaction
  * to do its job.
  *
- * Sessions default to Private. Toggling "Public access" on creates a
+ * Sessions default to Private. Toggling "Public Access" on creates a
  * `kind='link'` permission row; toggling off revokes it. Visiting the
  * URL when private requires sign-in (server-side gate, see
  * `/s/[id]/page.tsx`).
@@ -87,7 +87,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 			),
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public access enabled");
+			toast.success("Public Access Enabled");
 		},
 		onError: (err) => toast.error(errorMessage(err)),
 	});
@@ -103,7 +103,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 		},
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public access disabled");
+			toast.success("Public Access Disabled");
 		},
 		onError: (err) => toast.error(errorMessage(err)),
 	});
@@ -132,10 +132,12 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 				<div className="flex items-start justify-between gap-3 px-3 py-3">
 					<div className="min-w-0 flex-1 space-y-0.5">
 						<Label htmlFor="share-toggle" className="text-sm font-medium">
-							Public access
+							Public Access
 						</Label>
 						<p className="text-xs text-muted-foreground">
-							{sharedNow ? "Anyone with the link can view" : "Only you can view"}
+							{sharedNow
+								? "Anyone with the link can view this session."
+								: "Only you can view this session."}
 						</p>
 					</div>
 					<Switch
@@ -153,7 +155,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 					<PrimaryCopy url={url} />
 					{sharedNow ? (
 						<div className="space-y-1.5">
-							<div className="text-xs text-muted-foreground">For agents</div>
+							<div className="text-xs text-muted-foreground">Agent Formats</div>
 							<div className="flex gap-2">
 								<SecondaryCopy url={`${url}.md`} label="Markdown" />
 								<SecondaryCopy url={`${url}.json`} label="JSON" />
@@ -189,8 +191,8 @@ function CopyLinkButton({ sessionId }: { sessionId: string }) {
 			size="icon"
 			className={cn("size-8", copied && "text-emerald-600")}
 			onClick={copy}
-			aria-label="Copy share link"
-			title="Copy share link"
+			aria-label="Copy Share Link"
+			title="Copy Share Link"
 		>
 			{copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
 		</Button>
@@ -214,7 +216,7 @@ function useCopyToClipboard(url: string, label: string) {
 			setCopied(true);
 			if (timerRef.current) clearTimeout(timerRef.current);
 			timerRef.current = setTimeout(() => setCopied(false), 1500);
-			toast.success(`${label} copied`);
+			toast.success(`${label} Copied`);
 		} catch (e) {
 			toast.error(errorMessage(e));
 		}
@@ -230,6 +232,10 @@ function PrimaryCopy({ url }: { url: string }) {
 			<Input
 				readOnly
 				value={url}
+				name="session-share-url"
+				aria-label="Session share URL"
+				autoComplete="off"
+				spellCheck={false}
 				className="h-8 font-mono text-xs"
 				onFocus={(e) => e.currentTarget.select()}
 			/>

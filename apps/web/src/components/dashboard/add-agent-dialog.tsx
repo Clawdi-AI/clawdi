@@ -19,7 +19,7 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent className="max-w-2xl sm:max-w-2xl">
 				<DialogHeader>
-					<DialogTitle>Add an agent</DialogTitle>
+					<DialogTitle>Add Agent</DialogTitle>
 					<DialogDescription>
 						Connect another machine or agent — Claude Code, Codex, Hermes, or OpenClaw.
 					</DialogDescription>

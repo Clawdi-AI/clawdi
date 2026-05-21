@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { sessionDetailHref } from "@/lib/project-resource-model";
 import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 const summaryColumn: ColumnDef<SessionListItem> = {
@@ -19,7 +20,7 @@ const summaryColumn: ColumnDef<SessionListItem> = {
 			<div className="min-w-0">
 				<div className="truncate" title={title}>
 					<Link
-						href={`/sessions/${s.id}`}
+						href={sessionDetailHref(s.id)}
 						onClick={(e) => e.stopPropagation()}
 						className="font-medium hover:underline"
 					>

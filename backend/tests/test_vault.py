@@ -22,7 +22,12 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
-from app.models.vault import Vault, VaultCredentialProfile
+from app.models.vault import (
+    Vault,
+    VaultCredentialProfile,
+    VaultProjectAttachment,
+    VaultProjectSlugAlias,
+)
 
 
 @pytest.mark.asyncio
@@ -31,12 +36,46 @@ async def test_vault_create_list_and_slug_conflict(client: httpx.AsyncClient):
     assert r.status_code == 200, r.text
     assert r.json()["slug"] == "prod"
 
-    # Conflicting slug under same user must 409, not silently overwrite.
+    # Re-creating an existing vault is idempotent and keeps one vault row.
     r2 = await client.post("/api/vault", json={"slug": "prod", "name": "Again"})
-    assert r2.status_code == 409, r2.text
+    assert r2.status_code == 200, r2.text
 
     listing = (await client.get("/api/vault")).json()
-    assert any(v["slug"] == "prod" for v in listing["items"])
+    matches = [v for v in listing["items"] if v["slug"] == "prod"]
+    assert len(matches) == 1
+    assert matches[0]["project_ids"]
+    assert matches[0]["project_id"] in matches[0]["project_ids"]
+
+
+@pytest.mark.asyncio
+async def test_vault_rejects_invalid_slugs_and_item_names(client: httpx.AsyncClient):
+    invalid_slug = await client.post("/api/vault", json={"slug": "Bad Vault", "name": "Bad"})
+    assert invalid_slug.status_code == 422, invalid_slug.text
+
+    trailing_hyphen = await client.post("/api/vault", json={"slug": "prod-", "name": "Bad"})
+    assert trailing_hyphen.status_code == 422, trailing_hyphen.text
+
+    created = await client.post("/api/vault", json={"slug": "prod", "name": "Production"})
+    assert created.status_code == 200, created.text
+
+    empty_key = await client.put(
+        "/api/vault/prod/items",
+        json={"section": "", "fields": {"": "secret"}},
+    )
+    assert empty_key.status_code == 422, empty_key.text
+
+    bad_section = await client.put(
+        "/api/vault/prod/items",
+        json={"section": "api/keys", "fields": {"TOKEN": "secret"}},
+    )
+    assert bad_section.status_code == 422, bad_section.text
+
+    empty_delete = await client.request(
+        "DELETE",
+        "/api/vault/prod/items",
+        json={"section": "", "fields": []},
+    )
+    assert empty_delete.status_code == 422, empty_delete.text
 
 
 @pytest.mark.asyncio
@@ -86,6 +125,60 @@ async def test_vault_resolve_exact_clawdi_reference(cli_client: httpx.AsyncClien
     assert body["section"] == "database"
     assert body["item_name"] == "url"
     assert body["precedence"][0]["reason"] == "match"
+
+
+@pytest.mark.asyncio
+async def test_vault_resolve_exact_reference_accepts_legacy_project_slug_alias(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_project,
+):
+    created = await cli_client.post(
+        f"/api/vault?project_id={seed_project.id}",
+        json={"slug": "prod-legacy123", "name": "Production"},
+    )
+    assert created.status_code == 200, created.text
+    r = await cli_client.put(
+        f"/api/vault/prod-legacy123/items?project_id={seed_project.id}",
+        json={"section": "database", "fields": {"url": "postgres://legacy-secret"}},
+    )
+    assert r.status_code == 200, r.text
+
+    db_session.add(
+        VaultProjectSlugAlias(
+            vault_id=uuid.UUID(created.json()["id"]),
+            project_id=seed_project.id,
+            slug="prod",
+        )
+    )
+    await db_session.commit()
+
+    alias_items = await cli_client.get(f"/api/vault/prod/items?project_id={seed_project.id}")
+    assert alias_items.status_code == 200, alias_items.text
+    assert alias_items.json() == {"database": ["url"]}
+
+    alias_write = await cli_client.put(
+        f"/api/vault/prod/items?project_id={seed_project.id}",
+        json={"section": "database", "fields": {"user": "legacy-user"}},
+    )
+    assert alias_write.status_code == 200, alias_write.text
+
+    resolved = await cli_client.post(
+        f"/api/vault/resolve?project_id={seed_project.id}"
+        "&vault_slug=prod&section=database&field=url&debug=true"
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["value"] == "postgres://legacy-secret"
+    assert body["vault_slug"] == "prod-legacy123"
+    assert body["precedence"][0]["reason"] == "match"
+
+    resolved_user = await cli_client.post(
+        f"/api/vault/resolve?project_id={seed_project.id}"
+        "&vault_slug=prod&section=database&field=user"
+    )
+    assert resolved_user.status_code == 200, resolved_user.text
+    assert resolved_user.json()["value"] == "legacy-user"
 
 
 @pytest.mark.asyncio
@@ -491,17 +584,22 @@ async def test_env_bound_key_cannot_mutate_other_owned_project_vault(db_session,
     )
     vault_a = Vault(
         user_id=seed_user.id,
-        project_id=env_a.default_project_id,
-        slug="shared",
+        slug="shared-a",
         name="A",
     )
     vault_b = Vault(
         user_id=seed_user.id,
-        project_id=env_b.default_project_id,
-        slug="shared",
+        slug="shared-b",
         name="B",
     )
     db_session.add_all([vault_a, vault_b])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            VaultProjectAttachment(vault_id=vault_a.id, project_id=env_a.default_project_id),
+            VaultProjectAttachment(vault_id=vault_b.id, project_id=env_b.default_project_id),
+        ]
+    )
     await db_session.commit()
 
     key = ApiKey(
@@ -525,62 +623,63 @@ async def test_env_bound_key_cannot_mutate_other_owned_project_vault(db_session,
         async with httpx.AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
-            blocked = await ac.delete(f"/api/vault/shared?project_id={env_b.default_project_id}")
+            blocked = await ac.delete(f"/api/vault/shared-b?project_id={env_b.default_project_id}")
             assert blocked.status_code == 404, blocked.text
 
-            own = await ac.delete(f"/api/vault/shared?project_id={env_a.default_project_id}")
+            own = await ac.delete(f"/api/vault/shared-a?project_id={env_a.default_project_id}")
             assert own.status_code == 200, own.text
     finally:
         app.dependency_overrides.clear()
 
     remaining = (
-        await db_session.execute(select(Vault).where(Vault.project_id == env_b.default_project_id))
+        await db_session.execute(
+            select(VaultProjectAttachment).where(
+                VaultProjectAttachment.project_id == env_b.default_project_id
+            )
+        )
     ).scalar_one_or_none()
     assert remaining is not None
 
 
 @pytest.mark.asyncio
-async def test_vault_same_slug_allowed_across_projects(client, db_session, seed_user):
-    """Slug uniqueness is per (user_id, project_id, slug). Two vaults
-    with the same slug in different projects is a valid configuration
-    — env A's `github` vault and env B's `github` vault are
-    independent rows. Verifies the partial unique constraint
-    matches what the route allows: insert two vaults with the same
-    slug under two different project_ids and confirm both persist
-    without 409 at the DB layer."""
+async def test_vault_attaches_one_vault_to_multiple_projects(client, db_session, seed_user):
+    """A vault is account-owned. Projects attach to that one vault,
+    and key rows remain under the vault instead of being duplicated
+    per Project."""
     from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
-    from app.models.vault import Vault
 
     project_a = Project(user_id=seed_user.id, name="A", slug="env-a", kind=PROJECT_KIND_ENVIRONMENT)
     project_b = Project(user_id=seed_user.id, name="B", slug="env-b", kind=PROJECT_KIND_ENVIRONMENT)
     db_session.add_all([project_a, project_b])
-    await db_session.flush()
-
-    # Same slug in two different projects — must coexist.
-    db_session.add(Vault(user_id=seed_user.id, project_id=project_a.id, slug="github", name="A's"))
-    db_session.add(Vault(user_id=seed_user.id, project_id=project_b.id, slug="github", name="B's"))
     await db_session.commit()
 
-    # JWT user can read both via the listing — listing carries
-    # project_id per row so the dashboard can disambiguate before
-    # following the slug-keyed lookup.
-    listing = (await client.get("/api/vault")).json()
-    same_slug = [v for v in listing["items"] if v["slug"] == "github"]
-    assert len(same_slug) == 2, same_slug
-    listed_projects = {v["project_id"] for v in same_slug}
-    assert listed_projects == {str(project_a.id), str(project_b.id)}
+    first = await client.post(
+        f"/api/vault?project_id={project_a.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert first.status_code == 200, first.text
+    second = await client.post(
+        f"/api/vault?project_id={project_b.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+    other = await client.post(
+        f"/api/vault?project_id={project_b.id}",
+        json={"slug": "figma", "name": "Figma"},
+    )
+    assert other.status_code == 200, other.text
 
-    # Slug-only lookup with a duplicate across projects MUST 409.
-    # Previously the resolver silently picked the most-recently-
-    # updated row, which let a dashboard mutation land in the
-    # WRONG project when a JWT user happened to hold the same slug
-    # in two projects. Refusing forces the caller to specify
-    # `project_id`.
-    ambiguous = await client.get("/api/vault/github/items")
-    assert ambiguous.status_code == 409, ambiguous.text
-    body = ambiguous.json()["detail"]
-    assert body["code"] == "ambiguous_vault_slug"
-    assert set(body["project_ids"]) == listed_projects
+    listing = (await client.get("/api/vault")).json()
+    [github] = [v for v in listing["items"] if v["slug"] == "github"]
+    assert set(github["project_ids"]) == {str(project_a.id), str(project_b.id)}
+    assert github["project_id"] in github["project_ids"]
+    filtered_a = (await client.get(f"/api/vault?project_id={project_a.id}")).json()
+    assert [v["slug"] for v in filtered_a["items"]] == ["github"]
+    assert filtered_a["items"][0]["project_id"] == str(project_a.id)
+    filtered_b = (await client.get(f"/api/vault?project_id={project_b.id}")).json()
+    assert {v["slug"] for v in filtered_b["items"]} == {"figma", "github"}
+    assert {v["project_id"] for v in filtered_b["items"]} == {str(project_b.id)}
 
     # With `project_id` query param both vaults are reachable.
     a_resp = await client.get(f"/api/vault/github/items?project_id={project_a.id}")
@@ -590,13 +689,9 @@ async def test_vault_same_slug_allowed_across_projects(client, db_session, seed_
 
 
 @pytest.mark.asyncio
-async def test_vault_same_slug_blocked_within_one_project(client):
-    """Within a single project the slug must still 409 — we only
-    relaxed uniqueness across projects, not within."""
+async def test_vault_duplicate_slug_does_not_duplicate_keys(client):
     r = await client.post("/api/vault", json={"slug": "dup", "name": "First"})
     assert r.status_code == 200, r.text
     r2 = await client.post("/api/vault", json={"slug": "dup", "name": "Second"})
-    assert r2.status_code == 409, r2.text
-    body = r2.json()["detail"]
-    assert body["code"] == "vault_slug_conflict"
-    assert "project_id" in body
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["id"] == r.json()["id"]

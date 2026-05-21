@@ -122,6 +122,7 @@ const fetchShare = cache(async (sessionId: string, token: string | null): Promis
 });
 
 async function getOptionalToken(): Promise<string | null> {
+	if (env.NEXT_PUBLIC_DEV_AUTH_BYPASS) return env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
 	const { getToken } = await auth();
 	return await getToken();
 }
@@ -180,6 +181,7 @@ function sharedSessionFallbackMetadata(): Metadata {
 
 export default async function PublicSharePage({ params }: { params: Promise<Params> }) {
 	const { id } = await params;
+	if (!UUID_RE.test(id)) notFound();
 
 	const token = await getOptionalToken();
 	const result = await fetchShare(id, token);

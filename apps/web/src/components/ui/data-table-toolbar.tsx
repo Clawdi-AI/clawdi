@@ -24,7 +24,7 @@ export function DataTableToolbar({
 				value={value}
 				onChange={onChange}
 				placeholder={placeholder}
-				className="max-w-sm flex-1"
+				className="w-full flex-1 basis-full sm:max-w-sm sm:basis-auto"
 			/>
 			{children}
 		</div>

@@ -1,7 +1,7 @@
 import { pageMetadata } from "@/app/page-metadata";
 
 export const metadata = pageMetadata(
-	"Vault",
+	"Vaults",
 	"Store and manage encrypted secrets for AI agent commands and workflows.",
 );
 
