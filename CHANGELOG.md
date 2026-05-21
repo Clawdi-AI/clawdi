@@ -10,6 +10,37 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.2
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.2
+
+Package: `clawdi@0.8.2`
+
+### Added
+
+- Added non-interactive vault writes with `clawdi vault set --value <value>`
+  and `clawdi vault set --stdin`.
+- Added `--vault`, `--section`, and `--project` targeting to
+  `clawdi vault import`, so `.env` imports can populate sectioned vault paths.
+- Added `clawdi vault rm` / `clawdi vault delete` for scripted cleanup.
+- Added `clawdi project list --include-envs` to show auto-created machine
+  Projects when needed.
+
+### Changed
+
+- Vault write commands now print the concrete target vault, section, and Project
+  before writing, then print exact `clawdi://project/...` references after
+  writes.
+- `clawdi project list` now hides auto-created machine Projects by default and
+  reports how many were hidden.
+- The bundled `clawdi` skill now points agents at the new vault CLI workflow
+  for scripted secret migration and cleanup.
+
+### Fixed
+
+- `clawdi vault import` now warns about skipped invalid dotenv identifiers
+  instead of reporting only that no keys were found.
+
 ## Clawdi CLI v0.8.1
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.1

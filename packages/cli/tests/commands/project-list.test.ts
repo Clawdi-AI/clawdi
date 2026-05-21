@@ -119,5 +119,88 @@ describe("projectListCommand", () => {
 		expect(parsed.shared_projects.map((p: { slug: string }) => p.slug)).toEqual(["shared-toolkit"]);
 		expect(parsed.shared_projects[0].owner_handle).toBe("alice-a3b4");
 		expect(parsed.projects).toHaveLength(3);
+		expect(parsed.environment_projects).toEqual([]);
+		expect(parsed.hidden_environment_project_count).toBe(0);
+	});
+
+	it("hides machine environment projects by default and can include them", async () => {
+		const projects = [
+			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
+			{
+				id: "project-env",
+				slug: "env-abc123",
+				name: "Workstation (codex)",
+				kind: "environment",
+				is_owner: true,
+			},
+		];
+		const { restore } = mockFetch([
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+		]);
+		const orig = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await projectListCommand({});
+			const hiddenOut = lines.join("\n");
+			expect(hiddenOut).toContain("My projects (1)");
+			expect(hiddenOut).not.toContain("env-abc123");
+			expect(hiddenOut).toContain("Hidden machine projects: 1");
+
+			lines.length = 0;
+			await projectListCommand({ includeEnvs: true });
+			const includedOut = lines.join("\n");
+			expect(includedOut).toContain("Machines (1)");
+			expect(includedOut).toContain("env-abc123");
+		} finally {
+			console.log = orig;
+			restore();
+		}
+	});
+
+	it("omits machine environment projects from JSON unless requested", async () => {
+		const projects = [
+			{ id: "project-a", slug: "personal", name: "Personal", kind: "personal", is_owner: true },
+			{
+				id: "project-env",
+				slug: "env-abc123",
+				name: "Workstation (codex)",
+				kind: "environment",
+				is_owner: true,
+			},
+		];
+		const { restore } = mockFetch([
+			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+		]);
+		const orig = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out = args.map(String).join(" ");
+		};
+
+		try {
+			await projectListCommand({ json: true });
+			const hidden = JSON.parse(out);
+			expect(hidden.projects.map((p: { slug: string }) => p.slug)).toEqual(["personal"]);
+			expect(hidden.environment_projects).toEqual([]);
+			expect(hidden.hidden_environment_project_count).toBe(1);
+
+			await projectListCommand({ json: true, includeEnvs: true });
+			const included = JSON.parse(out);
+			expect(included.projects.map((p: { slug: string }) => p.slug)).toEqual([
+				"personal",
+				"env-abc123",
+			]);
+			expect(included.environment_projects.map((p: { slug: string }) => p.slug)).toEqual([
+				"env-abc123",
+			]);
+			expect(included.hidden_environment_project_count).toBe(0);
+		} finally {
+			console.log = orig;
+			restore();
+		}
 	});
 });

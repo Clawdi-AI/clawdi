@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vaultImport, vaultList } from "../../src/commands/vault";
+import { vaultImport, vaultList, vaultRm, vaultSet } from "../../src/commands/vault";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -89,11 +89,60 @@ describe("vaultList", () => {
 			restore();
 		}
 
-		expect(out).toContain(`default project=${PROJECT_ID}`);
+		expect(out).toContain(`Project personal (${PROJECT_ID})`);
+		expect(out).toContain("Vault default");
 		expect(out).toContain(`clawdi://project/${PROJECT_ID}/vault/default/field/OPENAI_API_KEY`);
 		expect(out).toContain(
 			`clawdi://project/${PROJECT_ID}/vault/default/section/openai/field/api%20key`,
 		);
+	});
+
+	it("groups multiple vaults under one project in human output", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/vault/default/items",
+				response: () => jsonResponse({ "(default)": ["OPENAI_API_KEY"] }),
+			},
+			{
+				method: "GET",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ stripe: ["SECRET_KEY"] }),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID },
+							{ id: "vault-2", slug: "prod", name: "prod", project_id: PROJECT_ID },
+						],
+						total: 2,
+					}),
+			},
+			...mockProjectList(),
+		]);
+		const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultList({});
+		} finally {
+			console.log = origLog;
+			if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(out.match(/Project personal/g)?.length).toBe(1);
+		expect(out).toContain("Vault default");
+		expect(out).toContain("Vault prod");
 	});
 });
 
@@ -112,6 +161,7 @@ describe("vaultImport", () => {
 			].join("\n"),
 		);
 		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
 				path: "/api/vault",
@@ -173,6 +223,299 @@ describe("vaultImport", () => {
 		expect(captured).toHaveLength(0);
 		expect(out).toContain("No keys found in file.");
 	});
+
+	it("warns about invalid dotenv identifiers without writing when none are valid", async () => {
+		const envFile = join(tmpHome, ".env.invalid");
+		writeFileSync(envFile, ["my-section/OPENAI_API_KEY=secret", "api.key=value", ""].join("\n"));
+		const { captured, restore } = mockFetch([]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultImport(envFile, { yes: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+		expect(out).toContain(
+			"Skipped 2 keys with invalid identifiers: my-section/OPENAI_API_KEY, api.key",
+		);
+		expect(out).toContain("No valid keys found in file.");
+	});
+
+	it("caps long invalid identifier warnings", async () => {
+		const envFile = join(tmpHome, ".env.many-invalid");
+		writeFileSync(
+			envFile,
+			Array.from({ length: 12 }, (_, index) => `bad-key-${index}=secret`).join("\n"),
+		);
+		const { captured, restore } = mockFetch([]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultImport(envFile, { yes: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+		expect(out).toContain(
+			"Skipped 12 keys with invalid identifiers: bad-key-0, bad-key-1, bad-key-2, bad-key-3, bad-key-4, bad-key-5, bad-key-6, bad-key-7, bad-key-8, bad-key-9, +2 more",
+		);
+	});
+
+	it("imports dotenv files into the requested vault section", async () => {
+		const envFile = join(tmpHome, ".env.prod");
+		writeFileSync(envFile, ["STRIPE_SECRET_KEY=sk_live", "bad-key=skipped"].join("\n"));
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ detail: "already exists" }, 409),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+			{
+				method: "PUT",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "ok", fields: 1 }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultImport(envFile, { yes: true, vault: "prod", section: "stripe" });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const create = captured.find((request) => request.method === "POST");
+		expect(create?.body).toEqual({ slug: "prod", name: "prod" });
+		const put = captured.find((request) => request.method === "PUT");
+		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.body).toEqual({
+			section: "stripe",
+			fields: { STRIPE_SECRET_KEY: "sk_live" },
+		});
+		expect(out).toContain("Skipped 1 key with invalid identifiers: bad-key");
+		expect(out).toContain(
+			`Imported 1 keys to vault "prod" section "stripe" in default-write project "personal" (${PROJECT_ID})`,
+		);
+		expect(out).toContain(
+			`clawdi://project/${PROJECT_ID}/vault/prod/section/stripe/field/STRIPE_SECRET_KEY`,
+		);
+	});
+
+	it("rejects invalid import targets before writing", async () => {
+		const envFile = join(tmpHome, ".env.bad-target");
+		writeFileSync(envFile, "TOKEN=secret\n");
+		const { captured, restore } = mockFetch([]);
+
+		try {
+			await expect(vaultImport(envFile, { yes: true, section: "api/keys" })).rejects.toThrow(
+				"Vault section may contain only letters",
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
+});
+
+describe("vaultSet", () => {
+	it("stores a non-interactive --value without prompting", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ detail: "already exists" }, 409),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+			{
+				method: "PUT",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "ok", fields: 1 }),
+			},
+		]);
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			await vaultSet("prod/stripe/SECRET_KEY", { value: "sk-live" });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const put = captured.find((request) => request.method === "PUT");
+		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.body).toEqual({
+			section: "stripe",
+			fields: { SECRET_KEY: "sk-live" },
+		});
+	});
+
+	it("stores a non-interactive --stdin value and strips one final newline", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ detail: "already exists" }, 409),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
+						total: 1,
+					}),
+			},
+			{
+				method: "PUT",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "ok", fields: 1 }),
+			},
+		]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+		const origLog = console.log;
+		console.log = () => {};
+
+		try {
+			const run = vaultSet("prod/stripe/SECRET_KEY", { stdin: true });
+			queueMicrotask(() => {
+				process.stdin.emit("data", "sk-live\n");
+				process.stdin.emit("end");
+			});
+			await run;
+		} finally {
+			console.log = origLog;
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		const put = captured.find((request) => request.method === "PUT");
+		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.body).toEqual({
+			section: "stripe",
+			fields: { SECRET_KEY: "sk-live" },
+		});
+	});
+
+	it("rejects --stdin from an interactive TTY before writing", async () => {
+		const { captured, restore } = mockFetch([]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+
+		try {
+			await expect(vaultSet("SECRET_KEY", { stdin: true })).rejects.toThrow(
+				"Refusing to read --stdin from an interactive TTY.",
+			);
+		} finally {
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
+
+	it("deletes a key from the resolved vault project", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "DELETE",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "deleted" }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultRm("prod/stripe/SECRET_KEY", { yes: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const del = captured.find((request) => request.method === "DELETE");
+		expect(del?.path).toContain(`/api/vault/prod/items?project_id=${PROJECT_ID}`);
+		expect(del?.body).toEqual({
+			section: "stripe",
+			fields: ["SECRET_KEY"],
+		});
+		expect(out).toContain(
+			`Deleted prod/stripe/SECRET_KEY from vault "prod" section "stripe" in default-write project "personal" (${PROJECT_ID})`,
+		);
+	});
+
+	it("rejects ambiguous vault keys before writing", async () => {
+		const { captured, restore } = mockFetch([]);
+
+		try {
+			await expect(vaultSet("prod/stripe/SECRET_KEY/extra", { value: "sk-live" })).rejects.toThrow(
+				"Vault key must be KEY, vault/KEY, or vault/section/KEY.",
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
+
+	it("rejects conflicting non-interactive value sources before writing", async () => {
+		const { captured, restore } = mockFetch([]);
+
+		try {
+			await expect(vaultSet("SECRET_KEY", { value: "sk-live", stdin: true })).rejects.toThrow(
+				"Pass either --value or --stdin, not both.",
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
+	});
 });
 
 function mockVaultListFetch() {
@@ -195,5 +538,56 @@ function mockVaultListFetch() {
 					total: 1,
 				}),
 		},
+		{
+			method: "GET",
+			path: "/api/projects",
+			response: () =>
+				jsonResponse([
+					{
+						id: PROJECT_ID,
+						slug: "personal",
+						name: "Personal",
+						kind: "personal",
+						is_owner: true,
+					},
+				]),
+		},
 	]);
+}
+
+function mockDefaultProjectResolution() {
+	return [
+		{
+			method: "GET",
+			path: "/api/projects/default",
+			response: () => jsonResponse({ project_id: PROJECT_ID }),
+		},
+		{
+			method: "GET",
+			path: "/api/projects",
+			response: () => jsonResponse(mockProjects()),
+		},
+	];
+}
+
+function mockProjectList() {
+	return [
+		{
+			method: "GET",
+			path: "/api/projects",
+			response: () => jsonResponse(mockProjects()),
+		},
+	];
+}
+
+function mockProjects() {
+	return [
+		{
+			id: PROJECT_ID,
+			slug: "personal",
+			name: "Personal",
+			kind: "personal",
+			is_owner: true,
+		},
+	];
 }

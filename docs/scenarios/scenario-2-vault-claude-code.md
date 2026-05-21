@@ -40,36 +40,36 @@ Current pain points:
 **Via CLI (primary for developers):**
 
 ```bash
-# Add a single key
+# Add a single key interactively
 clawdi vault set OPENAI_API_KEY
 > Enter value: ****
 ✓ Stored OPENAI_API_KEY
 
-# Add with namespace
-clawdi vault set prod/STRIPE_SECRET_KEY
-> Enter value: ****
-✓ Stored prod/STRIPE_SECRET_KEY
+# Add non-interactively
+printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set prod/stripe/STRIPE_SECRET_KEY --stdin
+✓ Stored prod/stripe/STRIPE_SECRET_KEY
 
 # Import from existing .env file
-clawdi vault import .env
-✓ Imported 6 keys from .env
+clawdi vault import .env --yes
+✓ Imported 6 keys to vault "default" in default-write project "personal" (...)
 
-# Import with namespace prefix
-clawdi vault import .env --namespace prod/
-✓ Imported 6 keys under prod/
+# Import into a vault section
+clawdi vault import --vault prod --section stripe --project personal --yes .env.stripe
+✓ Imported 6 keys to vault "prod" section "stripe" in explicit project "personal" (...)
 
 # List stored keys (values never shown)
 clawdi vault list
-  ai/OPENAI_API_KEY        last used: 2h ago
-  ai/ANTHROPIC_API_KEY     last used: 2h ago
-  prod/STRIPE_SECRET_KEY   last used: 1d ago
-  prod/AWS_ACCESS_KEY_ID   last used: 3d ago
-  prod/DATABASE_URL        last used: 1d ago
-  dev/DATABASE_URL         last used: 5m ago
+Project personal (...)
+  Vault default
+    OPENAI_API_KEY
+      clawdi://project/.../vault/default/field/OPENAI_API_KEY
+  Vault prod
+    stripe/STRIPE_SECRET_KEY
+      clawdi://project/.../vault/prod/section/stripe/field/STRIPE_SECRET_KEY
 
 # Remove a key
-clawdi vault rm dev/DATABASE_URL
-✓ Removed dev/DATABASE_URL
+clawdi vault rm prod/database/DATABASE_URL --yes
+✓ Deleted prod/database/DATABASE_URL from vault "prod" section "database" in default-write project "personal" (...)
 ```
 
 **Via Dashboard (for visual management):**
