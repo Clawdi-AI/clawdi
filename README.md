@@ -251,11 +251,13 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | --- | --- |
 | `clawdi auth login` / `logout` | Authenticate this machine |
 | `clawdi status [--json]` | Show auth and sync state |
+| `clawdi config list/get/set/unset` | Read or write CLI configuration |
 | `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start daemons by default |
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
 | `clawdi daemon run/install/status/logs/doctor/restart/uninstall` | Run and manage the background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
 | `clawdi pull` | Download cloud skills into registered agents |
+| `clawdi session list/extract` | Inspect local agent sessions |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
