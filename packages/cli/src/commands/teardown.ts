@@ -154,16 +154,12 @@ async function unregisterMcpServer(agentType: AgentType) {
 		return unregisterViaCli("Claude Code", "claude mcp remove clawdi");
 	if (agentType === "codex") return unregisterViaCli("Codex", "codex mcp remove clawdi");
 	if (agentType === "hermes") return unregisterHermesMcp();
-	if (agentType === "openclaw") {
-		// Symmetric with setup: OpenClaw has no native MCP registration point,
-		// so there's nothing to unregister here.
-		p.log.info("OpenClaw: no native MCP registration to remove (handled by the wrapped agent).");
-	}
+	if (agentType === "openclaw") return unregisterViaCli("OpenClaw", "openclaw mcp unset clawdi");
 }
 
 function unregisterViaCli(label: string, cmd: string) {
 	try {
-		execSync(cmd, { stdio: "pipe" });
+		execSync(cmd, { stdio: "pipe", env: process.env });
 		p.log.success(`${label}: removed MCP server registration`);
 	} catch {
 		// `mcp remove` returns non-zero if the entry didn't exist — that's fine.
@@ -180,26 +176,34 @@ function unregisterHermesMcp() {
 
 	const content = readFileSync(configPath, "utf-8");
 
-	// Match the clawdi child block we install in setup.ts:
-	//   clawdi:
-	//     command: "clawdi"
-	//     args: ["mcp"]
-	// The `\1[ \t]+` lookahead forces every absorbed child line to be indented
-	// STRICTLY DEEPER than the clawdi: header itself — without this guard, a
-	// permissive `[ \t]+.*` would eat sibling mcp_servers entries that follow
-	// at the same indent level.
-	const CLAWDI_BLOCK_RE = /^([ \t]*)clawdi:[ \t]*\n((?:\1[ \t]+.*\n?)*)/m;
-	if (!CLAWDI_BLOCK_RE.test(content)) {
+	const updated = removeAllYamlBlocks(removeAllYamlBlocks(content, "clawdi-mcp"), "clawdi");
+	if (updated === content) {
 		p.log.info("Hermes: clawdi entry not present in config.yaml");
 		return;
 	}
 
 	try {
-		const updated = content.replace(CLAWDI_BLOCK_RE, "");
 		writeFileSync(configPath, updated);
 		p.log.success("Hermes: removed MCP server entry from config.yaml");
 	} catch (e) {
 		p.log.warn(`Hermes: could not edit config.yaml (${errMessage(e)})`);
 		p.log.info(`  Edit ${configPath} manually and remove the clawdi block under mcp_servers`);
 	}
+}
+
+function removeAllYamlBlocks(content: string, key: string): string {
+	let updated = content;
+	while (true) {
+		const block = getYamlBlock(updated, key);
+		if (!block) return updated;
+		updated = updated.replace(block, "");
+	}
+}
+
+function getYamlBlock(content: string, key: string): string | null {
+	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const match = content.match(
+		new RegExp(`^([ \\t]*)${escaped}:[ \\t]*\\n((?:\\1[ \\t]+.*\\n?)*)`, "m"),
+	);
+	return match?.[0] ?? null;
 }

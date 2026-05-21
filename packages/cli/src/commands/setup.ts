@@ -302,35 +302,14 @@ async function registerHermesMcp() {
 	const { readFileSync: readFs, writeFileSync: writeFs } = await import("node:fs");
 	const content = readFs(configPath, "utf-8");
 
-	// Clawdi entry already present under mcp_servers.
-	if (/^mcp_servers:/m.test(content) && /^\s+clawdi:/m.test(content)) {
-		console.log(chalk.gray("✓ MCP server already registered in Hermes"));
-		return;
-	}
-
-	const clawdiChild = `  clawdi:\n    command: "clawdi"\n    args: ["mcp"]`;
-	const newSection = `mcp_servers:\n${clawdiChild}\n`;
-
 	try {
-		const HEADER_RE = /^mcp_servers:\s*(.*)$/m;
-		const headerMatch = content.match(HEADER_RE);
-
-		let updated: string;
-		if (!headerMatch) {
-			// No mcp_servers section at all — append a fresh block.
-			updated = `${content.trimEnd()}\n\n${newSection}`;
-		} else {
-			const inlineValue = (headerMatch[1] ?? "").trim();
-			if (inlineValue.startsWith("{") && inlineValue !== "{}") {
-				// Inline flow map with existing entries — too risky to patch.
-				throw new Error("mcp_servers uses inline flow map; edit config.yaml manually.");
-			}
-			// For empty map ({}, ~, null) or block map with children:
-			// replace the header line with a block-style header followed by our child.
-			// The regex's `m` flag anchors to line start, avoiding false matches like
-			// `other_mcp_servers:`. Existing block children after the header line are
-			// preserved because only the matched line is substituted.
-			updated = content.replace(HEADER_RE, `mcp_servers:\n${clawdiChild}`);
+		// Hermes has `hermes mcp add`, but it is discovery-first: it probes the
+		// server and can prompt for overwrite/tool selection. For setup we need a
+		// non-interactive, idempotent upsert that also cleans stale mixed blocks.
+		const updated = upsertHermesStdioClawdiMcp(content);
+		if (updated === content) {
+			console.log(chalk.gray("✓ MCP server already registered in Hermes"));
+			return;
 		}
 
 		writeFs(configPath, updated);
@@ -338,8 +317,58 @@ async function registerHermesMcp() {
 	} catch (e) {
 		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${errMessage(e)}`));
 		console.log(chalk.gray(`  Edit ${configPath} and add under mcp_servers:`));
-		console.log(chalk.gray(clawdiChild));
+		console.log(chalk.gray(HERMES_CLAUDI_MCP_CHILD));
 	}
+}
+
+const HERMES_CLAUDI_MCP_CHILD = `  clawdi:\n    command: "clawdi"\n    args: ["mcp"]`;
+
+function upsertHermesStdioClawdiMcp(content: string): string {
+	const newSection = `mcp_servers:\n${HERMES_CLAUDI_MCP_CHILD}\n`;
+	const HEADER_RE = /^mcp_servers:[ \t]*(.*)$/m;
+	const headerMatch = content.match(HEADER_RE);
+
+	if (!headerMatch) {
+		return `${content.trimEnd()}\n\n${newSection}`;
+	}
+
+	const inlineValue = (headerMatch[1] ?? "").trim();
+	if (!["", "{}", "~", "null"].includes(inlineValue)) {
+		throw new Error("mcp_servers uses inline value; edit config.yaml manually.");
+	}
+
+	const blockContent = content.replace(HEADER_RE, "mcp_servers:");
+	const section = getYamlBlock(blockContent, "mcp_servers");
+	if (!section) return blockContent;
+
+	// `clawdi mcp` is the canonical Hermes integration. Remove stale cloud HTTP
+	// (`clawdi-mcp`) and any mixed/duplicate `clawdi` blocks, then insert one
+	// stdio block so repeated setup runs converge to a single transport.
+	let normalizedSection = removeAllYamlBlocks(section, "clawdi-mcp");
+	normalizedSection = removeAllYamlBlocks(normalizedSection, "clawdi");
+	normalizedSection = normalizedSection.replace(
+		/^mcp_servers:[ \t]*\n?/,
+		`mcp_servers:\n${HERMES_CLAUDI_MCP_CHILD}\n`,
+	);
+
+	return blockContent.replace(section, normalizedSection);
+}
+
+function removeAllYamlBlocks(content: string, key: string): string {
+	let updated = content;
+	while (true) {
+		const block = getYamlBlock(updated, key);
+		if (!block) return updated;
+		updated = updated.replace(block, "");
+	}
+}
+
+function getYamlBlock(content: string, key: string): string | null {
+	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const match = content.match(
+		new RegExp(`^([ \\t]*)${escaped}:[ \\t]*\\n((?:\\1[ \\t]+.*\\n?)*)`, "m"),
+	);
+	return match?.[0] ?? null;
 }
 
 function registerCodexMcp() {
@@ -363,13 +392,18 @@ function registerCodexMcp() {
 }
 
 function registerOpenClawMcp() {
-	// OpenClaw's ACP bridge rejects per-session mcpServers and delegates MCP
-	// registration to whatever downstream agent it wraps (typically Claude Code
-	// via --mcp-config). There's no clawdi-safe config file to patch here.
-	console.log(chalk.yellow("⚠ OpenClaw has no native MCP registration point."));
-	console.log(chalk.gray("  If you also run `clawdi setup --agent claude_code` on this machine,"));
-	console.log(chalk.gray("  OpenClaw will inherit the clawdi MCP server through Claude Code."));
-	console.log(
-		chalk.gray("  Otherwise, add the clawdi MCP server to your OpenClaw gateway config manually."),
-	);
+	const mcpConfig = JSON.stringify({
+		command: "clawdi",
+		args: ["mcp"],
+	});
+
+	try {
+		// OpenClaw exposes a non-interactive config setter, so prefer its native
+		// CLI over editing ~/.openclaw/openclaw.json directly.
+		execSync(`openclaw mcp set clawdi '${mcpConfig}'`, { stdio: "pipe", env: process.env });
+		console.log(chalk.green("✓ MCP server registered in OpenClaw"));
+	} catch {
+		console.log(chalk.yellow("⚠ Could not auto-register MCP server in OpenClaw."));
+		console.log(chalk.gray(`  Run manually: openclaw mcp set clawdi '${mcpConfig}'`));
+	}
 }
