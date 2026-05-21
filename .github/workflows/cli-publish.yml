@@ -130,7 +130,7 @@ jobs:
           ## Scope
           This is the release for the published \`packages/cli\` package.
           Clawdi app/backend/web changes are versioned separately as
-          \`clawdi-v...\` releases.
+          \`clawdi-YYYY-MM-DD[-N]\` releases.
           EOF
           )
 

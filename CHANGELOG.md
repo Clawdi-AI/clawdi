@@ -4,8 +4,56 @@ This changelog tracks notable user-facing Clawdi releases. It is written for
 people using or upgrading Clawdi, so it intentionally omits internal deployment,
 database migration, CI, and implementation details.
 
-- Clawdi app/backend/web releases use `clawdi-vYYYY.MM.DD.<run_number>`.
+- Clawdi app/backend/web releases use `clawdi-YYYY-MM-DD` for the first UTC
+  release of a day, then `clawdi-YYYY-MM-DD-2`, `-3`, and so on for
+  additional releases that same day. Older releases may use the previous dotted
+  `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
+
+## Clawdi CLI v0.8.1
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.1
+
+Package: `clawdi@0.8.1`
+
+### Changed
+
+- Updated CLI vault commands for account-owned Vaults that can be attached to
+  multiple Projects. JSON output now includes `project_ids`, while exact
+  references continue to include the Project ID used for resolution.
+- `clawdi project show`, `clawdi skill list`, `clawdi pull`, and
+  `clawdi vault list` now page through cloud results instead of showing only
+  the first page.
+- Share-link preview copy now says Vault names unlock after sign-in, avoiding
+  the implication that shared secret values are exposed to human viewers.
+
+## Clawdi 2026.05.21.2
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-v2026.05.21.2
+
+### Added
+
+- Added dashboard Projects and Project detail surfaces for viewing resources,
+  metadata, sharing state, and Agent attachments.
+- Added dashboard Project sharing flows, including share links, direct invites,
+  member management, public share acceptance, and notifications.
+- Added Vault import and Project attachment controls in the dashboard, including
+  read-only Vault views for shared Project viewers.
+
+### Changed
+
+- Clarified the Project model across the dashboard: user-created Projects can be
+  shared, the Global Project is the account default, and Agent Projects are
+  managed per connected agent.
+- Vaults are now account-owned resources that can be attached to multiple
+  Projects. Existing `project_id` API consumers and legacy exact
+  `clawdi://project/.../vault/...` references remain compatible.
+
+### Security
+
+- Shared Project recipients remain read-only Viewers. Vault plaintext stays
+  hidden in web and human shared-access flows; bound Agent keys can use shared
+  Vault values only through explicit Agent Project attachments.
 
 ## Clawdi CLI v0.8.0
 
