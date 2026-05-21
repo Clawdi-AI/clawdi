@@ -181,4 +181,31 @@ describe("vaultResolveCommand", () => {
 		expect(out).toContain("redacted");
 		expect(out).not.toContain("sk-test");
 	});
+
+	it("explains shared Project backend drift when plaintext resolve returns project not found", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () => jsonResponse({ detail: "project not found" }, 404),
+			},
+		]);
+		const orig = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY");
+		} finally {
+			console.error = orig;
+			restore();
+		}
+
+		expect(process.exitCode).toBe(1);
+		expect(err).toContain("Vault resolve could not access the selected Project.");
+		expect(err).toContain("shared Project");
+		expect(err).toContain("update the Clawdi backend");
+		expect(err).not.toContain("No vault value found");
+	});
 });

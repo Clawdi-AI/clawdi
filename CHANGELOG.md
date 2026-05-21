@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.4
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.4
+
+Package: `clawdi@0.8.4`
+
+### Fixed
+
+- Improved Vault resolve errors when a CLI talks to a backend that has not yet
+  enabled shared Project Vault runtime reads for Viewers.
+
 ## Clawdi CLI v0.8.3
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.3

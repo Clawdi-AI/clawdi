@@ -3,6 +3,11 @@ import { readJson } from "../lib/api-client";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 import { getEnvIdByAgent } from "../lib/select-adapter";
+import {
+	isVaultProjectNotFoundBody,
+	VAULT_PROJECT_ACCESS_ERROR,
+	VAULT_PROJECT_ACCESS_HINT,
+} from "../lib/vault-errors";
 
 interface VaultResolveHit {
 	key: string;
@@ -84,7 +89,12 @@ export async function vaultResolveCommand(
 		if (opts.json) {
 			console.log(JSON.stringify(body, null, 2));
 		} else if (r.status === 404) {
-			console.error(chalk.red(`No vault value found for ${key}.`));
+			if (isVaultProjectNotFoundBody(body)) {
+				console.error(chalk.red(VAULT_PROJECT_ACCESS_ERROR));
+				console.error(chalk.gray(VAULT_PROJECT_ACCESS_HINT));
+			} else {
+				console.error(chalk.red(`No vault value found for ${key}.`));
+			}
 		} else if (r.status === 403) {
 			console.error(chalk.red("vault resolve requires CLI authentication."));
 		} else if (r.status === 409) {

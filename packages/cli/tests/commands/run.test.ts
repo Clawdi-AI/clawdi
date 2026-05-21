@@ -190,6 +190,38 @@ describe("run command project folder selection", () => {
 		expect(lines.join("\n")).not.toContain("Injected");
 	});
 
+	it("explains shared Project backend drift when all-vault resolve returns project not found", async () => {
+		const { calls, spawnImpl } = recordSpawn();
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () => jsonResponse({ detail: "project not found" }, 404),
+			},
+		]);
+		const origLog = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(calls).toHaveLength(1);
+		const out = lines.join("\n");
+		expect(out).toContain("Could not fetch vault secrets");
+		expect(out).toContain("Vault resolve could not access the selected Project.");
+		expect(out).toContain("shared Project");
+		expect(out).toContain("update the Clawdi backend");
+		expect(out).not.toContain("API error 404");
+		expect(out).not.toContain("Injected");
+	});
+
 	it("resolves clawdi references from env files without all-vault injection", async () => {
 		const envFile = join(tmpRoot, ".env");
 		writeFileSync(
