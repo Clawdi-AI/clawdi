@@ -145,15 +145,15 @@ Works the same under Codex / Hermes / OpenClaw when their MCP connection to Claw
 Store a secret once:
 
 ```bash
-$ clawdi vault set OPENAI_API_KEY
+$ clawdi vault set OPENAI_API_KEY --prompt
 Value for OPENAI_API_KEY: ••••••••••
 ✓ Stored OPENAI_API_KEY
 
-$ printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set prod/stripe/STRIPE_SECRET_KEY --stdin
-✓ Stored prod/stripe/STRIPE_SECRET_KEY
+$ printf '%s\n' "$STRIPE_SECRET_KEY" | clawdi vault set payments/env/STRIPE_SECRET_KEY --stdin
+✓ Stored payments/env/STRIPE_SECRET_KEY
 
-$ clawdi vault import --vault prod --section stripe --project personal --yes .env.stripe
-✓ Imported 3 keys to vault "prod" section "stripe"
+$ clawdi vault import --vault payments --section stripe --project personal --yes .env.stripe
+✓ Imported 3 keys to vault "payments" section "stripe"
 ```
 
 List what's stored (values never leave the CLI unmasked):
