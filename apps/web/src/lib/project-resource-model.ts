@@ -35,10 +35,7 @@ export interface ProjectResourceDefinition {
 export const PROJECT_CANONICAL_DEFINITION =
 	"A Project groups the skills and Vault access an agent or teammate can use.";
 
-export const PROJECT_FIRST_PATH =
-	"Create a Project, add Skills or Vaults, then add it to an Agent when it should use them.";
-
-export const PROJECT_RESOURCE_DEFINITIONS = [
+const PROJECT_RESOURCE_DEFINITIONS = [
 	{
 		id: "projects",
 		label: "Projects",
@@ -164,7 +161,7 @@ export const PROJECT_RESOURCE_NAV_IDS = PROJECT_RESOURCE_GROUPS.flatMap((group) 
 	group.resourceIds.map((id) => id),
 );
 
-export const PROJECT_MANAGED_RESOURCE_IDS = PROJECT_RESOURCE_DEFINITIONS.filter(
+const PROJECT_MANAGED_RESOURCE_IDS = PROJECT_RESOURCE_DEFINITIONS.filter(
 	(resource) => resource.projectScope === "project-managed",
 ).map((resource) => resource.id);
 

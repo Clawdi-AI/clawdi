@@ -51,13 +51,9 @@ export function projectAlias(project: Pick<ProjectMetadata, "slug" | "is_owner" 
 		: project.slug;
 }
 
-export function projectOwnerLabel(project: ProjectMetadata) {
+function projectOwnerLabel(project: ProjectMetadata) {
 	if (isProjectOwner(project)) return "You";
 	return project.owner_display ?? project.owner_handle ?? "Unknown";
-}
-
-export function projectAccessLabel(project: Pick<ProjectMetadata, "is_owner">) {
-	return isProjectOwner(project) ? "Owner" : "Viewer";
 }
 
 export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean {
@@ -150,7 +146,7 @@ export function ProjectIdentity({
 	);
 }
 
-export function ProjectIcon({
+function ProjectIcon({
 	project,
 	className,
 }: {
@@ -174,7 +170,7 @@ export function ProjectIcon({
 	);
 }
 
-export function ProjectAccessBadge({
+function ProjectAccessBadge({
 	project,
 	className,
 }: {

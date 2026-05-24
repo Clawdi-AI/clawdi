@@ -10,6 +10,28 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.5
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.5
+
+Package: `clawdi@0.8.5`
+
+### Fixed
+
+- `clawdi mcp` now exposes Composio connector tools through the Composio MCP
+  bridge with original tool names and typed input schemas, so downstream agents
+  such as Hermes and OpenClaw can discover and call connector tools correctly.
+
+## Clawdi 2026-05-24
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-2026-05-24
+
+### Fixed
+
+- Connector MCP traffic now routes through a backend Composio bridge instead of
+  the old reduced proxy path, preserving Composio tool metadata while keeping
+  connector credentials server-side.
+
 ## Clawdi CLI v0.8.4
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.4

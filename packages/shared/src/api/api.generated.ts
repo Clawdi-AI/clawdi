@@ -1395,7 +1395,7 @@ export interface paths {
         };
         /**
          * Get Mcp Config
-         * @description Get MCP proxy config for the current user.
+         * @description Get MCP bridge config for the current user.
          */
         get: operations["get_mcp_config_api_connectors_mcp_config_get"];
         put?: never;
@@ -1420,26 +1420,6 @@ export interface paths {
         get: operations["list_app_tools_api_connectors__app_name__tools_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/proxy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mcp Proxy Post
-         * @description Handle MCP JSON-RPC requests using Composio SDK directly.
-         */
-        post: operations["mcp_proxy_post_api_mcp_proxy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5801,26 +5781,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    mcp_proxy_post_api_mcp_proxy_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };

@@ -310,11 +310,6 @@ export function buildExactClawdiReference(
 	return `clawdi://${parts.join("/")}`;
 }
 
-export function maskSecret(value: string): string {
-	if (value.length <= 4) return "****";
-	return `${value.slice(0, 2)}****${value.slice(-2)}`;
-}
-
 export class VaultReferenceResolveError extends Error {
 	readonly status: number;
 	readonly body: unknown;

@@ -87,7 +87,7 @@ PostgreSQL setup (including `pgvector` + `pg_trgm`) is documented in `README.md`
 - **Dual auth**: Clerk JWT for web dashboard, ApiKey for CLI
 - **Vault secrets never reach the web**: `vault/resolve` endpoint only accepts ApiKey (CLI)
 - **Vault data model**: Three-level Jingui-style (Vault -> Section -> Field), `clawdi://` URI references
-- **Two encryption keys**: `VAULT_ENCRYPTION_KEY` (AES-256-GCM for vault data at rest) and `ENCRYPTION_KEY` (HS256 for MCP proxy JWTs) are kept separate for key separation
+- **Two encryption keys**: `VAULT_ENCRYPTION_KEY` (AES-256-GCM for vault data at rest) and `ENCRYPTION_KEY` (HS256 for MCP bridge JWTs) are kept separate for key separation
 - **Sync state is client-side**: stored in `~/.clawdi/sync.json`, server API is stateless
 - **Agent adapters**: each agent (Claude Code, Codex, OpenClaw, Hermes) has its own adapter in `packages/cli/src/adapters/`
 

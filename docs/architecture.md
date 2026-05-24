@@ -186,7 +186,7 @@ Agent runtime resolution is separate from folder links. `clawdi vault resolve KE
 - `memory_search(query, limit?)` — proxies to `GET /api/memories?q=...`
 - `memory_add(content, category?)` — proxies to `POST /api/memories`
 
-Plus **dynamically-registered connector tools** — at MCP init, the server fetches `/api/connectors/mcp-config` and `tools/list` from the user's Composio-backed proxy (`mcp_proxy` route), then registers each remote tool locally with a zod schema built from the Composio OpenAPI metadata. When the agent calls one (e.g. `gmail_fetch_emails`), the local MCP server forwards the call through the backend's `mcp_proxy`. The proxy mediates auth so the connector's real OAuth token never leaves the backend.
+Plus **dynamically-registered connector tools** — at MCP init, the server fetches `/api/connectors/mcp-config` and `tools/list` from the user's Composio Tool Router bridge (`/api/mcp/composio`), then registers each remote tool locally with a zod schema built from the MCP `inputSchema` or older `parameters` metadata. When the agent calls one, the local MCP server forwards the original upstream tool name and structured arguments through the backend bridge. The bridge mediates auth so the connector's real OAuth token and the Composio project API key never leave the backend.
 
 Tool descriptions on `memory_search` / `memory_add` are intentionally verbose and list concrete trigger patterns — the failure mode for a new agent is "didn't call memory when it obviously should have", and short descriptions leave too much to the agent's judgment. The `clawdi` skill installed to `~/.claude/skills/clawdi/` (and the equivalent paths on other agents) reinforces the same triggers in long-form.
 

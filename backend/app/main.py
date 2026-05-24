@@ -21,7 +21,7 @@ from app.routes.capabilities import router as capabilities_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
-from app.routes.mcp_proxy import router as mcp_proxy_router
+from app.routes.mcp_bridge import router as mcp_bridge_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
 from app.routes.projects import router as projects_router
@@ -38,6 +38,8 @@ from app.routes.vault import router as vault_router
 from app.services.embedding import LocalEmbedder
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 init_sentry()
 
@@ -175,7 +177,7 @@ app.include_router(settings_router)
 app.include_router(capabilities_router)
 app.include_router(vault_router)
 app.include_router(connectors_router)
-app.include_router(mcp_proxy_router)
+app.include_router(mcp_bridge_router)
 app.include_router(search_router)
 app.include_router(share_redeem_router)
 app.include_router(sharing_router)

@@ -3,7 +3,7 @@
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { env } from "@/lib/env";
 
-export const DEV_AUTH_BEARER = env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
+const DEV_AUTH_BEARER = env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
 
 const DEV_USER = {
 	id: "dev_browser",

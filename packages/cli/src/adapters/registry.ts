@@ -6,10 +6,6 @@ import { HermesAdapter } from "./hermes";
 import { OpenClawAdapter } from "./openclaw";
 import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
 
-// Re-exported here for callers that think of SKIP_DIRS as a registry concern.
-// Defined in paths.ts to avoid a circular import (registry imports adapters).
-export { SKIP_DIRS } from "./paths";
-
 // Agent identity is declared as a literal tuple so `AgentType` doesn't depend
 // on the registry object — avoids a type-level cycle when `AdapterRegistryEntry`
 // references `AgentAdapter` (which references `AgentType`).
