@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.8.6
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.6
+
+Package: `clawdi@0.8.6`
+
+### Fixed
+
+- Fixed the npm package metadata for `clawdi@0.8.5`, which accidentally used
+  Bun workspace catalog syntax for the `zod` runtime dependency and caused
+  plain `npm install clawdi@0.8.5` installs to fail.
+
 ## Clawdi CLI v0.8.5
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.5

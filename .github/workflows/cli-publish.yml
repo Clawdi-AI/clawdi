@@ -87,6 +87,24 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: bun test
 
+      - name: Validate npm tarball install
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          node scripts/check-publish-manifest.mjs
+          TMP=$(mktemp -d)
+          PACK_DIR=$(mktemp -d)
+          cleanup() {
+            rm -rf "$TMP"
+            rm -rf "$PACK_DIR"
+          }
+          trap cleanup EXIT
+          PACK_JSON=$(npm pack --json --ignore-scripts --pack-destination "$PACK_DIR")
+          TARBALL=$(node -e "const fs=require('node:fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); console.log(data[0].filename)" <<< "$PACK_JSON")
+          TARBALL_PATH="$PACK_DIR/$TARBALL"
+          cd "$TMP"
+          npm init -y >/dev/null
+          npm install "$TARBALL_PATH" --ignore-scripts --no-audit --no-fund
+
       # `prepublishOnly` would re-run the build. We pass `--ignore-scripts`
       # because the step above already built everything; rerunning wastes
       # ~10s of CI time and risks a silent re-bundle with stale env.
