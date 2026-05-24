@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { ApiError } from "../lib/api-client";
 import type { PendingSkillUploadEcho } from "./sync-engine";
 import {
+	addInFlight,
 	consumePendingSkillUploadEcho,
 	isAuthFailure,
 	isOversizedUploadError,
+	releaseInFlight,
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
 } from "./sync-engine";
@@ -60,11 +62,6 @@ describe("addInFlight / releaseInFlight refcount", () => {
 	// would otherwise have the second `releaseInFlight` clear
 	// the entry while the first pull is still extracting,
 	// re-opening the watcher echo window. Lock the contract.
-	const { addInFlight, releaseInFlight } = require("./sync-engine") as {
-		addInFlight: (m: Map<string, number>, k: string) => void;
-		releaseInFlight: (m: Map<string, number>, k: string) => void;
-	};
-
 	it("has(key) is true between addInFlight and matching releaseInFlight", () => {
 		const m = new Map<string, number>();
 		addInFlight(m, "foo");

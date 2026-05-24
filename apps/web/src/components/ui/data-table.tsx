@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 
 const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => `row-${i}`);
 
-export interface PaginationState {
+interface PaginationState {
 	pageIndex: number; // 0-based for tanstack; translated to 1-based for API
 	pageSize: number;
 }

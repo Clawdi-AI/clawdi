@@ -1,10 +1,10 @@
-export const MAX_SKILL_KEY_LEN = 200;
+const MAX_SKILL_KEY_LEN = 200;
 
 const SKILL_KEY_PATTERN =
 	/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}){0,3}$/;
 const RESERVED_SUFFIXES = new Set(["download", "content", "install"]);
 
-export function hasReservedSkillKeySuffix(skillKey: string): boolean {
+function hasReservedSkillKeySuffix(skillKey: string): boolean {
 	const parts = skillKey.split("/");
 	return parts.length > 1 && RESERVED_SUFFIXES.has(parts[parts.length - 1] ?? "");
 }

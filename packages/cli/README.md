@@ -204,7 +204,7 @@ Local self-hosting currently expects:
 - Python 3.12 with PDM
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
-- Two generated encryption keys for vault data and MCP proxy JWTs
+- Two generated encryption keys for vault data and MCP bridge JWTs
 
 See [`backend/.env.example`](https://github.com/Clawdi-AI/clawdi/blob/main/backend/.env.example) and [`apps/web/.env.example`](https://github.com/Clawdi-AI/clawdi/blob/main/apps/web/.env.example) for the exact environment variables.
 

@@ -7,16 +7,166 @@ import { isLoggedIn } from "../lib/config";
 // Minimal shape of a JSON Schema property we care about when mapping
 // Composio tool definitions to Zod. Unknown fields are ignored.
 interface JsonSchemaProperty {
-	type?: string;
+	type?: string | string[];
 	description?: string;
+	enum?: unknown[];
+	items?: JsonSchemaProperty;
+	properties?: Record<string, JsonSchemaProperty>;
+	required?: string[];
+	additionalProperties?: boolean | JsonSchemaProperty;
 }
 
-interface McpTool {
+type JsonSchemaObject = JsonSchemaProperty;
+
+export interface McpTool {
 	name: string;
-	description: string;
-	parameters?: {
-		properties: Record<string, JsonSchemaProperty>;
-		required?: string[];
+	description?: string;
+	inputSchema?: JsonSchemaObject;
+	parameters?: JsonSchemaObject;
+}
+
+type ConnectorToolCaller = (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeMcpUrl(rawUrl: string, apiUrl: string): string {
+	const url = new URL(rawUrl);
+	const api = new URL(apiUrl);
+
+	if (["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname)) {
+		url.protocol = api.protocol;
+		url.hostname = api.hostname;
+		url.port = api.port;
+	}
+
+	return url.toString();
+}
+
+function jsonSchemaType(schema: JsonSchemaProperty): string {
+	if (Array.isArray(schema.type)) {
+		return schema.type.find((type) => type !== "null") ?? "string";
+	}
+	if (schema.type) return schema.type;
+	if (schema.properties || schema.additionalProperties) return "object";
+	if (schema.items) return "array";
+	return "string";
+}
+
+function jsonSchemaAllowsNull(schema: JsonSchemaProperty): boolean {
+	return Array.isArray(schema.type) && schema.type.includes("null");
+}
+
+function stringEnumToZod(values: string[]): z.ZodTypeAny | null {
+	const [first, ...rest] = values;
+	if (first === undefined) return null;
+	return z.enum([first, ...rest]);
+}
+
+function jsonSchemaPropertyToZod(
+	schema: JsonSchemaProperty,
+	fallbackDescription: string,
+): z.ZodTypeAny {
+	const enumValues = schema.enum?.filter((value): value is string => typeof value === "string");
+	let field: z.ZodTypeAny;
+	if (enumValues && enumValues.length === schema.enum?.length) {
+		field = stringEnumToZod(enumValues) ?? z.string();
+	} else {
+		switch (jsonSchemaType(schema)) {
+			case "integer":
+				field = z.number().int();
+				break;
+			case "number":
+				field = z.number();
+				break;
+			case "boolean":
+				field = z.boolean();
+				break;
+			case "array":
+				field = z.array(
+					schema.items
+						? jsonSchemaPropertyToZod(schema.items, `${fallbackDescription} item`)
+						: z.any(),
+				);
+				break;
+			case "object":
+				field = jsonSchemaObjectToZod(schema);
+				break;
+			default:
+				field = z.string();
+		}
+	}
+
+	const desc = schema.description || fallbackDescription;
+	field = field.describe(desc);
+	return jsonSchemaAllowsNull(schema) ? field.nullable() : field;
+}
+
+function jsonSchemaObjectToZod(schema: JsonSchemaObject): z.ZodTypeAny {
+	const shape: Record<string, z.ZodTypeAny> = {};
+	for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+		const field = jsonSchemaPropertyToZod(prop, key);
+		shape[key] = schema.required?.includes(key) ? field : field.optional();
+	}
+
+	if (schema.properties) {
+		const objectSchema = z.object(shape);
+		if (schema.additionalProperties === false) {
+			return objectSchema.strict();
+		}
+		if (typeof schema.additionalProperties === "object") {
+			return objectSchema.catchall(
+				jsonSchemaPropertyToZod(schema.additionalProperties, "additional property"),
+			);
+		}
+		return objectSchema.passthrough();
+	}
+
+	if (typeof schema.additionalProperties === "object") {
+		return z.record(
+			z.string(),
+			jsonSchemaPropertyToZod(schema.additionalProperties, "additional property"),
+		);
+	}
+	return z.record(z.string(), z.any());
+}
+
+function buildConnectorToolSchema(tool: McpTool): {
+	inputSchema: z.ZodTypeAny;
+	hasSchema: boolean;
+} {
+	const inputSchema = tool.inputSchema ?? tool.parameters;
+	const hasSchema = Boolean(inputSchema?.properties || inputSchema?.type || inputSchema?.items);
+	return {
+		hasSchema,
+		inputSchema: hasSchema
+			? jsonSchemaObjectToZod(inputSchema ?? {})
+			: z.object({
+					arguments: z.string().optional().describe("JSON string of tool arguments"),
+				}),
+	};
+}
+
+export function createConnectorToolDefinition(tool: McpTool) {
+	const { inputSchema, hasSchema } = buildConnectorToolSchema(tool);
+
+	return {
+		name: tool.name,
+		description: tool.description || tool.name,
+		inputSchema,
+		execute: async (params: Record<string, unknown>, callTool: ConnectorToolCaller) => {
+			let args: Record<string, unknown>;
+			if (hasSchema) {
+				args = params;
+			} else {
+				const argsField = params.arguments;
+				const parsedArgs =
+					typeof argsField === "string" && argsField.length > 0 ? JSON.parse(argsField) : {};
+				args = isRecord(parsedArgs) ? parsedArgs : {};
+			}
+			return await callTool(tool.name, args);
+		},
 	};
 }
 
@@ -75,18 +225,22 @@ export async function startMcpServer() {
 
 	const api = new ApiClient();
 
-	// Get MCP proxy config — override mcp_url with local apiUrl
+	// Get MCP bridge config from the backend.
 	const { getConfig } = await import("../lib/config");
 	const cliConfig = getConfig();
 	let mcpConfig: { mcp_url: string; mcp_token: string } | null = null;
 	try {
 		const raw = unwrap(await api.GET("/api/connectors/mcp-config"));
-		// Backend returns localhost URL which may not work in containers;
-		// use the CLI's configured apiUrl instead
-		raw.mcp_url = `${cliConfig.apiUrl}/api/mcp/proxy`;
-		mcpConfig = raw;
+		mcpConfig = {
+			...raw,
+			// Backend may return localhost in dev; keep its selected path while
+			// mapping local bind hosts to the CLI's configured API host.
+			mcp_url: normalizeMcpUrl(raw.mcp_url, cliConfig.apiUrl),
+		};
 	} catch {
-		process.stderr.write("Warning: Could not get MCP proxy config. Connector tools unavailable.\n");
+		process.stderr.write(
+			"Warning: Could not get MCP bridge config. Connector tools unavailable.\n",
+		);
 	}
 
 	// Fetch available tools from backend (user's connected apps)
@@ -221,7 +375,7 @@ export async function startMcpServer() {
 	// share routes, anonymous fetch works — but we send the auth header
 	// anyway because (a) the backend ignores it on public routes and
 	// (b) it keeps the request shape identical to the owner-route case,
-	// which simplifies the proxy / retry logic in api-client.
+	// which keeps the api-client middleware / retry behavior simple.
 	const apiBase = cliConfig.apiUrl;
 	// Pull the API key off the shared ApiClient instance for direct
 	// `fetch()` calls (the Markdown export endpoints return text, not
@@ -368,12 +522,12 @@ export async function startMcpServer() {
 	// --- Dynamically registered connector tools (from Composio via backend) ---
 
 	if (mcpConfig && remoteTools.length > 0) {
-		const { mcp_url: proxyUrl, mcp_token: proxyToken } = mcpConfig;
+		const { mcp_url: bridgeUrl, mcp_token: bridgeToken } = mcpConfig;
 		const callTool = async (toolName: string, args: Record<string, unknown>) => {
-			const resp = await fetch(proxyUrl, {
+			const resp = await fetch(bridgeUrl, {
 				method: "POST",
 				headers: {
-					Authorization: `Bearer ${proxyToken}`,
+					Authorization: `Bearer ${bridgeToken}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
@@ -391,59 +545,17 @@ export async function startMcpServer() {
 		};
 
 		for (const tool of remoteTools) {
-			// Build Zod schema from Composio parameter definitions
-			const schema: Record<string, z.ZodTypeAny> = {};
-			if (tool.parameters?.properties) {
-				for (const [key, prop] of Object.entries(tool.parameters.properties)) {
-					const desc = prop.description || key;
-					const isRequired = tool.parameters.required?.includes(key) ?? false;
-					let field: z.ZodTypeAny;
-					switch (prop.type) {
-						case "integer":
-						case "number":
-							field = z.number().describe(desc);
-							break;
-						case "boolean":
-							field = z.boolean().describe(desc);
-							break;
-						case "array":
-							field = z.array(z.any()).describe(desc);
-							break;
-						case "object":
-							field = z.record(z.string(), z.any()).describe(desc);
-							break;
-						default:
-							field = z.string().describe(desc);
-					}
-					schema[key] = isRequired ? field : field.optional();
-				}
-			}
+			const definition = createConnectorToolDefinition(tool);
 
-			// Fallback: if no parameters, accept a generic JSON string
-			const hasSchema = Object.keys(schema).length > 0;
-			const toolSchema = hasSchema
-				? schema
-				: {
-						arguments: z.string().optional().describe("JSON string of tool arguments"),
-					};
-
-			server.tool(
-				tool.name.toLowerCase(),
-				tool.description || tool.name,
-				toolSchema,
-				async (params: Record<string, unknown>) => {
+			server.registerTool(
+				definition.name,
+				{
+					description: definition.description,
+					inputSchema: definition.inputSchema,
+				},
+				async (params) => {
 					try {
-						let args: Record<string, unknown>;
-						if (hasSchema) {
-							args = params;
-						} else {
-							const argsField = params.arguments;
-							args =
-								typeof argsField === "string" && argsField.length > 0
-									? (JSON.parse(argsField) as Record<string, unknown>)
-									: {};
-						}
-						const result = await callTool(tool.name, args);
+						const result = await definition.execute(isRecord(params) ? params : {}, callTool);
 						return {
 							content: [
 								{

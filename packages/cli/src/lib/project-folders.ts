@@ -61,7 +61,7 @@ export function readProjectFoldersConfig(): ProjectFoldersConfig {
 	return { version: 1, links };
 }
 
-export function writeProjectFoldersConfig(config: ProjectFoldersConfig): void {
+function writeProjectFoldersConfig(config: ProjectFoldersConfig): void {
 	const file = projectFoldersFile();
 	mkdirSync(dirname(file), { recursive: true });
 	writeFileSync(file, `${JSON.stringify({ version: 1, links: config.links }, null, 2)}\n`, {
@@ -72,10 +72,6 @@ export function writeProjectFoldersConfig(config: ProjectFoldersConfig): void {
 	} catch {
 		/* best effort on Windows / read-only filesystems */
 	}
-}
-
-export function listProjectFolderLinks(): ProjectFolderLink[] {
-	return readProjectFoldersConfig().links;
 }
 
 export function setProjectFolderLink(

@@ -1,4 +1,4 @@
-"""Composio integration service for connector management and MCP proxy.
+"""Composio integration service for connector management and the MCP bridge.
 
 The composio package initializes a filesystem cache directory at import time,
 which breaks cold starts in read-only / sandboxed environments. We defer the
@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import jwt
 from starlette.concurrency import run_in_threadpool
 
@@ -24,6 +26,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _client: Any = None
+_tool_router_session_cache: dict[str, ComposioMcpSession] = {}
+
+
+@dataclass(frozen=True)
+class ComposioMcpSession:
+    url: str
+    headers: dict[str, str]
+    expires_at: datetime
 
 
 def get_composio_client() -> Composio:
@@ -39,12 +49,12 @@ def get_composio_client() -> Composio:
 
 
 def _jwt_signing_key() -> str:
-    """Return the MCP proxy JWT signing key.
+    """Return the MCP bridge JWT signing key.
 
     We deliberately do NOT fall back to `vault_encryption_key` — that would
-    merge two key purposes (data-at-rest AES-GCM + proxy token HS256) into a
+    merge two key purposes (data-at-rest AES-GCM + bridge token HS256) into a
     single secret. A compromise of the fallback leaks both the vault
-    contents AND the ability to mint MCP proxy tokens. Keep them separate.
+    contents AND the ability to mint MCP bridge tokens. Keep them separate.
     """
     key = settings.encryption_key
     if not key:
@@ -55,8 +65,8 @@ def _jwt_signing_key() -> str:
     return key
 
 
-def create_proxy_token(user_id: str) -> str:
-    """Create a JWT for MCP proxy authentication."""
+def create_mcp_bridge_token(user_id: str) -> str:
+    """Create a JWT for MCP bridge authentication."""
     payload = {
         "sub": "mcp",
         "user_id": user_id,
@@ -65,10 +75,60 @@ def create_proxy_token(user_id: str) -> str:
     return jwt.encode(payload, _jwt_signing_key(), algorithm="HS256")
 
 
-def verify_proxy_token(token: str) -> str:
-    """Verify MCP proxy JWT, return user_id."""
+def verify_mcp_bridge_token(token: str) -> str:
+    """Verify MCP bridge JWT, return user_id."""
     payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
     return payload["user_id"]
+
+
+async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
+    """Return a user-scoped Composio Tool Router MCP session.
+
+    The CLI must never receive the Composio project API key. We create the
+    Composio session server-side, cache its MCP URL briefly, and let the
+    authenticated Clawdi MCP bridge forward JSON-RPC to that URL.
+    """
+    now = datetime.now(UTC)
+    cached = _tool_router_session_cache.get(user_id)
+    if cached and cached.expires_at > now:
+        return cached
+
+    session = await _create_tool_router_mcp_session(user_id, now=now)
+    _tool_router_session_cache[user_id] = session
+    return session
+
+
+async def _create_tool_router_mcp_session(
+    user_id: str, *, now: datetime | None = None
+) -> ComposioMcpSession:
+    if not settings.composio_api_key:
+        raise RuntimeError("COMPOSIO_API_KEY not configured")
+
+    base_url = settings.composio_api_base_url.rstrip("/")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{base_url}/api/v3.1/tool_router/session",
+            headers={"x-api-key": settings.composio_api_key},
+            json={"user_id": user_id},
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    mcp = data.get("mcp") if isinstance(data, dict) else None
+    if not isinstance(mcp, dict) or not isinstance(mcp.get("url"), str):
+        raise RuntimeError("Composio tool router session response did not include mcp.url")
+
+    raw_headers = mcp.get("headers")
+    headers = (
+        {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
+    )
+    issued_at = now or datetime.now(UTC)
+    return ComposioMcpSession(
+        url=mcp["url"],
+        headers=headers,
+        # Composio's create-session response does not currently expose expiry.
+        # Keep the cache short so session config and account changes converge.
+        expires_at=issued_at + timedelta(minutes=30),
+    )
 
 
 async def get_connected_accounts(user_id: str) -> list[dict]:
@@ -335,25 +395,6 @@ def _serialize_actions(
                 pass
         result.append(item)
     return result
-
-
-async def get_connected_tools(user_id: str) -> list[dict]:
-    """List all tools from user's active connected apps."""
-    accounts = await get_connected_accounts(user_id)
-    if not accounts:
-        return []
-    app_names = list({a["app_name"] for a in accounts})
-    client = get_composio_client()
-
-    def _list():
-        try:
-            actions = client.actions.get(apps=app_names)
-            return _serialize_actions(actions, skip_deprecated=True, include_parameters=True)
-        except Exception as e:
-            logger.warning(f"Failed to get connected tools: {e}")
-            return []
-
-    return await run_in_threadpool(_list)
 
 
 async def get_app_tools(app_name: str) -> list[dict]:

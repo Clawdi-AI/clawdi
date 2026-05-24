@@ -43,19 +43,6 @@ export async function askMulti<T extends string>(
 	return result;
 }
 
-export async function askOne<T extends string>(
-	message: string,
-	options: SelectOption<T>[],
-): Promise<T | null> {
-	if (!isInteractive()) return null;
-	const result = await p.select<T>({
-		message,
-		options: toClackOptions(options),
-	});
-	if (p.isCancel(result)) return null;
-	return result;
-}
-
 /**
  * Resolve a `--modules` value against the allowed module names. Returns
  * the full list when `input` is undefined, the parsed subset otherwise,

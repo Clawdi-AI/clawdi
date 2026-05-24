@@ -62,7 +62,7 @@ async def mint_api_key(
     blast radius; the route layer doesn't impose narrowing for deploy
     keys because the agent must do whatever the user does
     (sessions push, skills writeback, memories update, vault
-    resolve, MCP proxy).
+    resolve, MCP bridge).
 
     `environment_id` binds the key to a single AgentEnvironment.
     A leaked deploy-key from pod A then can't write into pod B's

@@ -38,7 +38,7 @@ def _ensure_crypto_keys():
     """Make sure vault/JWT keys are valid for the test run.
 
     The dev ``.env`` ships with placeholder values (comment-only); leaving
-    them in place makes vault_crypto / MCP proxy tests blow up at decrypt
+    them in place makes vault_crypto / MCP bridge tests blow up at decrypt
     time with cryptic errors. Override with per-run random keys so tests
     never accidentally use prod keys either.
     """

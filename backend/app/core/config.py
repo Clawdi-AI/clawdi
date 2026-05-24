@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     dev_auth_name: str = "Dev User"
 
     vault_encryption_key: str = ""
-    encryption_key: str = ""  # For JWT signing (MCP proxy tokens)
+    encryption_key: str = ""  # For JWT signing (MCP bridge tokens)
 
     # Admin endpoints (POST/DELETE /api/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in
@@ -122,6 +122,7 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
 
     composio_api_key: str = ""
+    composio_api_base_url: str = "https://backend.composio.dev"
 
     # File store selection. `local` is the only implementation today; S3/R2
     # plug in here without touching routes (see services/file_store.get_file_store).

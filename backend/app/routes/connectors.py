@@ -20,7 +20,7 @@ from app.schemas.connector import (
 from app.services.composio import (
     connect_with_credentials,
     create_connect_link,
-    create_proxy_token,
+    create_mcp_bridge_token,
     disconnect_account,
     get_app_by_name,
     get_app_tools,
@@ -268,15 +268,15 @@ async def disconnect(
 async def get_mcp_config(
     auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorMcpConfigResponse:
-    """Get MCP proxy config for the current user."""
+    """Get MCP bridge config for the current user."""
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
-    token = create_proxy_token(auth.user.clerk_id)
+    token = create_mcp_bridge_token(auth.user.clerk_id)
     base = settings.public_api_url.rstrip("/")
 
     return ConnectorMcpConfigResponse(
-        mcp_url=f"{base}/api/mcp/proxy",
+        mcp_url=f"{base}/api/mcp/composio",
         mcp_token=token,
     )
 

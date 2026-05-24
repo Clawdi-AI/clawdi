@@ -114,7 +114,7 @@ export function listRegisteredAgentTypes(): AgentType[] {
  * `resolveTargetAgentTypes` instead — it defaults an ambiguous machine
  * to "all registered agents" rather than aborting.
  */
-export async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
+async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 	// 1. Explicit --agent wins.
 	if (agentOpt) {
 		if (!AGENT_TYPES.includes(agentOpt as AgentType)) {

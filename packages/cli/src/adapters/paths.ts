@@ -68,25 +68,3 @@ export function getOpenClawHome(): string {
 	}
 	return join(h, ".openclaw");
 }
-
-/**
- * XDG config home. Used for locating OTHER agents (Amp, Goose, OpenCode)
- * whose own config follows XDG on Linux. NOT used for clawdi's own state
- * — clawdi stays in `~/.clawdi/`.
- */
-export function getXdgConfigHome(): string {
-	return process.env.XDG_CONFIG_HOME?.trim() || join(home(), ".config");
-}
-
-// Future adapters will pick a home function here — examples below, no
-// implementation wired up yet:
-//
-//   - Amp:          join(getXdgConfigHome(), "amp")
-//   - Goose:        join(getXdgConfigHome(), "goose")
-//   - OpenCode:     join(getXdgConfigHome(), "opencode")
-//   - Antigravity:  join(home(), ".gemini", "antigravity")
-//   - Gemini CLI:   join(home(), ".gemini")
-//   - Cursor:       join(home(), ".cursor")
-//   - Continue:     join(home(), ".continue")
-//   - Augment:      join(home(), ".augment")
-//   - Cline:        join(home(), ".cline")

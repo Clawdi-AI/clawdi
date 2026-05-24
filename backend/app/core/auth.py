@@ -444,39 +444,6 @@ def require_scope(*needed: str):
     return _check
 
 
-def require_environment(env_id_param: str = "environment_id"):
-    """Build a FastAPI dependency that asserts an api_key bound to a
-    specific `environment_id` is only acting on that env's
-    resources. Routes that operate on a single env (push session,
-    sync heartbeat, mint deploy-key for env X) declare which path /
-    body field carries the env_id and we 403 if it doesn't match
-    the key's binding.
-
-    Implemented as a wrapper the route's body picks up via
-    `auth.api_key.environment_id` and a manual compare — keeping it
-    a helper rather than a Dependency keeps the path-param vs
-    body-field difference simple per route.
-    """
-
-    def _check(auth: AuthContext, requested_env_id) -> None:
-        if not auth.is_cli or auth.api_key is None:
-            return
-        bound = auth.api_key.environment_id
-        if bound is None:
-            return
-        if bound != requested_env_id:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "api key bound to a different environment",
-            )
-
-    return _check
-
-
-# Convenience instance — most callers use the default param name.
-assert_environment = require_environment()
-
-
 async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """Require CLI authentication (ApiKey only, not Clerk JWT)."""
     if not auth.is_cli:

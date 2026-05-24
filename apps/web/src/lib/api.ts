@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
-export const API_URL = env.NEXT_PUBLIC_API_URL;
+const API_URL = env.NEXT_PUBLIC_API_URL;
 
 export class ApiError extends Error {
 	constructor(

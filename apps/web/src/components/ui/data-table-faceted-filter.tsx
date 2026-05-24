@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
  * preset / agent) by passing a single-value setter; the underlying
  * shape supports multi-select for future use.
  */
-export interface FacetedFilterOption {
+interface FacetedFilterOption {
 	label: string;
 	value: string;
 	icon?: React.ComponentType<{ className?: string }>;

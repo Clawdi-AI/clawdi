@@ -18,7 +18,7 @@ import { env } from "@/lib/env";
 
 const CLAWDI_API_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
 
-export class ClawdiApiError extends Error {
+class ClawdiApiError extends Error {
 	constructor(
 		public status: number,
 		public detail: string,
