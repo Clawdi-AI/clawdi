@@ -16,6 +16,22 @@ backend/           Python FastAPI backend (async PostgreSQL, Clerk JWT)
 docs/              Documentation, plans, scenarios
 ```
 
+## Product Terminology
+
+- **Clawdi Cloud** is this open-source repository and product surface: CLI,
+  backend, dashboard, shared packages, and docs.
+- Use **hosted agents** or **hosted agent service** only as generic product
+  terms for managed remote agent runtime behavior.
+- The hosted agent service implementation is outside this repository. This
+  repository may define API contracts, dashboard UI, and CLI behavior that
+  integrate with hosted agents, but it does not contain the hosted agent runtime
+  service itself.
+- Do not mention private repository names, internal checkout paths, production
+  hosts, runtime orchestration details, or deployment topology in this OSS
+  repository.
+- Avoid introducing legacy repo/path names in new examples unless the
+  surrounding text is explicitly about public backwards compatibility.
+
 ## Commands
 
 ### Development

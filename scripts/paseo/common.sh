@@ -27,7 +27,7 @@ load_paseo_ports() {
   WEB_PORT="${WEB_PORT:-$DEV_PORT}"
   BACKEND_PORT="${BACKEND_PORT:-$((WEB_PORT + 1))}"
   PG_PORT="${PG_PORT:-$((WEB_PORT + 2))}"
-  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-clawdi-cloud-${WEB_PORT}}"
+  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-clawdi-${WEB_PORT}}"
 }
 
 json_string_array() {

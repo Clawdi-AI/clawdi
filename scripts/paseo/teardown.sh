@@ -12,5 +12,5 @@ if [ -f .paseo/ports.env ]; then
   set +a
 fi
 
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-clawdi-cloud-${PASEO_WORKTREE_PORT:-$(basename "$REPO_ROOT")}}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-clawdi-${PASEO_WORKTREE_PORT:-$(basename "$REPO_ROOT")}}"
 INFRA_POSTGRES_PORT="${PG_PORT:-1}" COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose down -v --remove-orphans || true

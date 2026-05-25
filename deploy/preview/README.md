@@ -149,13 +149,12 @@ After all eleven, opening a PR on the repo deploys a preview automatically.
 
 ## Refreshing the snapshot
 
-Snapshots are produced manually on the production VM and scp'd to the
-self-hosted Coolify server:
+Snapshots are produced manually from an environment with database and file-store
+access, then copied to the self-hosted Coolify server:
 
 ```bash
-# On production VM:
-ssh <prod-host>
-cd /opt/<app>
+# On the source environment:
+cd <repo-checkout>
 ./deploy/snapshot/dump.sh \
   --email-domain @<your-team-email-domain> \
   --out /tmp/clawdi-snapshot-$(date -u +%F).tar.gz

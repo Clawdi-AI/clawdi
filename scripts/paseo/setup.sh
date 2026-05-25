@@ -102,7 +102,7 @@ fi
 WEB_PORT=$((BASE))
 BACKEND_PORT=$((BASE + 1))
 PG_PORT=$((BASE + 2))
-COMPOSE_PROJECT="clawdi-cloud-${BASE}"
+COMPOSE_PROJECT="clawdi-${BASE}"
 WEB_PUBLIC_URL="${WEB_PUBLIC_URL:-http://localhost:${WEB_PORT}}"
 API_PUBLIC_URL="${API_PUBLIC_URL:-http://localhost:${BACKEND_PORT}}"
 CORS_ORIGINS_VALUE="$(

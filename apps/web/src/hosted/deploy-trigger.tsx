@@ -6,8 +6,8 @@ import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 /**
  * Sidebar entry for hosted users.
  *
- * Cross-product link: clawdi-cloud (this app) is the agent
- * management home; clawdi.ai/dashboard owns the actual deploy
+ * Cross-product link: this app is the agent management home;
+ * clawdi.ai/dashboard owns the actual deploy
  * flow (plan selection, Stripe checkout, runtime configuration).
  * The two stay separate because mirroring the deploy form here
  * would mean maintaining two copies of plan/billing/Stripe

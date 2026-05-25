@@ -3,7 +3,7 @@
 Components and helpers that render only on the hosted instance
 (`cloud.clawdi.ai`, where `NEXT_PUBLIC_CLAWDI_HOSTED=true`).
 
-OSS users running their own clawdi-cloud see none of this UI.
+OSS users running their own Clawdi instance see none of this UI.
 
 ## Conventions
 

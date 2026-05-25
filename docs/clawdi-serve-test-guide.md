@@ -204,11 +204,11 @@ with a delay. Forced by `CLAWDI_SERVE_MODE=container`.
 unknown. Check `CLAWDI_API_URL` and that the env still exists
 server-side.
 
-## Running `clawdi daemon` inside an agent image (clawdi-monorepo)
+## Running `clawdi daemon` inside a hosted agent image
 
 The daemon was designed for laptops but works inside the clawdi
-agent container with three caveats. The clawdi.ai monorepo's
-control plane drives the dashboard's `POST /api/auth/keys`
+agent container with three caveats. The hosted agent service
+drives the dashboard's `POST /api/auth/keys`
 flow on the user's behalf to mint a deploy key bound to the env,
 then bakes the resulting key into the pod's environment. No
 backend-to-backend secret involved — the user's Clerk JWT is the

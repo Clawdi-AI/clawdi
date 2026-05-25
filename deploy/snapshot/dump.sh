@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# deploy/snapshot/dump.sh — produce a filtered snapshot of prod.
+# deploy/snapshot/dump.sh — produce a filtered snapshot of a production database.
 #
-# Runs on the prod VM. Produces a single tarball:
+# Runs from an operator machine with access to the database and file store.
+# Produces a single tarball:
 #   snapshot.pg_dump  — Postgres custom-format dump of the pruned data
 #   files/            — file_keys referenced by surviving sessions/skills
 #
@@ -9,10 +10,10 @@
 #   dump.sh [--email-domain @example.com] [--out <path>]
 #
 # Env overrides:
-#   PROD_DB     prod postgres DB name      (default clawdi_cloud_prod)
-#   PROD_FILES  prod file store path       (default /opt/clawdi-cloud/data/files)
+#   PROD_DB     production postgres DB name (required)
+#   PROD_FILES  production file store path  (required)
 #   TEMP_DB     intermediate DB name       (default clawdi_snapshot_temp)
-#   PG_OWNER    role that owns prod DB     (default clawdi_cloud_prod)
+#   PG_OWNER    role that owns temp DB      (default: same as PROD_DB)
 
 set -euo pipefail
 
@@ -44,10 +45,20 @@ main() {
     out="/tmp/clawdi-snapshot-$(date -u +%Y-%m-%d).tar.gz"
   fi
 
-  local prod_db="${PROD_DB:-clawdi_cloud_prod}"
-  local prod_files="${PROD_FILES:-/opt/clawdi-cloud/data/files}"
+  local prod_db="${PROD_DB:-}"
+  local prod_files="${PROD_FILES:-}"
   local temp_db="${TEMP_DB:-clawdi_snapshot_temp}"
-  local pg_owner="${PG_OWNER:-clawdi_cloud_prod}"
+  local pg_owner="${PG_OWNER:-$prod_db}"
+
+  if [ -z "$prod_db" ]; then
+    echo "dump.sh: PROD_DB is required" >&2
+    return 1
+  fi
+
+  if [ -z "$prod_files" ]; then
+    echo "dump.sh: PROD_FILES is required" >&2
+    return 1
+  fi
 
   local script_dir
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"

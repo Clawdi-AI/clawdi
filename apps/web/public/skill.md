@@ -85,7 +85,7 @@ Render something like (use the user's actual paths and counts, not these numbers
 > I found 215 sessions on this machine:
 >
 > **Claude Code** (180 sessions across 47 projects):
-> - `~/work/clawdi-cloud` — 23 sessions
+> - `~/work/clawdi` — 23 sessions
 > - `~/work/client-acme` — 18 sessions
 > - `~/personal/blog` — 12 sessions
 > - `~/work/api-gateway` — 9 sessions
@@ -93,7 +93,7 @@ Render something like (use the user's actual paths and counts, not these numbers
 > - …and 42 more projects
 >
 > **Codex** (35 sessions across 8 projects):
-> - `~/work/clawdi-cloud` — 11 sessions
+> - `~/work/clawdi` — 11 sessions
 > - `~/work/client-acme` — 8 sessions
 > - `~/work/api-gateway` — 6 sessions
 > - `~/personal/blog` — 5 sessions
@@ -116,7 +116,7 @@ The user references real project names from the summary you just showed them. Ma
 | "skip client-acme" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme` |
 | "skip client-acme and scratch" | `clawdi push --modules sessions --all-agents --all --exclude-project ~/work/client-acme --exclude-project ~/scratch` |
 | "only Claude Code" | `clawdi push --modules sessions --agent claude_code --all` |
-| "only ~/work/clawdi-cloud" | `clawdi push --modules sessions --all-agents --project ~/work/clawdi-cloud` |
+| "only ~/work/clawdi" | `clawdi push --modules sessions --all-agents --project ~/work/clawdi` |
 | "n" / "no" / "skip" / "not now" | (skip — tell them *"Run `clawdi push --modules sessions --all-agents --all` whenever you want to sync."* and continue) |
 
 Resolve `~` to an absolute path before passing to the CLI.

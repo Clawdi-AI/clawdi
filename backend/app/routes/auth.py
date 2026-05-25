@@ -32,7 +32,7 @@ async def create_api_key(
     # When `body.environment_id` is set, this also serves as the
     # "mint a deploy key for a hosted-agent pod" path — the
     # dashboard hands the resulting key to the external control
-    # plane (clawdi-monorepo) which bakes it into the pod's
+    # plane, which bakes it into the pod's
     # CLAWDI_AUTH_TOKEN env. No backend-to-backend call required;
     # the user's browser is the only conduit and `mint_api_key`
     # service-layer validates env ownership against `auth.user_id`.
