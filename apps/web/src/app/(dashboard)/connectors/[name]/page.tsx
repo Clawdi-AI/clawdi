@@ -28,16 +28,10 @@ import {
 import { cn, errorMessage } from "@/lib/utils";
 
 // Auth schemes whose connect flow is a redirect (OAuth family) or
-// instant (`none` / `no_auth` — Composio's SDK enum lowercases either
-// way); everything else needs the in-page credentials form.
-const REDIRECT_AUTH_TYPES = new Set([
-	"oauth",
-	"oauth1",
-	"oauth2",
-	"composio_link",
-	"none",
-	"no_auth",
-]);
+// Composio-hosted link; everything else needs the in-page credentials form
+// unless the toolkit is explicitly no-auth.
+const REDIRECT_AUTH_TYPES = new Set(["oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"]);
+const NO_AUTH_TYPES = new Set(["none", "no_auth"]);
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -175,7 +169,8 @@ function ConnectorDetail() {
 	// pass and route the user into a credentials dialog calling
 	// `/auth-fields` on a backend that lacks the endpoint.
 	const authType = app?.auth_type || "oauth2";
-	const usesCredentialsForm = !!app && !REDIRECT_AUTH_TYPES.has(authType);
+	const usesNoAuth = !!app && NO_AUTH_TYPES.has(authType);
+	const usesCredentialsForm = !!app && !usesNoAuth && !REDIRECT_AUTH_TYPES.has(authType);
 	// Synchronous single-flight guard for the connect flow. Mirrors the
 	// disconnect ref above: `connectMutation.isPending` only flips after
 	// TanStack Query notifies subscribers (next microtask + render), so a
@@ -185,6 +180,10 @@ function ConnectorDetail() {
 	const inflightConnectRef = useRef(false);
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
+		if (usesNoAuth) {
+			toast.info(`${displayName} does not require setup`);
+			return;
+		}
 		if (usesCredentialsForm) {
 			setCredsOpen(true);
 			return;
@@ -239,6 +238,7 @@ function ConnectorDetail() {
 		);
 	};
 	const isStarting = connectMutation.isPending;
+	const isReady = isConnected || usesNoAuth;
 
 	if (isLoading) {
 		return (
@@ -272,10 +272,10 @@ function ConnectorDetail() {
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2">
 						<h1 className="text-lg font-semibold tracking-tight">{displayName}</h1>
-						{isConnected && (
+						{isReady && (
 							<Badge variant="secondary">
 								<Check />
-								Connected
+								{usesNoAuth ? "Ready" : "Connected"}
 							</Badge>
 						)}
 					</div>
@@ -289,10 +289,14 @@ function ConnectorDetail() {
 				<DashboardSectionHeader
 					icon={Plug}
 					title="Connected Accounts"
-					count={`${activeConnections.length} connected`}
-					description="Connect an account once. Approved tools become available to agents through this connector."
+					count={usesNoAuth ? "No account required" : `${activeConnections.length} connected`}
+					description={
+						usesNoAuth
+							? "This connector does not require an account connection."
+							: "Connect an account once. Approved tools become available to agents through this connector."
+					}
 					toolbar={
-						activeConnections.length > 0 ? (
+						!usesNoAuth && activeConnections.length > 0 ? (
 							<Button variant="outline" size="sm" onClick={startConnect} disabled={isStarting}>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
 								Connect Account
@@ -311,6 +315,12 @@ function ConnectorDetail() {
 							<AlertTitle>Failed to Load Connections</AlertTitle>
 							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
 						</Alert>
+					) : usesNoAuth ? (
+						<EmptyState
+							fillHeight={false}
+							bordered
+							description="No account connection is required."
+						/>
 					) : activeConnections.length === 0 ? (
 						<EmptyState
 							fillHeight={false}
@@ -371,7 +381,12 @@ function ConnectorDetail() {
 			</DashboardSection>
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
-			<ConnectorToolsList tools={tools ?? []} isLoading={isToolsLoading} error={toolsQ.error} />
+			<ConnectorToolsList
+				tools={tools ?? []}
+				isLoading={isToolsLoading}
+				error={toolsQ.error}
+				requiresConnection={!usesNoAuth}
+			/>
 
 			<ConnectorCredentialsDialog
 				open={credsOpen}
@@ -426,10 +441,12 @@ function ConnectorToolsList({
 	tools,
 	isLoading,
 	error,
+	requiresConnection,
 }: {
 	tools: ConnectorTool[];
 	isLoading: boolean;
 	error: Error | null;
+	requiresConnection: boolean;
 }) {
 	const [search, setSearch] = useState("");
 	const deferredSearch = useDeferredValue(search);
@@ -448,7 +465,11 @@ function ConnectorToolsList({
 				<DashboardSectionHeader
 					icon={Wrench}
 					title="Available Tools"
-					description="Tools this connector exposes after an account is connected."
+					description={
+						requiresConnection
+							? "Tools this connector exposes after an account is connected."
+							: "Tools this connector exposes."
+					}
 				/>
 				<div className="flex items-center justify-center py-6">
 					<Spinner className="size-5 text-muted-foreground" />
@@ -465,7 +486,11 @@ function ConnectorToolsList({
 				<DashboardSectionHeader
 					icon={Wrench}
 					title="Available Tools"
-					description="Tools this connector exposes after an account is connected."
+					description={
+						requiresConnection
+							? "Tools this connector exposes after an account is connected."
+							: "Tools this connector exposes."
+					}
 				/>
 				<div className="p-4">
 					<Alert variant="destructive">
@@ -485,7 +510,11 @@ function ConnectorToolsList({
 					icon={Wrench}
 					title="Available Tools"
 					count="0 tools"
-					description="Tools this connector exposes after an account is connected."
+					description={
+						requiresConnection
+							? "Tools this connector exposes after an account is connected."
+							: "Tools this connector exposes."
+					}
 				/>
 				<EmptyState fillHeight={false} description="No tools are available for this connector." />
 			</DashboardSection>
@@ -498,7 +527,11 @@ function ConnectorToolsList({
 				icon={Wrench}
 				title="Available Tools"
 				count={`${tools.length} tools`}
-				description="Review the actions agents can request through this connector."
+				description={
+					requiresConnection
+						? "Review the actions agents can request through this connector."
+						: "Review the actions agents can request without account setup."
+				}
 				toolbar={
 					tools.length > 8 ? (
 						<SearchInput
