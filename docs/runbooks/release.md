@@ -126,53 +126,22 @@ run these checks before traffic is considered healthy:
 4. Check logs for migration errors, 5xx spikes, auth failures, and frontend
    build/runtime errors.
 
-### Hosted Cloud API Deployment
+### Connector Post-Deploy Smoke
 
-`cloud-api.clawdi.ai` is served from `/opt/clawdi-cloud` through the
-`clawdi-cloud-backend` Supervisor group on port `8070`. Do not use the
-`clawdi-backend` group for this service; that group serves the separate
-`api.clawdi.ai` deployment on ports `8060/8061`.
+After a connector change, run a smoke test against the deployed public backend
+for that environment with a user-level auth token. Keep environment-specific
+hosts, process names, ports, and secrets in private deployment runbooks.
 
-Deploy the hosted cloud API backend with:
+The smoke should verify:
 
-```bash
-ssh clawdi 'cd /opt/clawdi-cloud \
-  && git pull --ff-only origin main \
-  && cd backend \
-  && uv sync --frozen \
-  && sudo -n supervisorctl restart "clawdi-cloud-backend:*" \
-  && sudo -n supervisorctl status "clawdi-cloud-backend:*"'
-```
-
-After a connector change, run a real public API smoke against
-`https://cloud-api.clawdi.ai` with a user-level Clawdi API key injected from
-your password manager or current shell. Do not commit or print the key.
-
-```bash
-curl -sS -H "Authorization: Bearer $CLAWDI_API_KEY" \
-  https://cloud-api.clawdi.ai/api/connectors/available/posthog | jq '{name, auth_type}'
-# expect: {"name":"posthog","auth_type":"api_key"}
-
-curl -sS -H "Authorization: Bearer $CLAWDI_API_KEY" \
-  https://cloud-api.clawdi.ai/api/connectors/posthog/auth-fields \
-  | jq '{auth_scheme, fields:[.expected_input_fields[].name]}'
-# expect: {"auth_scheme":"API_KEY","fields":["generic_api_key"]}
-
-curl -sS -o /tmp/posthog-connect.json -w '%{http_code}\n' \
-  -H "Authorization: Bearer $CLAWDI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{}' \
-  https://cloud-api.clawdi.ai/api/connectors/posthog/connect
-# expect: 400 and {"detail":"Connector requires credentials"}
-
-curl -sS -H "Authorization: Bearer $CLAWDI_API_KEY" \
-  https://cloud-api.clawdi.ai/api/connectors/available/gmail | jq '{name, auth_type}'
-# expect: {"name":"gmail","auth_type":"oauth2"}
-
-curl -sS -H "Authorization: Bearer $CLAWDI_API_KEY" \
-  https://cloud-api.clawdi.ai/api/connectors/available/hackernews | jq '{name, auth_type}'
-# expect: {"name":"hackernews","auth_type":"no_auth"}
-```
+- an API-key connector returns an API-key-style `auth_type`, exposes
+  credential fields, and refuses the redirect `/connect` route with a
+  credentials-required error;
+- an OAuth connector returns an OAuth-style `auth_type` and creates a Connect
+  Link;
+- a no-auth connector reports a no-auth/ready auth type;
+- MCP connector config returns the current bridge endpoint and `tools/list`
+  succeeds for an authenticated user.
 
 ## Rollback
 
