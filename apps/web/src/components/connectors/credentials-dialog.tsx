@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuthFields, useConnectCredentials } from "@/lib/connectors-data";
 import { errorMessage } from "@/lib/utils";
+import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
 
 /**
  * API-key / credentials connect form.
@@ -67,9 +68,8 @@ export function ConnectorCredentialsDialog({
 		setSubmitError(null);
 	}, [open]);
 
-	const visibleFields = (fields.data?.expected_input_fields ?? []).filter(
-		(f) => f.expected_from_customer !== false,
-	);
+	const allFields = fields.data?.expected_input_fields ?? [];
+	const visibleFields = getVisibleCredentialFields(allFields);
 	const canSubmit =
 		visibleFields.length > 0 &&
 		visibleFields.filter((f) => f.required).every((f) => values[f.name]?.trim());
@@ -80,12 +80,7 @@ export function ConnectorCredentialsDialog({
 		const gen = openGenRef.current;
 		setSubmitError(null);
 		try {
-			const credentials = Object.fromEntries(
-				visibleFields.flatMap((f): [string, string][] => {
-					const value = values[f.name];
-					return value?.trim() ? [[f.name, value]] : [];
-				}),
-			);
+			const credentials = buildCredentialPayload(allFields, values);
 			await submit.mutateAsync({ appName, credentials });
 			// Drop the result if the dialog has been reopened — toasts
 			// and `onOpenChange(false)` should target the session that

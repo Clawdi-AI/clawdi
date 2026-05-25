@@ -15,12 +15,13 @@ dependencies = [
     "python-multipart>=0.0.20",
     "aiofiles>=24.1",
     "psycopg2-binary>=2.9.11",
-    "composio-core>=0.7.21",
     "pgvector>=0.2.5",
     "openai>=1.40",
     "fastembed>=0.3",
     "sentry-sdk[fastapi]>=2.23",
     "pyyaml>=6.0",
+    "composio>=0.11",
+    "composio-client>=1.39.0",
 ]
 
 [project.optional-dependencies]

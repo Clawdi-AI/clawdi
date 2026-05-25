@@ -32,6 +32,16 @@ from app.services.composio import (
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
 
+_REDIRECT_AUTH_TYPES = {
+    "oauth",
+    "oauth1",
+    "oauth2",
+    "dcr_oauth",
+    "composio_link",
+    "none",
+    "no_auth",
+}
+
 
 def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) -> HTTPException:
     """Translate Composio SDK exceptions into deterministic HTTP responses.
@@ -53,20 +63,27 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
     >=4-char value is redacted from the message text returned to the
     client (Composio sometimes echoes them in upstream templates).
     """
-    from composio.exceptions import (
-        HTTPError as ComposioHTTPError,
-    )
-    from composio.exceptions import (
-        NotFoundError as ComposioNotFoundError,
-    )
-    from composio.exceptions import (
-        SDKTimeoutError,
-    )
-    from composio.exceptions import (
-        ValidationError as ComposioValidationError,
+    from composio import exceptions as composio_exceptions
+
+    ComposioHTTPError = composio_exceptions.HTTPError
+    ComposioNotFoundError = composio_exceptions.NotFoundError
+    ComposioValidationError = composio_exceptions.ValidationError
+    SDKTimeoutError = getattr(
+        composio_exceptions,
+        "SDKTimeoutError",
+        getattr(composio_exceptions, "ComposioSDKTimeoutError", TimeoutError),
     )
 
-    if isinstance(exc, (ComposioNotFoundError, ValueError)):
+    if isinstance(exc, ValueError):
+        message = str(exc)
+        if message in {
+            "Connector requires credentials",
+            "Connector uses redirect auth",
+            "Connector does not require credentials",
+        }:
+            return HTTPException(status.HTTP_400_BAD_REQUEST, message)
+        return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
+    if isinstance(exc, ComposioNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     if isinstance(exc, SDKTimeoutError):
         return HTTPException(
@@ -151,6 +168,12 @@ async def connect_app(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     redirect_url = body.redirect_url if body else None
     try:
+        app = await get_app_by_name(app_name)
+        if app is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
+        auth_type = str(app.get("auth_type") or "oauth2").strip().lower()
+        if auth_type not in _REDIRECT_AUTH_TYPES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
         result = await create_connect_link(auth.user.clerk_id, app_name, redirect_url)
     except HTTPException:
         raise

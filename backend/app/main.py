@@ -35,6 +35,7 @@ from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 
 logging.basicConfig(level=logging.INFO)
@@ -80,6 +81,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
         if background:
             await asyncio.gather(*background, return_exceptions=True)
+        await close_composio_client()
 
 
 app = FastAPI(
