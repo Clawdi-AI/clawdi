@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
@@ -26,12 +27,6 @@ import {
 	useDisconnect,
 } from "@/lib/connectors-data";
 import { cn, errorMessage } from "@/lib/utils";
-
-// Auth schemes whose connect flow is a redirect (OAuth family) or
-// Composio-hosted link; everything else needs the in-page credentials form
-// unless the toolkit is explicitly no-auth.
-const REDIRECT_AUTH_TYPES = new Set(["oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"]);
-const NO_AUTH_TYPES = new Set(["none", "no_auth"]);
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -149,28 +144,16 @@ function ConnectorDetail() {
 
 	const displayName = app?.display_name || formatName(name);
 
-	// Connectors split into redirect flows (OAuth family) and credentials
-	// flows (form-based: API_KEY, BEARER_TOKEN, BASIC, …). Composio
-	// surfaces several scheme strings that all belong to the redirect
-	// path — `oauth`, `oauth1`, `oauth2`, `composio_link` — plus
-	// `none` for instant-connect apps. Anything outside that set goes
-	// to the dialog so newer credential-style schemes default safely
-	// without code changes here.
-	//
-	// `app.auth_type` may be missing during a frontend-deployed-before-
-	// backend window (older backend without the new field). Treat
-	// undefined as "oauth2" — the safe redirect path — so the OAuth
-	// popup is the worst-case experience instead of a credentials
-	// dialog hitting an endpoint that doesn't exist yet.
+	// Connectors split only on explicit Composio auth schemes:
+	// OAuth-family schemes open a Connect Link, credential schemes open
+	// the credentials form, and no-auth toolkits are ready immediately.
+	// Missing or unknown metadata is a backend contract error; do not
+	// guess a connection flow.
 	const [credsOpen, setCredsOpen] = useState(false);
-	// `||` (not `??`): Composio occasionally returns empty string for
-	// `auth_type` and an older backend may omit the field entirely; both
-	// cases must fall through to the OAuth path. `??` would let `""`
-	// pass and route the user into a credentials dialog calling
-	// `/auth-fields` on a backend that lacks the endpoint.
-	const authType = app?.auth_type || "oauth2";
-	const usesNoAuth = !!app && NO_AUTH_TYPES.has(authType);
-	const usesCredentialsForm = !!app && !usesNoAuth && !REDIRECT_AUTH_TYPES.has(authType);
+	const authFlow = app ? getConnectorAuthFlow(app.auth_type) : null;
+	const hasUnsupportedAuthType = !!app && authFlow === null;
+	const usesNoAuth = authFlow === "no_auth";
+	const usesCredentialsForm = authFlow === "credentials";
 	// Synchronous single-flight guard for the connect flow. Mirrors the
 	// disconnect ref above: `connectMutation.isPending` only flips after
 	// TanStack Query notifies subscribers (next microtask + render), so a
@@ -180,6 +163,12 @@ function ConnectorDetail() {
 	const inflightConnectRef = useRef(false);
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
+		if (hasUnsupportedAuthType) {
+			toast.error("Connector Metadata Error", {
+				description: `${displayName} did not return a supported auth type.`,
+			});
+			return;
+		}
 		if (usesNoAuth) {
 			toast.info(`${displayName} does not require setup`);
 			return;
@@ -238,6 +227,7 @@ function ConnectorDetail() {
 		);
 	};
 	const isStarting = connectMutation.isPending;
+	const isConnectDisabled = isStarting || hasUnsupportedAuthType;
 	const isReady = isConnected || usesNoAuth;
 
 	if (isLoading) {
@@ -297,7 +287,12 @@ function ConnectorDetail() {
 					}
 					toolbar={
 						!usesNoAuth && activeConnections.length > 0 ? (
-							<Button variant="outline" size="sm" onClick={startConnect} disabled={isStarting}>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={startConnect}
+								disabled={isConnectDisabled}
+							>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
 								Connect Account
 							</Button>
@@ -321,13 +316,21 @@ function ConnectorDetail() {
 							bordered
 							description="No account connection is required."
 						/>
+					) : hasUnsupportedAuthType ? (
+						<Alert variant="destructive">
+							<AlertCircle />
+							<AlertTitle>Connector Metadata Error</AlertTitle>
+							<AlertDescription>
+								This connector did not return a supported auth type. Refresh the page and try again.
+							</AlertDescription>
+						</Alert>
 					) : activeConnections.length === 0 ? (
 						<EmptyState
 							fillHeight={false}
 							bordered
 							description="No connected accounts yet."
 							action={
-								<Button onClick={startConnect} disabled={isStarting}>
+								<Button onClick={startConnect} disabled={isConnectDisabled}>
 									{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
 									{isStarting ? "Connecting…" : "Connect Account"}
 								</Button>

@@ -404,10 +404,10 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
         "auth_config": {"id": "ac_1"},
         "connection": {
             "user_id": "clerk_user_123",
-                "state": {
-                    "auth_scheme": "API_KEY",
-                    "val": {"generic_api_key": "phx_123"},
-                },
+            "state": {
+                "auth_scheme": "API_KEY",
+                "val": {"generic_api_key": "phx_123"},
+            },
         },
         "validate_credentials": True,
     }
@@ -449,6 +449,32 @@ async def test_connect_route_rejects_missing_auth_type_without_oauth_link(
 
     async def fail_create_connect_link(*args, **kwargs):
         raise AssertionError("missing auth metadata must not start the OAuth link flow")
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "get_app_by_name", fake_get_app_by_name)
+    monkeypatch.setattr(connectors, "create_connect_link", fail_create_connect_link)
+
+    with pytest.raises(connectors.HTTPException) as exc_info:
+        await connectors.connect_app(
+            "posthog",
+            None,
+            AuthContext(user=User(clerk_id="clerk_user_123")),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Connector auth metadata unavailable"
+
+
+@pytest.mark.asyncio
+async def test_connect_route_rejects_unknown_auth_type_without_oauth_link(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_get_app_by_name(app_name: str):
+        assert app_name == "posthog"
+        return {"name": "posthog", "auth_type": "unknown"}
+
+    async def fail_create_connect_link(*args, **kwargs):
+        raise AssertionError("unknown auth metadata must not start the OAuth link flow")
 
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
     monkeypatch.setattr(connectors, "get_app_by_name", fake_get_app_by_name)
