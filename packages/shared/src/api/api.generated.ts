@@ -2006,10 +2006,7 @@ export interface components {
             logo: string;
             /** Description */
             description: string;
-            /**
-             * Auth Type
-             * @default oauth2
-             */
+            /** Auth Type */
             auth_type: string;
         };
         /** ConnectorConnectResponse */

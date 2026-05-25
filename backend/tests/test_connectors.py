@@ -4,11 +4,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.auth import AuthContext
 from app.core.config import settings
 from app.models.user import User
 from app.routes import connectors
+from app.schemas.connector import ConnectorAvailableAppResponse
 from app.services import composio
 
 
@@ -194,7 +196,8 @@ class FakeClient:
         detail_toolkits: dict[str, Any] | None = None,
         auth_configs: FakeAuthConfigs | None = None,
     ):
-        detail_toolkits = detail_toolkits or {"posthog": _posthog_detail_toolkit()}
+        if detail_toolkits is None:
+            detail_toolkits = {"posthog": _posthog_detail_toolkit()}
         self.toolkits = FakeToolkits(
             list_toolkits=list_toolkits or [_posthog_list_toolkit()],
             detail_toolkits=detail_toolkits,
@@ -222,6 +225,55 @@ async def test_connector_detail_uses_toolkit_auth_config_details(monkeypatch: py
     assert app is not None
     assert app["name"] == "posthog"
     assert app["auth_type"] == "api_key"
+
+
+@pytest.mark.asyncio
+async def test_catalog_without_auth_metadata_is_unknown_not_oauth2(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(list_toolkits=[_posthog_list_toolkit()])
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    page = await composio.get_available_apps(search="posthog")
+
+    assert page["items"][0]["auth_type"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_connector_detail_requires_explicit_toolkit_auth_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(detail_toolkits={"posthog": _posthog_list_toolkit()})
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    with pytest.raises(composio.ConnectorAuthMetadataError):
+        await composio.get_app_by_name("posthog")
+
+
+@pytest.mark.asyncio
+async def test_connector_detail_does_not_fallback_to_catalog_when_retrieve_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(list_toolkits=[_posthog_list_toolkit()], detail_toolkits={})
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    with pytest.raises(KeyError):
+        await composio.get_app_by_name("posthog")
+
+
+def test_connector_available_app_response_requires_auth_type():
+    with pytest.raises(ValidationError):
+        ConnectorAvailableAppResponse.model_validate(
+            {
+                "name": "posthog",
+                "display_name": "PostHog",
+                "logo": "",
+                "description": "",
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -385,3 +437,29 @@ async def test_connect_route_rejects_credentials_connector_before_oauth_link(
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Connector requires credentials"
+
+
+@pytest.mark.asyncio
+async def test_connect_route_rejects_missing_auth_type_without_oauth_link(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_get_app_by_name(app_name: str):
+        assert app_name == "posthog"
+        return {"name": "posthog"}
+
+    async def fail_create_connect_link(*args, **kwargs):
+        raise AssertionError("missing auth metadata must not start the OAuth link flow")
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "get_app_by_name", fake_get_app_by_name)
+    monkeypatch.setattr(connectors, "create_connect_link", fail_create_connect_link)
+
+    with pytest.raises(connectors.HTTPException) as exc_info:
+        await connectors.connect_app(
+            "posthog",
+            None,
+            AuthContext(user=User(clerk_id="clerk_user_123")),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Connector auth metadata unavailable"
