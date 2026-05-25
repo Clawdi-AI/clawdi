@@ -86,10 +86,9 @@ class ConnectorAvailableAppResponse(BaseModel):
     logo: str
     description: str
     # Surfaces Composio's auth scheme so the UI can pick OAuth vs an
-    # API-key form on click. Lowercase strings — `oauth2`, `api_key`,
-    # `bearer_token`, `basic`, `none`. Falls back to "oauth2" when the
-    # SDK doesn't surface one.
-    auth_type: str = "oauth2"
+    # API-key form on click. Lowercase strings: `oauth2`, `api_key`,
+    # `bearer_token`, `basic`, `none`.
+    auth_type: str
 
 
 class ConnectorAuthFieldResponse(BaseModel):

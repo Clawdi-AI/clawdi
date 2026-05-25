@@ -18,6 +18,7 @@ from app.schemas.connector import (
     ConnectRequest,
 )
 from app.services.composio import (
+    ConnectorAuthMetadataError,
     connect_with_credentials,
     create_connect_link,
     create_mcp_bridge_token,
@@ -83,6 +84,11 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
         }:
             return HTTPException(status.HTTP_400_BAD_REQUEST, message)
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
+    if isinstance(exc, ConnectorAuthMetadataError):
+        return HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Connector auth metadata unavailable",
+        )
     if isinstance(exc, ComposioNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     if isinstance(exc, SDKTimeoutError):
@@ -145,7 +151,10 @@ async def get_available_app(
     Re-uses the cache that `/available` populates."""
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
-    app = await get_app_by_name(app_name)
+    try:
+        app = await get_app_by_name(app_name)
+    except Exception as exc:
+        raise _map_composio_error(exc) from exc
     if app is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     return ConnectorAvailableAppResponse.model_validate(app)
@@ -171,7 +180,9 @@ async def connect_app(
         app = await get_app_by_name(app_name)
         if app is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
-        auth_type = str(app.get("auth_type") or "oauth2").strip().lower()
+        auth_type = str(app.get("auth_type") or "").strip().lower()
+        if not auth_type or auth_type == "unknown":
+            raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {app_name}")
         if auth_type not in _REDIRECT_AUTH_TYPES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
         result = await create_connect_link(auth.user.clerk_id, app_name, redirect_url)

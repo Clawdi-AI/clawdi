@@ -41,6 +41,10 @@ _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
 _TERMINAL_STATUSES = {"ACTIVE", "FAILED", "EXPIRED", "INACTIVE", "REVOKED"}
 
 
+class ConnectorAuthMetadataError(RuntimeError):
+    """Raised when Composio does not return enough metadata to choose an auth flow."""
+
+
 @dataclass(frozen=True)
 class ComposioMcpSession:
     url: str
@@ -595,10 +599,11 @@ def _primary_auth_type(toolkit: Any) -> str:
     for scheme in all_schemes:
         if scheme:
             return scheme
-    return "oauth2"
+    slug = _str_or_none(_value(toolkit, "slug", "key", "name")) or "unknown"
+    raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {slug}")
 
 
-def _serialize_app(toolkit: Any) -> dict:
+def _serialize_app(toolkit: Any, *, allow_unknown_auth_type: bool = False) -> dict:
     meta = _value(toolkit, "meta", default={})
     key = _str_or_none(_value(toolkit, "slug", "key", "name")) or ""
     display = _str_or_none(_value(toolkit, "name", "display_name", "displayName"))
@@ -606,12 +611,18 @@ def _serialize_app(toolkit: Any) -> dict:
     logo = _str_or_none(_value(meta, "logo")) or _str_or_none(_value(toolkit, "logo")) or ""
     desc = _str_or_none(_value(meta, "description"))
     desc = desc or _str_or_none(_value(toolkit, "description")) or ""
+    try:
+        auth_type = _primary_auth_type(toolkit)
+    except ConnectorAuthMetadataError:
+        if not allow_unknown_auth_type:
+            raise
+        auth_type = "unknown"
     return {
         "name": key,
         "display_name": display,
         "logo": logo,
         "description": desc[:200],
-        "auth_type": _primary_auth_type(toolkit),
+        "auth_type": auth_type,
     }
 
 
@@ -652,7 +663,7 @@ async def _get_all_apps() -> list[dict]:
         if not cursor:
             break
 
-    fresh = [_serialize_app(toolkit) for toolkit in toolkits]
+    fresh = [_serialize_app(toolkit, allow_unknown_auth_type=True) for toolkit in toolkits]
     _apps_cache = fresh
     _apps_cache_at = now
     return fresh
@@ -663,19 +674,9 @@ async def get_app_by_name(name: str) -> dict | None:
     items = await _get_all_apps()
     for app in items:
         if app["name"] == name:
-            detail = await _get_app_detail_by_name(name)
-            if detail is None:
-                return app
-            return {**app, "auth_type": detail["auth_type"]}
+            toolkit = await _get_toolkit_detail(name)
+            return _serialize_app(toolkit)
     return None
-
-
-async def _get_app_detail_by_name(name: str) -> dict | None:
-    try:
-        toolkit = await _get_toolkit_detail(name)
-    except Exception:
-        return None
-    return _serialize_app(toolkit)
 
 
 async def _get_toolkit_detail(name: str) -> Any:
