@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -208,6 +209,16 @@ class FakeClient:
         self.tools = FakeTools()
 
 
+def _composio_client_status_error(
+    cls: type[Exception],
+    status_code: int,
+    body: dict[str, Any],
+) -> Exception:
+    request = httpx.Request("POST", "https://backend.composio.dev/api/v3.1/connected_accounts")
+    response = httpx.Response(status_code, json=body, request=request)
+    return cls(f"Error code: {status_code} - {body}", response=response, body=body)
+
+
 @pytest.fixture(autouse=True)
 def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(composio, "_apps_cache", None)
@@ -411,6 +422,44 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
         },
         "validate_credentials": True,
     }
+
+
+def test_map_composio_client_bad_request_to_safe_credential_error():
+    from composio_client import BadRequestError
+
+    exc = _composio_client_status_error(
+        BadRequestError,
+        400,
+        {
+            "error": {
+                "message": "Metabase rejected API key mb_secret_123",
+                "code": 10400,
+            }
+        },
+    )
+
+    mapped = connectors._map_composio_error(
+        exc,
+        scrub={"generic_api_key": "mb_secret_123"},
+    )
+
+    assert mapped.status_code == 400
+    assert mapped.detail == "Metabase rejected API key ***"
+
+
+def test_map_composio_client_not_found_to_connector_not_found():
+    from composio_client import NotFoundError
+
+    exc = _composio_client_status_error(
+        NotFoundError,
+        404,
+        {"error": {"message": "Toolkit metabase not found"}},
+    )
+
+    mapped = connectors._map_composio_error(exc)
+
+    assert mapped.status_code == 404
+    assert mapped.detail == "Connector not found"
 
 
 @pytest.mark.asyncio

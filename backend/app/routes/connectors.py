@@ -53,17 +53,19 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
     lazy-import pattern already used in `app/services/composio.py` so
     the route module stays importable without a writable home dir.
 
-    Buckets the SDK's structured exception subclasses (slug missing,
-    credential validation, upstream timeout, upstream HTTP failure)
-    into specific HTTP codes. Unknown exceptions get logged on the
-    server with the full traceback and surface as a generic 502 —
-    never `str(exc)`, which can echo internal IDs, stack info, or the
-    user's own credentials back over the wire.
+    Buckets both Composio SDK families into specific HTTP codes: the
+    high-level `composio` package used for exception compatibility, and
+    the generated `composio_client` package used by AsyncComposio.
+    Unknown exceptions get logged on the server with the full traceback
+    and surface as a generic 502 — never `str(exc)`, which can echo
+    internal IDs, stack info, or the user's own credentials back over
+    the wire.
 
     `scrub` is the user's submitted credentials map; when present, any
     >=4-char value is redacted from the message text returned to the
     client (Composio sometimes echoes them in upstream templates).
     """
+    import composio_client
     from composio import exceptions as composio_exceptions
 
     ComposioHTTPError = composio_exceptions.HTTPError
@@ -89,6 +91,17 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
             status.HTTP_502_BAD_GATEWAY,
             "Connector auth metadata unavailable",
         )
+    if isinstance(exc, composio_client.NotFoundError):
+        return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
+    if isinstance(exc, composio_client.APITimeoutError):
+        return HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "Composio took too long to respond. Please retry.",
+        )
+    if isinstance(exc, composio_client.APIConnectionError):
+        return HTTPException(status.HTTP_502_BAD_GATEWAY, "Composio request failed")
+    if isinstance(exc, composio_client.APIStatusError):
+        return _map_composio_status_code_error(exc, scrub=scrub)
     if isinstance(exc, ComposioNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     if isinstance(exc, SDKTimeoutError):
@@ -100,7 +113,7 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
         msg = _scrub_credentials(str(exc), scrub or {}) or "Invalid credentials"
         return HTTPException(status.HTTP_400_BAD_REQUEST, msg)
     if isinstance(exc, ComposioHTTPError):
-        return HTTPException(status.HTTP_502_BAD_GATEWAY, "Composio request failed")
+        return _map_composio_status_code_error(exc, scrub=scrub)
     log.exception("Unhandled Composio SDK error", extra={"exc_type": type(exc).__name__})
     return HTTPException(status.HTTP_502_BAD_GATEWAY, "Connector service error")
 
@@ -231,6 +244,79 @@ def _scrub_credentials(message: str, credentials: dict[str, str]) -> str:
         if len(v) >= 4:
             safe = safe.replace(v, "***")
     return safe
+
+
+def _map_composio_status_code_error(
+    exc: Exception,
+    *,
+    scrub: dict[str, str] | None,
+) -> HTTPException:
+    status_code = int(getattr(exc, "status_code", 0) or 0)
+    if status_code == status.HTTP_404_NOT_FOUND:
+        return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
+    if status_code in {status.HTTP_408_REQUEST_TIMEOUT, status.HTTP_504_GATEWAY_TIMEOUT}:
+        return HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "Composio took too long to respond. Please retry.",
+        )
+    if status_code in {status.HTTP_400_BAD_REQUEST, 422}:
+        fallback = "Invalid credentials" if scrub is not None else "Invalid connector request"
+        msg = _safe_composio_error_message(exc, scrub or {}, fallback=fallback)
+        return HTTPException(status.HTTP_400_BAD_REQUEST, msg)
+    return HTTPException(status.HTTP_502_BAD_GATEWAY, "Composio request failed")
+
+
+def _safe_composio_error_message(
+    exc: Exception,
+    credentials: dict[str, str],
+    *,
+    fallback: str,
+) -> str:
+    """Extract a bounded upstream error message and remove submitted secrets."""
+    message = _composio_error_message(exc)
+    if not message:
+        return fallback
+    message = _scrub_credentials(message, credentials).strip()
+    if not message:
+        return fallback
+    return " ".join(message.split())[:500]
+
+
+def _composio_error_message(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    message = _composio_error_message_from_body(body)
+    if message:
+        return message
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            message = _composio_error_message_from_body(response.json())
+        except ValueError:
+            message = ""
+        if message:
+            return message
+
+    attr_message = getattr(exc, "message", "")
+    if isinstance(attr_message, str):
+        return attr_message
+    return str(exc)
+
+
+def _composio_error_message_from_body(body: object) -> str:
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("detail")
+        if isinstance(message, str):
+            return message
+    if isinstance(error, str):
+        return error
+    message = body.get("message") or body.get("detail")
+    if isinstance(message, str):
+        return message
+    return ""
 
 
 @router.post("/{app_name}/connect-credentials")
