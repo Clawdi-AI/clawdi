@@ -28,6 +28,7 @@ from app.services.composio import (
     get_auth_fields,
     get_available_apps,
     get_connected_accounts,
+    invalidate_tool_router_mcp_session,
 )
 
 log = logging.getLogger(__name__)
@@ -126,6 +127,11 @@ async def list_connections(
     if not settings.composio_api_key:
         return []
     accounts = await get_connected_accounts(auth.user.clerk_id)
+    # The dashboard refetches connections after OAuth redirects complete.
+    # Composio Tool Router sessions capture the active account set, so
+    # observing the latest connected-account state should force the next
+    # MCP bridge call to create a fresh session.
+    invalidate_tool_router_mcp_session(auth.user.clerk_id)
     return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
@@ -346,18 +352,22 @@ async def connect_credentials(
         result = await connect_with_credentials(auth.user.clerk_id, app_name, body.credentials)
     except TimeoutError as exc:
         # `connect_with_credentials` polls Composio with a bounded
-        # timeout; built-in `TimeoutError` is what `wait_until_active`
-        # raises (separate hierarchy from `SDKTimeoutError`). Surface
-        # as 504 so the frontend can distinguish "credentials look
-        # wrong" (400) from "we couldn't reach Composio" (504).
+        # timeout after creating the connected account. Surface that
+        # as 504 so the frontend can distinguish a slow activation
+        # from a rejected credential request.
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            "Composio did not validate the connection in time. Please retry.",
+            "Composio did not activate the connection in time. Please retry.",
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:
         raise _map_composio_error(exc, scrub=body.credentials) from exc
+    if not result.get("ok"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Composio returned connection status {result.get('status', 'unknown')}",
+        )
     return ConnectorCredentialsConnectResponse.model_validate(result)
 
 
@@ -382,6 +392,7 @@ async def disconnect(
     success = await disconnect_account(connection_id)
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
+    invalidate_tool_router_mcp_session(auth.user.clerk_id)
     return ConnectorDisconnectResponse(status="disconnected")
 
 

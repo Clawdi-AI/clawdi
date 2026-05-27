@@ -121,6 +121,11 @@ async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     return session
 
 
+def invalidate_tool_router_mcp_session(user_id: str) -> None:
+    """Drop a user's cached Tool Router session after connection changes."""
+    _tool_router_session_cache.pop(user_id, None)
+
+
 async def _create_tool_router_mcp_session(
     user_id: str, *, now: datetime | None = None
 ) -> ComposioMcpSession:
@@ -245,6 +250,7 @@ async def create_connect_link(
     if redirect_url:
         kwargs["callback_url"] = redirect_url
     result = await client.link.create(**kwargs)
+    invalidate_tool_router_mcp_session(entity_id)
     return {
         "connect_url": _value(result, "redirect_url", "redirectUrl", default=""),
         "id": str(_value(result, "connected_account_id", "connectedAccountId", default="")),
@@ -337,8 +343,13 @@ async def _create_non_oauth_connection(
     )
     account_id = str(_value(result, "id", default=""))
     status = _normalize_status(_value(result, "status"))
+    try:
+        if status in _ACTIVE_OR_PENDING_STATUSES:
+            status = await _wait_for_connection_status(client, account_id, status)
+    finally:
+        invalidate_tool_router_mcp_session(user_id)
     if status in _ACTIVE_OR_PENDING_STATUSES:
-        status = await _wait_for_connection_status(client, account_id, status)
+        raise TimeoutError("Composio did not activate the connection in time")
     return {
         "id": account_id,
         "status": status.lower(),

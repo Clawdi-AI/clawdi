@@ -1350,10 +1350,11 @@ export interface paths {
          * Connect Credentials
          * @description Create a connection from user-supplied API-key credentials.
          *
-         *     The service polls Composio's `wait_until_active` (capped at 15s) so
-         *     a 200 here means the connection is ACTIVE — the frontend can render
-         *     it immediately without its own polling loop. Slow upstream auth
-         *     surfaces as 504.
+         *     API-key-style connections are imported into Composio as ACTIVE
+         *     credentials. We intentionally do not use Composio's experimental
+         *     `validate_credentials` flag because some toolkits reject valid keys
+         *     on that validation endpoint while the same credentials work through
+         *     normal tool execution.
          */
         post: operations["connect_credentials_api_connectors__app_name__connect_credentials_post"];
         delete?: never;

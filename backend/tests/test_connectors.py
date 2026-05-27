@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -223,6 +225,7 @@ def _composio_client_status_error(
 def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(composio, "_apps_cache", None)
     monkeypatch.setattr(composio, "_apps_cache_at", None)
+    monkeypatch.setattr(composio, "_tool_router_session_cache", {})
 
 
 @pytest.mark.asyncio
@@ -294,6 +297,11 @@ async def test_oauth_connect_uses_managed_auth_config_and_link(monkeypatch: pyte
         detail_toolkits={"gmail": _gmail_detail_toolkit()},
     )
     monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+        url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
 
     result = await composio.create_connect_link(
         "clerk_user_123",
@@ -319,6 +327,7 @@ async def test_oauth_connect_uses_managed_auth_config_and_link(monkeypatch: pyte
         "user_id": "clerk_user_123",
         "callback_url": "https://cloud.example.test/connectors/gmail",
     }
+    assert "clerk_user_123" not in composio._tool_router_session_cache
 
 
 @pytest.mark.asyncio
@@ -392,6 +401,11 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
 ):
     fake = FakeClient()
     monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+        url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
 
     result = await composio.connect_with_credentials(
         "clerk_user_123",
@@ -421,6 +435,124 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
             },
         },
     }
+    assert "clerk_user_123" not in composio._tool_router_session_cache
+
+
+@pytest.mark.asyncio
+async def test_credentials_connect_times_out_when_composio_stays_pending(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient()
+    fake.connected_accounts.create = AsyncMock(
+        return_value=SimpleNamespace(id="ca_posthog", status="INITIALIZING")
+    )
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    monkeypatch.setattr(
+        composio,
+        "_wait_for_connection_status",
+        AsyncMock(return_value="INITIALIZING"),
+    )
+    composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+        url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    with pytest.raises(TimeoutError):
+        await composio.connect_with_credentials(
+            "clerk_user_123",
+            "posthog",
+            {"generic_api_key": "phx_123"},
+        )
+
+    assert "clerk_user_123" not in composio._tool_router_session_cache
+
+
+@pytest.mark.asyncio
+async def test_connect_credentials_route_rejects_non_active_connection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_connect_with_credentials(
+        user_id: str,
+        app_name: str,
+        credentials: dict[str, str],
+    ):
+        assert user_id == "clerk_user_123"
+        assert app_name == "posthog"
+        assert credentials == {"generic_api_key": "phx_123"}
+        return {"id": "ca_posthog", "status": "failed", "ok": False}
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "connect_with_credentials", fake_connect_with_credentials)
+
+    with pytest.raises(connectors.HTTPException) as exc_info:
+        await connectors.connect_credentials(
+            "posthog",
+            connectors.ConnectorCredentialsConnectRequest(
+                credentials={"generic_api_key": "phx_123"}
+            ),
+            AuthContext(user=User(clerk_id="clerk_user_123")),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Composio returned connection status failed"
+
+
+@pytest.mark.asyncio
+async def test_list_connections_invalidates_tool_router_session(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_get_connected_accounts(user_id: str):
+        assert user_id == "clerk_user_123"
+        return []
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "get_connected_accounts", fake_get_connected_accounts)
+    composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+        url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    result = await connectors.list_connections(AuthContext(user=User(clerk_id="clerk_user_123")))
+
+    assert result == []
+    assert "clerk_user_123" not in composio._tool_router_session_cache
+
+
+@pytest.mark.asyncio
+async def test_disconnect_invalidates_tool_router_session(monkeypatch: pytest.MonkeyPatch):
+    async def fake_get_connected_accounts(user_id: str):
+        assert user_id == "clerk_user_123"
+        return [
+            {
+                "id": "ca_posthog",
+                "app_name": "posthog",
+                "status": "ACTIVE",
+                "created_at": "2026-05-27T00:00:00Z",
+            }
+        ]
+
+    async def fake_disconnect_account(connection_id: str):
+        assert connection_id == "ca_posthog"
+        return True
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "get_connected_accounts", fake_get_connected_accounts)
+    monkeypatch.setattr(connectors, "disconnect_account", fake_disconnect_account)
+    composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+        url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    result = await connectors.disconnect(
+        "ca_posthog",
+        AuthContext(user=User(clerk_id="clerk_user_123")),
+    )
+
+    assert result.status == "disconnected"
+    assert "clerk_user_123" not in composio._tool_router_session_cache
 
 
 def test_map_composio_client_bad_request_to_safe_credential_error():
