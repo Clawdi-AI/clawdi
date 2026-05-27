@@ -328,10 +328,12 @@ async def _create_non_oauth_connection(
             "user_id": user_id,
             "state": {
                 "auth_scheme": auth_scheme,
-                "val": credentials,
+                "val": {
+                    "status": "ACTIVE",
+                    **credentials,
+                },
             },
         },
-        validate_credentials=True,
     )
     account_id = str(_value(result, "id", default=""))
     status = _normalize_status(_value(result, "status"))

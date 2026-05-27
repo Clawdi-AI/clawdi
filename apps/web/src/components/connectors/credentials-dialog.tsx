@@ -102,8 +102,8 @@ export function ConnectorCredentialsDialog({
 				<DialogHeader>
 					<DialogTitle>Connect {displayName}</DialogTitle>
 					<DialogDescription>
-						Enter the credentials this app expects. Composio validates them immediately — you'll see
-						an error here if anything's wrong.
+						Enter the credentials this app expects. They are stored in Composio and used when
+						connector tools run.
 					</DialogDescription>
 				</DialogHeader>
 

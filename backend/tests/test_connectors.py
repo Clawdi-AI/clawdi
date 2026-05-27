@@ -417,10 +417,9 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
             "user_id": "clerk_user_123",
             "state": {
                 "auth_scheme": "API_KEY",
-                "val": {"generic_api_key": "phx_123"},
+                "val": {"status": "ACTIVE", "generic_api_key": "phx_123"},
             },
         },
-        "validate_credentials": True,
     }
 
 
