@@ -693,10 +693,7 @@ def _has_composio_managed_auth_scheme(toolkit: Any, auth_type: str) -> bool:
     if managed_schemes is None:
         return False
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
-    return any(
-        _auth_type_to_composio_scheme(scheme) == auth_scheme
-        for scheme in managed_schemes
-    )
+    return any(_auth_type_to_composio_scheme(scheme) == auth_scheme for scheme in managed_schemes)
 
 
 def _requires_preconfigured_custom_oauth(toolkit: Any, auth_type: str) -> bool:
