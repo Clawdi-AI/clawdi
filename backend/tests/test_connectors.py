@@ -92,6 +92,29 @@ def _gmail_detail_toolkit() -> SimpleNamespace:
     )
 
 
+def _gmail_detail_toolkit_without_managed_metadata() -> SimpleNamespace:
+    return SimpleNamespace(
+        slug="gmail",
+        name="Gmail",
+        meta=_meta("Gmail is Google's email service."),
+        auth_schemes=["OAUTH2"],
+        no_auth=False,
+        auth_config_details=[],
+    )
+
+
+def _twitter_detail_toolkit() -> SimpleNamespace:
+    return SimpleNamespace(
+        slug="twitter",
+        name="Twitter",
+        meta=_meta("Twitter is a social networking service."),
+        auth_schemes=["OAUTH2"],
+        composio_managed_auth_schemes=[],
+        no_auth=False,
+        auth_config_details=[],
+    )
+
+
 def _hackernews_detail_toolkit() -> SimpleNamespace:
     return SimpleNamespace(
         slug="hackernews",
@@ -120,10 +143,20 @@ class FakeAuthConfigs:
     def __init__(self, existing: list[Any] | None = None):
         self.existing = existing or []
         self.created: list[dict[str, Any]] = []
+        self.listed: list[dict[str, Any]] = []
         self.last_created_id = "ac_created"
 
     async def list(self, **kwargs):
-        return SimpleNamespace(items=self.existing, next_cursor=None)
+        self.listed.append(kwargs)
+        items = self.existing
+        managed = kwargs.get("is_composio_managed")
+        if managed is not None:
+            items = [
+                item
+                for item in items
+                if bool(getattr(item, "is_composio_managed", False)) is bool(managed)
+            ]
+        return SimpleNamespace(items=items, next_cursor=None)
 
     async def create(self, **kwargs):
         self.created.append(kwargs)
@@ -223,8 +256,10 @@ def _composio_client_status_error(
 
 @pytest.fixture(autouse=True)
 def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(composio, "_apps_cache", None)
-    monkeypatch.setattr(composio, "_apps_cache_at", None)
+    monkeypatch.setattr(composio, "_toolkits_cache", None)
+    monkeypatch.setattr(composio, "_toolkits_cache_at", None)
+    monkeypatch.setattr(composio, "_custom_auth_config_index", None)
+    monkeypatch.setattr(composio, "_custom_auth_config_index_at", None)
     monkeypatch.setattr(composio, "_tool_router_session_cache", {})
 
 
@@ -328,6 +363,200 @@ async def test_oauth_connect_uses_managed_auth_config_and_link(monkeypatch: pyte
         "callback_url": "https://cloud.example.test/connectors/gmail",
     }
     assert "clerk_user_123" not in composio._tool_router_session_cache
+
+
+@pytest.mark.asyncio
+async def test_oauth_connect_with_missing_managed_auth_metadata_uses_managed_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_gmail_detail_toolkit_without_managed_metadata()],
+        detail_toolkits={"gmail": _gmail_detail_toolkit_without_managed_metadata()},
+    )
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    await composio.create_connect_link(
+        "clerk_user_123",
+        "gmail",
+        "https://cloud.example.test/connectors/gmail",
+    )
+
+    assert fake.auth_configs.created == [
+        {
+            "toolkit": {"slug": "gmail"},
+            "auth_config": {
+                "type": "use_composio_managed_auth",
+                "name": "Clawdi gmail managed",
+            },
+        }
+    ]
+    assert fake.link.created == {
+        "auth_config_id": "ac_1",
+        "user_id": "clerk_user_123",
+        "callback_url": "https://cloud.example.test/connectors/gmail",
+    }
+
+
+@pytest.mark.asyncio
+async def test_oauth_without_managed_auth_uses_existing_custom_auth_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+        auth_configs=FakeAuthConfigs(
+            existing=[
+                SimpleNamespace(
+                    id="ac_twitter_custom",
+                    toolkit_slug="twitter",
+                    auth_scheme="OAUTH2",
+                    is_composio_managed=False,
+                    status="ENABLED",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    result = await composio.create_connect_link(
+        "clerk_user_123",
+        "twitter",
+        "https://cloud.example.test/connectors/twitter",
+    )
+
+    assert result == {
+        "connect_url": "https://connect.composio.dev/request_123",
+        "id": "ca_gmail",
+    }
+    assert fake.auth_configs.created == []
+    assert fake.link.created == {
+        "auth_config_id": "ac_twitter_custom",
+        "user_id": "clerk_user_123",
+        "callback_url": "https://cloud.example.test/connectors/twitter",
+    }
+
+
+@pytest.mark.asyncio
+async def test_connector_detail_enables_oauth_without_managed_auth_when_custom_config_exists(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+        auth_configs=FakeAuthConfigs(
+            existing=[
+                SimpleNamespace(
+                    id="ac_twitter_custom",
+                    toolkit_slug="twitter",
+                    auth_scheme="OAUTH2",
+                    is_composio_managed=False,
+                    status="ENABLED",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    app = await composio.get_app_by_name("twitter")
+
+    assert app is not None
+    assert app["auth_type"] == "oauth2"
+    assert app["connect_disabled"] is False
+    assert app["connect_disabled_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_connector_detail_disables_oauth_without_managed_or_custom_auth(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+    )
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    app = await composio.get_app_by_name("twitter")
+
+    assert app is not None
+    assert app["auth_type"] == "oauth2"
+    assert app["connect_disabled"] is True
+    assert app["connect_disabled_reason"] == composio.CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_connector_catalog_hides_oauth_without_managed_or_custom_auth(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+    )
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    page = await composio.get_available_apps(search="twitter")
+
+    assert page["items"] == []
+    assert page["total"] == 0
+    assert fake.auth_configs.listed == [
+        {"is_composio_managed": False, "show_disabled": False, "limit": 100}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_connector_catalog_shows_oauth_without_managed_auth_when_custom_config_exists(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+        auth_configs=FakeAuthConfigs(
+            existing=[
+                SimpleNamespace(
+                    id="ac_twitter_custom",
+                    toolkit_slug="twitter",
+                    auth_scheme="OAUTH2",
+                    is_composio_managed=False,
+                    status="ENABLED",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    page = await composio.get_available_apps(search="twitter")
+
+    assert page["items"][0]["name"] == "twitter"
+    assert page["items"][0]["connect_disabled"] is False
+    assert page["items"][0]["connect_disabled_reason"] is None
+    assert page["total"] == 1
+    assert fake.auth_configs.listed == [
+        {"is_composio_managed": False, "show_disabled": False, "limit": 100}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_oauth_without_managed_auth_requires_existing_custom_auth_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[_twitter_detail_toolkit()],
+        detail_toolkits={"twitter": _twitter_detail_toolkit()},
+    )
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    with pytest.raises(composio.ConnectorCustomAuthConfigRequired):
+        await composio.create_connect_link(
+            "clerk_user_123",
+            "twitter",
+            "https://cloud.example.test/connectors/twitter",
+        )
+
+    assert fake.auth_configs.created == []
+    assert fake.link.created is None
 
 
 @pytest.mark.asyncio
@@ -591,6 +820,46 @@ def test_map_composio_client_not_found_to_connector_not_found():
 
     assert mapped.status_code == 404
     assert mapped.detail == "Connector not found"
+
+
+def test_map_custom_oauth_config_required_to_actionable_bad_request():
+    mapped = connectors._map_composio_error(
+        composio.ConnectorCustomAuthConfigRequired("twitter", "OAUTH2")
+    )
+
+    assert mapped.status_code == 400
+    assert mapped.detail == composio.CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_connect_route_rejects_disabled_connector_without_oauth_link(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_get_app_by_name(app_name: str):
+        assert app_name == "twitter"
+        return {
+            "name": "twitter",
+            "auth_type": "oauth2",
+            "connect_disabled": True,
+            "connect_disabled_reason": composio.CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE,
+        }
+
+    async def fail_create_connect_link(*args, **kwargs):
+        raise AssertionError("disabled connectors must not start the OAuth link flow")
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(connectors, "get_app_by_name", fake_get_app_by_name)
+    monkeypatch.setattr(connectors, "create_connect_link", fail_create_connect_link)
+
+    with pytest.raises(connectors.HTTPException) as exc_info:
+        await connectors.connect_app(
+            "twitter",
+            None,
+            AuthContext(user=User(clerk_id="clerk_user_123")),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == composio.CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE
 
 
 @pytest.mark.asyncio

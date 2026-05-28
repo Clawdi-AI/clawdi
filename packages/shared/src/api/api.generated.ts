@@ -2009,6 +2009,13 @@ export interface components {
             description: string;
             /** Auth Type */
             auth_type: string;
+            /**
+             * Connect Disabled
+             * @default false
+             */
+            connect_disabled: boolean;
+            /** Connect Disabled Reason */
+            connect_disabled_reason?: string | null;
         };
         /** ConnectorConnectResponse */
         ConnectorConnectResponse: {

@@ -19,6 +19,7 @@ from app.schemas.connector import (
 )
 from app.services.composio import (
     ConnectorAuthMetadataError,
+    ConnectorCustomAuthConfigRequired,
     connect_with_credentials,
     create_connect_link,
     create_mcp_bridge_token,
@@ -92,6 +93,8 @@ def _map_composio_error(exc: Exception, *, scrub: dict[str, str] | None = None) 
             status.HTTP_502_BAD_GATEWAY,
             "Connector auth metadata unavailable",
         )
+    if isinstance(exc, ConnectorCustomAuthConfigRequired):
+        return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if isinstance(exc, composio_client.NotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     if isinstance(exc, composio_client.APITimeoutError):
@@ -202,6 +205,12 @@ async def connect_app(
         auth_type = str(app.get("auth_type") or "").strip().lower()
         if not auth_type or auth_type == "unknown":
             raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {app_name}")
+        if bool(app.get("connect_disabled")):
+            detail = str(app.get("connect_disabled_reason") or "").strip()
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail or "Connector is not available for connection",
+            )
         if auth_type not in _REDIRECT_AUTH_TYPES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
         result = await create_connect_link(auth.user.clerk_id, app_name, redirect_url)

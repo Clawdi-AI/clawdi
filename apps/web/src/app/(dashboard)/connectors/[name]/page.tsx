@@ -151,6 +151,8 @@ function ConnectorDetail() {
 	// guess a connection flow.
 	const [credsOpen, setCredsOpen] = useState(false);
 	const authFlow = app ? getConnectorAuthFlow(app.auth_type) : null;
+	const isSetupBlocked = !!app?.connect_disabled;
+	const setupBlockedReason = app?.connect_disabled_reason || "This connector needs admin setup.";
 	const hasUnsupportedAuthType = !!app && authFlow === null;
 	const usesNoAuth = authFlow === "no_auth";
 	const usesCredentialsForm = authFlow === "credentials";
@@ -163,6 +165,12 @@ function ConnectorDetail() {
 	const inflightConnectRef = useRef(false);
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
+		if (isSetupBlocked) {
+			toast.error("Connector Setup Required", {
+				description: setupBlockedReason,
+			});
+			return;
+		}
 		if (hasUnsupportedAuthType) {
 			toast.error("Connector Metadata Error", {
 				description: `${displayName} did not return a supported auth type.`,
@@ -227,7 +235,7 @@ function ConnectorDetail() {
 		);
 	};
 	const isStarting = connectMutation.isPending;
-	const isConnectDisabled = isStarting || hasUnsupportedAuthType;
+	const isConnectDisabled = isStarting || hasUnsupportedAuthType || isSetupBlocked;
 	const isReady = isConnected || usesNoAuth;
 
 	if (isLoading) {
@@ -286,7 +294,7 @@ function ConnectorDetail() {
 							: "Connect an account once. Approved tools become available to agents through this connector."
 					}
 					toolbar={
-						!usesNoAuth && activeConnections.length > 0 ? (
+						!usesNoAuth && !isSetupBlocked && activeConnections.length > 0 ? (
 							<Button
 								variant="outline"
 								size="sm"
@@ -325,17 +333,25 @@ function ConnectorDetail() {
 							</AlertDescription>
 						</Alert>
 					) : activeConnections.length === 0 ? (
-						<EmptyState
-							fillHeight={false}
-							bordered
-							description="No connected accounts yet."
-							action={
-								<Button onClick={startConnect} disabled={isConnectDisabled}>
-									{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-									{isStarting ? "Connecting…" : "Connect Account"}
-								</Button>
-							}
-						/>
+						isSetupBlocked ? (
+							<Alert>
+								<AlertCircle />
+								<AlertTitle>Connector Setup Required</AlertTitle>
+								<AlertDescription>{setupBlockedReason}</AlertDescription>
+							</Alert>
+						) : (
+							<EmptyState
+								fillHeight={false}
+								bordered
+								description="No connected accounts yet."
+								action={
+									<Button onClick={startConnect} disabled={isConnectDisabled}>
+										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+										{isStarting ? "Connecting…" : "Connect Account"}
+									</Button>
+								}
+							/>
+						)
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-background/60">
 							{activeConnections.map((c) => (

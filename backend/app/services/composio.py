@@ -2,8 +2,12 @@
 
 Connector auth uses Composio's current auth-config model:
 
-- OAuth / redirect flows create or reuse a Composio-managed auth config, then
-  create a Connect Link for the authenticated Clerk user id.
+- OAuth / redirect flows with Composio-managed credentials create or reuse a
+  managed auth config, then create a Connect Link for the authenticated Clerk
+  user id.
+- OAuth / redirect flows without Composio-managed credentials require an
+  existing custom auth config in Composio, created with the app's own OAuth
+  developer credentials.
 - API-key / bearer / basic flows create or reuse a custom auth config, then
   create a connected account with user-supplied credentials.
 - No-auth toolkits do not create auth configs or connected accounts; Composio
@@ -39,10 +43,24 @@ _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
 _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
 _TERMINAL_STATUSES = {"ACTIVE", "FAILED", "EXPIRED", "INACTIVE", "REVOKED"}
+_COMPOSIO_METADATA_CACHE_TTL = timedelta(minutes=5)
+CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE = (
+    "Connector requires a custom OAuth auth config in Composio before it can be "
+    "connected. Create it with your own client ID and client secret, then retry."
+)
 
 
 class ConnectorAuthMetadataError(RuntimeError):
     """Raised when Composio does not return enough metadata to choose an auth flow."""
+
+
+class ConnectorCustomAuthConfigRequired(RuntimeError):
+    """Raised when an OAuth toolkit requires a preconfigured custom auth config."""
+
+    def __init__(self, app_name: str, auth_scheme: str) -> None:
+        super().__init__(CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE)
+        self.app_name = app_name
+        self.auth_scheme = auth_scheme
 
 
 @dataclass(frozen=True)
@@ -237,11 +255,11 @@ async def create_connect_link(
     if auth_type not in _REDIRECT_AUTH_TYPES:
         raise ValueError("Connector requires credentials")
 
-    auth_config = await _get_or_create_auth_config(
+    auth_config = await _get_redirect_auth_config(
         client=client,
+        toolkit=toolkit,
         app_name=app_name,
         auth_type=auth_type,
-        managed=True,
     )
     kwargs: dict[str, Any] = {
         "auth_config_id": auth_config["id"],
@@ -449,6 +467,29 @@ async def _get_or_create_auth_config(
     return _serialize_auth_config(created_config)
 
 
+async def _get_redirect_auth_config(
+    *,
+    client: AsyncComposio,
+    toolkit: Any,
+    app_name: str,
+    auth_type: str,
+) -> dict:
+    managed_schemes = _composio_managed_auth_schemes(toolkit)
+    if managed_schemes is None or _has_composio_managed_auth_scheme(toolkit, auth_type):
+        return await _get_or_create_auth_config(
+            client=client,
+            app_name=app_name,
+            auth_type=auth_type,
+            managed=True,
+        )
+
+    auth_scheme = _auth_type_to_composio_scheme(auth_type)
+    existing = await _find_auth_config(client, app_name, auth_scheme, managed=False)
+    if existing is None:
+        raise ConnectorCustomAuthConfigRequired(app_name, auth_scheme)
+    return existing
+
+
 async def _find_auth_config(
     client: AsyncComposio,
     app_name: str,
@@ -471,6 +512,9 @@ async def _find_auth_config(
             status = (_str_or_none(_value(item, "status")) or "ENABLED").upper()
             if status != "ENABLED":
                 continue
+            item_managed = _value(item, "is_composio_managed")
+            if item_managed is not None and bool(item_managed) != managed:
+                continue
             item_scheme = _str_or_none(_value(item, "auth_scheme"))
             if managed and item_scheme and _normalize_composio_scheme(item_scheme) != auth_scheme:
                 continue
@@ -490,6 +534,107 @@ def _serialize_auth_config(auth_config: Any) -> dict:
         "auth_scheme": _normalize_composio_scheme(_value(auth_config, "auth_scheme")),
         "is_composio_managed": bool(_value(auth_config, "is_composio_managed", default=False)),
     }
+
+
+async def _connect_disabled_reason(
+    client: AsyncComposio,
+    toolkit: Any,
+    app_name: str,
+    auth_type: str,
+    *,
+    custom_auth_config_index: dict[tuple[str, str], dict] | None = None,
+) -> str | None:
+    if not _requires_preconfigured_custom_oauth(toolkit, auth_type):
+        return None
+
+    auth_scheme = _auth_type_to_composio_scheme(auth_type)
+    toolkit_slug = _normalize_toolkit_slug(app_name)
+    existing = (
+        custom_auth_config_index.get((toolkit_slug, auth_scheme))
+        if custom_auth_config_index is not None and toolkit_slug is not None
+        else await _find_auth_config(client, app_name, auth_scheme, managed=False)
+    )
+    if existing is not None:
+        return None
+    return CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE
+
+
+async def _annotate_connect_status(
+    client: AsyncComposio,
+    toolkit: Any,
+    app: dict,
+    *,
+    custom_auth_config_index: dict[tuple[str, str], dict] | None = None,
+) -> dict:
+    reason = await _connect_disabled_reason(
+        client,
+        toolkit,
+        str(app.get("name", "")),
+        str(app.get("auth_type", "")),
+        custom_auth_config_index=custom_auth_config_index,
+    )
+    return {
+        **app,
+        "connect_disabled": reason is not None,
+        "connect_disabled_reason": reason,
+    }
+
+
+_custom_auth_config_index: dict[tuple[str, str], dict] | None = None
+_custom_auth_config_index_at: datetime | None = None
+
+
+async def _get_custom_auth_config_index(client: AsyncComposio) -> dict[tuple[str, str], dict]:
+    """Return enabled custom auth configs keyed by (toolkit slug, auth scheme)."""
+    global _custom_auth_config_index, _custom_auth_config_index_at
+    now = datetime.now(UTC)
+    if _custom_auth_config_index is not None and _custom_auth_config_index_at is not None:
+        if (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL:
+            return _custom_auth_config_index
+
+    index: dict[tuple[str, str], dict] = {}
+    cursor: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "is_composio_managed": False,
+            "show_disabled": False,
+            "limit": 100,
+        }
+        if cursor:
+            kwargs["cursor"] = cursor
+        resp = await client.auth_configs.list(**kwargs)
+        for item in _items(resp):
+            status = (_str_or_none(_value(item, "status")) or "ENABLED").upper()
+            if status != "ENABLED":
+                continue
+            item_managed = _value(item, "is_composio_managed")
+            if item_managed is not None and bool(item_managed):
+                continue
+            toolkit_slug = _auth_config_toolkit_slug(item)
+            auth_scheme = _normalize_composio_scheme(_value(item, "auth_scheme"))
+            if toolkit_slug and auth_scheme:
+                index[(toolkit_slug, auth_scheme)] = _serialize_auth_config(item)
+        cursor = _str_or_none(_value(resp, "next_cursor"))
+        if not cursor:
+            break
+
+    _custom_auth_config_index = index
+    _custom_auth_config_index_at = now
+    return index
+
+
+def _auth_config_toolkit_slug(auth_config: Any) -> str | None:
+    toolkit = _value(auth_config, "toolkit")
+    if isinstance(toolkit, str) and toolkit.strip():
+        return toolkit.strip().lower()
+    return _normalize_toolkit_slug(
+        _value(auth_config, "toolkit_slug", "toolkitSlug", "app_name", "appName")
+    ) or _normalize_toolkit_slug(_value(toolkit, "slug", "key", "name"))
+
+
+def _normalize_toolkit_slug(value: Any) -> str | None:
+    text = _str_or_none(value)
+    return text.lower() if text else None
 
 
 def _auth_config_name(app_name: str, suffix: str) -> str:
@@ -541,6 +686,38 @@ def _normalize_auth_type(value: Any) -> str:
 def _normalize_status(value: Any) -> str:
     status = str(value or "").strip().upper()
     return status if status in (_ACTIVE_OR_PENDING_STATUSES | _TERMINAL_STATUSES) else "UNKNOWN"
+
+
+def _has_composio_managed_auth_scheme(toolkit: Any, auth_type: str) -> bool:
+    managed_schemes = _composio_managed_auth_schemes(toolkit)
+    if managed_schemes is None:
+        return False
+    auth_scheme = _auth_type_to_composio_scheme(auth_type)
+    return any(
+        _auth_type_to_composio_scheme(scheme) == auth_scheme
+        for scheme in managed_schemes
+    )
+
+
+def _requires_preconfigured_custom_oauth(toolkit: Any, auth_type: str) -> bool:
+    if auth_type not in _REDIRECT_AUTH_TYPES:
+        return False
+    managed_schemes = _composio_managed_auth_schemes(toolkit)
+    if managed_schemes is None:
+        # Older/partial toolkit payloads may omit the field. Treat that
+        # as unknown instead of disabling a connector from incomplete
+        # metadata; the connect path falls back to the previous managed-auth
+        # behavior unless the current payload explicitly says custom auth is
+        # required.
+        return False
+    return not _has_composio_managed_auth_scheme(toolkit, auth_type)
+
+
+def _composio_managed_auth_schemes(toolkit: Any) -> list[str] | None:
+    raw = _value(toolkit, "composio_managed_auth_schemes", default=None)
+    if raw is None:
+        return None
+    return _string_list(raw)
 
 
 def _serialize_auth_field(field: Any, *, required: bool | None = None) -> dict:
@@ -636,6 +813,8 @@ def _serialize_app(toolkit: Any, *, allow_unknown_auth_type: bool = False) -> di
         "logo": logo,
         "description": desc[:200],
         "auth_type": auth_type,
+        "connect_disabled": False,
+        "connect_disabled_reason": None,
     }
 
 
@@ -646,18 +825,17 @@ def _titleize_slug(slug: str) -> str:
     return spaced.title()
 
 
-_apps_cache: list[dict] | None = None
-_apps_cache_at: datetime | None = None
-_APPS_CACHE_TTL = timedelta(minutes=5)
+_toolkits_cache: list[Any] | None = None
+_toolkits_cache_at: datetime | None = None
 
 
-async def _get_all_apps() -> list[dict]:
+async def _get_all_toolkits() -> list[Any]:
     """Fetch and cache the Composio toolkit catalog."""
-    global _apps_cache, _apps_cache_at
+    global _toolkits_cache, _toolkits_cache_at
     now = datetime.now(UTC)
-    if _apps_cache is not None and _apps_cache_at is not None:
-        if (now - _apps_cache_at) < _APPS_CACHE_TTL:
-            return _apps_cache
+    if _toolkits_cache is not None and _toolkits_cache_at is not None:
+        if (now - _toolkits_cache_at) < _COMPOSIO_METADATA_CACHE_TTL:
+            return _toolkits_cache
 
     client = get_composio_client()
     toolkits: list[Any] = []
@@ -676,19 +854,20 @@ async def _get_all_apps() -> list[dict]:
         if not cursor:
             break
 
-    fresh = [_serialize_app(toolkit, allow_unknown_auth_type=True) for toolkit in toolkits]
-    _apps_cache = fresh
-    _apps_cache_at = now
-    return fresh
+    _toolkits_cache = toolkits
+    _toolkits_cache_at = now
+    return toolkits
 
 
 async def get_app_by_name(name: str) -> dict | None:
     """Look up one toolkit by Composio slug."""
-    items = await _get_all_apps()
-    for app in items:
+    client = get_composio_client()
+    toolkits = await _get_all_toolkits()
+    for toolkit in toolkits:
+        app = _serialize_app(toolkit, allow_unknown_auth_type=True)
         if app["name"] == name:
-            toolkit = await _get_toolkit_detail(name)
-            return _serialize_app(toolkit)
+            detail = await _get_toolkit_detail(name)
+            return await _annotate_connect_status(client, detail, _serialize_app(detail))
     return None
 
 
@@ -702,22 +881,49 @@ async def get_available_apps(
     page: int = 1,
     page_size: int = 24,
 ) -> dict:
-    """Paginated catalog query."""
-    items = await _get_all_apps()
+    """Paginated catalog query.
+
+    The catalog is a user-facing list of connectors they can actually
+    set up in this deployment. OAuth toolkits that require a custom
+    Composio auth config are hidden until that config exists; direct
+    detail lookup still reports the setup reason for admins/deep links.
+    """
+    client = get_composio_client()
+    toolkits = await _get_all_toolkits()
+    items = [
+        (toolkit, _serialize_app(toolkit, allow_unknown_auth_type=True)) for toolkit in toolkits
+    ]
     if search:
         q = search.lower()
         items = [
-            app
-            for app in items
+            (toolkit, app)
+            for toolkit, app in items
             if q in app["name"].lower()
             or q in app["display_name"].lower()
             or q in app["description"].lower()
         ]
-    total = len(items)
+    needs_custom_oauth = any(
+        _requires_preconfigured_custom_oauth(toolkit, app["auth_type"]) for toolkit, app in items
+    )
+    custom_auth_config_index = (
+        await _get_custom_auth_config_index(client) if needs_custom_oauth else {}
+    )
+    visible_items: list[dict] = []
+    for toolkit, app in items:
+        annotated = await _annotate_connect_status(
+            client,
+            toolkit,
+            app,
+            custom_auth_config_index=custom_auth_config_index,
+        )
+        if not annotated["connect_disabled"]:
+            visible_items.append(annotated)
+
+    total = len(visible_items)
     start = max(0, (page - 1) * page_size)
     end = start + page_size
     return {
-        "items": items[start:end],
+        "items": visible_items[start:end],
         "total": total,
         "page": page,
         "page_size": page_size,

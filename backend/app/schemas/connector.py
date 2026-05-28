@@ -89,6 +89,12 @@ class ConnectorAvailableAppResponse(BaseModel):
     # API-key form on click. Lowercase strings: `oauth2`, `api_key`,
     # `bearer_token`, `basic`, `none`.
     auth_type: str
+    # True when the deployment cannot currently start a connection for
+    # this toolkit. Example: OAuth toolkits such as Twitter with no
+    # Composio-managed credentials and no custom OAuth auth config
+    # configured in the Composio project.
+    connect_disabled: bool = False
+    connect_disabled_reason: str | None = None
 
 
 class ConnectorAuthFieldResponse(BaseModel):
