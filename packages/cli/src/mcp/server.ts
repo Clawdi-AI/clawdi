@@ -1,3 +1,4 @@
+import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -316,7 +317,7 @@ export async function startMcpServer() {
 
 	server.tool(
 		"memory_add",
-		'Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something ("remember this", "save this", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details ("the user asked about X today")\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today\'s conversation. Content language should match the user\'s primary language for that context.',
+		'Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something ("remember this", "save this", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details ("the user asked about X today")\n- Plaintext tokens, API keys, bearer credentials, or private keys; use Vault and save a clawdi:// reference instead\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today\'s conversation. Content language should match the user\'s primary language for that context.',
 		{
 			content: z
 				.string()
@@ -332,6 +333,14 @@ export async function startMcpServer() {
 		},
 		async ({ content, category }) => {
 			try {
+				const finding = findLikelySecret(content);
+				if (finding) {
+					return {
+						content: [
+							{ type: "text" as const, text: `Error: ${formatSecretMemoryWarning(finding)}` },
+						],
+					};
+				}
 				const result = unwrap(
 					await api.POST("/api/memories", {
 						body: { content, category: category ?? "fact", source: "mcp" },

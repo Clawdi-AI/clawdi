@@ -1,5 +1,6 @@
 "use client";
 
+import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -394,6 +395,7 @@ function AddMemoryForm() {
 	const [open, setOpen] = useState(false);
 	const [content, setContent] = useState("");
 	const [addCategory, setAddCategory] = useState("fact");
+	const secretFinding = findLikelySecret(content);
 
 	const createMemory = useMutation({
 		mutationFn: async () =>
@@ -440,6 +442,13 @@ function AddMemoryForm() {
 						className="resize-none"
 					/>
 				</div>
+				{secretFinding ? (
+					<Alert variant="destructive">
+						<AlertCircle />
+						<AlertTitle>Use Vault for Secrets</AlertTitle>
+						<AlertDescription>{formatSecretMemoryWarning(secretFinding)}</AlertDescription>
+					</Alert>
+				) : null}
 				<div className="flex items-center justify-between gap-2">
 					<div className="flex items-center gap-2">
 						<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
@@ -470,7 +479,7 @@ function AddMemoryForm() {
 						</Button>
 						<Button
 							onClick={() => content.trim() && createMemory.mutate()}
-							disabled={!content.trim() || createMemory.isPending}
+							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
 							Add Memory

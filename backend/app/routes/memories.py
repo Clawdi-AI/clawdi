@@ -23,6 +23,7 @@ from app.schemas.memory import (
 )
 from app.services.embedding import resolve_embedder
 from app.services.memory_provider import BuiltinProvider, get_memory_provider, memory_to_dict
+from app.services.secret_detection import find_likely_secret, secret_memory_warning
 
 
 async def _attach_source_machines(
@@ -324,6 +325,16 @@ async def create_memory(
             status.HTTP_403_FORBIDDEN,
             "Agent API keys cannot create manual memories. "
             "Memories without a source session aren't visible to scoped reads.",
+        )
+    finding = find_likely_secret(body.content)
+    if finding is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "memory_secret_rejected",
+                "message": secret_memory_warning(finding),
+                "secret_type": finding.label,
+            },
         )
     provider = await get_memory_provider(str(auth.user_id), db)
     return MemoryCreatedResponse.model_validate(

@@ -274,8 +274,9 @@ const vaultCmd = program
 		"after",
 		`
 Scope:
-  Write commands (set/import/rm) use --project first; otherwise they write to
-  your default-write project. The selected project is printed before writing.
+  Vaults are account-level key bundles. Projects attach to a Vault to use the
+  same shared key set. set/import update the Vault for every attached Project.
+  rm deletes a key from the Vault; detach only removes one Project's access.
   Key paths are KEY, vault/KEY, or vault/section/KEY.`,
 	);
 
@@ -344,21 +345,52 @@ vaultCmd
 	});
 
 vaultCmd
-	.command("rm <key>")
-	.alias("delete")
-	.description("Delete a secret")
-	.option(
-		"-p, --project <id-or-slug>",
-		"Target a specific project (default: your default-write project)",
-	)
-	.option("-y, --yes", "Skip the confirmation prompt")
+	.command("attach <vault>")
+	.description("Make an existing Vault available in a Project")
+	.requiredOption("-p, --project <id-or-slug>", "Project that should use this Vault")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes",
+		"\nExamples:\n  $ clawdi vault attach providers --project redpill-providers",
+	)
+	.action(async (vault, opts) => {
+		const { vaultAttach } = await import("./commands/vault.js");
+		await vaultAttach(vault, { project: opts.project });
+	});
+
+vaultCmd
+	.command("detach <vault>")
+	.alias("unlink")
+	.description("Remove a Project's access to a Vault without deleting keys")
+	.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this Vault")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
+	)
+	.action(async (vault, opts) => {
+		const { vaultDetach } = await import("./commands/vault.js");
+		await vaultDetach(vault, { project: opts.project });
+	});
+
+vaultCmd
+	.command("rm <key>")
+	.alias("delete")
+	.description("Delete a key from a Vault")
+	.option(
+		"-p, --project <id-or-slug>",
+		"Select the Project used to locate the Vault (default: your default-write project)",
+	)
+	.option("-y, --yes", "Skip the confirmation prompt")
+	.option(
+		"--global",
+		"Allow deleting a key from a Vault attached to multiple Projects (affects every Project using it)",
+	)
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes",
 	)
 	.action(async (key, opts) => {
 		const { vaultRm } = await import("./commands/vault.js");
-		await vaultRm(key, { ...opts, project: opts.project, yes: opts.yes });
+		await vaultRm(key, { ...opts, project: opts.project, yes: opts.yes, global: opts.global });
 	});
 
 vaultCmd

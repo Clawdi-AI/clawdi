@@ -116,6 +116,7 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 	console.log(chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`));
 
 	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
+	await warnIfSharedVaultWrite(api, vaultSlug);
 
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
@@ -231,7 +232,9 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	for (const group of groups.values()) {
 		console.log(chalk.white(`Project ${projectLabel(group.projectId)}`));
 		for (const { vault, items } of group.rows) {
-			console.log(chalk.gray(`  Vault ${sanitizeMetadata(vault.slug)}`));
+			const projectCount = vaultProjectIds(vault).length;
+			const attachedSummary = projectCount > 1 ? ` (${projectCount} attached Projects)` : "";
+			console.log(chalk.gray(`  Vault ${sanitizeMetadata(vault.slug)}${attachedSummary}`));
 			for (const row of group.projectId
 				? buildVaultReferenceRows(group.projectId, vault.slug, items)
 				: []) {
@@ -240,6 +243,90 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			}
 		}
 	}
+}
+
+interface VaultProjectOptions {
+	project?: string;
+}
+
+export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
+	requireAuth();
+	if (!opts.project) {
+		throw new Error("Pass --project to choose which Project should use this Vault.");
+	}
+
+	const vaultSlug = cleanVaultSlug(vaultSlugArg);
+	const api = new ApiClient();
+	const targetProject = await resolveVaultWriteProject(api, opts.project);
+	const vault = await loadVault(api, vaultSlug);
+	if (!vault) {
+		throw new Error(
+			`No Vault named "${vaultSlug}" was found. Store a key first with \`clawdi vault set ${vaultSlug}/KEY --prompt\`.`,
+		);
+	}
+	const projectIdsBefore = vaultProjectIds(vault);
+	if (projectIdsBefore.includes(targetProject.projectId)) {
+		console.log(
+			chalk.gray(
+				`Vault "${sanitizeMetadata(vaultSlug)}" is already available in ${formatProjectTarget(targetProject)}.`,
+			),
+		);
+		return;
+	}
+
+	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
+	const attachedCount = projectIdsBefore.length + 1;
+	console.log(
+		chalk.green(
+			`✓ Attached vault "${sanitizeMetadata(vaultSlug)}" to ${formatProjectTarget(targetProject)}`,
+		),
+	);
+	console.log(
+		chalk.gray(
+			`  Keys in this Vault are now available from ${attachedCount} Project${attachedCount === 1 ? "" : "s"} and remain one shared key set.`,
+		),
+	);
+}
+
+export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
+	requireAuth();
+	if (!opts.project) {
+		throw new Error("Pass --project to choose which Project should stop using this Vault.");
+	}
+
+	const vaultSlug = cleanVaultSlug(vaultSlugArg);
+	const api = new ApiClient();
+	const targetProject = await resolveVaultWriteProject(api, opts.project);
+	const vault = await loadVault(api, vaultSlug);
+	if (!vault) {
+		throw new Error(`No Vault named "${vaultSlug}" was found.`);
+	}
+	const projectIdsBefore = vaultProjectIds(vault);
+	if (!projectIdsBefore.includes(targetProject.projectId)) {
+		console.log(
+			chalk.gray(
+				`Vault "${sanitizeMetadata(vaultSlug)}" is not attached to ${formatProjectTarget(targetProject)}.`,
+			),
+		);
+		return;
+	}
+
+	unwrap(
+		await api.DELETE("/api/vault/{slug}", {
+			params: { path: { slug: vaultSlug }, query: { project_id: targetProject.projectId } },
+		}),
+	);
+	const remainingCount = Math.max(projectIdsBefore.length - 1, 0);
+	console.log(
+		chalk.green(
+			`✓ Detached vault "${sanitizeMetadata(vaultSlug)}" from ${formatProjectTarget(targetProject)}`,
+		),
+	);
+	console.log(
+		chalk.gray(
+			`  No keys were deleted. This Vault remains attached to ${remainingCount} Project${remainingCount === 1 ? "" : "s"}.`,
+		),
+	);
 }
 
 interface VaultReferenceRow {
@@ -328,6 +415,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 		vaultSlug === "default" ? "Default" : vaultSlug,
 		targetProject.projectId,
 	);
+	await warnIfSharedVaultWrite(api, vaultSlug);
 
 	unwrap(
 		await api.PUT("/api/vault/{slug}/items", {
@@ -353,6 +441,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 interface VaultRmOptions {
 	project?: string;
 	yes?: boolean;
+	global?: boolean;
 }
 
 export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
@@ -360,12 +449,29 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
 	const normalizedKey = formatVaultKey(vaultSlug, section, field);
+	if (!opts.yes && !isInteractive()) {
+		throw new Error(
+			"Cannot prompt for vault deletion in a non-interactive shell. Pass --yes to confirm explicitly.",
+		);
+	}
+
 	const api = new ApiClient();
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	const target = formatVaultTarget(vaultSlug, section, targetProject);
+	const attachedProjectIds = await loadVaultProjectIds(api, vaultSlug);
+	if (attachedProjectIds.length > 1 && !opts.global) {
+		throw new Error(
+			`Refusing to delete ${normalizedKey} from shared vault "${vaultSlug}". This Vault is attached to ${attachedProjectIds.length} Projects, so deleting the key would remove it for every Project. Re-run with --global after you have confirmed that is intended.`,
+		);
+	}
 
 	if (!opts.yes) {
-		const ok = await p.confirm({ message: `Delete ${normalizedKey} from ${target}?` });
+		const ok = await p.confirm({
+			message:
+				attachedProjectIds.length > 1
+					? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} Projects using ${target}?`
+					: `Delete ${normalizedKey} from ${target}?`,
+		});
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");
 			return;
@@ -376,13 +482,17 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		await api.DELETE("/api/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: { project_id: targetProject.projectId },
+				query: { project_id: targetProject.projectId, global_delete: Boolean(opts.global) },
 			},
 			body: { section, fields: [field] },
 		}),
 	);
 
-	console.log(chalk.green(`✓ Deleted ${normalizedKey} from ${target}`));
+	const suffix =
+		attachedProjectIds.length > 1
+			? ` globally from shared ${target} (${attachedProjectIds.length} Projects attached)`
+			: ` from ${target}`;
+	console.log(chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
 }
 
 async function readVaultSetValue(key: string, opts: VaultSetOptions): Promise<string | null> {
@@ -477,6 +587,27 @@ function warnIfBroadVaultSlug(vaultSlug: string) {
 	);
 }
 
+async function loadVaultProjectIds(api: ApiClient, vaultSlug: string): Promise<string[]> {
+	const vault = await loadVault(api, vaultSlug);
+	return vault ? vaultProjectIds(vault) : [];
+}
+
+async function loadVault(api: ApiClient, vaultSlug: string): Promise<VaultListRow | null> {
+	const page = await fetchAllVaults(api);
+	const vault = page.items.find((item) => item.slug === vaultSlug);
+	return vault ?? null;
+}
+
+async function warnIfSharedVaultWrite(api: ApiClient, vaultSlug: string) {
+	const projectIds = await loadVaultProjectIds(api, vaultSlug).catch(() => []);
+	if (projectIds.length <= 1) return;
+	console.log(
+		chalk.yellow(
+			`  Shared Vault: "${sanitizeMetadata(vaultSlug)}" is attached to ${projectIds.length} Projects. This write updates the same key set for every attached Project.`,
+		),
+	);
+}
+
 function cleanVaultSlug(value: string): string {
 	const slug = value.trim();
 	if (!VAULT_SLUG_RE.test(slug)) {
@@ -536,6 +667,11 @@ function formatVaultTarget(vaultSlug: string, section: string, project: VaultWri
 	const target = section ? `vault "${vaultSlug}" section "${section}"` : `vault "${vaultSlug}"`;
 	const source = project.source === "explicit" ? "explicit project" : "default-write project";
 	return `${target} in ${source} "${sanitizeMetadata(project.label)}" (${project.projectId})`;
+}
+
+function formatProjectTarget(project: VaultWriteProject): string {
+	const source = project.source === "explicit" ? "explicit project" : "default-write project";
+	return `${source} "${sanitizeMetadata(project.label)}" (${project.projectId})`;
 }
 
 function formatProjectLabel(project: {

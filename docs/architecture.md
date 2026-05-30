@@ -168,6 +168,8 @@ clawdi://api-service/database/url
 `.env` imports and `clawdi vault set OPENAI_API_KEY` store fields without a section by default, so that key resolves as `clawdi://default/OPENAI_API_KEY`. Use `clawdi vault import --section openai ...` or `clawdi vault set default/openai/api_key` for sectioned fields.
 Exact references include the Project ID and are the default Web/CLI copy UX. In project-relative references, `default` is the vault slug, not the Project; Project selection happens outside the URI through `--project`, `--agent`, local folder links, or the caller's default Project.
 
+Project access and key mutation are separate operations. `clawdi vault attach` and `clawdi vault detach` add or remove a Project's access to the whole Vault without changing stored values. `clawdi vault rm` deletes a key from the shared Vault itself; for Vaults attached to multiple Projects, the CLI and API require explicit global confirmation.
+
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 
 - `/api/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**

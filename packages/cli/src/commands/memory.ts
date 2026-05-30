@@ -1,3 +1,4 @@
+import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
@@ -103,6 +104,11 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 				`⚠ Unknown category "${opts.category}". Valid: ${VALID_CATEGORIES.join(", ")}. Defaulting to "fact".`,
 			),
 		);
+	}
+
+	const finding = findLikelySecret(content);
+	if (finding) {
+		throw new Error(formatSecretMemoryWarning(finding));
 	}
 
 	const api = new ApiClient();

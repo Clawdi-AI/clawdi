@@ -10,6 +10,36 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.9.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.9.0
+
+Package: `clawdi@0.9.0`
+
+### Added
+
+- Added `clawdi vault attach` and `clawdi vault detach` / `unlink` so users can
+  add or remove one Project's access to an existing Vault without copying or
+  deleting the underlying keys.
+
+### Changed
+
+- Deleting a key from a Vault attached to multiple Projects now requires
+  explicit global confirmation. The CLI refuses `clawdi vault rm` unless
+  `--global` is passed, and the API requires `global_delete=true`. Scripts
+  that intentionally delete keys from shared Vaults must add the new explicit
+  confirmation.
+- `clawdi vault rm` now fails clearly in non-interactive shells when `--yes` is
+  missing instead of waiting on a prompt that cannot be answered.
+
+### Security
+
+- Memory creation now rejects likely plaintext API keys, bearer tokens, and
+  similar secrets in the CLI, MCP server, dashboard, and backend, and points
+  users to Vault references instead. Automations that stored plaintext secrets
+  in memory should store the secret in Vault and save only a `clawdi://`
+  reference in memory.
+
 ## Clawdi CLI v0.8.6
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.8.6

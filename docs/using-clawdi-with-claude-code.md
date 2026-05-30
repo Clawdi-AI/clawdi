@@ -323,7 +323,7 @@ $ clawdi push --agent codex
 | `clawdi push` | Push sessions + skills to the cloud |
 | `clawdi pull` | Pull skills from the cloud into Claude Code's skills dir |
 | `clawdi memory list / search / add / rm` | Inspect or edit cross-agent memory (alias: `mem`) |
-| `clawdi vault set / list / import / rm` | Manage runtime secrets |
+| `clawdi vault set / list / import / attach / detach / rm` | Manage runtime secrets and Project access |
 | `clawdi run -- <cmd>` | Run a command with vault secrets injected |
 | `clawdi skill list / add / install / rm` | Manage skills |
 | `clawdi mcp` | Start MCP stdio server (invoked by Claude Code automatically) |
