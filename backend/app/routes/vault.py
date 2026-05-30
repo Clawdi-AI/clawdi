@@ -268,16 +268,40 @@ async def delete_vault_items(
     slug: str,
     body: VaultItemDelete,
     project_id: UUID | None = Query(default=None),
+    global_delete: bool = Query(
+        default=False,
+        description=(
+            "Allow deleting the account-level item when this Vault is attached to "
+            "multiple Projects."
+        ),
+    ),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
     vault = await _get_vault_write(auth, slug, db, project_id=project_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
+    items_to_delete = [
+        existing_by_name[field_name] for field_name in body.fields if field_name in existing_by_name
+    ]
 
-    for field_name in body.fields:
-        item = existing_by_name.get(field_name)
-        if item:
-            await db.delete(item)
+    if items_to_delete and not global_delete:
+        project_count = await _vault_project_count(db, vault.id)
+        if project_count > 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "vault_item_global_delete_requires_confirmation",
+                    "message": (
+                        "This Vault is attached to multiple Projects. Deleting a key removes the "
+                        "account-level secret for every Project that uses this Vault. Pass "
+                        "global_delete=true after explicit confirmation."
+                    ),
+                    "project_count": project_count,
+                },
+            )
+
+    for item in items_to_delete:
+        await db.delete(item)
 
     await db.commit()
     return VaultItemsDeleteResponse(status="deleted")
@@ -475,6 +499,16 @@ async def _ensure_vault_attached(
     ).scalar_one_or_none()
     if existing is None:
         db.add(VaultProjectAttachment(vault_id=vault_id, project_id=project_id))
+
+
+async def _vault_project_count(db: AsyncSession, vault_id: UUID) -> int:
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(VaultProjectAttachment)
+            .where(VaultProjectAttachment.vault_id == vault_id)
+        )
+    ).scalar_one()
 
 
 async def _project_precedence(

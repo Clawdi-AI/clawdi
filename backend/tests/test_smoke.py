@@ -64,3 +64,18 @@ async def test_create_and_list_memory(client: httpx.AsyncClient):
     assert any("smoke test memory" in (m.get("content") or m.get("text") or "") for m in items), (
         items
     )
+
+
+@pytest.mark.asyncio
+async def test_create_memory_rejects_likely_secret(client: httpx.AsyncClient):
+    r = await client.post(
+        "/api/memories",
+        json={
+            "content": "OpenAI key is sk-abcdefghijklmnopqrstuvwxyz123456",
+            "category": "fact",
+        },
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["detail"]["code"] == "memory_secret_rejected"
+    assert "vault set" in body["detail"]["message"]

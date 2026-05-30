@@ -1084,7 +1084,13 @@ function VaultKeysPanel({
 		mutationFn: async ({ section, name }: { section: string; name: string }) =>
 			unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug: vault.slug }, query: queryParams },
+					params: {
+						path: { slug: vault.slug },
+						query: {
+							...queryParams,
+							global_delete: vault.project_ids.length > 1,
+						},
+					},
 					body: { section, fields: [name] },
 				}),
 			),
@@ -1140,8 +1146,9 @@ function VaultKeysPanel({
 										title={`Delete ${row.original.key}?`}
 										description={
 											<p>
-												This cannot be undone. Apps, workflows, or agent runs using this key will
-												fail until you add it again.
+												This cannot be undone. This key will be removed from the Vault for every
+												Project using it. Apps, workflows, or agent runs using this key will fail
+												until you add it again.
 											</p>
 										}
 										confirmLabel="Delete Key"

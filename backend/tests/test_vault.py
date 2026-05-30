@@ -689,6 +689,58 @@ async def test_vault_attaches_one_vault_to_multiple_projects(client, db_session,
 
 
 @pytest.mark.asyncio
+async def test_vault_item_delete_requires_global_confirmation_for_shared_vault(
+    client, seed_project, workspace_project
+):
+    first = await client.post(
+        f"/api/vault?project_id={seed_project.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert first.status_code == 200, first.text
+    second = await client.post(
+        f"/api/vault?project_id={workspace_project.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert second.status_code == 200, second.text
+    upsert = await client.put(
+        f"/api/vault/github/items?project_id={workspace_project.id}",
+        json={"section": "", "fields": {"TOKEN": "secret"}},
+    )
+    assert upsert.status_code == 200, upsert.text
+
+    blocked = await client.request(
+        "DELETE",
+        f"/api/vault/github/items?project_id={seed_project.id}",
+        json={"section": "", "fields": ["TOKEN"]},
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "vault_item_global_delete_requires_confirmation"
+
+    still_there = await client.get(f"/api/vault/github/items?project_id={workspace_project.id}")
+    assert still_there.json() == {"(default)": ["TOKEN"]}
+
+    blocked_without_project = await client.request(
+        "DELETE",
+        "/api/vault/github/items",
+        json={"section": "", "fields": ["TOKEN"]},
+    )
+    assert blocked_without_project.status_code == 409, blocked_without_project.text
+    assert (
+        blocked_without_project.json()["detail"]["code"]
+        == "vault_item_global_delete_requires_confirmation"
+    )
+
+    confirmed = await client.request(
+        "DELETE",
+        f"/api/vault/github/items?project_id={seed_project.id}&global_delete=true",
+        json={"section": "", "fields": ["TOKEN"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    gone = await client.get(f"/api/vault/github/items?project_id={workspace_project.id}")
+    assert gone.json() == {}
+
+
+@pytest.mark.asyncio
 async def test_vault_duplicate_slug_does_not_duplicate_keys(client):
     r = await client.post("/api/vault", json={"slug": "dup", "name": "First"})
     assert r.status_code == 200, r.text

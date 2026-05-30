@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vaultImport, vaultList, vaultRm, vaultSet } from "../../src/commands/vault";
+import {
+	vaultAttach,
+	vaultDetach,
+	vaultImport,
+	vaultList,
+	vaultRm,
+	vaultSet,
+} from "../../src/commands/vault";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -10,6 +17,7 @@ let origHome: string | undefined;
 let origApiUrl: string | undefined;
 
 const PROJECT_ID = "00000000-0000-0000-0000-000000000123";
+const OTHER_PROJECT_ID = "00000000-0000-0000-0000-000000000456";
 
 beforeEach(() => {
 	origHome = process.env.HOME;
@@ -185,6 +193,51 @@ describe("vaultList", () => {
 		expect(out.match(/Project personal/g)?.length).toBe(1);
 		expect(out).toContain("Vault default");
 		expect(out).toContain("Vault prod");
+	});
+
+	it("marks vaults attached to multiple projects in human output", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/vault/shared/items",
+				response: () => jsonResponse({ "(default)": ["TOKEN"] }),
+			},
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "vault-1",
+								slug: "shared",
+								name: "shared",
+								project_ids: [PROJECT_ID, OTHER_PROJECT_ID],
+							},
+						],
+						total: 1,
+					}),
+			},
+			...mockProjectList(),
+		]);
+		const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultList({});
+		} finally {
+			console.log = origLog;
+			if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(out).toContain("Vault shared (2 attached Projects)");
 	});
 
 	it("hides empty vaults in human output", async () => {
@@ -426,6 +479,160 @@ describe("vaultImport", () => {
 	});
 });
 
+describe("vault attach/detach", () => {
+	it("attaches an existing vault to another project without touching keys", async () => {
+		const { captured, restore } = mockFetch([
+			...mockProjectList(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{ id: "vault-1", slug: "providers", name: "providers", project_ids: [PROJECT_ID] },
+						],
+						total: 1,
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ id: "vault-1", slug: "providers" }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultAttach("providers", { project: OTHER_PROJECT_ID });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const post = captured.find((request) => request.method === "POST");
+		expect(post?.path).toContain(`/api/vault?project_id=${OTHER_PROJECT_ID}`);
+		expect(post?.body).toEqual({ slug: "providers", name: "providers" });
+		expect(captured.some((request) => request.method === "PUT")).toBe(false);
+		expect(out).toContain("Attached vault");
+		expect(out).toContain("one shared key set");
+	});
+
+	it("attaches an existing but currently unattached vault", async () => {
+		const { captured, restore } = mockFetch([
+			...mockProjectList(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "vault-1",
+								slug: "providers",
+								name: "providers",
+								project_ids: [],
+							},
+						],
+						total: 1,
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/vault",
+				response: () => jsonResponse({ id: "vault-1", slug: "providers" }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultAttach("providers", { project: OTHER_PROJECT_ID });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const post = captured.find((request) => request.method === "POST");
+		expect(post?.path).toContain(`/api/vault?project_id=${OTHER_PROJECT_ID}`);
+		expect(out).toContain("Attached vault");
+		expect(out).toContain("1 Project");
+		expect(out).not.toContain("1 Projects");
+	});
+
+	it("detaches a vault from one project without deleting keys", async () => {
+		const { captured, restore } = mockFetch([
+			...mockProjectList(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "vault-1",
+								slug: "providers",
+								name: "providers",
+								project_ids: [PROJECT_ID, OTHER_PROJECT_ID],
+							},
+						],
+						total: 1,
+					}),
+			},
+			{
+				method: "DELETE",
+				path: "/api/vault/providers",
+				response: () => jsonResponse({ status: "deleted" }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultDetach("providers", { project: OTHER_PROJECT_ID });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const del = captured.find((request) => request.method === "DELETE");
+		expect(del?.path).toContain(`/api/vault/providers?project_id=${OTHER_PROJECT_ID}`);
+		expect(captured.some((request) => request.path.includes("/items"))).toBe(false);
+		expect(out).toContain("Detached vault");
+		expect(out).toContain("No keys were deleted");
+	});
+
+	it("refuses to attach a missing vault because attach should not create key bundles", async () => {
+		const { captured, restore } = mockFetch([
+			...mockProjectList(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () => jsonResponse({ items: [], total: 0 }),
+			},
+		]);
+
+		try {
+			await expect(vaultAttach("missing", { project: PROJECT_ID })).rejects.toThrow(
+				'No Vault named "missing" was found',
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured.some((request) => request.method === "POST")).toBe(false);
+	});
+});
+
 describe("vaultSet", () => {
 	it("stores a non-interactive --value without prompting", async () => {
 		const { captured, restore } = mockFetch([
@@ -632,6 +839,15 @@ describe("vaultSet", () => {
 		const { captured, restore } = mockFetch([
 			...mockDefaultProjectResolution(),
 			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "prod", name: "prod", project_ids: [PROJECT_ID] }],
+						total: 1,
+					}),
+			},
+			{
 				method: "DELETE",
 				path: "/api/vault/prod/items",
 				response: () => jsonResponse({ status: "deleted" }),
@@ -652,6 +868,7 @@ describe("vaultSet", () => {
 
 		const del = captured.find((request) => request.method === "DELETE");
 		expect(del?.path).toContain(`/api/vault/prod/items?project_id=${PROJECT_ID}`);
+		expect(del?.path).toContain("global_delete=false");
 		expect(del?.body).toEqual({
 			section: "stripe",
 			fields: ["SECRET_KEY"],
@@ -659,6 +876,104 @@ describe("vaultSet", () => {
 		expect(out).toContain(
 			`Deleted prod/stripe/SECRET_KEY from vault "prod" section "stripe" in default-write project "personal" (${PROJECT_ID})`,
 		);
+	});
+
+	it("refuses to delete a shared vault key without --global", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "vault-1",
+								slug: "prod",
+								name: "prod",
+								project_ids: [PROJECT_ID, OTHER_PROJECT_ID],
+							},
+						],
+						total: 1,
+					}),
+			},
+		]);
+
+		try {
+			await expect(vaultRm("prod/stripe/SECRET_KEY", { yes: true })).rejects.toThrow(
+				"Refusing to delete prod/stripe/SECRET_KEY from shared vault",
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured.some((request) => request.method === "DELETE")).toBe(false);
+	});
+
+	it("passes explicit global confirmation for shared vault key deletion", async () => {
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "GET",
+				path: "/api/vault",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "vault-1",
+								slug: "prod",
+								name: "prod",
+								project_ids: [PROJECT_ID, OTHER_PROJECT_ID],
+							},
+						],
+						total: 1,
+					}),
+			},
+			{
+				method: "DELETE",
+				path: "/api/vault/prod/items",
+				response: () => jsonResponse({ status: "deleted" }),
+			},
+		]);
+		const origLog = console.log;
+		let out = "";
+		console.log = (...args: unknown[]) => {
+			out += `${args.map(String).join(" ")}\n`;
+		};
+
+		try {
+			await vaultRm("prod/stripe/SECRET_KEY", { yes: true, global: true });
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		const del = captured.find((request) => request.method === "DELETE");
+		expect(del?.path).toContain("global_delete=true");
+		expect(out).toContain("globally from shared vault");
+		expect(out).toContain("2 Projects attached");
+	});
+
+	it("rejects interactive deletion prompts outside a TTY", async () => {
+		const { captured, restore } = mockFetch([]);
+		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+		const stdoutTtyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+		Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+
+		try {
+			await expect(vaultRm("SECRET_KEY")).rejects.toThrow(
+				"Cannot prompt for vault deletion in a non-interactive shell. Pass --yes",
+			);
+		} finally {
+			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
+			else Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+			if (stdoutTtyDesc) Object.defineProperty(process.stdout, "isTTY", stdoutTtyDesc);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(captured).toHaveLength(0);
 	});
 
 	it("rejects ambiguous vault keys before writing", async () => {
@@ -804,6 +1119,13 @@ function mockProjects() {
 			slug: "personal",
 			name: "Personal",
 			kind: "personal",
+			is_owner: true,
+		},
+		{
+			id: OTHER_PROJECT_ID,
+			slug: "redpill-providers",
+			name: "Redpill Providers",
+			kind: "workspace",
 			is_owner: true,
 		},
 	];

@@ -101,7 +101,7 @@ clawdi inject --dry-run --in .env.clawdi --out .env.local
 clawdi inject --force --in .env.clawdi --out .env.local
 ```
 
-`clawdi vault set`, `clawdi vault import`, `clawdi vault rm`, and `clawdi vault list` print the concrete Project target or exact references that include the Project ID. `vault set` supports `--prompt` for secure one-off entry, `--stdin` for scripts, and `--value` when shell history exposure is acceptable; empty stdin is rejected unless `--allow-empty` is passed intentionally. `vault import` supports `--vault`, `--section`, `--project`, and warns about skipped invalid dotenv identifiers. Prefer service-specific vault slugs such as `api-service` over broad environment slugs such as `prod`. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
+Vaults are account-level key bundles. Projects attach to a Vault to use the same shared key set. `clawdi vault set`, `clawdi vault import`, `clawdi vault rm`, and `clawdi vault list` print the concrete Project target or exact references that include the Project ID. `vault set` supports `--prompt` for secure one-off entry, `--stdin` for scripts, and `--value` when shell history exposure is acceptable; empty stdin is rejected unless `--allow-empty` is passed intentionally. `vault import` supports `--vault`, `--section`, `--project`, and warns about skipped invalid dotenv identifiers. Use `clawdi vault attach <vault> --project <project>` to make an existing Vault available in another Project, and `clawdi vault detach <vault> --project <project>` to remove one Project's access without deleting keys. `vault rm` deletes a key from the shared Vault; when a Vault is attached to multiple Projects, it requires `--global`. Prefer service-specific vault slugs such as `api-service` over broad environment slugs such as `prod`. Project-relative references such as `clawdi://default/OPENAI_API_KEY` still work for portable templates, but exact references are the default copy/read UX.
 
 Agents should prefer `clawdi run --env-file .env.clawdi -- <command>` when they can launch the tool themselves. Use `clawdi inject` only for tools that must read a physical `.env.local`; generated files are written owner-only and should stay gitignored.
 
@@ -260,7 +260,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
 | `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI; explicit Keychain import requires service/account options |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
-| `clawdi vault set/list/import/rm` | Manage encrypted secrets and copy exact references |
+| `clawdi vault set/list/import/attach/detach/rm` | Manage encrypted secrets, Project access, and copy exact references |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |

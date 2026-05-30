@@ -5343,6 +5343,8 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Allow deleting the account-level item when this Vault is attached to multiple Projects. */
+                global_delete?: boolean;
             };
             header?: never;
             path: {
