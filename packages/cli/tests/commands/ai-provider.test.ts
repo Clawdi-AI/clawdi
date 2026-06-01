@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -407,13 +415,14 @@ describe("ai-provider commands", () => {
 
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
 		expect(output()).toContain("ai-providers.hermes.yaml");
-		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "hermes"))).toBe(true);
-		expect(
-			readFileSync(
-				join(tmpHome, ".clawdi", "runtime", "hermes", "ai-providers.hermes.yaml"),
-				"utf-8",
-			),
-		).toContain('key_env: "OPENAI_API_KEY"');
+		const projectionDir = join(tmpHome, ".clawdi", "runtime", "hermes");
+		const projectionPath = join(projectionDir, "ai-providers.hermes.yaml");
+		expect(existsSync(projectionDir)).toBe(true);
+		expect(readFileSync(projectionPath, "utf-8")).toContain('key_env: "OPENAI_API_KEY"');
+		if (process.platform !== "win32") {
+			expect(statSync(projectionDir).mode & 0o777).toBe(0o700);
+			expect(statSync(projectionPath).mode & 0o777).toBe(0o600);
+		}
 	});
 
 	it("activates Hermes through hermes config set instead of editing config.yaml directly", async () => {

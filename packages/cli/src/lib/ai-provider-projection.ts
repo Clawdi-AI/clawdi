@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AiProvider, AiProviderAuth, AiProviderCatalog } from "@clawdi/shared";
 import { validateAiProviderCatalog } from "@clawdi/shared";
@@ -72,10 +72,12 @@ export function runtimeProjectionDir(engine: RuntimeEngine): string {
 export function writeRuntimeProjection(projection: RuntimeProjection): string[] {
 	const dir = runtimeProjectionDir(projection.engine);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	chmodRuntimePath(dir, 0o700);
 	const written: string[] = [];
 	for (const file of projection.files) {
 		const path = join(dir, file.path);
-		writeFileSync(path, file.content, { mode: 0o644 });
+		writeFileSync(path, file.content, { mode: 0o600 });
+		chmodRuntimePath(path, 0o600);
 		written.push(path);
 	}
 	const metadataPath = join(dir, "clawdi-ai-provider.sidecar.json");
@@ -92,10 +94,19 @@ export function writeRuntimeProjection(projection: RuntimeProjection): string[] 
 			null,
 			2,
 		)}\n`,
-		{ mode: 0o644 },
+		{ mode: 0o600 },
 	);
+	chmodRuntimePath(metadataPath, 0o600);
 	written.push(metadataPath);
 	return written;
+}
+
+function chmodRuntimePath(path: string, mode: number): void {
+	try {
+		chmodSync(path, mode);
+	} catch {
+		// Best effort on platforms without POSIX modes.
+	}
 }
 
 function normalizeProjectionProvider(provider: AiProvider): ProjectionProvider {
