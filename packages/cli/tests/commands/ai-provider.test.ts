@@ -394,6 +394,24 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe("new-auth");
 	});
 
+	it("does not project agent profiles into key-env runtime config", async () => {
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				runtimeEnv: "OPENAI_API_KEY",
+				json: true,
+			});
+			await expect(runtimeRenderCommand({ engine: "hermes", json: true })).rejects.toThrow(
+				"does not have a verified runtime projection",
+			);
+		} finally {
+			restore();
+		}
+	});
+
 	it("renders Hermes projection without mutating Hermes config.yaml", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });

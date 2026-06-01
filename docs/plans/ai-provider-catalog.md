@@ -531,6 +531,13 @@ Expected product behavior:
 6. AI Provider entries reference that auth payload through `auth.payload_ref`
    when a runtime provider uses that login state.
 
+V1 runtime projections only support auth forms that can be expressed as a
+runtime environment variable or no-auth local endpoint. `agent_profile` and
+`oauth_profile` entries are centrally managed provider auth, but they must be
+materialized through a verified native tool adapter until a target runtime has a
+pinned credential-profile config contract. They must not be projected as
+`key_env` just because a `runtime_env_name` is present.
+
 ### Failure States
 
 Common failure states should be explicit and recoverable:

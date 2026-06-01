@@ -113,6 +113,11 @@ function normalizeProjectionProvider(provider: AiProvider): ProjectionProvider {
 	if (!provider.default_model) {
 		throw new Error(`Provider ${provider.id} requires default_model for runtime projection.`);
 	}
+	if (provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile") {
+		throw new Error(
+			`Provider ${provider.id} uses ${provider.auth.type} auth, which does not have a verified runtime projection yet. Materialize the profile for its native tool or use env/Vault/managed API key auth for key-env runtimes.`,
+		);
+	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName) {
 		throw new Error(

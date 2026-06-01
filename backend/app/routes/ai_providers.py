@@ -552,7 +552,7 @@ def _payload_ref(provider_id: str, profile: str) -> str:
 
 
 def _normalize_profile(input: str) -> str:
-    profile = input.strip().lower().replace("_", "-")
+    profile = input.strip().lower()
     if not re.fullmatch(r"[a-z][a-z0-9._-]{0,119}", profile):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid profile")
     return profile

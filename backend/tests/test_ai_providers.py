@@ -204,7 +204,7 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
         json={
             "type": "agent_profile",
             "tool": "codex",
-            "profile": "default",
+            "profile": "work_team",
             "payload": '{"token":"codex-secret"}',
         },
     )
@@ -213,8 +213,8 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
     assert imported.json()["auth"] == {
         "type": "agent_profile",
         "tool": "codex",
-        "profile": "default",
-        "payload_ref": "ai-provider-auth://openai-codex/default",
+        "profile": "work_team",
+        "payload_ref": "ai-provider-auth://openai-codex/work_team",
     }
 
 

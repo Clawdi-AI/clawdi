@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
+import { aiProviderCatalogPath, readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import {
 	type RuntimeEngine,
 	renderRuntimeProjection,
@@ -70,7 +70,7 @@ export async function runtimeInspectCommand(opts: RuntimeInspectOptions = {}): P
 		written: existsSync(join(runtimeProjectionDir(engine), "clawdi-ai-provider.sidecar.json")),
 	}));
 	const result = {
-		catalog_path: "local",
+		catalog_path: aiProviderCatalogPath(),
 		provider_count: catalog.providers.length,
 		defaults: catalog.defaults ?? {},
 		providers: rows,
