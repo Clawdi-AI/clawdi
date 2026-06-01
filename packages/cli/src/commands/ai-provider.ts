@@ -182,6 +182,7 @@ interface OAuthLoopbackOptions {
 }
 
 const CODEX_OAUTH_PROVIDER = "codex";
+const CODEX_AGENT_PROFILE_TOOL = "codex";
 const CODEX_OAUTH_LOOPBACK: OAuthLoopbackOptions = {
 	host: "localhost",
 	path: "/auth/callback",
@@ -404,6 +405,7 @@ export async function aiProviderImportAuthCommand(
 	if (!tool) {
 		throw new Error("--tool is required unless the provider already uses agent_profile auth.");
 	}
+	assertSupportedAgentProfileTool(canonicalAuthTool(tool) ?? tool);
 	const profile =
 		opts.profile ?? (provider.auth.type === "agent_profile" ? provider.auth.profile : "default");
 	const collected = await collectAgentCredentialProfilePayload(tool, {
@@ -456,6 +458,7 @@ export async function aiProviderMaterializeAuthCommand(
 			`AI Provider ${providerId} does not use agent_profile auth. Current auth: ${describeAuth(provider.auth)}`,
 		);
 	}
+	assertSupportedAgentProfileTool(provider.auth.tool);
 	const profile = opts.profile ?? provider.auth.profile;
 	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
 		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
@@ -911,7 +914,7 @@ function buildProvider(
 	const auth = opts.auth ? parseAuth(opts.auth) : existing?.auth;
 	if (!auth)
 		throw new Error(
-			"--auth is required. Use env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none.",
+			"--auth is required. Use env:<NAME>, clawdi://..., agent:codex/<profile>, or none.",
 		);
 	const provider: AiProvider = {
 		id: providerId,
@@ -959,15 +962,15 @@ function parseAuth(input: string): AiProviderAuth {
 	if (input === "none") return { type: "none" };
 	if (isSupportedSecretRef(input)) return { type: "secret_ref", ref: input };
 	if (input.startsWith("oauth:")) {
-		const { provider, profile } = parseProfileRef(input.slice("oauth:".length));
-		return { type: "oauth_profile", provider, profile };
+		throw new Error("Direct oauth_profile auth is not supported. Use connect for Codex OAuth.");
 	}
 	if (input.startsWith("agent:")) {
 		const { provider, profile } = parseProfileRef(input.slice("agent:".length));
+		assertSupportedAgentProfileTool(provider);
 		return { type: "agent_profile", tool: provider, profile };
 	}
 	throw new Error(
-		"Unsupported --auth. Use env:<NAME>, clawdi://..., oauth:<provider>/<profile>, agent:<tool>/<profile>, or none.",
+		"Unsupported --auth. Use env:<NAME>, clawdi://..., agent:codex/<profile>, or none.",
 	);
 }
 
@@ -1001,6 +1004,13 @@ function assertSupportedOAuthProvider(oauthProvider: string): void {
 	if (oauthProvider === CODEX_OAUTH_PROVIDER) return;
 	throw new Error(
 		`AI Provider OAuth currently supports Codex only. Use API key, env:, or clawdi:// auth for ${oauthProvider}.`,
+	);
+}
+
+function assertSupportedAgentProfileTool(tool: string): void {
+	if (tool === CODEX_AGENT_PROFILE_TOOL) return;
+	throw new Error(
+		`AI Provider auth profiles currently support Codex only. Use API key, env:, clawdi:// auth, or legacy agent credential commands for ${tool}.`,
 	);
 }
 

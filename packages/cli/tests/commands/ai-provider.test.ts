@@ -193,6 +193,69 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain("codex-secret");
 	});
 
+	it("keeps non-Codex auth profiles out of AI Provider v1", async () => {
+		const { restore } = captureConsole();
+		try {
+			await expect(
+				aiProviderAddCommand("anthropic-profile", {
+					type: "anthropic",
+					defaultModel: "claude-opus-4-6",
+					auth: "agent:claude-code/default",
+					json: true,
+				}),
+			).rejects.toThrow("Codex only");
+			await expect(
+				aiProviderAddCommand("openai-oauth", {
+					type: "openai",
+					defaultModel: "gpt-5.2",
+					auth: "oauth:codex/default",
+					json: true,
+				}),
+			).rejects.toThrow("Direct oauth_profile auth is not supported");
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				json: true,
+			});
+			await expect(
+				aiProviderImportAuthCommand("anthropic-main", {
+					tool: "claude-code",
+					yes: true,
+				}),
+			).rejects.toThrow("Codex only");
+			writeFileSync(
+				aiProviderCatalogPath(),
+				JSON.stringify(
+					{
+						schema_version: 1,
+						providers: [
+							{
+								id: "anthropic-profile",
+								type: "anthropic",
+								base_url: "https://api.anthropic.com",
+								default_model: "claude-opus-4-6",
+								auth: {
+									type: "agent_profile",
+									tool: "claude-code",
+									profile: "default",
+									payload_ref: "ai-provider-auth://anthropic-profile/default",
+								},
+							},
+						],
+					},
+					null,
+					2,
+				),
+			);
+			await expect(aiProviderMaterializeAuthCommand("anthropic-profile")).rejects.toThrow(
+				"Codex only",
+			);
+		} finally {
+			restore();
+		}
+	});
+
 	it("starts provider OAuth through the backend link flow", async () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{

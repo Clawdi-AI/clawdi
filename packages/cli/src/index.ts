@@ -286,10 +286,7 @@ aiProviderCmd
 	.option("--base-url <url>", "Provider base URL")
 	.option("--default-model <model>", "Default model id")
 	.option("--api-mode <mode>", "Provider API mode")
-	.requiredOption(
-		"--auth <auth>",
-		"Auth: env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none",
-	)
+	.requiredOption("--auth <auth>", "Auth: env:<NAME>, clawdi://..., agent:codex/<profile>, or none")
 	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
 	.option(
 		"--capability <name>",
@@ -320,10 +317,7 @@ aiProviderCmd
 	.option("--base-url <url>", "Provider base URL")
 	.option("--default-model <model>", "Default model id")
 	.option("--api-mode <mode>", "Provider API mode")
-	.option(
-		"--auth <auth>",
-		"Auth: env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none",
-	)
+	.option("--auth <auth>", "Auth: env:<NAME>, clawdi://..., agent:codex/<profile>, or none")
 	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
 	.option(
 		"--capability <name>",
@@ -405,7 +399,7 @@ aiProviderCmd
 aiProviderCmd
 	.command("import-auth <provider-id>")
 	.description("Import a local auth profile and bind it to an AI Provider")
-	.option("--tool <tool>", "Tool profile to import, e.g. codex, claude-code, or gh")
+	.option("--tool <tool>", "Tool profile to import, currently codex")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--source <source>", "Credential source: file or keychain", "file")
 	.option("--from <path>", "Credential file to import")
