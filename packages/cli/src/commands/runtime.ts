@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
+import { getCodexHome } from "../adapters/paths";
 import { aiProviderCatalogPath, readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import {
+	CODEX_PROFILE_NAME,
 	type RuntimeEngine,
 	renderRuntimeProjection,
 	runtimeProjectionDir,
@@ -31,7 +33,7 @@ export async function runtimeRenderCommand(opts: RuntimeRenderOptions = {}): Pro
 	const projection = renderRuntimeProjection(engine, catalog);
 	if (opts.write) {
 		const written = writeRuntimeProjection(projection);
-		const activated = opts.activate ? activateRuntime(engine, catalog) : [];
+		const activated = opts.activate ? activateRuntime(engine, catalog, projection) : [];
 		if (opts.json) {
 			console.log(JSON.stringify({ engine, written, activated }, null, 2));
 			return;
@@ -64,7 +66,7 @@ export async function runtimeInspectCommand(opts: RuntimeInspectOptions = {}): P
 		auth: describeAuth(provider),
 		runtime_env_name: provider.runtime_env_name ?? inferredEnvName(provider) ?? null,
 	}));
-	const projections = (["openclaw", "hermes"] as const).map((engine) => ({
+	const projections = (["openclaw", "hermes", "codex"] as const).map((engine) => ({
 		engine,
 		dir: runtimeProjectionDir(engine),
 		written: existsSync(join(runtimeProjectionDir(engine), "clawdi-ai-provider.sidecar.json")),
@@ -101,7 +103,7 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 		ok: catalog.providers.length > 0,
 		detail: `${catalog.providers.length} provider(s)`,
 	});
-	for (const engine of ["openclaw", "hermes"] as const) {
+	for (const engine of ["openclaw", "hermes", "codex"] as const) {
 		try {
 			renderRuntimeProjection(engine, catalog);
 			checks.push({ name: `Projection: ${engine}`, ok: true });
@@ -126,15 +128,17 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 }
 
 function parseEngine(input: string | undefined): RuntimeEngine {
-	if (input === "openclaw" || input === "hermes") return input;
-	throw new Error("--engine must be openclaw or hermes.");
+	if (input === "openclaw" || input === "hermes" || input === "codex") return input;
+	throw new Error("--engine must be openclaw, hermes, or codex.");
 }
 
 function activateRuntime(
 	engine: RuntimeEngine,
 	catalog: ReturnType<typeof readAiProviderCatalog>,
+	projection: ReturnType<typeof renderRuntimeProjection>,
 ): string[] {
 	validateRuntimeActivation(engine, catalog);
+	if (engine === "codex") return activateCodexProfile(projection);
 	const defaultProviderId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
 	const defaultProvider = catalog.providers.find((provider) => provider.id === defaultProviderId);
 	if (!defaultProvider?.default_model) {
@@ -176,6 +180,7 @@ function validateRuntimeActivation(
 			"OpenClaw activation is not enabled until its provider config CLI or schema contract is pinned.",
 		);
 	}
+	if (engine === "codex") return;
 	for (const provider of catalog.providers) {
 		if (provider.id.includes(".")) {
 			throw new Error(
@@ -185,8 +190,28 @@ function validateRuntimeActivation(
 	}
 }
 
+function activateCodexProfile(projection: ReturnType<typeof renderRuntimeProjection>): string[] {
+	const file = projection.files.find((entry) => entry.path.endsWith(".codex.toml"));
+	if (!file) throw new Error("Codex projection did not include a profile TOML file.");
+	const codexHome = getCodexHome();
+	mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+	chmodRuntimePath(codexHome, 0o700);
+	const profilePath = join(codexHome, `${CODEX_PROFILE_NAME}.config.toml`);
+	writeFileSync(profilePath, file.content, { mode: 0o600 });
+	chmodRuntimePath(profilePath, 0o600);
+	return [`wrote ${profilePath}`, `run codex --profile ${CODEX_PROFILE_NAME}`];
+}
+
 function runHermesConfigSet(key: string, value: string): void {
 	execFileSync("hermes", ["config", "set", key, value], { stdio: "pipe", env: process.env });
+}
+
+function chmodRuntimePath(path: string, mode: number): void {
+	try {
+		chmodSync(path, mode);
+	} catch {
+		// Best effort on platforms without POSIX modes.
+	}
 }
 
 function providerEnvName(

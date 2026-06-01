@@ -457,7 +457,7 @@ const runtimeCmd = program.command("runtime").description("Render AI Provider ru
 runtimeCmd
 	.command("render")
 	.description("Render an engine projection from the AI Provider Catalog")
-	.requiredOption("--engine <engine>", "Runtime engine: openclaw or hermes")
+	.requiredOption("--engine <engine>", "Runtime engine: openclaw, hermes, or codex")
 	.option("--write", "Write Clawdi-owned projection files")
 	.option(
 		"--activate",

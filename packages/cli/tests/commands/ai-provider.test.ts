@@ -31,12 +31,14 @@ let origHome: string | undefined;
 let origClawdiHome: string | undefined;
 let origApiUrl: string | undefined;
 let origPath: string | undefined;
+let origCodexHome: string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
 	origClawdiHome = process.env.CLAWDI_HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
 	origPath = process.env.PATH;
+	origCodexHome = process.env.CODEX_HOME;
 	tmpHome = join(tmpdir(), `clawdi-ai-provider-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(tmpHome, { recursive: true });
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
@@ -55,6 +57,8 @@ afterEach(() => {
 	else delete process.env.CLAWDI_API_URL;
 	if (origPath) process.env.PATH = origPath;
 	else delete process.env.PATH;
+	if (origCodexHome) process.env.CODEX_HOME = origCodexHome;
+	else delete process.env.CODEX_HOME;
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
@@ -423,6 +427,77 @@ describe("ai-provider commands", () => {
 			});
 			await expect(runtimeRenderCommand({ engine: "hermes", json: true })).rejects.toThrow(
 				"does not have a verified runtime projection",
+			);
+		} finally {
+			restore();
+		}
+	});
+
+	it("renders and activates Codex through a profile file without editing config.toml", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		mkdirSync(codexHome, { recursive: true });
+		const userConfig = join(codexHome, "config.toml");
+		const originalConfig = 'model = "user-model"\n';
+		writeFileSync(userConfig, originalConfig);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await runtimeRenderCommand({ engine: "codex", write: true, activate: true, json: true });
+		} finally {
+			restore();
+		}
+
+		const profilePath = join(codexHome, "clawdi-ai-provider.config.toml");
+		const projectionPath = join(tmpHome, ".clawdi", "runtime", "codex", "ai-providers.codex.toml");
+		expect(readFileSync(userConfig, "utf-8")).toBe(originalConfig);
+		expect(readFileSync(profilePath, "utf-8")).toContain('model_provider = "openai-main"');
+		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
+		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
+		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
+		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex >=0.135.0 <0.136.0");
+		expect(readFileSync(projectionPath, "utf-8")).toBe(readFileSync(profilePath, "utf-8"));
+		expect(output()).toContain("clawdi-ai-provider.config.toml");
+		if (process.platform !== "win32") {
+			expect(statSync(profilePath).mode & 0o777).toBe(0o600);
+		}
+	});
+
+	it("uses Codex native auth for Codex agent profiles", async () => {
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await runtimeRenderCommand({ engine: "codex" });
+		} finally {
+			restore();
+		}
+
+		expect(output()).toContain('model_provider = "openai"');
+		expect(output()).not.toContain("env_key");
+		expect(output()).not.toContain("model_providers");
+	});
+
+	it("rejects Codex projection for chat-only providers", async () => {
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openrouter-main", {
+				type: "openrouter",
+				defaultModel: "openai/gpt-5.2",
+				auth: "env:OPENROUTER_API_KEY",
+				json: true,
+			});
+			await expect(runtimeRenderCommand({ engine: "codex", json: true })).rejects.toThrow(
+				"Responses-compatible providers only",
 			);
 		} finally {
 			restore();
