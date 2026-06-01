@@ -375,7 +375,7 @@ aiProviderCmd
 	.command("connect <provider-id>")
 	.description("Connect provider auth through an OAuth/device-code flow")
 	.option("--method <method>", "Connect method", "oauth")
-	.option("--tool <tool>", "Tool login profile to connect, e.g. codex or claude-code")
+	.option("--tool <tool>", "Tool login profile to connect, currently codex")
 	.option("--profile <name>", "Auth profile name", "default")
 	.option("--callback <mode>", "OAuth callback mode: loopback or manual")
 	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")

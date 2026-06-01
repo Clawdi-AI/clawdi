@@ -154,8 +154,9 @@ class Settings(BaseSettings):
 
     # JSON object keyed by provider/tool id. Each value can include:
     # authorization_url, token_url, client_id, client_secret, scope, audience,
-    # and extra_authorize_params. This keeps provider OAuth self-hostable and
-    # avoids routing AI Provider auth through local agent CLIs.
+    # and extra_authorize_params. Codex has an official built-in default; this
+    # setting can override it or add future verified adapters without routing
+    # AI Provider auth through local agent CLIs.
     ai_provider_oauth_config_json: str = ""
 
 

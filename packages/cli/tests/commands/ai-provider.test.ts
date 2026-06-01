@@ -237,10 +237,30 @@ describe("ai-provider commands", () => {
 		expect(captured[1].body).toMatchObject({
 			provider: "codex",
 			profile: "default",
+			redirect_uri: "http://localhost:1455/auth/callback",
 		});
-		expect("redirect_uri" in (captured[1].body as Record<string, unknown>)).toBe(false);
 		expect(output()).toContain('"auth_url": "https://oauth.example/authorize?state=state-123"');
 		expect(output()).not.toContain("codex login");
+	});
+
+	it("rejects unsupported Claude Code OAuth in the first AI Provider auth release", async () => {
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				json: true,
+			});
+			await expect(
+				aiProviderConnectCommand("anthropic-main", {
+					tool: "claude-code",
+					json: true,
+				}),
+			).rejects.toThrow("Codex only");
+		} finally {
+			restore();
+		}
 	});
 
 	it("listens for a loopback OAuth callback and completes through the backend", async () => {
@@ -266,8 +286,8 @@ describe("ai-provider commands", () => {
 					jsonResponse({
 						provider_id: "openai-codex",
 						auth: {
-							type: "oauth_profile",
-							provider: "codex",
+							type: "agent_profile",
+							tool: "codex",
 							profile: "default",
 							payload_ref: "ai-provider-auth://openai-codex/default",
 						},
@@ -307,11 +327,8 @@ describe("ai-provider commands", () => {
 			provider: "codex",
 			profile: "default",
 		});
-		expect(
-			String((captured[1].body as { redirect_uri?: string }).redirect_uri).startsWith(
-				"http://127.0.0.1:",
-			),
-		).toBe(true);
+		const startRedirectUri = String((captured[1].body as { redirect_uri?: string }).redirect_uri);
+		expect(startRedirectUri).toMatch(/^http:\/\/localhost:145[57]\/auth\/callback$/);
 		expect(captured[2].body).toMatchObject({
 			code: "oauth-code",
 			state: "state-123",
@@ -319,8 +336,8 @@ describe("ai-provider commands", () => {
 		});
 		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
 		expect(catalog.providers[0].auth).toEqual({
-			type: "oauth_profile",
-			provider: "codex",
+			type: "agent_profile",
+			tool: "codex",
 			profile: "default",
 			payload_ref: "ai-provider-auth://openai-codex/default",
 		});
@@ -335,8 +352,8 @@ describe("ai-provider commands", () => {
 					jsonResponse({
 						provider_id: "openai-codex",
 						auth: {
-							type: "oauth_profile",
-							provider: "codex",
+							type: "agent_profile",
+							tool: "codex",
 							profile: "default",
 							payload_ref: "ai-provider-auth://openai-codex/default",
 						},

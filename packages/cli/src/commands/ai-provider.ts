@@ -175,6 +175,19 @@ interface AiProviderOAuthStartBackendResponse {
 	expires_at: string;
 }
 
+interface OAuthLoopbackOptions {
+	host: string;
+	path: string;
+	ports: number[];
+}
+
+const CODEX_OAUTH_PROVIDER = "codex";
+const CODEX_OAUTH_LOOPBACK: OAuthLoopbackOptions = {
+	host: "localhost",
+	path: "/auth/callback",
+	ports: [1455, 1457],
+};
+
 export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	if (opts.json) {
@@ -481,15 +494,17 @@ export async function aiProviderConnectCommand(
 	}
 	const oauthProvider = canonicalAuthTool(opts.tool ?? defaultAuthTool(provider));
 	if (!oauthProvider) {
-		throw new Error(
-			"--tool is required for this provider type. Supported OAuth tools are codex and claude-code.",
-		);
+		throw new Error("--tool is required for this provider type. Supported OAuth tool: codex.");
 	}
+	assertSupportedOAuthProvider(oauthProvider);
 	const profile = opts.profile ?? "default";
 	let loopback: OAuthLoopbackServer | null = null;
 	if (callbackMode === "loopback" && !opts.dryRun) {
 		try {
-			loopback = await createOAuthLoopbackServer(parseOAuthTimeout(opts.timeout));
+			loopback = await createOAuthLoopbackServer(
+				parseOAuthTimeout(opts.timeout),
+				oauthLoopbackOptions(oauthProvider),
+			);
 		} catch (error) {
 			callbackMode = "manual";
 			if (!opts.json) {
@@ -501,13 +516,15 @@ export async function aiProviderConnectCommand(
 			}
 		}
 	}
+	const redirectUri =
+		loopback?.redirectUri ?? opts.redirectUri ?? defaultManualRedirectUri(oauthProvider);
 	const request = {
 		provider_id: providerId,
 		method,
 		provider: oauthProvider,
 		profile,
 		callback: callbackMode,
-		redirect_uri: loopback?.redirectUri ?? opts.redirectUri,
+		redirect_uri: redirectUri,
 		dry_run: Boolean(opts.dryRun),
 	};
 	if (opts.dryRun) {
@@ -526,7 +543,7 @@ export async function aiProviderConnectCommand(
 			{
 				provider: oauthProvider,
 				profile,
-				...(request.redirect_uri ? { redirect_uri: request.redirect_uri } : {}),
+				redirect_uri: request.redirect_uri,
 			},
 		);
 		if (opts.json) {
@@ -667,7 +684,10 @@ function parseOAuthCompletion(opts: AiProviderCompleteOAuthOptions): OAuthComple
 	};
 }
 
-async function createOAuthLoopbackServer(timeoutSeconds: number): Promise<OAuthLoopbackServer> {
+async function createOAuthLoopbackServer(
+	timeoutSeconds: number,
+	options: OAuthLoopbackOptions,
+): Promise<OAuthLoopbackServer> {
 	let redirectOrigin = "";
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let callbackResolved = false;
@@ -679,7 +699,7 @@ async function createOAuthLoopbackServer(timeoutSeconds: number): Promise<OAuthL
 	});
 	const server = createServer((req, res) => {
 		const url = new URL(req.url ?? "/", redirectOrigin);
-		if (url.pathname !== "/callback") {
+		if (url.pathname !== options.path) {
 			writeOAuthCallbackResponse(res, 404, "Not found");
 			return;
 		}
@@ -709,26 +729,15 @@ async function createOAuthLoopbackServer(timeoutSeconds: number): Promise<OAuthL
 		resolveCallback(result);
 	});
 
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			server.off("error", reject);
-			const address = server.address();
-			if (!address || typeof address === "string") {
-				reject(new Error("Could not determine loopback callback port."));
-				return;
-			}
-			redirectOrigin = `http://127.0.0.1:${(address as AddressInfo).port}`;
-			resolve();
-		});
-	});
+	const address = await listenOnPreferredPort(server, options);
+	redirectOrigin = `http://${options.host}:${address.port}`;
 
 	timer = setTimeout(() => {
 		rejectCallback(new OAuthCallbackTimeoutError());
 	}, timeoutSeconds * 1000);
 
 	return {
-		redirectUri: `${redirectOrigin}/callback`,
+		redirectUri: `${redirectOrigin}${options.path}`,
 		wait: () => callbackPromise,
 		close: () =>
 			new Promise<void>((resolve) => {
@@ -737,6 +746,56 @@ async function createOAuthLoopbackServer(timeoutSeconds: number): Promise<OAuthL
 			}),
 		timedOut: (error: unknown) => error instanceof OAuthCallbackTimeoutError,
 	};
+}
+
+async function listenOnPreferredPort(
+	server: ReturnType<typeof createServer>,
+	options: OAuthLoopbackOptions,
+): Promise<AddressInfo> {
+	let lastError: unknown;
+	for (let index = 0; index < options.ports.length; index += 1) {
+		const port = options.ports[index];
+		try {
+			return await listenOnPort(server, options.host, port);
+		} catch (error) {
+			lastError = error;
+			if (errorCode(error) !== "EADDRINUSE" || index === options.ports.length - 1) {
+				break;
+			}
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error("No available OAuth callback port.");
+}
+
+async function listenOnPort(
+	server: ReturnType<typeof createServer>,
+	host: string,
+	port: number,
+): Promise<AddressInfo> {
+	return await new Promise<AddressInfo>((resolve, reject) => {
+		const onError = (error: Error) => {
+			server.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off("error", onError);
+			const address = server.address();
+			if (!address || typeof address === "string") {
+				reject(new Error("Could not determine loopback callback port."));
+				return;
+			}
+			resolve(address);
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		server.listen(port, host);
+	});
+}
+
+function errorCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+	const code = (error as { code?: unknown }).code;
+	return typeof code === "string" ? code : undefined;
 }
 
 function writeOAuthCallbackResponse(
@@ -934,9 +993,25 @@ function canonicalAuthTool(input: string | undefined): string | undefined {
 }
 
 function defaultAuthTool(provider: AiProvider): string | undefined {
-	if (provider.type === "openai") return "codex";
-	if (provider.type === "anthropic") return "claude-code";
+	if (provider.type === "openai") return CODEX_OAUTH_PROVIDER;
 	return undefined;
+}
+
+function assertSupportedOAuthProvider(oauthProvider: string): void {
+	if (oauthProvider === CODEX_OAUTH_PROVIDER) return;
+	throw new Error(
+		`AI Provider OAuth currently supports Codex only. Use API key, env:, or clawdi:// auth for ${oauthProvider}.`,
+	);
+}
+
+function oauthLoopbackOptions(oauthProvider: string): OAuthLoopbackOptions {
+	assertSupportedOAuthProvider(oauthProvider);
+	return CODEX_OAUTH_LOOPBACK;
+}
+
+function defaultManualRedirectUri(oauthProvider: string): string {
+	const options = oauthLoopbackOptions(oauthProvider);
+	return `http://${options.host}:${options.ports[0]}${options.path}`;
 }
 
 function parseCapabilities(values: string[] | undefined): AiProviderCapabilities | undefined {

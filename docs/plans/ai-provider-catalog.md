@@ -63,9 +63,10 @@ There are four required refinements:
 3. Secret backup must be a separate encrypted bundle. Default backup exports
    provider metadata and secret references only.
 4. Provider auth management must be broader than API keys. Existing local agent
-   credential profiles such as Codex `~/.codex/auth.json` and Claude Code
-   credentials should migrate under AI Provider auth as first-class encrypted
-   payloads or refs, not become a separate user-facing product.
+   credential profiles such as Codex `~/.codex/auth.json` should migrate under
+   AI Provider auth as first-class encrypted payloads or refs, not become a
+   separate user-facing product. Claude Code credential handling remains a
+   future adapter until its public OAuth/config contract is pinned.
 5. Clawdi Cloud must treat provider projection as OSS CLI behavior. The hosted
    agent service consumes the catalog and invokes CLI materialization; it
    should not duplicate OpenClaw/Hermes config formats, provider header
@@ -194,8 +195,9 @@ Product success criteria:
    machine without exposing plaintext keys.
 5. An encrypted secret backup cannot be created without an explicit passphrase
    or public-key recipient.
-6. A user can import or connect Codex/Claude credentials, store them centrally,
-   and materialize them on a new machine without hand-copying auth files.
+6. A user can import or connect Codex credentials, store them centrally, and
+   materialize them on a new machine without hand-copying auth files. Claude
+   Code OAuth is deferred until a verified public contract is available.
 7. A hosted agent runtime receives a provider catalog plus auth metadata and
    secret env/materialization inputs, and can start without Clawdi Cloud
    generating engine-native provider config.
@@ -257,8 +259,9 @@ UX principles:
   ref, encrypted API key payload, OAuth connection, or local agent credential
   profile.
 - **Credential Profile**: a tool-specific local login artifact, for example
-  Codex `~/.codex/auth.json` or Claude Code credentials, attached to an AI
-  Provider auth object and materialized only by explicit adapter commands.
+  Codex `~/.codex/auth.json`, attached to an AI Provider auth object and
+  materialized only by explicit adapter commands. Claude Code credentials are a
+  future adapter target once the public contract is pinned.
 - **OAuth Connection**: provider auth acquired through an official provider or
   tool OAuth flow, including device-code, PKCE loopback, or manual paste
   completion when the provider supports it.
@@ -517,14 +520,13 @@ Expected product behavior:
 5. Audit output distinguishes the Vault resolution request from the direct
    model provider request.
 
-### Flow 10: User Connects Codex Or Claude Provider Auth
+### Flow 10: User Connects Codex Provider Auth
 
 The user wants Clawdi to centrally store and restore a runtime login, not just
 an API key.
 
 ```bash
 clawdi ai-provider connect openai-codex --method oauth --tool codex --profile default
-clawdi ai-provider connect claude-code-main --method oauth --tool claude-code --profile default
 clawdi ai-provider list
 clawdi ai-provider materialize-auth openai-codex
 ```
@@ -546,9 +548,10 @@ Expected product behavior:
    and stores redacted metadata such as provider, profile, scopes, expiry, and
    last test status.
 5. `materialize-auth` writes only the tool's expected local credential artifact,
-   using the verified adapter for Codex, Claude Code, Hermes, or another
-   runtime. It does not modify shell startup files or Provider Catalog
-   metadata.
+   using a verified adapter. Codex is the v1 AI Provider OAuth target; Claude
+   Code and other tool credential adapters remain deferred until their public
+   contracts are pinned. It does not modify shell startup files or Provider
+   Catalog metadata.
 6. AI Provider entries reference that auth payload through `auth.payload_ref`
    when a runtime provider uses that login state.
 
@@ -671,7 +674,9 @@ The catalog is JSON for portability and deterministic golden tests.
 `auth.type = "api_key"` is for Clawdi-managed API key payloads or refs.
 `auth.type = "oauth_profile"` is for official provider/tool OAuth connections.
 `auth.type = "agent_profile"` is for a tool-specific auth profile such as
-Codex or Claude Code. Provider metadata never stores raw token payloads.
+Codex. Claude Code can use normal Anthropic API key/env/Vault providers in v1;
+Claude Code auth profiles are deferred. Provider metadata never stores raw token
+payloads.
 
 Provider IDs are user-owned stable references. They should match:
 
@@ -968,9 +973,10 @@ AI Provider command behavior:
 - `import-auth` imports an existing API key, env/vault ref, keychain item, or
   local agent credential profile into the selected AI Provider auth.
 - `materialize-auth` writes the selected AI Provider auth into the adapter's
-  verified local target, such as Codex `auth.json`, Claude Code credentials, an
-  owner-only env file, or a runtime-managed auth store. It should dry-run and
-  create backups before replacing existing local files.
+  verified local target, such as Codex `auth.json`, an owner-only env file, or a
+  runtime-managed auth store. Claude Code materialization is deferred until its
+  public credential contract is pinned. It should dry-run and create backups
+  before replacing existing local files.
 - `export` writes metadata and secret refs only by default.
 - `import` validates and merges by provider ID. It accepts a provider catalog
   file by default, or a runtime source through `--from-openclaw` /
@@ -1273,8 +1279,6 @@ surface:
 
 ```bash
 clawdi ai-provider connect openai-codex --method oauth --tool codex --profile default
-clawdi ai-provider connect anthropic-main --method oauth --profile work
-clawdi ai-provider connect claude-code-main --method oauth --tool claude-code --profile default
 ```
 
 The backend adapter must choose the safest official flow available for that
@@ -1314,12 +1318,14 @@ POST /api/ai-providers/{provider_id}/auth/oauth/complete
 }
 ```
 
-`complete` accepts the encrypted state plus the provider code. The CLI default
-flow listens on `127.0.0.1:<ephemeral>/callback`, opens or prints the
-`auth_url`, captures the browser callback, and forwards only `code`, `state`,
-and `redirect_uri` to the backend. When loopback is unavailable, manual mode
-uses either an explicit `--redirect-uri` or the provider OAuth config's
-registered redirect URI; the user can paste the full callback URL into
+`complete` accepts the encrypted state plus the provider code. The Codex CLI
+default flow listens on the official Codex loopback allow-list,
+`http://localhost:1455/auth/callback` with fallback to
+`http://localhost:1457/auth/callback`, opens or prints the `auth_url`, captures
+the browser callback, and forwards only `code`, `state`, and `redirect_uri` to
+the backend. When loopback is unavailable, manual mode uses either an explicit
+`--redirect-uri` or the provider OAuth config's registered redirect URI; the
+user can paste the full callback URL into
 `clawdi ai-provider complete-oauth <provider-id> --redirect-url <url>`. The
 backend performs the token exchange and stores the encrypted provider-auth
 payload. The CLI should not exchange OAuth tokens locally for these
@@ -2245,7 +2251,7 @@ ai_provider_auth_payloads
   owner_user_id          text
   provider_id            text
   scope                  text     # account_global in v1
-  auth_profile           text     # default, codex, claude-code, etc.
+  auth_profile           text     # default, codex, gh, or future pinned tools
   kind                   text     # api_key, oauth_profile, agent_profile
   source                 text     # manual, oauth_device_code, oauth_pkce, import_file, keychain, env, vault
   payload_ref            text     # encrypted storage pointer; never plaintext
@@ -2463,7 +2469,6 @@ Import commands:
 clawdi ai-provider import --from-openclaw <path>
 clawdi ai-provider import --from-hermes <path>
 clawdi ai-provider import-auth openai-codex --tool codex --profile default
-clawdi ai-provider import-auth claude-code-main --tool claude-code --profile default
 ```
 
 Provider import and auth import are separate commands under the same
@@ -2632,8 +2637,9 @@ metadata and redacted auth metadata without plaintext secrets.
 
 ### Phase 2: OAuth Connect, Direct Test, And Runtime Inspect
 
-1. Implement `ai-provider connect` for verified Codex/Claude/provider flows
-   where an official contract exists.
+1. Implement `ai-provider connect` for the verified Codex flow first. Claude
+   Code and generic provider OAuth remain disabled until their public contracts
+   are pinned.
 2. Implement manual paste and device-code completion modes with short-lived
    flow state.
 3. Implement direct provider probes for OpenAI-compatible and Anthropic v1.
@@ -2763,12 +2769,13 @@ round:
    shape and preserve/import/export it, but must not maintain a default model
    metadata table.
 8. Existing local agent credential profile commands become compatibility
-   aliases around AI Provider auth import/materialization. Codex, Claude Code,
-   and GitHub CLI profiles migrate under provider auth rather than becoming a
-   separate user-facing catalog.
-9. OAuth adapters for Codex, Claude, or provider accounts require a verified
-   official contract. Clawdi backend should return the auth link and perform
-   token exchange; local agent CLI login commands are not the product path.
+   aliases around AI Provider auth import/materialization. Codex profiles migrate
+   under provider auth rather than becoming a separate user-facing catalog.
+   Claude Code migration waits for a pinned public credential contract.
+9. OAuth adapters require a verified official contract. Codex is first because
+   its OAuth constants, loopback allow-list, token exchange, and `auth.json`
+   shape are pinned from official OpenAI Codex source. Claude Code and generic
+   provider OAuth stay disabled until their public contracts are pinned.
 10. Gateway search, transcription, image, and other non-chat services stay out
    of AI Provider v1. They can become separate catalog capability work later.
 
@@ -2894,8 +2901,9 @@ User scenario coverage in this slice:
    default provider, and model fields.
 4. **Provider migration from OpenClaw projection-shaped JSON**: implemented as
    best-effort import, but native OpenClaw activation remains gated.
-5. **Codex/Claude/GitHub-style agent auth profiles**: covered through existing
+5. **Codex-style agent auth profiles**: covered through existing
    credential-profile import/materialization plus AI Provider binding commands.
+   Claude Code profile import and OAuth are deferred from AI Provider v1.
 6. **Encrypted provider-only backup/restore**: covered for env-backed secrets,
    redacted backup output, and owner-only env-file restore.
 7. **Cloud-managed API key storage**: covered by backend encrypted
@@ -3045,13 +3053,14 @@ Security tests required before enabling RPC:
 8. Implement provider auth validation and strict auth/runtime compatibility
    checks.
 9. Migrate `clawdi agent credentials import/materialize` to compatibility
-   aliases over `clawdi ai-provider import-auth/materialize-auth`, preserving
-   existing Codex, Claude Code, and GitHub CLI behavior.
+   aliases over `clawdi ai-provider import-auth/materialize-auth` for Codex and
+   GitHub CLI first. Keep Claude Code on the legacy credential path until its
+   public contract is pinned.
 10. Implement `clawdi ai-provider connect/import-auth/materialize-auth`.
 11. Implement backend provider-auth storage routes for managed API keys,
    imported auth payloads, and CLI-only auth resolution. Add OAuth
-   start/complete endpoints only after official Codex/Claude/provider flow
-   contracts are verified.
+   start/complete endpoints only after official provider flow contracts are
+   verified. Codex is the first enabled OAuth adapter.
 12. Implement `clawdi ai-provider add/list/edit/remove/validate/test`.
 13. Add `clawdi ai-provider export/import` with metadata-only defaults.
 14. Add provider/auth support to the global backup/restore surface, or

@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import json
 import re
@@ -50,6 +51,19 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 }
 
 OAUTH_STATE_TTL_SECONDS = 10 * 60
+CODEX_OAUTH_PROVIDER = "codex"
+CODEX_OAUTH_CONFIG = {
+    "authorization_url": "https://auth.openai.com/oauth/authorize",
+    "token_url": "https://auth.openai.com/oauth/token",
+    "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+    "scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
+    "extra_authorize_params": {
+        "id_token_add_organizations": "true",
+        "codex_cli_simplified_flow": "true",
+        "originator": "codex_cli_rs",
+    },
+}
+BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
 RESERVED_OAUTH_AUTHORIZE_PARAMS = {
     "audience",
     "client_id",
@@ -409,23 +423,27 @@ async def complete_ai_provider_oauth(
         form["client_secret"] = client_secret
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(token_url, data=form)
-    if response.status_code >= 400:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed")
+        if response.status_code >= 400:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed")
+        payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
+            client,
+            oauth_provider,
+            config,
+            response,
+            provider_id,
+            profile,
+        )
 
     payload_ref = _payload_ref(provider_id, profile)
-    ciphertext, nonce = encrypt(response.text)
+    ciphertext, nonce = encrypt(payload_text)
     existing = await _find_auth_payload(db, auth, provider_id, profile)
-    metadata = {
-        "provider": oauth_provider,
-        "profile": profile,
-        "payload_ref": payload_ref,
-    }
+    metadata["payload_ref"] = payload_ref
     if existing is None:
         existing = AiProviderAuthPayload(
             owner_user_id=auth.user_id,
             provider_id=provider_id,
             auth_profile=profile,
-            kind="oauth_profile",
+            kind=provider_auth_type,
             source="managed",
             encrypted_payload=ciphertext,
             nonce=nonce,
@@ -433,18 +451,161 @@ async def complete_ai_provider_oauth(
         )
         db.add(existing)
     else:
-        existing.kind = "oauth_profile"
+        existing.kind = provider_auth_type
         existing.source = "managed"
         existing.encrypted_payload = ciphertext
         existing.nonce = nonce
         existing.payload_metadata = metadata
         existing.archived_at = None
-    provider.auth_type = "oauth_profile"
+    provider.auth_type = provider_auth_type
     provider.auth_ref = payload_ref
     provider.auth_metadata = metadata
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
+
+
+async def _oauth_payload_from_token_response(
+    client: httpx.AsyncClient,
+    oauth_provider: str,
+    config: dict,
+    response: httpx.Response,
+    provider_id: str,
+    profile: str,
+) -> tuple[str, str, dict]:
+    payload_ref = _payload_ref(provider_id, profile)
+    if oauth_provider == CODEX_OAUTH_PROVIDER:
+        payload = await _codex_auth_profile_payload(client, config, response, profile)
+        return (
+            payload,
+            "agent_profile",
+            {
+                "tool": "codex",
+                "profile": profile,
+                "payload_ref": payload_ref,
+                "source": "oauth_pkce",
+            },
+        )
+    return (
+        response.text,
+        "oauth_profile",
+        {
+            "provider": oauth_provider,
+            "profile": profile,
+            "payload_ref": payload_ref,
+            "source": "oauth_pkce",
+        },
+    )
+
+
+async def _codex_auth_profile_payload(
+    client: httpx.AsyncClient,
+    config: dict,
+    response: httpx.Response,
+    profile: str,
+) -> str:
+    token_data = _token_response_json(response)
+    id_token = _required_token_field(token_data, "id_token")
+    access_token = _required_token_field(token_data, "access_token")
+    refresh_token = _required_token_field(token_data, "refresh_token")
+    api_key = await _obtain_codex_api_key(client, config, id_token)
+    claims = _jwt_auth_claims(id_token)
+    account_id = claims.get("chatgpt_account_id")
+    auth_json = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": api_key,
+        "tokens": {
+            "id_token": id_token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_id": account_id if isinstance(account_id, str) and account_id else None,
+        },
+        "last_refresh": datetime.now(UTC).isoformat(),
+    }
+    content = json.dumps(auth_json, indent=2)
+    envelope = {
+        "schemaVersion": 1,
+        "kind": "local_agent_profile",
+        "tool": "codex",
+        "profile": profile,
+        "importedAt": datetime.now(UTC).isoformat(),
+        "files": [
+            {
+                "logicalName": "auth.json",
+                "sourcePath": "codex-oauth",
+                "targetStrategy": "adapter_default",
+                "sourceKind": "file",
+                "content": content,
+                "mode": 0o600,
+                "size": len(content.encode("utf-8")),
+            }
+        ],
+    }
+    return json.dumps(envelope, separators=(",", ":"))
+
+
+def _token_response_json(response: httpx.Response) -> dict:
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "OAuth token response was not JSON",
+        ) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token response had invalid shape")
+    return data
+
+
+def _required_token_field(data: dict, field: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str) or not value:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"OAuth token response missing {field}",
+        )
+    return value
+
+
+async def _obtain_codex_api_key(
+    client: httpx.AsyncClient,
+    config: dict,
+    id_token: str,
+) -> str | None:
+    token_url = _required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
+    client_id = _required_oauth_config(config, "client_id", CODEX_OAUTH_PROVIDER)
+    response = await client.post(
+        token_url,
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": client_id,
+            "requested_token": "openai-api-key",
+            "subject_token": id_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+        },
+    )
+    if response.status_code >= 400:
+        return None
+    data = _token_response_json(response)
+    access_token = data.get("access_token")
+    return access_token if isinstance(access_token, str) and access_token else None
+
+
+def _jwt_auth_claims(jwt: str) -> dict:
+    parts = jwt.split(".")
+    if len(parts) < 2:
+        return {}
+    payload = parts[1]
+    padding = "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(f"{payload}{padding}".encode())
+        claims = json.loads(decoded)
+    except (binascii.Error, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(claims, dict):
+        return {}
+    auth_claims = claims.get("https://api.openai.com/auth")
+    return auth_claims if isinstance(auth_claims, dict) else {}
 
 
 @router.post("/{provider_id}/auth/resolve", response_model=AiProviderAuthResolveResponse)
@@ -491,31 +652,47 @@ async def resolve_ai_provider_auth(
 
 
 def _oauth_config_for(oauth_provider: str) -> dict:
+    config: dict = dict(BUILTIN_OAUTH_CONFIGS.get(oauth_provider, {}))
     raw = settings.ai_provider_oauth_config_json.strip()
-    if not raw:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "AI Provider OAuth is not configured",
-        )
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "AI Provider OAuth config is invalid JSON",
-        ) from exc
-    if not isinstance(data, dict):
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "AI Provider OAuth config must be an object",
-        )
-    config = data.get(oauth_provider)
-    if not isinstance(config, dict):
+    if raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "AI Provider OAuth config is invalid JSON",
+            ) from exc
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "AI Provider OAuth config must be an object",
+            )
+        configured = data.get(oauth_provider)
+        if configured is not None and not isinstance(configured, dict):
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                f"AI Provider OAuth config for {oauth_provider} must be an object",
+            )
+        if isinstance(configured, dict):
+            config = _merge_oauth_config(config, configured)
+    if not config:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"AI Provider OAuth config not found for {oauth_provider}",
         )
     return config
+
+
+def _merge_oauth_config(base: dict, override: dict) -> dict:
+    merged = {**base, **override}
+    base_extra = base.get("extra_authorize_params")
+    override_extra = override.get("extra_authorize_params")
+    if isinstance(base_extra, dict) or isinstance(override_extra, dict):
+        merged["extra_authorize_params"] = {
+            **(base_extra if isinstance(base_extra, dict) else {}),
+            **(override_extra if isinstance(override_extra, dict) else {}),
+        }
+    return merged
 
 
 def _required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:

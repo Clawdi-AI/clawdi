@@ -1,3 +1,4 @@
+import base64
 import json
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -9,6 +10,20 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.main import app
 from app.models.api_key import ApiKey
+
+
+def _test_jwt(account_id: str = "account-123") -> str:
+    def encode(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+    return ".".join(
+        [
+            encode({"alg": "none", "typ": "JWT"}),
+            encode({"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}),
+            "sig",
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -276,6 +291,48 @@ async def test_ai_provider_oauth_start_returns_backend_generated_link(client: ht
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_oauth_start_uses_builtin_codex_config(client: httpx.AsyncClient):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = ""
+    try:
+        started = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "profile": "default",
+                "redirect_uri": "http://localhost:1455/auth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert started.status_code == 200, started.text
+    parsed = urlparse(started.json()["auth_url"])
+    params = parse_qs(parsed.query)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "auth.openai.com"
+    assert parsed.path == "/oauth/authorize"
+    assert params["client_id"] == ["app_EMoamEEZ73f0CkXaXp7hrann"]
+    assert params["redirect_uri"] == ["http://localhost:1455/auth/callback"]
+    assert params["scope"] == [
+        "openid profile email offline_access api.connectors.read api.connectors.invoke"
+    ]
+    assert params["id_token_add_organizations"] == ["true"]
+    assert params["codex_cli_simplified_flow"] == ["true"]
+    assert params["originator"] == ["codex_cli_rs"]
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
     client: httpx.AsyncClient,
 ):
@@ -332,6 +389,7 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
 async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    seed_user,
 ):
     created = await client.post(
         "/api/ai-providers",
@@ -368,9 +426,15 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
 
         async def post(self, url, data):
             token_requests.append({"url": url, "data": data})
+            if data["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange":
+                return httpx.Response(200, json={"access_token": "sk-codex-api-key"})
             return httpx.Response(
                 200,
-                json={"access_token": "oauth-access-token", "refresh_token": "oauth-refresh-token"},
+                json={
+                    "id_token": _test_jwt(),
+                    "access_token": "oauth-access-token",
+                    "refresh_token": "oauth-refresh-token",
+                },
             )
 
     monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
@@ -407,9 +471,11 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
 
     assert completed.status_code == 200, completed.text
     assert "oauth-access-token" not in completed.text
+    assert "oauth-refresh-token" not in completed.text
+    assert "sk-codex-api-key" not in completed.text
     assert completed.json()["auth"] == {
-        "type": "oauth_profile",
-        "provider": "codex",
+        "type": "agent_profile",
+        "tool": "codex",
         "profile": "default",
         "payload_ref": "ai-provider-auth://openai-codex/default",
     }
@@ -419,6 +485,44 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     assert token_requests[0]["data"]["client_secret"] == "oauth-client-secret"
     assert token_requests[0]["data"]["code"] == "oauth-code"
     assert token_requests[0]["data"]["code_verifier"]
+    assert token_requests[1]["url"] == "https://oauth.example/token"
+    assert token_requests[1]["data"] == {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "client_id": "clawdi-client",
+        "requested_token": "openai-api-key",
+        "subject_token": _test_jwt(),
+        "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+    }
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_test",
+        label="test-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        resolved = await client.post(
+            "/api/ai-providers/openai-codex/auth/resolve",
+            json={"profile": "default"},
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+    assert resolved.status_code == 200, resolved.text
+    payload = json.loads(resolved.json()["payload"])
+    assert payload["kind"] == "local_agent_profile"
+    assert payload["tool"] == "codex"
+    auth_json = json.loads(payload["files"][0]["content"])
+    assert auth_json["auth_mode"] == "chatgpt"
+    assert auth_json["OPENAI_API_KEY"] == "sk-codex-api-key"
+    assert auth_json["tokens"]["access_token"] == "oauth-access-token"
+    assert auth_json["tokens"]["refresh_token"] == "oauth-refresh-token"
+    assert auth_json["tokens"]["account_id"] == "account-123"
 
 
 @pytest.mark.asyncio
