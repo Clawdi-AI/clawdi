@@ -1138,6 +1138,15 @@ clawdi agent credentials import codex
 clawdi agent credentials materialize codex
 ```
 
+In the current implementation slice, `clawdi ai-provider import-auth` and
+`connect` sync the local provider metadata to `/api/ai-providers`, then store
+the encrypted credential payload through
+`/api/ai-providers/{provider_id}/auth/import`. `materialize-auth` resolves the
+payload through the CLI-only provider-auth resolve route. The older
+`clawdi agent credentials` command group still exists as a compatibility path
+for existing profile backup/restore behavior, but it is no longer the storage
+path for provider-bound credentials.
+
 Suggested provider-auth shape:
 
 ```json

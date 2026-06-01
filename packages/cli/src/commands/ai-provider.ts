@@ -34,9 +34,10 @@ import {
 	probeAiProvider,
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
+import { ApiClient } from "../lib/api-client";
 import {
-	agentCredentialsImportCommand,
-	agentCredentialsMaterializeCommand,
+	collectAgentCredentialProfilePayload,
+	materializeAgentCredentialProfilePayload,
 } from "./agent-credentials";
 
 interface AiProviderAddOptions {
@@ -135,6 +136,19 @@ interface AiProviderConnectOptions {
 	yes?: boolean;
 	dryRun?: boolean;
 	json?: boolean;
+}
+
+interface AiProviderBackendResponse {
+	provider_id: string;
+	auth: AiProviderAuth;
+	runtime_env_name?: string | null;
+}
+
+interface AiProviderAuthResolveBackendResponse {
+	auth_type: AiProviderAuth["type"];
+	payload?: string | null;
+	tool?: string | null;
+	profile?: string | null;
 }
 
 export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
@@ -343,6 +357,9 @@ export async function aiProviderImportAuthCommand(
 	providerId: string,
 	opts: AiProviderImportAuthOptions = {},
 ): Promise<void> {
+	if (opts.project) {
+		throw new Error("AI Provider auth is account-global; --project is not supported here.");
+	}
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = findProvider(catalog, providerId);
 	const tool =
@@ -352,8 +369,7 @@ export async function aiProviderImportAuthCommand(
 	}
 	const profile =
 		opts.profile ?? (provider.auth.type === "agent_profile" ? provider.auth.profile : "default");
-	await agentCredentialsImportCommand(tool, {
-		project: opts.project,
+	const collected = await collectAgentCredentialProfilePayload(tool, {
 		profile,
 		source: opts.source,
 		from: opts.from,
@@ -365,11 +381,8 @@ export async function aiProviderImportAuthCommand(
 		json: opts.json,
 		quiet: opts.json,
 	});
-	if (opts.dryRun) return;
-	const nextProvider: AiProvider = {
-		...provider,
-		auth: { type: "agent_profile", tool, profile },
-	};
+	if (!collected) return;
+	const nextProvider = await storeAgentProfileForProvider(provider, collected);
 	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
 	if (opts.json) {
 		console.log(
@@ -384,13 +397,20 @@ export async function aiProviderImportAuthCommand(
 		);
 		return;
 	}
-	console.log(chalk.green(`✓ Bound ${providerId} auth to agent profile ${tool}/${profile}`));
+	console.log(
+		chalk.green(
+			`✓ Bound ${providerId} auth to agent profile ${collected.tool}/${collected.profile}`,
+		),
+	);
 }
 
 export async function aiProviderMaterializeAuthCommand(
 	providerId: string,
 	opts: AiProviderMaterializeAuthOptions = {},
 ): Promise<void> {
+	if (opts.project) {
+		throw new Error("AI Provider auth is account-global; --project is not supported here.");
+	}
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = findProvider(catalog, providerId);
 	if (provider.auth.type !== "agent_profile") {
@@ -398,15 +418,26 @@ export async function aiProviderMaterializeAuthCommand(
 			`AI Provider ${providerId} does not use agent_profile auth. Current auth: ${describeAuth(provider.auth)}`,
 		);
 	}
-	await agentCredentialsMaterializeCommand(provider.auth.tool, {
-		project: opts.project,
-		profile: opts.profile ?? provider.auth.profile,
-		to: opts.to,
-		yes: opts.yes,
-		dryRun: opts.dryRun,
-		json: opts.json,
-		backup: opts.backup,
-	});
+	const profile = opts.profile ?? provider.auth.profile;
+	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
+		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
+		{ profile },
+	);
+	if (!resolved.payload) {
+		throw new Error(`AI Provider ${providerId} auth resolve returned no credential payload.`);
+	}
+	await materializeAgentCredentialProfilePayload(
+		resolved.tool ?? provider.auth.tool,
+		resolved.profile ?? profile,
+		resolved.payload,
+		{
+			to: opts.to,
+			yes: opts.yes,
+			dryRun: opts.dryRun,
+			json: opts.json,
+			backup: opts.backup,
+		},
+	);
 }
 
 export async function aiProviderConnectCommand(
@@ -440,16 +471,14 @@ export async function aiProviderConnectCommand(
 		console.log(chalk.gray(`Running ${[login.command, ...login.args].join(" ")}...`));
 	}
 	await runInteractive(login.command, login.args);
-	await agentCredentialsImportCommand(tool, {
+	const collected = await collectAgentCredentialProfilePayload(tool, {
 		profile,
 		yes: opts.yes,
 		json: opts.json,
 		quiet: opts.json,
 	});
-	const nextProvider: AiProvider = {
-		...provider,
-		auth: { type: "agent_profile", tool, profile },
-	};
+	if (!collected) return;
+	const nextProvider = await storeAgentProfileForProvider(provider, collected);
 	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
 	if (opts.json) {
 		console.log(
@@ -461,7 +490,60 @@ export async function aiProviderConnectCommand(
 		);
 		return;
 	}
-	console.log(chalk.green(`✓ Connected ${providerId} through ${tool}/${profile}`));
+	console.log(
+		chalk.green(`✓ Connected ${providerId} through ${collected.tool}/${collected.profile}`),
+	);
+}
+
+async function storeAgentProfileForProvider(
+	provider: AiProvider,
+	collected: NonNullable<Awaited<ReturnType<typeof collectAgentCredentialProfilePayload>>>,
+): Promise<AiProvider> {
+	const api = new ApiClient();
+	await api.postJsonBody<AiProviderBackendResponse>(
+		"/api/ai-providers",
+		providerToBackendUpsert(provider),
+		{ replace: "true" },
+	);
+	const response = await api.postJsonBody<AiProviderBackendResponse>(
+		`/api/ai-providers/${encodeURIComponent(provider.id)}/auth/import`,
+		{
+			type: "agent_profile",
+			tool: collected.tool,
+			profile: collected.profile,
+			payload: collected.payload,
+		},
+	);
+	return providerFromBackendResponse(provider, response);
+}
+
+function providerToBackendUpsert(provider: AiProvider): Record<string, unknown> {
+	return {
+		provider_id: provider.id,
+		type: provider.type,
+		label: provider.label,
+		base_url: provider.base_url,
+		default_model: provider.default_model,
+		api_mode: provider.api_mode,
+		auth: provider.auth,
+		managed_by: provider.managed_by ?? "user",
+		runtime_env_name: provider.runtime_env_name,
+		capabilities: provider.capabilities,
+	};
+}
+
+function providerFromBackendResponse(
+	provider: AiProvider,
+	response: AiProviderBackendResponse,
+): AiProvider {
+	const next: AiProvider = {
+		...provider,
+		auth: response.auth,
+	};
+	if (response.runtime_env_name !== undefined && response.runtime_env_name !== null) {
+		next.runtime_env_name = response.runtime_env_name;
+	}
+	return next;
 }
 
 function buildProvider(

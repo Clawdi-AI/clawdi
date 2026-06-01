@@ -86,6 +86,19 @@ interface CredentialProfileResolveResponse extends CredentialProfileResponse {
 	payload: string;
 }
 
+export interface AgentCredentialProfilePayloadResult {
+	tool: string;
+	profile: string;
+	payload: string;
+	fileCount: number;
+}
+
+export interface AgentCredentialMaterializeResult {
+	tool: string;
+	profile: string;
+	fileCount: number;
+}
+
 interface ImportOptions {
 	project?: string;
 	profile?: string;
@@ -470,10 +483,10 @@ function materializeTarget(
 	throw new Error(`No materialization target for ${file.logicalName}. Pass --to <path>.`);
 }
 
-export async function agentCredentialsImportCommand(
+export async function collectAgentCredentialProfilePayload(
 	toolInput: string,
 	opts: ImportOptions = {},
-): Promise<void> {
+): Promise<AgentCredentialProfilePayloadResult | null> {
 	requireAuth();
 	const tool = canonicalTool(normalizeName(toolInput, "tool"));
 	const profile = normalizeName(opts.profile ?? "default", "profile", 120);
@@ -514,7 +527,7 @@ export async function agentCredentialsImportCommand(
 		p.note(preview, `Credential profile ${tool}/${profile}`);
 	}
 
-	if (opts.dryRun) return;
+	if (opts.dryRun) return null;
 
 	const hasKeychainSource = previewPlans.some((file) => file.sourceKind === "keychain");
 	if (hasKeychainSource) {
@@ -536,24 +549,38 @@ export async function agentCredentialsImportCommand(
 		const ok = await p.confirm({ message: "Import this credential profile into Clawdi Vault?" });
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");
-			return;
+			return null;
 		}
 	}
 
 	const files = await Promise.all(previewPlans.map(snapshotFile));
 	const envelope = buildEnvelope(tool, profile, files);
+	return {
+		tool,
+		profile,
+		payload: JSON.stringify(envelope),
+		fileCount: files.length,
+	};
+}
+
+export async function agentCredentialsImportCommand(
+	toolInput: string,
+	opts: ImportOptions = {},
+): Promise<void> {
+	const collected = await collectAgentCredentialProfilePayload(toolInput, opts);
+	if (!collected) return;
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
 	const response = await api.postJsonBody<CredentialProfileResponse>(
 		"/api/vault/credential-profiles",
-		{ tool, profile, payload: JSON.stringify(envelope) },
+		{ tool: collected.tool, profile: collected.profile, payload: collected.payload },
 		projectId ? { project_id: projectId } : undefined,
 	);
 
 	if (!opts.json && !opts.quiet) {
 		console.log(
 			chalk.green(
-				`✓ Imported ${files.length} credential file${files.length === 1 ? "" : "s"} to ${response.tool}/${response.profile}`,
+				`✓ Imported ${collected.fileCount} credential file${collected.fileCount === 1 ? "" : "s"} to ${response.tool}/${response.profile}`,
 			),
 		);
 	}
@@ -576,7 +603,18 @@ export async function agentCredentialsMaterializeCommand(
 			project_id: projectId,
 		},
 	);
-	const envelope = parseEnvelope(resolved.payload);
+	await materializeAgentCredentialProfilePayload(tool, profile, resolved.payload, opts);
+}
+
+export async function materializeAgentCredentialProfilePayload(
+	toolInput: string,
+	profileInput: string,
+	payload: string,
+	opts: MaterializeOptions = {},
+): Promise<AgentCredentialMaterializeResult | null> {
+	const tool = canonicalTool(normalizeName(toolInput, "tool"));
+	const profile = normalizeName(profileInput, "profile", 120);
+	const envelope = parseEnvelope(payload);
 	if (envelope.tool !== tool || envelope.profile !== profile) {
 		throw new Error("Stored credential profile metadata does not match the requested profile.");
 	}
@@ -619,13 +657,13 @@ export async function agentCredentialsMaterializeCommand(
 		p.note(preview, `Materialize credential profile ${tool}/${profile}`);
 	}
 
-	if (opts.dryRun) return;
+	if (opts.dryRun) return null;
 
 	if (!opts.yes) {
 		const ok = await p.confirm({ message: "Write these local credential files?" });
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");
-			return;
+			return null;
 		}
 	}
 
@@ -643,4 +681,5 @@ export async function agentCredentialsMaterializeCommand(
 			),
 		);
 	}
+	return { tool, profile, fileCount: targets.length };
 }

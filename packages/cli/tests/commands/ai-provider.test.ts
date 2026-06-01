@@ -131,14 +131,25 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles",
+				path: "/api/ai-providers/openai-codex/auth/import",
 				response: () =>
 					jsonResponse({
-						id: "profile-1",
-						project_id: "project-1",
-						tool: "codex",
-						profile: "default",
-						updated_at: new Date().toISOString(),
+						provider_id: "openai-codex",
+						auth: {
+							type: "agent_profile",
+							tool: "codex",
+							profile: "default",
+							payload_ref: "ai-provider-auth://openai-codex/default",
+						},
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
 					}),
 			},
 		]);
@@ -164,9 +175,15 @@ describe("ai-provider commands", () => {
 			type: "agent_profile",
 			tool: "codex",
 			profile: "default",
+			payload_ref: "ai-provider-auth://openai-codex/default",
 		});
-		expect(captured).toHaveLength(1);
-		expect(captured[0].body).toMatchObject({ tool: "codex", profile: "default" });
+		expect(captured).toHaveLength(2);
+		expect(captured[0].body).toMatchObject({ provider_id: "openai-codex" });
+		expect(captured[1].body).toMatchObject({
+			type: "agent_profile",
+			tool: "codex",
+			profile: "default",
+		});
 		expect(output()).not.toContain("codex-secret");
 	});
 
@@ -365,15 +382,15 @@ describe("ai-provider commands", () => {
 		const { restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles/resolve",
+				path: "/api/ai-providers/openai-codex/auth/resolve",
 				response: () =>
 					jsonResponse({
-						id: "profile-1",
-						project_id: "project-1",
-						tool: "codex",
-						profile: "default",
-						updated_at: new Date().toISOString(),
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload_ref: "ai-provider-auth://openai-codex/default",
 						payload: JSON.stringify(payload),
+						profile: "default",
+						tool: "codex",
 					}),
 			},
 		]);

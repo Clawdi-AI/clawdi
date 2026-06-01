@@ -388,7 +388,6 @@ aiProviderCmd
 aiProviderCmd
 	.command("import-auth <provider-id>")
 	.description("Import a local auth profile and bind it to an AI Provider")
-	.option("-p, --project <id-or-slug>", "Target a specific project")
 	.option("--tool <tool>", "Tool profile to import, e.g. codex, claude-code, or gh")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--source <source>", "Credential source: file or keychain", "file")
@@ -407,7 +406,6 @@ aiProviderCmd
 aiProviderCmd
 	.command("materialize-auth <provider-id>")
 	.description("Materialize an AI Provider's local auth profile on this machine")
-	.option("-p, --project <id-or-slug>", "Read from a specific project")
 	.option("--profile <name>", "Override profile name")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")
 	.option("-y, --yes", "Skip confirmation prompt")
