@@ -160,6 +160,38 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert bad_agent_profile.status_code == 422, bad_agent_profile.text
     assert "agent_profile auth has invalid" in bad_agent_profile.text
 
+    unsupported_agent_profile = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "anthropic-profile",
+            "type": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "auth": {
+                "type": "agent_profile",
+                "tool": "claude-code",
+                "profile": "default",
+            },
+        },
+    )
+    assert unsupported_agent_profile.status_code == 422, unsupported_agent_profile.text
+    assert "codex only" in unsupported_agent_profile.text.lower()
+
+    unsupported_oauth_profile = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-oauth",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {
+                "type": "oauth_profile",
+                "provider": "codex",
+                "profile": "default",
+            },
+        },
+    )
+    assert unsupported_oauth_profile.status_code == 422, unsupported_oauth_profile.text
+    assert "oauth_profile auth is not supported" in unsupported_oauth_profile.text
+
     public_no_auth = await client.post(
         "/api/ai-providers",
         json={
@@ -236,6 +268,30 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
         "profile": "work_team",
         "payload_ref": "ai-provider-auth://openai-codex/work_team",
     }
+
+    unsupported_agent_profile = await client.post(
+        "/api/ai-providers/openai-codex/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "claude-code",
+            "profile": "default",
+            "payload": '{"token":"claude-secret"}',
+        },
+    )
+    assert unsupported_agent_profile.status_code == 422, unsupported_agent_profile.text
+    assert "Codex only" in unsupported_agent_profile.text
+
+    unsupported_oauth_profile = await client.post(
+        "/api/ai-providers/openai-codex/auth/import",
+        json={
+            "type": "oauth_profile",
+            "provider": "codex",
+            "profile": "default",
+            "payload": '{"token":"oauth-secret"}',
+        },
+    )
+    assert unsupported_oauth_profile.status_code == 422, unsupported_oauth_profile.text
+    assert "oauth_profile import is not supported" in unsupported_oauth_profile.text
 
 
 @pytest.mark.asyncio
@@ -381,6 +437,17 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
         )
         assert reserved_override.status_code == 503, reserved_override.text
         assert "cannot override state" in reserved_override.text
+
+        unsupported_provider = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "claude-code",
+                "profile": "default",
+                "redirect_uri": "http://localhost:1455/auth/callback",
+            },
+        )
+        assert unsupported_provider.status_code == 422, unsupported_provider.text
+        assert "Codex only" in unsupported_provider.text
     finally:
         settings.ai_provider_oauth_config_json = previous
 
@@ -439,6 +506,17 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
 
     monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
     try:
+        invalid_state = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/complete",
+            json={
+                "state": "not-valid",
+                "code": "oauth-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert invalid_state.status_code == 400, invalid_state.text
+        assert token_requests == []
+
         started = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={

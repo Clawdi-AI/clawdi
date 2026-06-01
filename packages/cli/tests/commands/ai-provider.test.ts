@@ -8,7 +8,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { get as httpGet } from "node:http";
+import { createServer, get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -404,6 +404,70 @@ describe("ai-provider commands", () => {
 			profile: "default",
 			payload_ref: "ai-provider-auth://openai-codex/default",
 		});
+	});
+
+	it("falls back to the Codex secondary loopback port when the primary port is busy", async () => {
+		const occupied = await occupyLoopbackPort(1455);
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						oauth_provider: "codex",
+						profile: "default",
+						auth_url: "https://oauth.example/authorize?state=state-123",
+						state: "state-123",
+						redirect_uri: "http://localhost:1457/auth/callback",
+						expires_at: "2026-06-01T00:10:00Z",
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: {
+							type: "agent_profile",
+							tool: "codex",
+							profile: "default",
+							payload_ref: "ai-provider-auth://openai-codex/default",
+						},
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			const run = aiProviderConnectCommand("openai-codex", {
+				open: false,
+				timeout: "5",
+			});
+			const redirectUri = await waitForStartRedirectUri(captured);
+			expect(redirectUri).toBe("http://localhost:1457/auth/callback");
+			await requestLocalCallback(`${redirectUri}?code=oauth-code&state=state-123`);
+			await run;
+		} finally {
+			restore();
+			restoreFetch();
+			await closeServer(occupied);
+		}
 	});
 
 	it("completes provider OAuth from a pasted redirect URL", async () => {
@@ -1065,6 +1129,22 @@ async function requestLocalCallback(url: string): Promise<void> {
 		});
 		req.on("error", reject);
 	});
+}
+
+async function occupyLoopbackPort(port: number): Promise<ReturnType<typeof createServer> | null> {
+	const server = createServer((_req, res) => {
+		res.writeHead(404);
+		res.end();
+	});
+	return await new Promise((resolve) => {
+		server.once("error", () => resolve(null));
+		server.listen(port, () => resolve(server));
+	});
+}
+
+async function closeServer(server: ReturnType<typeof createServer> | null): Promise<void> {
+	if (!server) return;
+	await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {

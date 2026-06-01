@@ -52,6 +52,8 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 CODEX_OAUTH_PROVIDER = "codex"
+SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
+SUPPORTED_OAUTH_PROVIDERS = {CODEX_OAUTH_PROVIDER}
 CODEX_OAUTH_CONFIG = {
     "authorization_url": "https://auth.openai.com/oauth/authorize",
     "token_url": "https://auth.openai.com/oauth/token",
@@ -259,26 +261,20 @@ async def import_ai_provider_auth(
     if body.type == "agent_profile":
         if not body.tool:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "agent_profile requires tool")
+        tool = _normalize_profile(body.tool)
+        _validate_supported_agent_profile_tool(tool)
         provider.auth_type = "agent_profile"
         provider.auth_ref = payload_ref
         provider.auth_metadata = {
-            "tool": _normalize_profile(body.tool),
+            "tool": tool,
             "profile": profile,
             "payload_ref": payload_ref,
         }
     elif body.type == "oauth_profile":
-        if not body.provider:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "oauth_profile requires provider",
-            )
-        provider.auth_type = "oauth_profile"
-        provider.auth_ref = payload_ref
-        provider.auth_metadata = {
-            "provider": _normalize_profile(body.provider),
-            "profile": profile,
-            "payload_ref": payload_ref,
-        }
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "oauth_profile import is not supported; use Codex OAuth connect",
+        )
     ciphertext, nonce = encrypt(body.payload.get_secret_value())
     existing = await _find_auth_payload(db, auth, provider_id, profile)
     if existing is None:
@@ -317,6 +313,7 @@ async def start_ai_provider_oauth(
 ) -> AiProviderOAuthStartResponse:
     await _get_provider_or_404(db, auth, provider_id)
     oauth_provider = _normalize_profile(body.provider)
+    _validate_supported_oauth_provider(oauth_provider)
     profile = _normalize_profile(body.profile)
     config = _oauth_config_for(oauth_provider)
     authorization_url = _required_oauth_config(config, "authorization_url", oauth_provider)
@@ -935,20 +932,35 @@ def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
         ):
             errors.append("api_key managed auth has invalid payload_ref")
     elif auth.type == "oauth_profile":
-        if not auth.provider or not auth.profile:
-            errors.append("oauth_profile auth requires provider and profile")
-        elif not _is_profile_id(auth.provider) or not _is_profile_id(auth.profile):
-            errors.append("oauth_profile auth has invalid provider or profile")
-        if auth.payload_ref and not _is_payload_ref(auth.payload_ref, provider_id):
-            errors.append("oauth_profile auth has invalid payload_ref")
+        errors.append("oauth_profile auth is not supported; use Codex OAuth connect")
     elif auth.type == "agent_profile":
         if not auth.tool or not auth.profile:
             errors.append("agent_profile auth requires tool and profile")
         elif not _is_profile_id(auth.tool) or not _is_profile_id(auth.profile):
             errors.append("agent_profile auth has invalid tool or profile")
+        elif auth.tool not in SUPPORTED_AGENT_PROFILE_TOOLS:
+            errors.append("agent_profile auth currently supports codex only")
         if auth.payload_ref and not _is_payload_ref(auth.payload_ref, provider_id):
             errors.append("agent_profile auth has invalid payload_ref")
     return errors
+
+
+def _validate_supported_agent_profile_tool(tool: str) -> None:
+    if tool in SUPPORTED_AGENT_PROFILE_TOOLS:
+        return
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "AI Provider auth profiles currently support Codex only",
+    )
+
+
+def _validate_supported_oauth_provider(oauth_provider: str) -> None:
+    if oauth_provider in SUPPORTED_OAUTH_PROVIDERS:
+        return
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "AI Provider OAuth currently supports Codex only",
+    )
 
 
 def _validate_patch_nulls(update: dict) -> list[str]:
