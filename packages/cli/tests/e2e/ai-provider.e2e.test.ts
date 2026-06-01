@@ -42,7 +42,7 @@ afterAll(() => {
 });
 
 describe("ai-provider CLI process e2e", () => {
-	it("adds, probes, encrypts, restores, and renders a provider without leaking secrets", async () => {
+	it("adds, optionally probes, encrypts, restores, and renders a provider without leaking secrets", async () => {
 		const source = createFixture();
 		const destination = createFixture();
 		const backupPath = join(source.root, "providers.backup.json");
@@ -77,9 +77,21 @@ describe("ai-provider CLI process e2e", () => {
 				OPENAI_API_KEY: SECRET,
 			});
 			expect(tested.code).toBe(0);
-			expect(tested.stdout).toContain('"status": "ok"');
+			expect(tested.stdout).toContain('"status": "available"');
+			expect(tested.stdout).toContain('"status": "skipped"');
 			expect(tested.stdout).not.toContain(SECRET);
 			expect(tested.stderr).not.toContain(SECRET);
+			expect(providerRequests).toEqual([]);
+
+			const liveTested = await runCli(
+				source,
+				["ai-provider", "test", "openai-main", "--live", "--json"],
+				{ OPENAI_API_KEY: SECRET },
+			);
+			expect(liveTested.code).toBe(0);
+			expect(liveTested.stdout).toContain('"status": "ok"');
+			expect(liveTested.stdout).not.toContain(SECRET);
+			expect(liveTested.stderr).not.toContain(SECRET);
 			expect(providerRequests).toEqual([{ path: "/v1/models", auth: `Bearer ${SECRET}` }]);
 
 			const exported = await runCli(
