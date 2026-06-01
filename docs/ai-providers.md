@@ -33,9 +33,9 @@ Runtime projection status:
 
 | Runtime | Status | User launch path |
 | --- | --- | --- |
-| Codex | Enabled | `clawdi runtime render --engine codex --write --activate`, then `codex --profile clawdi-ai-provider` |
-| Hermes | Enabled | `clawdi runtime render --engine hermes --write --activate` uses `hermes config set` |
-| OpenClaw | Render-only | Native activation is blocked until the current provider config contract is pinned |
+| Codex | Enabled | `clawdi runtime apply --engine codex`, then `codex --profile clawdi-ai-provider` |
+| Hermes | Enabled | `clawdi runtime apply --engine hermes` uses `hermes config set` |
+| OpenClaw | Render-only | Native apply is blocked until the current provider config contract is pinned |
 
 OAuth status:
 
@@ -121,7 +121,7 @@ clawdi ai-provider add openai-codex \
 
 clawdi ai-provider connect openai-codex --tool codex
 clawdi ai-provider materialize-auth openai-codex
-clawdi runtime render --engine codex --write --activate
+clawdi runtime apply --engine codex
 codex --profile clawdi-ai-provider
 ```
 
@@ -139,14 +139,12 @@ clawdi ai-provider complete-oauth openai-codex --redirect-url '<browser callback
 OAuth tokens are stored as encrypted provider-auth payloads. They are not printed
 or stored inside the Provider Catalog.
 
-## Activate Codex
+## Apply Codex
 
-Codex activation does not edit your primary `$CODEX_HOME/config.toml`. Clawdi
-writes:
+Codex apply does not edit your primary `$CODEX_HOME/config.toml`. Clawdi writes
+the profile file Codex can read:
 
 ```text
-$CLAWDI_HOME/runtime/codex/ai-providers.codex.toml
-$CLAWDI_HOME/runtime/codex/clawdi-ai-provider.sidecar.json
 $CODEX_HOME/clawdi-ai-provider.config.toml
 ```
 
@@ -165,18 +163,24 @@ Supported contract:
 Codex projection requires Responses-compatible providers. Chat-only providers
 cannot be projected to Codex.
 
-## Activate Hermes
+Preview first:
 
-Hermes activation uses the Hermes CLI instead of rewriting
+```bash
+clawdi runtime apply --engine codex --dry-run
+```
+
+## Apply Hermes
+
+Hermes apply uses the Hermes CLI instead of rewriting
 `~/.hermes/config.yaml`:
 
 ```bash
-clawdi runtime render --engine hermes --write --activate
+clawdi runtime apply --engine hermes --dry-run
+clawdi runtime apply --engine hermes
 ```
 
-Clawdi writes a projection under `$CLAWDI_HOME/runtime/hermes/` and then calls
-`hermes config set` for the provider and default model fields. Existing unrelated
-Hermes config sections, such as MCP servers, are preserved.
+Clawdi calls `hermes config set` for the provider and default model fields.
+Existing unrelated Hermes config sections, such as MCP servers, are preserved.
 
 Supported contract:
 
@@ -184,20 +188,21 @@ Supported contract:
 Hermes Agent >=0.15.1 <0.16.0
 ```
 
-Hermes activation rejects provider IDs with dots until dotted key escaping is
+Hermes apply rejects provider IDs with dots until dotted key escaping is
 verified.
 
 ## OpenClaw Status
 
-OpenClaw projection can be rendered, but activation is intentionally blocked:
+OpenClaw projection can be rendered, but apply is intentionally blocked:
 
 ```bash
 clawdi runtime render --engine openclaw
+clawdi runtime apply --engine openclaw
 ```
 
-`--write --activate` fails with an explicit error until the OpenClaw provider
-config CLI or schema contract is pinned. This avoids shipping guessed native
-config.
+`runtime apply --engine openclaw` fails with an explicit error until the
+OpenClaw provider config CLI or schema contract is pinned. This avoids shipping
+guessed native config.
 
 ## Local No-Auth Endpoint
 
@@ -299,7 +304,7 @@ These are not current user experiences:
 
 - Clawdi-proxied BYOK model requests.
 - Claude Code OAuth through AI Provider.
-- OpenClaw native activation.
+- OpenClaw native apply.
 - Dashboard onboarding UI for AI Providers.
 - A CLI daemon/RPC surface for hosted agents to invoke local materialization.
 - Global `clawdi backup` integration for AI Providers.

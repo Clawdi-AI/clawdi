@@ -134,21 +134,13 @@ describe("ai-provider CLI process e2e", () => {
 				"render",
 				"--engine",
 				"hermes",
-				"--write",
 				"--json",
 			]);
 			expect(rendered.code).toBe(0);
 			expect(rendered.stdout).toContain("ai-providers.hermes.yaml");
 			expect(rendered.stdout).not.toContain(SECRET);
-			const projection = join(
-				destination.clawdiHome,
-				"runtime",
-				"hermes",
-				"ai-providers.hermes.yaml",
-			);
-			expect(existsSync(projection)).toBe(true);
-			expect(readFileSync(projection, "utf8")).toContain('key_env: "OPENAI_API_KEY"');
-			expect(readFileSync(projection, "utf8")).not.toContain(SECRET);
+			expect(rendered.stdout).toContain('key_env: \\"OPENAI_API_KEY\\"');
+			expect(existsSync(join(destination.clawdiHome, "runtime", "hermes"))).toBe(false);
 		} finally {
 			rmSync(source.root, { recursive: true, force: true });
 			rmSync(destination.root, { recursive: true, force: true });

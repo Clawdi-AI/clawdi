@@ -24,7 +24,11 @@ import {
 	aiProviderTestCommand,
 	aiProviderValidateCommand,
 } from "../../src/commands/ai-provider";
-import { runtimeRenderCommand } from "../../src/commands/runtime";
+import {
+	runtimeApplyCommand,
+	runtimeInspectCommand,
+	runtimeRenderCommand,
+} from "../../src/commands/runtime";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
 import { jsonResponse, mockFetch } from "./helpers";
 
@@ -763,7 +767,30 @@ describe("ai-provider commands", () => {
 		}
 	});
 
-	it("renders and activates Codex through a profile file without editing config.toml", async () => {
+	it("dry-runs Codex apply without writing the runtime profile", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
+		} finally {
+			restore();
+		}
+
+		const profilePath = join(codexHome, "clawdi-ai-provider.config.toml");
+		expect(output()).toContain('"dry_run": true');
+		expect(output()).toContain("clawdi-ai-provider.config.toml");
+		expect(output()).toContain("codex --profile clawdi-ai-provider");
+		expect(existsSync(profilePath)).toBe(false);
+	});
+
+	it("applies Codex through a profile file without editing config.toml", async () => {
 		const codexHome = join(tmpHome, ".codex");
 		process.env.CODEX_HOME = codexHome;
 		mkdirSync(codexHome, { recursive: true });
@@ -778,24 +805,67 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeRenderCommand({ engine: "codex", write: true, activate: true, json: true });
+			await runtimeApplyCommand({ engine: "codex", json: true });
 		} finally {
 			restore();
 		}
 
 		const profilePath = join(codexHome, "clawdi-ai-provider.config.toml");
-		const projectionPath = join(tmpHome, ".clawdi", "runtime", "codex", "ai-providers.codex.toml");
 		expect(readFileSync(userConfig, "utf-8")).toBe(originalConfig);
 		expect(readFileSync(profilePath, "utf-8")).toContain('model_provider = "openai-main"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
 		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex <1.0.0");
-		expect(readFileSync(projectionPath, "utf-8")).toBe(readFileSync(profilePath, "utf-8"));
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
+		expect(output()).toContain('"dry_run": false');
+		expect(output()).toContain("codex --profile clawdi-ai-provider");
+		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "codex"))).toBe(false);
 		if (process.platform !== "win32") {
 			expect(statSync(profilePath).mode & 0o777).toBe(0o600);
 		}
+	});
+
+	it("inspects Codex apply state from the native profile path", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const add = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+		} finally {
+			add.restore();
+		}
+
+		const before = captureConsole();
+		try {
+			await runtimeInspectCommand({ json: true });
+		} finally {
+			before.restore();
+		}
+		expect(before.output()).toContain('"engine": "codex"');
+		expect(before.output()).toContain('"applied": false');
+		expect(before.output()).toContain("clawdi-ai-provider.config.toml");
+
+		const apply = captureConsole();
+		try {
+			await runtimeApplyCommand({ engine: "codex", json: true });
+		} finally {
+			apply.restore();
+		}
+
+		const after = captureConsole();
+		try {
+			await runtimeInspectCommand({ json: true });
+		} finally {
+			after.restore();
+		}
+		expect(after.output()).toContain('"engine": "codex"');
+		expect(after.output()).toContain('"applied": true');
 	});
 
 	it("uses Codex native auth for Codex agent profiles", async () => {
@@ -834,7 +904,7 @@ describe("ai-provider commands", () => {
 		}
 	});
 
-	it("renders Hermes projection without mutating Hermes config.yaml", async () => {
+	it("renders Hermes projection without writing files or mutating config.yaml", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
 		const hermesConfig = join(hermesDir, "config.yaml");
@@ -848,24 +918,46 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeRenderCommand({ engine: "hermes", write: true, json: true });
+			await runtimeRenderCommand({ engine: "hermes", json: true });
 		} finally {
 			restore();
 		}
 
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
 		expect(output()).toContain("ai-providers.hermes.yaml");
-		const projectionDir = join(tmpHome, ".clawdi", "runtime", "hermes");
-		const projectionPath = join(projectionDir, "ai-providers.hermes.yaml");
-		expect(existsSync(projectionDir)).toBe(true);
-		expect(readFileSync(projectionPath, "utf-8")).toContain('key_env: "OPENAI_API_KEY"');
-		if (process.platform !== "win32") {
-			expect(statSync(projectionDir).mode & 0o777).toBe(0o700);
-			expect(statSync(projectionPath).mode & 0o777).toBe(0o600);
-		}
+		expect(output()).toContain('key_env: \\"OPENAI_API_KEY\\"');
+		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "hermes"))).toBe(false);
 	});
 
-	it("activates Hermes through hermes config set instead of editing config.yaml directly", async () => {
+	it("dry-runs Hermes apply without calling hermes", async () => {
+		const binDir = join(tmpHome, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const logPath = join(tmpHome, "hermes-calls.log");
+		const hermesPath = join(binDir, "hermes");
+		writeFileSync(hermesPath, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logPath}"\nexit 0\n`, {
+			mode: 0o755,
+		});
+		chmodSync(hermesPath, 0o755);
+		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
+		} finally {
+			restore();
+		}
+
+		expect(output()).toContain('"dry_run": true');
+		expect(output()).toContain("hermes config set providers.openai-main.base_url");
+		expect(existsSync(logPath)).toBe(false);
+	});
+
+	it("applies Hermes through hermes config set instead of editing config.yaml directly", async () => {
 		const binDir = join(tmpHome, "bin");
 		mkdirSync(binDir, { recursive: true });
 		const logPath = join(tmpHome, "hermes-calls.log");
@@ -888,7 +980,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeRenderCommand({ engine: "hermes", write: true, activate: true, json: true });
+			await runtimeApplyCommand({ engine: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -900,7 +992,7 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
 	});
 
-	it("refuses Hermes activation for dotted provider ids before writing files", async () => {
+	it("refuses Hermes apply for dotted provider ids before changing files", async () => {
 		const binDir = join(tmpHome, "bin");
 		mkdirSync(binDir, { recursive: true });
 		const logPath = join(tmpHome, "hermes-calls.log");
@@ -918,9 +1010,9 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(
-				runtimeRenderCommand({ engine: "hermes", write: true, activate: true, json: true }),
-			).rejects.toThrow("dot-path escaping has not been verified");
+			await expect(runtimeApplyCommand({ engine: "hermes", json: true })).rejects.toThrow(
+				"dot-path escaping has not been verified",
+			);
 		} finally {
 			restore();
 		}
@@ -945,7 +1037,7 @@ describe("ai-provider commands", () => {
 		}
 	});
 
-	it("does not write OpenClaw projection files when activation is unsupported", async () => {
+	it("does not write OpenClaw files when apply is unsupported", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -954,9 +1046,9 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(
-				runtimeRenderCommand({ engine: "openclaw", write: true, activate: true, json: true }),
-			).rejects.toThrow("OpenClaw activation is not enabled");
+			await expect(runtimeApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
+				"OpenClaw apply is not enabled",
+			);
 		} finally {
 			restore();
 		}

@@ -465,17 +465,14 @@ aiProviderCmd
 		await aiProviderImportCommand(file, opts);
 	});
 
-const runtimeCmd = program.command("runtime").description("Render AI Provider runtime config");
+const runtimeCmd = program
+	.command("runtime")
+	.description("Render or apply AI Provider runtime config");
 
 runtimeCmd
 	.command("render")
-	.description("Render an engine projection from the AI Provider Catalog")
+	.description("Preview an engine projection from the AI Provider Catalog")
 	.requiredOption("--engine <engine>", "Runtime engine: openclaw, hermes, or codex")
-	.option("--write", "Write Clawdi-owned projection files")
-	.option(
-		"--activate",
-		"Activate through a verified runtime CLI or layering mechanism when available",
-	)
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts) => {
 		const { runtimeRenderCommand } = await import("./commands/runtime.js");
@@ -483,8 +480,19 @@ runtimeCmd
 	});
 
 runtimeCmd
+	.command("apply")
+	.description("Apply AI Provider config to a verified runtime entrypoint")
+	.requiredOption("--engine <engine>", "Runtime engine: openclaw, hermes, or codex")
+	.option("--dry-run", "Preview writes and runtime CLI commands without changing files")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { runtimeApplyCommand } = await import("./commands/runtime.js");
+		await runtimeApplyCommand(opts);
+	});
+
+runtimeCmd
 	.command("inspect")
-	.description("Inspect AI Provider runtime projection state")
+	.description("Inspect AI Provider runtime apply state")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts) => {
 		const { runtimeInspectCommand } = await import("./commands/runtime.js");
