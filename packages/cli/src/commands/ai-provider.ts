@@ -13,6 +13,7 @@ import {
 	isAiProviderApiMode,
 	isAiProviderId,
 	isAiProviderType,
+	isProviderAuthProfileId,
 	isRuntimeEnvName,
 	isSupportedSecretRef,
 	validateAiProviderCatalog,
@@ -27,6 +28,12 @@ import {
 	upsertAiProvider,
 	writeAiProviderCatalog,
 } from "../lib/ai-provider-catalog";
+import {
+	inspectAiProviderAuth,
+	parseAiProviderTestTimeout,
+	probeAiProvider,
+	publicAiProviderAuthStatus,
+} from "../lib/ai-provider-test";
 import {
 	agentCredentialsImportCommand,
 	agentCredentialsMaterializeCommand,
@@ -271,14 +278,6 @@ export async function aiProviderImportCommand(
 	if (!result.valid) {
 		throw new Error(`Imported AI Provider catalog is invalid:\n${result.errors.join("\n")}`);
 	}
-	if (file && opts.restoreSecrets) {
-		restoreEncryptedSecrets(
-			JSON.parse(readFileSync(file, "utf-8")) as unknown,
-			opts.restoreSecrets,
-			opts.out,
-			opts.secretPassphraseEnv,
-		);
-	}
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	let next = catalog;
 	for (const provider of incoming.providers) {
@@ -288,6 +287,14 @@ export async function aiProviderImportCommand(
 		next = { ...next, defaults: { ...next.defaults, ...incoming.defaults } };
 	}
 	writeAiProviderCatalog(next);
+	if (file && opts.restoreSecrets) {
+		restoreEncryptedSecrets(
+			JSON.parse(readFileSync(file, "utf-8")) as unknown,
+			opts.restoreSecrets,
+			opts.out,
+			opts.secretPassphraseEnv,
+		);
+	}
 	if (opts.json) {
 		console.log(JSON.stringify({ imported: incoming.providers.length }, null, 2));
 		return;
@@ -308,15 +315,15 @@ export async function aiProviderTestCommand(
 	if (!validation.valid) {
 		throw new Error(`AI Provider is invalid:\n${validation.errors.join("\n")}`);
 	}
-	const authStatus = inspectAuth(provider.auth);
+	const authStatus = await inspectAiProviderAuth(provider);
 	const shouldProbe = opts.probe !== false;
 	const providerProbe = shouldProbe
-		? await probeProvider(provider, authStatus, Number(opts.timeout ?? 10))
+		? await probeAiProvider(provider, authStatus, parseAiProviderTestTimeout(opts.timeout))
 		: { status: "skipped", detail: "probe disabled" };
 	const result = {
 		provider_id: provider.id,
 		base_url: provider.base_url,
-		auth: publicAuthStatus(authStatus),
+		auth: publicAiProviderAuthStatus(authStatus),
 		model: opts.model ?? provider.default_model ?? null,
 		provider_probe: providerProbe,
 	};
@@ -536,6 +543,11 @@ function parseProfileRef(input: string): { provider: string; profile: string } {
 	const [provider, profile = "default", extra] = input.split("/");
 	if (!provider || extra !== undefined) {
 		throw new Error("Profile auth must use <provider>/<profile>.");
+	}
+	if (!isProviderAuthProfileId(provider) || !isProviderAuthProfileId(profile)) {
+		throw new Error(
+			"Profile auth provider and profile must use lowercase letters, numbers, dots, underscores, or hyphens.",
+		);
 	}
 	return { provider, profile };
 }
@@ -948,137 +960,6 @@ function describeAuth(auth: AiProviderAuth): string {
 	if (auth.type === "oauth_profile") return `oauth:${auth.provider}/${auth.profile}`;
 	if (auth.type === "agent_profile") return `agent:${auth.tool}/${auth.profile}`;
 	return "none";
-}
-
-function inspectAuth(auth: AiProviderAuth): {
-	status: "available" | "missing" | "unknown";
-	detail?: string;
-	value?: string;
-} {
-	if (auth.type === "none") return { status: "available", detail: "no auth" };
-	if (auth.type === "secret_ref" && auth.ref.startsWith("env:")) {
-		const name = auth.ref.slice("env:".length);
-		return process.env[name]
-			? { status: "available", detail: auth.ref, value: process.env[name] }
-			: { status: "missing", detail: auth.ref };
-	}
-	if (auth.type === "api_key" && auth.source === "env" && auth.ref?.startsWith("env:")) {
-		const name = auth.ref.slice("env:".length);
-		return process.env[name]
-			? { status: "available", detail: auth.ref, value: process.env[name] }
-			: { status: "missing", detail: auth.ref };
-	}
-	if (auth.type === "secret_ref" && auth.ref.startsWith("clawdi://")) {
-		return { status: "unknown", detail: "Vault resolution not performed by this local test slice" };
-	}
-	return { status: "unknown", detail: describeAuth(auth) };
-}
-
-function publicAuthStatus(authStatus: ReturnType<typeof inspectAuth>): {
-	status: "available" | "missing" | "unknown";
-	detail?: string;
-} {
-	return { status: authStatus.status, detail: authStatus.detail };
-}
-
-async function probeProvider(
-	provider: AiProvider,
-	authStatus: ReturnType<typeof inspectAuth>,
-	timeoutSeconds: number,
-): Promise<{
-	status: "ok" | "failed" | "skipped";
-	detail: string;
-	url?: string;
-	http_status?: number;
-}> {
-	if (authStatus.status === "missing") {
-		return { status: "skipped", detail: "auth missing" };
-	}
-	if (authStatus.status === "unknown") {
-		return { status: "skipped", detail: "auth cannot be resolved locally" };
-	}
-	const endpoint = providerProbeEndpoint(provider);
-	const headers = providerProbeHeaders(provider, authStatus.value);
-	const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	try {
-		const res = await fetch(endpoint, {
-			method: "GET",
-			headers,
-			signal: controller.signal,
-		});
-		if (res.ok) {
-			return {
-				status: "ok",
-				detail: "metadata endpoint reachable",
-				url: redactUrl(endpoint),
-				http_status: res.status,
-			};
-		}
-		return {
-			status: "failed",
-			detail: `metadata endpoint returned HTTP ${res.status}`,
-			url: redactUrl(endpoint),
-			http_status: res.status,
-		};
-	} catch (error) {
-		const err = error as { name?: string; message?: string };
-		return {
-			status: "failed",
-			detail:
-				err.name === "AbortError" ? "metadata probe timed out" : (err.message ?? String(error)),
-			url: redactUrl(endpoint),
-		};
-	} finally {
-		clearTimeout(timer);
-	}
-}
-
-function providerProbeEndpoint(provider: AiProvider): string {
-	const base = provider.base_url.replace(/\/+$/, "");
-	if (provider.type === "anthropic") {
-		return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
-	}
-	if (provider.type === "gemini") {
-		const key = authEnvValue(provider);
-		const url = new URL(base.endsWith("/models") ? base : `${base}/models`);
-		if (key) url.searchParams.set("key", key);
-		return url.toString();
-	}
-	return `${base}/models`;
-}
-
-function providerProbeHeaders(
-	provider: AiProvider,
-	key: string | undefined,
-): Record<string, string> {
-	if (!key) return {};
-	if (provider.type === "anthropic") {
-		return {
-			"x-api-key": key,
-			"anthropic-version": "2023-06-01",
-		};
-	}
-	if (provider.type === "gemini") return {};
-	return { Authorization: `Bearer ${key}` };
-}
-
-function authEnvValue(provider: AiProvider): string | undefined {
-	const auth = provider.auth;
-	if (auth.type === "secret_ref" && auth.ref.startsWith("env:")) {
-		return process.env[auth.ref.slice("env:".length)];
-	}
-	if (auth.type === "api_key" && auth.source === "env" && auth.ref?.startsWith("env:")) {
-		return process.env[auth.ref.slice("env:".length)];
-	}
-	return undefined;
-}
-
-function redactUrl(input: string): string {
-	const url = new URL(input);
-	if (url.searchParams.has("key")) url.searchParams.set("key", "redacted");
-	return url.toString();
 }
 
 function redactRef(ref: string): string {

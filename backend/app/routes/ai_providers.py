@@ -119,7 +119,23 @@ async def delete_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    provider.archived_at = datetime.now(UTC)
+    archived_at = datetime.now(UTC)
+    provider.archived_at = archived_at
+    payloads = (
+        (
+            await db.execute(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id == auth.user_id,
+                    AiProviderAuthPayload.provider_id == provider_id,
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payload in payloads:
+        payload.archived_at = archived_at
     await db.commit()
     return AiProviderDeleteResponse(status="deleted", provider_id=provider_id)
 
@@ -427,32 +443,46 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")
     if body.type == "custom_openai_compatible" and body.api_mode is None:
         errors.append("custom_openai_compatible requires api_mode")
-    errors.extend(_validate_auth(body.auth))
+    errors.extend(_validate_auth(body.provider_id, body.auth))
     return errors
 
 
-def _validate_auth(auth: AiProviderAuth) -> list[str]:
+def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
     errors: list[str] = []
     if auth.value is not None:
         errors.append("auth must not include plaintext value")
     if auth.type == "secret_ref":
-        if not auth.ref or not (auth.ref.startswith("env:") or auth.ref.startswith("clawdi://")):
+        if not auth.ref or not (_is_env_ref(auth.ref) or auth.ref.startswith("clawdi://")):
             errors.append("secret_ref auth requires env: or clawdi:// ref")
     elif auth.type == "api_key":
         if auth.source not in {"env", "vault", "managed"}:
             errors.append("api_key auth requires source env, vault, or managed")
-        if auth.source == "env" and (not auth.ref or not auth.ref.startswith("env:")):
+        if auth.source == "env" and (not auth.ref or not _is_env_ref(auth.ref)):
             errors.append("api_key env auth requires env: ref")
         if auth.source == "vault" and (not auth.ref or not auth.ref.startswith("clawdi://")):
             errors.append("api_key vault auth requires clawdi:// ref")
         if auth.source == "managed" and not auth.payload_ref:
             errors.append("api_key managed auth requires payload_ref")
+        if (
+            auth.source == "managed"
+            and auth.payload_ref
+            and not _is_payload_ref(auth.payload_ref, provider_id)
+        ):
+            errors.append("api_key managed auth has invalid payload_ref")
     elif auth.type == "oauth_profile":
         if not auth.provider or not auth.profile:
             errors.append("oauth_profile auth requires provider and profile")
+        elif not _is_profile_id(auth.provider) or not _is_profile_id(auth.profile):
+            errors.append("oauth_profile auth has invalid provider or profile")
+        if auth.payload_ref and not _is_payload_ref(auth.payload_ref, provider_id):
+            errors.append("oauth_profile auth has invalid payload_ref")
     elif auth.type == "agent_profile":
         if not auth.tool or not auth.profile:
             errors.append("agent_profile auth requires tool and profile")
+        elif not _is_profile_id(auth.tool) or not _is_profile_id(auth.profile):
+            errors.append("agent_profile auth has invalid tool or profile")
+        if auth.payload_ref and not _is_payload_ref(auth.payload_ref, provider_id):
+            errors.append("agent_profile auth has invalid payload_ref")
     return errors
 
 
@@ -530,3 +560,21 @@ def _normalize_profile(input: str) -> str:
 
 def _is_runtime_env_name(input: str) -> bool:
     return re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", input) is not None
+
+
+def _is_env_ref(input: str) -> bool:
+    return re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", input) is not None
+
+
+def _is_profile_id(input: str) -> bool:
+    return re.fullmatch(r"[a-z][a-z0-9._-]{0,119}", input) is not None
+
+
+def _is_payload_ref(input: str, provider_id: str) -> bool:
+    return (
+        re.fullmatch(
+            rf"ai-provider-auth://{re.escape(provider_id)}/[a-z][a-z0-9._-]{{0,119}}",
+            input,
+        )
+        is not None
+    )

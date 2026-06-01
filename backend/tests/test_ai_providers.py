@@ -100,6 +100,46 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert plaintext_extra.status_code == 422, plaintext_extra.text
     assert "sk-should-not-be-here" not in plaintext_extra.text
 
+    wrong_payload_ref = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-main",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {
+                "type": "api_key",
+                "source": "managed",
+                "payload_ref": "ai-provider-auth://other/default",
+            },
+        },
+    )
+    assert wrong_payload_ref.status_code == 422, wrong_payload_ref.text
+    assert "invalid payload_ref" in wrong_payload_ref.text
+
+    bad_env_ref = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-main",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:"},
+        },
+    )
+    assert bad_env_ref.status_code == 422, bad_env_ref.text
+    assert "secret_ref auth" in bad_env_ref.text
+
+    bad_agent_profile = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-main",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "agent_profile", "tool": "Codex", "profile": "../default"},
+        },
+    )
+    assert bad_agent_profile.status_code == 422, bad_agent_profile.text
+    assert "agent_profile auth has invalid" in bad_agent_profile.text
+
     public_no_auth = await client.post(
         "/api/ai-providers",
         json={
@@ -232,3 +272,27 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
         "provider": None,
         "profile": "default",
     }
+
+    deleted = await client.delete("/api/ai-providers/openai-main")
+    assert deleted.status_code == 200, deleted.text
+
+    recreated = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-main",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {
+                "type": "api_key",
+                "source": "managed",
+                "payload_ref": "ai-provider-auth://openai-main/default",
+            },
+        },
+    )
+    assert recreated.status_code == 200, recreated.text
+
+    stale_resolve = await client.post(
+        "/api/ai-providers/openai-main/auth/resolve",
+        json={"profile": "default"},
+    )
+    assert stale_resolve.status_code == 404, stale_resolve.text

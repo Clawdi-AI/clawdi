@@ -618,6 +618,21 @@ Provider IDs are user-owned stable references. They should match:
 ^[a-z][a-z0-9._-]{1,62}$
 ```
 
+Provider auth profile identifiers are separate from the slash-delimited
+`<provider-or-tool>/<profile>` CLI syntax. The individual provider/tool and
+profile segments should match:
+
+```text
+^[a-z][a-z0-9._-]{0,119}$
+```
+
+Managed provider-auth payload refs are internal pointers and must match the
+owning provider ID:
+
+```text
+ai-provider-auth://<provider-id>/<profile>
+```
+
 Provider types for v1:
 
 ```text
@@ -1128,7 +1143,7 @@ Suggested provider-auth shape:
     "type": "agent_profile",
     "tool": "codex",
     "profile": "default",
-    "payload_ref": "encrypted:redacted"
+    "payload_ref": "ai-provider-auth://openai-codex/default"
   }
 }
 ```
@@ -2694,6 +2709,122 @@ User scenario coverage in this slice:
 10. **Unsupported or unverified native activation**: covered by tests proving
     OpenClaw activation and dotted Hermes activation fail before writing managed
     files or invoking runtime CLIs.
+11. **Remote invocation readiness**: current command handlers are still a
+    Commander-facing adapter. They mix catalog I/O, stdout formatting,
+    confirmation prompts, backend calls, and external runtime CLI execution.
+    Before adding an RPC surface, the behavior should move behind deeper
+    modules with structured inputs/outputs so Commander and RPC become two
+    adapters over the same implementation.
+
+## CLI Remote Control And Daemon RPC
+
+Clawdi has three different "remote call" contexts, and they should not share
+one vague mechanism:
+
+1. **Cloud metadata calls**: dashboard and backend read/write account-global AI
+   Providers through `/api/ai-providers`. This is the right path for provider
+   metadata and encrypted payload custody.
+2. **Runtime-local materialization**: a local laptop, self-hosted machine, or
+   hosted runtime needs to render files, invoke runtime CLIs, inspect env refs,
+   or materialize auth files. This must execute where the runtime filesystem
+   and secret delivery context live.
+3. **Agent tool calls**: `clawdi mcp` exposes agent-facing tools over MCP. MCP
+   is not the product control plane for mutating runtime/provider config.
+
+V1 should keep remote execution simple: Cloud or hosted deployment code can
+invoke the installed CLI binary inside the target runtime environment for
+one-shot operations such as:
+
+```bash
+clawdi ai-provider import /mnt/config/provider-catalog.json --replace --json
+clawdi runtime render --engine hermes --write --activate --json
+clawdi runtime inspect --json
+```
+
+That is sufficient for deployment-time materialization and avoids adding a new
+daemon security surface before the Module boundaries are ready.
+
+A daemon RPC surface is still the right direction for later local/hosted
+control-plane operations, but it should be a narrow **CLI Control RPC**, not
+"remote shell over CLI":
+
+1. It must expose allowlisted methods, not arbitrary Commander command strings.
+2. It must return typed JSON results, warnings, diffs, and redacted diagnostics.
+3. It must never return plaintext provider secrets except to a method whose
+   explicit purpose is local materialization or direct provider probing inside
+   the runtime trust boundary.
+4. It must distinguish secret resolution calls from model traffic. RPC may ask
+   the CLI to resolve a `clawdi://` ref or managed provider payload, but model
+   calls still go runtime to provider.
+5. It must be local-first: Unix domain socket on macOS/Linux and named pipe on
+   Windows by default. Loopback TCP should require an explicit flag such as
+   `--listen 127.0.0.1:<port>` plus a bearer token stored under
+   `$CLAWDI_HOME/daemon/control-token`.
+6. It must never bind to public interfaces by default. If a hosted runtime
+   exposes a control channel, Cloud should reach it through the hosting
+   control plane or a sidecar-local socket, not through an internet-facing
+   listener.
+7. Mutating methods need idempotency keys, dry-run support, and redacted
+   before/after plans. Runtime activation remains separate from render.
+8. Interactive OAuth/device-code flows should be modeled as long-running RPC
+   jobs with states such as `pending_user`, `completed`, `expired`, and
+   `failed`; the RPC should not block an HTTP request for the full user flow.
+
+Suggested first RPC method set:
+
+```text
+aiProvider.list
+aiProvider.get
+aiProvider.upsert
+aiProvider.remove
+aiProvider.validate
+aiProvider.test
+runtime.render
+runtime.inspect
+runtime.activate
+providerAuth.importProfile
+providerAuth.materialize
+doctor.aiProvider
+```
+
+Methods such as `providerAuth.resolvePlaintext` should not exist as generic
+RPC calls. Plaintext can be used internally by `aiProvider.test`,
+`runtime.activate`, or `providerAuth.materialize` after authorization and
+redaction rules are applied.
+
+Implementation shape:
+
+1. Extract a deep `ai-provider-service` module for catalog load/save,
+   validation, imports, export, direct test planning, and redacted results.
+2. Extract a `runtime-materializer` module for projection, write, inspect,
+   activation planning, and runtime CLI execution.
+3. Extract a `provider-auth-service` module for env/Vault/managed payload
+   resolution, profile import/materialization, and OAuth job state.
+4. Keep Commander as a thin adapter that parses flags, calls those modules,
+   handles prompts, and formats terminal output.
+5. Add a separate `daemon control` adapter that speaks JSON-RPC over the local
+   control transport and calls the same modules. Do not route RPC through
+   Commander or shell command parsing.
+6. Keep the existing sync daemon loop focused on sync/SSE/heartbeats. The
+   control RPC can live in the same installed daemon process later, but it
+   should be implemented as a separate Module with its own auth token, socket,
+   logs, and tests. If that makes lifecycle coupling messy, ship it as
+   `clawdi control run` first and have `clawdi daemon install` opt into it.
+
+Security tests required before enabling RPC:
+
+1. Socket/token permissions prevent another local user from invoking mutating
+   methods.
+2. Loopback mode rejects missing/invalid bearer tokens and sends no CORS
+   wildcard headers.
+3. RPC responses redact env values, Vault values, managed API keys, OAuth
+   tokens, and imported credential file contents.
+4. Mutating methods can be dry-run without writing files or invoking runtime
+   CLIs.
+5. `runtime.activate` cannot patch primary runtime config without the same
+   explicit activation/patched-native controls as the CLI command.
+6. A failed or cancelled long-running OAuth/materialization job leaves no
+   partial credential files unless a documented backup/rollback path exists.
 
 ## OSS Task Breakdown
 
@@ -2750,6 +2881,14 @@ User scenario coverage in this slice:
     rewrite of user BYOK providers.
 27. Update user docs to state that BYOK model requests go directly to providers,
     while `clawdi://` secret refs may resolve through Clawdi Vault.
+28. Extract AI Provider command behavior into deep service modules before
+    adding remote invocation.
+29. Add a local CLI Control RPC adapter over Unix domain socket / named pipe
+    with an explicit loopback TCP opt-in, allowlisted methods, token auth,
+    dry-run support, and redacted JSON responses.
+30. Teach hosted deployment code to prefer one-shot CLI invocation for
+    deployment-time materialization, then migrate to Control RPC only when
+    runtime-local long-lived control is needed.
 
 ## Deferred Questions
 

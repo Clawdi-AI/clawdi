@@ -5,6 +5,7 @@ import { validateAiProviderCatalog } from "@clawdi/shared";
 import { getClawdiDir } from "./config";
 
 const CATALOG_MODE = 0o600;
+const CATALOG_DIR_MODE = 0o700;
 
 export function aiProviderCatalogPath(): string {
 	return join(getClawdiDir(), "ai-providers", "catalog.json");
@@ -40,9 +41,11 @@ export function writeAiProviderCatalog(catalog: AiProviderCatalog): void {
 		throw new Error(`Refusing to write invalid AI Provider catalog:\n${result.errors.join("\n")}`);
 	}
 	const path = aiProviderCatalogPath();
-	mkdirSync(dirname(path), { recursive: true });
+	const dir = dirname(path);
+	mkdirSync(dir, { recursive: true, mode: CATALOG_DIR_MODE });
 	writeFileSync(path, `${JSON.stringify(catalog, null, 2)}\n`, { mode: CATALOG_MODE });
 	try {
+		chmodSync(dir, CATALOG_DIR_MODE);
 		chmodSync(path, CATALOG_MODE);
 	} catch {
 		// Best effort on platforms without POSIX modes.

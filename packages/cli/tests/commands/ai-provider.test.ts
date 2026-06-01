@@ -212,6 +212,124 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain("sk-test-secret");
 	});
 
+	it("resolves clawdi vault refs before direct provider probes without printing secrets", async () => {
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: /^\/api\/vault\/resolve/,
+				response: () =>
+					jsonResponse({
+						reference: "clawdi://default/openai/api_key",
+						source_project_id: "project-1",
+						source_alias: "default",
+						value: "sk-vault-secret",
+					}),
+			},
+			{
+				method: "GET",
+				path: "/v1/models",
+				response: () => jsonResponse({ data: [] }),
+			},
+		]);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "clawdi://default/openai/api_key",
+				runtimeEnv: "OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderTestCommand("openai-main", { json: true });
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(captured.map((request) => request.path)).toContain(
+			"/api/vault/resolve?vault_slug=default&section=openai&field=api_key",
+		);
+		const providerProbe = captured.find((request) => request.path === "/v1/models");
+		expect(providerProbe?.headers.authorization).toBe("Bearer sk-vault-secret");
+		expect(output()).toContain('"status": "ok"');
+		expect(output()).toContain("clawdi://...");
+		expect(output()).not.toContain("sk-vault-secret");
+	});
+
+	it("resolves managed provider api keys through the CLI-only backend route", async () => {
+		const catalogPath = join(tmpHome, "providers.json");
+		writeFileSync(
+			catalogPath,
+			JSON.stringify({
+				schema_version: 1,
+				providers: [
+					{
+						id: "openai-main",
+						type: "openai",
+						base_url: "https://api.openai.com/v1",
+						default_model: "gpt-5.2",
+						auth: {
+							type: "api_key",
+							source: "managed",
+							payload_ref: "ai-provider-auth://openai-main/default",
+						},
+						runtime_env_name: "OPENAI_API_KEY",
+					},
+				],
+			}),
+		);
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-main/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-main",
+						auth_type: "api_key",
+						payload_ref: "ai-provider-auth://openai-main/default",
+						value: "sk-managed-secret",
+						profile: "default",
+					}),
+			},
+			{
+				method: "GET",
+				path: "/v1/models",
+				response: () => jsonResponse({ data: [] }),
+			},
+		]);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(catalogPath, { json: true });
+			await aiProviderTestCommand("openai-main", { json: true });
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(captured[0].body).toEqual({ profile: "default" });
+		const providerProbe = captured.find((request) => request.path === "/v1/models");
+		expect(providerProbe?.headers.authorization).toBe("Bearer sk-managed-secret");
+		expect(output()).toContain('"status": "ok"');
+		expect(output()).not.toContain("sk-managed-secret");
+	});
+
+	it("rejects invalid provider probe timeouts", async () => {
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await expect(aiProviderTestCommand("openai-main", { timeout: "nope" })).rejects.toThrow(
+				"--timeout must be a positive number",
+			);
+		} finally {
+			restore();
+		}
+	});
+
 	it("materializes a provider-bound Codex auth profile", async () => {
 		mkdirSync(join(tmpHome, ".codex"), { recursive: true });
 		const codexAuthPath = join(tmpHome, ".codex", "auth.json");
@@ -481,6 +599,40 @@ describe("ai-provider commands", () => {
 		expect(backup).not.toContain("sk-backup-secret");
 		expect(output()).not.toContain("sk-backup-secret");
 		expect(readFileSync(envPath, "utf-8")).toBe("OPENAI_API_KEY='sk-backup-secret'\n");
+	});
+
+	it("does not restore encrypted secrets when catalog import conflicts", async () => {
+		process.env.OPENAI_API_KEY = "sk-backup-secret";
+		process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE = "correct horse battery staple";
+		const backupPath = join(tmpHome, "providers.backup.json");
+		const envPath = join(tmpHome, "providers.env");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderExportCommand({
+				out: backupPath,
+				includeSecrets: true,
+				secretPassphrase: true,
+			});
+			await expect(
+				aiProviderImportCommand(backupPath, {
+					restoreSecrets: "env-file",
+					out: envPath,
+					json: true,
+				}),
+			).rejects.toThrow("already exists");
+		} finally {
+			restore();
+			delete process.env.OPENAI_API_KEY;
+			delete process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE;
+		}
+
+		expect(existsSync(envPath)).toBe(false);
 	});
 
 	it("refuses secret export without explicit passphrase encryption", async () => {
