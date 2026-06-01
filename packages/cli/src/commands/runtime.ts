@@ -5,17 +5,12 @@ import chalk from "chalk";
 import { getCodexHome } from "../adapters/paths";
 import { aiProviderCatalogPath, readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import {
+	buildRuntimeProjection,
 	CODEX_PROFILE_NAME,
 	RUNTIME_PROJECTION_CONTRACTS,
 	type RuntimeEngine,
 	type RuntimeProjection,
-	renderRuntimeProjection,
 } from "../lib/ai-provider-projection";
-
-interface RuntimeRenderOptions {
-	engine?: string;
-	json?: boolean;
-}
 
 interface RuntimeApplyOptions {
 	engine?: string;
@@ -48,25 +43,11 @@ interface RuntimeApplyPlan {
 	warnings: string[];
 }
 
-export async function runtimeRenderCommand(opts: RuntimeRenderOptions = {}): Promise<void> {
-	const engine = parseEngine(opts.engine);
-	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	const projection = renderRuntimeProjection(engine, catalog);
-	if (opts.json) {
-		console.log(JSON.stringify(projection, null, 2));
-		return;
-	}
-	for (const file of projection.files) {
-		console.log(chalk.bold(`# ${file.path}`));
-		process.stdout.write(file.content);
-	}
-}
-
 export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promise<void> {
 	const engine = parseEngine(opts.engine);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	validateRuntimeApply(engine, catalog);
-	const projection = renderRuntimeProjection(engine, catalog);
+	const projection = buildRuntimeProjection(engine, catalog);
 	const plan = buildRuntimeApplyPlan(engine, catalog, projection);
 	if (!opts.dryRun) applyRuntimePlan(plan);
 	printRuntimeApplyPlan(plan, Boolean(opts.dryRun), Boolean(opts.json));
@@ -123,11 +104,11 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 	});
 	for (const engine of ["openclaw", "hermes", "codex"] as const) {
 		try {
-			renderRuntimeProjection(engine, catalog);
-			checks.push({ name: `Projection: ${engine}`, ok: true });
+			buildRuntimeProjection(engine, catalog);
+			checks.push({ name: `Runtime config: ${engine}`, ok: true });
 		} catch (error) {
 			checks.push({
-				name: `Projection: ${engine}`,
+				name: `Runtime config: ${engine}`,
 				ok: false,
 				detail: error instanceof Error ? error.message : String(error),
 			});
@@ -172,7 +153,7 @@ function validateRuntimeApply(
 function buildRuntimeApplyPlan(
 	engine: RuntimeEngine,
 	catalog: ReturnType<typeof readAiProviderCatalog>,
-	projection: ReturnType<typeof renderRuntimeProjection>,
+	projection: ReturnType<typeof buildRuntimeProjection>,
 ): RuntimeApplyPlan {
 	if (engine === "codex") return buildCodexApplyPlan(projection);
 	const defaultProviderId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
@@ -210,7 +191,7 @@ function buildRuntimeApplyPlan(
 }
 
 function buildCodexApplyPlan(
-	projection: ReturnType<typeof renderRuntimeProjection>,
+	projection: ReturnType<typeof buildRuntimeProjection>,
 ): RuntimeApplyPlan {
 	const file = projection.files.find((entry) => entry.path.endsWith(".codex.toml"));
 	if (!file) throw new Error("Codex projection did not include a profile TOML file.");
@@ -332,8 +313,8 @@ function inspectRuntime(engine: RuntimeEngine): {
 	return {
 		engine,
 		contract: RUNTIME_PROJECTION_CONTRACTS[engine],
-		native_target: "not enabled",
-		apply_status: "render only",
+		native_target: "OpenClaw native config contract not pinned",
+		apply_status: "apply blocked",
 		applied: null,
 	};
 }

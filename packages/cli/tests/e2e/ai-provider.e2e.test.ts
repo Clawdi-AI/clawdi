@@ -42,7 +42,7 @@ afterAll(() => {
 });
 
 describe("ai-provider CLI process e2e", () => {
-	it("adds, optionally probes, encrypts, restores, and renders a provider without leaking secrets", async () => {
+	it("adds, optionally probes, encrypts, restores, and dry-runs runtime apply without leaking secrets", async () => {
 		const source = createFixture();
 		const destination = createFixture();
 		const backupPath = join(source.root, "providers.backup.json");
@@ -129,17 +129,18 @@ describe("ai-provider CLI process e2e", () => {
 			expect(imported.stderr).not.toContain(SECRET);
 			expect(readFileSync(restoredEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
 
-			const rendered = await runCli(destination, [
+			const dryRun = await runCli(destination, [
 				"runtime",
-				"render",
+				"apply",
 				"--engine",
 				"hermes",
+				"--dry-run",
 				"--json",
 			]);
-			expect(rendered.code).toBe(0);
-			expect(rendered.stdout).toContain("ai-providers.hermes.yaml");
-			expect(rendered.stdout).not.toContain(SECRET);
-			expect(rendered.stdout).toContain('key_env: \\"OPENAI_API_KEY\\"');
+			expect(dryRun.code).toBe(0);
+			expect(dryRun.stdout).toContain('"dry_run": true');
+			expect(dryRun.stdout).toContain("hermes config set providers.openai-main.key_env");
+			expect(dryRun.stdout).not.toContain(SECRET);
 			expect(existsSync(join(destination.clawdiHome, "runtime", "hermes"))).toBe(false);
 		} finally {
 			rmSync(source.root, { recursive: true, force: true });

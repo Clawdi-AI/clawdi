@@ -1,9 +1,9 @@
 # AI Providers
 
 AI Provider is Clawdi's portable model-provider layer. It stores provider
-metadata, auth references, and runtime capabilities once, then renders the
-runtime-specific config that Codex, Hermes, OpenClaw, or hosted agent setup can
-consume.
+metadata, auth references, and runtime capabilities once, then applies the
+runtime-specific config changes that Codex, Hermes, OpenClaw, or hosted agent
+setup can consume.
 
 The important boundary: Clawdi does not proxy BYOK model traffic. Runtime tools
 call OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your custom endpoint
@@ -35,7 +35,7 @@ Runtime projection status:
 | --- | --- | --- |
 | Codex | Enabled | `clawdi runtime apply --engine codex`, then `codex --profile clawdi-ai-provider` |
 | Hermes | Enabled | `clawdi runtime apply --engine hermes` uses `hermes config set` |
-| OpenClaw | Render-only | Native apply is blocked until the current provider config contract is pinned |
+| OpenClaw | Blocked | Native apply is blocked until the current provider config contract is pinned |
 
 OAuth status:
 
@@ -193,10 +193,10 @@ verified.
 
 ## OpenClaw Status
 
-OpenClaw projection can be rendered, but apply is intentionally blocked:
+OpenClaw apply is intentionally blocked:
 
 ```bash
-clawdi runtime render --engine openclaw
+clawdi runtime apply --engine openclaw --dry-run
 clawdi runtime apply --engine openclaw
 ```
 

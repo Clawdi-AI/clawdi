@@ -467,17 +467,7 @@ aiProviderCmd
 
 const runtimeCmd = program
 	.command("runtime")
-	.description("Render or apply AI Provider runtime config");
-
-runtimeCmd
-	.command("render")
-	.description("Preview an engine projection from the AI Provider Catalog")
-	.requiredOption("--engine <engine>", "Runtime engine: openclaw, hermes, or codex")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts) => {
-		const { runtimeRenderCommand } = await import("./commands/runtime.js");
-		await runtimeRenderCommand(opts);
-	});
+	.description("Apply or inspect AI Provider runtime config");
 
 runtimeCmd
 	.command("apply")

@@ -24,11 +24,7 @@ import {
 	aiProviderTestCommand,
 	aiProviderValidateCommand,
 } from "../../src/commands/ai-provider";
-import {
-	runtimeApplyCommand,
-	runtimeInspectCommand,
-	runtimeRenderCommand,
-} from "../../src/commands/runtime";
+import { runtimeApplyCommand, runtimeInspectCommand } from "../../src/commands/runtime";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
 import { jsonResponse, mockFetch } from "./helpers";
 
@@ -759,9 +755,9 @@ describe("ai-provider commands", () => {
 				runtimeEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(runtimeRenderCommand({ engine: "hermes", json: true })).rejects.toThrow(
-				"does not have a verified runtime projection",
-			);
+			await expect(
+				runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true }),
+			).rejects.toThrow("does not have a verified runtime projection");
 		} finally {
 			restore();
 		}
@@ -877,17 +873,17 @@ describe("ai-provider commands", () => {
 				auth: "agent:codex/default",
 				json: true,
 			});
-			await runtimeRenderCommand({ engine: "codex" });
+			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
 
-		expect(output()).toContain('model_provider = "openai"');
+		expect(output()).toContain('model_provider = \\"openai\\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
 
-	it("rejects Codex projection for chat-only providers", async () => {
+	it("rejects Codex apply for chat-only providers", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openrouter-main", {
@@ -896,15 +892,15 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENROUTER_API_KEY",
 				json: true,
 			});
-			await expect(runtimeRenderCommand({ engine: "codex", json: true })).rejects.toThrow(
-				"Responses-compatible providers only",
-			);
+			await expect(
+				runtimeApplyCommand({ engine: "codex", dryRun: true, json: true }),
+			).rejects.toThrow("Responses-compatible providers only");
 		} finally {
 			restore();
 		}
 	});
 
-	it("renders Hermes projection without writing files or mutating config.yaml", async () => {
+	it("dry-runs Hermes apply without writing files or mutating config.yaml", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
 		const hermesConfig = join(hermesDir, "config.yaml");
@@ -918,14 +914,14 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeRenderCommand({ engine: "hermes", json: true });
+			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
 
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
-		expect(output()).toContain("ai-providers.hermes.yaml");
-		expect(output()).toContain('key_env: \\"OPENAI_API_KEY\\"');
+		expect(output()).toContain('"dry_run": true');
+		expect(output()).toContain("hermes config set providers.openai-main.key_env");
 		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "hermes"))).toBe(false);
 	});
 
@@ -1021,7 +1017,7 @@ describe("ai-provider commands", () => {
 		expect(existsSync(logPath)).toBe(false);
 	});
 
-	it("requires default_model before rendering runtime projections", async () => {
+	it("requires default_model before runtime apply", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -1029,9 +1025,9 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(runtimeRenderCommand({ engine: "openclaw", json: true })).rejects.toThrow(
-				"requires default_model",
-			);
+			await expect(
+				runtimeApplyCommand({ engine: "codex", dryRun: true, json: true }),
+			).rejects.toThrow("requires default_model");
 		} finally {
 			restore();
 		}

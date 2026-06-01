@@ -87,14 +87,15 @@ were likely contracts. The implementation plan must correct that:
 3. Audit copy must distinguish direct model traffic from secret resolution.
    `clawdi://` refs may call Clawdi Vault even though BYOK model calls bypass
    Clawdi Cloud.
-4. Runtime adapters must not treat "render" as "edit the user's primary
-   runtime config." Rendering is pure projection; `runtime apply --dry-run`
-   previews native writes/commands; `runtime apply` is the runtime-specific
-   step that makes config effective.
+4. Runtime adapters must not edit the user's primary runtime config by
+   default. Projection is an internal pure transformation; `runtime apply
+   --dry-run` previews native writes/commands, and `runtime apply` is the
+   runtime-specific step that makes config effective.
 5. Hermes apply must use verified runtime CLI commands and preserve unrelated
    settings such as `mcp_servers.clawdi` from `clawdi setup`.
-6. Drift metadata must be sidecar by default; native config files should not
-   receive Clawdi metadata keys unless the pinned runtime schema allows them.
+6. Drift metadata is deferred until the runtime activation path needs it.
+   Native config files should not receive Clawdi metadata keys unless the
+   pinned runtime schema allows them.
 7. Gateway is represented only as an explicit Clawdi-managed provider. It is
    not an automatic fallback that rewrites user BYOK providers.
 
@@ -186,8 +187,9 @@ The user-visible outcomes:
 
 Product success criteria:
 
-1. A user adds `openai-main` once and renders Codex, OpenClaw, and Hermes
-   config from the same catalog.
+1. A user adds `openai-main` once and applies Codex and Hermes config from the
+   same catalog. OpenClaw apply stays blocked until its native contract is
+   pinned.
 2. A user migrates an existing Hermes or OpenClaw provider config into the
    catalog, then regenerates equivalent runtime config.
 3. A user rotates `OPENAI_API_KEY` without editing Codex, OpenClaw, or Hermes
@@ -209,8 +211,8 @@ UX principles:
 
 1. The primary user concept is "AI Provider", not "BYOK config".
 2. Provider ID is the stable handle users and runtimes reference.
-3. The happy path should be one provider add, one direct test, one runtime
-   render.
+3. The happy path should be one provider add, one direct test, and one runtime
+   apply.
 4. Every command that could activate or patch runtime config should support
    dry-run and show a redacted diff before writing.
 5. Missing secrets should be actionable: name the missing ref and where the
@@ -327,10 +329,9 @@ Expected product behavior:
    explicit secret target or skips the plaintext secret while preserving
    provider metadata.
 4. Provider IDs are derived from existing provider keys where possible.
-5. The user can render and activate OpenClaw config from the imported catalog
-   without retyping provider details. OpenClaw activation should use
-   `OPENCLAW_CONFIG_PATH` or `$include` before any native config patch is
-   considered.
+5. The user can import OpenClaw config into the catalog without retyping
+   provider details. OpenClaw activation stays disabled until a verified
+   `OPENCLAW_CONFIG_PATH`, `$include`, CLI, or schema contract is pinned.
 
 ### Flow 3: User Rotates A Provider Key
 
@@ -375,7 +376,7 @@ Expected product behavior:
 3. Restore recreates the catalog.
 4. `validate` passes schema checks but reports missing secret refs until the
    user provides them or logs in for Vault-backed refs.
-5. Once the user sets the env vars, `test` and `runtime render` work normally.
+5. Once the user sets the env vars, `test` and `runtime apply --dry-run` work normally.
 
 Optional encrypted secret backup:
 
@@ -511,7 +512,7 @@ clawdi run --env-file .env.clawdi -- hermes
 Expected product behavior:
 
 1. The catalog stores `auth.ref = clawdi://default/openai/api_key`.
-2. `runtime render` emits engine config that expects `OPENAI_API_KEY` or the
+2. `runtime apply --dry-run` emits engine config that expects `OPENAI_API_KEY` or the
    runtime's verified secret-ref equivalent.
 3. `clawdi run` resolves the `clawdi://` ref through Clawdi Vault and injects
    `OPENAI_API_KEY` into the Hermes process.
@@ -582,7 +583,7 @@ codex --profile clawdi-ai-provider
 
 Expected product behavior:
 
-1. `runtime render` emits deterministic Codex TOML with
+1. `runtime apply --dry-run` emits deterministic Codex TOML with
    `wire_api = "responses"` and an `env_key`, or uses Codex native OpenAI auth
    when the provider auth is `agent:codex/<profile>`.
 2. `runtime apply --dry-run` previews the profile file write.
@@ -597,12 +598,12 @@ Expected product behavior:
 
 Common failure states should be explicit and recoverable:
 
-1. **No catalog**: `runtime render` explains that no Provider Catalog exists
+1. **No catalog**: `runtime apply --dry-run` explains that no Provider Catalog exists
    and suggests `clawdi ai-provider add`.
 2. **Missing env ref**: `test` and `runtime inspect` show
    `env:OPENAI_API_KEY` is missing and do not make a network call.
 3. **Bad base URL**: `validate` fails before writing runtime config.
-4. **Unsupported projection**: `runtime render --engine hermes` reports which
+4. **Unsupported projection**: `runtime apply --engine hermes --dry-run` reports which
    provider field cannot be represented in Hermes config.
 5. **Native config drift**: `runtime inspect` identifies generated files that
    differ from the current catalog projection.
@@ -624,15 +625,9 @@ $CLAWDI_HOME/ai-providers/catalog.json
 contains endpoint metadata and secret references, even though it does not
 contain plaintext secrets.
 
-Runtime projection output is separate:
-
-```text
-$CLAWDI_HOME/runtime/openclaw/
-$CLAWDI_HOME/runtime/hermes/
-```
-
-Projection files are materialized as Clawdi-owned artifacts. They are connected
-to an engine only through an explicit activation step. The catalog is still
+Runtime activation output is engine-specific. Codex v1 writes
+`$CODEX_HOME/clawdi-ai-provider.config.toml`; Hermes v1 invokes
+`hermes config set`; OpenClaw v1 activation is blocked. The catalog remains
 authoritative.
 
 ## Catalog Schema
@@ -735,9 +730,9 @@ the wire protocol. Validation must reject incompatible pairs:
 | `custom_openai_compatible` | `openai_chat`, `openai_responses` |
 
 The catalog may omit `default_model` for provider inventory, but v1 runtime
-projection for chat agents requires either `default_model` or an explicit
-`--default-model` / `--default-provider` render option. Without a concrete
-model, `runtime render` fails before materializing runtime files.
+apply for chat agents requires either `default_model` or an explicit future
+`--default-model` / `--default-provider` apply option. Without a concrete
+model, `runtime apply --dry-run` fails before planning runtime changes.
 
 The `capabilities` object is declarative metadata used for validation,
 projection, and user display. It is not a live provider model catalog. The
@@ -983,9 +978,9 @@ AI Provider command behavior:
 Second batch:
 
 ```bash
-clawdi runtime render --engine openclaw
-clawdi runtime render --engine hermes
-clawdi runtime render --engine codex
+clawdi runtime apply --engine openclaw --dry-run
+clawdi runtime apply --engine hermes --dry-run
+clawdi runtime apply --engine codex --dry-run
 clawdi runtime apply --engine hermes --dry-run
 clawdi runtime apply --engine hermes
 clawdi runtime apply --engine codex --dry-run
@@ -996,7 +991,7 @@ clawdi doctor ai-provider
 
 Runtime command behavior:
 
-- `runtime render` reads the catalog, resolves refs as far as the target engine
+- `runtime apply --dry-run` reads the catalog, resolves refs as far as the target engine
   needs, and emits deterministic projection files without changing the
   machine.
 - `runtime apply --dry-run` asks the target adapter for the least invasive
@@ -1105,15 +1100,12 @@ The default JSON import path expects an AI Provider Catalog or an exported
 adapter and may produce warnings for inferred protocol, skipped plaintext
 secrets, or unsupported runtime fields.
 
-`clawdi runtime render` should accept:
+`clawdi runtime apply --dry-run` should accept:
 
 ```bash
-clawdi runtime render --engine <openclaw|hermes|codex> \
+clawdi runtime apply --dry-run --engine <openclaw|hermes|codex> \
   [--json]
 ```
-
-`render` prints projection content only. It does not write files, call runtime
-CLIs, or make the runtime use the provider.
 
 `clawdi runtime apply` should accept:
 
@@ -1137,9 +1129,9 @@ apply remains blocked until its native config contract is pinned.
 6. Drift between current generated files and the catalog.
 7. Whether each provider is direct BYOK or Clawdi-managed.
 
-## `clawdi run` And Runtime Render
+## `clawdi run` And Runtime Apply
 
-`clawdi run` and `clawdi runtime render` solve different parts of the same
+`clawdi run` and `clawdi runtime apply --dry-run` solve different parts of the same
 problem and should compose.
 
 `clawdi run` is process env injection:
@@ -1152,15 +1144,14 @@ problem and should compose.
 5. It does not permanently change engine-native config or materialize whole
    local auth files.
 
-`runtime render` is config materialization:
+`runtime apply --dry-run` is runtime change planning:
 
 1. It reads the Provider Catalog.
-2. It writes or prints engine-native provider config as Clawdi-owned
-   projection files.
+2. It prints the exact engine-native writes or runtime CLI commands that apply
+   would execute.
 3. It should prefer secret refs or env variable names over plaintext values.
 4. It should not launch the engine by itself.
-5. It should not mutate the user's primary runtime config unless activation is
-   requested and native patching is explicitly allowed.
+5. It must not mutate files or call runtime CLIs.
 
 The two paths compose when projection emits env names. For example, Hermes can
 receive `key_env: OPENAI_API_KEY`, while `clawdi run --env-file .env.clawdi --
@@ -1470,8 +1461,8 @@ packages/cli/src/ai-providers/
   backup.ts               # provider backup/restore helpers
   projections/
     types.ts              # adapter contracts
-    openclaw.ts           # OpenClaw render + inspect
-    hermes.ts             # Hermes render + inspect
+    openclaw.ts           # OpenClaw projection + inspect
+    hermes.ts             # Hermes projection + inspect
   imports/
     openclaw.ts           # OpenClaw config -> provider catalog
     hermes.ts             # Hermes config -> provider catalog
@@ -1664,7 +1655,7 @@ export interface RuntimeProjectionAdapter {
   engine: "openclaw" | "hermes" | "codex";
 
   inspect(input: ProjectionInput): ProjectionInspection;
-  render(input: ProjectionInput): ProjectionResult;
+  buildProjection(input: ProjectionInput): ProjectionResult;
   planActivation(input: ProjectionActivationInput): ProjectionActivationPlan;
   activate?(input: ProjectionActivationInput): Promise<ProjectionWriteResult>;
 }
@@ -1685,7 +1676,7 @@ export interface ProjectionFile {
   path: string;
   format: "json" | "yaml" | "dotenv" | "toml";
   contents: string;
-  role: "managed" | "activation" | "sidecar" | "env";
+  role: "managed" | "activation" | "env";
   mode?: number;
   sensitive: boolean;
 }
@@ -1707,7 +1698,7 @@ export interface ProjectionInspection {
 }
 
 export interface ProjectionActivationInput extends ProjectionInput {
-  rendered: ProjectionResult;
+  projection: ProjectionResult;
   activationMode?: RuntimeActivationMode;
   allowNativePatch: boolean;
   dryRun: boolean;
@@ -1727,7 +1718,7 @@ export interface ProjectionActivationPlan {
 export interface ProjectionWriteResult {
   writtenFiles: string[];
   backupFiles: string[];
-  sidecarFiles: string[];
+  metadataFiles: string[];
   diagnostics: ProjectionDiagnostic[];
 }
 ```
@@ -1735,20 +1726,20 @@ export interface ProjectionWriteResult {
 Adapter responsibilities:
 
 1. Convert normalized providers into engine-native config through a pure
-   `render` function.
+   `buildProjection` function.
 2. Preserve secret refs when the runtime supports them.
 3. Generate owner-only env files only when necessary.
 4. Produce deterministic output for golden tests.
 5. Report unsupported provider features before writing files.
-6. Keep `runtime render` pure and side-effect free.
+6. Keep `runtime apply --dry-run` pure and side-effect free.
 7. Use `runtime apply --dry-run` for redacted apply planning.
 8. Prefer apply through runtime-supported config-path env vars, official
    runtime CLI commands, include files, or managed homes/profiles.
 9. Use native config patching only when no safer apply mechanism exists
    for the local workflow and `--patch-native` is explicitly present.
 10. For native patches, avoid unrelated runtime config sections, show a
-    redacted diff, create a backup, write a sidecar marker, and use structured
-    merge. Hermes native patch activation may update only
+    redacted diff, create a backup, write an external metadata marker file,
+    and use structured merge. Hermes native patch activation may update only
     provider/model-owned sections and must preserve `mcp_servers`, tool config,
     skins, memory config, and other unrelated keys written by `clawdi setup`
     or the user.
@@ -1765,14 +1756,13 @@ Adapter non-responsibilities:
 
 Adapter implementation should use a three-step model:
 
-1. **Render**: pure transformation from normalized catalog to runtime-native
-   files. No disk reads or writes except optional fixture loading in tests.
-2. **Materialize**: write generated files that Clawdi owns. The default target
-   is `$CLAWDI_HOME/runtime/<engine>/`, but an adapter may choose an
-   engine-local managed subdirectory when the runtime's include security model
-   requires same-tree files.
-3. **Activate**: make the runtime discover the materialized files. Activation
-   is explicit and engine-specific.
+1. **Build projection**: pure transformation from normalized catalog to
+   runtime-native content. No disk reads or writes except optional fixture
+   loading in tests.
+2. **Plan apply**: produce the exact writes and runtime CLI commands that
+   would make the runtime use the provider.
+3. **Apply**: execute the verified runtime entrypoint. Apply is explicit and
+   engine-specific.
 
 Activation order:
 
@@ -1789,8 +1779,8 @@ Activation order:
 
 This keeps the adapter interface deep: callers ask for "make this catalog
 usable by engine X," while the adapter hides the runtime-specific activation
-mechanism. The test surface is the rendered files plus the activation plan, not
-the user's entire home directory.
+mechanism. The test surface is the projected content plus the activation plan,
+not the user's entire home directory.
 
 Runtime CLI activation changes the dependency from a file-format contract to a
 command contract. That is preferable when the command contract is strong, but
@@ -1816,15 +1806,15 @@ profiles, or explicit native patch mode instead.
 
 ## Runtime Configuration Mode And Version Pins
 
-Every runtime activation path is a versioned contract. The adapter may render
-managed files without native activation, but it may not patch or activate a
-runtime through an unpinned setting surface.
+Every runtime activation path is a versioned contract. The adapter may build
+internal projections for tests and dry-run output, but it may not patch or
+activate a runtime through an unpinned setting surface.
 
 | Engine | Best v1 setting mode | Pinned support range | Status | Reason |
 | --- | --- | --- | --- | --- |
 | Codex | Write `$CODEX_HOME/clawdi-ai-provider.config.toml`; user runs `codex --profile clawdi-ai-provider` | `@openai/codex <1.0.0` when the installed version supports profile config, `model_providers`, and `wire_api = "responses"` | Enabled | Codex profiles are first-class config layers. They avoid editing the user's primary `config.toml`, project config cannot override provider/auth/profile keys, and `-c key=value` is too ephemeral for persistent provider management. |
-| Hermes | `hermes config set` under explicit `runtime apply`; preserve the managed projection and sidecar under `$CLAWDI_HOME/runtime/hermes/` | `Hermes Agent >=0.15.1 <0.16.0` | Enabled for non-dotted provider IDs | The runtime CLI owns native write semantics and has been tested to preserve existing `mcp_servers.clawdi`. Direct YAML replacement is not allowed. |
-| OpenClaw | Managed JSON projection only; native activation disabled until config CLI/include fixtures are pinned | Unverified | Render-only | Local source review is promising, but activation depends on OpenClaw's exact schema/CLI contract and must not be guessed. |
+| Hermes | `hermes config set` under explicit `runtime apply` | `Hermes Agent >=0.15.1 <0.16.0` | Enabled for non-dotted provider IDs | The runtime CLI owns native write semantics and has been tested to preserve existing `mcp_servers.clawdi`. Direct YAML replacement is not allowed. |
+| OpenClaw | Native activation disabled until config CLI/include fixtures are pinned | Unverified | Blocked | Local source review is promising, but activation depends on OpenClaw's exact schema/CLI contract and must not be guessed. |
 
 Rejected Codex modes:
 
@@ -1848,7 +1838,7 @@ V1 projection support matrix:
 | Google Generate Content / Gemini | Supported after fixture lock | Unsupported until a native Gemini fixture is captured | Unsupported |
 
 If a catalog contains a provider that a target runtime cannot represent,
-`runtime render --engine <engine>` must fail before emitting a projection, and
+`runtime apply --engine <engine> --dry-run` must fail before emitting a projection, and
 `runtime apply --engine <engine>` must fail before changing the machine. Both
 paths should name the provider, protocol, and missing runtime capability.
 
@@ -1914,7 +1904,8 @@ may materialize a Clawdi-owned subdirectory there, for example
 `~/.openclaw/clawdi/`, but it must still treat the runtime's primary config
 file as user-owned.
 
-Generated debug or managed files may pair with metadata in a sidecar file:
+Generated debug or managed files may pair with an external metadata marker
+file:
 
 ```json
 {
@@ -1928,7 +1919,7 @@ Generated debug or managed files may pair with metadata in a sidecar file:
 
 Rules:
 
-1. `runtime render` prints projection content and does not change the machine.
+1. `runtime apply --dry-run` prints projection content and does not change the machine.
 2. `runtime apply --dry-run` previews native writes or runtime CLI commands.
 3. `runtime apply` may write a profile file, env-file, include target, or
    managed runtime home depending on adapter support.
@@ -1940,8 +1931,8 @@ Rules:
 6. If a native file has no Clawdi marker, the CLI treats it as user-owned and
    requires explicit confirmation before patching.
 7. Do not embed drift markers into engine-native config files unless the
-   pinned engine schema explicitly allows unknown metadata keys. Use sidecar
-   files by default.
+   pinned engine schema explicitly allows unknown metadata keys. Use external
+   metadata marker files by default.
 
 ## OpenClaw Projection
 
@@ -2089,8 +2080,8 @@ Hermes activation strategy:
    only with `--patch-native`. It must perform structured YAML merge, not
    whole-file replacement. It may update `model` and verified provider-owned
    sections only. It must preserve `mcp_servers`, including the `clawdi` block
-   written by `clawdi setup`, and it must use a sidecar drift marker instead
-   of adding Clawdi metadata keys to `config.yaml`.
+   written by `clawdi setup`, and it must use an external metadata marker file
+   instead of adding Clawdi metadata keys to `config.yaml`.
 
 ## Codex Projection
 
@@ -2158,13 +2149,13 @@ Codex projection rules:
 
 Codex activation strategy:
 
-1. `runtime render --engine codex` previews deterministic Codex TOML.
-2. `runtime apply --engine codex --dry-run` previews the profile-file write.
-3. `runtime apply --engine codex` writes the rendered TOML into
+1. `runtime apply --engine codex --dry-run` previews the deterministic
+   profile-file write.
+2. `runtime apply --engine codex` writes the projected TOML into
    `$CODEX_HOME/clawdi-ai-provider.config.toml` with owner-only permissions.
-4. Apply prints the exact launch instruction
+3. Apply prints the exact launch instruction
    `codex --profile clawdi-ai-provider`.
-5. The adapter never edits `$CODEX_HOME/config.toml` and never writes project
+4. The adapter never edits `$CODEX_HOME/config.toml` and never writes project
    `.codex/config.toml`.
 
 ## Backup And Restore
@@ -2420,10 +2411,10 @@ Hosted agent materialization contract:
   },
   "runtime": {
     "engine": "hermes",
-    "render_command": [
+    "apply_command": [
       "clawdi",
       "runtime",
-      "render",
+      "apply",
       "--engine",
       "hermes",
       "--dry-run"
@@ -2543,7 +2534,7 @@ Required coverage:
    `cost: 0`, `contextWindow: 0`, or `maxTokens: 0`.
 10. Hermes projection uses verified API-mode labels such as
    `chat_completions`, `codex_responses`, and `anthropic_messages`.
-11. `runtime render` is side-effect free; `runtime apply --dry-run` previews
+11. `runtime apply --dry-run` is side-effect free; `runtime apply --dry-run` previews
     native writes or commands.
 12. OpenClaw apply uses verified `OPENCLAW_CONFIG_PATH` or `$include`
     behavior before native patching is allowed.
@@ -2555,8 +2546,8 @@ Required coverage:
     and requires launch through `codex --profile clawdi-ai-provider`.
 15. Codex projection rejects non-Responses-compatible providers and projects
     `agent:codex/<profile>` to Codex native auth without leaking auth payloads.
-16. Drift metadata is written to sidecar files, not into native config, unless
-    the engine schema explicitly permits unknown keys.
+16. Drift metadata is written to external metadata marker files, not into
+    native config, unless the engine schema explicitly permits unknown keys.
 17. `export` omits plaintext secrets, OAuth tokens, and whole auth files.
 18. Default backup includes provider metadata and redacted auth metadata only.
 19. Encrypted secret backup refuses to run without passphrase or public key.
@@ -2661,16 +2652,17 @@ payloads may be resolved before the direct provider probe.
    golden tests.
 2. Implement OpenClaw projection from verified fixtures with golden tests.
 3. Implement Hermes projection from verified fixtures with golden tests.
-4. Implement `runtime render --out` if file output is still needed.
+4. Implement `runtime apply --dry-run --out` if file output is still needed.
 5. Implement `runtime apply --dry-run` with adapter-specific apply plans.
 6. Implement `runtime apply` execution through verified runtime entrypoints.
 7. Add OpenClaw runtime-CLI, config-path, and include activation coverage.
 8. Add Hermes managed-home coverage and native-patch coverage that preserves
    `mcp_servers.clawdi`.
 
-Exit criteria: one catalog renders stable Codex, OpenClaw, and Hermes config,
-and each enabled engine has a tested activation path that avoids primary
-native config patches unless explicit native patch mode is used.
+Exit criteria: one catalog applies stable Codex and Hermes config, and each
+enabled engine has a tested activation path that avoids primary native config
+patches unless explicit native patch mode is used. OpenClaw remains disabled
+until its contract is pinned.
 
 ### Phase 4: Import/Migration
 
@@ -2727,7 +2719,7 @@ Compatibility rules:
 1. Existing native config keeps working until the user opts into
    `ai-provider import` or `runtime apply`.
 2. Import is additive by default.
-3. Runtime render does not overwrite unmarked user config without explicit
+3. Runtime apply does not overwrite unmarked user config without explicit
    confirmation.
 4. Plaintext keys are never silently copied into the Provider Catalog.
 5. The CLI should show the exact native provider entries it imported, skipped,
@@ -2755,15 +2747,15 @@ round:
 4. Encrypted secret backup v1 must support passphrase encryption. Public-key
    recipients are additive and can ship in the same phase if the chosen
    encryption library supports them cleanly.
-5. Runtime adapter implementation uses render/apply as the user-facing split:
-   `render` previews projection content, `apply --dry-run` previews native
-   writes/commands, and `apply` executes through a verified runtime CLI or
-   layering mechanism. Native config patching remains a separate future mode.
+5. Runtime adapter implementation uses dry-run/apply as the user-facing split:
+   `apply --dry-run` previews native writes/commands, and `apply` executes
+   through a verified runtime CLI or layering mechanism. Native config
+   patching remains a separate future mode.
 6. Runtime apply should prefer managed config paths, eligible runtime CLI
    commands, include files, or managed homes/profiles. If the runtime has no
    verified CLI or layering mechanism, apply stays disabled until native
-   patching can use a structured merge plus a sidecar marker. Hermes v1
-   apply may use `hermes config set`; OpenClaw apply stays gated
+   patching can use a structured merge. Hermes v1 apply may use
+   `hermes config set`; OpenClaw apply stays gated
    until the pinned CLI or include contract is captured.
 7. Model metadata is user-owned optional `models[]` data. Clawdi may validate
    shape and preserve/import/export it, but must not maintain a default model
@@ -2807,7 +2799,7 @@ Implemented in the first non-UI slice:
 5. Provider-only export defaults to metadata and refs. `--include-secrets`
    requires passphrase encryption and currently supports env-backed secrets
    with owner-only env-file restore.
-6. `runtime render` is side-effect free. `runtime apply --dry-run` previews
+6. `runtime apply --dry-run` is side-effect free. `runtime apply --dry-run` previews
    native writes or commands, and `runtime apply` executes them.
 7. Codex projection and apply are implemented through a pinned
    `@openai/codex <1.0.0` feature contract. Apply writes
@@ -2816,7 +2808,7 @@ Implemented in the first non-UI slice:
    `codex --profile clawdi-ai-provider`.
 8. Hermes explicit apply uses `hermes config set` and is tested to
    preserve an existing `~/.hermes/config.yaml` containing
-   `mcp_servers.clawdi`. Provider IDs containing `.` render normally, but
+   `mcp_servers.clawdi`. Provider IDs containing `.` can be projected, but
    Hermes apply rejects them until Hermes dot-path escaping is verified.
 9. OpenClaw managed-file projection exists, but native apply remains
    disabled until its provider config CLI/include contract is pinned.
@@ -2858,10 +2850,10 @@ Current best-practice assessment after implementation review:
    account resources available to local runtimes and hosted agent service
    runtimes. Project-scoped policy should be an override layer later, not the
    primary v1 entity.
-4. **Render/apply split vs direct config mutation**: the split is the right
-   runtime interface. `render` is pure, `apply --dry-run` previews the native
-   plan, and `apply` is only allowed through a verified runtime adapter. This
-   avoids hidden edits to user-owned runtime config.
+4. **Dry-run/apply split vs direct config mutation**: the split is the right
+   runtime interface. Projection is internal, `apply --dry-run` previews the
+   native plan, and `apply` is only allowed through a verified runtime adapter.
+   This avoids hidden edits to user-owned runtime config.
 5. **Codex apply through profile file**: the profile file is the best v1
    mode for Codex. It is persistent, launch-selectable, and testable while
    avoiding edits to the user's primary `config.toml`. Project config and
@@ -2892,8 +2884,8 @@ Current best-practice assessment after implementation review:
 User scenario coverage in this slice:
 
 1. **New env-backed OpenAI/OpenRouter/etc. provider**: covered by CLI add/list,
-   direct metadata probe, Hermes render, Codex Responses-profile render, and
-   e2e secret-leak checks.
+   direct metadata probe, Hermes apply dry-run, Codex Responses-profile apply,
+   and e2e secret-leak checks.
 2. **Local no-auth model endpoint**: covered for loopback
    `custom_openai_compatible` providers; public no-auth is rejected.
 3. **Provider migration from Hermes config**: covered for structured
@@ -2934,8 +2926,8 @@ one vague mechanism:
    Providers through `/api/ai-providers`. This is the right path for provider
    metadata and encrypted payload custody.
 2. **Runtime-local materialization**: a local laptop, self-hosted machine, or
-   hosted agent runtime needs to render files, invoke runtime CLIs, inspect
-   env refs, or materialize auth files. This must execute where the runtime
+   hosted agent runtime needs to write files, invoke runtime CLIs, inspect env
+   refs, or materialize auth files. This must execute where the runtime
    filesystem and secret delivery context live.
 3. **Agent tool calls**: `clawdi mcp` exposes agent-facing tools over MCP. MCP
    is not the product control plane for mutating runtime/provider config.
@@ -2971,10 +2963,10 @@ control-plane operations, but it should be a narrow **CLI Control RPC**, not
    `$CLAWDI_HOME/daemon/control-token`.
 6. It must never bind to public interfaces by default. If a hosted agent
    runtime exposes a control channel, Clawdi Cloud should reach it through the
-   hosting control plane or a sidecar-local socket, not through an
+   hosting control plane or a localhost-only control socket, not through an
    internet-facing listener.
 7. Mutating methods need idempotency keys, dry-run support, and redacted
-   before/after plans. Runtime activation remains separate from render.
+   before/after plans. Runtime activation remains an explicit apply step.
 8. Interactive OAuth/device-code flows should be modeled as long-running RPC
    jobs with states such as `pending_user`, `completed`, `expired`, and
    `failed`; the RPC should not block an HTTP request for the full user flow.
@@ -2988,7 +2980,7 @@ aiProvider.upsert
 aiProvider.remove
 aiProvider.validate
 aiProvider.test
-runtime.render
+runtime.applyPlan
 runtime.inspect
 runtime.activate
 providerAuth.importProfile
@@ -3080,7 +3072,7 @@ Security tests required before enabling RPC:
     apply, and Hermes apply tests that prove existing
     `mcp_servers.clawdi` config is preserved.
 21. Add import/migration from existing OpenClaw and Hermes config.
-22. Add `clawdi runtime render`, `clawdi runtime inspect`, and
+22. Add `clawdi runtime apply --dry-run`, `clawdi runtime inspect`, and
     `clawdi doctor ai-provider`.
 23. Add direct provider and provider-auth connect tests with redacted diagnostics.
 24. Add explicit encrypted secret backup and restore targets for provider refs,

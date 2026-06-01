@@ -1,14 +1,9 @@
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { AiProvider, AiProviderAuth, AiProviderCatalog } from "@clawdi/shared";
 import {
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
-import { aiProviderCatalogPath } from "./ai-provider-catalog";
-import { getClawdiDir } from "./config";
 
 export type RuntimeEngine = "openclaw" | "hermes" | "codex";
 
@@ -19,7 +14,7 @@ export const RUNTIME_PROJECTION_CONTRACTS: Record<
 	{
 		settingMethod: string;
 		supportedVersionRange: string;
-		status: "enabled" | "render-only" | "blocked";
+		status: "enabled" | "blocked";
 	}
 > = {
 	codex: {
@@ -34,9 +29,9 @@ export const RUNTIME_PROJECTION_CONTRACTS: Record<
 		status: "enabled",
 	},
 	openclaw: {
-		settingMethod: "managed JSON projection; native activation blocked until fixture contract",
+		settingMethod: "native activation blocked until fixture contract",
 		supportedVersionRange: "unverified",
-		status: "render-only",
+		status: "blocked",
 	},
 };
 
@@ -64,7 +59,7 @@ interface ProjectionProvider {
 	auth_type: AiProviderAuth["type"];
 }
 
-export function renderRuntimeProjection(
+export function buildRuntimeProjection(
 	engine: RuntimeEngine,
 	catalog: AiProviderCatalog,
 ): RuntimeProjection {
@@ -86,10 +81,10 @@ export function renderRuntimeProjection(
 	const warnings = validation.warnings;
 	const projection =
 		engine === "openclaw"
-			? renderOpenClawProjection(providers, defaultProvider)
+			? buildOpenClawProjection(providers, defaultProvider)
 			: engine === "hermes"
-				? renderHermesProjection(providers, defaultProvider)
-				: renderCodexProjection(providers, defaultProvider);
+				? buildHermesProjection(providers, defaultProvider)
+				: buildCodexProjection(providers, defaultProvider);
 	const extension = engine === "openclaw" ? "json" : engine === "hermes" ? "yaml" : "toml";
 	return {
 		engine,
@@ -102,51 +97,6 @@ export function renderRuntimeProjection(
 		warnings,
 		contract: RUNTIME_PROJECTION_CONTRACTS[engine],
 	};
-}
-
-export function runtimeProjectionDir(engine: RuntimeEngine): string {
-	return join(getClawdiDir(), "runtime", engine);
-}
-
-export function writeRuntimeProjection(projection: RuntimeProjection): string[] {
-	const dir = runtimeProjectionDir(projection.engine);
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	chmodRuntimePath(dir, 0o700);
-	const written: string[] = [];
-	for (const file of projection.files) {
-		const path = join(dir, file.path);
-		writeFileSync(path, file.content, { mode: 0o600 });
-		chmodRuntimePath(path, 0o600);
-		written.push(path);
-	}
-	const metadataPath = join(dir, "clawdi-ai-provider.sidecar.json");
-	writeFileSync(
-		metadataPath,
-		`${JSON.stringify(
-			{
-				engine: projection.engine,
-				generated_at: new Date().toISOString(),
-				catalog_path: aiProviderCatalogPath(),
-				catalog_hash: catalogHash(),
-				contract: projection.contract,
-				files: projection.files.map((file) => file.path),
-			},
-			null,
-			2,
-		)}\n`,
-		{ mode: 0o600 },
-	);
-	chmodRuntimePath(metadataPath, 0o600);
-	written.push(metadataPath);
-	return written;
-}
-
-function chmodRuntimePath(path: string, mode: number): void {
-	try {
-		chmodSync(path, mode);
-	} catch {
-		// Best effort on platforms without POSIX modes.
-	}
 }
 
 function normalizeProjectionProvider(
@@ -195,7 +145,7 @@ function authEnvName(provider: AiProvider): string | undefined {
 	return provider.runtime_env_name;
 }
 
-function renderOpenClawProjection(
+function buildOpenClawProjection(
 	providers: ProjectionProvider[],
 	defaultProvider: ProjectionProvider,
 ): string {
@@ -228,7 +178,7 @@ function renderOpenClawProjection(
 	return `${JSON.stringify(body, null, 2)}\n`;
 }
 
-function renderHermesProjection(
+function buildHermesProjection(
 	providers: ProjectionProvider[],
 	defaultProvider: ProjectionProvider,
 ): string {
@@ -252,7 +202,7 @@ function renderHermesProjection(
 	return `${lines.join("\n")}\n`;
 }
 
-function renderCodexProjection(
+function buildCodexProjection(
 	providers: ProjectionProvider[],
 	defaultProvider: ProjectionProvider,
 ): string {
@@ -333,10 +283,4 @@ function quoteTomlKey(value: string): string {
 
 function compactObject(input: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
-}
-
-function catalogHash(): string | null {
-	const path = aiProviderCatalogPath();
-	if (!existsSync(path)) return null;
-	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
