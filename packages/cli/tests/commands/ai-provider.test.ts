@@ -8,10 +8,12 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
+import { get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	aiProviderAddCommand,
+	aiProviderCompleteOAuthCommand,
 	aiProviderConnectCommand,
 	aiProviderExportCommand,
 	aiProviderImportAuthCommand,
@@ -191,7 +193,32 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain("codex-secret");
 	});
 
-	it("plans provider OAuth through the agent login command", async () => {
+	it("starts provider OAuth through the backend link flow", async () => {
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						oauth_provider: "codex",
+						profile: "default",
+						auth_url: "https://oauth.example/authorize?state=state-123",
+						state: "state-123",
+						redirect_uri: "https://cloud.example/oauth/callback",
+						expires_at: "2026-06-01T00:10:00Z",
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+					}),
+			},
+		]);
 		const { output, restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-codex", {
@@ -200,14 +227,142 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderConnectCommand("openai-codex", { dryRun: true, json: true });
+			await aiProviderConnectCommand("openai-codex", { json: true });
 		} finally {
 			restore();
+			restoreFetch();
 		}
 
-		expect(output()).toContain('"tool": "codex"');
-		expect(output()).toContain('"codex"');
-		expect(output()).toContain('"--device-auth"');
+		expect(captured[0].body).toMatchObject({ provider_id: "openai-codex" });
+		expect(captured[1].body).toMatchObject({
+			provider: "codex",
+			profile: "default",
+		});
+		expect(output()).toContain('"auth_url": "https://oauth.example/authorize?state=state-123"');
+		expect(output()).not.toContain("codex login");
+	});
+
+	it("listens for a loopback OAuth callback and completes through the backend", async () => {
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						oauth_provider: "codex",
+						profile: "default",
+						auth_url: "https://oauth.example/authorize?state=state-123",
+						state: "state-123",
+						redirect_uri: "http://127.0.0.1/callback",
+						expires_at: "2026-06-01T00:10:00Z",
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: {
+							type: "oauth_profile",
+							provider: "codex",
+							profile: "default",
+							payload_ref: "ai-provider-auth://openai-codex/default",
+						},
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			const run = aiProviderConnectCommand("openai-codex", {
+				open: false,
+				timeout: "5",
+			});
+			const redirectUri = await waitForStartRedirectUri(captured);
+			await requestLocalCallback(`${redirectUri}?code=oauth-code&state=state-123`);
+			await run;
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(captured[1].body).toMatchObject({
+			provider: "codex",
+			profile: "default",
+		});
+		expect(
+			String((captured[1].body as { redirect_uri?: string }).redirect_uri).startsWith(
+				"http://127.0.0.1:",
+			),
+		).toBe(true);
+		expect(captured[2].body).toMatchObject({
+			code: "oauth-code",
+			state: "state-123",
+			redirect_uri: (captured[1].body as { redirect_uri?: string }).redirect_uri,
+		});
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.providers[0].auth).toEqual({
+			type: "oauth_profile",
+			provider: "codex",
+			profile: "default",
+			payload_ref: "ai-provider-auth://openai-codex/default",
+		});
+	});
+
+	it("completes provider OAuth from a pasted redirect URL", async () => {
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: {
+							type: "oauth_profile",
+							provider: "codex",
+							profile: "default",
+							payload_ref: "ai-provider-auth://openai-codex/default",
+						},
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderCompleteOAuthCommand("openai-codex", {
+				redirectUrl: "http://127.0.0.1:12345/callback?code=oauth-code&state=state-123",
+				json: true,
+			});
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(captured[0].body).toMatchObject({
+			code: "oauth-code",
+			state: "state-123",
+		});
 	});
 
 	it("probes provider metadata directly without printing the API key", async () => {
@@ -460,7 +615,7 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
-		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex >=0.135.0 <0.136.0");
+		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex <1.0.0");
 		expect(readFileSync(projectionPath, "utf-8")).toBe(readFileSync(profilePath, "utf-8"));
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		if (process.platform !== "win32") {
@@ -484,7 +639,7 @@ describe("ai-provider commands", () => {
 
 		expect(output()).toContain('model_provider = "openai"');
 		expect(output()).not.toContain("env_key");
-		expect(output()).not.toContain("model_providers");
+		expect(output()).not.toContain("[model_providers");
 	});
 
 	it("rejects Codex projection for chat-only providers", async () => {
@@ -804,4 +959,33 @@ function captureConsole(): { output: () => string; restore: () => void } {
 			process.stdout.write = origWrite;
 		},
 	};
+}
+
+async function waitForStartRedirectUri(
+	captured: Array<{ path: string; body?: unknown }>,
+): Promise<string> {
+	const deadline = Date.now() + 3000;
+	while (Date.now() < deadline) {
+		const request = captured.find(
+			(item) => item.path === "/api/ai-providers/openai-codex/auth/oauth/start",
+		);
+		const body = request?.body;
+		if (isRecord(body) && typeof body.redirect_uri === "string") return body.redirect_uri;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error("Timed out waiting for OAuth start redirect_uri.");
+}
+
+async function requestLocalCallback(url: string): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const req = httpGet(url, (res) => {
+			res.resume();
+			res.on("end", resolve);
+		});
+		req.on("error", reject);
+	});
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+	return typeof input === "object" && input !== null && !Array.isArray(input);
 }

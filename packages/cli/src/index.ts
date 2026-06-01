@@ -377,12 +377,29 @@ aiProviderCmd
 	.option("--method <method>", "Connect method", "oauth")
 	.option("--tool <tool>", "Tool login profile to connect, e.g. codex or claude-code")
 	.option("--profile <name>", "Auth profile name", "default")
+	.option("--callback <mode>", "OAuth callback mode: loopback or manual")
+	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")
+	.option("--timeout <seconds>", "Seconds to wait for loopback callback", "600")
+	.option("--no-open", "Do not open the browser automatically")
 	.option("-y, --yes", "Skip the post-login import confirmation prompt")
-	.option("--dry-run", "Show the login command without running it")
+	.option("--dry-run", "Show the OAuth start request without running it")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderConnectCommand } = await import("./commands/ai-provider.js");
 		await aiProviderConnectCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("complete-oauth <provider-id>")
+	.description("Complete AI Provider OAuth with a pasted redirect URL or code/state")
+	.option("--redirect-url <url>", "Full OAuth redirect URL containing code and state")
+	.option("--code <code>", "OAuth authorization code")
+	.option("--state <state>", "OAuth state returned by connect")
+	.option("--redirect-uri <uri>", "Redirect URI used for the OAuth start request")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderCompleteOAuthCommand } = await import("./commands/ai-provider.js");
+		await aiProviderCompleteOAuthCommand(providerId, opts);
 	});
 
 aiProviderCmd

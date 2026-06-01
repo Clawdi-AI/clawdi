@@ -1,7 +1,11 @@
+import json
+from urllib.parse import parse_qs, urlparse
+
 import httpx
 import pytest
 
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.main import app
 from app.models.api_key import ApiKey
 
@@ -216,6 +220,141 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
         "profile": "work_team",
         "payload_ref": "ai-provider-auth://openai-codex/work_team",
     }
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_oauth_start_returns_backend_generated_link(client: httpx.AsyncClient):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "scope": "openid profile",
+            }
+        }
+    )
+    try:
+        started = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "profile": "default",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert started.status_code == 200, started.text
+    body = started.json()
+    assert body["provider_id"] == "openai-codex"
+    assert body["oauth_provider"] == "codex"
+    assert body["profile"] == "default"
+    parsed = urlparse(body["auth_url"])
+    params = parse_qs(parsed.query)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "oauth.example"
+    assert params["client_id"] == ["clawdi-client"]
+    assert params["response_type"] == ["code"]
+    assert params["redirect_uri"] == ["https://cloud.example/oauth/callback"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert params["scope"] == ["openid profile"]
+    assert params["state"] == [body["state"]]
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "client_secret": "oauth-client-secret",
+            }
+        }
+    )
+    token_requests: list[dict] = []
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            token_requests.append({"url": url, "data": data})
+            return httpx.Response(
+                200,
+                json={"access_token": "oauth-access-token", "refresh_token": "oauth-refresh-token"},
+            )
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    try:
+        started = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "profile": "default",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert started.status_code == 200, started.text
+        completed = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "oauth-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert completed.status_code == 200, completed.text
+    assert "oauth-access-token" not in completed.text
+    assert completed.json()["auth"] == {
+        "type": "oauth_profile",
+        "provider": "codex",
+        "profile": "default",
+        "payload_ref": "ai-provider-auth://openai-codex/default",
+    }
+    assert token_requests[0]["url"] == "https://oauth.example/token"
+    assert token_requests[0]["data"]["grant_type"] == "authorization_code"
+    assert token_requests[0]["data"]["client_id"] == "clawdi-client"
+    assert token_requests[0]["data"]["client_secret"] == "oauth-client-secret"
+    assert token_requests[0]["data"]["code"] == "oauth-code"
+    assert token_requests[0]["data"]["code_verifier"]
 
 
 @pytest.mark.asyncio

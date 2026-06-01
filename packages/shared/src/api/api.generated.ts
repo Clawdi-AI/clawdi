@@ -144,6 +144,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai-providers/{provider_id}/auth/oauth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Ai Provider Oauth */
+        post: operations["start_ai_provider_oauth_api_ai_providers__provider_id__auth_oauth_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}/auth/oauth/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Ai Provider Oauth */
+        post: operations["complete_ai_provider_oauth_api_ai_providers__provider_id__auth_oauth_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai-providers/{provider_id}/auth/resolve": {
         parameters: {
             query?: never;
@@ -2021,6 +2055,49 @@ export interface components {
             profile: string;
             /** Runtime Env Name */
             runtime_env_name?: string | null;
+        };
+        /** AiProviderOAuthCompleteRequest */
+        AiProviderOAuthCompleteRequest: {
+            /** State */
+            state: string;
+            /** Code */
+            code: string;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+        };
+        /** AiProviderOAuthStartRequest */
+        AiProviderOAuthStartRequest: {
+            /** Provider */
+            provider: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Scope */
+            scope?: string | null;
+        };
+        /** AiProviderOAuthStartResponse */
+        AiProviderOAuthStartResponse: {
+            /** Provider Id */
+            provider_id: string;
+            /** Oauth Provider */
+            oauth_provider: string;
+            /** Profile */
+            profile: string;
+            /** Auth Url */
+            auth_url: string;
+            /** State */
+            state: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /** AiProviderPatch */
         AiProviderPatch: {
@@ -4074,6 +4151,76 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AiProviderAuthImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_ai_provider_oauth_api_ai_providers__provider_id__auth_oauth_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_ai_provider_oauth_api_ai_providers__provider_id__auth_oauth_complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthCompleteRequest"];
             };
         };
         responses: {

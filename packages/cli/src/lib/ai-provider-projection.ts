@@ -24,7 +24,8 @@ export const RUNTIME_PROJECTION_CONTRACTS: Record<
 > = {
 	codex: {
 		settingMethod: "$CODEX_HOME/clawdi-ai-provider.config.toml selected with codex --profile",
-		supportedVersionRange: "@openai/codex >=0.135.0 <0.136.0",
+		supportedVersionRange:
+			"@openai/codex <1.0.0 with profile config, model_providers, and responses wire_api support",
 		status: "enabled",
 	},
 	hermes: {

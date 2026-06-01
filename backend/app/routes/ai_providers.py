@@ -1,11 +1,18 @@
+import base64
+import hashlib
+import json
 import re
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode, urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.schemas.ai_provider import (
@@ -16,6 +23,9 @@ from app.schemas.ai_provider import (
     AiProviderDeleteResponse,
     AiProviderListResponse,
     AiProviderManagedApiKeyRequest,
+    AiProviderOAuthCompleteRequest,
+    AiProviderOAuthStartRequest,
+    AiProviderOAuthStartResponse,
     AiProviderPatch,
     AiProviderResponse,
     AiProviderUpsert,
@@ -33,6 +43,8 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
     "mistral": {"openai_chat"},
     "custom_openai_compatible": {"openai_chat", "openai_responses"},
 }
+
+OAUTH_STATE_TTL_SECONDS = 10 * 60
 
 
 @router.get("", response_model=AiProviderListResponse, response_model_exclude_none=True)
@@ -264,6 +276,155 @@ async def import_ai_provider_auth(
     return _to_response(provider)
 
 
+@router.post(
+    "/{provider_id}/auth/oauth/start",
+    response_model=AiProviderOAuthStartResponse,
+)
+async def start_ai_provider_oauth(
+    provider_id: str,
+    body: AiProviderOAuthStartRequest,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AiProviderOAuthStartResponse:
+    await _get_provider_or_404(db, auth, provider_id)
+    oauth_provider = _normalize_profile(body.provider)
+    profile = _normalize_profile(body.profile)
+    config = _oauth_config_for(oauth_provider)
+    authorization_url = _required_oauth_config(config, "authorization_url", oauth_provider)
+    client_id = _required_oauth_config(config, "client_id", oauth_provider)
+    redirect_uri = body.redirect_uri or str(config.get("redirect_uri") or "")
+    if not redirect_uri:
+        redirect_uri = (
+            f"{settings.public_api_url.rstrip('/')}"
+            f"/api/ai-providers/{provider_id}/auth/oauth/callback"
+        )
+    _validate_oauth_url(authorization_url, "authorization_url")
+    _validate_redirect_uri(redirect_uri)
+
+    code_verifier = secrets.token_urlsafe(48)
+    code_challenge = _code_challenge(code_verifier)
+    expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
+    state = _encode_oauth_state(
+        {
+            "provider_id": provider_id,
+            "owner_user_id": str(auth.user_id),
+            "oauth_provider": oauth_provider,
+            "profile": profile,
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier,
+            "expires_at": expires_at.isoformat(),
+        }
+    )
+    params: dict[str, str] = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    scope = body.scope or str(config.get("scope") or "")
+    if scope:
+        params["scope"] = scope
+    audience = str(config.get("audience") or "")
+    if audience:
+        params["audience"] = audience
+    extra = config.get("extra_authorize_params")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            if isinstance(key, str) and isinstance(value, str):
+                params[key] = value
+
+    separator = "&" if "?" in authorization_url else "?"
+    auth_url = f"{authorization_url}{separator}{urlencode(params)}"
+    return AiProviderOAuthStartResponse(
+        provider_id=provider_id,
+        oauth_provider=oauth_provider,
+        profile=profile,
+        auth_url=auth_url,
+        state=state,
+        redirect_uri=redirect_uri,
+        expires_at=expires_at,
+    )
+
+
+@router.post(
+    "/{provider_id}/auth/oauth/complete",
+    response_model=AiProviderResponse,
+    response_model_exclude_none=True,
+)
+async def complete_ai_provider_oauth(
+    provider_id: str,
+    body: AiProviderOAuthCompleteRequest,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AiProviderResponse:
+    provider = await _get_provider_or_404(db, auth, provider_id)
+    state = _decode_oauth_state(body.state)
+    if state.get("provider_id") != provider_id or state.get("owner_user_id") != str(auth.user_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
+    expires_at = _parse_state_datetime(str(state.get("expires_at") or ""))
+    if expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
+    oauth_provider = _normalize_profile(str(state.get("oauth_provider") or ""))
+    profile = _normalize_profile(str(state.get("profile") or "default"))
+    redirect_uri = body.redirect_uri or str(state.get("redirect_uri") or "")
+    _validate_redirect_uri(redirect_uri)
+    config = _oauth_config_for(oauth_provider)
+    token_url = _required_oauth_config(config, "token_url", oauth_provider)
+    client_id = _required_oauth_config(config, "client_id", oauth_provider)
+    _validate_oauth_url(token_url, "token_url")
+
+    form = {
+        "grant_type": "authorization_code",
+        "client_id": client_id,
+        "code": body.code,
+        "redirect_uri": redirect_uri,
+        "code_verifier": str(state.get("code_verifier") or ""),
+    }
+    client_secret = str(config.get("client_secret") or "")
+    if client_secret:
+        form["client_secret"] = client_secret
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(token_url, data=form)
+    if response.status_code >= 400:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed")
+
+    payload_ref = _payload_ref(provider_id, profile)
+    ciphertext, nonce = encrypt(response.text)
+    existing = await _find_auth_payload(db, auth, provider_id, profile)
+    metadata = {
+        "provider": oauth_provider,
+        "profile": profile,
+        "payload_ref": payload_ref,
+    }
+    if existing is None:
+        existing = AiProviderAuthPayload(
+            owner_user_id=auth.user_id,
+            provider_id=provider_id,
+            auth_profile=profile,
+            kind="oauth_profile",
+            source="managed",
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+            payload_metadata=metadata,
+        )
+        db.add(existing)
+    else:
+        existing.kind = "oauth_profile"
+        existing.source = "managed"
+        existing.encrypted_payload = ciphertext
+        existing.nonce = nonce
+        existing.payload_metadata = metadata
+        existing.archived_at = None
+    provider.auth_type = "oauth_profile"
+    provider.auth_ref = payload_ref
+    provider.auth_metadata = metadata
+    await db.commit()
+    await db.refresh(provider)
+    return _to_response(provider)
+
+
 @router.post("/{provider_id}/auth/resolve", response_model=AiProviderAuthResolveResponse)
 async def resolve_ai_provider_auth(
     provider_id: str,
@@ -304,6 +465,111 @@ async def resolve_ai_provider_auth(
     raise HTTPException(
         status.HTTP_409_CONFLICT,
         "AI Provider auth has no managed payload",
+    )
+
+
+def _oauth_config_for(oauth_provider: str) -> dict:
+    raw = settings.ai_provider_oauth_config_json.strip()
+    if not raw:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "AI Provider OAuth is not configured",
+        )
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "AI Provider OAuth config is invalid JSON",
+        ) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "AI Provider OAuth config must be an object",
+        )
+    config = data.get(oauth_provider)
+    if not isinstance(config, dict):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"AI Provider OAuth config not found for {oauth_provider}",
+        )
+    return config
+
+
+def _required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:
+    value = config.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"AI Provider OAuth config for {oauth_provider} is missing {key}",
+        )
+    return value.strip()
+
+
+def _encode_oauth_state(payload: dict[str, str]) -> str:
+    ciphertext, nonce = encrypt(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return f"v1.{_base64url(nonce)}.{_base64url(ciphertext)}"
+
+
+def _decode_oauth_state(state: str) -> dict:
+    try:
+        version, nonce, ciphertext = state.split(".", 2)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
+    if version != "v1":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
+    try:
+        plaintext = decrypt(_base64url_decode_bytes(ciphertext), _base64url_decode_bytes(nonce))
+        decoded = json.loads(plaintext)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
+    if not isinstance(decoded, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
+    return decoded
+
+
+def _code_challenge(code_verifier: str) -> str:
+    return _base64url(hashlib.sha256(code_verifier.encode()).digest())
+
+
+def _base64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _base64url_decode(raw: str) -> str:
+    return _base64url_decode_bytes(raw).decode()
+
+
+def _base64url_decode_bytes(raw: str) -> bytes:
+    padding = "=" * ((4 - len(raw) % 4) % 4)
+    return base64.urlsafe_b64decode(f"{raw}{padding}")
+
+
+def _parse_state_datetime(input: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(input)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _validate_oauth_url(input: str, label: str) -> None:
+    parsed = urlparse(input)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{label} must be an https URL")
+
+
+def _validate_redirect_uri(input: str) -> None:
+    parsed = urlparse(input)
+    if parsed.scheme == "https" and parsed.netloc:
+        return
+    if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+        return
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "redirect_uri must be https or loopback http",
     )
 
 

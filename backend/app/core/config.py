@@ -152,5 +152,11 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
 
+    # JSON object keyed by provider/tool id. Each value can include:
+    # authorization_url, token_url, client_id, client_secret, scope, audience,
+    # and extra_authorize_params. This keeps provider OAuth self-hostable and
+    # avoids routing AI Provider auth through local agent CLIs.
+    ai_provider_oauth_config_json: str = ""
+
 
 settings = Settings()

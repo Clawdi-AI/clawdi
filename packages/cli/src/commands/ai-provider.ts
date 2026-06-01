@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
 	type AiProvider,
 	type AiProviderApiMode,
@@ -133,8 +135,20 @@ interface AiProviderConnectOptions {
 	method?: string;
 	tool?: string;
 	profile?: string;
+	callback?: string;
+	redirectUri?: string;
+	timeout?: string;
+	open?: boolean;
 	yes?: boolean;
 	dryRun?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderCompleteOAuthOptions {
+	code?: string;
+	state?: string;
+	redirectUrl?: string;
+	redirectUri?: string;
 	json?: boolean;
 }
 
@@ -150,6 +164,18 @@ interface AiProviderAuthResolveBackendResponse {
 	tool?: string | null;
 	profile?: string | null;
 }
+
+interface AiProviderOAuthStartBackendResponse {
+	provider_id: string;
+	oauth_provider: string;
+	profile: string;
+	auth_url: string;
+	state: string;
+	redirect_uri: string;
+	expires_at: string;
+}
+
+const DEFAULT_MANUAL_OAUTH_REDIRECT_URI = "http://127.0.0.1:14565/callback";
 
 export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
@@ -448,53 +474,311 @@ export async function aiProviderConnectCommand(
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = findProvider(catalog, providerId);
 	const method = opts.method ?? "oauth";
-	const tool = canonicalAuthTool(opts.tool ?? defaultAuthTool(provider));
-	if (!tool) {
+	if (method !== "oauth") {
+		throw new Error("AI Provider connect currently supports --method oauth.");
+	}
+	const callbackMode = parseOAuthCallbackMode(opts.callback ?? (opts.json ? "manual" : "loopback"));
+	if (opts.redirectUri && callbackMode === "loopback") {
+		throw new Error("--redirect-uri is only supported with --callback manual.");
+	}
+	const oauthProvider = canonicalAuthTool(opts.tool ?? defaultAuthTool(provider));
+	if (!oauthProvider) {
 		throw new Error(
 			"--tool is required for this provider type. Supported OAuth tools are codex and claude-code.",
 		);
 	}
 	const profile = opts.profile ?? "default";
-	const login = loginCommandForTool(tool, method);
-	const payload = {
+	const loopback =
+		callbackMode === "loopback" && !opts.dryRun
+			? await createOAuthLoopbackServer(parseOAuthTimeout(opts.timeout))
+			: null;
+	const request = {
 		provider_id: providerId,
 		method,
-		tool,
+		provider: oauthProvider,
 		profile,
-		command: [login.command, ...login.args],
+		callback: callbackMode,
+		redirect_uri:
+			loopback?.redirectUri ??
+			(callbackMode === "manual"
+				? (opts.redirectUri ?? DEFAULT_MANUAL_OAUTH_REDIRECT_URI)
+				: undefined),
 		dry_run: Boolean(opts.dryRun),
 	};
-	if (opts.json && opts.dryRun) {
-		console.log(JSON.stringify(payload, null, 2));
-	}
-	if (opts.dryRun) return;
-	if (!opts.json) {
-		console.log(chalk.gray(`Running ${[login.command, ...login.args].join(" ")}...`));
-	}
-	await runInteractive(login.command, login.args);
-	const collected = await collectAgentCredentialProfilePayload(tool, {
-		profile,
-		yes: opts.yes,
-		json: opts.json,
-		quiet: opts.json,
-		destinationLabel: "AI Provider auth",
-	});
-	if (!collected) return;
-	const nextProvider = await storeAgentProfileForProvider(provider, collected);
-	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
-	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{ provider_id: providerId, auth: nextProvider.auth, status: "connected" },
-				null,
-				2,
-			),
-		);
+	if (opts.dryRun) {
+		console.log(JSON.stringify(request, null, 2));
 		return;
 	}
-	console.log(
-		chalk.green(`✓ Connected ${providerId} through ${collected.tool}/${collected.profile}`),
+	try {
+		const api = new ApiClient();
+		await api.postJsonBody<AiProviderBackendResponse>(
+			"/api/ai-providers",
+			providerToBackendUpsert(provider),
+			{ replace: "true" },
+		);
+		const started = await api.postJsonBody<AiProviderOAuthStartBackendResponse>(
+			`/api/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/start`,
+			{
+				provider: oauthProvider,
+				profile,
+				...(request.redirect_uri ? { redirect_uri: request.redirect_uri } : {}),
+			},
+		);
+		if (opts.json) {
+			console.log(JSON.stringify(started, null, 2));
+			return;
+		}
+		console.log(chalk.green(`✓ Started OAuth for ${providerId}`));
+		console.log(`Open: ${started.auth_url}`);
+		if (!loopback) {
+			console.log(
+				chalk.gray(
+					`After the browser redirects, complete with \`clawdi ai-provider complete-oauth ${providerId} --redirect-url <url>\`.`,
+				),
+			);
+			return;
+		}
+		if (opts.open !== false) openInBrowser(started.auth_url);
+		console.log(chalk.gray(`Waiting for OAuth callback on ${loopback.redirectUri}`));
+		const callback = await loopback.wait();
+		if (callback.error) {
+			throw new Error(
+				`OAuth provider returned ${callback.error}${callback.errorDescription ? `: ${callback.errorDescription}` : ""}`,
+			);
+		}
+		if (!callback.code || !callback.state) {
+			throw new Error("OAuth callback did not include code and state.");
+		}
+		const updated = await completeProviderOAuth(providerId, {
+			code: callback.code,
+			state: callback.state,
+			redirectUri: loopback.redirectUri,
+		});
+		console.log(chalk.green(`✓ Connected OAuth profile for ${updated.id}`));
+	} catch (error) {
+		if (loopback?.timedOut(error)) {
+			console.log(
+				chalk.yellow(
+					"Timed out waiting for the browser callback. If the browser shows a localhost URL, paste it with:",
+				),
+			);
+			console.log(
+				chalk.bold(`clawdi ai-provider complete-oauth ${providerId} --redirect-url <url>`),
+			);
+			return;
+		}
+		throw error;
+	} finally {
+		await loopback?.close();
+	}
+}
+
+export async function aiProviderCompleteOAuthCommand(
+	providerId: string,
+	opts: AiProviderCompleteOAuthOptions = {},
+): Promise<void> {
+	const completion = parseOAuthCompletion(opts);
+	const updated = await completeProviderOAuth(providerId, completion);
+	if (opts.json) {
+		console.log(JSON.stringify(updated, null, 2));
+		return;
+	}
+	console.log(chalk.green(`✓ Connected OAuth profile for ${providerId}`));
+}
+
+interface OAuthCompletionInput {
+	code: string;
+	state: string;
+	redirectUri?: string;
+}
+
+interface OAuthCallbackResult {
+	code?: string;
+	state?: string;
+	error?: string;
+	errorDescription?: string;
+}
+
+interface OAuthLoopbackServer {
+	redirectUri: string;
+	wait: () => Promise<OAuthCallbackResult>;
+	close: () => Promise<void>;
+	timedOut: (error: unknown) => boolean;
+}
+
+class OAuthCallbackTimeoutError extends Error {
+	constructor() {
+		super("Timed out waiting for OAuth callback.");
+	}
+}
+
+async function completeProviderOAuth(
+	providerId: string,
+	completion: OAuthCompletionInput,
+): Promise<AiProvider> {
+	const api = new ApiClient();
+	const response = await api.postJsonBody<AiProviderBackendResponse>(
+		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/complete`,
+		{
+			code: completion.code,
+			state: completion.state,
+			...(completion.redirectUri ? { redirect_uri: completion.redirectUri } : {}),
+		},
 	);
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const provider = findProvider(catalog, providerId);
+	const updated = providerFromBackendResponse(provider, response);
+	writeAiProviderCatalog(upsertAiProvider(catalog, updated, true));
+	return updated;
+}
+
+function parseOAuthCompletion(opts: AiProviderCompleteOAuthOptions): OAuthCompletionInput {
+	let code = opts.code;
+	let state = opts.state;
+	if (opts.redirectUrl) {
+		let url: URL;
+		try {
+			url = new URL(opts.redirectUrl);
+		} catch (error) {
+			throw new Error(`Invalid --redirect-url: ${(error as Error).message}`);
+		}
+		const providerError = url.searchParams.get("error");
+		if (providerError) {
+			const description = url.searchParams.get("error_description");
+			throw new Error(
+				`OAuth provider returned ${providerError}${description ? `: ${description}` : ""}`,
+			);
+		}
+		code = code ?? url.searchParams.get("code") ?? undefined;
+		state = state ?? url.searchParams.get("state") ?? undefined;
+	}
+	if (!code || !state) {
+		throw new Error("OAuth completion requires --redirect-url or both --code and --state.");
+	}
+	return {
+		code,
+		state,
+		redirectUri: opts.redirectUri,
+	};
+}
+
+async function createOAuthLoopbackServer(timeoutSeconds: number): Promise<OAuthLoopbackServer> {
+	let redirectOrigin = "";
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let callbackResolved = false;
+	let resolveCallback: (result: OAuthCallbackResult) => void = () => {};
+	let rejectCallback: (error: Error) => void = () => {};
+	const callbackPromise = new Promise<OAuthCallbackResult>((resolve, reject) => {
+		resolveCallback = resolve;
+		rejectCallback = reject;
+	});
+	const server = createServer((req, res) => {
+		const url = new URL(req.url ?? "/", redirectOrigin);
+		if (url.pathname !== "/callback") {
+			writeOAuthCallbackResponse(res, 404, "Not found");
+			return;
+		}
+		if (callbackResolved) {
+			writeOAuthCallbackResponse(
+				res,
+				200,
+				"OAuth callback already received. You can close this tab.",
+			);
+			return;
+		}
+		callbackResolved = true;
+		if (timer) clearTimeout(timer);
+		const result: OAuthCallbackResult = {
+			code: url.searchParams.get("code") ?? undefined,
+			state: url.searchParams.get("state") ?? undefined,
+			error: url.searchParams.get("error") ?? undefined,
+			errorDescription: url.searchParams.get("error_description") ?? undefined,
+		};
+		writeOAuthCallbackResponse(
+			res,
+			result.error ? 400 : 200,
+			result.error
+				? "OAuth returned an error. Return to your terminal for details."
+				: "OAuth callback received. You can close this tab.",
+		);
+		resolveCallback(result);
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			const address = server.address();
+			if (!address || typeof address === "string") {
+				reject(new Error("Could not determine loopback callback port."));
+				return;
+			}
+			redirectOrigin = `http://127.0.0.1:${(address as AddressInfo).port}`;
+			resolve();
+		});
+	});
+
+	timer = setTimeout(() => {
+		rejectCallback(new OAuthCallbackTimeoutError());
+	}, timeoutSeconds * 1000);
+
+	return {
+		redirectUri: `${redirectOrigin}/callback`,
+		wait: () => callbackPromise,
+		close: () =>
+			new Promise<void>((resolve) => {
+				if (timer) clearTimeout(timer);
+				server.close(() => resolve());
+			}),
+		timedOut: (error: unknown) => error instanceof OAuthCallbackTimeoutError,
+	};
+}
+
+function writeOAuthCallbackResponse(
+	res: ServerResponse,
+	statusCode: number,
+	message: string,
+): void {
+	res.writeHead(statusCode, { "content-type": "text/html; charset=utf-8" });
+	res.end(
+		`<!doctype html><meta charset="utf-8"><title>Clawdi OAuth</title><body>${escapeHtml(message)}</body>`,
+	);
+}
+
+function parseOAuthCallbackMode(input: string): "loopback" | "manual" {
+	if (input === "loopback" || input === "manual") return input;
+	throw new Error("Invalid --callback. Supported modes: loopback, manual.");
+}
+
+function parseOAuthTimeout(input: string | undefined): number {
+	const timeout = Number(input ?? 600);
+	if (!Number.isFinite(timeout) || timeout < 1 || timeout > 3600) {
+		throw new Error("--timeout must be a number of seconds between 1 and 3600.");
+	}
+	return timeout;
+}
+
+function openInBrowser(url: string): void {
+	const cmd =
+		process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+	try {
+		const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+		const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+		child.on("error", () => {
+			/* Browser opener is best-effort; terminal URL remains visible. */
+		});
+		child.unref();
+	} catch {
+		/* Same as above. */
+	}
+}
+
+function escapeHtml(input: string): string {
+	return input
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
 }
 
 async function storeAgentProfileForProvider(
@@ -648,39 +932,6 @@ function defaultAuthTool(provider: AiProvider): string | undefined {
 	if (provider.type === "openai") return "codex";
 	if (provider.type === "anthropic") return "claude-code";
 	return undefined;
-}
-
-function loginCommandForTool(tool: string, method: string): { command: string; args: string[] } {
-	if (tool === "codex") {
-		if (method !== "oauth" && method !== "device") {
-			throw new Error("Codex connect supports --method oauth or --method device.");
-		}
-		return { command: "codex", args: ["login", "--device-auth"] };
-	}
-	if (tool === "claude-code") {
-		if (method !== "oauth" && method !== "claudeai" && method !== "console") {
-			throw new Error("Claude Code connect supports --method oauth, claudeai, or console.");
-		}
-		const args = ["auth", "login"];
-		if (method === "console") args.push("--console");
-		return { command: "claude", args };
-	}
-	throw new Error("Provider OAuth connect supports codex and claude-code.");
-}
-
-async function runInteractive(command: string, args: string[]): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(command, args, { stdio: "inherit" });
-		child.once("error", (error) => reject(error));
-		child.once("exit", (code, signal) => {
-			if (code === 0) {
-				resolve();
-				return;
-			}
-			const reason = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
-			reject(new Error(`${command} ${args.join(" ")} failed with ${reason}`));
-		});
-	});
 }
 
 function parseCapabilities(values: string[] | undefined): AiProviderCapabilities | undefined {

@@ -116,3 +116,30 @@ class AiProviderAuthResolveResponse(BaseModel):
     tool: str | None = None
     provider: str | None = None
     profile: str | None = None
+
+
+class AiProviderOAuthStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: str = Field(min_length=1, max_length=80)
+    profile: str = Field(default="default", min_length=1, max_length=120)
+    redirect_uri: str | None = Field(default=None, max_length=1000)
+    scope: str | None = Field(default=None, max_length=1000)
+
+
+class AiProviderOAuthStartResponse(BaseModel):
+    provider_id: str
+    oauth_provider: str
+    profile: str
+    auth_url: str
+    state: str
+    redirect_uri: str
+    expires_at: datetime
+
+
+class AiProviderOAuthCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    state: str = Field(min_length=1, max_length=4000)
+    code: str = Field(min_length=1, max_length=4000)
+    redirect_uri: str | None = Field(default=None, max_length=1000)
