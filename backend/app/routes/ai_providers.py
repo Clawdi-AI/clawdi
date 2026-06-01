@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_user_auth, require_user_cli
+from app.core.auth import (
+    AuthContext,
+    require_user_auth,
+    require_user_auth_unbound,
+    require_user_cli,
+)
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
@@ -45,6 +50,16 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 }
 
 OAUTH_STATE_TTL_SECONDS = 10 * 60
+RESERVED_OAUTH_AUTHORIZE_PARAMS = {
+    "audience",
+    "client_id",
+    "code_challenge",
+    "code_challenge_method",
+    "redirect_uri",
+    "response_type",
+    "scope",
+    "state",
+}
 
 
 @router.get("", response_model=AiProviderListResponse, response_model_exclude_none=True)
@@ -70,7 +85,7 @@ async def list_ai_providers(
 async def upsert_ai_provider(
     body: AiProviderUpsert,
     replace: bool = Query(default=False),
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     errors = _validate_provider(body)
@@ -102,7 +117,7 @@ async def get_ai_provider(
 async def patch_ai_provider(
     provider_id: str,
     body: AiProviderPatch,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
@@ -127,7 +142,7 @@ async def patch_ai_provider(
 @router.delete("/{provider_id}", response_model=AiProviderDeleteResponse)
 async def delete_ai_provider(
     provider_id: str,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
@@ -172,7 +187,7 @@ async def validate_ai_provider(
 async def set_ai_provider_api_key(
     provider_id: str,
     body: AiProviderManagedApiKeyRequest,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
@@ -221,7 +236,7 @@ async def set_ai_provider_api_key(
 async def import_ai_provider_auth(
     provider_id: str,
     body: AiProviderAuthImportRequest,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
@@ -283,7 +298,7 @@ async def import_ai_provider_auth(
 async def start_ai_provider_oauth(
     provider_id: str,
     body: AiProviderOAuthStartRequest,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthStartResponse:
     await _get_provider_or_404(db, auth, provider_id)
@@ -292,12 +307,11 @@ async def start_ai_provider_oauth(
     config = _oauth_config_for(oauth_provider)
     authorization_url = _required_oauth_config(config, "authorization_url", oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    redirect_uri = body.redirect_uri or str(config.get("redirect_uri") or "")
-    if not redirect_uri:
-        redirect_uri = (
-            f"{settings.public_api_url.rstrip('/')}"
-            f"/api/ai-providers/{provider_id}/auth/oauth/callback"
-        )
+    redirect_uri = body.redirect_uri or _required_oauth_config(
+        config,
+        "redirect_uri",
+        oauth_provider,
+    )
     _validate_oauth_url(authorization_url, "authorization_url")
     _validate_redirect_uri(redirect_uri)
 
@@ -323,7 +337,7 @@ async def start_ai_provider_oauth(
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
-    scope = body.scope or str(config.get("scope") or "")
+    scope = str(config.get("scope") or "")
     if scope:
         params["scope"] = scope
     audience = str(config.get("audience") or "")
@@ -333,6 +347,11 @@ async def start_ai_provider_oauth(
     if isinstance(extra, dict):
         for key, value in extra.items():
             if isinstance(key, str) and isinstance(value, str):
+                if key in RESERVED_OAUTH_AUTHORIZE_PARAMS:
+                    raise HTTPException(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        f"AI Provider OAuth config for {oauth_provider} cannot override {key}",
+                    )
                 params[key] = value
 
     separator = "&" if "?" in authorization_url else "?"
@@ -356,7 +375,7 @@ async def start_ai_provider_oauth(
 async def complete_ai_provider_oauth(
     provider_id: str,
     body: AiProviderOAuthCompleteRequest,
-    auth: AuthContext = Depends(require_user_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
@@ -368,8 +387,11 @@ async def complete_ai_provider_oauth(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
     oauth_provider = _normalize_profile(str(state.get("oauth_provider") or ""))
     profile = _normalize_profile(str(state.get("profile") or "default"))
-    redirect_uri = body.redirect_uri or str(state.get("redirect_uri") or "")
+    state_redirect_uri = str(state.get("redirect_uri") or "")
+    redirect_uri = body.redirect_uri or state_redirect_uri
     _validate_redirect_uri(redirect_uri)
+    if redirect_uri != state_redirect_uri:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth redirect_uri does not match state")
     config = _oauth_config_for(oauth_provider)
     token_url = _required_oauth_config(config, "token_url", oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)

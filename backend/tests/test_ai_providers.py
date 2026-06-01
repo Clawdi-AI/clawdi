@@ -1,4 +1,5 @@
 import json
+import uuid
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -275,6 +276,59 @@ async def test_ai_provider_oauth_start_returns_backend_generated_link(client: ht
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
+    client: httpx.AsyncClient,
+):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+            }
+        }
+    )
+    try:
+        missing_redirect = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={"provider": "codex", "profile": "default"},
+        )
+        assert missing_redirect.status_code == 503, missing_redirect.text
+        assert "missing redirect_uri" in missing_redirect.text
+
+        settings.ai_provider_oauth_config_json = json.dumps(
+            {
+                "codex": {
+                    "authorization_url": "https://oauth.example/authorize",
+                    "token_url": "https://oauth.example/token",
+                    "client_id": "clawdi-client",
+                    "redirect_uri": "https://cloud.example/oauth/callback",
+                    "extra_authorize_params": {"state": "attacker-state"},
+                }
+            }
+        )
+        reserved_override = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={"provider": "codex", "profile": "default"},
+        )
+        assert reserved_override.status_code == 503, reserved_override.text
+        assert "cannot override state" in reserved_override.text
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -330,6 +384,16 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
             },
         )
         assert started.status_code == 200, started.text
+        mismatch = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "oauth-code",
+                "redirect_uri": "https://cloud.example/other-callback",
+            },
+        )
+        assert mismatch.status_code == 400, mismatch.text
+        assert token_requests == []
         completed = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/complete",
             json={
@@ -355,6 +419,42 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     assert token_requests[0]["data"]["client_secret"] == "oauth-client-secret"
     assert token_requests[0]["data"]["code"] == "oauth-code"
     assert token_requests[0]["data"]["code_verifier"]
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_account_mutations_reject_environment_api_keys(
+    client: httpx.AsyncClient,
+    seed_user,
+):
+    env_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_env",
+        label="agent-env",
+        environment_id=uuid.uuid4(),
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=env_key)
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        created = await client.post(
+            "/api/ai-providers",
+            json={
+                "provider_id": "openai-main",
+                "type": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+            },
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+
+    assert created.status_code == 403, created.text
+    assert "Agent API keys" in created.text
 
 
 @pytest.mark.asyncio

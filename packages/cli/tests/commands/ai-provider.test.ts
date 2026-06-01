@@ -238,6 +238,7 @@ describe("ai-provider commands", () => {
 			provider: "codex",
 			profile: "default",
 		});
+		expect("redirect_uri" in (captured[1].body as Record<string, unknown>)).toBe(false);
 		expect(output()).toContain('"auth_url": "https://oauth.example/authorize?state=state-123"');
 		expect(output()).not.toContain("codex login");
 	});

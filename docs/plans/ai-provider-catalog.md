@@ -534,10 +534,10 @@ Expected product behavior:
 1. `connect` starts the verified provider/tool OAuth flow and prints a login
    URL, device code, or loopback URL according to that flow. CLI defaults to a
    loopback callback when the provider allows native-app loopback redirects.
-2. If browser loopback is unavailable, the CLI supports manual completion with
-   a loopback redirect such as `http://127.0.0.1:14565/callback`; the user can
-   paste the failed browser callback into `complete-oauth --redirect-url <url>`
-   or pass `--code/--state`.
+2. If browser loopback is unavailable, the CLI falls back to manual completion
+   using either an explicit `--redirect-uri` or the provider OAuth config's
+   registered redirect URI. The user can paste the provider callback into
+   `complete-oauth --redirect-url <url>` or pass `--code/--state`.
 3. The backend exchanges the code only through official provider/tool
    contracts. The CLI forwards `code`, `state`, and redirect URI but does not
    receive provider tokens. Neither side may scrape browser cookies or
@@ -1318,12 +1318,12 @@ POST /api/ai-providers/{provider_id}/auth/oauth/complete
 flow listens on `127.0.0.1:<ephemeral>/callback`, opens or prints the
 `auth_url`, captures the browser callback, and forwards only `code`, `state`,
 and `redirect_uri` to the backend. When loopback is unavailable, manual mode
-still asks the provider to redirect to a loopback URL such as
-`http://127.0.0.1:14565/callback`; the user can paste that full failed redirect
-URL into `clawdi ai-provider complete-oauth <provider-id> --redirect-url
-<url>`. The backend performs the token exchange and stores the encrypted
-provider-auth payload. The CLI should not exchange OAuth tokens locally for
-these provider-auth flows.
+uses either an explicit `--redirect-uri` or the provider OAuth config's
+registered redirect URI; the user can paste the full callback URL into
+`clawdi ai-provider complete-oauth <provider-id> --redirect-url <url>`. The
+backend performs the token exchange and stores the encrypted provider-auth
+payload. The CLI should not exchange OAuth tokens locally for these
+provider-auth flows.
 
 Security requirements:
 

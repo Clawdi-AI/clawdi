@@ -124,7 +124,6 @@ class AiProviderOAuthStartRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=80)
     profile: str = Field(default="default", min_length=1, max_length=120)
     redirect_uri: str | None = Field(default=None, max_length=1000)
-    scope: str | None = Field(default=None, max_length=1000)
 
 
 class AiProviderOAuthStartResponse(BaseModel):

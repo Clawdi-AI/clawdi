@@ -175,8 +175,6 @@ interface AiProviderOAuthStartBackendResponse {
 	expires_at: string;
 }
 
-const DEFAULT_MANUAL_OAUTH_REDIRECT_URI = "http://127.0.0.1:14565/callback";
-
 export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	if (opts.json) {
@@ -477,7 +475,7 @@ export async function aiProviderConnectCommand(
 	if (method !== "oauth") {
 		throw new Error("AI Provider connect currently supports --method oauth.");
 	}
-	const callbackMode = parseOAuthCallbackMode(opts.callback ?? (opts.json ? "manual" : "loopback"));
+	let callbackMode = parseOAuthCallbackMode(opts.callback ?? (opts.json ? "manual" : "loopback"));
 	if (opts.redirectUri && callbackMode === "loopback") {
 		throw new Error("--redirect-uri is only supported with --callback manual.");
 	}
@@ -488,21 +486,28 @@ export async function aiProviderConnectCommand(
 		);
 	}
 	const profile = opts.profile ?? "default";
-	const loopback =
-		callbackMode === "loopback" && !opts.dryRun
-			? await createOAuthLoopbackServer(parseOAuthTimeout(opts.timeout))
-			: null;
+	let loopback: OAuthLoopbackServer | null = null;
+	if (callbackMode === "loopback" && !opts.dryRun) {
+		try {
+			loopback = await createOAuthLoopbackServer(parseOAuthTimeout(opts.timeout));
+		} catch (error) {
+			callbackMode = "manual";
+			if (!opts.json) {
+				console.log(
+					chalk.yellow(
+						`Could not start the local OAuth callback: ${(error as Error).message}. Falling back to manual completion.`,
+					),
+				);
+			}
+		}
+	}
 	const request = {
 		provider_id: providerId,
 		method,
 		provider: oauthProvider,
 		profile,
 		callback: callbackMode,
-		redirect_uri:
-			loopback?.redirectUri ??
-			(callbackMode === "manual"
-				? (opts.redirectUri ?? DEFAULT_MANUAL_OAUTH_REDIRECT_URI)
-				: undefined),
+		redirect_uri: loopback?.redirectUri ?? opts.redirectUri,
 		dry_run: Boolean(opts.dryRun),
 	};
 	if (opts.dryRun) {

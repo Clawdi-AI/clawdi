@@ -518,7 +518,7 @@ async def require_user_auth_unbound(
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "sharing operations require user-level auth (Agent API keys cannot manage sharing)",
+            "user-level auth is required (Agent API keys cannot manage account resources)",
         )
     return auth
 

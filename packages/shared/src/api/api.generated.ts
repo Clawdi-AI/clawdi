@@ -2076,8 +2076,6 @@ export interface components {
             profile: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
-            /** Scope */
-            scope?: string | null;
         };
         /** AiProviderOAuthStartResponse */
         AiProviderOAuthStartResponse: {
