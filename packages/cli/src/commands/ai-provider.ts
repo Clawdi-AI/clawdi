@@ -380,6 +380,7 @@ export async function aiProviderImportAuthCommand(
 		dryRun: opts.dryRun,
 		json: opts.json,
 		quiet: opts.json,
+		destinationLabel: "AI Provider auth",
 	});
 	if (!collected) return;
 	const nextProvider = await storeAgentProfileForProvider(provider, collected);
@@ -476,6 +477,7 @@ export async function aiProviderConnectCommand(
 		yes: opts.yes,
 		json: opts.json,
 		quiet: opts.json,
+		destinationLabel: "AI Provider auth",
 	});
 	if (!collected) return;
 	const nextProvider = await storeAgentProfileForProvider(provider, collected);

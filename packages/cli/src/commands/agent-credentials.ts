@@ -111,6 +111,7 @@ interface ImportOptions {
 	dryRun?: boolean;
 	json?: boolean;
 	quiet?: boolean;
+	destinationLabel?: string;
 }
 
 interface MaterializeOptions {
@@ -546,7 +547,8 @@ export async function collectAgentCredentialProfilePayload(
 	}
 
 	if (!opts.yes) {
-		const ok = await p.confirm({ message: "Import this credential profile into Clawdi Vault?" });
+		const destination = opts.destinationLabel ?? "Clawdi Vault";
+		const ok = await p.confirm({ message: `Import this credential profile into ${destination}?` });
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");
 			return null;
