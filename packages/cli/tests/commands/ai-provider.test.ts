@@ -527,7 +527,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderTestCommand("openai-main", { json: true });
+			await aiProviderTestCommand("openai-main", { live: true, json: true });
 		} finally {
 			restore();
 			restoreFetch();
@@ -538,6 +538,36 @@ describe("ai-provider commands", () => {
 		expect(captured[0].url).toBe("https://api.openai.com/v1/models");
 		expect(captured[0].headers.authorization).toBe("Bearer sk-test-secret");
 		expect(output()).toContain('"status": "ok"');
+		expect(output()).not.toContain("sk-test-secret");
+	});
+
+	it("checks auth by default without running a live provider probe", async () => {
+		process.env.OPENAI_API_KEY = "sk-test-secret";
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/models",
+				response: () => jsonResponse({ data: [] }),
+			},
+		]);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderTestCommand("openai-main", { json: true });
+		} finally {
+			restore();
+			restoreFetch();
+			delete process.env.OPENAI_API_KEY;
+		}
+
+		expect(captured).toHaveLength(0);
+		expect(output()).toContain('"status": "available"');
+		expect(output()).toContain("live probe disabled");
 		expect(output()).not.toContain("sk-test-secret");
 	});
 
@@ -569,7 +599,7 @@ describe("ai-provider commands", () => {
 				runtimeEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderTestCommand("openai-main", { json: true });
+			await aiProviderTestCommand("openai-main", { live: true, json: true });
 		} finally {
 			restore();
 			restoreFetch();
@@ -629,7 +659,7 @@ describe("ai-provider commands", () => {
 		const { output, restore } = captureConsole();
 		try {
 			await aiProviderImportCommand(catalogPath, { json: true });
-			await aiProviderTestCommand("openai-main", { json: true });
+			await aiProviderTestCommand("openai-main", { live: true, json: true });
 		} finally {
 			restore();
 			restoreFetch();
@@ -651,9 +681,9 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(aiProviderTestCommand("openai-main", { timeout: "nope" })).rejects.toThrow(
-				"--timeout must be a positive number",
-			);
+			await expect(
+				aiProviderTestCommand("openai-main", { live: true, timeout: "nope" }),
+			).rejects.toThrow("--timeout must be a positive number");
 		} finally {
 			restore();
 		}

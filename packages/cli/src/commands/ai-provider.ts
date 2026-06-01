@@ -103,6 +103,7 @@ interface AiProviderImportOptions {
 interface AiProviderTestOptions {
 	model?: string;
 	timeout?: string;
+	live?: boolean;
 	probe?: boolean;
 	json?: boolean;
 }
@@ -368,10 +369,10 @@ export async function aiProviderTestCommand(
 		throw new Error(`AI Provider is invalid:\n${validation.errors.join("\n")}`);
 	}
 	const authStatus = await inspectAiProviderAuth(provider);
-	const shouldProbe = opts.probe !== false;
+	const shouldProbe = opts.live === true || opts.probe === true;
 	const providerProbe = shouldProbe
 		? await probeAiProvider(provider, authStatus, parseAiProviderTestTimeout(opts.timeout))
-		: { status: "skipped", detail: "probe disabled" };
+		: { status: "skipped", detail: "live probe disabled; pass --live to call provider" };
 	const result = {
 		provider_id: provider.id,
 		base_url: provider.base_url,

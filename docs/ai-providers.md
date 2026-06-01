@@ -60,6 +60,7 @@ clawdi ai-provider add openai-main \
 
 clawdi ai-provider validate openai-main
 clawdi ai-provider test openai-main
+clawdi ai-provider test openai-main --live
 ```
 
 The catalog stores `env:OPENAI_API_KEY`, not the key value.
@@ -77,10 +78,12 @@ clawdi ai-provider add openai-vault \
   --auth clawdi://default/OPENAI_API_KEY
 
 clawdi ai-provider test openai-vault
+clawdi ai-provider test openai-vault --live
 ```
 
 `clawdi://` resolution may call Clawdi Vault from the CLI. The provider probe
-still calls the provider API directly; it is not a Clawdi model proxy.
+only calls the provider API directly when `--live` is passed; it is not a Clawdi
+model proxy.
 
 ## Add An Anthropic Provider
 
@@ -286,7 +289,9 @@ clawdi doctor ai-provider
 ```
 
 `ai-provider test` checks auth availability and direct provider reachability. It
-redacts secrets and prints provider/probe status, not raw request bodies.
+does not call the provider by default. Pass `--live` to run an optional direct
+provider metadata probe. It redacts secrets and prints provider/probe status,
+not raw request bodies.
 
 ## Current Non-Goals
 

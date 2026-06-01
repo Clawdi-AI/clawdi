@@ -355,10 +355,12 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("test <provider-id>")
-	.description("Check provider auth availability and direct provider reachability")
+	.description("Check provider config and auth availability")
 	.option("--model <model>", "Model to validate against when a provider-specific probe supports it")
 	.option("--timeout <seconds>", "Provider probe timeout in seconds", "10")
-	.option("--no-probe", "Skip direct provider metadata probe")
+	.option("--live", "Also run a direct provider metadata probe")
+	.option("--probe", "Deprecated alias for --live")
+	.option("--no-probe", "Compatibility flag; live probes are disabled unless --live is passed")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderTestCommand } = await import("./commands/ai-provider.js");
