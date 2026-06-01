@@ -1,0 +1,1120 @@
+import { spawn } from "node:child_process";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import {
+	type AiProvider,
+	type AiProviderApiMode,
+	type AiProviderAuth,
+	type AiProviderCapabilities,
+	type AiProviderCatalog,
+	type AiProviderType,
+	defaultAiProviderApiMode,
+	defaultAiProviderBaseUrl,
+	isAiProviderApiMode,
+	isAiProviderId,
+	isAiProviderType,
+	isRuntimeEnvName,
+	isSupportedSecretRef,
+	validateAiProviderCatalog,
+} from "@clawdi/shared";
+import chalk from "chalk";
+import { parse as parseYaml } from "yaml";
+import {
+	aiProviderCatalogPath,
+	coerceAiProviderCatalog,
+	readAiProviderCatalog,
+	removeAiProvider,
+	upsertAiProvider,
+	writeAiProviderCatalog,
+} from "../lib/ai-provider-catalog";
+import {
+	agentCredentialsImportCommand,
+	agentCredentialsMaterializeCommand,
+} from "./agent-credentials";
+
+interface AiProviderAddOptions {
+	type?: string;
+	label?: string;
+	baseUrl?: string;
+	defaultModel?: string;
+	apiMode?: string;
+	auth?: string;
+	runtimeEnv?: string;
+	capability?: string[];
+	setDefault?: boolean;
+	replace?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderEditOptions {
+	type?: string;
+	label?: string;
+	baseUrl?: string;
+	defaultModel?: string;
+	apiMode?: string;
+	auth?: string;
+	runtimeEnv?: string;
+	capability?: string[];
+	setDefault?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderListOptions {
+	json?: boolean;
+}
+
+interface AiProviderRemoveOptions {
+	force?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderValidateOptions {
+	allowNoAuthPublic?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderExportOptions {
+	out?: string;
+	includeSecrets?: boolean;
+	secretPassphrase?: boolean;
+	secretPassphraseEnv?: string;
+}
+
+interface AiProviderImportOptions {
+	fromHermes?: string;
+	fromOpenclaw?: string;
+	restoreSecrets?: string;
+	out?: string;
+	secretPassphraseEnv?: string;
+	replace?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderTestOptions {
+	model?: string;
+	timeout?: string;
+	probe?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderImportAuthOptions {
+	tool?: string;
+	project?: string;
+	profile?: string;
+	source?: string;
+	from?: string;
+	to?: string;
+	keychainService?: string;
+	keychainAccount?: string;
+	yes?: boolean;
+	dryRun?: boolean;
+	json?: boolean;
+}
+
+interface AiProviderMaterializeAuthOptions {
+	project?: string;
+	profile?: string;
+	to?: string;
+	yes?: boolean;
+	dryRun?: boolean;
+	json?: boolean;
+	backup?: boolean;
+}
+
+interface AiProviderConnectOptions {
+	method?: string;
+	tool?: string;
+	profile?: string;
+	yes?: boolean;
+	dryRun?: boolean;
+	json?: boolean;
+}
+
+export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	if (opts.json) {
+		console.log(JSON.stringify(catalog, null, 2));
+		return;
+	}
+	if (catalog.providers.length === 0) {
+		console.log("No AI Providers configured.");
+		return;
+	}
+	const rows = catalog.providers.map((provider) => [
+		provider.id,
+		provider.type,
+		hostOf(provider.base_url),
+		provider.default_model ?? "-",
+		describeAuth(provider.auth),
+	]);
+	printTable(["ID", "TYPE", "HOST", "DEFAULT MODEL", "AUTH"], rows);
+}
+
+export async function aiProviderAddCommand(
+	providerId: string,
+	opts: AiProviderAddOptions,
+): Promise<void> {
+	const provider = buildProvider(providerId, opts);
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const next = applyDefault(
+		upsertAiProvider(catalog, provider, Boolean(opts.replace)),
+		provider,
+		opts,
+	);
+	writeAiProviderCatalog(next);
+	printMutationResult("added", provider, opts.json);
+}
+
+export async function aiProviderEditCommand(
+	providerId: string,
+	opts: AiProviderEditOptions,
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const existing = catalog.providers.find((provider) => provider.id === providerId);
+	if (!existing) throw new Error(`AI Provider not found: ${providerId}`);
+	const updated = buildProvider(providerId, opts, existing);
+	const next = applyDefault(upsertAiProvider(catalog, updated, true), updated, opts);
+	writeAiProviderCatalog(next);
+	printMutationResult("updated", updated, opts.json);
+}
+
+export async function aiProviderRemoveCommand(
+	providerId: string,
+	opts: AiProviderRemoveOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const next = removeAiProvider(catalog, providerId, Boolean(opts.force));
+	writeAiProviderCatalog(next);
+	if (opts.json) {
+		console.log(JSON.stringify({ removed: providerId }, null, 2));
+		return;
+	}
+	console.log(chalk.green(`✓ Removed AI Provider ${providerId}`));
+}
+
+export async function aiProviderValidateCommand(
+	providerId?: string,
+	opts: AiProviderValidateOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const target = providerId ? catalogForProvider(catalog, providerId) : catalog;
+	const result = validateAiProviderCatalog(target, {
+		allowNoAuthPublic: Boolean(opts.allowNoAuthPublic),
+	});
+	if (opts.json) {
+		console.log(JSON.stringify(result, null, 2));
+	}
+	for (const warning of result.warnings) {
+		if (!opts.json) console.log(chalk.yellow(`warning: ${warning}`));
+	}
+	if (!result.valid) {
+		if (!opts.json) {
+			for (const error of result.errors) console.log(chalk.red(`error: ${error}`));
+		}
+		throw new Error("AI Provider validation failed.");
+	}
+	if (!opts.json) {
+		console.log(chalk.green("✓ AI Provider catalog is valid"));
+	}
+}
+
+export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}): Promise<void> {
+	if (opts.includeSecrets) {
+		if (!opts.secretPassphrase) {
+			throw new Error("--include-secrets requires --secret-passphrase.");
+		}
+		if (!opts.out) {
+			throw new Error(
+				"--include-secrets requires --out so encrypted material is not dumped to stdout.",
+			);
+		}
+	}
+	if (opts.secretPassphrase && !opts.includeSecrets) {
+		throw new Error("--secret-passphrase can only be used with --include-secrets.");
+	}
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const exportPayload: AiProviderCatalog & {
+		encrypted_secrets?: EncryptedSecretBundle;
+	} = { ...catalog };
+	if (opts.includeSecrets) {
+		const passphrase = readSecretBackupPassphrase(opts.secretPassphraseEnv);
+		exportPayload.encrypted_secrets = encryptSecretBundle(passphrase, collectEnvSecrets(catalog));
+	}
+	const output = `${JSON.stringify(exportPayload, null, 2)}\n`;
+	if (opts.out) {
+		writeFileSync(opts.out, output, { mode: 0o600 });
+		console.log(chalk.green(`✓ Exported AI Provider catalog to ${opts.out}`));
+		return;
+	}
+	process.stdout.write(output);
+}
+
+export async function aiProviderImportCommand(
+	file: string | undefined,
+	opts: AiProviderImportOptions = {},
+): Promise<void> {
+	const sources = [file, opts.fromHermes, opts.fromOpenclaw].filter(Boolean);
+	if (sources.length !== 1) {
+		throw new Error("Pass exactly one import source: <file>, --from-hermes, or --from-openclaw.");
+	}
+	const incoming = opts.fromHermes
+		? catalogFromHermesConfig(readFileSync(opts.fromHermes, "utf-8"))
+		: opts.fromOpenclaw
+			? catalogFromOpenClawConfig(JSON.parse(readFileSync(opts.fromOpenclaw, "utf-8")) as unknown)
+			: coerceAiProviderCatalog(
+					stripEncryptedSecrets(JSON.parse(readFileSync(file as string, "utf-8")) as unknown),
+				);
+	if (opts.restoreSecrets && !file) {
+		throw new Error("--restore-secrets requires an AI Provider backup file.");
+	}
+	const result = validateAiProviderCatalog(incoming);
+	if (!result.valid) {
+		throw new Error(`Imported AI Provider catalog is invalid:\n${result.errors.join("\n")}`);
+	}
+	if (file && opts.restoreSecrets) {
+		restoreEncryptedSecrets(
+			JSON.parse(readFileSync(file, "utf-8")) as unknown,
+			opts.restoreSecrets,
+			opts.out,
+			opts.secretPassphraseEnv,
+		);
+	}
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	let next = catalog;
+	for (const provider of incoming.providers) {
+		next = upsertAiProvider(next, provider, Boolean(opts.replace));
+	}
+	if (incoming.defaults) {
+		next = { ...next, defaults: { ...next.defaults, ...incoming.defaults } };
+	}
+	writeAiProviderCatalog(next);
+	if (opts.json) {
+		console.log(JSON.stringify({ imported: incoming.providers.length }, null, 2));
+		return;
+	}
+	console.log(chalk.green(`✓ Imported ${incoming.providers.length} AI Provider(s)`));
+}
+
+export async function aiProviderTestCommand(
+	providerId: string,
+	opts: AiProviderTestOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const provider = catalog.providers.find((entry) => entry.id === providerId);
+	if (!provider) throw new Error(`AI Provider not found: ${providerId}`);
+	const validation = validateAiProviderCatalog(catalogForProvider(catalog, providerId), {
+		allowNoAuthPublic: false,
+	});
+	if (!validation.valid) {
+		throw new Error(`AI Provider is invalid:\n${validation.errors.join("\n")}`);
+	}
+	const authStatus = inspectAuth(provider.auth);
+	const shouldProbe = opts.probe !== false;
+	const providerProbe = shouldProbe
+		? await probeProvider(provider, authStatus, Number(opts.timeout ?? 10))
+		: { status: "skipped", detail: "probe disabled" };
+	const result = {
+		provider_id: provider.id,
+		base_url: provider.base_url,
+		auth: publicAuthStatus(authStatus),
+		model: opts.model ?? provider.default_model ?? null,
+		provider_probe: providerProbe,
+	};
+	if (opts.json) {
+		console.log(JSON.stringify(result, null, 2));
+		return;
+	}
+	console.log(`Provider: ${provider.id}`);
+	console.log(`Endpoint: ${provider.base_url}`);
+	console.log(`Auth: ${authStatus.status}${authStatus.detail ? ` (${authStatus.detail})` : ""}`);
+	console.log(
+		`Provider probe: ${providerProbe.status}${"detail" in providerProbe && providerProbe.detail ? ` (${providerProbe.detail})` : ""}`,
+	);
+}
+
+export async function aiProviderImportAuthCommand(
+	providerId: string,
+	opts: AiProviderImportAuthOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const provider = findProvider(catalog, providerId);
+	const tool =
+		opts.tool ?? (provider.auth.type === "agent_profile" ? provider.auth.tool : undefined);
+	if (!tool) {
+		throw new Error("--tool is required unless the provider already uses agent_profile auth.");
+	}
+	const profile =
+		opts.profile ?? (provider.auth.type === "agent_profile" ? provider.auth.profile : "default");
+	await agentCredentialsImportCommand(tool, {
+		project: opts.project,
+		profile,
+		source: opts.source,
+		from: opts.from,
+		to: opts.to,
+		keychainService: opts.keychainService,
+		keychainAccount: opts.keychainAccount,
+		yes: opts.yes,
+		dryRun: opts.dryRun,
+		json: opts.json,
+		quiet: opts.json,
+	});
+	if (opts.dryRun) return;
+	const nextProvider: AiProvider = {
+		...provider,
+		auth: { type: "agent_profile", tool, profile },
+	};
+	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
+	if (opts.json) {
+		console.log(
+			JSON.stringify(
+				{
+					provider_id: providerId,
+					auth: nextProvider.auth,
+				},
+				null,
+				2,
+			),
+		);
+		return;
+	}
+	console.log(chalk.green(`✓ Bound ${providerId} auth to agent profile ${tool}/${profile}`));
+}
+
+export async function aiProviderMaterializeAuthCommand(
+	providerId: string,
+	opts: AiProviderMaterializeAuthOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const provider = findProvider(catalog, providerId);
+	if (provider.auth.type !== "agent_profile") {
+		throw new Error(
+			`AI Provider ${providerId} does not use agent_profile auth. Current auth: ${describeAuth(provider.auth)}`,
+		);
+	}
+	await agentCredentialsMaterializeCommand(provider.auth.tool, {
+		project: opts.project,
+		profile: opts.profile ?? provider.auth.profile,
+		to: opts.to,
+		yes: opts.yes,
+		dryRun: opts.dryRun,
+		json: opts.json,
+		backup: opts.backup,
+	});
+}
+
+export async function aiProviderConnectCommand(
+	providerId: string,
+	opts: AiProviderConnectOptions = {},
+): Promise<void> {
+	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const provider = findProvider(catalog, providerId);
+	const method = opts.method ?? "oauth";
+	const tool = canonicalAuthTool(opts.tool ?? defaultAuthTool(provider));
+	if (!tool) {
+		throw new Error(
+			"--tool is required for this provider type. Supported OAuth tools are codex and claude-code.",
+		);
+	}
+	const profile = opts.profile ?? "default";
+	const login = loginCommandForTool(tool, method);
+	const payload = {
+		provider_id: providerId,
+		method,
+		tool,
+		profile,
+		command: [login.command, ...login.args],
+		dry_run: Boolean(opts.dryRun),
+	};
+	if (opts.json && opts.dryRun) {
+		console.log(JSON.stringify(payload, null, 2));
+	}
+	if (opts.dryRun) return;
+	if (!opts.json) {
+		console.log(chalk.gray(`Running ${[login.command, ...login.args].join(" ")}...`));
+	}
+	await runInteractive(login.command, login.args);
+	await agentCredentialsImportCommand(tool, {
+		profile,
+		yes: opts.yes,
+		json: opts.json,
+		quiet: opts.json,
+	});
+	const nextProvider: AiProvider = {
+		...provider,
+		auth: { type: "agent_profile", tool, profile },
+	};
+	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
+	if (opts.json) {
+		console.log(
+			JSON.stringify(
+				{ provider_id: providerId, auth: nextProvider.auth, status: "connected" },
+				null,
+				2,
+			),
+		);
+		return;
+	}
+	console.log(chalk.green(`✓ Connected ${providerId} through ${tool}/${profile}`));
+}
+
+function buildProvider(
+	providerId: string,
+	opts: AiProviderAddOptions | AiProviderEditOptions,
+	existing?: AiProvider,
+): AiProvider {
+	if (!isAiProviderId(providerId)) throw new Error(`Invalid AI Provider id: ${providerId}`);
+	const type = parseProviderType(opts.type ?? existing?.type);
+	const apiMode = parseApiMode(
+		opts.apiMode ?? existing?.api_mode ?? defaultAiProviderApiMode(type),
+	);
+	const baseUrl = opts.baseUrl ?? existing?.base_url ?? defaultAiProviderBaseUrl(type);
+	if (!baseUrl) throw new Error(`--base-url is required for provider type ${type}.`);
+	const auth = opts.auth ? parseAuth(opts.auth) : existing?.auth;
+	if (!auth)
+		throw new Error(
+			"--auth is required. Use env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none.",
+		);
+	const provider: AiProvider = {
+		id: providerId,
+		type,
+		base_url: baseUrl,
+		auth,
+	};
+	if (opts.label ?? existing?.label) provider.label = opts.label ?? existing?.label;
+	if (opts.defaultModel ?? existing?.default_model) {
+		provider.default_model = opts.defaultModel ?? existing?.default_model;
+	}
+	if (apiMode) provider.api_mode = apiMode;
+	const runtimeEnv = opts.runtimeEnv ?? existing?.runtime_env_name;
+	if (runtimeEnv) {
+		if (!isRuntimeEnvName(runtimeEnv)) throw new Error(`Invalid runtime env name: ${runtimeEnv}`);
+		provider.runtime_env_name = runtimeEnv;
+	}
+	const capabilities = parseCapabilities(opts.capability);
+	if (capabilities ?? existing?.capabilities) {
+		provider.capabilities = capabilities ?? existing?.capabilities;
+	}
+	return provider;
+}
+
+function parseProviderType(input: string | undefined): AiProviderType {
+	if (!input || !isAiProviderType(input)) {
+		throw new Error(
+			`Invalid or missing --type. Supported types: openai, anthropic, openrouter, gemini, mistral, custom_openai_compatible.`,
+		);
+	}
+	return input;
+}
+
+function parseApiMode(input: string | undefined): AiProviderApiMode | undefined {
+	if (!input) return undefined;
+	if (!isAiProviderApiMode(input)) {
+		throw new Error(
+			`Invalid --api-mode. Supported modes: openai_chat, openai_responses, anthropic_messages, google_generate_content.`,
+		);
+	}
+	return input;
+}
+
+function parseAuth(input: string): AiProviderAuth {
+	if (input === "none") return { type: "none" };
+	if (isSupportedSecretRef(input)) return { type: "secret_ref", ref: input };
+	if (input.startsWith("oauth:")) {
+		const { provider, profile } = parseProfileRef(input.slice("oauth:".length));
+		return { type: "oauth_profile", provider, profile };
+	}
+	if (input.startsWith("agent:")) {
+		const { provider, profile } = parseProfileRef(input.slice("agent:".length));
+		return { type: "agent_profile", tool: provider, profile };
+	}
+	throw new Error(
+		"Unsupported --auth. Use env:<NAME>, clawdi://..., oauth:<provider>/<profile>, agent:<tool>/<profile>, or none.",
+	);
+}
+
+function parseProfileRef(input: string): { provider: string; profile: string } {
+	const [provider, profile = "default", extra] = input.split("/");
+	if (!provider || extra !== undefined) {
+		throw new Error("Profile auth must use <provider>/<profile>.");
+	}
+	return { provider, profile };
+}
+
+function canonicalAuthTool(input: string | undefined): string | undefined {
+	if (!input) return undefined;
+	const normalized = input.trim().toLowerCase().replace(/_/g, "-");
+	if (normalized === "claude" || normalized === "claudecode") return "claude-code";
+	if (normalized === "github" || normalized === "github-cli") return "gh";
+	return normalized;
+}
+
+function defaultAuthTool(provider: AiProvider): string | undefined {
+	if (provider.type === "openai") return "codex";
+	if (provider.type === "anthropic") return "claude-code";
+	return undefined;
+}
+
+function loginCommandForTool(tool: string, method: string): { command: string; args: string[] } {
+	if (tool === "codex") {
+		if (method !== "oauth" && method !== "device") {
+			throw new Error("Codex connect supports --method oauth or --method device.");
+		}
+		return { command: "codex", args: ["login", "--device-auth"] };
+	}
+	if (tool === "claude-code") {
+		if (method !== "oauth" && method !== "claudeai" && method !== "console") {
+			throw new Error("Claude Code connect supports --method oauth, claudeai, or console.");
+		}
+		const args = ["auth", "login"];
+		if (method === "console") args.push("--console");
+		return { command: "claude", args };
+	}
+	throw new Error("Provider OAuth connect supports codex and claude-code.");
+}
+
+async function runInteractive(command: string, args: string[]): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const child = spawn(command, args, { stdio: "inherit" });
+		child.once("error", (error) => reject(error));
+		child.once("exit", (code, signal) => {
+			if (code === 0) {
+				resolve();
+				return;
+			}
+			const reason = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+			reject(new Error(`${command} ${args.join(" ")} failed with ${reason}`));
+		});
+	});
+}
+
+function parseCapabilities(values: string[] | undefined): AiProviderCapabilities | undefined {
+	if (!values || values.length === 0) return undefined;
+	const out: AiProviderCapabilities = {};
+	for (const raw of values.flatMap((value) => value.split(","))) {
+		const key = raw.trim();
+		if (!key) continue;
+		if (
+			key === "chat" ||
+			key === "responses" ||
+			key === "tools" ||
+			key === "vision" ||
+			key === "embeddings" ||
+			key === "image_generation"
+		) {
+			out[key] = true;
+			continue;
+		}
+		throw new Error(`Unsupported capability: ${key}`);
+	}
+	return out;
+}
+
+function applyDefault(
+	catalog: AiProviderCatalog,
+	provider: AiProvider,
+	opts: { setDefault?: boolean },
+): AiProviderCatalog {
+	if (!opts.setDefault) return catalog;
+	return {
+		...catalog,
+		defaults: {
+			...catalog.defaults,
+			chat_provider_id: provider.id,
+		},
+	};
+}
+
+function catalogForProvider(catalog: AiProviderCatalog, providerId: string): AiProviderCatalog {
+	const provider = findProvider(catalog, providerId);
+	return {
+		...catalog,
+		providers: [provider],
+		defaults: undefined,
+	};
+}
+
+interface SecretBackupPayload {
+	schema_version: 1;
+	secrets: Array<{
+		provider_id: string;
+		ref: string;
+		env_name: string;
+		value: string;
+	}>;
+}
+
+interface EncryptedSecretBundle {
+	schema_version: 1;
+	algorithm: "aes-256-gcm+scrypt";
+	kdf: {
+		name: "scrypt";
+		salt: string;
+		key_length: 32;
+	};
+	nonce: string;
+	ciphertext: string;
+	auth_tag: string;
+}
+
+function collectEnvSecrets(catalog: AiProviderCatalog): SecretBackupPayload {
+	const secrets: SecretBackupPayload["secrets"] = [];
+	for (const provider of catalog.providers) {
+		const ref = exportableEnvRef(provider.auth);
+		if (!ref) continue;
+		const envName = ref.slice("env:".length);
+		const value = process.env[envName];
+		if (!value) {
+			throw new Error(`Cannot include secrets: ${ref} is not set in the current environment.`);
+		}
+		secrets.push({ provider_id: provider.id, ref, env_name: envName, value });
+	}
+	return { schema_version: 1, secrets };
+}
+
+function exportableEnvRef(auth: AiProviderAuth): string | null {
+	if (auth.type === "secret_ref") {
+		if (auth.ref.startsWith("env:")) return auth.ref;
+		if (auth.ref.startsWith("clawdi://")) {
+			throw new Error(
+				"Provider-only encrypted export does not resolve clawdi:// refs. Use Vault backup for those secrets.",
+			);
+		}
+	}
+	if (auth.type === "api_key") {
+		if (auth.source === "env" && auth.ref?.startsWith("env:")) return auth.ref;
+		if (auth.source === "vault" || auth.source === "managed") {
+			throw new Error(
+				"Provider-only encrypted export currently supports env-backed provider secrets only.",
+			);
+		}
+	}
+	return null;
+}
+
+function readSecretBackupPassphrase(envName = "CLAWDI_SECRET_BACKUP_PASSPHRASE"): string {
+	const passphrase = process.env[envName];
+	if (!passphrase) {
+		throw new Error(`Set ${envName} to use --secret-passphrase.`);
+	}
+	return passphrase;
+}
+
+function encryptSecretBundle(
+	passphrase: string,
+	payload: SecretBackupPayload,
+): EncryptedSecretBundle {
+	const salt = randomBytes(16);
+	const nonce = randomBytes(12);
+	const key = scryptSync(passphrase, salt, 32);
+	const cipher = createCipheriv("aes-256-gcm", key, nonce);
+	const ciphertext = Buffer.concat([
+		cipher.update(JSON.stringify(payload), "utf-8"),
+		cipher.final(),
+	]);
+	return {
+		schema_version: 1,
+		algorithm: "aes-256-gcm+scrypt",
+		kdf: {
+			name: "scrypt",
+			salt: salt.toString("base64"),
+			key_length: 32,
+		},
+		nonce: nonce.toString("base64"),
+		ciphertext: ciphertext.toString("base64"),
+		auth_tag: cipher.getAuthTag().toString("base64"),
+	};
+}
+
+function decryptSecretBundle(
+	passphrase: string,
+	bundle: EncryptedSecretBundle,
+): SecretBackupPayload {
+	if (
+		bundle.schema_version !== 1 ||
+		bundle.algorithm !== "aes-256-gcm+scrypt" ||
+		bundle.kdf?.name !== "scrypt" ||
+		bundle.kdf.key_length !== 32
+	) {
+		throw new Error("Unsupported encrypted secret backup format.");
+	}
+	const salt = Buffer.from(bundle.kdf.salt, "base64");
+	const nonce = Buffer.from(bundle.nonce, "base64");
+	const key = scryptSync(passphrase, salt, 32);
+	const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+	decipher.setAuthTag(Buffer.from(bundle.auth_tag, "base64"));
+	const plaintext = Buffer.concat([
+		decipher.update(Buffer.from(bundle.ciphertext, "base64")),
+		decipher.final(),
+	]).toString("utf-8");
+	const parsed = JSON.parse(plaintext) as unknown;
+	const payload = asRecord(parsed, "secret backup payload");
+	if (payload.schema_version !== 1 || !Array.isArray(payload.secrets)) {
+		throw new Error("Invalid decrypted secret backup payload.");
+	}
+	const secrets = payload.secrets.map((entry) => {
+		const secret = asRecord(entry, "secret backup entry");
+		if (
+			typeof secret.provider_id !== "string" ||
+			typeof secret.ref !== "string" ||
+			typeof secret.env_name !== "string" ||
+			typeof secret.value !== "string"
+		) {
+			throw new Error("Invalid decrypted secret backup entry.");
+		}
+		if (!isRuntimeEnvName(secret.env_name) || secret.ref !== `env:${secret.env_name}`) {
+			throw new Error("Invalid decrypted env secret metadata.");
+		}
+		return {
+			provider_id: secret.provider_id,
+			ref: secret.ref,
+			env_name: secret.env_name,
+			value: secret.value,
+		};
+	});
+	return { schema_version: 1, secrets };
+}
+
+function stripEncryptedSecrets(input: unknown): unknown {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+	const { encrypted_secrets: _encryptedSecrets, ...rest } = input as Record<string, unknown>;
+	return rest;
+}
+
+function restoreEncryptedSecrets(
+	input: unknown,
+	target: string,
+	out: string | undefined,
+	passphraseEnv: string | undefined,
+): void {
+	if (target !== "env-file") {
+		throw new Error("Only --restore-secrets env-file is supported in the provider-only path.");
+	}
+	if (!out) throw new Error("--restore-secrets env-file requires --out <file>.");
+	const root = asRecord(input, "AI Provider backup");
+	const bundle = root.encrypted_secrets;
+	if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
+		throw new Error("Backup does not contain encrypted_secrets.");
+	}
+	const payload = decryptSecretBundle(
+		readSecretBackupPassphrase(passphraseEnv),
+		bundle as EncryptedSecretBundle,
+	);
+	const lines = payload.secrets.map((secret) => `${secret.env_name}=${shellQuote(secret.value)}`);
+	writeFileSync(out, `${lines.join("\n")}\n`, { mode: 0o600 });
+}
+
+function shellQuote(input: string): string {
+	return `'${input.replace(/'/g, "'\\''")}'`;
+}
+
+function catalogFromOpenClawConfig(input: unknown): AiProviderCatalog {
+	const root = asRecord(input, "OpenClaw config");
+	const models = asRecord(root.models, "OpenClaw models");
+	const providerMap = asRecord(models.providers, "OpenClaw models.providers");
+	const providers: AiProvider[] = [];
+	for (const [id, value] of Object.entries(providerMap)) {
+		if (!isAiProviderId(id)) continue;
+		const entry = asRecord(value, `OpenClaw provider ${id}`);
+		const type = parseProviderType(
+			String(entry.type ?? entry.provider ?? "custom_openai_compatible"),
+		);
+		const baseUrl = stringField(entry, "baseUrl") ?? stringField(entry, "base_url");
+		if (!baseUrl) continue;
+		const apiModeInput = stringField(entry, "apiMode") ?? stringField(entry, "api_mode");
+		const keyEnv = stringField(entry, "keyEnv") ?? stringField(entry, "key_env");
+		const modelId = firstModelId(entry.models);
+		const provider: AiProvider = {
+			id,
+			type,
+			base_url: baseUrl,
+			auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
+		};
+		if (modelId) provider.default_model = modelId;
+		const apiMode = parseApiMode(apiModeInput ?? defaultAiProviderApiMode(type));
+		if (apiMode) provider.api_mode = apiMode;
+		if (keyEnv) provider.runtime_env_name = keyEnv;
+		providers.push(provider);
+	}
+	const defaults = defaultProviderFromOpenClaw(root);
+	return { schema_version: 1, providers, defaults };
+}
+
+function catalogFromHermesConfig(content: string): AiProviderCatalog {
+	let rootValue: unknown;
+	try {
+		rootValue = parseYaml(content);
+	} catch (error) {
+		throw new Error(
+			`Hermes config is not valid YAML: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const root = asRecord(rootValue, "Hermes config");
+	const providerMaps = [
+		recordField(root, "providers"),
+		recordField(root, "custom_providers"),
+	].filter((entry): entry is Record<string, unknown> => entry !== undefined);
+	if (providerMaps.length === 0) {
+		throw new Error("Hermes config does not contain a providers block.");
+	}
+	const providers: AiProvider[] = [];
+	for (const providerMap of providerMaps) {
+		for (const [id, value] of Object.entries(providerMap)) {
+			if (!isAiProviderId(id)) continue;
+			const provider = asRecord(value, `Hermes provider ${id}`);
+			const type = parseProviderType(stringField(provider, "type") ?? "custom_openai_compatible");
+			const baseUrl = stringField(provider, "base_url") ?? stringField(provider, "baseUrl");
+			if (!baseUrl) continue;
+			const keyEnv = stringField(provider, "key_env") ?? stringField(provider, "api_key_env");
+			const entry: AiProvider = {
+				id,
+				type,
+				base_url: baseUrl,
+				auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
+			};
+			const model = stringField(provider, "model") ?? stringField(provider, "default_model");
+			if (model) entry.default_model = model;
+			const apiMode = parseApiMode(
+				stringField(provider, "api_mode") ?? defaultAiProviderApiMode(type),
+			);
+			if (apiMode) entry.api_mode = apiMode;
+			if (keyEnv) entry.runtime_env_name = keyEnv;
+			const name = stringField(provider, "name");
+			if (name) entry.label = name;
+			providers.push(entry);
+		}
+	}
+	const modelConfig = recordField(root, "model");
+	const defaultProvider = modelConfig ? stringField(modelConfig, "provider") : undefined;
+	return {
+		schema_version: 1,
+		providers,
+		defaults: defaultProvider ? { chat_provider_id: defaultProvider } : undefined,
+	};
+}
+
+function recordField(
+	record: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> | undefined {
+	const value = record[key];
+	if (value === undefined || value === null) return undefined;
+	return asRecord(value, key);
+}
+
+function findProvider(catalog: AiProviderCatalog, providerId: string): AiProvider {
+	const provider = catalog.providers.find((entry) => entry.id === providerId);
+	if (!provider) throw new Error(`AI Provider not found: ${providerId}`);
+	return provider;
+}
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(`${label} must be an object.`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function firstModelId(value: unknown): string | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const first = value[0];
+	if (typeof first === "string") return first;
+	if (typeof first === "object" && first !== null && "id" in first) {
+		const id = (first as { id?: unknown }).id;
+		return typeof id === "string" ? id : undefined;
+	}
+	return undefined;
+}
+
+function defaultProviderFromOpenClaw(root: Record<string, unknown>): AiProviderCatalog["defaults"] {
+	const agents = root.agents;
+	if (typeof agents !== "object" || agents === null || Array.isArray(agents)) return undefined;
+	const defaults = (agents as Record<string, unknown>).defaults;
+	if (typeof defaults !== "object" || defaults === null || Array.isArray(defaults))
+		return undefined;
+	const model = (defaults as Record<string, unknown>).model;
+	if (typeof model !== "string") return undefined;
+	const providerId = model.split("/")[0];
+	return isAiProviderId(providerId) ? { chat_provider_id: providerId } : undefined;
+}
+
+function describeAuth(auth: AiProviderAuth): string {
+	if (auth.type === "secret_ref") return redactRef(auth.ref);
+	if (auth.type === "api_key") return `api_key:${auth.source}`;
+	if (auth.type === "oauth_profile") return `oauth:${auth.provider}/${auth.profile}`;
+	if (auth.type === "agent_profile") return `agent:${auth.tool}/${auth.profile}`;
+	return "none";
+}
+
+function inspectAuth(auth: AiProviderAuth): {
+	status: "available" | "missing" | "unknown";
+	detail?: string;
+	value?: string;
+} {
+	if (auth.type === "none") return { status: "available", detail: "no auth" };
+	if (auth.type === "secret_ref" && auth.ref.startsWith("env:")) {
+		const name = auth.ref.slice("env:".length);
+		return process.env[name]
+			? { status: "available", detail: auth.ref, value: process.env[name] }
+			: { status: "missing", detail: auth.ref };
+	}
+	if (auth.type === "api_key" && auth.source === "env" && auth.ref?.startsWith("env:")) {
+		const name = auth.ref.slice("env:".length);
+		return process.env[name]
+			? { status: "available", detail: auth.ref, value: process.env[name] }
+			: { status: "missing", detail: auth.ref };
+	}
+	if (auth.type === "secret_ref" && auth.ref.startsWith("clawdi://")) {
+		return { status: "unknown", detail: "Vault resolution not performed by this local test slice" };
+	}
+	return { status: "unknown", detail: describeAuth(auth) };
+}
+
+function publicAuthStatus(authStatus: ReturnType<typeof inspectAuth>): {
+	status: "available" | "missing" | "unknown";
+	detail?: string;
+} {
+	return { status: authStatus.status, detail: authStatus.detail };
+}
+
+async function probeProvider(
+	provider: AiProvider,
+	authStatus: ReturnType<typeof inspectAuth>,
+	timeoutSeconds: number,
+): Promise<{
+	status: "ok" | "failed" | "skipped";
+	detail: string;
+	url?: string;
+	http_status?: number;
+}> {
+	if (authStatus.status === "missing") {
+		return { status: "skipped", detail: "auth missing" };
+	}
+	if (authStatus.status === "unknown") {
+		return { status: "skipped", detail: "auth cannot be resolved locally" };
+	}
+	const endpoint = providerProbeEndpoint(provider);
+	const headers = providerProbeHeaders(provider, authStatus.value);
+	const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(endpoint, {
+			method: "GET",
+			headers,
+			signal: controller.signal,
+		});
+		if (res.ok) {
+			return {
+				status: "ok",
+				detail: "metadata endpoint reachable",
+				url: redactUrl(endpoint),
+				http_status: res.status,
+			};
+		}
+		return {
+			status: "failed",
+			detail: `metadata endpoint returned HTTP ${res.status}`,
+			url: redactUrl(endpoint),
+			http_status: res.status,
+		};
+	} catch (error) {
+		const err = error as { name?: string; message?: string };
+		return {
+			status: "failed",
+			detail:
+				err.name === "AbortError" ? "metadata probe timed out" : (err.message ?? String(error)),
+			url: redactUrl(endpoint),
+		};
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function providerProbeEndpoint(provider: AiProvider): string {
+	const base = provider.base_url.replace(/\/+$/, "");
+	if (provider.type === "anthropic") {
+		return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+	}
+	if (provider.type === "gemini") {
+		const key = authEnvValue(provider);
+		const url = new URL(base.endsWith("/models") ? base : `${base}/models`);
+		if (key) url.searchParams.set("key", key);
+		return url.toString();
+	}
+	return `${base}/models`;
+}
+
+function providerProbeHeaders(
+	provider: AiProvider,
+	key: string | undefined,
+): Record<string, string> {
+	if (!key) return {};
+	if (provider.type === "anthropic") {
+		return {
+			"x-api-key": key,
+			"anthropic-version": "2023-06-01",
+		};
+	}
+	if (provider.type === "gemini") return {};
+	return { Authorization: `Bearer ${key}` };
+}
+
+function authEnvValue(provider: AiProvider): string | undefined {
+	const auth = provider.auth;
+	if (auth.type === "secret_ref" && auth.ref.startsWith("env:")) {
+		return process.env[auth.ref.slice("env:".length)];
+	}
+	if (auth.type === "api_key" && auth.source === "env" && auth.ref?.startsWith("env:")) {
+		return process.env[auth.ref.slice("env:".length)];
+	}
+	return undefined;
+}
+
+function redactUrl(input: string): string {
+	const url = new URL(input);
+	if (url.searchParams.has("key")) url.searchParams.set("key", "redacted");
+	return url.toString();
+}
+
+function redactRef(ref: string): string {
+	if (ref.startsWith("env:")) return ref;
+	if (ref.startsWith("clawdi://")) return "clawdi://...";
+	return "redacted";
+}
+
+function hostOf(input: string): string {
+	try {
+		return new URL(input).host;
+	} catch {
+		return input;
+	}
+}
+
+function printMutationResult(action: string, provider: AiProvider, json?: boolean): void {
+	if (json) {
+		console.log(JSON.stringify({ [action]: provider.id, provider }, null, 2));
+		return;
+	}
+	console.log(chalk.green(`✓ ${capitalize(action)} AI Provider ${provider.id}`));
+	console.log(chalk.dim(`Catalog: ${aiProviderCatalogPath()}`));
+}
+
+function printTable(headers: string[], rows: string[][]): void {
+	const widths = headers.map((header, index) =>
+		Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
+	);
+	const line = (cells: string[]) =>
+		cells.map((cell, index) => cell.padEnd(widths[index] ?? cell.length)).join("  ");
+	console.log(line(headers));
+	console.log(line(headers.map((header) => "-".repeat(header.length))));
+	for (const row of rows) console.log(line(row));
+}
+
+function capitalize(input: string): string {
+	return `${input.slice(0, 1).toUpperCase()}${input.slice(1)}`;
+}

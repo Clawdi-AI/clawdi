@@ -1,0 +1,204 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { AiProvider, AiProviderAuth, AiProviderCatalog } from "@clawdi/shared";
+import { validateAiProviderCatalog } from "@clawdi/shared";
+import { aiProviderCatalogPath } from "./ai-provider-catalog";
+import { getClawdiDir } from "./config";
+
+export type RuntimeEngine = "openclaw" | "hermes";
+
+export interface ProjectionFile {
+	path: string;
+	content: string;
+}
+
+export interface RuntimeProjection {
+	engine: RuntimeEngine;
+	files: ProjectionFile[];
+	warnings: string[];
+}
+
+interface ProjectionProvider {
+	id: string;
+	type: string;
+	label?: string;
+	base_url: string;
+	default_model: string;
+	api_mode?: string;
+	env_name?: string;
+	auth_type: AiProviderAuth["type"];
+}
+
+export function renderRuntimeProjection(
+	engine: RuntimeEngine,
+	catalog: AiProviderCatalog,
+): RuntimeProjection {
+	const validation = validateAiProviderCatalog(catalog);
+	if (!validation.valid) {
+		throw new Error(`AI Provider catalog is invalid:\n${validation.errors.join("\n")}`);
+	}
+	const providers = catalog.providers.map(normalizeProjectionProvider);
+	if (providers.length === 0) {
+		throw new Error("No AI Providers configured.");
+	}
+	const defaultProviderId = catalog.defaults?.chat_provider_id ?? providers[0]?.id;
+	const defaultProvider = providers.find((provider) => provider.id === defaultProviderId);
+	if (!defaultProvider) {
+		throw new Error(`Default provider not found: ${defaultProviderId}`);
+	}
+	const warnings = validation.warnings;
+	const projection =
+		engine === "openclaw"
+			? renderOpenClawProjection(providers, defaultProvider)
+			: renderHermesProjection(providers, defaultProvider);
+	const extension = engine === "openclaw" ? "json" : "yaml";
+	return {
+		engine,
+		files: [
+			{
+				path: `ai-providers.${engine}.${extension}`,
+				content: projection,
+			},
+		],
+		warnings,
+	};
+}
+
+export function runtimeProjectionDir(engine: RuntimeEngine): string {
+	return join(getClawdiDir(), "runtime", engine);
+}
+
+export function writeRuntimeProjection(projection: RuntimeProjection): string[] {
+	const dir = runtimeProjectionDir(projection.engine);
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const written: string[] = [];
+	for (const file of projection.files) {
+		const path = join(dir, file.path);
+		writeFileSync(path, file.content, { mode: 0o644 });
+		written.push(path);
+	}
+	const metadataPath = join(dir, "clawdi-ai-provider.sidecar.json");
+	writeFileSync(
+		metadataPath,
+		`${JSON.stringify(
+			{
+				engine: projection.engine,
+				generated_at: new Date().toISOString(),
+				catalog_path: aiProviderCatalogPath(),
+				catalog_hash: catalogHash(),
+				files: projection.files.map((file) => file.path),
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o644 },
+	);
+	written.push(metadataPath);
+	return written;
+}
+
+function normalizeProjectionProvider(provider: AiProvider): ProjectionProvider {
+	if (!provider.default_model) {
+		throw new Error(`Provider ${provider.id} requires default_model for runtime projection.`);
+	}
+	const envName = authEnvName(provider);
+	if (provider.auth.type !== "none" && !envName) {
+		throw new Error(
+			`Provider ${provider.id} auth requires runtime_env_name or an env:<NAME> ref for runtime projection.`,
+		);
+	}
+	return {
+		id: provider.id,
+		type: provider.type,
+		label: provider.label,
+		base_url: provider.base_url,
+		default_model: provider.default_model,
+		api_mode: provider.api_mode,
+		env_name: envName,
+		auth_type: provider.auth.type,
+	};
+}
+
+function authEnvName(provider: AiProvider): string | undefined {
+	const auth = provider.auth;
+	if (auth.type === "none") return undefined;
+	if (auth.type === "secret_ref" && auth.ref.startsWith("env:")) {
+		return auth.ref.slice("env:".length);
+	}
+	if (auth.type === "api_key" && auth.source === "env" && auth.ref?.startsWith("env:")) {
+		return auth.ref.slice("env:".length);
+	}
+	return provider.runtime_env_name;
+}
+
+function renderOpenClawProjection(
+	providers: ProjectionProvider[],
+	defaultProvider: ProjectionProvider,
+): string {
+	const body = {
+		schema_version: 1,
+		generated_by: "clawdi",
+		models: {
+			providers: Object.fromEntries(
+				providers.map((provider) => [
+					provider.id,
+					compactObject({
+						id: provider.id,
+						type: provider.type,
+						label: provider.label,
+						baseUrl: provider.base_url,
+						apiMode: provider.api_mode,
+						keyEnv: provider.env_name,
+						authType: provider.auth_type,
+						models: [{ id: provider.default_model }],
+					}),
+				]),
+			),
+		},
+		agents: {
+			defaults: {
+				model: `${defaultProvider.id}/${defaultProvider.default_model}`,
+			},
+		},
+	};
+	return `${JSON.stringify(body, null, 2)}\n`;
+}
+
+function renderHermesProjection(
+	providers: ProjectionProvider[],
+	defaultProvider: ProjectionProvider,
+): string {
+	const lines: string[] = [
+		"# Generated by Clawdi. Do not put API keys in this file.",
+		"model:",
+		`  provider: ${quoteYaml(defaultProvider.id)}`,
+		`  default: ${quoteYaml(defaultProvider.default_model)}`,
+		"providers:",
+	];
+	for (const provider of providers) {
+		lines.push(`  ${provider.id}:`);
+		if (provider.label) lines.push(`    name: ${quoteYaml(provider.label)}`);
+		lines.push(`    type: ${quoteYaml(provider.type)}`);
+		lines.push(`    base_url: ${quoteYaml(provider.base_url)}`);
+		if (provider.api_mode) lines.push(`    api_mode: ${quoteYaml(provider.api_mode)}`);
+		lines.push(`    model: ${quoteYaml(provider.default_model)}`);
+		if (provider.env_name) lines.push(`    key_env: ${quoteYaml(provider.env_name)}`);
+		lines.push(`    auth_type: ${quoteYaml(provider.auth_type)}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function quoteYaml(value: string): string {
+	return JSON.stringify(value);
+}
+
+function compactObject(input: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+}
+
+function catalogHash(): string | null {
+	const path = aiProviderCatalogPath();
+	if (!existsSync(path)) return null;
+	return createHash("sha256").update(readFileSync(path)).digest("hex");
+}

@@ -56,6 +56,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Ai Providers */
+        get: operations["list_ai_providers_api_ai_providers_get"];
+        put?: never;
+        /** Upsert Ai Provider */
+        post: operations["upsert_ai_provider_api_ai_providers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Provider */
+        get: operations["get_ai_provider_api_ai_providers__provider_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Ai Provider */
+        delete: operations["delete_ai_provider_api_ai_providers__provider_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Ai Provider */
+        patch: operations["patch_ai_provider_api_ai_providers__provider_id__patch"];
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Ai Provider */
+        post: operations["validate_ai_provider_api_ai_providers__provider_id__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}/auth/api-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Ai Provider Api Key */
+        post: operations["set_ai_provider_api_key_api_ai_providers__provider_id__auth_api_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}/auth/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Ai Provider Auth */
+        post: operations["import_ai_provider_auth_api_ai_providers__provider_id__auth_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-providers/{provider_id}/auth/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Ai Provider Auth */
+        post: operations["resolve_ai_provider_auth_api_ai_providers__provider_id__auth_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/auth/device": {
         parameters: {
             query?: never;
@@ -1815,6 +1920,221 @@ export interface components {
              */
             created_at: string;
         };
+        /** AiProviderAuth */
+        AiProviderAuth: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "secret_ref" | "api_key" | "oauth_profile" | "agent_profile" | "none";
+            /** Ref */
+            ref?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Payload Ref */
+            payload_ref?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Tool */
+            tool?: string | null;
+            /** Profile */
+            profile?: string | null;
+        };
+        /** AiProviderAuthImportRequest */
+        AiProviderAuthImportRequest: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "agent_profile" | "oauth_profile";
+            /**
+             * Payload
+             * Format: password
+             */
+            payload: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Tool */
+            tool?: string | null;
+            /** Provider */
+            provider?: string | null;
+        };
+        /** AiProviderAuthResolveRequest */
+        AiProviderAuthResolveRequest: {
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+        };
+        /** AiProviderAuthResolveResponse */
+        AiProviderAuthResolveResponse: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Auth Type
+             * @enum {string}
+             */
+            auth_type: "secret_ref" | "api_key" | "oauth_profile" | "agent_profile" | "none";
+            /** Payload Ref */
+            payload_ref: string;
+            /** Value */
+            value?: string | null;
+            /** Payload */
+            payload?: string | null;
+            /** Tool */
+            tool?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Profile */
+            profile?: string | null;
+        };
+        /** AiProviderDeleteResponse */
+        AiProviderDeleteResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "deleted";
+            /** Provider Id */
+            provider_id: string;
+        };
+        /** AiProviderListResponse */
+        AiProviderListResponse: {
+            /** Providers */
+            providers: components["schemas"]["AiProviderResponse"][];
+        };
+        /** AiProviderManagedApiKeyRequest */
+        AiProviderManagedApiKeyRequest: {
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Runtime Env Name */
+            runtime_env_name?: string | null;
+        };
+        /** AiProviderPatch */
+        AiProviderPatch: {
+            /** Type */
+            type?: ("openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom_openai_compatible") | null;
+            /** Label */
+            label?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Default Model */
+            default_model?: string | null;
+            /** Api Mode */
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            auth?: components["schemas"]["AiProviderAuth"] | null;
+            /** Managed By */
+            managed_by?: ("user" | "clawdi") | null;
+            /** Runtime Env Name */
+            runtime_env_name?: string | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** AiProviderResponse */
+        AiProviderResponse: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom_openai_compatible";
+            /** Label */
+            label?: string | null;
+            /** Base Url */
+            base_url: string;
+            /** Default Model */
+            default_model?: string | null;
+            /** Api Mode */
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            auth: components["schemas"]["AiProviderAuth"];
+            /**
+             * Managed By
+             * @default user
+             * @enum {string}
+             */
+            managed_by: "user" | "clawdi";
+            /** Runtime Env Name */
+            runtime_env_name?: string | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /** Id */
+            id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Scope */
+            scope: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AiProviderUpsert */
+        AiProviderUpsert: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom_openai_compatible";
+            /** Label */
+            label?: string | null;
+            /** Base Url */
+            base_url: string;
+            /** Default Model */
+            default_model?: string | null;
+            /** Api Mode */
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            auth: components["schemas"]["AiProviderAuth"];
+            /**
+             * Managed By
+             * @default user
+             * @enum {string}
+             */
+            managed_by: "user" | "clawdi";
+            /** Runtime Env Name */
+            runtime_env_name?: string | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /** Provider Id */
+            provider_id: string;
+        };
+        /** AiProviderValidationResponse */
+        AiProviderValidationResponse: {
+            /** Valid */
+            valid: boolean;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
+        };
         /** ApiKeyCreate */
         ApiKeyCreate: {
             /** Label */
@@ -3520,6 +3840,294 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentUserResponse"];
+                };
+            };
+        };
+    };
+    list_ai_providers_api_ai_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderListResponse"];
+                };
+            };
+        };
+    };
+    upsert_ai_provider_api_ai_providers_post: {
+        parameters: {
+            query?: {
+                replace?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ai_provider_api_ai_providers__provider_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_ai_provider_api_ai_providers__provider_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_ai_provider_api_ai_providers__provider_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_ai_provider_api_ai_providers__provider_id__validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderValidationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_ai_provider_api_key_api_ai_providers__provider_id__auth_api_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderManagedApiKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_ai_provider_auth_api_ai_providers__provider_id__auth_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderAuthImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_ai_provider_auth_api_ai_providers__provider_id__auth_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderAuthResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderAuthResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

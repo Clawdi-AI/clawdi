@@ -6,6 +6,7 @@ from alembic import context
 from app.core.config import settings
 from app.models import (  # noqa: F401 - register models
     agent_project_binding,
+    ai_provider,
     api_key,
     device_authorization,
     memory,

@@ -97,6 +97,7 @@ interface ImportOptions {
 	yes?: boolean;
 	dryRun?: boolean;
 	json?: boolean;
+	quiet?: boolean;
 }
 
 interface MaterializeOptions {
@@ -107,6 +108,7 @@ interface MaterializeOptions {
 	dryRun?: boolean;
 	json?: boolean;
 	backup?: boolean;
+	quiet?: boolean;
 }
 
 interface FilePlan {
@@ -487,7 +489,9 @@ export async function agentCredentialsImportCommand(
 		})),
 	);
 
-	if (opts.json) {
+	if (opts.quiet) {
+		// Used by higher-level commands that need one machine-readable JSON envelope.
+	} else if (opts.json) {
 		console.log(
 			JSON.stringify(
 				{
@@ -546,7 +550,7 @@ export async function agentCredentialsImportCommand(
 		projectId ? { project_id: projectId } : undefined,
 	);
 
-	if (!opts.json) {
+	if (!opts.json && !opts.quiet) {
 		console.log(
 			chalk.green(
 				`✓ Imported ${files.length} credential file${files.length === 1 ? "" : "s"} to ${response.tool}/${response.profile}`,
@@ -592,7 +596,9 @@ export async function agentCredentialsMaterializeCommand(
 		})),
 	);
 
-	if (opts.json) {
+	if (opts.quiet) {
+		// Used by provider-bound wrappers that print their own result.
+	} else if (opts.json) {
 		console.log(
 			JSON.stringify(
 				{
@@ -630,7 +636,7 @@ export async function agentCredentialsMaterializeCommand(
 		writeAtomic(targetPath, file.content, credentialFileMode());
 	}
 
-	if (!opts.json) {
+	if (!opts.json && !opts.quiet) {
 		console.log(
 			chalk.green(
 				`✓ Materialized ${targets.length} credential file${targets.length === 1 ? "" : "s"} for ${tool}/${profile}`,

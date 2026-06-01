@@ -265,6 +265,222 @@ Examples:
 registerServeCommand(program);
 
 // ─────────────────────────────────────────────────────────────
+// ai-provider
+// ─────────────────────────────────────────────────────────────
+const aiProviderCmd = program.command("ai-provider").description("Manage AI Providers");
+
+aiProviderCmd
+	.command("list")
+	.description("List configured AI Providers")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { aiProviderListCommand } = await import("./commands/ai-provider.js");
+		await aiProviderListCommand(opts);
+	});
+
+aiProviderCmd
+	.command("add <provider-id>")
+	.description("Add an AI Provider to the local Provider Catalog")
+	.requiredOption("--type <type>", "Provider type")
+	.option("--label <label>", "Display label")
+	.option("--base-url <url>", "Provider base URL")
+	.option("--default-model <model>", "Default model id")
+	.option("--api-mode <mode>", "Provider API mode")
+	.requiredOption(
+		"--auth <auth>",
+		"Auth: env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none",
+	)
+	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
+	.option(
+		"--capability <name>",
+		"Capability to mark true (repeatable or comma-separated)",
+		collectValues,
+		[],
+	)
+	.option("--set-default", "Set as the default chat provider")
+	.option("--replace", "Replace an existing provider with the same id")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi ai-provider add openai-main --type openai --default-model gpt-5.2 --auth env:OPENAI_API_KEY
+  $ clawdi ai-provider add local --type custom_openai_compatible --base-url http://127.0.0.1:1234/v1 --api-mode openai_chat --auth none`,
+	)
+	.action(async (providerId: string, opts) => {
+		const { aiProviderAddCommand } = await import("./commands/ai-provider.js");
+		await aiProviderAddCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("edit <provider-id>")
+	.description("Edit an AI Provider")
+	.option("--type <type>", "Provider type")
+	.option("--label <label>", "Display label")
+	.option("--base-url <url>", "Provider base URL")
+	.option("--default-model <model>", "Default model id")
+	.option("--api-mode <mode>", "Provider API mode")
+	.option(
+		"--auth <auth>",
+		"Auth: env:<NAME>, clawdi://..., oauth:<tool>/<profile>, agent:<tool>/<profile>, or none",
+	)
+	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
+	.option(
+		"--capability <name>",
+		"Capability to mark true (repeatable or comma-separated)",
+		collectValues,
+		[],
+	)
+	.option("--set-default", "Set as the default chat provider")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderEditCommand } = await import("./commands/ai-provider.js");
+		await aiProviderEditCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("remove <provider-id>")
+	.alias("rm")
+	.description("Remove an AI Provider")
+	.option("--force", "Remove even if defaults reference it")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderRemoveCommand } = await import("./commands/ai-provider.js");
+		await aiProviderRemoveCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("validate [provider-id]")
+	.description("Validate the AI Provider Catalog")
+	.option("--allow-no-auth-public", "Allow no-auth providers on public URLs")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string | undefined, opts) => {
+		const { aiProviderValidateCommand } = await import("./commands/ai-provider.js");
+		await aiProviderValidateCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("test <provider-id>")
+	.description("Check provider auth availability and direct provider reachability")
+	.option("--model <model>", "Model to validate against when a provider-specific probe supports it")
+	.option("--timeout <seconds>", "Provider probe timeout in seconds", "10")
+	.option("--no-probe", "Skip direct provider metadata probe")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderTestCommand } = await import("./commands/ai-provider.js");
+		await aiProviderTestCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("connect <provider-id>")
+	.description("Connect provider auth through an OAuth/device-code flow")
+	.option("--method <method>", "Connect method", "oauth")
+	.option("--tool <tool>", "Tool login profile to connect, e.g. codex or claude-code")
+	.option("--profile <name>", "Auth profile name", "default")
+	.option("-y, --yes", "Skip the post-login import confirmation prompt")
+	.option("--dry-run", "Show the login command without running it")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderConnectCommand } = await import("./commands/ai-provider.js");
+		await aiProviderConnectCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("import-auth <provider-id>")
+	.description("Import a local auth profile and bind it to an AI Provider")
+	.option("-p, --project <id-or-slug>", "Target a specific project")
+	.option("--tool <tool>", "Tool profile to import, e.g. codex, claude-code, or gh")
+	.option("--profile <name>", "Profile name", "default")
+	.option("--source <source>", "Credential source: file or keychain", "file")
+	.option("--from <path>", "Credential file to import")
+	.option("--to <path>", "Materialization target path to store with the profile")
+	.option("--keychain-service <service>", "macOS Keychain service name for --source keychain")
+	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--dry-run", "Show what would be imported without storing anything")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderImportAuthCommand } = await import("./commands/ai-provider.js");
+		await aiProviderImportAuthCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("materialize-auth <provider-id>")
+	.description("Materialize an AI Provider's local auth profile on this machine")
+	.option("-p, --project <id-or-slug>", "Read from a specific project")
+	.option("--profile <name>", "Override profile name")
+	.option("--to <path>", "Override destination path (only for single-file profiles)")
+	.option("-y, --yes", "Skip confirmation prompt")
+	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
+	.option("--dry-run", "Show what would be written without changing files")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (providerId: string, opts) => {
+		const { aiProviderMaterializeAuthCommand } = await import("./commands/ai-provider.js");
+		await aiProviderMaterializeAuthCommand(providerId, opts);
+	});
+
+aiProviderCmd
+	.command("export")
+	.description("Export Provider Catalog metadata and refs")
+	.option("--out <file>", "Write to a file instead of stdout")
+	.option("--include-secrets", "Refuse unless encrypted secret backup is available")
+	.option("--secret-passphrase", "Require passphrase encryption for secret backup")
+	.option(
+		"--secret-passphrase-env <name>",
+		"Env var holding the secret backup passphrase",
+		"CLAWDI_SECRET_BACKUP_PASSPHRASE",
+	)
+	.action(async (opts) => {
+		const { aiProviderExportCommand } = await import("./commands/ai-provider.js");
+		await aiProviderExportCommand(opts);
+	});
+
+aiProviderCmd
+	.command("import [file]")
+	.description("Import and merge a Provider Catalog file")
+	.option("--from-hermes <path>", "Import providers from a Hermes config.yaml")
+	.option("--from-openclaw <path>", "Import providers from an OpenClaw projection JSON")
+	.option("--restore-secrets <target>", "Restore encrypted secrets to a target, currently env-file")
+	.option("--out <file>", "Output path for --restore-secrets env-file")
+	.option(
+		"--secret-passphrase-env <name>",
+		"Env var holding the secret backup passphrase",
+		"CLAWDI_SECRET_BACKUP_PASSPHRASE",
+	)
+	.option("--replace", "Replace existing providers with matching ids")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (file: string | undefined, opts) => {
+		const { aiProviderImportCommand } = await import("./commands/ai-provider.js");
+		await aiProviderImportCommand(file, opts);
+	});
+
+const runtimeCmd = program.command("runtime").description("Render AI Provider runtime config");
+
+runtimeCmd
+	.command("render")
+	.description("Render an engine projection from the AI Provider Catalog")
+	.requiredOption("--engine <engine>", "Runtime engine: openclaw or hermes")
+	.option("--write", "Write Clawdi-owned projection files")
+	.option(
+		"--activate",
+		"Activate through a verified runtime CLI or layering mechanism when available",
+	)
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { runtimeRenderCommand } = await import("./commands/runtime.js");
+		await runtimeRenderCommand(opts);
+	});
+
+runtimeCmd
+	.command("inspect")
+	.description("Inspect AI Provider runtime projection state")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { runtimeInspectCommand } = await import("./commands/runtime.js");
+		await runtimeInspectCommand(opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
 const vaultCmd = program
@@ -652,9 +868,21 @@ memoryCmd
 program
 	.command("doctor")
 	.description("Diagnose auth, agents, vault, and MCP connectivity")
+	.argument("[topic]", "Optional doctor topic, e.g. ai-provider")
 	.option("--json", "Output as JSON")
-	.addHelpText("after", "\nExamples:\n  $ clawdi doctor\n  $ clawdi doctor --json")
-	.action(async (opts) => {
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi doctor\n  $ clawdi doctor --json\n  $ clawdi doctor ai-provider",
+	)
+	.action(async (topic: string | undefined, opts) => {
+		if (topic === "ai-provider") {
+			const { doctorAiProviderCommand } = await import("./commands/runtime.js");
+			await doctorAiProviderCommand(opts);
+			return;
+		}
+		if (topic) {
+			throw new Error(`Unknown doctor topic: ${topic}`);
+		}
 		const { doctor } = await import("./commands/doctor.js");
 		await doctor(opts);
 	});
