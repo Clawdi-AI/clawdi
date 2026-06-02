@@ -112,7 +112,6 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "auth": {
                 "type": "api_key",
                 "source": "managed",
-                "payload_ref": "encrypted:redacted",
                 "value": "sk-should-not-be-here",
             },
         },
@@ -120,7 +119,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert plaintext_extra.status_code == 422, plaintext_extra.text
     assert "sk-should-not-be-here" not in plaintext_extra.text
 
-    wrong_payload_ref = await client.post(
+    managed_ref = await client.post(
         "/api/ai-providers",
         json={
             "provider_id": "openai-main",
@@ -129,12 +128,12 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "auth": {
                 "type": "api_key",
                 "source": "managed",
-                "payload_ref": "ai-provider-auth://other/default",
+                "ref": "env:OPENAI_API_KEY",
             },
         },
     )
-    assert wrong_payload_ref.status_code == 422, wrong_payload_ref.text
-    assert "invalid payload_ref" in wrong_payload_ref.text
+    assert managed_ref.status_code == 422, managed_ref.text
+    assert "must not include ref" in managed_ref.text
 
     bad_env_ref = await client.post(
         "/api/ai-providers",
@@ -223,7 +222,6 @@ async def test_ai_provider_managed_api_key_is_redacted(client: httpx.AsyncClient
         "/api/ai-providers/openai-main/auth/api-key",
         json={
             "value": "sk-managed-secret",
-            "profile": "default",
             "runtime_env_name": "OPENAI_API_KEY",
         },
     )
@@ -233,7 +231,6 @@ async def test_ai_provider_managed_api_key_is_redacted(client: httpx.AsyncClient
     assert body["auth"] == {
         "type": "api_key",
         "source": "managed",
-        "payload_ref": "ai-provider-auth://openai-main/default",
     }
     assert body["runtime_env_name"] == "OPENAI_API_KEY"
 
@@ -266,7 +263,6 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
         "type": "agent_profile",
         "tool": "codex",
         "profile": "work_team",
-        "payload_ref": "ai-provider-auth://openai-codex/work_team",
     }
 
     unsupported_agent_profile = await client.post(
@@ -292,6 +288,78 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
     )
     assert unsupported_oauth_profile.status_code == 422, unsupported_oauth_profile.text
     assert "oauth_profile import is not supported" in unsupported_oauth_profile.text
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_resolve_uses_only_active_auth_profile(
+    client: httpx.AsyncClient,
+    seed_user,
+):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    first = await client.post(
+        "/api/ai-providers/openai-codex/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": '{"token":"old"}',
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        "/api/ai-providers/openai-codex/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "work_team",
+            "payload": '{"token":"active"}',
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["auth"] == {
+        "type": "agent_profile",
+        "tool": "codex",
+        "profile": "work_team",
+    }
+
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_test",
+        label="test-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        old_profile = await client.post(
+            "/api/ai-providers/openai-codex/auth/resolve",
+            json={"profile": "default"},
+        )
+        assert old_profile.status_code == 404, old_profile.text
+
+        active_profile = await client.post(
+            "/api/ai-providers/openai-codex/auth/resolve",
+            json={"profile": "work_team"},
+        )
+        assert active_profile.status_code == 200, active_profile.text
+        assert active_profile.json()["payload"] == '{"token":"active"}'
+    finally:
+        app.dependency_overrides.pop(get_auth, None)
 
 
 @pytest.mark.asyncio
@@ -322,7 +390,6 @@ async def test_ai_provider_oauth_start_returns_backend_generated_link(client: ht
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "codex",
-                "profile": "default",
                 "redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
@@ -365,7 +432,6 @@ async def test_ai_provider_oauth_start_uses_builtin_codex_config(client: httpx.A
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "codex",
-                "profile": "default",
                 "redirect_uri": "http://localhost:1455/auth/callback",
             },
         )
@@ -415,7 +481,7 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
     try:
         missing_redirect = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/start",
-            json={"provider": "codex", "profile": "default"},
+            json={"provider": "codex"},
         )
         assert missing_redirect.status_code == 503, missing_redirect.text
         assert "missing redirect_uri" in missing_redirect.text
@@ -433,7 +499,7 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
         )
         reserved_override = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/start",
-            json={"provider": "codex", "profile": "default"},
+            json={"provider": "codex"},
         )
         assert reserved_override.status_code == 503, reserved_override.text
         assert "cannot override state" in reserved_override.text
@@ -442,7 +508,6 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "claude-code",
-                "profile": "default",
                 "redirect_uri": "http://localhost:1455/auth/callback",
             },
         )
@@ -521,7 +586,6 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "codex",
-                "profile": "default",
                 "redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
@@ -555,7 +619,6 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
         "type": "agent_profile",
         "tool": "codex",
         "profile": "default",
-        "payload_ref": "ai-provider-auth://openai-codex/default",
     }
     assert token_requests[0]["url"] == "https://oauth.example/token"
     assert token_requests[0]["data"]["grant_type"] == "authorization_code"
@@ -656,7 +719,7 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
     assert created.status_code == 200, created.text
     managed = await client.post(
         "/api/ai-providers/openai-main/auth/api-key",
-        json={"value": "sk-managed-secret", "profile": "default"},
+        json={"value": "sk-managed-secret"},
     )
     assert managed.status_code == 200, managed.text
 
@@ -686,7 +749,6 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
     assert resolved.json() == {
         "provider_id": "openai-main",
         "auth_type": "api_key",
-        "payload_ref": "ai-provider-auth://openai-main/default",
         "value": "sk-managed-secret",
         "payload": None,
         "tool": None,
@@ -706,7 +768,6 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
             "auth": {
                 "type": "api_key",
                 "source": "managed",
-                "payload_ref": "ai-provider-auth://openai-main/default",
             },
         },
     )

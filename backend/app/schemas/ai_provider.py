@@ -27,7 +27,6 @@ class AiProviderAuth(BaseModel):
     type: AuthType
     ref: str | None = None
     source: str | None = None
-    payload_ref: str | None = None
     provider: str | None = None
     tool: str | None = None
     profile: str | None = None
@@ -89,7 +88,6 @@ class AiProviderManagedApiKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     value: SecretStr
-    profile: str = Field(default="default", min_length=1, max_length=120)
     runtime_env_name: str | None = Field(default=None, max_length=128)
 
 
@@ -110,7 +108,6 @@ class AiProviderAuthResolveRequest(BaseModel):
 class AiProviderAuthResolveResponse(BaseModel):
     provider_id: str
     auth_type: AuthType
-    payload_ref: str
     value: str | None = None
     payload: str | None = None
     tool: str | None = None
@@ -122,7 +119,6 @@ class AiProviderOAuthStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     provider: str = Field(min_length=1, max_length=80)
-    profile: str = Field(default="default", min_length=1, max_length=120)
     redirect_uri: str | None = Field(default=None, max_length=1000)
 
 

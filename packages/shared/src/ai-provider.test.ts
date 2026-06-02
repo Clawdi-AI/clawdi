@@ -33,7 +33,7 @@ describe("validateAiProviderCatalog", () => {
 		);
 	});
 
-	test("rejects auth profiles and payload refs that do not match the provider", () => {
+	test("rejects malformed auth profile metadata", () => {
 		expect(isProviderAuthProfileId("default")).toBe(true);
 		expect(isProviderAuthProfileId("team/default")).toBe(false);
 
@@ -47,7 +47,7 @@ describe("validateAiProviderCatalog", () => {
 					auth: {
 						type: "api_key",
 						source: "managed",
-						payload_ref: "ai-provider-auth://other/default",
+						ref: "env:OPENAI_API_KEY",
 					},
 				},
 				{
@@ -58,14 +58,15 @@ describe("validateAiProviderCatalog", () => {
 						type: "agent_profile",
 						tool: "codex",
 						profile: "team/default",
-						payload_ref: "ai-provider-auth://openai-agent/default",
 					},
 				},
 			],
 		});
 
 		expect(result.valid).toBe(false);
-		expect(result.errors).toContain("Provider openai-main api_key auth has invalid payload_ref.");
+		expect(result.errors).toContain(
+			"Provider openai-main api_key auth with source managed must not include ref.",
+		);
 		expect(result.errors).toContain(
 			"Provider openai-agent has invalid agent_profile auth metadata.",
 		);

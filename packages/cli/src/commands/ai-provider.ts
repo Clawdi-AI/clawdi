@@ -124,7 +124,6 @@ interface AiProviderImportAuthOptions {
 
 interface AiProviderMaterializeAuthOptions {
 	project?: string;
-	profile?: string;
 	to?: string;
 	yes?: boolean;
 	dryRun?: boolean;
@@ -135,7 +134,6 @@ interface AiProviderMaterializeAuthOptions {
 interface AiProviderConnectOptions {
 	method?: string;
 	tool?: string;
-	profile?: string;
 	callback?: string;
 	redirectUri?: string;
 	timeout?: string;
@@ -460,7 +458,7 @@ export async function aiProviderMaterializeAuthCommand(
 		);
 	}
 	assertSupportedAgentProfileTool(provider.auth.tool);
-	const profile = opts.profile ?? provider.auth.profile;
+	const profile = provider.auth.profile;
 	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
 		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
 		{ profile },
@@ -501,7 +499,6 @@ export async function aiProviderConnectCommand(
 		throw new Error("--tool is required for this provider type. Supported OAuth tool: codex.");
 	}
 	assertSupportedOAuthProvider(oauthProvider);
-	const profile = opts.profile ?? "default";
 	let loopback: OAuthLoopbackServer | null = null;
 	if (callbackMode === "loopback" && !opts.dryRun) {
 		try {
@@ -526,7 +523,6 @@ export async function aiProviderConnectCommand(
 		provider_id: providerId,
 		method,
 		provider: oauthProvider,
-		profile,
 		callback: callbackMode,
 		redirect_uri: redirectUri,
 		dry_run: Boolean(opts.dryRun),
@@ -546,7 +542,6 @@ export async function aiProviderConnectCommand(
 			`/api/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/start`,
 			{
 				provider: oauthProvider,
-				profile,
 				redirect_uri: request.redirect_uri,
 			},
 		);

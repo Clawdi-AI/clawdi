@@ -24,10 +24,9 @@ export type AiProviderAuth =
 			type: "api_key";
 			source: "env" | "vault" | "managed";
 			ref?: string;
-			payload_ref?: string;
 	  }
-	| { type: "oauth_profile"; provider: string; profile: string; payload_ref?: string }
-	| { type: "agent_profile"; tool: string; profile: string; payload_ref?: string }
+	| { type: "oauth_profile"; provider: string; profile: string }
+	| { type: "agent_profile"; tool: string; profile: string }
 	| { type: "none" };
 
 export interface AiProviderCapabilities {
@@ -95,8 +94,6 @@ const PROVIDER_ID_RE = /^[a-z][a-z0-9._-]{1,62}$/;
 const PROFILE_ID_RE = /^[a-z][a-z0-9._-]{0,119}$/;
 const ENV_REF_RE = /^env:[A-Z][A-Z0-9_]{0,127}$/;
 const ENV_NAME_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
-const PROVIDER_AUTH_PAYLOAD_REF_RE =
-	/^ai-provider-auth:\/\/([a-z][a-z0-9._-]{1,62})\/([a-z][a-z0-9._-]{0,119})$/;
 
 const COMPATIBLE_API_MODES: Record<AiProviderType, readonly AiProviderApiMode[]> = {
 	openai: ["openai_chat", "openai_responses"],
@@ -129,12 +126,6 @@ export function isAiProviderId(input: string): boolean {
 
 export function isProviderAuthProfileId(input: string): boolean {
 	return PROFILE_ID_RE.test(input);
-}
-
-export function isAiProviderAuthPayloadRef(input: string, providerId?: string): boolean {
-	const match = PROVIDER_AUTH_PAYLOAD_REF_RE.exec(input);
-	if (!match) return false;
-	return providerId === undefined || match[1] === providerId;
 }
 
 export function isRuntimeEnvName(input: string): boolean {
@@ -276,15 +267,8 @@ function validateAuth(
 		if (auth.source === "vault" && (!auth.ref || !isClawdiSecretRef(auth.ref))) {
 			errors.push(`Provider ${prefix} api_key auth with source vault requires clawdi:// ref.`);
 		}
-		if (auth.source === "managed" && !auth.payload_ref) {
-			errors.push(`Provider ${prefix} api_key auth with source managed requires payload_ref.`);
-		}
-		if (
-			auth.source === "managed" &&
-			auth.payload_ref &&
-			!isAiProviderAuthPayloadRef(auth.payload_ref, provider.id)
-		) {
-			errors.push(`Provider ${prefix} api_key auth has invalid payload_ref.`);
+		if (auth.source === "managed" && auth.ref) {
+			errors.push(`Provider ${prefix} api_key auth with source managed must not include ref.`);
 		}
 		return;
 	}
@@ -292,17 +276,11 @@ function validateAuth(
 		if (!isProviderAuthProfileId(auth.provider) || !isProviderAuthProfileId(auth.profile)) {
 			errors.push(`Provider ${prefix} has invalid oauth_profile auth metadata.`);
 		}
-		if (auth.payload_ref && !isAiProviderAuthPayloadRef(auth.payload_ref, provider.id)) {
-			errors.push(`Provider ${prefix} oauth_profile auth has invalid payload_ref.`);
-		}
 		return;
 	}
 	if (auth.type === "agent_profile") {
 		if (!isProviderAuthProfileId(auth.tool) || !isProviderAuthProfileId(auth.profile)) {
 			errors.push(`Provider ${prefix} has invalid agent_profile auth metadata.`);
-		}
-		if (auth.payload_ref && !isAiProviderAuthPayloadRef(auth.payload_ref, provider.id)) {
-			errors.push(`Provider ${prefix} agent_profile auth has invalid payload_ref.`);
 		}
 		return;
 	}

@@ -372,7 +372,6 @@ aiProviderCmd
 	.description("Connect provider auth through an OAuth/device-code flow")
 	.option("--method <method>", "Connect method", "oauth")
 	.option("--tool <tool>", "Tool login profile to connect, currently codex")
-	.option("--profile <name>", "Auth profile name", "default")
 	.option("--callback <mode>", "OAuth callback mode: loopback or manual")
 	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")
 	.option("--timeout <seconds>", "Seconds to wait for loopback callback", "600")
@@ -419,7 +418,6 @@ aiProviderCmd
 aiProviderCmd
 	.command("materialize-auth <provider-id>")
 	.description("Materialize an AI Provider's local auth profile on this machine")
-	.option("--profile <name>", "Override profile name")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")
 	.option("-y, --yes", "Skip confirmation prompt")
 	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")

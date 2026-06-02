@@ -145,7 +145,6 @@ describe("ai-provider commands", () => {
 							type: "agent_profile",
 							tool: "codex",
 							profile: "default",
-							payload_ref: "ai-provider-auth://openai-codex/default",
 						},
 					}),
 			},
@@ -181,7 +180,6 @@ describe("ai-provider commands", () => {
 			type: "agent_profile",
 			tool: "codex",
 			profile: "default",
-			payload_ref: "ai-provider-auth://openai-codex/default",
 		});
 		expect(captured).toHaveLength(2);
 		expect(captured[0].body).toMatchObject({ provider_id: "openai-codex" });
@@ -239,7 +237,6 @@ describe("ai-provider commands", () => {
 									type: "agent_profile",
 									tool: "claude-code",
 									profile: "default",
-									payload_ref: "ai-provider-auth://anthropic-profile/default",
 								},
 							},
 						],
@@ -299,7 +296,6 @@ describe("ai-provider commands", () => {
 		expect(captured[0].body).toMatchObject({ provider_id: "openai-codex" });
 		expect(captured[1].body).toMatchObject({
 			provider: "codex",
-			profile: "default",
 			redirect_uri: "http://localhost:1455/auth/callback",
 		});
 		expect(output()).toContain('"auth_url": "https://oauth.example/authorize?state=state-123"');
@@ -352,7 +348,6 @@ describe("ai-provider commands", () => {
 							type: "agent_profile",
 							tool: "codex",
 							profile: "default",
-							payload_ref: "ai-provider-auth://openai-codex/default",
 						},
 					}),
 			},
@@ -388,7 +383,6 @@ describe("ai-provider commands", () => {
 
 		expect(captured[1].body).toMatchObject({
 			provider: "codex",
-			profile: "default",
 		});
 		const startRedirectUri = String((captured[1].body as { redirect_uri?: string }).redirect_uri);
 		expect(startRedirectUri).toMatch(/^http:\/\/localhost:145[57]\/auth\/callback$/);
@@ -402,7 +396,6 @@ describe("ai-provider commands", () => {
 			type: "agent_profile",
 			tool: "codex",
 			profile: "default",
-			payload_ref: "ai-provider-auth://openai-codex/default",
 		});
 	});
 
@@ -433,7 +426,6 @@ describe("ai-provider commands", () => {
 							type: "agent_profile",
 							tool: "codex",
 							profile: "default",
-							payload_ref: "ai-provider-auth://openai-codex/default",
 						},
 					}),
 			},
@@ -482,7 +474,6 @@ describe("ai-provider commands", () => {
 							type: "agent_profile",
 							tool: "codex",
 							profile: "default",
-							payload_ref: "ai-provider-auth://openai-codex/default",
 						},
 					}),
 			},
@@ -630,7 +621,6 @@ describe("ai-provider commands", () => {
 						auth: {
 							type: "api_key",
 							source: "managed",
-							payload_ref: "ai-provider-auth://openai-main/default",
 						},
 						runtime_env_name: "OPENAI_API_KEY",
 					},
@@ -645,7 +635,6 @@ describe("ai-provider commands", () => {
 					jsonResponse({
 						provider_id: "openai-main",
 						auth_type: "api_key",
-						payload_ref: "ai-provider-auth://openai-main/default",
 						value: "sk-managed-secret",
 						profile: "default",
 					}),
@@ -721,7 +710,6 @@ describe("ai-provider commands", () => {
 					jsonResponse({
 						provider_id: "openai-codex",
 						auth_type: "agent_profile",
-						payload_ref: "ai-provider-auth://openai-codex/default",
 						payload: JSON.stringify(payload),
 						profile: "default",
 						tool: "codex",

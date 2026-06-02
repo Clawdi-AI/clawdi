@@ -1965,8 +1965,6 @@ export interface components {
             ref?: string | null;
             /** Source */
             source?: string | null;
-            /** Payload Ref */
-            payload_ref?: string | null;
             /** Provider */
             provider?: string | null;
             /** Tool */
@@ -2013,8 +2011,6 @@ export interface components {
              * @enum {string}
              */
             auth_type: "secret_ref" | "api_key" | "oauth_profile" | "agent_profile" | "none";
-            /** Payload Ref */
-            payload_ref: string;
             /** Value */
             value?: string | null;
             /** Payload */
@@ -2048,11 +2044,6 @@ export interface components {
              * Format: password
              */
             value: string;
-            /**
-             * Profile
-             * @default default
-             */
-            profile: string;
             /** Runtime Env Name */
             runtime_env_name?: string | null;
         };
@@ -2069,11 +2060,6 @@ export interface components {
         AiProviderOAuthStartRequest: {
             /** Provider */
             provider: string;
-            /**
-             * Profile
-             * @default default
-             */
-            profile: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
         };

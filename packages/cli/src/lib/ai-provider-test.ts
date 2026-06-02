@@ -41,26 +41,26 @@ export async function inspectAiProviderAuth(provider: AiProvider): Promise<AiPro
 			? { status: "available", detail: auth.ref, value: process.env[name] }
 			: { status: "missing", detail: auth.ref };
 	}
-	if (auth.type === "api_key" && auth.source === "managed" && auth.payload_ref) {
+	if (auth.type === "api_key" && auth.source === "managed") {
 		try {
 			const resolved = await new ApiClient().postJsonBody<{
 				value?: string | null;
 				profile?: string | null;
 			}>(`/api/ai-providers/${encodeURIComponent(provider.id)}/auth/resolve`, {
-				profile: profileFromPayloadRef(auth.payload_ref),
+				profile: "default",
 			});
 			if (resolved.value) {
 				return {
 					status: "available",
-					detail: `${auth.payload_ref} (managed)`,
+					detail: "managed api_key",
 					value: resolved.value,
 				};
 			}
-			return { status: "missing", detail: `${auth.payload_ref} returned no API key` };
+			return { status: "missing", detail: "managed api_key returned no API key" };
 		} catch (error) {
 			return {
 				status: "missing",
-				detail: `${auth.payload_ref} (${error instanceof Error ? error.message : String(error)})`,
+				detail: `managed api_key (${error instanceof Error ? error.message : String(error)})`,
 			};
 		}
 	}
@@ -157,13 +157,6 @@ function providerProbeHeaders(
 	}
 	if (provider.type === "gemini") return {};
 	return { Authorization: `Bearer ${key}` };
-}
-
-function profileFromPayloadRef(payloadRef: string): string {
-	const prefix = "ai-provider-auth://";
-	if (!payloadRef.startsWith(prefix)) return "default";
-	const [, profile] = payloadRef.slice(prefix.length).split("/");
-	return profile || "default";
 }
 
 function describeAuth(auth: AiProvider["auth"]): string {

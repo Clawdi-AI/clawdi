@@ -9,7 +9,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -207,11 +207,10 @@ async def set_ai_provider_api_key(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    profile = _normalize_profile(body.profile)
+    profile = "default"
     runtime_env_name = body.runtime_env_name
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid runtime_env_name")
-    payload_ref = _payload_ref(provider_id, profile)
     ciphertext, nonce = encrypt(body.value.get_secret_value())
     existing = await _find_auth_payload(db, auth, provider_id, profile)
     if existing is None:
@@ -235,10 +234,11 @@ async def set_ai_provider_api_key(
         existing.archived_at = None
 
     provider.auth_type = "api_key"
-    provider.auth_ref = payload_ref
-    provider.auth_metadata = {"source": "managed", "payload_ref": payload_ref}
+    provider.auth_ref = None
+    provider.auth_metadata = {"source": "managed", "profile": profile}
     if runtime_env_name is not None:
         provider.runtime_env_name = runtime_env_name
+    await _archive_other_auth_payloads(db, auth, provider_id, profile)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -257,18 +257,16 @@ async def import_ai_provider_auth(
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
     profile = _normalize_profile(body.profile)
-    payload_ref = _payload_ref(provider_id, profile)
     if body.type == "agent_profile":
         if not body.tool:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "agent_profile requires tool")
         tool = _normalize_profile(body.tool)
         _validate_supported_agent_profile_tool(tool)
         provider.auth_type = "agent_profile"
-        provider.auth_ref = payload_ref
+        provider.auth_ref = None
         provider.auth_metadata = {
             "tool": tool,
             "profile": profile,
-            "payload_ref": payload_ref,
         }
     elif body.type == "oauth_profile":
         raise HTTPException(
@@ -296,6 +294,7 @@ async def import_ai_provider_auth(
         existing.nonce = nonce
         existing.payload_metadata = provider.auth_metadata
         existing.archived_at = None
+    await _archive_other_auth_payloads(db, auth, provider_id, profile)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -314,7 +313,7 @@ async def start_ai_provider_oauth(
     await _get_provider_or_404(db, auth, provider_id)
     oauth_provider = _normalize_profile(body.provider)
     _validate_supported_oauth_provider(oauth_provider)
-    profile = _normalize_profile(body.profile)
+    profile = "default"
     config = _oauth_config_for(oauth_provider)
     authorization_url = _required_oauth_config(config, "authorization_url", oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)
@@ -427,14 +426,11 @@ async def complete_ai_provider_oauth(
             oauth_provider,
             config,
             response,
-            provider_id,
             profile,
         )
 
-    payload_ref = _payload_ref(provider_id, profile)
     ciphertext, nonce = encrypt(payload_text)
     existing = await _find_auth_payload(db, auth, provider_id, profile)
-    metadata["payload_ref"] = payload_ref
     if existing is None:
         existing = AiProviderAuthPayload(
             owner_user_id=auth.user_id,
@@ -455,8 +451,9 @@ async def complete_ai_provider_oauth(
         existing.payload_metadata = metadata
         existing.archived_at = None
     provider.auth_type = provider_auth_type
-    provider.auth_ref = payload_ref
+    provider.auth_ref = None
     provider.auth_metadata = metadata
+    await _archive_other_auth_payloads(db, auth, provider_id, profile)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -467,10 +464,8 @@ async def _oauth_payload_from_token_response(
     oauth_provider: str,
     config: dict,
     response: httpx.Response,
-    provider_id: str,
     profile: str,
 ) -> tuple[str, str, dict]:
-    payload_ref = _payload_ref(provider_id, profile)
     if oauth_provider == CODEX_OAUTH_PROVIDER:
         payload = await _codex_auth_profile_payload(client, config, response, profile)
         return (
@@ -479,7 +474,6 @@ async def _oauth_payload_from_token_response(
             {
                 "tool": "codex",
                 "profile": profile,
-                "payload_ref": payload_ref,
                 "source": "oauth_pkce",
             },
         )
@@ -489,7 +483,6 @@ async def _oauth_payload_from_token_response(
         {
             "provider": oauth_provider,
             "profile": profile,
-            "payload_ref": payload_ref,
             "source": "oauth_pkce",
         },
     )
@@ -620,6 +613,9 @@ async def resolve_ai_provider_auth(
             "AI Provider does not use managed api_key auth",
         )
     profile = _normalize_profile(body.profile)
+    active_profile = _active_auth_profile(provider)
+    if active_profile is not None and profile != active_profile:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
     payload = await _find_auth_payload(db, auth, provider_id, profile)
     if payload is None or payload.archived_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
@@ -628,7 +624,6 @@ async def resolve_ai_provider_auth(
         return AiProviderAuthResolveResponse(
             provider_id=provider_id,
             auth_type="api_key",
-            payload_ref=_payload_ref(provider_id, profile),
             value=plaintext,
             profile=profile,
         )
@@ -636,7 +631,6 @@ async def resolve_ai_provider_auth(
         return AiProviderAuthResolveResponse(
             provider_id=provider_id,
             auth_type=provider.auth_type,
-            payload_ref=_payload_ref(provider_id, profile),
             payload=plaintext,
             tool=metadata.get("tool"),
             provider=metadata.get("provider"),
@@ -812,23 +806,21 @@ def _split_auth(auth: AiProviderAuth) -> tuple[str | None, dict | None]:
     if auth.type == "api_key":
         metadata = {
             "source": auth.source,
-            "payload_ref": auth.payload_ref,
+            "profile": auth.profile,
         }
-        return auth.ref or auth.payload_ref, _compact(metadata)
+        return auth.ref, _compact(metadata)
     if auth.type == "oauth_profile":
         metadata = {
             "provider": auth.provider,
             "profile": auth.profile,
-            "payload_ref": auth.payload_ref,
         }
-        return auth.payload_ref, _compact(metadata)
+        return None, _compact(metadata)
     if auth.type == "agent_profile":
         metadata = {
             "tool": auth.tool,
             "profile": auth.profile,
-            "payload_ref": auth.payload_ref,
         }
-        return auth.payload_ref, _compact(metadata)
+        return None, _compact(metadata)
     return None, None
 
 
@@ -842,21 +834,18 @@ def _to_auth(provider: AiProvider) -> AiProviderAuth:
             type="api_key",
             source=source,
             ref=provider.auth_ref if source != "managed" else None,
-            payload_ref=metadata.get("payload_ref"),
         )
     if provider.auth_type == "oauth_profile":
         return AiProviderAuth(
             type="oauth_profile",
             provider=metadata.get("provider"),
             profile=metadata.get("profile"),
-            payload_ref=metadata.get("payload_ref"),
         )
     if provider.auth_type == "agent_profile":
         return AiProviderAuth(
             type="agent_profile",
             tool=metadata.get("tool"),
             profile=metadata.get("profile"),
-            payload_ref=metadata.get("payload_ref"),
         )
     return AiProviderAuth(type="none")
 
@@ -923,14 +912,8 @@ def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
             errors.append("api_key env auth requires env: ref")
         if auth.source == "vault" and (not auth.ref or not auth.ref.startswith("clawdi://")):
             errors.append("api_key vault auth requires clawdi:// ref")
-        if auth.source == "managed" and not auth.payload_ref:
-            errors.append("api_key managed auth requires payload_ref")
-        if (
-            auth.source == "managed"
-            and auth.payload_ref
-            and not _is_payload_ref(auth.payload_ref, provider_id)
-        ):
-            errors.append("api_key managed auth has invalid payload_ref")
+        if auth.source == "managed" and auth.ref:
+            errors.append("api_key managed auth must not include ref")
     elif auth.type == "oauth_profile":
         errors.append("oauth_profile auth is not supported; use Codex OAuth connect")
     elif auth.type == "agent_profile":
@@ -940,8 +923,6 @@ def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
             errors.append("agent_profile auth has invalid tool or profile")
         elif auth.tool not in SUPPORTED_AGENT_PROFILE_TOOLS:
             errors.append("agent_profile auth currently supports codex only")
-        if auth.payload_ref and not _is_payload_ref(auth.payload_ref, provider_id):
-            errors.append("agent_profile auth has invalid payload_ref")
     return errors
 
 
@@ -1024,8 +1005,31 @@ async def _find_auth_payload(
     ).scalar_one_or_none()
 
 
-def _payload_ref(provider_id: str, profile: str) -> str:
-    return f"ai-provider-auth://{provider_id}/{profile}"
+async def _archive_other_auth_payloads(
+    db: AsyncSession,
+    auth: AuthContext,
+    provider_id: str,
+    active_profile: str,
+) -> None:
+    await db.execute(
+        update(AiProviderAuthPayload)
+        .where(
+            AiProviderAuthPayload.owner_user_id == auth.user_id,
+            AiProviderAuthPayload.provider_id == provider_id,
+            AiProviderAuthPayload.auth_profile != active_profile,
+            AiProviderAuthPayload.archived_at.is_(None),
+        )
+        .values(archived_at=datetime.now(UTC))
+    )
+
+
+def _active_auth_profile(provider: AiProvider) -> str | None:
+    metadata = provider.auth_metadata or {}
+    if provider.auth_type == "api_key" and metadata.get("source") == "managed":
+        return str(metadata.get("profile") or "default")
+    if provider.auth_type in {"agent_profile", "oauth_profile"}:
+        return str(metadata.get("profile") or "default")
+    return None
 
 
 def _normalize_profile(input: str) -> str:
@@ -1045,13 +1049,3 @@ def _is_env_ref(input: str) -> bool:
 
 def _is_profile_id(input: str) -> bool:
     return re.fullmatch(r"[a-z][a-z0-9._-]{0,119}", input) is not None
-
-
-def _is_payload_ref(input: str, provider_id: str) -> bool:
-    return (
-        re.fullmatch(
-            rf"ai-provider-auth://{re.escape(provider_id)}/[a-z][a-z0-9._-]{{0,119}}",
-            input,
-        )
-        is not None
-    )

@@ -526,7 +526,7 @@ The user wants Clawdi to centrally store and restore a runtime login, not just
 an API key.
 
 ```bash
-clawdi ai-provider connect openai-codex --method oauth --tool codex --profile default
+clawdi ai-provider connect openai-codex --method oauth --tool codex
 clawdi ai-provider list
 clawdi ai-provider materialize-auth openai-codex
 ```
@@ -552,8 +552,13 @@ Expected product behavior:
    Code and other tool credential adapters remain deferred until their public
    contracts are pinned. It does not modify shell startup files or Provider
    Catalog metadata.
-6. AI Provider entries reference that auth payload through `auth.payload_ref`
-   when a runtime provider uses that login state.
+6. AI Provider entries identify that login state through auth metadata such as
+   `tool` and `profile`. They must not expose backend storage pointers for the
+   encrypted payload.
+7. One Provider ID selects one current auth. Multiple API keys or multiple Codex
+   OAuth accounts must be represented as multiple Provider IDs, for example
+   `openai-personal` and `openai-work`, not as multiple auth entries under one
+   Provider.
 
 V1 key-env runtime projections only support auth forms that can be expressed
 as a runtime environment variable or no-auth local endpoint. `agent_profile`
@@ -685,12 +690,9 @@ profile segments should match:
 ^[a-z][a-z0-9._-]{0,119}$
 ```
 
-Managed provider-auth payload refs are internal pointers and must match the
-owning provider ID:
-
-```text
-ai-provider-auth://<provider-id>/<profile>
-```
+Managed provider-auth payload storage is internal. Public catalogs and API
+responses must not expose a synthetic URI or storage pointer; the backend
+locates payloads by account, provider ID, and the active auth profile.
 
 Provider types for v1:
 
@@ -784,9 +786,9 @@ export type AiProviderApiMode =
 
 export type AiProviderAuth =
   | { type: "secret_ref"; ref: string }
-  | { type: "api_key"; source: "env" | "vault" | "managed"; ref?: string; payload_ref?: string }
-  | { type: "oauth_profile"; provider: string; profile: string; payload_ref?: string }
-  | { type: "agent_profile"; tool: string; profile: string; payload_ref?: string }
+  | { type: "api_key"; source: "env" | "vault" | "managed"; ref?: string }
+  | { type: "oauth_profile"; provider: string; profile: string }
+  | { type: "agent_profile"; tool: string; profile: string }
   | { type: "none" };
 
 export interface AiProviderCapabilities {
@@ -913,10 +915,12 @@ ref or to Clawdi-managed encrypted material:
 The user-facing object is still the AI Provider. Internally, Clawdi may store
 encrypted API key values, OAuth refresh tokens, provider token sets, or whole
 tool-specific credential profiles in a separate payload store keyed by
-provider ID and auth profile. Runtime adapters decide whether provider auth can
-be converted to a process env var, materialized to a tool-owned auth file,
-referenced through a runtime-native mechanism, or rejected because the runtime
-has no verified way to consume that auth type.
+provider ID and active auth profile. This is not a second user-facing auth
+dimension: a Provider ID has one current auth. To configure several API keys or
+several Codex OAuth logins, create several Provider IDs. Runtime adapters decide
+whether provider auth can be converted to a process env var, materialized to a
+tool-owned auth file, referenced through a runtime-native mechanism, or rejected
+because the runtime has no verified way to consume that auth type.
 
 Provider export includes auth metadata and external refs only. Encrypted
 secret backup can include provider-auth payloads only when the user explicitly
@@ -1014,7 +1018,7 @@ clawdi ai-provider add <provider-id> \
   --base-url <url> \
   --default-model <model> \
   --api-mode <mode> \
-  --auth env:<ENV_VAR>|clawdi://...|agent:<tool>/<profile>|oauth:<provider>/<profile>|none \
+  --auth env:<ENV_VAR>|clawdi://...|agent:<tool>/<profile>|none \
   --runtime-env <ENV_VAR> \
   --label <label>
 ```
@@ -1024,10 +1028,11 @@ and env var names, but the written catalog should contain explicit values.
 When `--auth` is `env:<ENV_VAR>`, `runtime_env_name` defaults to that env var.
 When `--auth` is `clawdi://...`, `--runtime-env` is required unless the target
 runtime can consume the verified native secret-ref form directly.
-When `--auth` is `agent:<tool>/<profile>` or
-`oauth:<provider>/<profile>`, validation checks profile metadata and runtime
-projection requires either a materialized env var name or a verified native
-runtime auth form.
+When `--auth` is `agent:<tool>/<profile>`, validation checks profile metadata
+and runtime projection requires either a materialized env var name or a verified
+native runtime auth form. OAuth-backed auth is connected through
+`clawdi ai-provider connect`, not by passing tokens or OAuth profile refs to
+`add`.
 
 `clawdi ai-provider list` output columns:
 
@@ -1214,8 +1219,7 @@ Suggested provider-auth shape:
   "auth": {
     "type": "agent_profile",
     "tool": "codex",
-    "profile": "default",
-    "payload_ref": "ai-provider-auth://openai-codex/default"
+    "profile": "default"
   }
 }
 ```
@@ -1272,7 +1276,7 @@ official local agent CLIs. The CLI and dashboard both call the same backend
 surface:
 
 ```bash
-clawdi ai-provider connect openai-codex --method oauth --tool codex --profile default
+clawdi ai-provider connect openai-codex --method oauth --tool codex
 ```
 
 The backend adapter must choose the safest official flow available for that
@@ -2249,7 +2253,6 @@ ai_provider_auth_payloads
   auth_profile           text     # default, codex, gh, or future pinned tools
   kind                   text     # api_key, oauth_profile, agent_profile
   source                 text     # manual, oauth_device_code, oauth_pkce, import_file, keychain, env, vault
-  payload_ref            text     # encrypted storage pointer; never plaintext
   metadata               jsonb    # scopes, expiry, profile, target hints, status
   created_at             timestamptz
   updated_at             timestamptz
@@ -2267,7 +2270,7 @@ ai_providers
   api_mode               text
   capabilities           jsonb
   auth_type              text     # secret_ref, api_key, oauth_profile, agent_profile, none
-  auth_ref               text     # env:, clawdi://..., or internal payload ref
+  auth_ref               text     # env: or clawdi:// external secret ref; null for managed payloads
   auth_metadata          jsonb    # source/profile/tool/scopes; no plaintext secrets
   runtime_env_name       text     # optional injection name, e.g. OPENAI_API_KEY
   created_at             timestamptz
@@ -2299,16 +2302,16 @@ flow accepts a plaintext API key, it should:
 
 1. Encrypt/store the secret through the provider-auth payload or Vault storage
    path.
-2. Create or update an AI Provider whose `auth` object points at that internal
-   payload, or at an existing `clawdi://...` Vault ref when the user
-   intentionally chooses Vault refs as the source of truth.
+2. Create or update an AI Provider whose `auth` object describes the managed
+   auth type/profile, or points at an existing `clawdi://...` Vault ref when
+   the user intentionally chooses Vault refs as the source of truth.
 4. Store `runtime_env_name` only as the env var name the deployment layer should
    materialize, for example `OPENAI_API_KEY`.
 5. Return redacted metadata only.
 
 Do not use `auth_ref = env:OPENAI_API_KEY` as a Cloud storage pointer. `env:`
-is a runtime contract; provider-auth payload refs or `clawdi://` refs are the
-Clawdi storage references.
+is a runtime contract. Managed provider-auth payloads live in the internal
+payload table, while `clawdi://` refs point to Vault.
 
 Canonical API surface for Cloud/dashboard should be account-scoped:
 
