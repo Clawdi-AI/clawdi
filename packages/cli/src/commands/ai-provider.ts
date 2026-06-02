@@ -49,7 +49,7 @@ interface AiProviderAddOptions {
 	defaultModel?: string;
 	apiMode?: string;
 	auth?: string;
-	runtimeEnv?: string;
+	agentEnv?: string;
 	capability?: string[];
 	setDefault?: boolean;
 	replace?: boolean;
@@ -63,7 +63,7 @@ interface AiProviderEditOptions {
 	defaultModel?: string;
 	apiMode?: string;
 	auth?: string;
-	runtimeEnv?: string;
+	agentEnv?: string;
 	capability?: string[];
 	setDefault?: boolean;
 	json?: boolean;
@@ -923,10 +923,10 @@ function buildProvider(
 		provider.default_model = opts.defaultModel ?? existing?.default_model;
 	}
 	if (apiMode) provider.api_mode = apiMode;
-	const runtimeEnv = opts.runtimeEnv ?? existing?.runtime_env_name;
-	if (runtimeEnv) {
-		if (!isRuntimeEnvName(runtimeEnv)) throw new Error(`Invalid runtime env name: ${runtimeEnv}`);
-		provider.runtime_env_name = runtimeEnv;
+	const agentEnv = opts.agentEnv ?? existing?.runtime_env_name;
+	if (agentEnv) {
+		if (!isRuntimeEnvName(agentEnv)) throw new Error(`Invalid agent env name: ${agentEnv}`);
+		provider.runtime_env_name = agentEnv;
 	}
 	const capabilities = parseCapabilities(opts.capability);
 	if (capabilities ?? existing?.capabilities) {

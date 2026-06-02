@@ -83,7 +83,7 @@ Clawdi is the shared layer underneath:
 - **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
-- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex or Hermes runtime config without proxying BYOK model traffic.
+- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex or Hermes agent config without proxying BYOK model traffic.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
 - **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 

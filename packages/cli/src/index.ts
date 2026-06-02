@@ -287,7 +287,7 @@ aiProviderCmd
 	.option("--default-model <model>", "Default model id")
 	.option("--api-mode <mode>", "Provider API mode")
 	.requiredOption("--auth <auth>", "Auth: env:<NAME>, clawdi://..., agent:codex/<profile>, or none")
-	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
+	.option("--agent-env <name>", "Env var name the target agent process should read")
 	.option(
 		"--capability <name>",
 		"Capability to mark true (repeatable or comma-separated)",
@@ -318,7 +318,7 @@ aiProviderCmd
 	.option("--default-model <model>", "Default model id")
 	.option("--api-mode <mode>", "Provider API mode")
 	.option("--auth <auth>", "Auth: env:<NAME>, clawdi://..., agent:codex/<profile>, or none")
-	.option("--runtime-env <name>", "Runtime env var name to emit in projections")
+	.option("--agent-env <name>", "Env var name the target agent process should read")
 	.option(
 		"--capability <name>",
 		"Capability to mark true (repeatable or comma-separated)",

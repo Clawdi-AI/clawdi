@@ -5,11 +5,11 @@ import chalk from "chalk";
 import { getCodexHome } from "../adapters/paths";
 import { aiProviderCatalogPath, readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import {
-	buildRuntimeProjection,
+	AGENT_ENGINE_CONTRACTS,
+	type AgentEngine,
+	type AgentEngineProjection,
+	buildAgentEngineProjection,
 	CODEX_PROFILE_NAME,
-	RUNTIME_PROJECTION_CONTRACTS,
-	type RuntimeEngine,
-	type RuntimeProjection,
 } from "../lib/ai-provider-projection";
 
 interface AiProviderApplyOptions {
@@ -35,8 +35,10 @@ interface AiProviderApplyCommandStep {
 }
 
 interface AiProviderApplyPlan {
-	engine: RuntimeEngine;
-	contract: RuntimeProjection["contract"];
+	engine: AgentEngine;
+	engine_contract: AgentEngineProjection["contract"];
+	provider_ids: string[];
+	default_provider_id: string;
 	writes: AiProviderApplyWrite[];
 	commands: AiProviderApplyCommandStep[];
 	next_steps: string[];
@@ -47,7 +49,7 @@ export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}):
 	const engine = parseEngine(opts.engine);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	validateAiProviderApply(engine, catalog);
-	const projection = buildRuntimeProjection(engine, catalog);
+	const projection = buildAgentEngineProjection(engine, catalog);
 	const plan = buildAiProviderApplyPlan(engine, catalog, projection);
 	if (!opts.dryRun) applyAiProviderPlan(plan);
 	printAiProviderApplyPlan(plan, Boolean(opts.dryRun), Boolean(opts.json));
@@ -60,7 +62,7 @@ export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}
 		type: provider.type,
 		default_model: provider.default_model ?? null,
 		auth: describeAuth(provider),
-		runtime_env_name: provider.runtime_env_name ?? inferredEnvName(provider) ?? null,
+		agent_env_name: provider.runtime_env_name ?? inferredAgentEnvName(provider) ?? null,
 	}));
 	const agents = (["openclaw", "hermes", "codex"] as const).map((engine) =>
 		inspectAiProviderAgentApply(engine),
@@ -80,7 +82,7 @@ export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}
 	console.log(`Providers: ${rows.length}`);
 	for (const row of rows) {
 		console.log(
-			`  ${row.id} (${row.type}) model=${row.default_model ?? "-"} auth=${row.auth} env=${row.runtime_env_name ?? "-"}`,
+			`  ${row.id} (${row.type}) model=${row.default_model ?? "-"} auth=${row.auth} env=${row.agent_env_name ?? "-"}`,
 		);
 	}
 	for (const agent of agents) {
@@ -104,7 +106,7 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 	});
 	for (const engine of ["openclaw", "hermes", "codex"] as const) {
 		try {
-			buildRuntimeProjection(engine, catalog);
+			buildAgentEngineProjection(engine, catalog);
 			checks.push({ name: `Agent config: ${engine}`, ok: true });
 		} catch (error) {
 			checks.push({
@@ -126,13 +128,13 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 	if (checks.some((check) => !check.ok)) process.exitCode = 1;
 }
 
-function parseEngine(input: string | undefined): RuntimeEngine {
+function parseEngine(input: string | undefined): AgentEngine {
 	if (input === "openclaw" || input === "hermes" || input === "codex") return input;
 	throw new Error("--engine must be openclaw, hermes, or codex.");
 }
 
 function validateAiProviderApply(
-	engine: RuntimeEngine,
+	engine: AgentEngine,
 	_catalog: ReturnType<typeof readAiProviderCatalog>,
 ): void {
 	if (engine === "openclaw") {
@@ -143,9 +145,9 @@ function validateAiProviderApply(
 }
 
 function buildAiProviderApplyPlan(
-	engine: RuntimeEngine,
+	engine: AgentEngine,
 	catalog: ReturnType<typeof readAiProviderCatalog>,
-	projection: ReturnType<typeof buildRuntimeProjection>,
+	projection: ReturnType<typeof buildAgentEngineProjection>,
 ): AiProviderApplyPlan {
 	if (engine === "codex") return buildCodexApplyPlan(projection);
 	const projectedProviderIds = new Set(projection.provider_ids);
@@ -179,7 +181,9 @@ function buildAiProviderApplyPlan(
 	commands.push(buildHermesConfigCommand("model.default", defaultProvider.default_model));
 	return {
 		engine,
-		contract: projection.contract,
+		engine_contract: projection.contract,
+		provider_ids: projection.provider_ids,
+		default_provider_id: projection.default_provider_id,
 		writes: [],
 		commands,
 		next_steps: [],
@@ -188,14 +192,16 @@ function buildAiProviderApplyPlan(
 }
 
 function buildCodexApplyPlan(
-	projection: ReturnType<typeof buildRuntimeProjection>,
+	projection: ReturnType<typeof buildAgentEngineProjection>,
 ): AiProviderApplyPlan {
 	const file = projection.files.find((entry) => entry.path.endsWith(".codex.toml"));
 	if (!file) throw new Error("Codex projection did not include a profile TOML file.");
 	const profilePath = join(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 	return {
 		engine: "codex",
-		contract: projection.contract,
+		engine_contract: projection.contract,
+		provider_ids: projection.provider_ids,
+		default_provider_id: projection.default_provider_id,
 		writes: [{ path: profilePath, mode: "0600", content: file.content }],
 		commands: [],
 		next_steps: [`codex --profile ${CODEX_PROFILE_NAME}`],
@@ -262,13 +268,13 @@ function providerEnvName(
 }
 
 function describeAuth(provider: { auth: { type: string }; runtime_env_name?: string }): string {
-	const env = inferredEnvName(provider);
+	const env = inferredAgentEnvName(provider);
 	if (provider.auth.type === "none") return "none";
 	if (env) return `${provider.auth.type}:env:${env}`;
 	return provider.auth.type;
 }
 
-function inferredEnvName(provider: {
+function inferredAgentEnvName(provider: {
 	auth:
 		| { type: string; ref?: string; source?: string }
 		| { type: string; provider?: string; profile?: string }
@@ -280,9 +286,9 @@ function inferredEnvName(provider: {
 	return provider.runtime_env_name;
 }
 
-function inspectAiProviderAgentApply(engine: RuntimeEngine): {
-	engine: RuntimeEngine;
-	contract: (typeof RUNTIME_PROJECTION_CONTRACTS)[RuntimeEngine];
+function inspectAiProviderAgentApply(engine: AgentEngine): {
+	engine: AgentEngine;
+	engine_contract: (typeof AGENT_ENGINE_CONTRACTS)[AgentEngine];
 	apply_target: string;
 	apply_status: string;
 	applied: boolean | null;
@@ -292,7 +298,7 @@ function inspectAiProviderAgentApply(engine: RuntimeEngine): {
 		const applied = existsSync(profilePath);
 		return {
 			engine,
-			contract: RUNTIME_PROJECTION_CONTRACTS[engine],
+			engine_contract: AGENT_ENGINE_CONTRACTS[engine],
 			apply_target: profilePath,
 			apply_status: applied ? "applied" : "not applied",
 			applied,
@@ -301,7 +307,7 @@ function inspectAiProviderAgentApply(engine: RuntimeEngine): {
 	if (engine === "hermes") {
 		return {
 			engine,
-			contract: RUNTIME_PROJECTION_CONTRACTS[engine],
+			engine_contract: AGENT_ENGINE_CONTRACTS[engine],
 			apply_target: "hermes config set",
 			apply_status: "native config not inspected",
 			applied: null,
@@ -309,7 +315,7 @@ function inspectAiProviderAgentApply(engine: RuntimeEngine): {
 	}
 	return {
 		engine,
-		contract: RUNTIME_PROJECTION_CONTRACTS[engine],
+		engine_contract: AGENT_ENGINE_CONTRACTS[engine],
 		apply_target: "OpenClaw native config contract not pinned",
 		apply_status: "apply blocked",
 		applied: null,

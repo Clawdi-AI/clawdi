@@ -590,7 +590,7 @@ describe("ai-provider commands", () => {
 				type: "openai",
 				defaultModel: "gpt-5.2",
 				auth: "clawdi://default/openai/api_key",
-				runtimeEnv: "OPENAI_API_KEY",
+				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
 			await aiProviderTestCommand("openai-main", { live: true, json: true });
@@ -736,25 +736,25 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe("new-auth");
 	});
 
-	it("does not project agent profiles into key-env runtime config", async () => {
+	it("does not project agent profiles into key-env agent config", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-codex", {
 				type: "openai",
 				defaultModel: "gpt-5.2",
 				auth: "agent:codex/default",
-				runtimeEnv: "OPENAI_API_KEY",
+				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
 			await expect(
 				aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true }),
-			).rejects.toThrow("does not have a verified runtime projection");
+			).rejects.toThrow("does not have a verified agent config apply path");
 		} finally {
 			restore();
 		}
 	});
 
-	it("dry-runs Codex apply without writing the runtime profile", async () => {
+	it("dry-runs Codex apply without writing the Codex profile", async () => {
 		const codexHome = join(tmpHome, ".codex");
 		process.env.CODEX_HOME = codexHome;
 		const { output, restore } = captureConsole();
@@ -772,6 +772,8 @@ describe("ai-provider commands", () => {
 
 		const profilePath = join(codexHome, "clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": true');
+		expect(output()).toContain('"engine_contract"');
+		expect(output()).toContain('"provider_ids"');
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain("codex --profile clawdi-ai-provider");
 		expect(existsSync(profilePath)).toBe(false);
@@ -868,6 +870,8 @@ describe("ai-provider commands", () => {
 			before.restore();
 		}
 		expect(before.output()).toContain('"engine": "codex"');
+		expect(before.output()).toContain('"agent_env_name": "OPENAI_API_KEY"');
+		expect(before.output()).toContain('"engine_contract"');
 		expect(before.output()).toContain('"applied": false');
 		expect(before.output()).toContain("clawdi-ai-provider.config.toml");
 
@@ -948,7 +952,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain("Provider anthropic-main skipped for codex");
-		expect(output()).toContain("Default provider anthropic-main cannot be projected to codex");
+		expect(output()).toContain("Default provider anthropic-main cannot be applied to codex");
 		expect(output()).toContain('model_provider = \\"openai\\"');
 	});
 

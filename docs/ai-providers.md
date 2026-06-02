@@ -1,13 +1,13 @@
 # AI Providers
 
 AI Provider is Clawdi's portable model-provider layer. It stores provider
-metadata, auth references, and runtime capabilities once, then applies the
-runtime-specific config changes that Codex, Hermes, OpenClaw, or hosted agent
+metadata, auth references, and agent capabilities once, then applies the
+engine-specific config changes that Codex, Hermes, OpenClaw, or hosted agent
 setup can consume.
 
-The important boundary: Clawdi does not proxy BYOK model traffic. Runtime tools
-call OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your custom endpoint
-directly. Clawdi may store secrets, resolve `clawdi://` references, or
+The important boundary: Clawdi does not proxy BYOK model traffic. Agents and
+tools call OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your custom
+endpoint directly. Clawdi may store secrets, resolve `clawdi://` references, or
 materialize local auth files, but it is not in the model request path.
 
 ## What Works Today
@@ -29,12 +29,12 @@ Supported auth surfaces:
 - Codex OAuth, stored as an encrypted Codex `agent_profile`.
 - Imported Codex auth profiles through `ai-provider import-auth`.
 
-Runtime projection status:
+Agent apply status:
 
-| Runtime | Status | User launch path |
+| Agent engine | Status | User launch path |
 | --- | --- | --- |
-| Codex | Enabled | `clawdi runtime apply --engine codex`, then `codex --profile clawdi-ai-provider` |
-| Hermes | Enabled | `clawdi runtime apply --engine hermes` uses `hermes config set` |
+| Codex | Enabled | `clawdi ai-provider apply --engine codex`, then `codex --profile clawdi-ai-provider` |
+| Hermes | Enabled | `clawdi ai-provider apply --engine hermes` uses `hermes config set` |
 | OpenClaw | Blocked | Native apply is blocked until the current provider config contract is pinned |
 
 OAuth status:
@@ -75,7 +75,8 @@ clawdi ai-provider add openai-vault \
   --base-url https://api.openai.com/v1 \
   --default-model gpt-5.2 \
   --api-mode openai_responses \
-  --auth clawdi://default/OPENAI_API_KEY
+  --auth clawdi://default/OPENAI_API_KEY \
+  --agent-env OPENAI_API_KEY
 
 clawdi ai-provider test openai-vault
 clawdi ai-provider test openai-vault --live
@@ -121,7 +122,7 @@ clawdi ai-provider add openai-codex \
 
 clawdi ai-provider connect openai-codex --tool codex
 clawdi ai-provider materialize-auth openai-codex
-clawdi runtime apply --engine codex
+clawdi ai-provider apply --engine codex
 codex --profile clawdi-ai-provider
 ```
 
@@ -160,13 +161,13 @@ Supported contract:
 @openai/codex <1.0.0 with profile config, model_providers, and responses wire_api support
 ```
 
-Codex projection requires Responses-compatible providers. Chat-only providers
-cannot be projected to Codex.
+Codex apply requires Responses-compatible providers. Chat-only providers cannot
+be applied to Codex.
 
 Preview first:
 
 ```bash
-clawdi runtime apply --engine codex --dry-run
+clawdi ai-provider apply --engine codex --dry-run
 ```
 
 ## Apply Hermes
@@ -175,8 +176,8 @@ Hermes apply uses the Hermes CLI instead of rewriting
 `~/.hermes/config.yaml`:
 
 ```bash
-clawdi runtime apply --engine hermes --dry-run
-clawdi runtime apply --engine hermes
+clawdi ai-provider apply --engine hermes --dry-run
+clawdi ai-provider apply --engine hermes
 ```
 
 Clawdi calls `hermes config set` for the provider and default model fields.
@@ -196,11 +197,11 @@ verified.
 OpenClaw apply is intentionally blocked:
 
 ```bash
-clawdi runtime apply --engine openclaw --dry-run
-clawdi runtime apply --engine openclaw
+clawdi ai-provider apply --engine openclaw --dry-run
+clawdi ai-provider apply --engine openclaw
 ```
 
-`runtime apply --engine openclaw` fails with an explicit error until the
+`ai-provider apply --engine openclaw` fails with an explicit error until the
 OpenClaw provider config CLI or schema contract is pinned. This avoids shipping
 guessed native config.
 
@@ -221,7 +222,7 @@ clawdi ai-provider validate lmstudio-local
 
 Public no-auth URLs are rejected by default.
 
-## Import Existing Runtime Config
+## Import Existing Agent Config
 
 Import providers from Hermes:
 
@@ -230,7 +231,7 @@ clawdi ai-provider import --from-hermes ~/.hermes/config.yaml
 clawdi ai-provider validate
 ```
 
-Import a projection-shaped OpenClaw config:
+Import a Clawdi-generated OpenClaw provider config:
 
 ```bash
 clawdi ai-provider import --from-openclaw ./openclaw-provider-config.json
@@ -289,7 +290,7 @@ Do not commit restored env files.
 ```bash
 clawdi ai-provider list
 clawdi ai-provider validate
-clawdi runtime inspect
+clawdi ai-provider status
 clawdi doctor ai-provider
 ```
 
