@@ -35,7 +35,7 @@ Agent apply status:
 | --- | --- | --- |
 | Codex | Enabled | `clawdi ai-provider apply --engine codex`, then `codex --profile clawdi-ai-provider` |
 | Hermes | Enabled | `clawdi ai-provider apply --engine hermes` uses `hermes config set` |
-| OpenClaw | Blocked | Native apply is blocked until the current provider config contract is pinned |
+| OpenClaw | Enabled | `clawdi ai-provider apply --engine openclaw` uses `openclaw config patch --stdin` |
 
 OAuth status:
 
@@ -194,16 +194,23 @@ verified.
 
 ## OpenClaw Status
 
-OpenClaw apply is intentionally blocked:
+OpenClaw apply uses OpenClaw's native config patch CLI:
 
 ```bash
 clawdi ai-provider apply --engine openclaw --dry-run
 clawdi ai-provider apply --engine openclaw
 ```
 
-`ai-provider apply --engine openclaw` fails with an explicit error until the
-OpenClaw provider config CLI or schema contract is pinned. This avoids shipping
-guessed native config.
+Supported contract:
+
+```text
+openclaw 2026.5.28
+```
+
+Clawdi sends a patch over stdin instead of editing OpenClaw config files
+directly. The patch uses `models.mode: "merge"`,
+`models.providers.<id>.apiKey` env refs, and
+`agents.defaults.model.primary`.
 
 ## Local No-Auth Endpoint
 
@@ -305,7 +312,6 @@ These are not current user experiences:
 
 - Clawdi-proxied BYOK model requests.
 - Claude Code OAuth through AI Provider.
-- OpenClaw native apply.
 - Dashboard onboarding UI for AI Providers.
 - A CLI daemon/RPC surface for hosted agents to invoke local materialization.
 - Global `clawdi backup` integration for AI Providers.

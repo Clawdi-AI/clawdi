@@ -29,9 +29,9 @@ export const AGENT_ENGINE_CONTRACTS: Record<
 		status: "enabled",
 	},
 	openclaw: {
-		settingMethod: "native activation blocked until fixture contract",
-		supportedVersionRange: "unverified",
-		status: "blocked",
+		settingMethod: "openclaw config patch --stdin",
+		supportedVersionRange: "openclaw 2026.5.28",
+		status: "enabled",
 	},
 };
 
@@ -56,6 +56,7 @@ interface ProjectionProvider {
 	base_url: string;
 	default_model: string;
 	api_mode?: AiProvider["api_mode"];
+	models?: AiProvider["models"];
 	env_name?: string;
 	auth: AiProviderAuth;
 	auth_type: AiProviderAuth["type"];
@@ -152,6 +153,7 @@ function normalizeProjectionProvider(
 		base_url: provider.base_url,
 		default_model: provider.default_model,
 		api_mode: provider.api_mode,
+		models: provider.models,
 		env_name: envName,
 		auth: provider.auth,
 		auth_type: provider.auth.type,
@@ -180,32 +182,69 @@ function buildOpenClawProjection(
 	defaultProvider: ProjectionProvider,
 ): string {
 	const body = {
-		schema_version: 1,
-		generated_by: "clawdi",
+		agents: {
+			defaults: {
+				model: {
+					primary: `${defaultProvider.id}/${defaultProvider.default_model}`,
+				},
+			},
+		},
 		models: {
+			mode: "merge",
 			providers: Object.fromEntries(
 				providers.map((provider) => [
 					provider.id,
 					compactObject({
-						id: provider.id,
-						type: provider.type,
-						label: provider.label,
 						baseUrl: provider.base_url,
-						apiMode: provider.api_mode,
-						keyEnv: provider.env_name,
-						authType: provider.auth_type,
-						models: [{ id: provider.default_model }],
+						api: openClawApiLabel(provider.api_mode ?? defaultAiProviderApiMode(provider.type)),
+						apiKey: provider.env_name
+							? { source: "env", provider: "default", id: provider.env_name }
+							: undefined,
+						models: openClawModels(provider),
 					}),
 				]),
 			),
 		},
-		agents: {
-			defaults: {
-				model: `${defaultProvider.id}/${defaultProvider.default_model}`,
-			},
-		},
 	};
 	return `${JSON.stringify(body, null, 2)}\n`;
+}
+
+function openClawModels(provider: ProjectionProvider): Array<Record<string, unknown>> {
+	const models = (provider.models ?? [])
+		.map((model) => {
+			const api = openClawApiLabel(
+				model.api_mode ?? provider.api_mode ?? defaultAiProviderApiMode(provider.type),
+			);
+			return compactObject({
+				id: model.id,
+				name: model.label ?? model.id,
+				api,
+				input: model.input_modalities,
+				contextWindow: positiveNumber(model.context_window),
+				maxTokens: positiveNumber(model.max_tokens),
+			});
+		})
+		.filter((model) => typeof model.id === "string" && model.id.length > 0)
+		.filter(
+			(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
+		);
+	const api = openClawApiLabel(provider.api_mode ?? defaultAiProviderApiMode(provider.type));
+	if (!models.some((model) => model.id === provider.default_model)) {
+		models.unshift({ id: provider.default_model, name: provider.default_model, api });
+	}
+	return models;
+}
+
+function openClawApiLabel(apiMode: AiProvider["api_mode"]): string | undefined {
+	if (apiMode === "openai_chat") return "openai-completions";
+	if (apiMode === "openai_responses") return "openai-responses";
+	if (apiMode === "anthropic_messages") return "anthropic-messages";
+	if (apiMode === "google_generate_content") return "google-generative-ai";
+	return undefined;
+}
+
+function positiveNumber(input: number | undefined): number | undefined {
+	return typeof input === "number" && Number.isFinite(input) && input > 0 ? input : undefined;
 }
 
 function buildHermesProjection(

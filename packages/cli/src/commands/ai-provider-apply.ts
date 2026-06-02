@@ -32,6 +32,7 @@ interface AiProviderApplyCommandStep {
 	command: string;
 	args: string[];
 	display: string;
+	stdin?: string;
 }
 
 interface AiProviderApplyPlan {
@@ -48,7 +49,6 @@ interface AiProviderApplyPlan {
 export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}): Promise<void> {
 	const engine = parseEngine(opts.engine);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	validateAiProviderApply(engine, catalog);
 	const projection = buildAgentEngineProjection(engine, catalog);
 	const plan = buildAiProviderApplyPlan(engine, catalog, projection);
 	if (!opts.dryRun) applyAiProviderPlan(plan);
@@ -133,22 +133,12 @@ function parseEngine(input: string | undefined): AgentEngine {
 	throw new Error("--engine must be openclaw, hermes, or codex.");
 }
 
-function validateAiProviderApply(
-	engine: AgentEngine,
-	_catalog: ReturnType<typeof readAiProviderCatalog>,
-): void {
-	if (engine === "openclaw") {
-		throw new Error(
-			"OpenClaw apply is not enabled until its provider config CLI or schema contract is pinned.",
-		);
-	}
-}
-
 function buildAiProviderApplyPlan(
 	engine: AgentEngine,
 	catalog: ReturnType<typeof readAiProviderCatalog>,
 	projection: ReturnType<typeof buildAgentEngineProjection>,
 ): AiProviderApplyPlan {
+	if (engine === "openclaw") return buildOpenClawApplyPlan(projection);
 	if (engine === "codex") return buildCodexApplyPlan(projection);
 	const projectedProviderIds = new Set(projection.provider_ids);
 	const projectedProviders = catalog.providers.filter((provider) =>
@@ -191,6 +181,30 @@ function buildAiProviderApplyPlan(
 	};
 }
 
+function buildOpenClawApplyPlan(
+	projection: ReturnType<typeof buildAgentEngineProjection>,
+): AiProviderApplyPlan {
+	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+	return {
+		engine: "openclaw",
+		engine_contract: projection.contract,
+		provider_ids: projection.provider_ids,
+		default_provider_id: projection.default_provider_id,
+		writes: [],
+		commands: [
+			{
+				command: "openclaw",
+				args: ["config", "patch", "--stdin"],
+				display: "openclaw config patch --stdin",
+				stdin: file.content,
+			},
+		],
+		next_steps: [],
+		warnings: projection.warnings,
+	};
+}
+
 function buildCodexApplyPlan(
 	projection: ReturnType<typeof buildAgentEngineProjection>,
 ): AiProviderApplyPlan {
@@ -225,7 +239,11 @@ function applyAiProviderPlan(plan: AiProviderApplyPlan): void {
 		chmodAiProviderPath(write.path, 0o600);
 	}
 	for (const command of plan.commands) {
-		execFileSync(command.command, command.args, { stdio: "pipe", env: process.env });
+		execFileSync(command.command, command.args, {
+			input: command.stdin,
+			stdio: "pipe",
+			env: process.env,
+		});
 	}
 }
 
@@ -241,6 +259,7 @@ function printAiProviderApplyPlan(plan: AiProviderApplyPlan, dryRun: boolean, js
 	}
 	for (const command of plan.commands) {
 		console.log(`${dryRun ? chalk.gray("•") : chalk.green("✓")} ${prefix} run ${command.display}`);
+		if (dryRun && command.stdin) console.log(command.stdin.trimEnd());
 	}
 	for (const next of plan.next_steps) {
 		console.log(chalk.gray(`Next: ${next}`));
@@ -316,8 +335,8 @@ function inspectAiProviderAgentApply(engine: AgentEngine): {
 	return {
 		engine,
 		engine_contract: AGENT_ENGINE_CONTRACTS[engine],
-		apply_target: "OpenClaw native config contract not pinned",
-		apply_status: "apply blocked",
+		apply_target: "openclaw config patch --stdin",
+		apply_status: "native config not inspected",
 		applied: null,
 	};
 }

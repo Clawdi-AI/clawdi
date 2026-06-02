@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -142,6 +150,40 @@ describe("ai-provider CLI process e2e", () => {
 			expect(dryRun.stdout).toContain("hermes config set providers.openai-main.key_env");
 			expect(dryRun.stdout).not.toContain(SECRET);
 			expect(existsSync(join(destination.clawdiHome, "runtime", "hermes"))).toBe(false);
+
+			const stubDir = join(destination.root, "bin");
+			const openClawArgs = join(destination.root, "openclaw-args");
+			const openClawStdin = join(destination.root, "openclaw-stdin.json");
+			mkdirSync(stubDir, { recursive: true });
+			writeFileSync(
+				join(stubDir, "openclaw"),
+				`#!/bin/sh\nprintf "%s\\n" "$@" > "${openClawArgs}"\ncat > "${openClawStdin}"\nexit 0\n`,
+			);
+			chmodSync(join(stubDir, "openclaw"), 0o755);
+
+			const openClawApplied = await runCli(
+				destination,
+				["ai-provider", "apply", "--engine", "openclaw", "--json"],
+				{ PATH: `${stubDir}:${process.env.PATH ?? ""}` },
+			);
+			expect(openClawApplied.code).toBe(0);
+			expect(openClawApplied.stdout).toContain('"engine": "openclaw"');
+			expect(openClawApplied.stdout).not.toContain(SECRET);
+			expect(openClawApplied.stderr).not.toContain(SECRET);
+			expect(readFileSync(openClawArgs, "utf8").trim().split("\n")).toEqual([
+				"config",
+				"patch",
+				"--stdin",
+			]);
+			const openClawPatch = JSON.parse(readFileSync(openClawStdin, "utf8"));
+			expect(openClawPatch.agents.defaults.model.primary).toBe("openai-main/gpt-5.2");
+			expect(openClawPatch.models.mode).toBe("merge");
+			expect(openClawPatch.models.providers["openai-main"].api).toBe("openai-responses");
+			expect(openClawPatch.models.providers["openai-main"].apiKey).toEqual({
+				source: "env",
+				provider: "default",
+				id: "OPENAI_API_KEY",
+			});
 		} finally {
 			rmSync(source.root, { recursive: true, force: true });
 			rmSync(destination.root, { recursive: true, force: true });

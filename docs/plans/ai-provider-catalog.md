@@ -78,9 +78,11 @@ The first design pass intentionally marked OpenClaw and Hermes output as
 illustrative, but it still treated several unverified assumptions as if they
 were likely contracts. The implementation plan must correct that:
 
-1. Projection work is blocked on pinned OpenClaw/Hermes provider-config
-   fixtures. Local source review has identified likely contracts, but golden
-   tests must lock verified runtime fixtures, not guessed shapes.
+1. Projection work must stay tied to pinned provider-config fixtures. OpenClaw
+   is pinned to `openclaw 2026.5.28` using `openclaw config patch --stdin`;
+   Hermes is pinned to `Hermes Agent >=0.15.1 <0.16.0` using
+   `hermes config set`. Golden tests must lock verified runtime fixtures, not
+   guessed shapes.
 2. AI Provider secret handling must reuse Clawdi's existing
    `secret-references.ts` and Vault resolver instead of creating a parallel
    `clawdi://` parser.
@@ -187,9 +189,8 @@ The user-visible outcomes:
 
 Product success criteria:
 
-1. A user adds `openai-main` once and applies Codex and Hermes config from the
-   same catalog. OpenClaw apply stays blocked until its native contract is
-   pinned.
+1. A user adds `openai-main` once and applies Codex, Hermes, and OpenClaw
+   config from the same catalog.
 2. A user migrates an existing Hermes or OpenClaw provider config into the
    catalog, then regenerates equivalent engine-native config.
 3. A user rotates `OPENAI_API_KEY` without editing Codex, OpenClaw, or Hermes
@@ -634,8 +635,8 @@ contain plaintext secrets.
 
 Runtime activation output is engine-specific. Codex v1 writes
 `$CODEX_HOME/clawdi-ai-provider.config.toml`; Hermes v1 invokes
-`hermes config set`; OpenClaw v1 activation is blocked. The catalog remains
-authoritative.
+`hermes config set`; OpenClaw v1 invokes `openclaw config patch --stdin`.
+The catalog remains authoritative.
 
 ## Catalog Schema
 
@@ -1127,8 +1128,7 @@ clawdi ai-provider apply --engine <openclaw|hermes|codex> \
 `apply --dry-run` previews the exact native write/command plan. `apply` makes
 the runtime use the compatible provider set through a verified runtime
 entrypoint. The catalog may contain providers for other engines; those are
-skipped with redacted warnings instead of being removed or rewritten. OpenClaw
-apply remains blocked until its native config contract is pinned.
+skipped with redacted warnings instead of being removed or rewritten.
 
 `clawdi ai-provider status` should show:
 
@@ -1827,7 +1827,7 @@ activate a runtime through an unpinned setting surface.
 | --- | --- | --- | --- | --- |
 | Codex | Write `$CODEX_HOME/clawdi-ai-provider.config.toml`; user runs `codex --profile clawdi-ai-provider` | `@openai/codex <1.0.0` when the installed version supports profile config, `model_providers`, and `wire_api = "responses"` | Enabled | Codex profiles are first-class config layers. They avoid editing the user's primary `config.toml`, project config cannot override provider/auth/profile keys, and `-c key=value` is too ephemeral for persistent provider management. |
 | Hermes | `hermes config set` under explicit `ai-provider apply` | `Hermes Agent >=0.15.1 <0.16.0` | Enabled for non-dotted provider IDs | The runtime CLI owns native write semantics and has been tested to preserve existing `mcp_servers.clawdi`. Direct YAML replacement is not allowed. |
-| OpenClaw | Native activation disabled until config CLI/include fixtures are pinned | Unverified | Blocked | Local source review is promising, but activation depends on OpenClaw's exact schema/CLI contract and must not be guessed. |
+| OpenClaw | `openclaw config patch --stdin` under explicit `ai-provider apply` | `openclaw 2026.5.28` | Enabled | The runtime CLI owns native structured merge semantics. Clawdi sends a JSON patch over stdin and does not edit OpenClaw config files directly. |
 
 Rejected Codex modes:
 
@@ -2769,8 +2769,8 @@ round:
    commands, include files, or managed homes/profiles. If the runtime has no
    verified CLI or layering mechanism, apply stays disabled until native
    patching can use a structured merge. Hermes v1 apply may use
-   `hermes config set`; OpenClaw apply stays gated
-   until the pinned CLI or include contract is captured.
+   `hermes config set`; OpenClaw v1 apply uses
+   `openclaw config patch --stdin`.
 7. Model metadata is user-owned optional `models[]` data. Clawdi may validate
    shape and preserve/import/export it, but must not maintain a default model
    metadata table.
@@ -2824,8 +2824,9 @@ Implemented in the first non-UI slice:
    preserve an existing `~/.hermes/config.yaml` containing
    `mcp_servers.clawdi`. Provider IDs containing `.` can be projected, but
    Hermes apply rejects them until Hermes dot-path escaping is verified.
-9. OpenClaw managed-file projection exists, but native apply remains
-   disabled until its provider config CLI/include contract is pinned.
+9. OpenClaw projection and apply are implemented through the pinned
+   `openclaw 2026.5.28` config patch contract. Apply uses stdin and leaves
+   OpenClaw's primary config file writes to OpenClaw itself.
 10. Hermes import uses a structured YAML parser for `providers` and
    `custom_providers`, rather than ad hoc string parsing.
 11. Backend account-scoped routes store provider metadata and encrypted
@@ -2843,8 +2844,7 @@ Not yet implemented in this slice:
    provider still needs verified client configuration before being enabled.
 3. Global `clawdi backup` integration. `ai-provider export/import` is the v1
    provider-only backup surface.
-4. OpenClaw native activation.
-5. Public-key encrypted secret backup and non-env secret restore targets.
+4. Public-key encrypted secret backup and non-env secret restore targets.
 
 ## Implementation Review
 
@@ -2906,7 +2906,8 @@ User scenario coverage in this slice:
    `providers`, legacy `custom_providers`, `key_env`, `api_key_env`, labels,
    default provider, and model fields.
 4. **Provider migration from OpenClaw projection-shaped JSON**: implemented as
-   best-effort import, but native OpenClaw activation remains gated.
+   best-effort import; OpenClaw apply now uses the pinned native
+   `openclaw config patch --stdin` contract.
 5. **Codex-style agent auth profiles**: covered through existing
    credential-profile import/materialization plus AI Provider binding commands.
    Claude Code profile import and OAuth are deferred from AI Provider v1.
@@ -3076,8 +3077,9 @@ Security tests required before enabling RPC:
 16. Implement Codex profile-file projection and apply through
     `$CODEX_HOME/clawdi-ai-provider.config.toml`, with tests proving
     `$CODEX_HOME/config.toml` is preserved.
-17. Implement OpenClaw managed-file projection, with native apply gated
-    until verified fixtures are captured.
+17. Implement OpenClaw apply through the pinned
+    `openclaw config patch --stdin` contract; defer optional managed-file or
+    include activation modes.
 18. Implement Hermes managed-file projection and explicit `hermes config set`
     apply tests.
 19. Implement apply planning, runtime CLI execution, and explicit native patch

@@ -29,6 +29,7 @@ import {
 	aiProviderStatusCommand,
 } from "../../src/commands/ai-provider-apply";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
+import { buildAgentEngineProjection } from "../../src/lib/ai-provider-projection";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -1121,22 +1122,97 @@ describe("ai-provider commands", () => {
 		}
 	});
 
-	it("does not write OpenClaw files when apply is unsupported", async () => {
-		const { restore } = captureConsole();
+	it("dry-runs OpenClaw apply without calling openclaw", async () => {
+		const { output, restore } = captureConsole();
+		const stubDir = join(tmpHome, "bin");
+		mkdirSync(stubDir, { recursive: true });
+		writeFileSync(join(stubDir, "openclaw"), "#!/bin/sh\nexit 42\n");
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
 		try {
 			await aiProviderAddCommand("openai-main", {
 				type: "openai",
 				defaultModel: "gpt-5.2",
 				auth: "env:OPENAI_API_KEY",
+				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(aiProviderApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
-				"OpenClaw apply is not enabled",
-			);
+			await aiProviderApplyCommand({ engine: "openclaw", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
-		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "openclaw"))).toBe(false);
+		expect(output()).not.toContain("sk-ai-provider");
+		expect(output()).toContain('"engine": "openclaw"');
+		expect(output()).toContain('"command": "openclaw"');
+		expect(output()).toContain('"stdin"');
+		expect(output()).toContain("apiKey");
+		expect(output()).toContain("openai-main/gpt-5.2");
+	});
+
+	it("applies OpenClaw through config patch stdin", async () => {
+		const stubDir = join(tmpHome, "bin");
+		const argsPath = join(tmpHome, "openclaw-args");
+		const stdinPath = join(tmpHome, "openclaw-stdin.json");
+		mkdirSync(stubDir, { recursive: true });
+		writeFileSync(
+			join(stubDir, "openclaw"),
+			`#!/bin/sh\nprintf "%s\\n" "$@" > "${argsPath}"\ncat > "${stdinPath}"\nexit 0\n`,
+		);
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				agentEnv: "OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ engine: "openclaw", json: true });
+		} finally {
+			restore();
+		}
+
+		expect(output()).toContain('"engine": "openclaw"');
+		expect(readFileSync(argsPath, "utf-8").trim().split("\n")).toEqual([
+			"config",
+			"patch",
+			"--stdin",
+		]);
+		const patch = JSON.parse(readFileSync(stdinPath, "utf-8"));
+		expect(patch.agents.defaults.model.primary).toBe("openai-main/gpt-5.2");
+		expect(patch.models.mode).toBe("merge");
+		expect(patch.models.providers["openai-main"].api).toBe("openai-responses");
+		expect(patch.models.providers["openai-main"].apiKey).toEqual({
+			source: "env",
+			provider: "default",
+			id: "OPENAI_API_KEY",
+		});
+	});
+
+	it("keeps the OpenClaw default model registered when catalog models omit it", () => {
+		const projection = buildAgentEngineProjection("openclaw", {
+			schema_version: 1,
+			defaults: { chat_provider_id: "openai-main" },
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					default_model: "gpt-5.2",
+					api_mode: "openai_responses",
+					auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+					models: [{ id: "gpt-4o", label: "GPT 4o", input_modalities: ["text", "image"] }],
+				},
+			],
+		});
+
+		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
+		expect(
+			patch.models.providers["openai-main"].models.map((model: { id: string }) => model.id),
+		).toEqual(["gpt-5.2", "gpt-4o"]);
+		expect(patch.models.providers["openai-main"].models[1].input).toEqual(["text", "image"]);
 	});
 
 	it("imports provider metadata from a Hermes config without secrets", async () => {
