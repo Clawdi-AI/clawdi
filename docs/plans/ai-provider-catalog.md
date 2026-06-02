@@ -457,8 +457,10 @@ Expected product behavior:
 
 1. The catalog can hold multiple providers with stable IDs.
 2. Defaults decide the normal runtime path.
-3. Runtime projection can include all providers or only selected providers,
-   depending on engine support and CLI flags.
+3. Runtime projection includes the providers compatible with the target engine.
+   Incompatible providers remain in the catalog and are reported as warnings;
+   they do not block applying a different engine when at least one compatible
+   provider exists.
 4. Inspect output shows which provider is default and which secret refs are
    missing or available.
 
@@ -1121,7 +1123,9 @@ clawdi runtime apply --engine <openclaw|hermes|codex> \
 ```
 
 `apply --dry-run` previews the exact native write/command plan. `apply` makes
-the runtime use the provider through a verified runtime entrypoint. OpenClaw
+the runtime use the compatible provider set through a verified runtime
+entrypoint. The catalog may contain providers for other engines; those are
+skipped with redacted warnings instead of being removed or rewritten. OpenClaw
 apply remains blocked until its native config contract is pinned.
 
 `clawdi runtime inspect` should show:
@@ -1734,7 +1738,10 @@ Adapter responsibilities:
 2. Preserve secret refs when the runtime supports them.
 3. Generate owner-only env files only when necessary.
 4. Produce deterministic output for golden tests.
-5. Report unsupported provider features before writing files.
+5. Report unsupported provider features before writing files. Unsupported
+   providers for the selected engine are skipped with warnings when another
+   compatible provider can still be applied; if no compatible providers remain,
+   apply fails before changing the machine.
 6. Keep `runtime apply --dry-run` pure and side-effect free.
 7. Use `runtime apply --dry-run` for redacted apply planning.
 8. Prefer apply through runtime-supported config-path env vars, official
@@ -2547,7 +2554,8 @@ Required coverage:
     `$CODEX_HOME/clawdi-ai-provider.config.toml`, never edits
     `$CODEX_HOME/config.toml`, includes the pinned `@openai/codex` contract,
     and requires launch through `codex --profile clawdi-ai-provider`.
-15. Codex projection rejects non-Responses-compatible providers and projects
+15. Codex projection skips non-Responses-compatible providers with warnings,
+    fails only when no compatible provider remains, and projects
     `agent:codex/<profile>` to Codex native auth without leaking auth payloads.
 16. Drift metadata is written to external metadata marker files, not into
     native config, unless the engine schema explicitly permits unknown keys.

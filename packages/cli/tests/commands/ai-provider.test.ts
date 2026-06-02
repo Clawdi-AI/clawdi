@@ -810,6 +810,39 @@ describe("ai-provider commands", () => {
 		}
 	});
 
+	it("applies Codex with multiple compatible providers in one profile", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderAddCommand("gateway-main", {
+				type: "custom_openai_compatible",
+				baseUrl: "https://gateway.example/v1",
+				defaultModel: "gpt-5.2",
+				apiMode: "openai_responses",
+				auth: "env:GATEWAY_API_KEY",
+				json: true,
+			});
+			await runtimeApplyCommand({ engine: "codex", json: true });
+		} finally {
+			restore();
+		}
+
+		const profile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
+		expect(profile).toContain('model_provider = "openai-main"');
+		expect(profile).toContain('[model_providers."openai-main"]');
+		expect(profile).toContain('env_key = "OPENAI_API_KEY"');
+		expect(profile).toContain('[model_providers."gateway-main"]');
+		expect(profile).toContain('base_url = "https://gateway.example/v1"');
+		expect(profile).toContain('env_key = "GATEWAY_API_KEY"');
+	});
+
 	it("inspects Codex apply state from the native profile path", async () => {
 		const codexHome = join(tmpHome, ".codex");
 		process.env.CODEX_HOME = codexHome;
@@ -886,6 +919,34 @@ describe("ai-provider commands", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("lets Codex apply skip incompatible providers while keeping a usable default", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				setDefault: true,
+				json: true,
+			});
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
+		} finally {
+			restore();
+		}
+
+		expect(output()).toContain("Provider anthropic-main skipped for codex");
+		expect(output()).toContain("Default provider anthropic-main cannot be projected to codex");
+		expect(output()).toContain('model_provider = \\"openai\\"');
 	});
 
 	it("dry-runs Hermes apply without writing files or mutating config.yaml", async () => {
@@ -974,6 +1035,38 @@ describe("ai-provider commands", () => {
 		expect(calls).toContain("config set model.provider openai-main");
 		expect(calls).toContain("config set model.default gpt-5.2");
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
+	});
+
+	it("lets Hermes apply compatible providers while skipping Codex-only auth", async () => {
+		const binDir = join(tmpHome, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const hermesPath = join(binDir, "hermes");
+		writeFileSync(hermesPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		chmodSync(hermesPath, 0o755);
+		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				setDefault: true,
+				json: true,
+			});
+			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
+		} finally {
+			restore();
+		}
+
+		expect(output()).toContain("Provider openai-codex skipped for hermes");
+		expect(output()).toContain("hermes config set providers.anthropic-main.key_env");
+		expect(output()).not.toContain("hermes config set providers.openai-codex");
 	});
 
 	it("refuses Hermes apply for dotted provider ids before changing files", async () => {

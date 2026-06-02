@@ -133,20 +133,12 @@ function parseEngine(input: string | undefined): RuntimeEngine {
 
 function validateRuntimeApply(
 	engine: RuntimeEngine,
-	catalog: ReturnType<typeof readAiProviderCatalog>,
+	_catalog: ReturnType<typeof readAiProviderCatalog>,
 ): void {
 	if (engine === "openclaw") {
 		throw new Error(
 			"OpenClaw apply is not enabled until its provider config CLI or schema contract is pinned.",
 		);
-	}
-	if (engine === "codex") return;
-	for (const provider of catalog.providers) {
-		if (provider.id.includes(".")) {
-			throw new Error(
-				`Hermes apply does not support provider id "${provider.id}" because dot-path escaping has not been verified. Rename the provider id before applying.`,
-			);
-		}
 	}
 }
 
@@ -156,13 +148,18 @@ function buildRuntimeApplyPlan(
 	projection: ReturnType<typeof buildRuntimeProjection>,
 ): RuntimeApplyPlan {
 	if (engine === "codex") return buildCodexApplyPlan(projection);
-	const defaultProviderId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
-	const defaultProvider = catalog.providers.find((provider) => provider.id === defaultProviderId);
+	const projectedProviderIds = new Set(projection.provider_ids);
+	const projectedProviders = catalog.providers.filter((provider) =>
+		projectedProviderIds.has(provider.id),
+	);
+	const defaultProvider = projectedProviders.find(
+		(provider) => provider.id === projection.default_provider_id,
+	);
 	if (!defaultProvider?.default_model) {
 		throw new Error("Hermes apply requires a default provider with default_model.");
 	}
 	const commands: RuntimeApplyCommand[] = [];
-	for (const provider of catalog.providers) {
+	for (const provider of projectedProviders) {
 		if (!provider.default_model) continue;
 		const values: Record<string, string> = {
 			type: provider.type,

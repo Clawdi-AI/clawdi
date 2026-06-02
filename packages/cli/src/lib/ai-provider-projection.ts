@@ -45,6 +45,8 @@ export interface RuntimeProjection {
 	files: ProjectionFile[];
 	warnings: string[];
 	contract: (typeof RUNTIME_PROJECTION_CONTRACTS)[RuntimeEngine];
+	provider_ids: string[];
+	default_provider_id: string;
 }
 
 interface ProjectionProvider {
@@ -67,18 +69,10 @@ export function buildRuntimeProjection(
 	if (!validation.valid) {
 		throw new Error(`AI Provider catalog is invalid:\n${validation.errors.join("\n")}`);
 	}
-	const providers = catalog.providers.map((provider) =>
-		normalizeProjectionProvider(engine, provider),
-	);
-	if (providers.length === 0) {
-		throw new Error("No AI Providers configured.");
-	}
-	const defaultProviderId = catalog.defaults?.chat_provider_id ?? providers[0]?.id;
-	const defaultProvider = providers.find((provider) => provider.id === defaultProviderId);
-	if (!defaultProvider) {
-		throw new Error(`Default provider not found: ${defaultProviderId}`);
-	}
-	const warnings = validation.warnings;
+	const selection = selectProjectionProviders(engine, catalog);
+	const providers = selection.providers;
+	const defaultProvider = selection.defaultProvider;
+	const warnings = [...validation.warnings, ...selection.warnings];
 	const projection =
 		engine === "openclaw"
 			? buildOpenClawProjection(providers, defaultProvider)
@@ -96,31 +90,62 @@ export function buildRuntimeProjection(
 		],
 		warnings,
 		contract: RUNTIME_PROJECTION_CONTRACTS[engine],
+		provider_ids: providers.map((provider) => provider.id),
+		default_provider_id: defaultProvider.id,
 	};
+}
+
+function selectProjectionProviders(
+	engine: RuntimeEngine,
+	catalog: AiProviderCatalog,
+): { providers: ProjectionProvider[]; defaultProvider: ProjectionProvider; warnings: string[] } {
+	const warnings: string[] = [];
+	const providers: ProjectionProvider[] = [];
+	for (const provider of catalog.providers) {
+		const result = normalizeProjectionProvider(engine, provider);
+		if (typeof result === "string") warnings.push(result);
+		else providers.push(result);
+	}
+	if (providers.length === 0) {
+		throw new Error(
+			`No AI Providers can be projected to ${engine}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
+		);
+	}
+	const preferredDefaultId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
+	const preferredDefault = providers.find((provider) => provider.id === preferredDefaultId);
+	if (preferredDefault) {
+		return { providers, defaultProvider: preferredDefault, warnings };
+	}
+	const defaultProvider = providers[0];
+	if (preferredDefaultId) {
+		warnings.push(
+			`Default provider ${preferredDefaultId} cannot be projected to ${engine}; using ${defaultProvider.id}.`,
+		);
+	}
+	return { providers, defaultProvider, warnings };
 }
 
 function normalizeProjectionProvider(
 	engine: RuntimeEngine,
 	provider: AiProvider,
-): ProjectionProvider {
+): ProjectionProvider | string {
+	if (engine === "hermes" && provider.id.includes(".")) {
+		return `Provider ${provider.id} skipped for hermes: Hermes apply does not support provider id "${provider.id}" because dot-path escaping has not been verified. Rename the provider id before applying.`;
+	}
 	if (!provider.default_model) {
-		throw new Error(`Provider ${provider.id} requires default_model for runtime projection.`);
+		return `Provider ${provider.id} skipped for ${engine}: requires default_model for runtime projection.`;
 	}
 	if (
 		engine !== "codex" &&
 		(provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile")
 	) {
-		throw new Error(
-			`Provider ${provider.id} uses ${provider.auth.type} auth, which does not have a verified runtime projection yet. Materialize the profile for its native tool or use env/Vault/managed API key auth for key-env runtimes.`,
-		);
+		return `Provider ${provider.id} skipped for ${engine}: uses ${provider.auth.type} auth, which does not have a verified runtime projection yet. Materialize the profile for its native tool or use env/Vault/managed API key auth for key-env runtimes.`;
 	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName && !usesCodexNativeAuth(provider)) {
-		throw new Error(
-			`Provider ${provider.id} auth requires runtime_env_name or an env:<NAME> ref for runtime projection.`,
-		);
+		return `Provider ${provider.id} skipped for ${engine}: auth requires runtime_env_name or an env:<NAME> ref for runtime projection.`;
 	}
-	return {
+	const projectionProvider = {
 		id: provider.id,
 		type: provider.type,
 		label: provider.label,
@@ -131,6 +156,11 @@ function normalizeProjectionProvider(
 		auth: provider.auth,
 		auth_type: provider.auth.type,
 	};
+	if (engine === "codex") {
+		const reason = codexProjectionSkipReason(projectionProvider);
+		if (reason) return reason;
+	}
+	return projectionProvider;
 }
 
 function authEnvName(provider: AiProvider): string | undefined {
@@ -231,22 +261,22 @@ function buildCodexProjection(
 }
 
 function validateCodexProjectionProvider(provider: ProjectionProvider): void {
+	const reason = codexProjectionSkipReason(provider);
+	if (reason) throw new Error(reason);
+}
+
+function codexProjectionSkipReason(provider: ProjectionProvider): string | undefined {
 	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
 	if (apiMode !== "openai_responses") {
-		throw new Error(
-			`Provider ${provider.id} cannot be projected to Codex: Codex provider config supports Responses-compatible providers only; got api_mode ${apiMode ?? "unknown"}.`,
-		);
+		return `Provider ${provider.id} skipped for codex: Codex provider config supports Responses-compatible providers only; got api_mode ${apiMode ?? "unknown"}.`;
 	}
 	if (provider.auth.type === "oauth_profile") {
-		throw new Error(
-			`Provider ${provider.id} uses oauth_profile auth, which does not have a verified Codex config projection.`,
-		);
+		return `Provider ${provider.id} skipped for codex: uses oauth_profile auth, which does not have a verified Codex config projection.`;
 	}
 	if (provider.auth.type === "agent_profile" && !usesCodexNativeAuth(provider)) {
-		throw new Error(
-			`Provider ${provider.id} uses agent_profile auth for ${provider.auth.tool}; Codex projection only supports agent:codex/<profile>.`,
-		);
+		return `Provider ${provider.id} skipped for codex: uses agent_profile auth for ${provider.auth.tool}; Codex projection only supports agent:codex/<profile>.`;
 	}
+	return undefined;
 }
 
 function codexModelProviderId(provider: ProjectionProvider): string {
