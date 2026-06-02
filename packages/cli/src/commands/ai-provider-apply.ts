@@ -12,48 +12,48 @@ import {
 	type RuntimeProjection,
 } from "../lib/ai-provider-projection";
 
-interface RuntimeApplyOptions {
+interface AiProviderApplyOptions {
 	engine?: string;
 	dryRun?: boolean;
 	json?: boolean;
 }
 
-interface RuntimeInspectOptions {
+interface AiProviderStatusOptions {
 	json?: boolean;
 }
 
-interface RuntimeApplyWrite {
+interface AiProviderApplyWrite {
 	path: string;
 	mode: string;
 	content: string;
 }
 
-interface RuntimeApplyCommand {
+interface AiProviderApplyCommandStep {
 	command: string;
 	args: string[];
 	display: string;
 }
 
-interface RuntimeApplyPlan {
+interface AiProviderApplyPlan {
 	engine: RuntimeEngine;
 	contract: RuntimeProjection["contract"];
-	writes: RuntimeApplyWrite[];
-	commands: RuntimeApplyCommand[];
+	writes: AiProviderApplyWrite[];
+	commands: AiProviderApplyCommandStep[];
 	next_steps: string[];
 	warnings: string[];
 }
 
-export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promise<void> {
+export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}): Promise<void> {
 	const engine = parseEngine(opts.engine);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	validateRuntimeApply(engine, catalog);
+	validateAiProviderApply(engine, catalog);
 	const projection = buildRuntimeProjection(engine, catalog);
-	const plan = buildRuntimeApplyPlan(engine, catalog, projection);
-	if (!opts.dryRun) applyRuntimePlan(plan);
-	printRuntimeApplyPlan(plan, Boolean(opts.dryRun), Boolean(opts.json));
+	const plan = buildAiProviderApplyPlan(engine, catalog, projection);
+	if (!opts.dryRun) applyAiProviderPlan(plan);
+	printAiProviderApplyPlan(plan, Boolean(opts.dryRun), Boolean(opts.json));
 }
 
-export async function runtimeInspectCommand(opts: RuntimeInspectOptions = {}): Promise<void> {
+export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const rows = catalog.providers.map((provider) => ({
 		id: provider.id,
@@ -62,35 +62,35 @@ export async function runtimeInspectCommand(opts: RuntimeInspectOptions = {}): P
 		auth: describeAuth(provider),
 		runtime_env_name: provider.runtime_env_name ?? inferredEnvName(provider) ?? null,
 	}));
-	const runtimes = (["openclaw", "hermes", "codex"] as const).map((engine) =>
-		inspectRuntime(engine),
+	const agents = (["openclaw", "hermes", "codex"] as const).map((engine) =>
+		inspectAiProviderAgentApply(engine),
 	);
 	const result = {
 		catalog_path: aiProviderCatalogPath(),
 		provider_count: catalog.providers.length,
 		defaults: catalog.defaults ?? {},
 		providers: rows,
-		runtimes,
+		agents,
 	};
 	if (opts.json) {
 		console.log(JSON.stringify(result, null, 2));
 		return;
 	}
-	console.log(chalk.bold("AI Provider runtime"));
+	console.log(chalk.bold("AI Provider agents"));
 	console.log(`Providers: ${rows.length}`);
 	for (const row of rows) {
 		console.log(
 			`  ${row.id} (${row.type}) model=${row.default_model ?? "-"} auth=${row.auth} env=${row.runtime_env_name ?? "-"}`,
 		);
 	}
-	for (const runtime of runtimes) {
+	for (const agent of agents) {
 		const state =
-			runtime.applied === true
+			agent.applied === true
 				? chalk.green("applied")
-				: runtime.applied === false
+				: agent.applied === false
 					? chalk.gray("not applied")
-					: chalk.gray(runtime.apply_status);
-		console.log(`  ${runtime.engine}: ${state} ${chalk.gray(runtime.native_target)}`);
+					: chalk.gray(agent.apply_status);
+		console.log(`  ${agent.engine}: ${state} ${chalk.gray(agent.apply_target)}`);
 	}
 }
 
@@ -105,10 +105,10 @@ export async function doctorAiProviderCommand(opts: { json?: boolean } = {}): Pr
 	for (const engine of ["openclaw", "hermes", "codex"] as const) {
 		try {
 			buildRuntimeProjection(engine, catalog);
-			checks.push({ name: `Runtime config: ${engine}`, ok: true });
+			checks.push({ name: `Agent config: ${engine}`, ok: true });
 		} catch (error) {
 			checks.push({
-				name: `Runtime config: ${engine}`,
+				name: `Agent config: ${engine}`,
 				ok: false,
 				detail: error instanceof Error ? error.message : String(error),
 			});
@@ -131,7 +131,7 @@ function parseEngine(input: string | undefined): RuntimeEngine {
 	throw new Error("--engine must be openclaw, hermes, or codex.");
 }
 
-function validateRuntimeApply(
+function validateAiProviderApply(
 	engine: RuntimeEngine,
 	_catalog: ReturnType<typeof readAiProviderCatalog>,
 ): void {
@@ -142,11 +142,11 @@ function validateRuntimeApply(
 	}
 }
 
-function buildRuntimeApplyPlan(
+function buildAiProviderApplyPlan(
 	engine: RuntimeEngine,
 	catalog: ReturnType<typeof readAiProviderCatalog>,
 	projection: ReturnType<typeof buildRuntimeProjection>,
-): RuntimeApplyPlan {
+): AiProviderApplyPlan {
 	if (engine === "codex") return buildCodexApplyPlan(projection);
 	const projectedProviderIds = new Set(projection.provider_ids);
 	const projectedProviders = catalog.providers.filter((provider) =>
@@ -158,7 +158,7 @@ function buildRuntimeApplyPlan(
 	if (!defaultProvider?.default_model) {
 		throw new Error("Hermes apply requires a default provider with default_model.");
 	}
-	const commands: RuntimeApplyCommand[] = [];
+	const commands: AiProviderApplyCommandStep[] = [];
 	for (const provider of projectedProviders) {
 		if (!provider.default_model) continue;
 		const values: Record<string, string> = {
@@ -189,7 +189,7 @@ function buildRuntimeApplyPlan(
 
 function buildCodexApplyPlan(
 	projection: ReturnType<typeof buildRuntimeProjection>,
-): RuntimeApplyPlan {
+): AiProviderApplyPlan {
 	const file = projection.files.find((entry) => entry.path.endsWith(".codex.toml"));
 	if (!file) throw new Error("Codex projection did not include a profile TOML file.");
 	const profilePath = join(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
@@ -203,7 +203,7 @@ function buildCodexApplyPlan(
 	};
 }
 
-function buildHermesConfigCommand(key: string, value: string): RuntimeApplyCommand {
+function buildHermesConfigCommand(key: string, value: string): AiProviderApplyCommandStep {
 	return {
 		command: "hermes",
 		args: ["config", "set", key, value],
@@ -211,19 +211,19 @@ function buildHermesConfigCommand(key: string, value: string): RuntimeApplyComma
 	};
 }
 
-function applyRuntimePlan(plan: RuntimeApplyPlan): void {
+function applyAiProviderPlan(plan: AiProviderApplyPlan): void {
 	for (const write of plan.writes) {
 		mkdirSync(dirname(write.path), { recursive: true, mode: 0o700 });
-		chmodRuntimePath(dirname(write.path), 0o700);
+		chmodAiProviderPath(dirname(write.path), 0o700);
 		writeFileSync(write.path, write.content, { mode: 0o600 });
-		chmodRuntimePath(write.path, 0o600);
+		chmodAiProviderPath(write.path, 0o600);
 	}
 	for (const command of plan.commands) {
 		execFileSync(command.command, command.args, { stdio: "pipe", env: process.env });
 	}
 }
 
-function printRuntimeApplyPlan(plan: RuntimeApplyPlan, dryRun: boolean, json: boolean): void {
+function printAiProviderApplyPlan(plan: AiProviderApplyPlan, dryRun: boolean, json: boolean): void {
 	if (json) {
 		console.log(JSON.stringify({ ...plan, dry_run: dryRun }, null, 2));
 		return;
@@ -241,7 +241,7 @@ function printRuntimeApplyPlan(plan: RuntimeApplyPlan, dryRun: boolean, json: bo
 	}
 }
 
-function chmodRuntimePath(path: string, mode: number): void {
+function chmodAiProviderPath(path: string, mode: number): void {
 	try {
 		chmodSync(path, mode);
 	} catch {
@@ -280,10 +280,10 @@ function inferredEnvName(provider: {
 	return provider.runtime_env_name;
 }
 
-function inspectRuntime(engine: RuntimeEngine): {
+function inspectAiProviderAgentApply(engine: RuntimeEngine): {
 	engine: RuntimeEngine;
 	contract: (typeof RUNTIME_PROJECTION_CONTRACTS)[RuntimeEngine];
-	native_target: string;
+	apply_target: string;
 	apply_status: string;
 	applied: boolean | null;
 } {
@@ -293,7 +293,7 @@ function inspectRuntime(engine: RuntimeEngine): {
 		return {
 			engine,
 			contract: RUNTIME_PROJECTION_CONTRACTS[engine],
-			native_target: profilePath,
+			apply_target: profilePath,
 			apply_status: applied ? "applied" : "not applied",
 			applied,
 		};
@@ -302,7 +302,7 @@ function inspectRuntime(engine: RuntimeEngine): {
 		return {
 			engine,
 			contract: RUNTIME_PROJECTION_CONTRACTS[engine],
-			native_target: "hermes config set",
+			apply_target: "hermes config set",
 			apply_status: "native config not inspected",
 			applied: null,
 		};
@@ -310,7 +310,7 @@ function inspectRuntime(engine: RuntimeEngine): {
 	return {
 		engine,
 		contract: RUNTIME_PROJECTION_CONTRACTS[engine],
-		native_target: "OpenClaw native config contract not pinned",
+		apply_target: "OpenClaw native config contract not pinned",
 		apply_status: "apply blocked",
 		applied: null,
 	};

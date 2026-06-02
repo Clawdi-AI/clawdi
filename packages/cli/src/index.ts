@@ -429,6 +429,26 @@ aiProviderCmd
 	});
 
 aiProviderCmd
+	.command("apply")
+	.description("Apply AI Provider config to a verified agent entrypoint")
+	.requiredOption("--engine <engine>", "Agent engine: openclaw, hermes, or codex")
+	.option("--dry-run", "Preview writes and agent CLI commands without changing files")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { aiProviderApplyCommand } = await import("./commands/ai-provider-apply.js");
+		await aiProviderApplyCommand(opts);
+	});
+
+aiProviderCmd
+	.command("status")
+	.description("Inspect AI Provider agent apply state")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts) => {
+		const { aiProviderStatusCommand } = await import("./commands/ai-provider-apply.js");
+		await aiProviderStatusCommand(opts);
+	});
+
+aiProviderCmd
 	.command("export")
 	.description("Export Provider Catalog metadata and refs")
 	.option("--out <file>", "Write to a file instead of stdout")
@@ -461,30 +481,6 @@ aiProviderCmd
 	.action(async (file: string | undefined, opts) => {
 		const { aiProviderImportCommand } = await import("./commands/ai-provider.js");
 		await aiProviderImportCommand(file, opts);
-	});
-
-const runtimeCmd = program
-	.command("runtime")
-	.description("Apply or inspect AI Provider runtime config");
-
-runtimeCmd
-	.command("apply")
-	.description("Apply AI Provider config to a verified runtime entrypoint")
-	.requiredOption("--engine <engine>", "Runtime engine: openclaw, hermes, or codex")
-	.option("--dry-run", "Preview writes and runtime CLI commands without changing files")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts) => {
-		const { runtimeApplyCommand } = await import("./commands/runtime.js");
-		await runtimeApplyCommand(opts);
-	});
-
-runtimeCmd
-	.command("inspect")
-	.description("Inspect AI Provider runtime apply state")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts) => {
-		const { runtimeInspectCommand } = await import("./commands/runtime.js");
-		await runtimeInspectCommand(opts);
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -883,7 +879,7 @@ program
 	)
 	.action(async (topic: string | undefined, opts) => {
 		if (topic === "ai-provider") {
-			const { doctorAiProviderCommand } = await import("./commands/runtime.js");
+			const { doctorAiProviderCommand } = await import("./commands/ai-provider-apply.js");
 			await doctorAiProviderCommand(opts);
 			return;
 		}

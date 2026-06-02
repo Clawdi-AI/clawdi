@@ -42,7 +42,7 @@ afterAll(() => {
 });
 
 describe("ai-provider CLI process e2e", () => {
-	it("adds, optionally probes, encrypts, restores, and dry-runs runtime apply without leaking secrets", async () => {
+	it("adds, optionally probes, encrypts, restores, and dry-runs ai-provider apply without leaking secrets", async () => {
 		const source = createFixture();
 		const destination = createFixture();
 		const backupPath = join(source.root, "providers.backup.json");
@@ -130,7 +130,7 @@ describe("ai-provider CLI process e2e", () => {
 			expect(readFileSync(restoredEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
 
 			const dryRun = await runCli(destination, [
-				"runtime",
+				"ai-provider",
 				"apply",
 				"--engine",
 				"hermes",

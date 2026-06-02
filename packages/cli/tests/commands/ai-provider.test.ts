@@ -24,7 +24,10 @@ import {
 	aiProviderTestCommand,
 	aiProviderValidateCommand,
 } from "../../src/commands/ai-provider";
-import { runtimeApplyCommand, runtimeInspectCommand } from "../../src/commands/runtime";
+import {
+	aiProviderApplyCommand,
+	aiProviderStatusCommand,
+} from "../../src/commands/ai-provider-apply";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
 import { jsonResponse, mockFetch } from "./helpers";
 
@@ -744,7 +747,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(
-				runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true }),
+				aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true }),
 			).rejects.toThrow("does not have a verified runtime projection");
 		} finally {
 			restore();
@@ -762,7 +765,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -789,7 +792,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ engine: "codex", json: true });
 		} finally {
 			restore();
 		}
@@ -829,7 +832,7 @@ describe("ai-provider commands", () => {
 				auth: "env:GATEWAY_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ engine: "codex", json: true });
 		} finally {
 			restore();
 		}
@@ -860,7 +863,7 @@ describe("ai-provider commands", () => {
 
 		const before = captureConsole();
 		try {
-			await runtimeInspectCommand({ json: true });
+			await aiProviderStatusCommand({ json: true });
 		} finally {
 			before.restore();
 		}
@@ -870,14 +873,14 @@ describe("ai-provider commands", () => {
 
 		const apply = captureConsole();
 		try {
-			await runtimeApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ engine: "codex", json: true });
 		} finally {
 			apply.restore();
 		}
 
 		const after = captureConsole();
 		try {
-			await runtimeInspectCommand({ json: true });
+			await aiProviderStatusCommand({ json: true });
 		} finally {
 			after.restore();
 		}
@@ -894,7 +897,7 @@ describe("ai-provider commands", () => {
 				auth: "agent:codex/default",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -914,7 +917,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(
-				runtimeApplyCommand({ engine: "codex", dryRun: true, json: true }),
+				aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true }),
 			).rejects.toThrow("Responses-compatible providers only");
 		} finally {
 			restore();
@@ -939,7 +942,7 @@ describe("ai-provider commands", () => {
 				auth: "agent:codex/default",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -963,7 +966,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -992,7 +995,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1025,7 +1028,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ engine: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1059,7 +1062,7 @@ describe("ai-provider commands", () => {
 				setDefault: true,
 				json: true,
 			});
-			await runtimeApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1087,7 +1090,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(runtimeApplyCommand({ engine: "hermes", json: true })).rejects.toThrow(
+			await expect(aiProviderApplyCommand({ engine: "hermes", json: true })).rejects.toThrow(
 				"dot-path escaping has not been verified",
 			);
 		} finally {
@@ -1098,7 +1101,7 @@ describe("ai-provider commands", () => {
 		expect(existsSync(logPath)).toBe(false);
 	});
 
-	it("requires default_model before runtime apply", async () => {
+	it("requires default_model before ai-provider apply", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -1107,7 +1110,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(
-				runtimeApplyCommand({ engine: "codex", dryRun: true, json: true }),
+				aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true }),
 			).rejects.toThrow("requires default_model");
 		} finally {
 			restore();
@@ -1123,7 +1126,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(runtimeApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
+			await expect(aiProviderApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
 				"OpenClaw apply is not enabled",
 			);
 		} finally {

@@ -88,8 +88,8 @@ were likely contracts. The implementation plan must correct that:
    `clawdi://` refs may call Clawdi Vault even though BYOK model calls bypass
    Clawdi Cloud.
 4. Runtime adapters must not edit the user's primary runtime config by
-   default. Projection is an internal pure transformation; `runtime apply
-   --dry-run` previews native writes/commands, and `runtime apply` is the
+   default. Projection is an internal pure transformation; `ai-provider apply
+   --dry-run` previews native writes/commands, and `ai-provider apply` is the
    runtime-specific step that makes config effective.
 5. Hermes apply must use verified runtime CLI commands and preserve unrelated
    settings such as `mcp_servers.clawdi` from `clawdi setup`.
@@ -131,8 +131,8 @@ Repository and adjacent-runtime review produced these constraints:
    legacy `custom_providers`, `key_env` / `api_key_env`, and API modes
    `chat_completions`, `codex_responses`, and `anthropic_messages`.
 7. Hermes exposes `hermes config set`. V1 may use it only under explicit
-   `runtime apply`, after tests prove it preserves unrelated config such as
-   `mcp_servers.clawdi`. `runtime apply --dry-run` previews those commands
+   `ai-provider apply`, after tests prove it preserves unrelated config such as
+   `mcp_servers.clawdi`. `ai-provider apply --dry-run` previews those commands
    without executing them.
 8. Official Codex config docs and local `codex-cli 0.135.0` review show the
    current Codex config contract: Codex loads user config from
@@ -181,7 +181,7 @@ The user-visible outcomes:
 7. **Cloud simplicity**: Clawdi Cloud can collect provider settings, return
    OAuth authorization links, and inject secrets, but provider-specific
    runtime details stay in the OSS CLI.
-8. **Auditability**: `validate`, `test`, and `runtime inspect` make it clear
+8. **Auditability**: `validate`, `test`, and `ai-provider status` make it clear
    which provider will be used, which secret ref is required, and whether the
    request path is direct or Clawdi-managed.
 
@@ -293,7 +293,7 @@ clawdi ai-provider add openai-main \
 
 clawdi ai-provider validate openai-main
 clawdi ai-provider test openai-main
-clawdi runtime apply --engine hermes
+clawdi ai-provider apply --engine hermes
 ```
 
 Expected product behavior:
@@ -302,8 +302,8 @@ Expected product behavior:
 2. `validate` checks schema and secret ref shape without making a network call.
 3. `test` resolves `OPENAI_API_KEY` from the local environment and calls
    `https://api.openai.com/v1` directly.
-4. `runtime apply --dry-run` shows the redacted Hermes command plan.
-   `runtime apply` executes the verified Hermes config commands and updates
+4. `ai-provider apply --dry-run` shows the redacted Hermes command plan.
+   `ai-provider apply` executes the verified Hermes config commands and updates
    only provider/model-owned settings.
 5. Hermes starts with the projected provider config and calls OpenAI directly.
 
@@ -315,8 +315,8 @@ to become the source of truth.
 ```bash
 clawdi ai-provider import --from-hermes ~/.hermes/config.yaml
 clawdi ai-provider validate
-clawdi runtime inspect
-clawdi runtime apply --engine openclaw
+clawdi ai-provider status
+clawdi ai-provider apply --engine openclaw
 ```
 
 Expected product behavior:
@@ -340,7 +340,7 @@ The user rotates their OpenAI key at the provider dashboard.
 ```bash
 export OPENAI_API_KEY=...
 clawdi ai-provider test openai-main
-clawdi runtime inspect
+clawdi ai-provider status
 ```
 
 Expected product behavior:
@@ -348,7 +348,7 @@ Expected product behavior:
 1. The catalog does not change because it references `env:OPENAI_API_KEY`.
 2. Engine-native config does not need to change.
 3. `test` verifies the new key by calling the provider directly.
-4. `runtime inspect` reports that `openai-main` has an available secret ref.
+4. `ai-provider status` reports that `openai-main` has an available secret ref.
 
 ### Flow 4: Backup And Restore To A New Machine
 
@@ -362,7 +362,7 @@ clawdi backup --out clawdi-backup.zip
 # On the new machine:
 clawdi restore clawdi-backup.zip
 clawdi ai-provider validate
-clawdi runtime inspect
+clawdi ai-provider status
 
 # Provider-only v1 fallback if global backup is not implemented yet:
 clawdi ai-provider export --out ai-providers.json
@@ -376,7 +376,7 @@ Expected product behavior:
 3. Restore recreates the catalog.
 4. `validate` passes schema checks but reports missing secret refs until the
    user provides them or logs in for Vault-backed refs.
-5. Once the user sets the env vars, `test` and `runtime apply --dry-run` work normally.
+5. Once the user sets the env vars, `test` and `ai-provider apply --dry-run` work normally.
 
 Optional encrypted secret backup:
 
@@ -419,7 +419,7 @@ has its own secret source.
 clawdi ai-provider export --out providers.json
 clawdi ai-provider import providers.json
 clawdi ai-provider edit openai-main --auth env:TEAM_OPENAI_API_KEY
-clawdi runtime apply --engine openclaw
+clawdi ai-provider apply --engine openclaw
 ```
 
 Expected product behavior:
@@ -450,7 +450,7 @@ clawdi ai-provider add anthropic-direct \
   --auth env:ANTHROPIC_API_KEY
 
 clawdi ai-provider list
-clawdi runtime inspect
+clawdi ai-provider status
 ```
 
 Expected product behavior:
@@ -478,7 +478,7 @@ clawdi ai-provider add lmstudio-local \
   --auth none
 
 clawdi ai-provider test lmstudio-local
-clawdi runtime apply --engine hermes
+clawdi ai-provider apply --engine hermes
 ```
 
 Expected product behavior:
@@ -507,14 +507,14 @@ clawdi ai-provider add openai-main \
   --runtime-env OPENAI_API_KEY
 
 printf 'OPENAI_API_KEY=clawdi://default/openai/api_key\n' > .env.clawdi
-clawdi runtime apply --engine hermes
+clawdi ai-provider apply --engine hermes
 clawdi run --env-file .env.clawdi -- hermes
 ```
 
 Expected product behavior:
 
 1. The catalog stores `auth.ref = clawdi://default/openai/api_key`.
-2. `runtime apply --dry-run` emits engine config that expects `OPENAI_API_KEY` or the
+2. `ai-provider apply --dry-run` emits engine config that expects `OPENAI_API_KEY` or the
    runtime's verified secret-ref equivalent.
 3. `clawdi run` resolves the `clawdi://` ref through Clawdi Vault and injects
    `OPENAI_API_KEY` into the Hermes process.
@@ -584,17 +584,17 @@ clawdi ai-provider add openai-main \
   --api-mode openai_responses \
   --auth env:OPENAI_API_KEY
 
-clawdi runtime apply --engine codex
+clawdi ai-provider apply --engine codex
 codex --profile clawdi-ai-provider
 ```
 
 Expected product behavior:
 
-1. `runtime apply --dry-run` emits deterministic Codex TOML with
+1. `ai-provider apply --dry-run` emits deterministic Codex TOML with
    `wire_api = "responses"` and an `env_key`, or uses Codex native OpenAI auth
    when the provider auth is `agent:codex/<profile>`.
-2. `runtime apply --dry-run` previews the profile file write.
-3. `runtime apply` writes only
+2. `ai-provider apply --dry-run` previews the profile file write.
+3. `ai-provider apply` writes only
    `$CODEX_HOME/clawdi-ai-provider.config.toml` and keeps
    `$CODEX_HOME/config.toml` unchanged.
 4. The user starts Codex with `codex --profile clawdi-ai-provider`.
@@ -605,14 +605,14 @@ Expected product behavior:
 
 Common failure states should be explicit and recoverable:
 
-1. **No catalog**: `runtime apply --dry-run` explains that no Provider Catalog exists
+1. **No catalog**: `ai-provider apply --dry-run` explains that no Provider Catalog exists
    and suggests `clawdi ai-provider add`.
-2. **Missing env ref**: `test` and `runtime inspect` show
+2. **Missing env ref**: `test` and `ai-provider status` show
    `env:OPENAI_API_KEY` is missing and do not make a network call.
 3. **Bad base URL**: `validate` fails before writing runtime config.
-4. **Unsupported projection**: `runtime apply --engine hermes --dry-run` reports which
+4. **Unsupported projection**: `ai-provider apply --engine hermes --dry-run` reports which
    provider field cannot be represented in Hermes config.
-5. **Native config drift**: `runtime inspect` identifies generated files that
+5. **Native config drift**: `ai-provider status` identifies generated files that
    differ from the current catalog projection.
 6. **Import conflict**: import refuses to overwrite an existing provider ID
    without an explicit replace or rename.
@@ -736,7 +736,7 @@ the wire protocol. Validation must reject incompatible pairs:
 The catalog may omit `default_model` for provider inventory, but v1 runtime
 apply for chat agents requires either `default_model` or an explicit future
 `--default-model` / `--default-provider` apply option. Without a concrete
-model, `runtime apply --dry-run` fails before planning runtime changes.
+model, `ai-provider apply --dry-run` fails before planning runtime changes.
 
 The `capabilities` object is declarative metadata used for validation,
 projection, and user display. It is not a live provider model catalog. The
@@ -984,29 +984,29 @@ AI Provider command behavior:
 Second batch:
 
 ```bash
-clawdi runtime apply --engine openclaw --dry-run
-clawdi runtime apply --engine hermes --dry-run
-clawdi runtime apply --engine codex --dry-run
-clawdi runtime apply --engine hermes --dry-run
-clawdi runtime apply --engine hermes
-clawdi runtime apply --engine codex --dry-run
-clawdi runtime apply --engine codex
-clawdi runtime inspect
+clawdi ai-provider apply --engine openclaw --dry-run
+clawdi ai-provider apply --engine hermes --dry-run
+clawdi ai-provider apply --engine codex --dry-run
+clawdi ai-provider apply --engine hermes --dry-run
+clawdi ai-provider apply --engine hermes
+clawdi ai-provider apply --engine codex --dry-run
+clawdi ai-provider apply --engine codex
+clawdi ai-provider status
 clawdi doctor ai-provider
 ```
 
-Runtime command behavior:
+AI Provider apply behavior:
 
-- `runtime apply --dry-run` reads the catalog, resolves refs as far as the target engine
+- `ai-provider apply --dry-run` reads the catalog, resolves refs as far as the target engine
   needs, and emits deterministic projection files without changing the
   machine.
-- `runtime apply --dry-run` asks the target adapter for the least invasive
+- `ai-provider apply --dry-run` asks the target adapter for the least invasive
   native write/command plan and prints it without changing the machine.
-- `runtime apply` executes that verified plan. It should prefer a
+- `ai-provider apply` executes that verified plan. It should prefer a
   runtime-supported CLI command, config-path env var, include/overlay file, or
   managed runtime profile. Native config patching is a future mode, not implied
   by v1 apply.
-- `runtime inspect` shows catalog source, selected defaults, projected provider
+- `ai-provider status` shows catalog source, selected defaults, projected provider
   IDs, missing refs, and target file paths with all secrets redacted.
 - `doctor ai-provider` runs catalog validation plus engine projection checks.
 
@@ -1107,17 +1107,17 @@ The default JSON import path expects an AI Provider Catalog or an exported
 adapter and may produce warnings for inferred protocol, skipped plaintext
 secrets, or unsupported runtime fields.
 
-`clawdi runtime apply --dry-run` should accept:
+`clawdi ai-provider apply --dry-run` should accept:
 
 ```bash
-clawdi runtime apply --dry-run --engine <openclaw|hermes|codex> \
+clawdi ai-provider apply --dry-run --engine <openclaw|hermes|codex> \
   [--json]
 ```
 
-`clawdi runtime apply` should accept:
+`clawdi ai-provider apply` should accept:
 
 ```bash
-clawdi runtime apply --engine <openclaw|hermes|codex> \
+clawdi ai-provider apply --engine <openclaw|hermes|codex> \
   [--dry-run] \
   [--json]
 ```
@@ -1128,7 +1128,7 @@ entrypoint. The catalog may contain providers for other engines; those are
 skipped with redacted warnings instead of being removed or rewritten. OpenClaw
 apply remains blocked until its native config contract is pinned.
 
-`clawdi runtime inspect` should show:
+`clawdi ai-provider status` should show:
 
 1. Catalog path and hash.
 2. Effective default provider.
@@ -1138,9 +1138,9 @@ apply remains blocked until its native config contract is pinned.
 6. Drift between current generated files and the catalog.
 7. Whether each provider is direct BYOK or Clawdi-managed.
 
-## `clawdi run` And Runtime Apply
+## `clawdi run` And AI Provider Apply
 
-`clawdi run` and `clawdi runtime apply --dry-run` solve different parts of the same
+`clawdi run` and `clawdi ai-provider apply --dry-run` solve different parts of the same
 problem and should compose.
 
 `clawdi run` is process env injection:
@@ -1153,7 +1153,7 @@ problem and should compose.
 5. It does not permanently change engine-native config or materialize whole
    local auth files.
 
-`runtime apply --dry-run` is runtime change planning:
+`ai-provider apply --dry-run` is agent config change planning:
 
 1. It reads the Provider Catalog.
 2. It prints the exact engine-native writes or runtime CLI commands that apply
@@ -1582,7 +1582,7 @@ Implementation must reuse the existing Clawdi reference resolver:
 2. `clawdi://` uses `parseClawdiReference`, `previewClawdiReference`, and
    `resolveClawdiReference` from `packages/cli/src/lib/secret-references.ts`.
 3. Bulk preview/resolve should use the existing bulk resolver where possible,
-   so `ai-provider validate`, `runtime inspect`, `read`, `inject`, and `run`
+   so `ai-provider validate`, `ai-provider status`, `read`, `inject`, and `run`
    report the same provenance and conflict behavior.
 
 Suggested result type:
@@ -1742,8 +1742,8 @@ Adapter responsibilities:
    providers for the selected engine are skipped with warnings when another
    compatible provider can still be applied; if no compatible providers remain,
    apply fails before changing the machine.
-6. Keep `runtime apply --dry-run` pure and side-effect free.
-7. Use `runtime apply --dry-run` for redacted apply planning.
+6. Keep `ai-provider apply --dry-run` pure and side-effect free.
+7. Use `ai-provider apply --dry-run` for redacted apply planning.
 8. Prefer apply through runtime-supported config-path env vars, official
    runtime CLI commands, include files, or managed homes/profiles.
 9. Use native config patching only when no safer apply mechanism exists
@@ -1824,7 +1824,7 @@ activate a runtime through an unpinned setting surface.
 | Engine | Best v1 setting mode | Pinned support range | Status | Reason |
 | --- | --- | --- | --- | --- |
 | Codex | Write `$CODEX_HOME/clawdi-ai-provider.config.toml`; user runs `codex --profile clawdi-ai-provider` | `@openai/codex <1.0.0` when the installed version supports profile config, `model_providers`, and `wire_api = "responses"` | Enabled | Codex profiles are first-class config layers. They avoid editing the user's primary `config.toml`, project config cannot override provider/auth/profile keys, and `-c key=value` is too ephemeral for persistent provider management. |
-| Hermes | `hermes config set` under explicit `runtime apply` | `Hermes Agent >=0.15.1 <0.16.0` | Enabled for non-dotted provider IDs | The runtime CLI owns native write semantics and has been tested to preserve existing `mcp_servers.clawdi`. Direct YAML replacement is not allowed. |
+| Hermes | `hermes config set` under explicit `ai-provider apply` | `Hermes Agent >=0.15.1 <0.16.0` | Enabled for non-dotted provider IDs | The runtime CLI owns native write semantics and has been tested to preserve existing `mcp_servers.clawdi`. Direct YAML replacement is not allowed. |
 | OpenClaw | Native activation disabled until config CLI/include fixtures are pinned | Unverified | Blocked | Local source review is promising, but activation depends on OpenClaw's exact schema/CLI contract and must not be guessed. |
 
 Rejected Codex modes:
@@ -1848,10 +1848,11 @@ V1 projection support matrix:
 | Anthropic Messages | Supported after fixture lock | Supported after fixture lock | Unsupported |
 | Google Generate Content / Gemini | Supported after fixture lock | Unsupported until a native Gemini fixture is captured | Unsupported |
 
-If a catalog contains a provider that a target runtime cannot represent,
-`runtime apply --engine <engine> --dry-run` must fail before emitting a projection, and
-`runtime apply --engine <engine>` must fail before changing the machine. Both
-paths should name the provider, protocol, and missing runtime capability.
+If a catalog contains providers that a target runtime cannot represent,
+`ai-provider apply --engine <engine> --dry-run` must skip those providers with
+redacted warnings when at least one compatible provider remains. If no
+compatible providers remain, dry-run and apply must fail before changing the
+machine, naming the provider IDs, protocols, and missing runtime capabilities.
 
 ## Import Adapter Contract
 
@@ -1930,15 +1931,15 @@ file:
 
 Rules:
 
-1. `runtime apply --dry-run` prints projection content and does not change the machine.
-2. `runtime apply --dry-run` previews native writes or runtime CLI commands.
-3. `runtime apply` may write a profile file, env-file, include target, or
+1. `ai-provider apply --dry-run` prints projection content and does not change the machine.
+2. `ai-provider apply --dry-run` previews native writes or runtime CLI commands.
+3. `ai-provider apply` may write a profile file, env-file, include target, or
    managed runtime home depending on adapter support.
 4. Patching a primary native config file is out of v1 scope; if added later it
    requires a redacted diff and a backup unless `--no-backup` is explicitly
    passed.
 5. If a managed file's stored `catalog_hash` differs from the current
-   projection, `runtime inspect` reports drift.
+   projection, `ai-provider status` reports drift.
 6. If a native file has no Clawdi marker, the CLI treats it as user-owned and
    requires explicit confirmation before patching.
 7. Do not embed drift markers into engine-native config files unless the
@@ -2101,7 +2102,7 @@ lets the same Provider Catalog produce a Codex profile that can be selected at
 launch time:
 
 ```bash
-clawdi runtime apply --engine codex
+clawdi ai-provider apply --engine codex
 codex --profile clawdi-ai-provider
 ```
 
@@ -2160,9 +2161,9 @@ Codex projection rules:
 
 Codex activation strategy:
 
-1. `runtime apply --engine codex --dry-run` previews the deterministic
+1. `ai-provider apply --engine codex --dry-run` previews the deterministic
    profile-file write.
-2. `runtime apply --engine codex` writes the projected TOML into
+2. `ai-provider apply --engine codex` writes the projected TOML into
    `$CODEX_HOME/clawdi-ai-provider.config.toml` with owner-only permissions.
 3. Apply prints the exact launch instruction
    `codex --profile clawdi-ai-provider`.
@@ -2492,7 +2493,7 @@ For hosted agent runtimes:
 2. The runtime image includes the Clawdi CLI.
 3. Entrypoint or setup step writes the Provider Catalog to `$CLAWDI_HOME`.
 4. Entrypoint runs
-   `clawdi runtime apply --engine <engine>`.
+   `clawdi ai-provider apply --engine <engine>`.
 5. The engine starts normally.
 
 For local runtimes:
@@ -2544,7 +2545,7 @@ Required coverage:
    `cost: 0`, `contextWindow: 0`, or `maxTokens: 0`.
 10. Hermes projection uses verified API-mode labels such as
    `chat_completions`, `codex_responses`, and `anthropic_messages`.
-11. `runtime apply --dry-run` is side-effect free; `runtime apply --dry-run` previews
+11. `ai-provider apply --dry-run` is side-effect free; `ai-provider apply --dry-run` previews
     native writes or commands.
 12. OpenClaw apply uses verified `OPENCLAW_CONFIG_PATH` or `$include`
     behavior before native patching is allowed.
@@ -2649,7 +2650,7 @@ metadata and redacted auth metadata without plaintext secrets.
    flow state.
 3. Implement direct provider probes for OpenAI-compatible and Anthropic v1.
 4. Implement redacted diagnostics.
-5. Implement `runtime inspect` against provider catalog, provider auth, and
+5. Implement `ai-provider status` against provider catalog, provider auth, and
    local env.
 
 Exit criteria: `ai-provider test` proves direct provider calls and never targets
@@ -2663,9 +2664,9 @@ payloads may be resolved before the direct provider probe.
    golden tests.
 2. Implement OpenClaw projection from verified fixtures with golden tests.
 3. Implement Hermes projection from verified fixtures with golden tests.
-4. Implement `runtime apply --dry-run --out` if file output is still needed.
-5. Implement `runtime apply --dry-run` with adapter-specific apply plans.
-6. Implement `runtime apply` execution through verified runtime entrypoints.
+4. Implement `ai-provider apply --dry-run --out` if file output is still needed.
+5. Implement `ai-provider apply --dry-run` with adapter-specific apply plans.
+6. Implement `ai-provider apply` execution through verified runtime entrypoints.
 7. Add OpenClaw runtime-CLI, config-path, and include activation coverage.
 8. Add Hermes managed-home coverage and native-patch coverage that preserves
    `mcp_servers.clawdi`.
@@ -2728,7 +2729,7 @@ Existing users may have:
 Compatibility rules:
 
 1. Existing native config keeps working until the user opts into
-   `ai-provider import` or `runtime apply`.
+   `ai-provider import` or `ai-provider apply`.
 2. Import is additive by default.
 3. Runtime apply does not overwrite unmarked user config without explicit
    confirmation.
@@ -2810,8 +2811,8 @@ Implemented in the first non-UI slice:
 5. Provider-only export defaults to metadata and refs. `--include-secrets`
    requires passphrase encryption and currently supports env-backed secrets
    with owner-only env-file restore.
-6. `runtime apply --dry-run` is side-effect free. `runtime apply --dry-run` previews
-   native writes or commands, and `runtime apply` executes them.
+6. `ai-provider apply --dry-run` is side-effect free. `ai-provider apply --dry-run` previews
+   native writes or commands, and `ai-provider apply` executes them.
 7. Codex projection and apply are implemented through a pinned
    `@openai/codex <1.0.0` feature contract. Apply writes
    `$CODEX_HOME/clawdi-ai-provider.config.toml`, does not edit
@@ -2949,8 +2950,8 @@ one-shot operations such as:
 
 ```bash
 clawdi ai-provider import /mnt/config/provider-catalog.json --replace --json
-clawdi runtime apply --engine hermes --json
-clawdi runtime inspect --json
+clawdi ai-provider apply --engine hermes --json
+clawdi ai-provider status --json
 ```
 
 That is sufficient for deployment-time materialization and avoids adding a new
@@ -3083,7 +3084,7 @@ Security tests required before enabling RPC:
     apply, and Hermes apply tests that prove existing
     `mcp_servers.clawdi` config is preserved.
 21. Add import/migration from existing OpenClaw and Hermes config.
-22. Add `clawdi runtime apply --dry-run`, `clawdi runtime inspect`, and
+22. Add `clawdi ai-provider apply --dry-run`, `clawdi ai-provider status`, and
     `clawdi doctor ai-provider`.
 23. Add direct provider and provider-auth connect tests with redacted diagnostics.
 24. Add explicit encrypted secret backup and restore targets for provider refs,

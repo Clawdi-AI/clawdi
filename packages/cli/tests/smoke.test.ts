@@ -42,6 +42,7 @@ describe("CLI smoke — src entry", () => {
 			"setup",
 			"push",
 			"pull",
+			"ai-provider",
 			"vault",
 			"skill",
 			"memory",
@@ -54,6 +55,11 @@ describe("CLI smoke — src entry", () => {
 		]) {
 			expect(stdout).toContain(cmd);
 		}
+	});
+
+	it("runtime namespace is not a top-level command", async () => {
+		const { code } = await runCli(["runtime", "apply", "--engine", "hermes"]);
+		expect(code).not.toBe(0);
 	});
 
 	it("status exits cleanly when not logged in (via isolated HOME)", async () => {
