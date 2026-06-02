@@ -306,6 +306,9 @@ does not call the provider by default. Pass `--live` to run an optional direct
 provider metadata probe. It redacts secrets and prints provider/probe status,
 not raw request bodies.
 
+The isolated pre-merge test record is in
+[`docs/ai-provider-isolated-e2e.md`](./ai-provider-isolated-e2e.md).
+
 ## Current Non-Goals
 
 These are not current user experiences:
