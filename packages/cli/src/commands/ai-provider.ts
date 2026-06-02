@@ -93,7 +93,7 @@ interface AiProviderExportOptions {
 interface AiProviderImportOptions {
 	fromHermes?: string;
 	fromOpenclaw?: string;
-	restoreSecrets?: string;
+	importSecrets?: string;
 	out?: string;
 	secretPassphraseEnv?: string;
 	replace?: boolean;
@@ -295,7 +295,7 @@ export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}
 		encrypted_secrets?: EncryptedSecretBundle;
 	} = { ...catalog };
 	if (opts.includeSecrets) {
-		const passphrase = readSecretBackupPassphrase(opts.secretPassphraseEnv);
+		const passphrase = readSecretExportPassphrase(opts.secretPassphraseEnv);
 		exportPayload.encrypted_secrets = encryptSecretBundle(passphrase, collectEnvSecrets(catalog));
 	}
 	const output = `${JSON.stringify(exportPayload, null, 2)}\n`;
@@ -322,8 +322,8 @@ export async function aiProviderImportCommand(
 			: coerceAiProviderCatalog(
 					stripEncryptedSecrets(JSON.parse(readFileSync(file as string, "utf-8")) as unknown),
 				);
-	if (opts.restoreSecrets && !file) {
-		throw new Error("--restore-secrets requires an AI Provider backup file.");
+	if (opts.importSecrets && !file) {
+		throw new Error("--import-secrets requires an AI Provider export file.");
 	}
 	const result = validateAiProviderCatalog(incoming);
 	if (!result.valid) {
@@ -338,10 +338,10 @@ export async function aiProviderImportCommand(
 		next = { ...next, defaults: { ...next.defaults, ...incoming.defaults } };
 	}
 	writeAiProviderCatalog(next);
-	if (file && opts.restoreSecrets) {
-		restoreEncryptedSecrets(
+	if (file && opts.importSecrets) {
+		importEncryptedSecrets(
 			JSON.parse(readFileSync(file, "utf-8")) as unknown,
-			opts.restoreSecrets,
+			opts.importSecrets,
 			opts.out,
 			opts.secretPassphraseEnv,
 		);
@@ -1066,7 +1066,7 @@ function catalogForProvider(catalog: AiProviderCatalog, providerId: string): AiP
 	};
 }
 
-interface SecretBackupPayload {
+interface SecretExportPayload {
 	schema_version: 1;
 	secrets: Array<{
 		provider_id: string;
@@ -1089,8 +1089,8 @@ interface EncryptedSecretBundle {
 	auth_tag: string;
 }
 
-function collectEnvSecrets(catalog: AiProviderCatalog): SecretBackupPayload {
-	const secrets: SecretBackupPayload["secrets"] = [];
+function collectEnvSecrets(catalog: AiProviderCatalog): SecretExportPayload {
+	const secrets: SecretExportPayload["secrets"] = [];
 	for (const provider of catalog.providers) {
 		const ref = exportableEnvRef(provider.auth);
 		if (!ref) continue;
@@ -1109,7 +1109,7 @@ function exportableEnvRef(auth: AiProviderAuth): string | null {
 		if (auth.ref.startsWith("env:")) return auth.ref;
 		if (auth.ref.startsWith("clawdi://")) {
 			throw new Error(
-				"Provider-only encrypted export does not resolve clawdi:// refs. Use Vault backup for those secrets.",
+				"Provider-only encrypted export does not resolve clawdi:// refs. Export/import keeps those refs and leaves the Vault secret in Vault.",
 			);
 		}
 	}
@@ -1124,7 +1124,7 @@ function exportableEnvRef(auth: AiProviderAuth): string | null {
 	return null;
 }
 
-function readSecretBackupPassphrase(envName = "CLAWDI_SECRET_BACKUP_PASSPHRASE"): string {
+function readSecretExportPassphrase(envName = "CLAWDI_SECRET_EXPORT_PASSPHRASE"): string {
 	const passphrase = process.env[envName];
 	if (!passphrase) {
 		throw new Error(`Set ${envName} to use --secret-passphrase.`);
@@ -1134,7 +1134,7 @@ function readSecretBackupPassphrase(envName = "CLAWDI_SECRET_BACKUP_PASSPHRASE")
 
 function encryptSecretBundle(
 	passphrase: string,
-	payload: SecretBackupPayload,
+	payload: SecretExportPayload,
 ): EncryptedSecretBundle {
 	const salt = randomBytes(16);
 	const nonce = randomBytes(12);
@@ -1161,14 +1161,14 @@ function encryptSecretBundle(
 function decryptSecretBundle(
 	passphrase: string,
 	bundle: EncryptedSecretBundle,
-): SecretBackupPayload {
+): SecretExportPayload {
 	if (
 		bundle.schema_version !== 1 ||
 		bundle.algorithm !== "aes-256-gcm+scrypt" ||
 		bundle.kdf?.name !== "scrypt" ||
 		bundle.kdf.key_length !== 32
 	) {
-		throw new Error("Unsupported encrypted secret backup format.");
+		throw new Error("Unsupported encrypted secret export format.");
 	}
 	const salt = Buffer.from(bundle.kdf.salt, "base64");
 	const nonce = Buffer.from(bundle.nonce, "base64");
@@ -1180,19 +1180,19 @@ function decryptSecretBundle(
 		decipher.final(),
 	]).toString("utf-8");
 	const parsed = JSON.parse(plaintext) as unknown;
-	const payload = asRecord(parsed, "secret backup payload");
+	const payload = asRecord(parsed, "secret export payload");
 	if (payload.schema_version !== 1 || !Array.isArray(payload.secrets)) {
-		throw new Error("Invalid decrypted secret backup payload.");
+		throw new Error("Invalid decrypted secret export payload.");
 	}
 	const secrets = payload.secrets.map((entry) => {
-		const secret = asRecord(entry, "secret backup entry");
+		const secret = asRecord(entry, "secret export entry");
 		if (
 			typeof secret.provider_id !== "string" ||
 			typeof secret.ref !== "string" ||
 			typeof secret.env_name !== "string" ||
 			typeof secret.value !== "string"
 		) {
-			throw new Error("Invalid decrypted secret backup entry.");
+			throw new Error("Invalid decrypted secret export entry.");
 		}
 		if (!isRuntimeEnvName(secret.env_name) || secret.ref !== `env:${secret.env_name}`) {
 			throw new Error("Invalid decrypted env secret metadata.");
@@ -1213,23 +1213,23 @@ function stripEncryptedSecrets(input: unknown): unknown {
 	return rest;
 }
 
-function restoreEncryptedSecrets(
+function importEncryptedSecrets(
 	input: unknown,
 	target: string,
 	out: string | undefined,
 	passphraseEnv: string | undefined,
 ): void {
 	if (target !== "env-file") {
-		throw new Error("Only --restore-secrets env-file is supported in the provider-only path.");
+		throw new Error("Only --import-secrets env-file is supported in the provider-only path.");
 	}
-	if (!out) throw new Error("--restore-secrets env-file requires --out <file>.");
-	const root = asRecord(input, "AI Provider backup");
+	if (!out) throw new Error("--import-secrets env-file requires --out <file>.");
+	const root = asRecord(input, "AI Provider export");
 	const bundle = root.encrypted_secrets;
 	if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
-		throw new Error("Backup does not contain encrypted_secrets.");
+		throw new Error("Export file does not contain encrypted_secrets.");
 	}
 	const payload = decryptSecretBundle(
-		readSecretBackupPassphrase(passphraseEnv),
+		readSecretExportPassphrase(passphraseEnv),
 		bundle as EncryptedSecretBundle,
 	);
 	const lines = payload.secrets.map((secret) => `${secret.env_name}=${shellQuote(secret.value)}`);

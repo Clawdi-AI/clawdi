@@ -1265,10 +1265,10 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("exports and restores env secrets only through an encrypted bundle", async () => {
-		process.env.OPENAI_API_KEY = "sk-backup-secret";
-		process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE = "correct horse battery staple";
-		const backupPath = join(tmpHome, "providers.backup.json");
+	it("exports and imports env secrets only through an encrypted export bundle", async () => {
+		process.env.OPENAI_API_KEY = "sk-provider-secret";
+		process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE = "correct horse battery staple";
+		const exportPath = join(tmpHome, "providers-with-secrets.json");
 		const envPath = join(tmpHome, "providers.env");
 		const { output, restore } = captureConsole();
 		try {
@@ -1279,33 +1279,33 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await aiProviderExportCommand({
-				out: backupPath,
+				out: exportPath,
 				includeSecrets: true,
 				secretPassphrase: true,
 			});
-			await aiProviderImportCommand(backupPath, {
+			await aiProviderImportCommand(exportPath, {
 				replace: true,
-				restoreSecrets: "env-file",
+				importSecrets: "env-file",
 				out: envPath,
 				json: true,
 			});
 		} finally {
 			restore();
 			delete process.env.OPENAI_API_KEY;
-			delete process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE;
+			delete process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE;
 		}
 
-		const backup = readFileSync(backupPath, "utf-8");
-		expect(backup).toContain("encrypted_secrets");
-		expect(backup).not.toContain("sk-backup-secret");
-		expect(output()).not.toContain("sk-backup-secret");
-		expect(readFileSync(envPath, "utf-8")).toBe("OPENAI_API_KEY='sk-backup-secret'\n");
+		const exportJson = readFileSync(exportPath, "utf-8");
+		expect(exportJson).toContain("encrypted_secrets");
+		expect(exportJson).not.toContain("sk-provider-secret");
+		expect(output()).not.toContain("sk-provider-secret");
+		expect(readFileSync(envPath, "utf-8")).toBe("OPENAI_API_KEY='sk-provider-secret'\n");
 	});
 
-	it("does not restore encrypted secrets when catalog import conflicts", async () => {
-		process.env.OPENAI_API_KEY = "sk-backup-secret";
-		process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE = "correct horse battery staple";
-		const backupPath = join(tmpHome, "providers.backup.json");
+	it("does not import encrypted secrets when catalog import conflicts", async () => {
+		process.env.OPENAI_API_KEY = "sk-provider-secret";
+		process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE = "correct horse battery staple";
+		const exportPath = join(tmpHome, "providers-with-secrets.json");
 		const envPath = join(tmpHome, "providers.env");
 		const { restore } = captureConsole();
 		try {
@@ -1316,13 +1316,13 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await aiProviderExportCommand({
-				out: backupPath,
+				out: exportPath,
 				includeSecrets: true,
 				secretPassphrase: true,
 			});
 			await expect(
-				aiProviderImportCommand(backupPath, {
-					restoreSecrets: "env-file",
+				aiProviderImportCommand(exportPath, {
+					importSecrets: "env-file",
 					out: envPath,
 					json: true,
 				}),
@@ -1330,7 +1330,7 @@ describe("ai-provider commands", () => {
 		} finally {
 			restore();
 			delete process.env.OPENAI_API_KEY;
-			delete process.env.CLAWDI_SECRET_BACKUP_PASSPHRASE;
+			delete process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE;
 		}
 
 		expect(existsSync(envPath)).toBe(false);
@@ -1338,11 +1338,11 @@ describe("ai-provider commands", () => {
 
 	it("refuses secret export without explicit passphrase encryption", async () => {
 		await expect(
-			aiProviderExportCommand({ includeSecrets: true, out: "backup.json" }),
+			aiProviderExportCommand({ includeSecrets: true, out: "providers-with-secrets.json" }),
 		).rejects.toThrow("--secret-passphrase");
 	});
 
-	it("requires a backup file when restoring encrypted secrets", async () => {
+	it("requires an export file when importing encrypted secrets", async () => {
 		const hermesConfig = join(tmpHome, "hermes-config.yaml");
 		writeFileSync(
 			hermesConfig,
@@ -1360,11 +1360,11 @@ describe("ai-provider commands", () => {
 		await expect(
 			aiProviderImportCommand(undefined, {
 				fromHermes: hermesConfig,
-				restoreSecrets: "env-file",
+				importSecrets: "env-file",
 				out: join(tmpHome, "providers.env"),
 				json: true,
 			}),
-		).rejects.toThrow("--restore-secrets requires");
+		).rejects.toThrow("--import-secrets requires an AI Provider export file");
 	});
 });
 

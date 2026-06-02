@@ -260,7 +260,7 @@ clawdi ai-provider materialize-auth openai-codex
 Claude Code credential sync remains on the legacy `clawdi agent credentials`
 path until its public credential and OAuth contracts are pinned.
 
-## Export And Restore Provider Catalogs
+## Export And Import Provider Catalogs
 
 Default export includes provider metadata and secret references only:
 
@@ -274,23 +274,23 @@ It does not export plaintext keys.
 To include env-backed secrets, explicitly request encrypted secret export:
 
 ```bash
-export CLAWDI_SECRET_BACKUP_PASSPHRASE='choose-a-strong-passphrase'
+export CLAWDI_SECRET_EXPORT_PASSPHRASE='choose-a-strong-passphrase'
 clawdi ai-provider export \
   --out ai-providers-with-secrets.json \
   --include-secrets \
   --secret-passphrase
 ```
 
-Restore encrypted env-backed secrets into an owner-only env file:
+Import encrypted env-backed secrets into an owner-only env file:
 
 ```bash
-export CLAWDI_SECRET_BACKUP_PASSPHRASE='choose-a-strong-passphrase'
+export CLAWDI_SECRET_EXPORT_PASSPHRASE='choose-a-strong-passphrase'
 clawdi ai-provider import ai-providers-with-secrets.json \
-  --restore-secrets env-file \
+  --import-secrets env-file \
   --out .env.ai-providers
 ```
 
-Do not commit restored env files.
+Do not commit imported env files.
 
 ## Inspect And Diagnose
 
@@ -314,6 +314,5 @@ These are not current user experiences:
 - Claude Code OAuth through AI Provider.
 - Dashboard onboarding UI for AI Providers.
 - A CLI daemon/RPC surface for hosted agents to invoke local materialization.
-- Global `clawdi backup` integration for AI Providers.
 - OAuth for Anthropic, Gemini, OpenRouter, Mistral, or arbitrary custom
   providers.

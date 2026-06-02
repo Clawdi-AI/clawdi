@@ -50,11 +50,11 @@ afterAll(() => {
 });
 
 describe("ai-provider CLI process e2e", () => {
-	it("adds, optionally probes, encrypts, restores, and dry-runs ai-provider apply without leaking secrets", async () => {
+	it("adds, optionally probes, encrypts, imports secrets, and applies agent config without leaking secrets", async () => {
 		const source = createFixture();
 		const destination = createFixture();
-		const backupPath = join(source.root, "providers.backup.json");
-		const restoredEnv = join(destination.root, "providers.env");
+		const exportPath = join(source.root, "providers-with-secrets.json");
+		const importedEnv = join(destination.root, "providers.env");
 		providerRequests = [];
 
 		try {
@@ -104,16 +104,16 @@ describe("ai-provider CLI process e2e", () => {
 
 			const exported = await runCli(
 				source,
-				["ai-provider", "export", "--out", backupPath, "--include-secrets", "--secret-passphrase"],
+				["ai-provider", "export", "--out", exportPath, "--include-secrets", "--secret-passphrase"],
 				{
-					CLAWDI_SECRET_BACKUP_PASSPHRASE: PASSPHRASE,
+					CLAWDI_SECRET_EXPORT_PASSPHRASE: PASSPHRASE,
 					OPENAI_API_KEY: SECRET,
 				},
 			);
 			expect(exported.code).toBe(0);
-			const backup = readFileSync(backupPath, "utf8");
-			expect(backup).toContain("encrypted_secrets");
-			expect(backup).not.toContain(SECRET);
+			const exportJson = readFileSync(exportPath, "utf8");
+			expect(exportJson).toContain("encrypted_secrets");
+			expect(exportJson).not.toContain(SECRET);
 			expect(exported.stdout).not.toContain(SECRET);
 			expect(exported.stderr).not.toContain(SECRET);
 
@@ -122,20 +122,20 @@ describe("ai-provider CLI process e2e", () => {
 				[
 					"ai-provider",
 					"import",
-					backupPath,
+					exportPath,
 					"--replace",
-					"--restore-secrets",
+					"--import-secrets",
 					"env-file",
 					"--out",
-					restoredEnv,
+					importedEnv,
 					"--json",
 				],
-				{ CLAWDI_SECRET_BACKUP_PASSPHRASE: PASSPHRASE },
+				{ CLAWDI_SECRET_EXPORT_PASSPHRASE: PASSPHRASE },
 			);
 			expect(imported.code).toBe(0);
 			expect(imported.stdout).not.toContain(SECRET);
 			expect(imported.stderr).not.toContain(SECRET);
-			expect(readFileSync(restoredEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
+			expect(readFileSync(importedEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
 
 			const dryRun = await runCli(destination, [
 				"ai-provider",

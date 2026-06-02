@@ -48,7 +48,7 @@ three current risks:
 2. It makes the security boundary explicit: BYOK calls go directly from runtime
    to provider, while Clawdi only handles metadata, secret custody, and config
    materialization.
-3. It creates a backup/restore unit that can move across local, self-hosted,
+3. It creates an export/import unit that can move across local, self-hosted,
    and hosted agent service environments without scattering raw API keys into
    agent config files.
 
@@ -60,7 +60,7 @@ There are four required refinements:
    custom endpoints.
 2. The CLI may provide base URL and env var suggestions, but it should not own
    a long-lived default model table. The user's catalog owns `default_model`.
-3. Secret backup must be a separate encrypted bundle. Default backup exports
+3. Secret export must be a separate encrypted bundle. Default export includes
    provider metadata and secret references only.
 4. Provider auth management must be broader than API keys. Existing local agent
    credential profiles such as Codex `~/.codex/auth.json` should migrate under
@@ -110,10 +110,9 @@ Repository and adjacent-runtime review produced these constraints:
    resolution, and `clawdi run` env injection live in
    `packages/cli/src/lib/secret-references.ts` and
    `packages/cli/src/commands/run.ts`.
-2. The current Clawdi CLI does not appear to have a general `clawdi backup` /
-   `clawdi restore` command. Provider backup is therefore either a new product
-   surface, or v1 should treat `ai-provider export/import` as the provider-only
-   backup path until a global backup command exists.
+2. AI Provider v1 should treat `ai-provider export/import` as the provider
+   catalog migration surface. A separate global archive product is not required
+   for this launch slice.
 3. `clawdi setup` already writes Hermes MCP registration into
    `~/.hermes/config.yaml`. Hermes projection must not replace this file, and
    native patch activation must preserve unrelated YAML sections such as
@@ -165,7 +164,7 @@ and hosted environments without reauthoring OpenClaw or Hermes config by hand.
 The user-visible outcomes:
 
 1. **Portability**: a provider such as `openai-main` follows the user across
-   machines, backup/restore, local runtime, self-hosted runtime, and hosted
+   machines, export/import, local runtime, self-hosted runtime, and hosted
    agent service runtime.
 2. **Runtime neutrality**: Codex, OpenClaw, Hermes, and future engines consume the
    same provider catalog. Engine-native config is generated output.
@@ -173,13 +172,13 @@ The user-visible outcomes:
    model requests go from runtime to provider. Clawdi does not proxy or record
    request bodies. Secret resolution may still use Clawdi Vault when the
    provider auth ref is `clawdi://...`.
-4. **Secret minimization**: provider catalogs, agent configs, backups, logs,
+4. **Secret minimization**: provider catalogs, agent configs, exports, logs,
    and diagnostics carry secret refs or availability status, not plaintext
    API keys.
 5. **Auth portability**: API keys, OAuth connections, and agent login profiles
    are managed as AI Provider auth instead of scattered per-runtime files.
-6. **Recoverability**: a user can back up provider metadata by default and can
-   optionally make an explicitly encrypted secret backup.
+6. **Recoverability**: a user can export provider metadata by default and can
+   optionally include encrypted secrets.
 7. **Cloud simplicity**: Clawdi Cloud can collect provider settings, return
    OAuth authorization links, and inject secrets, but provider-specific
    runtime details stay in the OSS CLI.
@@ -195,9 +194,9 @@ Product success criteria:
    catalog, then regenerates equivalent engine-native config.
 3. A user rotates `OPENAI_API_KEY` without editing Codex, OpenClaw, or Hermes
    config.
-4. A default backup restores provider metadata and secret refs on a new
+4. A default import recreates provider metadata and secret refs on a new
    machine without exposing plaintext keys.
-5. An encrypted secret backup cannot be created without an explicit passphrase
+5. An encrypted secret export cannot be created without an explicit passphrase
    or public-key recipient.
 6. A user can import or connect Codex credentials, store them centrally, and
    materialize them on a new machine without hand-copying auth files. Claude
@@ -229,9 +228,9 @@ UX principles:
 4. Support `env:` and existing `clawdi://` Vault secret refs in v1, then add
    keychain and 1Password through the same resolver interface.
 5. Generate deterministic engine projections for Codex, OpenClaw, and Hermes.
-6. Include provider metadata in Clawdi backup and restore.
-7. Allow explicit encrypted secret backup without ever placing plaintext keys
-   in default backup archives.
+6. Include provider metadata in AI Provider export and import.
+7. Allow explicit encrypted secret export without ever placing plaintext keys
+   in default export artifacts.
 8. Centralize API keys, OAuth connections, and agent credential profiles under
    AI Provider auth, while keeping provider metadata separate from encrypted
    token payloads internally.
@@ -242,11 +241,11 @@ UX principles:
 
 1. No Clawdi proxying for user BYOK model traffic.
 2. No plaintext API keys in the Provider Catalog.
-3. No default plaintext secret export in `clawdi backup`.
+3. No default plaintext secret export.
 4. No Cloud-maintained OpenClaw or Hermes provider config generator.
 5. No Cloud-maintained provider default model table.
 6. No broad home-directory scan to discover API keys.
-7. No automatic shell startup file edits to install restored env vars.
+7. No automatic shell startup file edits to install imported env vars.
 8. No storage of whole OAuth tokens or local agent auth files inside Provider
    Catalog metadata. Those belong in the encrypted provider-auth payload store
    and are referenced by provider auth metadata.
@@ -351,46 +350,42 @@ Expected product behavior:
 3. `test` verifies the new key by calling the provider directly.
 4. `ai-provider status` reports that `openai-main` has an available secret ref.
 
-### Flow 4: Backup And Restore To A New Machine
+### Flow 4: Export And Import To A New Machine
 
 The user wants provider definitions on a new machine without accidentally
 exporting API keys.
 
 ```bash
-# Future global backup surface:
-clawdi backup --out clawdi-backup.zip
+clawdi ai-provider export --out ai-providers.json
 
 # On the new machine:
-clawdi restore clawdi-backup.zip
+clawdi ai-provider import ai-providers.json
 clawdi ai-provider validate
 clawdi ai-provider status
-
-# Provider-only v1 fallback if global backup is not implemented yet:
-clawdi ai-provider export --out ai-providers.json
-clawdi ai-provider import ai-providers.json
 ```
 
 Expected product behavior:
 
-1. The default backup includes provider metadata and secret refs.
-2. The default backup does not include plaintext secret values.
-3. Restore recreates the catalog.
+1. The default export includes provider metadata and secret refs.
+2. The default export does not include plaintext secret values.
+3. Import recreates the catalog.
 4. `validate` passes schema checks but reports missing secret refs until the
    user provides them or logs in for Vault-backed refs.
 5. Once the user sets the env vars, `test` and `ai-provider apply --dry-run` work normally.
 
-Optional encrypted secret backup:
+Optional encrypted secret export:
 
 ```bash
-clawdi backup --include-secrets --secret-passphrase --out clawdi-backup.zip
-clawdi restore clawdi-backup.zip --secrets-target env-file --out ~/.clawdi/providers.env
+export CLAWDI_SECRET_EXPORT_PASSPHRASE='choose-a-strong-passphrase'
+clawdi ai-provider export --include-secrets --secret-passphrase --out ai-providers.json
+clawdi ai-provider import ai-providers.json --import-secrets env-file --out ~/.clawdi/providers.env
 ```
 
 Expected product behavior:
 
 1. The command refuses to include secrets without encryption.
-2. Restore writes owner-only secret material to the selected target.
-3. Restore does not edit shell startup files.
+2. Import writes owner-only secret material to the selected target.
+3. Import does not edit shell startup files.
 
 ### Flow 5: Hosted Agent Service Uses The Same Catalog
 
@@ -525,7 +520,7 @@ Expected product behavior:
 
 ### Flow 10: User Connects Codex Provider Auth
 
-The user wants Clawdi to centrally store and restore a runtime login, not just
+The user wants Clawdi to centrally store and recreate a runtime login, not just
 an API key.
 
 ```bash
@@ -893,7 +888,7 @@ parallel resolver stack. A resolver can produce either:
 3. A plaintext value in memory only for direct `test` calls.
 
 Resolved secret values must never be logged, stored in generated config
-snapshots, or written into default backups.
+snapshots, or written into default exports.
 
 Audit language must distinguish secret resolution from model traffic:
 
@@ -926,7 +921,7 @@ tool-owned auth file, referenced through a runtime-native mechanism, or rejected
 because the runtime has no verified way to consume that auth type.
 
 Provider export includes auth metadata and external refs only. Encrypted
-secret backup can include provider-auth payloads only when the user explicitly
+secret export can include provider-auth payloads only when the user explicitly
 selects encrypted secret export.
 
 ## CLI Commands
@@ -975,8 +970,8 @@ AI Provider command behavior:
 - `materialize-auth` writes the selected AI Provider auth into the adapter's
   verified local target, such as Codex `auth.json`, an owner-only env file, or a
   runtime-managed auth store. Claude Code materialization is deferred until its
-  public credential contract is pinned. It should dry-run and create backups
-  before replacing existing local files.
+  public credential contract is pinned. It should dry-run and create rollback
+  copies before replacing existing local files.
 - `export` writes metadata and secret refs only by default.
 - `import` validates and merges by provider ID. It accepts a provider catalog
   file by default, or a runtime source through `--from-openclaw` /
@@ -1211,7 +1206,7 @@ the encrypted credential payload through
 `/api/ai-providers/{provider_id}/auth/import`. `materialize-auth` resolves the
 payload through the CLI-only provider-auth resolve route. The older
 `clawdi agent credentials` command group still exists as a compatibility path
-for existing profile backup/restore behavior, but it is no longer the storage
+for existing profile export/import behavior, but it is no longer the storage
 path for provider-bound credentials.
 
 Suggested provider-auth shape:
@@ -1345,9 +1340,9 @@ Security requirements:
 3. List only redacted metadata: provider ID, profile, scopes, expiry, status, and
    last materialized target.
 4. Never include OAuth access tokens, refresh tokens, auth files, or API keys
-   in default backup, logs, diagnostics, agent config snapshots, or
+   in default export, logs, diagnostics, agent config snapshots, or
    Cloud payload metadata.
-5. Secret backup may include provider-auth payloads only through explicit
+5. Secret export may include provider-auth payloads only through explicit
    encrypted export.
 6. Support revocation and local deletion separately: removing a local
    materialized file should not necessarily revoke the stored provider auth,
@@ -1468,7 +1463,7 @@ packages/cli/src/ai-providers/
   normalize.ts            # AiProvider -> NormalizedProvider
   secret-refs.ts          # thin wrapper over existing secret-references.ts + env refs
   test-provider.ts        # direct provider probes
-  backup.ts               # provider backup/restore helpers
+  export.ts               # provider export/import helpers
   projections/
     types.ts              # adapter contracts
     openclaw.ts           # OpenClaw projection + inspect
@@ -1614,8 +1609,8 @@ Security rules:
 1. Logs and thrown errors must include refs, not values.
 2. Dry-run uses inspect mode by default.
 3. `test` is the only v1 command that needs plaintext.
-4. Default backup uses refs only.
-5. Optional secret backup must encrypt before writing backup artifacts.
+4. Default export uses refs only.
+5. Optional secret export must encrypt before writing export artifacts.
 6. Privacy claims about "not hitting Clawdi Cloud" apply to model provider
    traffic, not to `clawdi://` secret resolution.
 
@@ -1712,7 +1707,7 @@ export interface ProjectionApplyInput extends ProjectionInput {
   applyMode?: AgentApplyMode;
   allowNativePatch: boolean;
   dryRun: boolean;
-  backup: boolean;
+  createRollback: boolean;
 }
 
 export interface ProjectionApplyPlan {
@@ -1727,7 +1722,7 @@ export interface ProjectionApplyPlan {
 
 export interface ProjectionApplyResult {
   writtenFiles: string[];
-  backupFiles: string[];
+  rollbackFiles: string[];
   metadataFiles: string[];
   diagnostics: ProjectionDiagnostic[];
 }
@@ -1751,7 +1746,7 @@ Adapter responsibilities:
 9. Use native config patching only when no safer apply mechanism exists
    for the local workflow and `--patch-native` is explicitly present.
 10. For native patches, avoid unrelated engine-native config sections, show a
-    redacted diff, create a backup, write an external metadata marker file,
+    redacted diff, create a rollback copy, write an external metadata marker file,
     and use structured merge. Hermes native patch activation may update only
     provider/model-owned sections and must preserve `mcp_servers`, tool config,
     skins, memory config, and other unrelated keys written by `clawdi setup`
@@ -1938,8 +1933,8 @@ Rules:
 3. `ai-provider apply` may write a profile file, env-file, include target, or
    managed runtime home depending on adapter support.
 4. Patching a primary native config file is out of v1 scope; if added later it
-   requires a redacted diff and a backup unless `--no-backup` is explicitly
-   passed.
+   requires a redacted diff and a rollback copy unless `--no-backup` is
+   explicitly passed.
 5. If a managed file's stored `catalog_hash` differs from the current
    projection, `ai-provider status` reports drift.
 6. If a native file has no Clawdi marker, the CLI treats it as user-owned and
@@ -2172,15 +2167,12 @@ Codex activation strategy:
 4. The adapter never edits `$CODEX_HOME/config.toml` and never writes project
    `.codex/config.toml`.
 
-## Backup And Restore
+## Export And Import
 
-The audited CLI does not currently expose a general `clawdi backup` /
-`clawdi restore` command. If that product surface is not introduced in the
-same release, `clawdi ai-provider export` and `clawdi ai-provider import`
-should serve as the provider-only backup/restore path for v1. The rules below
-apply to both a future global backup and provider-only export.
+Current AI Provider v1 uses `clawdi ai-provider export` and
+`clawdi ai-provider import` as the provider catalog export/import path.
 
-Default backup includes provider metadata, auth refs, and redacted auth
+Default export includes provider metadata, auth refs, and redacted auth
 metadata:
 
 ```json
@@ -2205,37 +2197,35 @@ metadata:
 }
 ```
 
-Default backup must not include plaintext secret values, OAuth tokens, refresh
+Default export must not include plaintext secret values, OAuth tokens, refresh
 tokens, or whole local auth files.
 
-Optional secret backup requires explicit encryption:
+Optional secret export requires explicit encryption:
 
 ```bash
-clawdi backup --include-secrets --secret-passphrase
-clawdi backup --include-secrets --secret-recipient age1...
+clawdi ai-provider export --include-secrets --secret-passphrase --out ai-providers.json
 ```
 
 Secret export rules:
 
 1. Secrets and provider-auth payloads are resolved only from supported refs or
    provider IDs selected by the user.
-2. The secret bundle is encrypted before it enters the backup archive.
+2. The secret bundle is encrypted before it enters the export artifact.
 3. Metadata can identify which provider/ref/auth profile each encrypted secret
    belongs to.
 4. Plaintext never appears in the zip, logs, temp files, or JSON metadata.
-5. Restore requires an explicit target such as env file, local keychain, Clawdi
-   Vault, AI Provider auth, agent credential profile materialization, or a
-   future 1Password adapter.
+5. Import requires an explicit target. V1 supports owner-only env files;
+   local keychain, Clawdi Vault, AI Provider auth payloads, agent credential
+   profile materialization, and 1Password are future targets.
 
-Restore examples:
+Import examples:
 
 ```bash
-clawdi restore backup.zip
-clawdi restore backup.zip --secrets-target env-file --out ~/.clawdi/providers.env
-clawdi restore backup.zip --secrets-target vault --project personal
+clawdi ai-provider import ai-providers.json
+clawdi ai-provider import ai-providers-with-secrets.json --import-secrets env-file --out ~/.clawdi/providers.env
 ```
 
-Restoring to an env file writes owner-only files and does not edit shell
+Importing to an env file writes owner-only files and does not edit shell
 startup files.
 
 ## Backend Storage Model
@@ -2563,8 +2553,8 @@ Required coverage:
 16. Drift metadata is written to external metadata marker files, not into
     native config, unless the engine schema explicitly permits unknown keys.
 17. `export` omits plaintext secrets, OAuth tokens, and whole auth files.
-18. Default backup includes provider metadata and redacted auth metadata only.
-19. Encrypted secret backup refuses to run without passphrase or public key.
+18. Default export includes provider metadata and redacted auth metadata only.
+19. Encrypted secret export refuses to run without passphrase or public key.
 20. OAuth connect tests cover device-code, PKCE/manual paste, expiry, state
     mismatch, and redacted diagnostics with provider-specific fixtures.
 21. Agent credential profile compatibility tests prove old
@@ -2636,11 +2626,9 @@ activation remains explicit and unverified native patching is blocked.
 5. Implement `ai-provider add/list/edit/remove/validate/export/import`.
 6. Implement `env:` handling and reuse existing `clawdi://` Vault reference
    parsing/preview/resolve.
-7. Add metadata-only provider/auth backup through `ai-provider export/import`,
-   and through global backup/restore only if that command surface ships in the
-   same slice.
+7. Add metadata-only provider/auth export through `ai-provider export/import`.
 
-Exit criteria: a user can create, validate, export, import, and restore provider
+Exit criteria: a user can create, validate, export, and import provider
 metadata and redacted auth metadata without plaintext secrets.
 
 ### Phase 2: OAuth Connect, Direct Test, And Runtime Inspect
@@ -2688,14 +2676,14 @@ until its contract is pinned.
 Exit criteria: existing runtime users can migrate to a catalog without losing
 provider metadata or silently importing plaintext keys.
 
-### Phase 5: Encrypted Secret Backup
+### Phase 5: Encrypted Secret Export
 
 1. Add encrypted secret bundle format.
 2. Add passphrase and public-key recipient support.
-3. Add restore targets for owner-only env files, Vault, AI Provider auth, and
+3. Add import targets for owner-only env files, Vault, AI Provider auth, and
    agent credential profile materialization.
 
-Exit criteria: `--include-secrets` refuses to run without encryption and restore
+Exit criteria: `--include-secrets` refuses to run without encryption and import
 does not edit shell startup files. OAuth payloads and whole auth files are
 included only in explicitly encrypted secret export.
 
@@ -2756,9 +2744,8 @@ round:
 2. CLI code should reuse the existing Clawdi home helper from
    `packages/cli/src/lib/config.ts`. If needed, expose a public helper instead
    of reimplementing `$CLAWDI_HOME` lookup in the AI Provider module.
-3. `ai-provider export/import` is the v1 provider-only backup path unless a
-   general `clawdi backup` / `clawdi restore` surface ships first.
-4. Encrypted secret backup v1 must support passphrase encryption. Public-key
+3. `ai-provider export/import` is the v1 provider catalog migration surface.
+4. Encrypted secret export v1 must support passphrase encryption. Public-key
    recipients are additive and can ship in the same phase if the chosen
    encryption library supports them cleanly.
 5. Agent apply adapter implementation uses dry-run/apply as the user-facing split:
@@ -2790,7 +2777,7 @@ round:
 Required docs:
 
 1. Product docs: "AI Provider" and "Provider Catalog" as first-class concepts.
-2. Security docs: BYOK direct-provider request path and secret backup rules.
+2. Security docs: BYOK direct-provider request path and secret export rules.
 3. CLI docs: command reference and examples.
 4. Cloud docs: onboarding and hosted agent materialization.
 5. Migration docs: Hermes/OpenClaw import examples.
@@ -2812,7 +2799,7 @@ Implemented in the first non-UI slice:
    skips rather than proxies when auth cannot be resolved locally.
 5. Provider-only export defaults to metadata and refs. `--include-secrets`
    requires passphrase encryption and currently supports env-backed secrets
-   with owner-only env-file restore.
+   with owner-only env-file import.
 6. `ai-provider apply --dry-run` is side-effect free. `ai-provider apply --dry-run` previews
    native writes or commands, and `ai-provider apply` executes them.
 7. Codex projection and apply are implemented through a pinned
@@ -2842,9 +2829,7 @@ Not yet implemented in this slice:
 2. Production OAuth provider adapters for Codex, Claude, or provider accounts.
    The backend start/complete shape exists and returns auth links; each
    provider still needs verified client configuration before being enabled.
-3. Global `clawdi backup` integration. `ai-provider export/import` is the v1
-   provider-only backup surface.
-4. Public-key encrypted secret backup and non-env secret restore targets.
+3. Public-key encrypted secret export and non-env secret import targets.
 
 ## Implementation Review
 
@@ -2876,12 +2861,13 @@ Current best-practice assessment after implementation review:
    safest v1 activation path because it delegates native write semantics to
    Hermes. The adapter intentionally refuses dotted provider IDs until Hermes
    dot-path escaping is verified.
-7. **OpenClaw activation gate vs guessed native contract**: keeping activation
-   disabled is correct. The projection file can exist, but native activation
-   must wait for pinned fixtures or a verified CLI/include contract.
-8. **Secret refs and backup**: metadata-only export by default and
+7. **OpenClaw activation through pinned CLI patch**: OpenClaw activation is
+   enabled through `openclaw config patch --stdin` for the pinned
+   `openclaw 2026.5.28` contract. The adapter still avoids hand-editing
+   OpenClaw's primary config.
+8. **Secret refs and export/import**: metadata-only export by default and
    passphrase-encrypted env-secret export are the right first slice.
-   Provider-only backup validates restored metadata before writing env files
+   Provider-only export validates imported metadata before writing env files
    and validates decrypted env names before materialization.
 9. **Hermes import parser**: structured YAML parsing is now used for
    `providers` and `custom_providers`; ad hoc line parsing was too brittle for
@@ -2911,8 +2897,8 @@ User scenario coverage in this slice:
 5. **Codex-style agent auth profiles**: covered through existing
    credential-profile import/materialization plus AI Provider binding commands.
    Claude Code profile import and OAuth are deferred from AI Provider v1.
-6. **Encrypted provider-only backup/restore**: covered for env-backed secrets,
-   redacted backup output, and owner-only env-file restore.
+6. **Encrypted provider-only export/import**: covered for env-backed secrets,
+   redacted export output, and owner-only env-file import.
 7. **Cloud-managed API key storage**: covered by backend encrypted
    provider-auth payload routes, redacted dashboard responses, and CLI-only
    plaintext resolve.
@@ -3040,7 +3026,7 @@ Security tests required before enabling RPC:
 5. `aiProvider.apply` cannot patch primary engine-native config without the same
    explicit activation/patched-native controls as the CLI command.
 6. A failed or cancelled long-running OAuth/materialization job leaves no
-   partial credential files unless a documented backup/rollback path exists.
+   partial credential files unless a documented rollback path exists.
 
 ## OSS Task Breakdown
 
@@ -3070,9 +3056,9 @@ Security tests required before enabling RPC:
    verified. Codex is the first enabled OAuth adapter.
 12. Implement `clawdi ai-provider add/list/edit/remove/validate/test`.
 13. Add `clawdi ai-provider export/import` with metadata-only defaults.
-14. Add provider/auth support to the global backup/restore surface, or
-   explicitly ship `ai-provider export/import` as the v1 provider-only backup
-   path if global backup/restore is not yet implemented.
+14. Add provider/auth support to the global export/import surface, or
+   explicitly ship `ai-provider export/import` as the v1 provider-only export
+   path if global export/import is not yet implemented.
 15. Implement projection adapter contracts.
 16. Implement Codex profile-file projection and apply through
     `$CODEX_HOME/clawdi-ai-provider.config.toml`, with tests proving
@@ -3091,9 +3077,9 @@ Security tests required before enabling RPC:
 22. Add `clawdi ai-provider apply --dry-run`, `clawdi ai-provider status`, and
     `clawdi doctor ai-provider`.
 23. Add direct provider and provider-auth connect tests with redacted diagnostics.
-24. Add explicit encrypted secret backup and restore targets for provider refs,
+24. Add explicit encrypted secret export and import targets for provider refs,
     API keys, OAuth payloads, and agent credential profiles. Provider-only v1
-    may start with env-backed API keys and owner-only env-file restore.
+    may start with env-backed API keys and owner-only env-file import.
 25. Add account-scoped backend routes under `/api/ai-providers`.
 26. Update Cloud to distribute provider specs, auth metadata, and secret
     env/materialization inputs, and to stop generating engine-native runtime
@@ -3117,7 +3103,7 @@ These are not blockers for v1 implementation:
 
 1. Whether Cloud should later sync the local catalog bidirectionally instead of
    treating Cloud as another account-global catalog store.
-2. Whether public-key encrypted secret backup should be mandatory in addition
-   to passphrase backup.
+2. Whether public-key encrypted secret export should be mandatory in addition
+   to passphrase encryption.
 3. Whether Gateway non-chat services should share the AI Provider catalog or
    use a separate service catalog.

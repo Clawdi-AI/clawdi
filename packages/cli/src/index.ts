@@ -452,12 +452,12 @@ aiProviderCmd
 	.command("export")
 	.description("Export Provider Catalog metadata and refs")
 	.option("--out <file>", "Write to a file instead of stdout")
-	.option("--include-secrets", "Refuse unless encrypted secret backup is available")
-	.option("--secret-passphrase", "Require passphrase encryption for secret backup")
+	.option("--include-secrets", "Include encrypted env-backed secrets in the export")
+	.option("--secret-passphrase", "Encrypt included secrets with a passphrase from env")
 	.option(
 		"--secret-passphrase-env <name>",
-		"Env var holding the secret backup passphrase",
-		"CLAWDI_SECRET_BACKUP_PASSPHRASE",
+		"Env var holding the encrypted secret export passphrase",
+		"CLAWDI_SECRET_EXPORT_PASSPHRASE",
 	)
 	.action(async (opts) => {
 		const { aiProviderExportCommand } = await import("./commands/ai-provider.js");
@@ -469,12 +469,12 @@ aiProviderCmd
 	.description("Import and merge a Provider Catalog file")
 	.option("--from-hermes <path>", "Import providers from a Hermes config.yaml")
 	.option("--from-openclaw <path>", "Import providers from an OpenClaw projection JSON")
-	.option("--restore-secrets <target>", "Restore encrypted secrets to a target, currently env-file")
-	.option("--out <file>", "Output path for --restore-secrets env-file")
+	.option("--import-secrets <target>", "Import encrypted secrets to a target, currently env-file")
+	.option("--out <file>", "Output path for --import-secrets env-file")
 	.option(
 		"--secret-passphrase-env <name>",
-		"Env var holding the secret backup passphrase",
-		"CLAWDI_SECRET_BACKUP_PASSPHRASE",
+		"Env var holding the encrypted secret import passphrase",
+		"CLAWDI_SECRET_EXPORT_PASSPHRASE",
 	)
 	.option("--replace", "Replace existing providers with matching ids")
 	.option("--json", "Emit machine-readable JSON")
@@ -1174,7 +1174,7 @@ Examples:
 
 agentCredentialsCmd
 	.command("materialize <tool>")
-	.description("Restore a personal local CLI credential profile on this machine")
+	.description("Recreate a personal local CLI credential profile on this machine")
 	.option("-p, --project <id-or-slug>", "Read from a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")
