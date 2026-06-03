@@ -2979,7 +2979,7 @@ control-plane operations, but it should be a narrow **CLI Control RPC**, not
    the CLI to resolve a `clawdi://` ref or managed provider payload, but model
    calls still go runtime to provider.
 5. It must be local-first: Unix domain socket on macOS/Linux and named pipe on
-   Windows by default. Loopback TCP should require an explicit flag such as
+   Windows by default. Loopback HTTP RPC should require an explicit flag such as
    `--listen 127.0.0.1:<port>` plus a bearer token stored under
    `$CLAWDI_HOME/daemon/control-token`.
 6. It must never bind to public interfaces by default. If a hosted agent
@@ -3110,7 +3110,7 @@ Security tests required before enabling RPC:
 29. Extract AI Provider command behavior into deep service modules before
     adding remote invocation.
 30. Add a local CLI Control RPC adapter over Unix domain socket / named pipe
-    with an explicit loopback TCP opt-in, allowlisted methods, token auth,
+    with an explicit loopback HTTP RPC opt-in, allowlisted methods, token auth,
     dry-run support, and redacted JSON responses.
 30. Teach hosted deployment code to prefer one-shot CLI invocation for
     deployment-time materialization, then migrate to Control RPC only when

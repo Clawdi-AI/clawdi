@@ -22,6 +22,7 @@
  * Logs are JSON-per-line on stderr; stdout is reserved.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { isLoggedIn } from "../lib/config";
@@ -33,6 +34,7 @@ import {
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
 	callControlRpc,
+	rotateControlToken,
 	startControlRpcServer,
 } from "../serve/control-rpc";
 import {
@@ -59,9 +61,16 @@ type ServeOpts = Record<string, unknown>;
 interface RpcListenOpts {
 	rpcHost?: unknown;
 	rpcPort?: unknown;
+	rpcAllowRemote?: unknown;
 }
 
-let activeControlRpcTcp: { host: string; port: number } | null = null;
+interface ResolvedRpcListenConfig extends ControlRpcListenConfig {
+	allowRemote?: boolean;
+}
+
+let activeControlRpcHttp: { host: string; port: number; allow_remote: boolean } | null = null;
+
+const CONTROL_ACTION_DELAY_MS = 100;
 
 interface DaemonRunTarget {
 	agentType: AgentType;
@@ -86,7 +95,7 @@ interface DaemonDoctorReport {
 	control_rpc: {
 		socket_path: string;
 		token_path: string;
-		tcp: { host: string; port: number } | null;
+		http: { host: string; port: number; allow_remote: boolean } | null;
 	};
 	api_url: string | null;
 	agents: Array<
@@ -190,11 +199,13 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	}
 
 	const rpc = await startControlRpcServer(createControlRpcHandlers(), abort.signal, rpcListen);
-	activeControlRpcTcp = rpc.tcp;
+	activeControlRpcHttp = rpc.http
+		? { ...rpc.http, allow_remote: rpcListen.allowRemote === true }
+		: null;
 	log.info("serve.rpc_listening", {
 		socket: rpc.socketPath,
 		token_path: rpc.tokenPath,
-		tcp: rpc.tcp,
+		http: rpc.http,
 	});
 
 	try {
@@ -251,6 +262,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		const result = installService({
 			rpcHost: rpcListen.host,
 			rpcPort: rpcListen.port,
+			rpcAllowRemote: rpcListen.allowRemote === true ? true : undefined,
 		});
 		const verb = result.replaced ? "Replaced existing" : "Installed";
 		console.log(`✓ ${verb} singleton daemon unit: ${result.unit}`);
@@ -263,7 +275,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	if (failed > 0) process.exit(1);
 }
 
-const INSTALL_ALLOWED = new Set(["rpcHost", "rpcPort"]);
+const INSTALL_ALLOWED = new Set(["rpcHost", "rpcPort", "rpcAllowRemote"]);
 const UNINSTALL_ALLOWED = new Set<string>();
 const STATUS_ALLOWED = new Set(["agent"]);
 const DOCTOR_ALLOWED = new Set(["json"]);
@@ -441,8 +453,8 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 		console.log(`legacy:      ${summary.legacy_daemon_units.join(", ")}`);
 	}
 	console.log(`rpc socket:  ${summary.control_rpc.socket_path}`);
-	if (summary.control_rpc.tcp) {
-		console.log(`rpc tcp:     ${summary.control_rpc.tcp.host}:${summary.control_rpc.tcp.port}`);
+	if (summary.control_rpc.http) {
+		console.log(`rpc http:    ${summary.control_rpc.http.host}:${summary.control_rpc.http.port}`);
 	}
 	console.log("");
 	if (summary.registered_agents === 0) {
@@ -511,7 +523,7 @@ function buildDoctorReport(): DaemonDoctorReport {
 		control_rpc: {
 			socket_path: getDaemonControlSocketPath(),
 			token_path: getDaemonControlTokenPath(),
-			tcp: activeControlRpcTcp ?? normalizeRpcTcpConfig(resolveRpcListenConfig({})),
+			http: activeControlRpcHttp ?? normalizeRpcHttpConfig(resolveRpcListenConfig({})),
 		},
 		api_url: process.env.CLAWDI_API_URL ?? null,
 		agents,
@@ -566,66 +578,179 @@ function createControlRpcHandlers(): ControlRpcHandlers {
 	handlers["daemon.uninstall"] = (params) => daemonUninstallRpc(params);
 	handlers["daemon.restart"] = (params) => daemonRestartRpc(params);
 	handlers["daemon.logs"] = (params) => daemonLogsRpc(params);
+	handlers["daemon.rotate_token"] = (params) => daemonRotateTokenRpc(params);
 	return handlers;
 }
 
 function daemonInstallRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["rpc_host", "rpc_port"]));
-	const rpcListen = resolveRpcListenConfig({
-		rpcHost: record.rpc_host,
-		rpcPort: record.rpc_port,
-	});
-	return installService({
-		rpcHost: rpcListen.host,
-		rpcPort: rpcListen.port,
-	});
+	rejectRpcParams(record, new Set(["rpc_host", "rpc_port", "rpc_allow_remote"]));
+	const hasExplicitRpcConfig =
+		record.rpc_host !== undefined ||
+		record.rpc_port !== undefined ||
+		record.rpc_allow_remote !== undefined;
+	const rpcListen = hasExplicitRpcConfig
+		? resolveRpcListenConfig({
+				rpcHost: record.rpc_host,
+				rpcPort: record.rpc_port,
+				rpcAllowRemote: record.rpc_allow_remote,
+			})
+		: resolveRpcListenConfig({
+				rpcHost: activeControlRpcHttp?.host,
+				rpcPort: activeControlRpcHttp?.port,
+				rpcAllowRemote: activeControlRpcHttp?.allow_remote,
+			});
+	return scheduleDaemonControlAction(
+		"install",
+		() => {
+			installService({
+				rpcHost: rpcListen.host,
+				rpcPort: rpcListen.port,
+				rpcAllowRemote: rpcListen.allowRemote === true ? true : undefined,
+			});
+		},
+		{
+			rpc_http: normalizeRpcHttpConfig(rpcListen),
+		},
+	);
 }
 
 function daemonUninstallRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set());
-	return {
-		results: daemonUnitTargets().map((target) => {
-			try {
-				const opts = target === "daemon" ? undefined : { agent: target };
-				return { target, ...uninstallService(opts) };
-			} catch (error) {
-				return { target, removed: false, error: toErrorMessage(error) };
+	const targets = daemonUnitTargets();
+	if (targets.length === 0) {
+		return { accepted: false, reason: "no daemon units installed" };
+	}
+	return scheduleDaemonControlAction(
+		"uninstall",
+		() => {
+			for (const target of targets) {
+				try {
+					const opts = target === "daemon" ? undefined : { agent: target };
+					uninstallService(opts);
+				} catch (error) {
+					log.error("daemon.control_action_target_failed", {
+						action: "uninstall",
+						target,
+						error: toErrorMessage(error),
+					});
+				}
 			}
-		}),
-	};
+		},
+		{ targets },
+	);
 }
 
 function daemonRestartRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set());
-	const targets = isSingletonDaemonInstalled() ? ["daemon"] : [];
+	if (!isSingletonDaemonInstalled()) {
+		return { accepted: false, reason: "no singleton daemon unit installed" };
+	}
+	return scheduleDaemonControlAction(
+		"restart",
+		() => {
+			restartService();
+		},
+		{ target: "daemon" },
+	);
+}
+
+function daemonRotateTokenRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set());
+	const token = rotateControlToken();
 	return {
-		results: targets.map((target) => {
-			try {
-				restartService();
-				return { target, restarted: true };
-			} catch (error) {
-				return { target, restarted: false, error: toErrorMessage(error) };
-			}
-		}),
+		rotated: true,
+		token_path: getDaemonControlTokenPath(),
+		token,
+	};
+}
+
+function scheduleDaemonControlAction(
+	action: string,
+	run: () => void,
+	extra: Record<string, unknown> = {},
+): unknown {
+	setTimeout(() => {
+		try {
+			run();
+			log.info("daemon.control_action_completed", { action });
+		} catch (error) {
+			log.error("daemon.control_action_failed", { action, error: toErrorMessage(error) });
+		}
+	}, CONTROL_ACTION_DELAY_MS);
+	return {
+		accepted: true,
+		action,
+		delay_ms: CONTROL_ACTION_DELAY_MS,
+		...extra,
 	};
 }
 
 function daemonLogsRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set());
+	rejectRpcParams(record, new Set(["limit"]));
+	const limit = optionalLogLimitParam(record.limit);
 	const currentPlatform = process.platform;
+	if (currentPlatform === "linux") {
+		const command = [
+			"journalctl",
+			"--user",
+			"-u",
+			"clawdi-serve.service",
+			"-n",
+			String(limit),
+			"--no-pager",
+		];
+		try {
+			const output = execFileSync(command[0], command.slice(1), {
+				encoding: "utf-8",
+				maxBuffer: 1024 * 1024,
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 5000,
+			});
+			return {
+				platform: currentPlatform,
+				source: "journalctl",
+				command,
+				lines: splitLogLines(output),
+			};
+		} catch (error) {
+			return {
+				platform: currentPlatform,
+				source: "journalctl",
+				command,
+				lines: [],
+				error: toErrorMessage(error),
+			};
+		}
+	}
+	if (currentPlatform === "darwin") {
+		const stderr = getServeLogPath("daemon", "stderr");
+		const output = existsSync(stderr) ? readFileSync(stderr, "utf-8") : "";
+		return {
+			platform: currentPlatform,
+			source: "file",
+			stdout: getServeLogPath("daemon", "stdout"),
+			stderr,
+			lines: tailLogLines(splitLogLines(output), limit),
+		};
+	}
 	return {
 		platform: currentPlatform,
-		command:
-			currentPlatform === "linux"
-				? ["journalctl", "--user", "-u", "clawdi-serve.service", "-n", "200"]
-				: undefined,
-		stdout: currentPlatform === "linux" ? undefined : getServeLogPath("daemon", "stdout"),
-		stderr: currentPlatform === "linux" ? undefined : getServeLogPath("daemon", "stderr"),
+		lines: [],
+		error: `unsupported platform for daemon logs: ${currentPlatform}`,
 	};
+}
+
+function splitLogLines(output: string): string[] {
+	return output.split(/\r?\n/).filter((line) => line.length > 0);
+}
+
+function tailLogLines(lines: string[], limit: number): string[] {
+	return lines.slice(Math.max(0, lines.length - limit));
 }
 
 function daemonUnitTargets(): Array<"daemon" | AgentType> {
@@ -666,7 +791,35 @@ function optionalAgentParam(value: unknown): AgentType | undefined {
 	return agent;
 }
 
-function resolveRpcListenConfig(opts: RpcListenOpts): ControlRpcListenConfig {
+function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
+	const host =
+		optionalStringParam(opts.rpcHost, "--rpc-host") ?? process.env.CLAWDI_DAEMON_RPC_HOST;
+	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
+	const port = optionalPortParam(portValue, "--rpc-port");
+	const allowRemote =
+		optionalBooleanParam(opts.rpcAllowRemote, "--rpc-allow-remote") ??
+		optionalBooleanParam(
+			process.env.CLAWDI_DAEMON_RPC_ALLOW_REMOTE,
+			"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
+		) ??
+		false;
+	if (host !== undefined && port === undefined) {
+		throw new Error("--rpc-host requires --rpc-port (or CLAWDI_DAEMON_RPC_PORT)");
+	}
+	if (host === undefined && port === undefined) return {};
+	const resolvedHost = host ?? "127.0.0.1";
+	if (!allowRemote && !isLoopbackRpcHost(resolvedHost)) {
+		throw new Error(
+			`Refusing to listen on non-loopback HTTP RPC host ${resolvedHost}. ` +
+				"Use --rpc-allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
+		);
+	}
+	return { host: resolvedHost, port, allowRemote };
+}
+
+function resolveRpcClientConfig(
+	opts: RpcListenOpts & { rpcToken?: unknown },
+): ControlRpcClientConfig {
 	const host =
 		optionalStringParam(opts.rpcHost, "--rpc-host") ?? process.env.CLAWDI_DAEMON_RPC_HOST;
 	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
@@ -674,23 +827,60 @@ function resolveRpcListenConfig(opts: RpcListenOpts): ControlRpcListenConfig {
 	if (host !== undefined && port === undefined) {
 		throw new Error("--rpc-host requires --rpc-port (or CLAWDI_DAEMON_RPC_PORT)");
 	}
-	if (host === undefined && port === undefined) return {};
-	return { host: host ?? "127.0.0.1", port };
-}
-
-function resolveRpcClientConfig(
-	opts: RpcListenOpts & { rpcToken?: unknown },
-): ControlRpcClientConfig {
-	const listen = resolveRpcListenConfig(opts);
 	const token = optionalStringParam(opts.rpcToken, "--rpc-token");
-	return { ...listen, token };
+	if (host === undefined && port === undefined) return { token };
+	return { host: host ?? "127.0.0.1", port, token };
 }
 
-function normalizeRpcTcpConfig(
-	config: ControlRpcListenConfig,
-): { host: string; port: number } | null {
+function normalizeRpcHttpConfig(
+	config: ResolvedRpcListenConfig,
+): { host: string; port: number; allow_remote: boolean } | null {
 	if (config.port === undefined) return null;
-	return { host: config.host ?? "127.0.0.1", port: config.port };
+	return {
+		host: config.host ?? "127.0.0.1",
+		port: config.port,
+		allow_remote: config.allowRemote === true,
+	};
+}
+
+function optionalBooleanParam(value: unknown, label: string): boolean | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === "boolean") return value;
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if (!normalized) return undefined;
+		if (["1", "true", "yes", "on"].includes(normalized)) return true;
+		if (["0", "false", "no", "off"].includes(normalized)) return false;
+	}
+	throw new Error(`${label} must be a boolean`);
+}
+
+function optionalLogLimitParam(value: unknown): number {
+	if (value === undefined || value === null) return 200;
+	let limit: number;
+	if (typeof value === "number") {
+		limit = value;
+	} else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+		limit = Number(value);
+	} else {
+		throw new Error("limit must be an integer from 1 to 1000");
+	}
+	if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+		throw new Error("limit must be an integer from 1 to 1000");
+	}
+	return limit;
+}
+
+function isLoopbackRpcHost(host: string): boolean {
+	const normalized = host.trim().toLowerCase();
+	return (
+		normalized === "localhost" ||
+		normalized === "::1" ||
+		normalized === "[::1]" ||
+		normalized === "0:0:0:0:0:0:0:1" ||
+		normalized === "127.0.0.1" ||
+		normalized.startsWith("127.")
+	);
 }
 
 function optionalPortParam(value: unknown, label: string): number | undefined {

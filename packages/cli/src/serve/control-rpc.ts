@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import {
 	createServer,
@@ -23,6 +23,7 @@ export type ControlRpcHandlers = Record<string, ControlRpcHandler>;
 export interface ControlRpcListenConfig {
 	host?: string;
 	port?: number;
+	allowRemote?: boolean;
 }
 
 export interface ControlRpcClientConfig {
@@ -41,7 +42,7 @@ interface JsonRpcRequest {
 interface ControlRpcServer {
 	socketPath: string;
 	tokenPath: string;
-	tcp: { host: string; port: number } | null;
+	http: { host: string; port: number } | null;
 	close: () => Promise<void>;
 }
 
@@ -53,6 +54,15 @@ export async function startControlRpcServer(
 	if (process.platform === "win32") {
 		throw new Error("daemon control RPC is not supported on Windows yet");
 	}
+	if (config.port !== undefined) {
+		const host = config.host ?? "127.0.0.1";
+		if (config.allowRemote !== true && !isLoopbackRpcHost(host)) {
+			throw new Error(
+				`Refusing to listen on non-loopback HTTP RPC host ${host}. ` +
+					"Use --rpc-allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
+			);
+		}
+	}
 	const controlDir = getDaemonControlDir();
 	mkdirSync(controlDir, { recursive: true, mode: 0o700 });
 	try {
@@ -60,7 +70,7 @@ export async function startControlRpcServer(
 	} catch {
 		/* best effort */
 	}
-	const token = ensureControlToken();
+	ensureControlToken();
 	const socketPath = getDaemonControlSocketPath();
 	if (existsSync(socketPath)) {
 		if (await socketAcceptsConnections(socketPath)) {
@@ -70,7 +80,7 @@ export async function startControlRpcServer(
 	}
 
 	const socketServer = createServer(async (req, res) => {
-		await handleHttpRequest(req, res, handlers, token);
+		await handleHttpRequest(req, res, handlers);
 	});
 	await listenOnSocket(socketServer, socketPath);
 	try {
@@ -78,26 +88,26 @@ export async function startControlRpcServer(
 	} catch {
 		/* best effort */
 	}
-	let tcpServer: Server | null = null;
-	let tcp: { host: string; port: number } | null = null;
+	let httpServer: Server | null = null;
+	let http: { host: string; port: number } | null = null;
 	if (config.port !== undefined) {
 		const host = config.host ?? "127.0.0.1";
-		tcpServer = createServer(async (req, res) => {
-			await handleHttpRequest(req, res, handlers, token);
+		httpServer = createServer(async (req, res) => {
+			await handleHttpRequest(req, res, handlers);
 		});
 		try {
-			await listenOnTcp(tcpServer, host, config.port);
+			await listenOnHttpEndpoint(httpServer, host, config.port);
 		} catch (error) {
-			await closeServers(socketServer, socketPath, tcpServer);
+			await closeServers(socketServer, socketPath, httpServer);
 			throw error;
 		}
-		const address = tcpServer.address();
-		tcp = {
+		const address = httpServer.address();
+		http = {
 			host,
 			port: typeof address === "object" && address ? address.port : config.port,
 		};
 	}
-	const close = () => closeServers(socketServer, socketPath, tcpServer);
+	const close = () => closeServers(socketServer, socketPath, httpServer);
 	abort.addEventListener(
 		"abort",
 		() => {
@@ -105,7 +115,7 @@ export async function startControlRpcServer(
 		},
 		{ once: true },
 	);
-	return { socketPath, tokenPath: getDaemonControlTokenPath(), tcp, close };
+	return { socketPath, tokenPath: getDaemonControlTokenPath(), http, close };
 }
 
 export async function callControlRpc(
@@ -113,6 +123,9 @@ export async function callControlRpc(
 	params?: unknown,
 	config: ControlRpcClientConfig = {},
 ): Promise<unknown> {
+	if (config.host !== undefined && config.port === undefined) {
+		throw new Error("RPC host requires an RPC port");
+	}
 	const token = config.token ?? process.env.CLAWDI_DAEMON_RPC_TOKEN ?? readControlToken();
 	const body = JSON.stringify({
 		jsonrpc: "2.0",
@@ -186,6 +199,18 @@ function ensureControlToken(): string {
 	if (existsSync(tokenPath)) {
 		return readControlToken();
 	}
+	return rotateControlToken();
+}
+
+export function rotateControlToken(): string {
+	const controlDir = getDaemonControlDir();
+	mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+	try {
+		chmodSync(controlDir, 0o700);
+	} catch {
+		/* best effort */
+	}
+	const tokenPath = getDaemonControlTokenPath();
 	const token = randomBytes(32).toString("hex");
 	writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
 	try {
@@ -203,6 +228,11 @@ function readControlToken(): string {
 			`daemon control token not found at ${tokenPath}. Start \`clawdi daemon run\` first.`,
 		);
 	}
+	try {
+		chmodSync(tokenPath, 0o600);
+	} catch {
+		/* best effort */
+	}
 	const token = readFileSync(tokenPath, "utf-8").trim();
 	if (!token) throw new Error(`daemon control token at ${tokenPath} is empty`);
 	return token;
@@ -212,14 +242,20 @@ async function handleHttpRequest(
 	req: IncomingMessage,
 	res: ServerResponse,
 	handlers: ControlRpcHandlers,
-	token: string,
 ): Promise<void> {
 	if (req.method !== "POST" || req.url !== "/rpc") {
 		sendHttp(res, 404, { error: "not_found" });
 		return;
 	}
+	let token: string;
+	try {
+		token = readControlToken();
+	} catch (error) {
+		sendHttp(res, 500, { error: error instanceof Error ? error.message : "token_unavailable" });
+		return;
+	}
 	const auth = req.headers.authorization;
-	if (auth !== `Bearer ${token}`) {
+	if (!bearerTokenMatches(auth, token)) {
 		sendHttp(res, 401, { error: "unauthorized" });
 		return;
 	}
@@ -255,6 +291,28 @@ async function handleHttpRequest(
 		const message = error instanceof Error ? error.message : String(error);
 		sendRpcError(res, request.id ?? null, -32000, message);
 	}
+}
+
+function bearerTokenMatches(auth: string | undefined, token: string): boolean {
+	if (!auth?.startsWith("Bearer ")) return false;
+	const provided = auth.slice("Bearer ".length);
+	const providedBuffer = Buffer.from(provided);
+	const tokenBuffer = Buffer.from(token);
+	return (
+		providedBuffer.length === tokenBuffer.length && timingSafeEqual(providedBuffer, tokenBuffer)
+	);
+}
+
+function isLoopbackRpcHost(host: string): boolean {
+	const normalized = host.trim().toLowerCase();
+	return (
+		normalized === "localhost" ||
+		normalized === "::1" ||
+		normalized === "[::1]" ||
+		normalized === "0:0:0:0:0:0:0:1" ||
+		normalized === "127.0.0.1" ||
+		normalized.startsWith("127.")
+	);
 }
 
 function parseJsonRpcRequest(raw: string): JsonRpcRequest {
@@ -336,7 +394,7 @@ function listenOnSocket(server: Server, socketPath: string): Promise<void> {
 	});
 }
 
-function listenOnTcp(server: Server, host: string, port: number): Promise<void> {
+function listenOnHttpEndpoint(server: Server, host: string, port: number): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const onError = (error: Error) => {
 			server.off("listening", onListening);
@@ -355,9 +413,9 @@ function listenOnTcp(server: Server, host: string, port: number): Promise<void> 
 async function closeServers(
 	socketServer: Server,
 	socketPath: string,
-	tcpServer: Server | null,
+	httpServer: Server | null,
 ): Promise<void> {
-	await Promise.all([closeServer(socketServer), tcpServer ? closeServer(tcpServer) : undefined]);
+	await Promise.all([closeServer(socketServer), httpServer ? closeServer(httpServer) : undefined]);
 	try {
 		if (existsSync(socketPath)) unlinkSync(socketPath);
 	} catch {

@@ -30,8 +30,9 @@ export interface ServeHandlers {
 
 function addRpcEndpointOptions(cmd: Command): Command {
 	return cmd
-		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
-		.option("--rpc-port <port>", "Control RPC TCP port");
+		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC HTTP port")
+		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host");
 }
 
 async function defaultHandlers(): Promise<ServeHandlers> {
@@ -53,8 +54,9 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 	const serveCmd = program
 		.command("daemon")
 		.alias("serve")
-		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
-		.option("--rpc-port <port>", "Control RPC TCP port")
+		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC HTTP port")
+		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host")
 		.description(
 			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
 		)
@@ -65,9 +67,10 @@ Environment:
   CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
   CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
   CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
-  CLAWDI_DAEMON_RPC_HOST  Optional TCP host for daemon control RPC
-  CLAWDI_DAEMON_RPC_PORT  Optional TCP port for daemon control RPC
-  CLAWDI_DAEMON_RPC_TOKEN Bearer token for TCP RPC clients (defaults to generated token file)
+  CLAWDI_DAEMON_RPC_HOST         Optional HTTP host for daemon control RPC
+  CLAWDI_DAEMON_RPC_PORT         Optional HTTP port for daemon control RPC
+  CLAWDI_DAEMON_RPC_ALLOW_REMOTE Set to 1 to allow non-loopback HTTP bind
+  CLAWDI_DAEMON_RPC_TOKEN        Bearer token for HTTP RPC clients (defaults to generated token file)
   CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
 
 Examples:
@@ -91,9 +94,10 @@ Examples:
 		.command("run")
 		.description("Run the sync daemon in the foreground")
 		.configureHelp({ showGlobalOptions: true })
-		.addHelpText("after", "\nControl RPC TCP options are optional; Unix socket is always enabled.")
-		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
-		.option("--rpc-port <port>", "Control RPC TCP port")
+		.addHelpText("after", "\nControl RPC HTTP options are optional; Unix socket is always enabled.")
+		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC HTTP port")
+		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host")
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serve(cmd.optsWithGlobals());
@@ -157,8 +161,8 @@ Examples:
 		.command("rpc <method>")
 		.description("Call the local daemon control RPC socket")
 		.option("--params <json>", "JSON object passed as RPC params", "{}")
-		.option("--rpc-host <host>", "Control RPC TCP host to call (requires --rpc-port)")
-		.option("--rpc-port <port>", "Control RPC TCP port to call")
+		.option("--rpc-host <host>", "Control RPC HTTP host to call (requires --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC HTTP port to call")
 		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
 		.action(async (method: string, _opts, cmd) => {
 			const h = await get();

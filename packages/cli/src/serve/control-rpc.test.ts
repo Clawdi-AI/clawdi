@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { callControlRpc, startControlRpcServer } from "./control-rpc";
+import { dirname, join } from "node:path";
+import { callControlRpc, rotateControlToken, startControlRpcServer } from "./control-rpc";
 import { getDaemonControlTokenPath } from "./paths";
 
 if (process.platform !== "win32") {
@@ -55,7 +63,7 @@ if (process.platform !== "win32") {
 			);
 		});
 
-		it("serves TCP RPC when a host and port are configured", async () => {
+		it("serves HTTP RPC when a host and port are configured", async () => {
 			const server = await startControlRpcServer(
 				{
 					"daemon.echo": (params) => ({ params }),
@@ -65,12 +73,18 @@ if (process.platform !== "win32") {
 			);
 			closeServer = server.close;
 
-			const result = await callControlRpc("daemon.echo", { via: "tcp" }, server.tcp ?? undefined);
+			const result = await callControlRpc("daemon.echo", { via: "http" }, server.http ?? undefined);
 
-			expect(result).toEqual({ params: { via: "tcp" } });
+			expect(result).toEqual({ params: { via: "http" } });
 		});
 
-		it("requires a bearer token for TCP RPC access", async () => {
+		it("rejects non-loopback HTTP listeners unless explicitly allowed", async () => {
+			await expect(
+				startControlRpcServer({}, abort.signal, { host: "0.0.0.0", port: 0 }),
+			).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
+		});
+
+		it("requires a bearer token for HTTP RPC access", async () => {
 			const server = await startControlRpcServer(
 				{
 					"daemon.echo": (params) => ({ params }),
@@ -79,15 +93,15 @@ if (process.platform !== "win32") {
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
-			if (!server.tcp) throw new Error("expected tcp listener");
+			if (!server.http) throw new Error("expected HTTP listener");
 
-			const response = await postWithoutToken(server.tcp.host, server.tcp.port);
+			const response = await postWithoutToken(server.http.host, server.http.port);
 
 			expect(response.statusCode).toBe(401);
 			expect(response.body).toContain("unauthorized");
 		});
 
-		it("allows explicit RPC tokens for TCP clients", async () => {
+		it("allows explicit RPC tokens for HTTP clients", async () => {
 			const server = await startControlRpcServer(
 				{
 					"daemon.echo": (params) => ({ params }),
@@ -96,19 +110,72 @@ if (process.platform !== "win32") {
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
-			if (!server.tcp) throw new Error("expected tcp listener");
-			const token = await Bun.file(getDaemonControlTokenPath()).text();
+			if (!server.http) throw new Error("expected HTTP listener");
+			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const result = await callControlRpc(
 				"daemon.echo",
 				{ token: "explicit" },
 				{
-					...server.tcp,
-					token: token.trim(),
+					...server.http,
+					token,
 				},
 			);
 
 			expect(result).toEqual({ params: { token: "explicit" } });
+		});
+
+		it("repairs existing token file permissions on startup", async () => {
+			const tokenPath = getDaemonControlTokenPath();
+			mkdirSync(dirname(tokenPath), { recursive: true });
+			writeFileSync(tokenPath, "fixed-token\n", { mode: 0o644 });
+			chmodSync(tokenPath, 0o644);
+
+			const server = await startControlRpcServer({}, abort.signal);
+			closeServer = server.close;
+
+			expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+		});
+
+		it("rotates the bearer token without restarting the server", async () => {
+			const server = await startControlRpcServer(
+				{
+					"daemon.echo": (params) => ({ params }),
+					"daemon.rotate_token": () => ({ token: rotateControlToken() }),
+				},
+				abort.signal,
+				{ host: "127.0.0.1", port: 0 },
+			);
+			closeServer = server.close;
+			if (!server.http) throw new Error("expected HTTP listener");
+			const oldToken = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
+
+			const rotated = (await callControlRpc("daemon.rotate_token", {}, server.http)) as {
+				token: string;
+			};
+
+			expect(rotated.token).not.toBe(oldToken);
+			await expect(
+				callControlRpc(
+					"daemon.echo",
+					{ rejected: true },
+					{
+						...server.http,
+						token: oldToken,
+					},
+				),
+			).rejects.toThrow("unauthorized");
+
+			const result = await callControlRpc(
+				"daemon.echo",
+				{ accepted: true },
+				{
+					...server.http,
+					token: rotated.token,
+				},
+			);
+
+			expect(result).toEqual({ params: { accepted: true } });
 		});
 	});
 }

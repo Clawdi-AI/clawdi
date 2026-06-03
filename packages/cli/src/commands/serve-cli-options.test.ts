@@ -51,7 +51,7 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
-	it("daemon run accepts RPC TCP host and port", async () => {
+	it("daemon run accepts RPC HTTP host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
@@ -67,13 +67,19 @@ describe("registerServeCommand", () => {
 		expect(captured.last?.rpcPort).toBe("17654");
 	});
 
+	it("daemon run accepts the non-loopback HTTP RPC opt-in", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "run", "--rpc-allow-remote"]);
+		expect(captured.last?.rpcAllowRemote).toBe(true);
+	});
+
 	it("daemon with no subcommand still runs the foreground action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "daemon"]);
 		expect(captured.last).toEqual({});
 	});
 
-	it("daemon with no subcommand accepts RPC TCP host and port", async () => {
+	it("daemon with no subcommand accepts RPC HTTP host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
@@ -86,6 +92,12 @@ describe("registerServeCommand", () => {
 		]);
 		expect(captured.last?.rpcHost).toBe("127.0.0.1");
 		expect(captured.last?.rpcPort).toBe("17654");
+	});
+
+	it("daemon with no subcommand accepts the non-loopback HTTP RPC opt-in", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "--rpc-allow-remote"]);
+		expect(captured.last?.rpcAllowRemote).toBe(true);
 	});
 
 	it("legacy serve with no subcommand still runs the foreground action", async () => {
@@ -100,7 +112,7 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
-	it("install accepts RPC TCP host and port", async () => {
+	it("install accepts RPC HTTP host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
@@ -114,6 +126,12 @@ describe("registerServeCommand", () => {
 		]);
 		expect(captured.last?.rpcHost).toBe("127.0.0.1");
 		expect(captured.last?.rpcPort).toBe("17654");
+	});
+
+	it("install accepts the non-loopback HTTP RPC opt-in", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "install", "--rpc-allow-remote"]);
+		expect(captured.last?.rpcAllowRemote).toBe(true);
 	});
 
 	it("restart reaches the action", async () => {

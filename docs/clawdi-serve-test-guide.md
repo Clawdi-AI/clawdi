@@ -190,16 +190,25 @@ Logs land at `~/.clawdi/serve/logs/daemon.{stdout,stderr}.log`
 on macOS and via `journalctl --user -u clawdi-serve.service` on Linux.
 
 The control RPC always exposes the owner-only Unix socket. To also
-listen on TCP, pass an explicit host and port at install time:
+listen on HTTP, pass an explicit host and port at install time:
 
 ```sh
 clawdi daemon install --rpc-host 127.0.0.1 --rpc-port 17654
 clawdi daemon rpc daemon.ping --rpc-host 127.0.0.1 --rpc-port 17654
 ```
 
-TCP RPC requests require the generated bearer token by default. The
+HTTP RPC requests require the generated bearer token by default. The
 CLI reads it from `~/.clawdi/daemon/control-token`; remote clients can
 pass it through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`.
+Rotate the token with `clawdi daemon rpc daemon.rotate_token`; update
+remote clients with the returned token.
+
+Non-loopback HTTP binds are rejected unless the daemon is started or
+installed with `--rpc-allow-remote` (or
+`CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Do not expose that listener directly
+on the public internet: the protocol is cleartext HTTP with bearer-token
+auth. Use an SSH tunnel, a private network, or a TLS-terminating reverse
+proxy.
 
 ## Troubleshooting
 
@@ -237,8 +246,9 @@ only conduit.
 | `CLAWDI_ENVIRONMENT_ID` | The env this single-agent pod represents. Bypasses `~/.clawdi/environments/*.json`. |
 | `CLAWDI_API_URL` | Cloud backend (e.g. `https://cloud-api.clawdi.ai`). |
 | `CLAWDI_SERVE_MODE=container` | Forces poll mode (overlay-fs doesn't fire fs.watch reliably). |
-| `CLAWDI_DAEMON_RPC_HOST` | Optional TCP host for the daemon control RPC. Requires `CLAWDI_DAEMON_RPC_PORT`. |
-| `CLAWDI_DAEMON_RPC_PORT` | Optional TCP port for the daemon control RPC. Requests still require bearer token auth. |
+| `CLAWDI_DAEMON_RPC_HOST` | Optional HTTP host for the daemon control RPC. Requires `CLAWDI_DAEMON_RPC_PORT`. |
+| `CLAWDI_DAEMON_RPC_PORT` | Optional HTTP port for the daemon control RPC. Requests still require bearer token auth. |
+| `CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1` | Allows the daemon to bind a non-loopback HTTP RPC host. Use only behind SSH tunneling, private networking, or TLS. |
 | `CLAWDI_DAEMON_RPC_TOKEN` | Optional client-side bearer token for `clawdi daemon rpc` when the token file is not local. |
 
 ### Per-agent paths

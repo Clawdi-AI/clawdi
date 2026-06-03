@@ -41,6 +41,7 @@ interface InstallOpts {
 	agent?: string;
 	rpcHost?: string;
 	rpcPort?: number;
+	rpcAllowRemote?: boolean;
 }
 
 function home(): string {
@@ -83,8 +84,9 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * Whitelist deliberately narrow:
  *   - CLAWDI_AUTH_TOKEN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
- *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT: optional
- *     TCP listener for the owner-token-protected control RPC
+ *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT /
+ *     CLAWDI_DAEMON_RPC_ALLOW_REMOTE: optional HTTP listener for
+ *     the owner-token-protected control RPC
  *   - CLAWDI_AGENT_TYPE: container fallback when no env registry exists
  *   - CLAWDI_SERVE_MODE: container/laptop mode
  *   - CLAWDI_SERVE_DEBUG: verbose log level
@@ -105,6 +107,7 @@ const PERSISTED_ENV_KEYS = [
 	"CLAWDI_STATE_DIR",
 	"CLAWDI_DAEMON_RPC_HOST",
 	"CLAWDI_DAEMON_RPC_PORT",
+	"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
 	// CLAWDI_HOME redirects the entire CLI state tree (auth.json,
 	// environments, locks, serve queue/health) to a sibling
 	// directory; honored by `lib/config.ts:clawdiDir()` and
@@ -138,6 +141,11 @@ function capturedEnv(opts: InstallOpts = {}): { key: string; value: string }[] {
 		out,
 		"CLAWDI_DAEMON_RPC_PORT",
 		opts.rpcPort === undefined ? undefined : String(opts.rpcPort),
+	);
+	upsertCapturedEnv(
+		out,
+		"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
+		opts.rpcAllowRemote === true ? "1" : undefined,
 	);
 	return out;
 }

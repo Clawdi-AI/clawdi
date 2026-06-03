@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { rejectUnsupportedOpts } from "./serve";
 
 /**
@@ -135,5 +138,47 @@ describe("subcommand handler rejects parent-leaked options", () => {
 			ExitCalled,
 		);
 		expect(captured.stderr.join("\n")).toMatch(/daemon doctor.*--agent/);
+	});
+});
+
+describe("daemon HTTP RPC listener safety", () => {
+	it("rejects non-loopback listen hosts unless explicitly allowed", async () => {
+		const { serve } = await import("./serve");
+
+		await expect(
+			serve({ rpcHost: "0.0.0.0", rpcPort: "17654" } as Record<string, unknown>),
+		).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
+	});
+
+	it("rejects a listen host without a port", async () => {
+		const { serve } = await import("./serve");
+
+		await expect(serve({ rpcHost: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
+			"--rpc-host requires --rpc-port",
+		);
+	});
+
+	it("allows explicit non-loopback opt-in before continuing to the auth gate", async () => {
+		const originalHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-listen-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			const { serve } = await import("./serve");
+			await expect(
+				serve({
+					rpcHost: "0.0.0.0",
+					rpcPort: "17654",
+					rpcAllowRemote: true,
+				} as Record<string, unknown>),
+			).rejects.toThrow(ExitCalled);
+		} finally {
+			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
 	});
 });

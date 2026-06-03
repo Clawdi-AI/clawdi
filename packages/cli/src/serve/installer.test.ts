@@ -253,7 +253,7 @@ describe("installer.install (macOS plist)", () => {
 });
 
 describe("installer.install (Linux systemd)", () => {
-	it("captures RPC host and port into the unit Environment", async () => {
+	it("captures RPC host, port, and remote opt-in into the unit Environment", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "linux") return;
 
@@ -268,10 +268,15 @@ describe("installer.install (Linux systemd)", () => {
 
 		try {
 			const { install } = await import("./installer");
-			const result = install({ rpcHost: "127.0.0.1", rpcPort: 17654 });
+			const result = install({
+				rpcHost: "0.0.0.0",
+				rpcPort: 17654,
+				rpcAllowRemote: true,
+			});
 			const content = readFileSync(result.unit, "utf-8");
-			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=127.0.0.1"');
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=0.0.0.0"');
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_PORT=17654"');
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1"');
 		} finally {
 			process.env.PATH = oldPath;
 		}
