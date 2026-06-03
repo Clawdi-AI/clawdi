@@ -132,7 +132,7 @@ export function ShareProjectDialog({
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
+			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl min-w-0 overflow-x-hidden overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
 						{isShareableProject ? `Share ${projectName}` : "Only Projects You Create Can Be Shared"}
@@ -147,7 +147,7 @@ export function ShareProjectDialog({
 					<>
 						<PermissionSummary />
 						<ShareMethodGuide />
-						<Tabs defaultValue="members" className="w-full">
+						<Tabs defaultValue="members" className="min-w-0 w-full">
 							<TabsList className="grid w-full grid-cols-3">
 								<TabsTrigger value="members" className="min-w-0 px-2">
 									<Users className="mr-2 size-3.5" />
@@ -162,13 +162,13 @@ export function ShareProjectDialog({
 									<span className="truncate">Links</span>
 								</TabsTrigger>
 							</TabsList>
-							<TabsContent value="members" className="mt-4">
+							<TabsContent value="members" className="mt-4 min-w-0">
 								<MembersPanel projectId={projectId} />
 							</TabsContent>
-							<TabsContent value="invitations" className="mt-4">
+							<TabsContent value="invitations" className="mt-4 min-w-0">
 								<InvitationsPanel projectId={projectId} />
 							</TabsContent>
-							<TabsContent value="links" className="mt-4">
+							<TabsContent value="links" className="mt-4 min-w-0">
 								<ShareLinksPanel projectId={projectId} />
 							</TabsContent>
 						</Tabs>
@@ -307,7 +307,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 	const visibleLinks = links.data ?? [];
 
 	return (
-		<div className="space-y-3">
+		<div className="min-w-0 space-y-3">
 			<div className="space-y-1">
 				<h3 className="text-sm font-semibold">Share Links</h3>
 				<p className="text-xs text-muted-foreground">
@@ -316,7 +316,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 				</p>
 			</div>
 			<form
-				className="space-y-2 rounded-lg border p-3"
+				className="min-w-0 space-y-2 rounded-lg border p-3"
 				onSubmit={(e) => {
 					e.preventDefault();
 					create.mutate(label);
@@ -403,10 +403,10 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	};
 	const agentPrompt = buildShareAgentHandoffPrompt(link);
 	return (
-		<Alert>
+		<Alert className="overflow-hidden">
 			<CheckCircle2 />
 			<AlertTitle>Copy This Link Now</AlertTitle>
-			<AlertDescription>
+			<AlertDescription className="max-w-full">
 				<p className="text-xs text-muted-foreground">
 					Send this URL to the person you want to invite. They sign in or create an account, accept
 					as a read-only Viewer, then open the Project from their dashboard.
@@ -420,7 +420,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						Label: <span className="font-medium text-foreground">{link.label}</span>
 					</p>
 				) : null}
-				<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+				<div className="mt-2 flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
 					<Input
 						readOnly
 						value={link.url}
@@ -428,7 +428,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						aria-label="New share link URL"
 						autoComplete="off"
 						spellCheck={false}
-						className="min-w-0 font-mono text-xs"
+						className="min-w-0 flex-1 font-mono text-xs"
 					/>
 					<Button
 						variant="outline"
@@ -444,7 +444,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						Done
 					</Button>
 				</div>
-				<div className="mt-2 rounded-md border bg-background/60 p-2">
+				<div className="mt-2 w-full min-w-0 rounded-md border bg-background/60 p-2">
 					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div className="min-w-0">
 							<div className="text-xs font-medium">Agent Handoff Prompt</div>
