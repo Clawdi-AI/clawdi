@@ -13,6 +13,7 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
+    hide_parameters=True,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,

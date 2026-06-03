@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { daemonAutoUpdateOnce, maybeAutoUpdate, update } from "../../src/commands/update";
+import {
+	daemonAutoUpdateOnce,
+	detectInstallerFromPaths,
+	installCommand,
+	maybeAutoUpdate,
+	update,
+} from "../../src/commands/update";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -43,6 +49,58 @@ afterEach(() => {
 	if (origNoAuto) process.env.CLAWDI_NO_AUTO_UPDATE = origNoAuto;
 	else delete process.env.CLAWDI_NO_AUTO_UPDATE;
 	rmSync(tmpHome, { recursive: true, force: true });
+});
+
+describe("detectInstaller", () => {
+	it("uses npm when the running clawdi binary is in npm's global bin even if bun is available", () => {
+		expect(
+			detectInstallerFromPaths("/home/user/.local/bin/clawdi", {
+				npmBin: "/home/user/.local/bin",
+				npmRoot: "/home/user/.local/lib/node_modules",
+				bunBin: "/home/user/.bun/bin",
+			}),
+		).toBe("npm");
+	});
+
+	it("uses bun when the running clawdi binary is in bun's global bin", () => {
+		expect(
+			detectInstallerFromPaths("/home/user/.bun/bin/clawdi", {
+				npmBin: "/home/user/.local/bin",
+				npmRoot: "/home/user/.local/lib/node_modules",
+				bunBin: "/home/user/.bun/bin",
+			}),
+		).toBe("bun");
+	});
+
+	it("uses npm when the resolved clawdi package path is inside npm's global root", () => {
+		expect(
+			detectInstallerFromPaths("/home/user/.local/lib/node_modules/clawdi/bin/clawdi.mjs", {
+				npmBin: "/home/user/.local/bin",
+				npmRoot: "/home/user/.local/lib/node_modules",
+				bunBin: "/home/user/.bun/bin",
+			}),
+		).toBe("npm");
+	});
+
+	it("uses bun when the resolved clawdi package path is inside Bun's global install", () => {
+		expect(
+			detectInstallerFromPaths(
+				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
+				{
+					npmBin: "/home/user/.local/bin",
+					npmRoot: "/home/user/.local/lib/node_modules",
+				},
+			),
+		).toBe("bun");
+	});
+});
+
+describe("installCommand", () => {
+	it("prints the installer-specific manual command", () => {
+		expect(installCommand("npm")).toBe("npm i -g clawdi");
+		expect(installCommand("bun")).toBe("bun add -g clawdi");
+		expect(installCommand(null)).toBe("npm i -g clawdi");
+	});
 });
 
 describe("update --json", () => {

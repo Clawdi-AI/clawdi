@@ -71,4 +71,45 @@ describe("validateAiProviderCatalog", () => {
 			"Provider openai-agent has invalid agent_profile auth metadata.",
 		);
 	});
+
+	test("allows no-auth local endpoints but rejects public no-auth URLs", () => {
+		for (const base_url of [
+			"http://localhost:1234/v1",
+			"http://127.0.0.1:1234/v1",
+			"http://[::1]:1234/v1",
+			"http://0.0.0.0:1234/v1",
+		]) {
+			const result = validateAiProviderCatalog({
+				schema_version: 1,
+				providers: [
+					{
+						id: "local-main",
+						type: "custom_openai_compatible",
+						base_url,
+						api_mode: "openai_chat",
+						auth: { type: "none" },
+					},
+				],
+			});
+
+			expect(result.errors).toEqual([]);
+			expect(result.valid).toBe(true);
+		}
+
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "public-main",
+					type: "custom_openai_compatible",
+					base_url: "https://example.com/v1",
+					api_mode: "openai_chat",
+					auth: { type: "none" },
+				},
+			],
+		});
+
+		expect(result.valid).toBe(false);
+		expect(result.errors).toContain("Provider public-main uses no auth on a public URL.");
+	});
 });

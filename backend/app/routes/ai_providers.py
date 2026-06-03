@@ -930,7 +930,7 @@ def _validate_base_url(base_url: str, auth: AiProviderAuth) -> list[str]:
 
 
 def _is_loopback_host(hostname: str) -> bool:
-    return hostname in {"localhost", "127.0.0.1", "::1"}
+    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
 def _is_private_host(hostname: str) -> bool:

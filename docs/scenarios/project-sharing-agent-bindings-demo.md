@@ -275,15 +275,15 @@ Project-aware skill commands target a project explicitly when needed.
 ```bash
 clawdi skill list --project @alice/engineering --json
 clawdi skill add ./deploy-helper --project engineering --yes
-clawdi skill install owner/repo/path --project engineering --yes
+clawdi skill install owner/repo/path --project engineering
 clawdi skill rm deploy-helper --project engineering
-clawdi pull --modules skills --project @alice/engineering --agent codex --yes
+clawdi pull --modules skills --project @alice/engineering --agent codex
 ```
 
 Session push `--project` remains a local path filter:
 
 ```bash
-clawdi push --modules sessions --project ~/work/client-a --agent codex --yes
+clawdi push --modules sessions --project ~/work/client-a --agent codex
 ```
 
 Expected:

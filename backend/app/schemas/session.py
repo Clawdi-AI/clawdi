@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 # the fix — strip on ingest so one bad record can't take the
 # batch down again.
 _LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+_MODEL_FIELD_RE = re.compile(r"""["'](?:default|model)["']\s*:\s*["']([^"']+)["']""")
+_MAX_MODEL_LENGTH = 100
 
 
 # local_session_id flows straight into a file-store key
@@ -77,6 +79,23 @@ class SessionCreate(BaseModel):
             return None
         return _LONE_SURROGATE_RE.sub("", v)
 
+    @field_validator("model", mode="after")
+    @classmethod
+    def _clean_model(cls, v: str | None) -> str | None:
+        return _clean_model_value(v)
+
+    @field_validator("models_used", mode="after")
+    @classmethod
+    def _clean_models_used(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        models: list[str] = []
+        for raw in v:
+            model = _clean_model_value(raw)
+            if model and model not in models:
+                models.append(model)
+        return models or None
+
     @field_validator("started_at", "ended_at", "last_activity_at", mode="after")
     @classmethod
     def _coerce_to_utc(cls, v: datetime | None) -> datetime | None:
@@ -94,6 +113,23 @@ class SessionCreate(BaseModel):
         if v.tzinfo is None:
             return v.replace(tzinfo=UTC)
         return v
+
+
+def _clean_model_value(v: str | None) -> str | None:
+    if v is None:
+        return None
+    value = _LONE_SURROGATE_RE.sub("", v).strip()
+    if not value:
+        return None
+    if value.startswith("{"):
+        match = _MODEL_FIELD_RE.search(value)
+        if match:
+            value = match.group(1).strip()
+        else:
+            return None
+    if not value:
+        return None
+    return value[:_MAX_MODEL_LENGTH]
 
 
 class SessionBatchRequest(BaseModel):

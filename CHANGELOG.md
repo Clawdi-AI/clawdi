@@ -10,6 +10,45 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.10.1
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.10.1
+
+Package: `clawdi@0.10.1`
+
+### Fixed
+
+- Fixed `clawdi update` choosing Bun just because `bun` was on `PATH`. The
+  updater now prefers the package manager that owns the currently running
+  `clawdi` binary, so npm-installed CLIs update with npm and Bun-installed CLIs
+  update with Bun.
+- Reduced live-sync daemon noise during transient Cloud SSE reconnects and
+  heartbeat timeouts. Short reconnect bursts are now classified as transient;
+  only sustained failures are written to `last_sync_error` or logged as warning
+  signals.
+- Fixed AI Provider OpenClaw import round-trips, stale runtime env display after
+  auth edits, and local no-auth endpoint validation parity between CLI and
+  backend.
+- Clarified that Codex provider auth should use `clawdi ai-provider
+  import-auth/connect/materialize-auth`; lower-level `agent credentials` commands
+  remain a compatibility backup/restore surface.
+
+## Clawdi 2026-06-03-2
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-2026-06-03-2
+
+### Fixed
+
+- Fixed session sync failures when an agent runtime reported structured provider
+  configuration or very long strings in the `model` field. Clawdi now extracts a
+  usable model id when possible and caps stored model labels to the database
+  limit instead of returning a 500.
+
+### Security
+
+- Hardened backend database error logging so SQL bound parameter values are not
+  written to logs when an unexpected database exception occurs.
+
 ## Clawdi CLI v0.10.0
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.10.0

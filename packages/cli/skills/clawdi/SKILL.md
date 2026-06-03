@@ -100,3 +100,16 @@ When the user asks to migrate secrets into Clawdi Vault or script secret writes,
 - Use `clawdi vault detach <vault> --project <project>` to remove one Project's access without deleting keys.
 - Use `clawdi vault rm <vault>/<section>/<field> --global --yes` only when the key should be deleted from the shared Vault for every attached Project.
 - Prefer exact `clawdi://project/...` references printed by the CLI. Do not print plaintext secret values unless the user explicitly asks for them.
+
+## AI Provider CLI
+
+When the user asks to configure model providers, API keys, or Codex OAuth for agents, use `clawdi ai-provider`:
+
+- Add reusable providers with `clawdi ai-provider add <id> --type <openai|anthropic|openrouter|gemini|mistral|custom_openai_compatible> --default-model <model> --auth <env:KEY|clawdi://...|agent:codex/profile|none>`.
+- Validate metadata with `clawdi ai-provider validate [provider-id]`.
+- Check local auth availability with `clawdi ai-provider test <provider-id>`; add `--live` only when the user explicitly wants a real provider API probe.
+- Apply agent config with `clawdi ai-provider apply --engine codex|hermes|openclaw --dry-run` first, then run without `--dry-run` if the diff is acceptable.
+- Connect Codex OAuth with `clawdi ai-provider connect <provider-id> --tool codex`; use `--callback manual` when loopback localhost cannot be reached.
+- Materialize a stored provider auth profile with `clawdi ai-provider materialize-auth <provider-id>`.
+- Default export/import is metadata-only; `--include-secrets` requires passphrase-encrypted secret export.
+- BYOK model requests go directly from the agent runtime to the configured provider. Clawdi stores metadata and secret references but is not a model proxy.

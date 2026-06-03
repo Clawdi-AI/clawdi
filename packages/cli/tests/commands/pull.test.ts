@@ -57,6 +57,38 @@ async function buildSkillTar(skillKey: string, skillMdContent: string): Promise<
 }
 
 describe("pull — Hermes fixture", () => {
+	it("bounds cloud session pagination if the backend keeps returning full pages", async () => {
+		setup("hermes");
+		const page = Array.from({ length: 200 }, (_, index) => ({
+			id: `session-${index}`,
+			local_session_id: `local-${index}`,
+			agent_type: "hermes",
+			machine_name: "Test Mac",
+			project_path: "/tmp/project",
+			started_at: "2026-06-01T00:00:00.000Z",
+			ended_at: null,
+			message_count: 1,
+			model: null,
+			summary: null,
+			content_hash: `hash-${index}`,
+		}));
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/sessions",
+				response: () => jsonResponse({ items: page, total: 100_000 }),
+			},
+		]);
+		try {
+			await expect(pull({ agent: "hermes", modules: "sessions" })).rejects.toThrow(
+				"Too many session pages to pull safely.",
+			);
+		} finally {
+			restore();
+		}
+		expect(captured.filter((request) => request.path.startsWith("/api/sessions"))).toHaveLength(50);
+	});
+
 	it("downloads the cloud skill into $HOME/.hermes/skills/<key>/", async () => {
 		setup("hermes");
 

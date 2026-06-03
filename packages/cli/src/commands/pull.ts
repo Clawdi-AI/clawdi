@@ -32,14 +32,13 @@ interface PullOpts {
 	agent?: string;
 	allAgents?: boolean;
 	all?: boolean;
-	yes?: boolean;
 }
 
 /**
  * What `scanOneAgent` found for a single agent: the skills and sessions
  * staged for download. Splitting scan from download lets `pull` show a
- * combined, per-agent summary across every target agent and ask for ONE
- * confirmation — the same shape as `clawdi push`.
+ * combined, per-agent summary across every target agent before downloading,
+ * the same shape as `clawdi push`.
  */
 interface AgentPullScan {
 	agentType: AgentType;
@@ -130,7 +129,7 @@ export async function pull(opts: PullOpts) {
 	}
 	scanSpinner.stop("Scan complete.");
 
-	// Combined per-agent summary, visible in full before the confirmation.
+	// Combined per-agent summary, visible in full before downloads begin.
 	for (const scan of scans) {
 		const name = adapterRegistry[scan.agentType].displayName;
 		const bits: string[] = [];
@@ -403,16 +402,16 @@ async function fetchCloudSessions(
 ): Promise<SessionListItem[]> {
 	const all: SessionListItem[] = [];
 	const pageSize = 200;
-	for (let page = 1; ; page++) {
+	for (let page = 1; page <= 50; page++) {
 		const result = unwrap(
 			await api.GET("/api/sessions", {
 				params: { query: { agent: agentType, page, page_size: pageSize } },
 			}),
 		);
 		all.push(...result.items);
-		if (result.items.length < pageSize) break;
+		if (all.length >= (result.total ?? all.length) || result.items.length < pageSize) return all;
 	}
-	return all;
+	throw new Error("Too many session pages to pull safely.");
 }
 
 interface SessionMirrorMeta {

@@ -68,7 +68,7 @@ function parseModelField(raw: string | null): string | null {
 			const obj = JSON.parse(raw);
 			return obj.default || obj.model || null;
 		} catch {
-			return raw;
+			return /['"](?:default|model)['"]\s*:\s*['"]([^'"]+)['"]/.exec(raw)?.[1] ?? null;
 		}
 	}
 	return raw;

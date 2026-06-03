@@ -16,6 +16,7 @@ import {
 	aiProviderAddCommand,
 	aiProviderCompleteOAuthCommand,
 	aiProviderConnectCommand,
+	aiProviderEditCommand,
 	aiProviderExportCommand,
 	aiProviderImportAuthCommand,
 	aiProviderImportCommand,
@@ -960,6 +961,37 @@ describe("ai-provider commands", () => {
 		expect(after.output()).toContain('"applied": true');
 	});
 
+	it("clears stale runtime env names when auth changes to an env ref", async () => {
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "clawdi://default/openai/api_key",
+				agentEnv: "OLD_OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderEditCommand("openai-main", {
+				auth: "env:NEW_OPENAI_API_KEY",
+				json: true,
+			});
+		} finally {
+			restore();
+		}
+
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.providers[0].runtime_env_name).toBeUndefined();
+
+		const status = captureConsole();
+		try {
+			await aiProviderStatusCommand({ json: true });
+		} finally {
+			status.restore();
+		}
+		expect(status.output()).toContain('"agent_env_name": "NEW_OPENAI_API_KEY"');
+		expect(status.output()).not.toContain("OLD_OPENAI_API_KEY");
+	});
+
 	it("uses Codex native auth for Codex agent profiles", async () => {
 		const { output, restore } = captureConsole();
 		try {
@@ -1513,6 +1545,61 @@ describe("ai-provider commands", () => {
 		expect(openrouter.auth).toEqual({
 			type: "secret_ref",
 			ref: "env:OPENROUTER_API_KEY",
+		});
+	});
+
+	it("imports provider metadata from the current OpenClaw patch shape", async () => {
+		const openclawConfig = join(tmpHome, "openclaw-config.json");
+		const projection = buildAgentEngineProjection("openclaw", {
+			schema_version: 1,
+			defaults: { chat_provider_id: "anthropic-main" },
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					default_model: "gpt-5.2",
+					api_mode: "openai_responses",
+					auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+				},
+				{
+					id: "anthropic-main",
+					type: "anthropic",
+					base_url: "https://api.anthropic.com",
+					default_model: "claude-opus-4-6",
+					api_mode: "anthropic_messages",
+					auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
+				},
+			],
+		});
+		writeFileSync(openclawConfig, projection.files[0]?.content ?? "{}");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(undefined, { fromOpenclaw: openclawConfig, json: true });
+		} finally {
+			restore();
+		}
+
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.defaults.chat_provider_id).toBe("anthropic-main");
+		expect(catalog.providers).toHaveLength(2);
+		expect(catalog.providers[0]).toMatchObject({
+			id: "openai-main",
+			type: "openai",
+			base_url: "https://api.openai.com/v1",
+			default_model: "gpt-5.2",
+			api_mode: "openai_responses",
+			auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+			runtime_env_name: "OPENAI_API_KEY",
+		});
+		expect(catalog.providers[1]).toMatchObject({
+			id: "anthropic-main",
+			type: "anthropic",
+			base_url: "https://api.anthropic.com",
+			default_model: "claude-opus-4-6",
+			api_mode: "anthropic_messages",
+			auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
+			runtime_env_name: "ANTHROPIC_API_KEY",
 		});
 	});
 
