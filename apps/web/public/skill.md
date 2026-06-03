@@ -134,13 +134,13 @@ clawdi daemon status
 If the user opted out during setup, install it now:
 
 ```bash
-clawdi daemon install --all
+clawdi daemon install
 ```
 
 The install command writes a launchd unit on macOS or a systemd `--user` service on Linux, then loads it. The daemon stays alive across reboots and respawns on crash. Ongoing logs:
 
-- macOS: `tail -f ~/.clawdi/serve/logs/<agent>.stderr.log`
-- Linux: `journalctl --user -u clawdi-serve-<agent> -f`
+- macOS: `tail -f ~/.clawdi/serve/logs/daemon.stderr.log`
+- Linux: `journalctl --user -u clawdi-serve.service -f`
 
 What the user gets:
 
@@ -154,7 +154,7 @@ Skip this step only if the user explicitly says they want manual sync. The CLI f
 If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
 
 ```bash
-clawdi daemon run --agent claude_code
+clawdi daemon run
 ```
 
 ## Sync skills (optional one-time backup)

@@ -170,19 +170,15 @@ async function registerEnv(
 	}
 }
 
-function installDaemon(agentType: AgentType) {
+function installDaemonForAllRegisteredAgents() {
 	try {
-		const result = installDaemonService({ agent: agentType });
+		const result = installDaemonService();
 		const verb = result.replaced ? "updated" : "installed";
-		console.log(chalk.green(`✓ Daemon ${verb} for ${adapterRegistry[agentType].displayName}`));
+		console.log(chalk.green(`✓ Singleton daemon ${verb}`));
 		console.log(chalk.gray(`  ${result.instructions}`));
 	} catch (e) {
-		console.log(
-			chalk.yellow(
-				`⚠ Could not install daemon for ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`,
-			),
-		);
-		console.log(chalk.gray(`  Run manually: clawdi daemon install --agent ${agentType}`));
+		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
+		console.log(chalk.gray("  Run manually: clawdi daemon install"));
 	}
 }
 
@@ -211,10 +207,8 @@ function installDaemonsForRegisteredAgents() {
 		return;
 	}
 	console.log();
-	console.log(chalk.cyan("Installing background sync daemons..."));
-	for (const agentType of registered) {
-		installDaemon(agentType);
-	}
+	console.log(chalk.cyan("Installing background sync daemon..."));
+	installDaemonForAllRegisteredAgents();
 }
 
 async function installBuiltinSkill(agentType: AgentType) {

@@ -14,10 +14,10 @@
  *     the user logs out (laptops where each session ssh's into
  *     a fresh shell)
  *
- * Per-agent unit name (e.g. `ai.clawdi.serve.claude_code`) so a
- * laptop running Claude Code AND Codex can have one daemon per
- * agent without arguing about which one owns the supervisor
- * slot. v1 daemon services exactly one agent per process.
+ * `clawdi daemon install` writes one singleton unit
+ * (`ai.clawdi.serve` / `clawdi-serve.service`) whose process runs
+ * every registered agent's sync engine. Older per-agent units are
+ * still detected so setup/install can remove them during migration.
  *
  * Windows is not part of v1 — explicitly told by the user.
  */
@@ -37,15 +37,8 @@ import { homedir, platform } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 interface InstallOpts {
-	agent: string;
-	/** Pinned environment id baked into the unit's
-	 * `--environment-id <id>` flag. Use ONLY when the caller
-	 * explicitly opts a single agent into a non-default env (e.g.
-	 * `clawdi daemon install --agent codex --environment-id <id>`).
-	 * Must not be derived from `process.env.CLAWDI_ENVIRONMENT_ID`
-	 * during multi-agent install (`--all`); a shell-set env var
-	 * would otherwise pin every agent unit to the same env. */
-	environmentId?: string;
+	/** Internal migration hook for removing pre-singleton per-agent units. */
+	agent?: string;
 }
 
 function home(): string {
@@ -67,11 +60,13 @@ function clawdiRoot(): string {
 	return join(home(), ".clawdi");
 }
 
-function unitName(agent: string): string {
-	// launchd labels follow reverse-DNS; systemd unit names are
-	// freeform but conventionally use a slug. We use the same
-	// agent slug both ways for predictability.
-	return `ai.clawdi.serve.${agent}`;
+function unitName(): string {
+	return "ai.clawdi.serve";
+}
+
+function daemonProgramArgs(opts: InstallOpts): string[] {
+	if (opts.agent) return ["daemon", "run", "--agent", opts.agent];
+	return ["daemon", "run"];
 }
 
 /** CLAWDI_* env vars that need to be baked into the supervisor
@@ -86,6 +81,7 @@ function unitName(agent: string): string {
  * Whitelist deliberately narrow:
  *   - CLAWDI_AUTH_TOKEN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
+ *   - CLAWDI_AGENT_TYPE: container fallback when no env registry exists
  *   - CLAWDI_SERVE_MODE: container/laptop mode
  *   - CLAWDI_SERVE_DEBUG: verbose log level
  *   - CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME /
@@ -96,13 +92,8 @@ function unitName(agent: string): string {
  * NOTE: `CLAWDI_ENVIRONMENT_ID` is deliberately NOT captured here.
  * It's per-agent state and lives in `~/.clawdi/environments/<agent>.json`
  * (written by `clawdi setup`). Capturing the shell env var would let a
- * single env id leak into every agent's unit during
- * `clawdi daemon install --all` — at runtime `resolveEnvironmentId`
- * prefers the env var over the per-agent file, so all daemons would
- * pin to the same env. Single-agent installs that need an explicit
- * pin pass `--environment-id` via `InstallOpts.environmentId`, which
- * gets baked into the unit's ProgramArguments (NOT
- * EnvironmentVariables) and so doesn't bleed across agents.
+ * single env id leak into the singleton daemon and be misapplied across
+ * multiple engines.
  */
 const PERSISTED_ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
@@ -118,6 +109,7 @@ const PERSISTED_ENV_KEYS = [
 	// `~/.clawdi/` after the user logs out — splitting state
 	// across two directories and breaking the isolation guarantee.
 	"CLAWDI_HOME",
+	"CLAWDI_AGENT_TYPE",
 	"CLAWDI_SERVE_MODE",
 	"CLAWDI_SERVE_DEBUG",
 	"CLAUDE_CONFIG_DIR",
@@ -193,7 +185,7 @@ function currentClawdiCommand(): string[] {
 	return [node, entry];
 }
 
-export function install(opts: InstallOpts): {
+export function install(opts: InstallOpts = {}): {
 	unit: string;
 	instructions: string;
 	replaced: boolean;
@@ -204,14 +196,14 @@ export function install(opts: InstallOpts): {
 	throw new Error(`unsupported platform for service install: ${p}`);
 }
 
-export function uninstall(opts: InstallOpts): { removed: boolean } {
+export function uninstall(opts: InstallOpts = {}): { removed: boolean } {
 	const p = platform();
 	if (p === "darwin") return uninstallLaunchd(opts);
 	if (p === "linux") return uninstallSystemd(opts);
 	throw new Error(`unsupported platform for service uninstall: ${p}`);
 }
 
-export function statusLines(opts: InstallOpts): string[] {
+export function statusLines(opts: InstallOpts = {}): string[] {
 	const p = platform();
 	if (p === "darwin") return statusLaunchd(opts);
 	if (p === "linux") return statusSystemd(opts);
@@ -221,7 +213,7 @@ export function statusLines(opts: InstallOpts): string[] {
 /** Restart an already-installed daemon unit. Throws if no unit is
  * installed (caller should install first) or if the supervisor
  * refuses to restart (corrupt unit, permissions, etc). */
-export function restart(opts: InstallOpts): void {
+export function restart(opts: InstallOpts = {}): void {
 	const p = platform();
 	if (p === "darwin") {
 		restartLaunchd(opts);
@@ -233,14 +225,11 @@ export function restart(opts: InstallOpts): void {
 }
 
 function restartLaunchd(opts: InstallOpts): void {
-	const path = plistPath(opts.agent);
+	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	if (!existsSync(path)) {
-		throw new Error(
-			`no daemon unit installed for ${opts.agent} ` +
-				`(run \`clawdi daemon install --agent ${opts.agent}\` first)`,
-		);
+		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
-	const label = unitName(opts.agent);
+	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
 	const target = `gui/${process.getuid?.() ?? 501}/${label}`;
 	// Two restart shapes depending on launchd's view of the unit:
 	//   - Loaded: hot restart via `kickstart -k` (kills the running
@@ -263,7 +252,7 @@ function restartLaunchd(opts: InstallOpts): void {
 }
 
 function restartSystemd(opts: InstallOpts): void {
-	const unit = `clawdi-serve-${opts.agent}.service`;
+	const unit = unitFileName(opts.agent);
 	const ok = tryRun(["systemctl", "--user", "restart", unit]);
 	if (!ok) {
 		throw new Error(
@@ -284,7 +273,15 @@ function launchAgentsDir(): string {
 }
 
 function plistPath(agent: string): string {
-	return join(launchAgentsDir(), `${unitName(agent)}.plist`);
+	return join(launchAgentsDir(), `${legacyUnitName(agent)}.plist`);
+}
+
+function singletonPlistPath(): string {
+	return join(launchAgentsDir(), `${unitName()}.plist`);
+}
+
+function legacyUnitName(agent: string): string {
+	return `ai.clawdi.serve.${agent}`;
 }
 
 function installLaunchd(opts: InstallOpts): {
@@ -292,8 +289,7 @@ function installLaunchd(opts: InstallOpts): {
 	instructions: string;
 	replaced: boolean;
 } {
-	validateEnvironmentId(opts.environmentId);
-	const label = unitName(opts.agent);
+	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
 	const [node, entry] = currentClawdiCommand();
 	const logDir = join(clawdiRoot(), "serve", "logs");
 	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
@@ -304,15 +300,10 @@ function installLaunchd(opts: InstallOpts): {
 	// stderr (where we emit JSON logs) lands in a rotating
 	// file the user can `tail`.
 	//
-	// `--environment-id <id>` is appended to ProgramArguments
-	// (NOT EnvironmentVariables) when the caller pinned an env_id
-	// for this specific agent. Putting it in argv keeps it scoped
-	// to this unit; an EnvironmentVariables entry could leak
-	// across multi-agent installs if every unit picked up the same
-	// shell env var.
-	const envIdArgs = opts.environmentId
-		? `\n    <string>--environment-id</string>\n    <string>${escapeXml(opts.environmentId)}</string>`
-		: "";
+	const args = daemonProgramArgs(opts);
+	const programArgs = [node, entry, ...args]
+		.map((arg) => `    <string>${escapeXml(arg)}</string>`)
+		.join("\n");
 	const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -321,12 +312,7 @@ function installLaunchd(opts: InstallOpts): {
   <string>${escapeXml(label)}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(node)}</string>
-    <string>${escapeXml(entry)}</string>
-    <string>daemon</string>
-    <string>run</string>
-    <string>--agent</string>
-    <string>${escapeXml(opts.agent)}</string>${envIdArgs}
+${programArgs}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -335,9 +321,9 @@ function installLaunchd(opts: InstallOpts): {
   <key>ThrottleInterval</key>
   <integer>10</integer>
   <key>StandardErrorPath</key>
-  <string>${escapeXml(join(logDir, `${opts.agent}.stderr.log`))}</string>
+  <string>${escapeXml(join(logDir, `${opts.agent ?? "daemon"}.stderr.log`))}</string>
   <key>StandardOutPath</key>
-  <string>${escapeXml(join(logDir, `${opts.agent}.stdout.log`))}</string>
+  <string>${escapeXml(join(logDir, `${opts.agent ?? "daemon"}.stdout.log`))}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
@@ -352,7 +338,7 @@ function installLaunchd(opts: InstallOpts): {
 </plist>
 `;
 
-	const path = plistPath(opts.agent);
+	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	// Sample BEFORE we writeFileSync — caller wants to know
 	// whether this install was a fresh write or replacing an
 	// existing unit.
@@ -381,15 +367,15 @@ function installLaunchd(opts: InstallOpts): {
 	const loaded = tryRun(["launchctl", "load", "-w", path]);
 
 	const instructions = loaded
-		? `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent}.stderr.log`)}`
+		? `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent ?? "daemon"}.stderr.log`)}`
 		: `Wrote plist to ${path}, but launchctl load failed (try: launchctl load -w "${path}").`;
 	return { unit: path, instructions, replaced };
 }
 
 function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
-	const path = plistPath(opts.agent);
+	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	if (!existsSync(path)) return { removed: false };
-	const label = unitName(opts.agent);
+	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
 	// Stop the daemon BEFORE removing the plist. Pre-fix this used a
 	// bare `tryRun(["launchctl", "unload", path])` and ignored the
 	// return code, then `unlinkSync(path)` regardless — so a
@@ -422,9 +408,9 @@ function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
 }
 
 function statusLaunchd(opts: InstallOpts): string[] {
-	const label = unitName(opts.agent);
+	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
 	const lines: string[] = [];
-	const path = plistPath(opts.agent);
+	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	lines.push(`unit:    ${existsSync(path) ? path : "(not installed)"}`);
 	const out = tryRunCapture(["launchctl", "list", label]);
 	if (out !== null) {
@@ -452,8 +438,12 @@ function systemdUserDir(): string {
 	return dir;
 }
 
-function unitPath(agent: string): string {
-	return join(systemdUserDir(), `clawdi-serve-${agent}.service`);
+function unitFileName(agent?: string): string {
+	return agent ? `clawdi-serve-${agent}.service` : "clawdi-serve.service";
+}
+
+function unitPath(agent?: string): string {
+	return join(systemdUserDir(), unitFileName(agent));
 }
 
 function installSystemd(opts: InstallOpts): {
@@ -461,10 +451,10 @@ function installSystemd(opts: InstallOpts): {
 	instructions: string;
 	replaced: boolean;
 } {
-	validateEnvironmentId(opts.environmentId);
 	const [node, entry] = currentClawdiCommand();
 	const path = unitPath(opts.agent);
 	const replaced = existsSync(path);
+	const args = daemonProgramArgs(opts);
 
 	// systemd `Environment="KEY=VALUE"` parses backslash + double-
 	// quote inside the value. A $HOME containing `"` could close
@@ -515,15 +505,13 @@ function installSystemd(opts: InstallOpts): {
 	// of "start at user login"; requires `loginctl enable-linger
 	// <user>` to fire on boot rather than first login session.
 	const unit = `[Unit]
-Description=clawdi daemon (${opts.agent})
+Description=clawdi daemon
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${shellEscape(node)} ${shellEscape(entry)} daemon run --agent ${shellEscape(opts.agent)}${
-		opts.environmentId ? ` --environment-id ${shellEscape(opts.environmentId)}` : ""
-	}
+ExecStart=${[node, entry, ...args].map(shellEscape).join(" ")}
 Restart=always
 RestartSec=10
 RestartPreventExitStatus=2
@@ -547,24 +535,18 @@ WantedBy=default.target
 		/* best effort */
 	}
 	tryRun(["systemctl", "--user", "daemon-reload"]);
-	const enabled = tryRun([
-		"systemctl",
-		"--user",
-		"enable",
-		"--now",
-		`clawdi-serve-${opts.agent}.service`,
-	]);
+	const enabled = tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]);
 
 	const instructions = enabled
-		? `Enabled and started clawdi-serve-${opts.agent}.service. Tail logs with: journalctl --user -u clawdi-serve-${opts.agent} -f`
-		: `Wrote ${path} but systemctl enable failed. Try: systemctl --user enable --now clawdi-serve-${opts.agent}.service`;
+		? `Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f`
+		: `Wrote ${path} but systemctl enable failed. Try: systemctl --user enable --now ${unitFileName(opts.agent)}`;
 	return { unit: path, instructions, replaced };
 }
 
 function uninstallSystemd(opts: InstallOpts): { removed: boolean } {
 	const path = unitPath(opts.agent);
 	if (!existsSync(path)) return { removed: false };
-	tryRun(["systemctl", "--user", "disable", "--now", `clawdi-serve-${opts.agent}.service`]);
+	tryRun(["systemctl", "--user", "disable", "--now", unitFileName(opts.agent)]);
 	unlinkSync(path);
 	tryRun(["systemctl", "--user", "daemon-reload"]);
 	return { removed: true };
@@ -574,18 +556,13 @@ function statusSystemd(opts: InstallOpts): string[] {
 	const lines: string[] = [];
 	const path = unitPath(opts.agent);
 	lines.push(`unit:    ${existsSync(path) ? path : "(not installed)"}`);
-	const out = tryRunCapture([
-		"systemctl",
-		"--user",
-		"is-active",
-		`clawdi-serve-${opts.agent}.service`,
-	]);
+	const out = tryRunCapture(["systemctl", "--user", "is-active", unitFileName(opts.agent)]);
 	lines.push(`active:  ${out?.trim() ?? "unknown"}`);
 	const sub = tryRunCapture([
 		"systemctl",
 		"--user",
 		"status",
-		`clawdi-serve-${opts.agent}.service`,
+		unitFileName(opts.agent),
 		"--no-pager",
 	]);
 	if (sub !== null) {
@@ -634,23 +611,6 @@ function escapeXml(s: string): string {
 		.replace(/'/g, "&apos;");
 }
 
-/** Validate `environmentId` is safe to bake into a unit's argv.
- * Defense-in-depth — the install command should already pass a
- * UUID, but injecting a control char or shell metachar via a
- * compromised env file would otherwise let an attacker append
- * arbitrary `--flag` arguments. Allow only the canonical UUID
- * shape. */
-function validateEnvironmentId(envId: string | undefined): void {
-	if (envId === undefined) return;
-	const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-	if (!UUID_RE.test(envId)) {
-		throw new Error(
-			`refusing to install with non-UUID --environment-id (${envId}). ` +
-				"Pass a valid environment id from `clawdi setup` output.",
-		);
-	}
-}
-
 function shellEscape(s: string): string {
 	// systemd unit ExecStart accepts a quoted form for paths
 	// containing spaces. Wrap in double-quotes and escape any
@@ -661,13 +621,10 @@ function shellEscape(s: string): string {
 }
 
 /** Scan the OS supervisor for every clawdi daemon unit installed
- * by `clawdi daemon install`, regardless of whether its agent is
- * still registered in `~/.clawdi/environments/`. Used by callers
- * that need to act on the actual installed surface (e.g. `serve
- * restart --all`, `auth logout`'s warn-about-residual-daemons
- * check) — `listRegisteredAgentTypes()` would miss daemons whose
- * env file was deleted out from under them, leaving the unit
- * orphaned but still running.
+ * by older `clawdi daemon install --agent <agent>` builds,
+ * regardless of whether its agent is still registered in
+ * `~/.clawdi/environments/`. Used only for migration cleanup and
+ * logout warnings.
  *
  * Cheap implementation: enumerate `~/Library/LaunchAgents/` (macOS)
  * or `~/.config/systemd/user/` (Linux) and pattern-match against
@@ -684,6 +641,21 @@ export function listInstalledAgents(): KnownAgent[] {
 		if (path && existsSync(path)) installed.push(agent);
 	}
 	return installed;
+}
+
+export type InstalledDaemonTarget = KnownAgent | "daemon";
+
+export function isSingletonDaemonInstalled(): boolean {
+	const p = platform();
+	const path = p === "darwin" ? singletonPlistPath() : p === "linux" ? unitPath() : null;
+	return path ? existsSync(path) : false;
+}
+
+export function listInstalledDaemonTargets(): InstalledDaemonTarget[] {
+	const targets: InstalledDaemonTarget[] = [];
+	if (isSingletonDaemonInstalled()) targets.push("daemon");
+	targets.push(...listInstalledAgents());
+	return targets;
 }
 
 /** Health-file age check, used by `clawdi daemon status` even

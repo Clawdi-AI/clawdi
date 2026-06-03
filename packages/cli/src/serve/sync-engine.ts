@@ -78,6 +78,24 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // (dashboard install / delete) propagate to the machine; 60s is
 // the worst-case lag a user sees after acting on the dashboard.
 const RECONCILE_INTERVAL_MS = 60_000;
+const LAUNCHD_DAEMON_LABEL = "ai.clawdi.serve";
+
+function removeLaunchdDaemonSupervision(agentType: string): void {
+	if (process.platform !== "darwin") return;
+	void (async () => {
+		try {
+			const { execFile } = await import("node:child_process");
+			for (const label of [LAUNCHD_DAEMON_LABEL, `${LAUNCHD_DAEMON_LABEL}.${agentType}`]) {
+				execFile("launchctl", ["remove", label], () => {
+					// fire-and-forget; the daemon is exiting anyway
+				});
+			}
+		} catch {
+			/* launchctl missing, ignore — the manual `launchctl unload`
+			 * from the user is the fallback. */
+		}
+	})();
+}
 // Backoff between retry attempts when the queue has items but the
 // last drain attempt failed. Keeps the daemon from hammering a
 // dead network. Per-item attempts counter caps the work too.
@@ -326,14 +344,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// handler below — boot-time auth failure also needs
 			// supervision removal on macOS or launchd respawns
 			// the daemon every 10s.
-			if (process.platform === "darwin" && opts.adapter.agentType) {
-				try {
-					const { execFile } = await import("node:child_process");
-					execFile("launchctl", ["remove", `ai.clawdi.serve.${opts.adapter.agentType}`], () => {});
-				} catch {
-					/* launchctl missing, fall through */
-				}
-			}
+			removeLaunchdDaemonSupervision(opts.adapter.agentType);
 			opts.abortController.abort();
 			return;
 		}
@@ -400,20 +411,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// the same revoked key isn't retried every 10s. Best-effort:
 		// failures (non-installed daemon, no launchctl in PATH) just
 		// fall through to the abort + exit 2 path below.
-		if (process.platform === "darwin" && opts.adapter.agentType) {
-			void (async () => {
-				try {
-					const { execFile } = await import("node:child_process");
-					execFile("launchctl", ["remove", `ai.clawdi.serve.${opts.adapter.agentType}`], () => {
-						// fire-and-forget; the daemon is exiting anyway
-					});
-				} catch {
-					/* launchctl missing, ignore — the manual
-					 * `launchctl unload` from the user is the
-					 * fallback. */
-				}
-			})();
-		}
+		removeLaunchdDaemonSupervision(opts.adapter.agentType);
 		opts.abortController.abort();
 	};
 

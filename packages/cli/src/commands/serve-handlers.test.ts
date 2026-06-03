@@ -4,7 +4,7 @@ import { rejectUnsupportedOpts } from "./serve";
 /**
  * Behavior tests for the post-codex-review fixes:
  *   - rejectUnsupportedOpts (helper used by status/uninstall/restart/logs/doctor)
- *   - --all + --agent mutex (install / uninstall / restart) via integration
+ *   - singleton daemon handlers rejecting legacy target selectors
  *
  * Strategy: swap `process.exit` to throw a tagged error so we can
  * `expect(...).toThrow()` and inspect the captured `console.error`
@@ -84,27 +84,31 @@ describe("rejectUnsupportedOpts", () => {
 	});
 });
 
-describe("--all + --agent mutex", () => {
-	it("uninstall errors with both flags", async () => {
-		const { serveUninstall } = await import("./serve");
-		await expect(serveUninstall({ all: true, agent: "codex" })).rejects.toThrow(ExitCalled);
-		expect(captured.exitCode).toBe(1);
-		expect(captured.stderr.join("\n")).toMatch(/--all and --agent are mutually exclusive/);
-	});
-
-	it("restart errors with both flags", async () => {
-		const { serveRestart } = await import("./serve");
-		await expect(serveRestart({ all: true, agent: "codex" })).rejects.toThrow(ExitCalled);
-		expect(captured.exitCode).toBe(1);
-		expect(captured.stderr.join("\n")).toMatch(/--all and --agent are mutually exclusive/);
-	});
-
-	// install's mutex is also tested via parser path (serve-cli-options.test.ts)
-	// — the handler-level test would need to stub `isLoggedIn` so we can reach
-	// the `if (opts.all)` branch. Skip in favor of the integration test.
-});
-
 describe("subcommand handler rejects parent-leaked options", () => {
+	it("install rejects legacy selectors", async () => {
+		const { serveInstall } = await import("./serve");
+		await expect(serveInstall({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon install.*--agent/);
+	});
+
+	it("uninstall rejects legacy selectors", async () => {
+		const { serveUninstall } = await import("./serve");
+		await expect(serveUninstall({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon uninstall.*--agent/);
+	});
+
+	it("restart rejects legacy selectors", async () => {
+		const { serveRestart } = await import("./serve");
+		await expect(serveRestart({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon restart.*--agent/);
+	});
+
 	it("uninstall rejects --environment-id", async () => {
 		const { serveUninstall } = await import("./serve");
 		await expect(

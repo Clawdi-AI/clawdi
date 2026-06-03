@@ -555,13 +555,13 @@ export async function authLogout() {
 	// env-file path would skip a daemon whose env file got deleted
 	// but whose plist was still installed (codex flagged this gap
 	// in PR-#74 review).
-	const { listInstalledAgents } = await import("../serve/installer");
-	const installedAgents = listInstalledAgents();
+	const { listInstalledDaemonTargets } = await import("../serve/installer");
+	const installedAgents = listInstalledDaemonTargets();
 	if (installedAgents.length > 0) {
 		p.log.warn(
 			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
 				`These keep running after logout and will fail with 401 against the cloud. ` +
-				`Run \`clawdi daemon uninstall --all\` first, or accept the noise.`,
+				`Run \`clawdi daemon uninstall\` first, or accept the noise.`,
 		);
 	}
 

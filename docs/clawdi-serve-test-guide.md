@@ -98,8 +98,11 @@ won't collide with anyone's real login. Tear it down later with
 
 ```sh
 export CLAWDI_AUTH_TOKEN="$RAW_KEY"
-export CLAWDI_ENVIRONMENT_ID="$ENV_ID"
 export CLAUDE_CONFIG_DIR=/tmp/manual-claude   # fake skills dir
+mkdir -p ~/.clawdi/environments
+cat > ~/.clawdi/environments/claude_code.json <<EOF
+{"id":"$ENV_ID","agentType":"claude_code"}
+EOF
 mkdir -p $CLAUDE_CONFIG_DIR/skills/test-skill
 cat > $CLAUDE_CONFIG_DIR/skills/test-skill/SKILL.md <<'EOF'
 ---
@@ -110,7 +113,7 @@ description: manual test
 EOF
 
 # CLAWDI_SERVE_DEBUG=1 prints debug-level events on stderr.
-CLAWDI_SERVE_DEBUG=1 bun run packages/cli/src/index.ts daemon run --agent claude_code
+CLAWDI_SERVE_DEBUG=1 bun run packages/cli/src/index.ts daemon run
 ```
 
 You should see (filtered to the interesting events):
@@ -178,23 +181,22 @@ rm -rf /tmp/manual-claude
 If you want the daemon supervised by launchd / systemd:
 
 ```sh
-clawdi daemon install --agent claude_code
+clawdi daemon install
 clawdi daemon status --agent claude_code
-clawdi daemon uninstall --agent claude_code  # when done
+clawdi daemon uninstall  # when done
 ```
 
-Logs land at `~/.clawdi/serve/logs/<agent>.{stdout,stderr}.log`
-on macOS and via `journalctl --user -u clawdi-serve-<agent>` on
-Linux.
+Logs land at `~/.clawdi/serve/logs/daemon.{stdout,stderr}.log`
+on macOS and via `journalctl --user -u clawdi-serve.service` on Linux.
 
 ## Troubleshooting
 
 **`serve.no_auth`** — `~/.clawdi/auth.json` missing AND no
 `CLAWDI_AUTH_TOKEN` env. Run `clawdi auth login` or set the env.
 
-**`serve.no_environment`** — no `~/.clawdi/environments/<agent>.json`,
-no `--environment-id` flag, no `CLAWDI_ENVIRONMENT_ID` env. Run
-`clawdi setup` or pass `--environment-id` explicitly.
+**`serve.no_environment`** — no `~/.clawdi/environments/<agent>.json`.
+Run `clawdi setup`; in a single-agent container, set both
+`CLAWDI_AGENT_TYPE` and `CLAWDI_ENVIRONMENT_ID`.
 
 **`watcher.fs_watch_failed` → falls back to poll** — expected
 inside containers / overlay-fs. The 30s poll picks up edits but
@@ -219,7 +221,8 @@ only conduit.
 | Var | Role |
 |---|---|
 | `CLAWDI_AUTH_TOKEN` | Deploy key. Bypasses `~/.clawdi/auth.json` so no interactive login is needed. |
-| `CLAWDI_ENVIRONMENT_ID` | The env this pod represents. Bypasses `~/.clawdi/environments/*.json`. |
+| `CLAWDI_AGENT_TYPE` | Agent adapter to load when the container has no `~/.clawdi/environments/*.json` registry. |
+| `CLAWDI_ENVIRONMENT_ID` | The env this single-agent pod represents. Bypasses `~/.clawdi/environments/*.json`. |
 | `CLAWDI_API_URL` | Cloud backend (e.g. `https://cloud-api.clawdi.ai`). |
 | `CLAWDI_SERVE_MODE=container` | Forces poll mode (overlay-fs doesn't fire fs.watch reliably). |
 
@@ -245,9 +248,8 @@ only conduit.
 ### Entrypoint shape
 
 ```sh
-exec clawdi daemon run --agent ${CLAWDI_AGENT_TYPE:-hermes}
+exec clawdi daemon run
 ```
 
-`--agent` is required when `CLAWDI_ENVIRONMENT_ID` is set (the
-env-pick logic uses agent_type to disambiguate the local
-adapter to load).
+Set `CLAWDI_AGENT_TYPE` when the image does not contain a
+`~/.clawdi/environments/<agent>.json` registry file.

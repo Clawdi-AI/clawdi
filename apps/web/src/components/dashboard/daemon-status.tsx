@@ -434,7 +434,7 @@ function SyncHelpDialog({
 										</p>
 										<CommandLine command="clawdi daemon status" />
 										<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
-										<CommandLine command={`clawdi daemon install --agent ${env.agent_type}`} />
+										<CommandLine command="clawdi daemon install" />
 									</div>
 								)
 							) : null}
@@ -503,14 +503,14 @@ function SyncSetupSnippet({ env }: { env: Env }) {
 }
 
 /** Hand-off prompt the user pastes into Claude / Codex / etc. The
- * agent reads the prompt, runs `clawdi daemon install --all`, and
+ * agent reads the prompt, runs `clawdi daemon install`, and
  * confirms with `clawdi daemon status`. Mirrors the prose tone and
  * structure of `useAgentPrompt` in add-agent-setup.tsx. */
 function useSyncAgentPrompt(env: Env): string {
 	const typeLabel = agentTypeLabel(env.agent_type);
 	return [
 		`Turn on Clawdi live sync on this machine for ${typeLabel}.`,
-		"Run `clawdi daemon install --all` to install the per-user daemon for every Clawdi-registered agent on this machine.",
+		"Run `clawdi daemon install` to install one per-user daemon that syncs every Clawdi-registered agent on this machine.",
 		"Then confirm with `clawdi daemon status` and report whether the daemon is live.",
 	].join(" ");
 }
@@ -527,15 +527,13 @@ function SyncSetupAgentTab({ env }: { env: Env }) {
 	);
 }
 
-function SyncSetupCliTab({ env }: { env: Env }) {
-	const perAgentCmd = `clawdi daemon install --agent ${env.agent_type}`;
-	const allCmd = "clawdi daemon install --all";
+function SyncSetupCliTab(_props: { env: Env }) {
+	const installCmd = "clawdi daemon install";
 	return (
 		<div className="space-y-3">
-			<p className="text-sm text-muted-foreground">In a terminal on this machine, run either:</p>
+			<p className="text-sm text-muted-foreground">In a terminal on this machine, run:</p>
 			<div className="space-y-1.5">
-				<CommandLine command={perAgentCmd} hint="this agent only" />
-				<CommandLine command={allCmd} hint="every agent on this machine" />
+				<CommandLine command={installCmd} hint="single daemon for every agent on this machine" />
 			</div>
 			<p className="text-xs text-muted-foreground">
 				Installs a launchd (macOS) or systemd (Linux) unit so the daemon survives reboots.
