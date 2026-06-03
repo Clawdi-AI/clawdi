@@ -1,11 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AiProvider, AiProviderCatalog, AiProviderValidationOptions } from "@clawdi/shared";
 import { validateAiProviderCatalog } from "@clawdi/shared";
 import { getClawdiDir } from "./config";
-
-const CATALOG_MODE = 0o600;
-const CATALOG_DIR_MODE = 0o700;
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "./private-file";
 
 export function aiProviderCatalogPath(): string {
 	return join(getClawdiDir(), "ai-providers", "catalog.json");
@@ -41,15 +39,10 @@ export function writeAiProviderCatalog(catalog: AiProviderCatalog): void {
 		throw new Error(`Refusing to write invalid AI Provider catalog:\n${result.errors.join("\n")}`);
 	}
 	const path = aiProviderCatalogPath();
-	const dir = dirname(path);
-	mkdirSync(dir, { recursive: true, mode: CATALOG_DIR_MODE });
-	writeFileSync(path, `${JSON.stringify(catalog, null, 2)}\n`, { mode: CATALOG_MODE });
-	try {
-		chmodSync(dir, CATALOG_DIR_MODE);
-		chmodSync(path, CATALOG_MODE);
-	} catch {
-		// Best effort on platforms without POSIX modes.
-	}
+	writePrivateFileAtomic(path, `${JSON.stringify(catalog, null, 2)}\n`, {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
 }
 
 export function upsertAiProvider(
@@ -93,17 +86,19 @@ export function removeAiProvider(
 }
 
 export function coerceAiProviderCatalog(input: unknown): AiProviderCatalog {
-	if (!isRecord(input)) throw new Error("AI Provider catalog must be an object.");
-	if (input.schema_version !== 1) {
+	const source =
+		isRecord(input) && isRecord(input.ai_provider_catalog) ? input.ai_provider_catalog : input;
+	if (!isRecord(source)) throw new Error("AI Provider catalog must be an object.");
+	if (source.schema_version !== 1) {
 		throw new Error("AI Provider catalog schema_version must be 1.");
 	}
-	if (!Array.isArray(input.providers)) {
+	if (!Array.isArray(source.providers)) {
 		throw new Error("AI Provider catalog providers must be an array.");
 	}
 	return {
-		schema_version: input.schema_version,
-		providers: input.providers,
-		defaults: isRecord(input.defaults) ? input.defaults : undefined,
+		schema_version: source.schema_version,
+		providers: source.providers,
+		defaults: isRecord(source.defaults) ? source.defaults : undefined,
 	} as AiProviderCatalog;
 }
 

@@ -211,34 +211,21 @@ async def set_ai_provider_api_key(
     runtime_env_name = body.runtime_env_name
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid runtime_env_name")
-    ciphertext, nonce = encrypt(body.value.get_secret_value())
-    existing = await _find_auth_payload(db, auth, provider_id, profile)
-    if existing is None:
-        existing = AiProviderAuthPayload(
-            owner_user_id=auth.user_id,
-            provider_id=provider_id,
-            auth_profile=profile,
-            kind="api_key",
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata=_compact({"runtime_env_name": runtime_env_name}),
-        )
-        db.add(existing)
-    else:
-        existing.kind = "api_key"
-        existing.source = "managed"
-        existing.encrypted_payload = ciphertext
-        existing.nonce = nonce
-        existing.payload_metadata = _compact({"runtime_env_name": runtime_env_name})
-        existing.archived_at = None
+    await _store_auth_payload(
+        db,
+        auth,
+        provider_id,
+        profile,
+        "api_key",
+        body.value.get_secret_value(),
+        _compact({"runtime_env_name": runtime_env_name}),
+    )
 
     provider.auth_type = "api_key"
     provider.auth_ref = None
     provider.auth_metadata = {"source": "managed", "profile": profile}
     if runtime_env_name is not None:
         provider.runtime_env_name = runtime_env_name
-    await _archive_other_auth_payloads(db, auth, provider_id, profile)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -262,39 +249,27 @@ async def import_ai_provider_auth(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "agent_profile requires tool")
         tool = _normalize_profile(body.tool)
         _validate_supported_agent_profile_tool(tool)
-        provider.auth_type = "agent_profile"
-        provider.auth_ref = None
-        provider.auth_metadata = {
+        metadata = {
             "tool": tool,
             "profile": profile,
         }
+        provider.auth_type = "agent_profile"
+        provider.auth_ref = None
+        provider.auth_metadata = metadata
     elif body.type == "oauth_profile":
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "oauth_profile import is not supported; use Codex OAuth connect",
         )
-    ciphertext, nonce = encrypt(body.payload.get_secret_value())
-    existing = await _find_auth_payload(db, auth, provider_id, profile)
-    if existing is None:
-        existing = AiProviderAuthPayload(
-            owner_user_id=auth.user_id,
-            provider_id=provider_id,
-            auth_profile=profile,
-            kind=body.type,
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata=provider.auth_metadata,
-        )
-        db.add(existing)
-    else:
-        existing.kind = body.type
-        existing.source = "managed"
-        existing.encrypted_payload = ciphertext
-        existing.nonce = nonce
-        existing.payload_metadata = provider.auth_metadata
-        existing.archived_at = None
-    await _archive_other_auth_payloads(db, auth, provider_id, profile)
+    await _store_auth_payload(
+        db,
+        auth,
+        provider_id,
+        profile,
+        body.type,
+        body.payload.get_secret_value(),
+        provider.auth_metadata,
+    )
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -429,31 +404,18 @@ async def complete_ai_provider_oauth(
             profile,
         )
 
-    ciphertext, nonce = encrypt(payload_text)
-    existing = await _find_auth_payload(db, auth, provider_id, profile)
-    if existing is None:
-        existing = AiProviderAuthPayload(
-            owner_user_id=auth.user_id,
-            provider_id=provider_id,
-            auth_profile=profile,
-            kind=provider_auth_type,
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata=metadata,
-        )
-        db.add(existing)
-    else:
-        existing.kind = provider_auth_type
-        existing.source = "managed"
-        existing.encrypted_payload = ciphertext
-        existing.nonce = nonce
-        existing.payload_metadata = metadata
-        existing.archived_at = None
+    await _store_auth_payload(
+        db,
+        auth,
+        provider_id,
+        profile,
+        provider_auth_type,
+        payload_text,
+        metadata,
+    )
     provider.auth_type = provider_auth_type
     provider.auth_ref = None
     provider.auth_metadata = metadata
-    await _archive_other_auth_payloads(db, auth, provider_id, profile)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -503,7 +465,6 @@ async def _codex_auth_profile_payload(
     account_id = claims.get("chatgpt_account_id")
     auth_json = {
         "auth_mode": "chatgpt",
-        "OPENAI_API_KEY": api_key,
         "tokens": {
             "id_token": id_token,
             "access_token": access_token,
@@ -512,6 +473,8 @@ async def _codex_auth_profile_payload(
         },
         "last_refresh": datetime.now(UTC).isoformat(),
     }
+    if api_key:
+        auth_json["OPENAI_API_KEY"] = api_key
     content = json.dumps(auth_json, indent=2)
     envelope = {
         "schemaVersion": 1,
@@ -724,10 +687,6 @@ def _code_challenge(code_verifier: str) -> str:
 
 def _base64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _base64url_decode(raw: str) -> str:
-    return _base64url_decode_bytes(raw).decode()
 
 
 def _base64url_decode_bytes(raw: str) -> bytes:
@@ -1003,6 +962,39 @@ async def _find_auth_payload(
             )
         )
     ).scalar_one_or_none()
+
+
+async def _store_auth_payload(
+    db: AsyncSession,
+    auth: AuthContext,
+    provider_id: str,
+    profile: str,
+    kind: str,
+    plaintext: str,
+    metadata: dict | None,
+) -> None:
+    ciphertext, nonce = encrypt(plaintext)
+    payload = await _find_auth_payload(db, auth, provider_id, profile)
+    if payload is None:
+        payload = AiProviderAuthPayload(
+            owner_user_id=auth.user_id,
+            provider_id=provider_id,
+            auth_profile=profile,
+            kind=kind,
+            source="managed",
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+            payload_metadata=metadata,
+        )
+        db.add(payload)
+    else:
+        payload.kind = kind
+        payload.source = "managed"
+        payload.encrypted_payload = ciphertext
+        payload.nonce = nonce
+        payload.payload_metadata = metadata
+        payload.archived_at = None
+    await _archive_other_auth_payloads(db, auth, provider_id, profile)
 
 
 async def _archive_other_auth_payloads(

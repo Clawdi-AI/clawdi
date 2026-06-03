@@ -10,6 +10,44 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.10.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.10.0
+
+Package: `clawdi@0.10.0`
+
+### Added
+
+- Added account-global AI Provider management with `clawdi ai-provider`, so
+  users can define OpenAI, Anthropic, OpenRouter, Gemini, Mistral, and
+  OpenAI-compatible endpoints once and reuse them across agents.
+- Added `clawdi ai-provider apply --engine codex|hermes|openclaw` to generate
+  native agent configuration from the Provider Catalog. Codex uses a dedicated
+  profile file, Hermes receives a structured `config.yaml` merge, and OpenClaw
+  uses its native config patch command.
+- Added Codex OAuth connection and provider-bound credential profile import /
+  materialization, including loopback callback handling with manual paste
+  fallback.
+- Added encrypted Provider Catalog export/import for env-backed secrets. Plain
+  API keys are never included in default exports.
+
+### Security
+
+- BYOK model requests remain direct from the runtime to the selected provider;
+  Clawdi stores metadata and secret references but does not proxy model traffic.
+- AI Provider catalog, generated agent config, exported secret env files, and
+  materialized credential files are written with owner-only permissions.
+
+## Clawdi 2026-06-03
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-2026-06-03
+
+### Added
+
+- Added backend AI Provider APIs for account-global provider metadata, managed
+  provider API keys, Codex OAuth start/complete, and CLI-only credential
+  resolution.
+
 ## Clawdi CLI v0.9.0
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.9.0

@@ -1,21 +1,14 @@
 import { execFile } from "node:child_process";
-import {
-	chmodSync,
-	copyFileSync,
-	existsSync,
-	mkdirSync,
-	renameSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, copyFileSync, existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
 import { getAuth, getConfig, isLoggedIn } from "../lib/config";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
 
 const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
@@ -440,11 +433,7 @@ function previewFiles(
 }
 
 function writeAtomic(path: string, content: string, mode: number) {
-	const dir = dirname(path);
-	mkdirSync(dir, { recursive: true });
-	const tmp = join(dir, `.${basename(path)}.tmp-${process.pid}-${Date.now()}`);
-	writeFileSync(tmp, content, { mode });
-	renameSync(tmp, path);
+	writePrivateFileAtomic(path, content, { mode });
 }
 
 function credentialFileMode(): number {

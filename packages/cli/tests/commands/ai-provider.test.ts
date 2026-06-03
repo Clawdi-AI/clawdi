@@ -11,6 +11,7 @@ import {
 import { createServer, get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
 	aiProviderAddCommand,
 	aiProviderCompleteOAuthCommand,
@@ -505,6 +506,72 @@ describe("ai-provider commands", () => {
 		});
 	});
 
+	it("reports loopback OAuth provider errors without completing auth", async () => {
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						oauth_provider: "codex",
+						profile: "default",
+						auth_url: "https://oauth.example/authorize?state=state-123",
+						state: "state-123",
+						redirect_uri: "http://127.0.0.1/callback",
+						expires_at: "2026-06-01T00:10:00Z",
+					}),
+			},
+			{
+				method: "POST",
+				path: "/api/ai-providers",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			const run = aiProviderConnectCommand("openai-codex", {
+				open: false,
+				timeout: "5",
+			});
+			const runError = run.then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			const redirectUri = await waitForStartRedirectUri(captured);
+			await requestLocalCallback(
+				`${redirectUri}?error=access_denied&error_description=No%20thanks`,
+			);
+			const error = await runError;
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).message).toBe("OAuth provider returned access_denied: No thanks");
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(
+			captured.some(
+				(request) => request.path === "/api/ai-providers/openai-codex/auth/oauth/complete",
+			),
+		).toBe(false);
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.providers[0].auth).toEqual({
+			type: "secret_ref",
+			ref: "env:OPENAI_API_KEY",
+		});
+	});
+
 	it("probes provider metadata directly without printing the API key", async () => {
 		process.env.OPENAI_API_KEY = "sk-test-secret";
 		const { captured, restore: restoreFetch } = mockFetch([
@@ -806,7 +873,7 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
-		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex <1.0.0");
+		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.136.0");
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": false');
 		expect(output()).toContain("codex --profile clawdi-ai-provider");
@@ -908,6 +975,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('model_provider = \\"openai\\"');
+		expect(output()).not.toContain('model = \\"gpt-5.2\\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
@@ -957,11 +1025,12 @@ describe("ai-provider commands", () => {
 		expect(output()).toContain('model_provider = \\"openai\\"');
 	});
 
-	it("dry-runs Hermes apply without writing files or mutating config.yaml", async () => {
+	it("dry-runs Hermes apply without mutating config.yaml or printing existing inline secrets", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
 		const hermesConfig = join(hermesDir, "config.yaml");
-		const originalConfig = 'mcp_servers:\n  clawdi:\n    command: "clawdi"\n';
+		const originalConfig =
+			'mcp_servers:\n  clawdi:\n    command: "clawdi"\nproviders:\n  old:\n    api_key: sk-existing-secret\n';
 		writeFileSync(hermesConfig, originalConfig);
 		const { output, restore } = captureConsole();
 		try {
@@ -978,7 +1047,10 @@ describe("ai-provider commands", () => {
 
 		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
 		expect(output()).toContain('"dry_run": true');
-		expect(output()).toContain("hermes config set providers.openai-main.key_env");
+		expect(output()).toContain("Hermes config.yaml provider merge");
+		expect(output()).toContain("custom:openai-main");
+		expect(output()).toContain("OPENAI_API_KEY");
+		expect(output()).not.toContain("sk-existing-secret");
 		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "hermes"))).toBe(false);
 	});
 
@@ -1006,24 +1078,32 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('"dry_run": true');
-		expect(output()).toContain("hermes config set providers.openai-main.base_url");
+		expect(output()).toContain("Hermes config.yaml provider merge");
+		expect(output()).toContain("https://api.openai.com/v1");
 		expect(existsSync(logPath)).toBe(false);
 	});
 
-	it("applies Hermes through hermes config set instead of editing config.yaml directly", async () => {
-		const binDir = join(tmpHome, "bin");
-		mkdirSync(binDir, { recursive: true });
-		const logPath = join(tmpHome, "hermes-calls.log");
-		const hermesPath = join(binDir, "hermes");
-		writeFileSync(hermesPath, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logPath}"\nexit 0\n`, {
-			mode: 0o755,
-		});
-		chmodSync(hermesPath, 0o755);
-		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+	it("applies Hermes through a structured config.yaml merge", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
 		const hermesConfig = join(hermesDir, "config.yaml");
-		const originalConfig = "mcp_servers:\n  clawdi:\n    command: clawdi\n";
+		const originalConfig = [
+			"# user hermes config",
+			"mcp_servers:",
+			"  clawdi:",
+			"    command: clawdi # keep setup comment",
+			"model:",
+			"  provider: custom",
+			"  base_url: https://stale.example/v1",
+			"  api_key: sk-stale-model",
+			"providers:",
+			"  openai-main:",
+			"    base_url: https://stale.example/v1",
+			"    api_key: sk-stale-provider",
+			"    extra_body:",
+			"      keep: true",
+			"",
+		].join("\n");
 		writeFileSync(hermesConfig, originalConfig);
 		const { restore } = captureConsole();
 		try {
@@ -1038,11 +1118,78 @@ describe("ai-provider commands", () => {
 			restore();
 		}
 
-		const calls = readFileSync(logPath, "utf-8");
-		expect(calls).toContain("config set providers.openai-main.base_url https://api.openai.com/v1");
-		expect(calls).toContain("config set model.provider openai-main");
-		expect(calls).toContain("config set model.default gpt-5.2");
-		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
+		const mergedConfig = readFileSync(hermesConfig, "utf-8");
+		expect(mergedConfig).toContain("# user hermes config");
+		expect(mergedConfig).toContain("mcp_servers:");
+		expect(mergedConfig).toContain("command: clawdi # keep setup comment");
+		expect(mergedConfig).toContain("provider: custom:openai-main");
+		expect(mergedConfig).toContain("default: gpt-5.2");
+		expect(mergedConfig).toContain("openai-main:");
+		expect(mergedConfig).toContain("api: https://api.openai.com/v1");
+		expect(mergedConfig).toContain("transport: codex_responses");
+		expect(mergedConfig).toContain("default_model: gpt-5.2");
+		expect(mergedConfig).toContain("key_env: OPENAI_API_KEY");
+		expect(mergedConfig).toContain("extra_body:");
+		expect(mergedConfig).toContain("keep: true");
+		expect(mergedConfig).not.toContain("sk-stale-model");
+		expect(mergedConfig).not.toContain("sk-stale-provider");
+	});
+
+	it("applies Hermes with multiple providers while preserving unrelated provider config", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		writeFileSync(
+			hermesConfig,
+			[
+				"providers:",
+				"  local-legacy:",
+				"    api: http://127.0.0.1:11434/v1",
+				"    transport: chat_completions",
+				"    keep_me: true",
+				"",
+			].join("\n"),
+		);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				setDefault: true,
+				json: true,
+			});
+			await aiProviderApplyCommand({ engine: "hermes", json: true });
+		} finally {
+			restore();
+		}
+
+		const parsed = parseYaml(readFileSync(hermesConfig, "utf-8"));
+		expect(parsed.model.provider).toBe("custom:anthropic-main");
+		expect(parsed.model.default).toBe("claude-opus-4-6");
+		expect(parsed.providers["openai-main"]).toMatchObject({
+			api: "https://api.openai.com/v1",
+			transport: "codex_responses",
+			default_model: "gpt-5.2",
+			key_env: "OPENAI_API_KEY",
+		});
+		expect(parsed.providers["anthropic-main"]).toMatchObject({
+			api: "https://api.anthropic.com",
+			transport: "anthropic_messages",
+			default_model: "claude-opus-4-6",
+			key_env: "ANTHROPIC_API_KEY",
+		});
+		expect(parsed.providers["local-legacy"]).toMatchObject({
+			api: "http://127.0.0.1:11434/v1",
+			transport: "chat_completions",
+			keep_me: true,
+		});
 	});
 
 	it("lets Hermes apply compatible providers while skipping Codex-only auth", async () => {
@@ -1073,20 +1220,40 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain("Provider openai-codex skipped for hermes");
-		expect(output()).toContain("hermes config set providers.anthropic-main.key_env");
-		expect(output()).not.toContain("hermes config set providers.openai-codex");
+		expect(output()).toContain("custom:anthropic-main");
+		expect(output()).toContain("ANTHROPIC_API_KEY");
+		expect(output()).not.toContain("openai-codex:");
 	});
 
-	it("refuses Hermes apply for dotted provider ids before changing files", async () => {
-		const binDir = join(tmpHome, "bin");
-		mkdirSync(binDir, { recursive: true });
-		const logPath = join(tmpHome, "hermes-calls.log");
-		const hermesPath = join(binDir, "hermes");
-		writeFileSync(hermesPath, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logPath}"\nexit 0\n`, {
-			mode: 0o755,
-		});
-		chmodSync(hermesPath, 0o755);
-		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+	it("upgrades a scalar Hermes model config during structured merge", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		writeFileSync(hermesConfig, "model: old-model\nproviders:\n");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ engine: "hermes", json: true });
+		} finally {
+			restore();
+		}
+
+		const mergedConfig = readFileSync(hermesConfig, "utf-8");
+		expect(mergedConfig).toContain("model:");
+		expect(mergedConfig).toContain("provider: custom:openai-main");
+		expect(mergedConfig).toContain("default: gpt-5.2");
+		expect(mergedConfig).toContain("openai-main:");
+	});
+
+	it("supports dotted provider ids in Hermes config.yaml merge", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai.main", {
@@ -1095,15 +1262,42 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(aiProviderApplyCommand({ engine: "hermes", json: true })).rejects.toThrow(
-				"dot-path escaping has not been verified",
-			);
+			await aiProviderApplyCommand({ engine: "hermes", json: true });
 		} finally {
 			restore();
 		}
 
 		expect(existsSync(join(tmpHome, ".clawdi", "runtime", "hermes"))).toBe(false);
-		expect(existsSync(logPath)).toBe(false);
+		const mergedConfig = readFileSync(hermesConfig, "utf-8");
+		expect(mergedConfig).toContain("provider: custom:openai.main");
+		expect(mergedConfig).toContain("openai.main:");
+	});
+
+	it("quotes scalar-like provider ids in Hermes config.yaml merge", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("true", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ engine: "hermes", json: true });
+		} finally {
+			restore();
+		}
+
+		const mergedConfig = readFileSync(hermesConfig, "utf-8");
+		expect(mergedConfig).toContain('"true":');
+		const parsed = parseYaml(mergedConfig);
+		expect(parsed.model.provider).toBe("custom:true");
+		expect(parsed.providers.true).toMatchObject({
+			api: "https://api.openai.com/v1",
+			transport: "codex_responses",
+		});
 	});
 
 	it("requires default_model before ai-provider apply", async () => {
@@ -1191,6 +1385,32 @@ describe("ai-provider commands", () => {
 		});
 	});
 
+	it("wraps OpenClaw apply failures without echoing generated stdin", async () => {
+		const stubDir = join(tmpHome, "bin");
+		mkdirSync(stubDir, { recursive: true });
+		writeFileSync(join(stubDir, "openclaw"), "#!/bin/sh\necho native-failed >&2\nexit 42\n");
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				agentEnv: "OPENAI_API_KEY",
+				json: true,
+			});
+			await expect(aiProviderApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
+				"Failed to run openclaw config patch --stdin (exit 42)",
+			);
+		} finally {
+			restore();
+		}
+
+		expect(output()).not.toContain('"models"');
+		expect(output()).not.toContain("native-failed");
+	});
+
 	it("keeps the OpenClaw default model registered when catalog models omit it", () => {
 		const projection = buildAgentEngineProjection("openclaw", {
 			schema_version: 1,
@@ -1215,27 +1435,58 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers["openai-main"].models[1].input).toEqual(["text", "image"]);
 	});
 
+	it("projects multiple OpenClaw providers with merge mode and one default", () => {
+		const projection = buildAgentEngineProjection("openclaw", {
+			schema_version: 1,
+			defaults: { chat_provider_id: "anthropic-main" },
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					default_model: "gpt-5.2",
+					api_mode: "openai_responses",
+					auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+				},
+				{
+					id: "anthropic-main",
+					type: "anthropic",
+					base_url: "https://api.anthropic.com",
+					default_model: "claude-opus-4-6",
+					api_mode: "anthropic_messages",
+					auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
+				},
+			],
+		});
+
+		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
+		expect(patch.models.mode).toBe("merge");
+		expect(patch.agents.defaults.model.primary).toBe("anthropic-main/claude-opus-4-6");
+		expect(Object.keys(patch.models.providers)).toEqual(["openai-main", "anthropic-main"]);
+		expect(patch.models.providers["openai-main"].api).toBe("openai-responses");
+		expect(patch.models.providers["anthropic-main"].api).toBe("anthropic-messages");
+		expect(patch.models.providers["openai-main"].apiKey.id).toBe("OPENAI_API_KEY");
+		expect(patch.models.providers["anthropic-main"].apiKey.id).toBe("ANTHROPIC_API_KEY");
+	});
+
 	it("imports provider metadata from a Hermes config without secrets", async () => {
 		const hermesConfig = join(tmpHome, "hermes-config.yaml");
 		writeFileSync(
 			hermesConfig,
 			[
 				"model:",
-				'  provider: "openai-main"',
+				'  provider: "custom:openai-main"',
 				"providers:",
 				"  openai-main:",
-				'    type: "openai"',
-				'    base_url: "https://api.openai.com/v1"',
-				'    api_mode: "openai_responses"',
-				'    model: "gpt-5.2"',
+				'    api: "https://api.openai.com/v1"',
+				'    transport: "codex_responses"',
+				'    default_model: "gpt-5.2"',
 				'    key_env: "OPENAI_API_KEY"',
 				"custom_providers:",
-				"  openrouter-main:",
-				'    name: "OpenRouter: main"',
-				'    type: "openrouter"',
+				'  - name: "OpenRouter: main"',
 				'    base_url: "https://openrouter.ai/api/v1"',
 				'    model: "openai/gpt-5.2"',
-				'    api_key_env: "OPENROUTER_API_KEY"',
+				'    key_env: "OPENROUTER_API_KEY"',
 				"",
 			].join("\n"),
 		);
@@ -1265,6 +1516,46 @@ describe("ai-provider commands", () => {
 		});
 	});
 
+	it("imports provider catalog envelopes from hosted materialization payloads", async () => {
+		const catalogPath = join(tmpHome, "provider-envelope.json");
+		writeFileSync(
+			catalogPath,
+			JSON.stringify(
+				{
+					ai_provider_catalog: {
+						schema_version: 1,
+						defaults: { chat_provider_id: "openai-main" },
+						providers: [
+							{
+								id: "openai-main",
+								type: "openai",
+								base_url: "https://api.openai.com/v1",
+								default_model: "gpt-5.2",
+								auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+							},
+						],
+					},
+				},
+				null,
+				2,
+			),
+		);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(catalogPath, { json: true });
+		} finally {
+			restore();
+		}
+
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.defaults.chat_provider_id).toBe("openai-main");
+		expect(catalog.providers).toHaveLength(1);
+		expect(catalog.providers[0].auth).toEqual({
+			type: "secret_ref",
+			ref: "env:OPENAI_API_KEY",
+		});
+	});
+
 	it("exports and imports env secrets only through an encrypted export bundle", async () => {
 		process.env.OPENAI_API_KEY = "sk-provider-secret";
 		process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE = "correct horse battery staple";
@@ -1283,6 +1574,8 @@ describe("ai-provider commands", () => {
 				includeSecrets: true,
 				secretPassphrase: true,
 			});
+			writeFileSync(envPath, "OLD=value\n", { mode: 0o644 });
+			chmodSync(envPath, 0o644);
 			await aiProviderImportCommand(exportPath, {
 				replace: true,
 				importSecrets: "env-file",
@@ -1300,6 +1593,7 @@ describe("ai-provider commands", () => {
 		expect(exportJson).not.toContain("sk-provider-secret");
 		expect(output()).not.toContain("sk-provider-secret");
 		expect(readFileSync(envPath, "utf-8")).toBe("OPENAI_API_KEY='sk-provider-secret'\n");
+		expect(statSync(envPath).mode & 0o777).toBe(0o600);
 	});
 
 	it("does not import encrypted secrets when catalog import conflicts", async () => {
@@ -1333,6 +1627,43 @@ describe("ai-provider commands", () => {
 			delete process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE;
 		}
 
+		expect(existsSync(envPath)).toBe(false);
+	});
+
+	it("does not import catalog metadata when encrypted secret decrypt fails", async () => {
+		process.env.OPENAI_API_KEY = "sk-provider-secret";
+		process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE = "correct horse battery staple";
+		const exportPath = join(tmpHome, "providers-with-secrets.json");
+		const envPath = join(tmpHome, "providers.env");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderExportCommand({
+				out: exportPath,
+				includeSecrets: true,
+				secretPassphrase: true,
+			});
+			rmSync(aiProviderCatalogPath(), { force: true });
+			process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE = "wrong passphrase";
+			await expect(
+				aiProviderImportCommand(exportPath, {
+					importSecrets: "env-file",
+					out: envPath,
+					json: true,
+				}),
+			).rejects.toThrow();
+		} finally {
+			restore();
+			delete process.env.OPENAI_API_KEY;
+			delete process.env.CLAWDI_SECRET_EXPORT_PASSPHRASE;
+		}
+
+		expect(existsSync(aiProviderCatalogPath())).toBe(false);
 		expect(existsSync(envPath)).toBe(false);
 	});
 

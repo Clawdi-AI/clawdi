@@ -363,6 +363,76 @@ async def test_ai_provider_resolve_uses_only_active_auth_profile(
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_codex_profiles_are_scoped_by_provider_id(
+    client: httpx.AsyncClient,
+    seed_user,
+):
+    for provider_id, label, payload in [
+        ("openai-codex-work", "Work Codex", '{"token":"work"}'),
+        ("openai-codex-personal", "Personal Codex", '{"token":"personal"}'),
+    ]:
+        created = await client.post(
+            "/api/ai-providers",
+            json={
+                "provider_id": provider_id,
+                "type": "openai",
+                "label": label,
+                "base_url": "https://api.openai.com/v1",
+                "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+            },
+        )
+        assert created.status_code == 200, created.text
+        imported = await client.post(
+            f"/api/ai-providers/{provider_id}/auth/import",
+            json={
+                "type": "agent_profile",
+                "tool": "codex",
+                "profile": "default",
+                "payload": payload,
+            },
+        )
+        assert imported.status_code == 200, imported.text
+        assert payload not in imported.text
+        assert imported.json()["auth"] == {
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+        }
+
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_test",
+        label="test-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        work = await client.post(
+            "/api/ai-providers/openai-codex-work/auth/resolve",
+            json={"profile": "default"},
+        )
+        personal = await client.post(
+            "/api/ai-providers/openai-codex-personal/auth/resolve",
+            json={"profile": "default"},
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+
+    assert work.status_code == 200, work.text
+    assert personal.status_code == 200, personal.text
+    assert work.json()["payload"] == '{"token":"work"}'
+    assert personal.json()["payload"] == '{"token":"personal"}'
+    assert work.json()["tool"] == "codex"
+    assert personal.json()["tool"] == "codex"
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_oauth_start_returns_backend_generated_link(client: httpx.AsyncClient):
     created = await client.post(
         "/api/ai-providers",
@@ -664,6 +734,111 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     assert auth_json["tokens"]["access_token"] == "oauth-access-token"
     assert auth_json["tokens"]["refresh_token"] == "oauth-refresh-token"
     assert auth_json["tokens"]["account_id"] == "account-123"
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_oauth_complete_omits_missing_codex_api_key(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    seed_user,
+):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+            }
+        }
+    )
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            return httpx.Response(
+                200,
+                json={
+                    "id_token": _test_jwt(),
+                    "access_token": "oauth-access-token",
+                    "refresh_token": "oauth-refresh-token",
+                },
+            )
+
+    async def fake_obtain_codex_api_key(client, config, id_token):
+        return None
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    monkeypatch.setattr(
+        "app.routes.ai_providers._obtain_codex_api_key",
+        fake_obtain_codex_api_key,
+    )
+    try:
+        started = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert started.status_code == 200, started.text
+        completed = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "oauth-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert completed.status_code == 200, completed.text
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_test",
+        label="test-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        resolved = await client.post(
+            "/api/ai-providers/openai-codex/auth/resolve",
+            json={"profile": "default"},
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+    assert resolved.status_code == 200, resolved.text
+    payload = json.loads(resolved.json()["payload"])
+    auth_json = json.loads(payload["files"][0]["content"])
+    assert auth_json["auth_mode"] == "chatgpt"
+    assert "OPENAI_API_KEY" not in auth_json
+    assert auth_json["tokens"]["access_token"] == "oauth-access-token"
+    assert auth_json["tokens"]["refresh_token"] == "oauth-refresh-token"
 
 
 @pytest.mark.asyncio

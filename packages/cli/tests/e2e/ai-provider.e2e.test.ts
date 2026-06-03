@@ -137,6 +137,27 @@ describe("ai-provider CLI process e2e", () => {
 			expect(imported.stderr).not.toContain(SECRET);
 			expect(readFileSync(importedEnv, "utf8")).toBe(`OPENAI_API_KEY='${SECRET}'\n`);
 
+			const codexHome = join(destination.root, "codex-home");
+			mkdirSync(codexHome, { recursive: true });
+			const codexPrimaryConfig = join(codexHome, "config.toml");
+			writeFileSync(codexPrimaryConfig, 'model = "user-model"\n');
+			const codexApplied = await runCli(
+				destination,
+				["ai-provider", "apply", "--engine", "codex", "--json"],
+				{ CODEX_HOME: codexHome },
+			);
+			expect(codexApplied.code).toBe(0);
+			expect(codexApplied.stdout).toContain("clawdi-ai-provider.config.toml");
+			expect(codexApplied.stdout).not.toContain(SECRET);
+			expect(codexApplied.stderr).not.toContain(SECRET);
+			expect(readFileSync(codexPrimaryConfig, "utf8")).toBe('model = "user-model"\n');
+			const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf8");
+			expect(codexProfile).toContain('model = "gpt-5.2"');
+			expect(codexProfile).toContain('model_provider = "openai-main"');
+			expect(codexProfile).toContain('base_url = "http://127.0.0.1:');
+			expect(codexProfile).toContain('env_key = "OPENAI_API_KEY"');
+			expect(codexProfile).not.toContain(SECRET);
+
 			const dryRun = await runCli(destination, [
 				"ai-provider",
 				"apply",
@@ -147,7 +168,9 @@ describe("ai-provider CLI process e2e", () => {
 			]);
 			expect(dryRun.code).toBe(0);
 			expect(dryRun.stdout).toContain('"dry_run": true');
-			expect(dryRun.stdout).toContain("hermes config set providers.openai-main.key_env");
+			expect(dryRun.stdout).toContain("Hermes config.yaml provider merge");
+			expect(dryRun.stdout).toContain("custom:openai-main");
+			expect(dryRun.stdout).toContain("OPENAI_API_KEY");
 			expect(dryRun.stdout).not.toContain(SECRET);
 			expect(existsSync(join(destination.clawdiHome, "runtime", "hermes"))).toBe(false);
 

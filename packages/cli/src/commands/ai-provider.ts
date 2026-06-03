@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -37,6 +37,7 @@ import {
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
+import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import {
 	collectAgentCredentialProfilePayload,
 	materializeAgentCredentialProfilePayload,
@@ -300,7 +301,7 @@ export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}
 	}
 	const output = `${JSON.stringify(exportPayload, null, 2)}\n`;
 	if (opts.out) {
-		writeFileSync(opts.out, output, { mode: 0o600 });
+		writePrivateFile(opts.out, output);
 		console.log(chalk.green(`✓ Exported AI Provider catalog to ${opts.out}`));
 		return;
 	}
@@ -315,13 +316,12 @@ export async function aiProviderImportCommand(
 	if (sources.length !== 1) {
 		throw new Error("Pass exactly one import source: <file>, --from-hermes, or --from-openclaw.");
 	}
+	const fileInput = file ? (JSON.parse(readFileSync(file, "utf-8")) as unknown) : undefined;
 	const incoming = opts.fromHermes
 		? catalogFromHermesConfig(readFileSync(opts.fromHermes, "utf-8"))
 		: opts.fromOpenclaw
 			? catalogFromOpenClawConfig(JSON.parse(readFileSync(opts.fromOpenclaw, "utf-8")) as unknown)
-			: coerceAiProviderCatalog(
-					stripEncryptedSecrets(JSON.parse(readFileSync(file as string, "utf-8")) as unknown),
-				);
+			: coerceAiProviderCatalog(stripEncryptedSecrets(fileInput));
 	if (opts.importSecrets && !file) {
 		throw new Error("--import-secrets requires an AI Provider export file.");
 	}
@@ -337,15 +337,17 @@ export async function aiProviderImportCommand(
 	if (incoming.defaults) {
 		next = { ...next, defaults: { ...next.defaults, ...incoming.defaults } };
 	}
+	const secretImport =
+		fileInput && opts.importSecrets
+			? prepareEncryptedSecretImport(
+					fileInput,
+					opts.importSecrets,
+					opts.out,
+					opts.secretPassphraseEnv,
+				)
+			: undefined;
 	writeAiProviderCatalog(next);
-	if (file && opts.importSecrets) {
-		importEncryptedSecrets(
-			JSON.parse(readFileSync(file, "utf-8")) as unknown,
-			opts.importSecrets,
-			opts.out,
-			opts.secretPassphraseEnv,
-		);
-	}
+	if (secretImport) writePrivateFile(secretImport.out, secretImport.content);
 	if (opts.json) {
 		console.log(JSON.stringify({ imported: incoming.providers.length }, null, 2));
 		return;
@@ -1213,12 +1215,12 @@ function stripEncryptedSecrets(input: unknown): unknown {
 	return rest;
 }
 
-function importEncryptedSecrets(
+function prepareEncryptedSecretImport(
 	input: unknown,
 	target: string,
 	out: string | undefined,
 	passphraseEnv: string | undefined,
-): void {
+): { out: string; content: string } {
 	if (target !== "env-file") {
 		throw new Error("Only --import-secrets env-file is supported in the provider-only path.");
 	}
@@ -1233,11 +1235,15 @@ function importEncryptedSecrets(
 		bundle as EncryptedSecretBundle,
 	);
 	const lines = payload.secrets.map((secret) => `${secret.env_name}=${shellQuote(secret.value)}`);
-	writeFileSync(out, `${lines.join("\n")}\n`, { mode: 0o600 });
+	return { out, content: `${lines.join("\n")}\n` };
 }
 
 function shellQuote(input: string): string {
 	return `'${input.replace(/'/g, "'\\''")}'`;
+}
+
+function writePrivateFile(path: string, content: string): void {
+	writePrivateFileAtomic(path, content, { mode: PRIVATE_FILE_MODE });
 }
 
 function catalogFromOpenClawConfig(input: unknown): AiProviderCatalog {
@@ -1282,47 +1288,137 @@ function catalogFromHermesConfig(content: string): AiProviderCatalog {
 		);
 	}
 	const root = asRecord(rootValue, "Hermes config");
-	const providerMaps = [
-		recordField(root, "providers"),
-		recordField(root, "custom_providers"),
-	].filter((entry): entry is Record<string, unknown> => entry !== undefined);
-	if (providerMaps.length === 0) {
+	const providers: AiProvider[] = [
+		...providersFromHermesProvidersDict(recordField(root, "providers")),
+		...providersFromHermesCustomProvidersList(root.custom_providers),
+	];
+	if (providers.length === 0) {
 		throw new Error("Hermes config does not contain a providers block.");
 	}
-	const providers: AiProvider[] = [];
-	for (const providerMap of providerMaps) {
-		for (const [id, value] of Object.entries(providerMap)) {
-			if (!isAiProviderId(id)) continue;
-			const provider = asRecord(value, `Hermes provider ${id}`);
-			const type = parseProviderType(stringField(provider, "type") ?? "custom_openai_compatible");
-			const baseUrl = stringField(provider, "base_url") ?? stringField(provider, "baseUrl");
-			if (!baseUrl) continue;
-			const keyEnv = stringField(provider, "key_env") ?? stringField(provider, "api_key_env");
-			const entry: AiProvider = {
-				id,
-				type,
-				base_url: baseUrl,
-				auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
-			};
-			const model = stringField(provider, "model") ?? stringField(provider, "default_model");
-			if (model) entry.default_model = model;
-			const apiMode = parseApiMode(
-				stringField(provider, "api_mode") ?? defaultAiProviderApiMode(type),
-			);
-			if (apiMode) entry.api_mode = apiMode;
-			if (keyEnv) entry.runtime_env_name = keyEnv;
-			const name = stringField(provider, "name");
-			if (name) entry.label = name;
-			providers.push(entry);
-		}
-	}
 	const modelConfig = recordField(root, "model");
-	const defaultProvider = modelConfig ? stringField(modelConfig, "provider") : undefined;
+	const defaultProvider = modelConfig
+		? normalizeHermesProviderSelector(stringField(modelConfig, "provider"))
+		: undefined;
 	return {
 		schema_version: 1,
 		providers,
 		defaults: defaultProvider ? { chat_provider_id: defaultProvider } : undefined,
 	};
+}
+
+function providersFromHermesProvidersDict(
+	providerMap: Record<string, unknown> | undefined,
+): AiProvider[] {
+	if (!providerMap) return [];
+	const providers: AiProvider[] = [];
+	for (const [id, value] of Object.entries(providerMap)) {
+		if (!isAiProviderId(id)) continue;
+		const provider = asRecord(value, `Hermes provider ${id}`);
+		const entry = providerFromHermesEntry(id, provider);
+		if (entry) providers.push(entry);
+	}
+	return providers;
+}
+
+function providersFromHermesCustomProvidersList(input: unknown): AiProvider[] {
+	if (input === undefined || input === null) return [];
+	if (!Array.isArray(input)) throw new Error("Hermes custom_providers must be a list.");
+	const providers: AiProvider[] = [];
+	for (const value of input) {
+		const provider = asRecord(value, "Hermes custom provider");
+		const name = stringField(provider, "name");
+		if (!name) continue;
+		const id = hermesProviderIdFromName(name);
+		const entry = providerFromHermesEntry(id, provider);
+		if (entry) providers.push(entry);
+	}
+	return providers;
+}
+
+function providerFromHermesEntry(
+	id: string,
+	provider: Record<string, unknown>,
+): AiProvider | undefined {
+	const baseUrl =
+		stringField(provider, "api") ??
+		stringField(provider, "url") ??
+		stringField(provider, "base_url") ??
+		stringField(provider, "baseUrl");
+	if (!baseUrl) return undefined;
+	const keyEnv = stringField(provider, "key_env") ?? stringField(provider, "api_key_env");
+	const type = parseProviderType(
+		stringField(provider, "type") ?? inferProviderTypeFromEndpoint(id, baseUrl, provider),
+	);
+	const entry: AiProvider = {
+		id,
+		type,
+		base_url: baseUrl,
+		auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
+	};
+	const model =
+		stringField(provider, "default_model") ??
+		stringField(provider, "model") ??
+		stringField(provider, "default");
+	if (model) entry.default_model = model;
+	const apiMode = parseApiMode(
+		aiApiModeFromHermesTransport(stringField(provider, "transport")) ??
+			stringField(provider, "api_mode") ??
+			defaultAiProviderApiMode(type),
+	);
+	if (apiMode) entry.api_mode = apiMode;
+	if (keyEnv) entry.runtime_env_name = keyEnv;
+	const name = stringField(provider, "name");
+	if (name) entry.label = name;
+	return entry;
+}
+
+function inferProviderTypeFromEndpoint(
+	id: string,
+	baseUrl: string,
+	provider: Record<string, unknown>,
+): AiProviderType {
+	const normalizedId = id.toLowerCase();
+	const host = hostOf(baseUrl).toLowerCase();
+	const transport = stringField(provider, "transport") ?? stringField(provider, "api_mode");
+	if (normalizedId.includes("openrouter") || host.includes("openrouter.ai")) return "openrouter";
+	if (normalizedId.includes("mistral") || host.includes("mistral.ai")) return "mistral";
+	if (normalizedId.includes("gemini") || host.includes("generativelanguage.googleapis.com"))
+		return "gemini";
+	if (normalizedId.includes("anthropic") || host.includes("anthropic.com")) return "anthropic";
+	if (normalizedId.includes("openai") || host.includes("api.openai.com")) return "openai";
+	if (transport === "anthropic_messages") return "anthropic";
+	return "custom_openai_compatible";
+}
+
+function aiApiModeFromHermesTransport(input: string | undefined): AiProviderApiMode | undefined {
+	if (input === "chat_completions") return "openai_chat";
+	if (input === "codex_responses") return "openai_responses";
+	if (input === "anthropic_messages") return "anthropic_messages";
+	return undefined;
+}
+
+function normalizeHermesProviderSelector(input: string | undefined): string | undefined {
+	if (!input) return undefined;
+	const providerId = input.startsWith("custom:") ? input.slice("custom:".length) : input;
+	return isAiProviderId(providerId) ? providerId : undefined;
+}
+
+function hermesProviderIdFromName(name: string): string {
+	const normalized = name
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/^[^a-z]+/, "")
+		.replace(/-+/g, "-")
+		.replace(/[-.]+$/g, "");
+	const candidate = normalized.slice(0, 63).replace(/[-.]+$/g, "");
+	if (isAiProviderId(candidate)) return candidate;
+	const suffix = candidate
+		.replace(/^[^a-z0-9]+/, "")
+		.slice(0, 54)
+		.replace(/[-.]+$/g, "");
+	const fallback = `provider-${suffix || "custom"}`.slice(0, 63).replace(/[-.]+$/g, "");
+	return isAiProviderId(fallback) ? fallback : "provider-custom";
 }
 
 function recordField(

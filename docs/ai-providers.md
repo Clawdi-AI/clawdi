@@ -29,13 +29,29 @@ Supported auth surfaces:
 - Codex OAuth, stored as an encrypted Codex `agent_profile`.
 - Imported Codex auth profiles through `ai-provider import-auth`.
 
+Supported catalog fields for v1 apply:
+
+- Provider identity: `id`, `type`, `label`.
+- Endpoint/protocol: `base_url`, `api_mode`, `default_model`.
+- Auth indirection: `auth`, plus optional `runtime_env_name` for agents that
+  need an env var name.
+- Declarative metadata: `capabilities`.
+- Optional model metadata through JSON catalog import: `models[].id`,
+  `models[].label`, `models[].api_mode`, `models[].input_modalities`,
+  `models[].context_window`, and `models[].max_tokens`. Today this is projected
+  only where the pinned agent contract supports it, such as OpenClaw model
+  entries.
+
 Agent apply status:
 
 | Agent engine | Status | User launch path |
 | --- | --- | --- |
 | Codex | Enabled | `clawdi ai-provider apply --engine codex`, then `codex --profile clawdi-ai-provider` |
-| Hermes | Enabled | `clawdi ai-provider apply --engine hermes` uses `hermes config set` |
+| Hermes | Enabled | `clawdi ai-provider apply --engine hermes` merges `$HERMES_HOME/config.yaml` |
 | OpenClaw | Enabled | `clawdi ai-provider apply --engine openclaw` uses `openclaw config patch --stdin` |
+
+Pinned agent contracts are documented in
+[`docs/ai-provider-agent-contract-audit.md`](./ai-provider-agent-contract-audit.md).
 
 OAuth status:
 
@@ -140,6 +156,11 @@ clawdi ai-provider complete-oauth openai-codex --redirect-url '<browser callback
 OAuth tokens are stored as encrypted provider-auth payloads. They are not printed
 or stored inside the Provider Catalog.
 
+For Codex OAuth, `ai-provider apply --engine codex` uses Codex's built-in
+OpenAI provider and does not write a fixed `model` value into the generated
+profile. Codex then selects the default model supported by the signed-in
+ChatGPT/Codex account for the pinned CLI version.
+
 ## Apply Codex
 
 Codex apply does not edit your primary `$CODEX_HOME/config.toml`. Clawdi writes
@@ -158,7 +179,7 @@ codex --profile clawdi-ai-provider
 Supported contract:
 
 ```text
-@openai/codex <1.0.0 with profile config, model_providers, and responses wire_api support
+@openai/codex 0.134.0 through 0.136.0 with profile config, model_providers, and responses wire_api support
 ```
 
 Codex apply requires Responses-compatible providers. Chat-only providers cannot
@@ -172,25 +193,54 @@ clawdi ai-provider apply --engine codex --dry-run
 
 ## Apply Hermes
 
-Hermes apply uses the Hermes CLI instead of rewriting
-`~/.hermes/config.yaml`:
+Hermes apply does a structured merge into `$HERMES_HOME/config.yaml`:
 
 ```bash
 clawdi ai-provider apply --engine hermes --dry-run
 clawdi ai-provider apply --engine hermes
 ```
 
-Clawdi calls `hermes config set` for the provider and default model fields.
-Existing unrelated Hermes config sections, such as MCP servers, are preserved.
+The merge writes Hermes' verified `providers` dict shape and selects the default
+provider with `model.provider: custom:<provider-id>`. Existing unrelated Hermes
+config sections, such as `mcp_servers`, are preserved. Clawdi does not print or
+copy existing inline Hermes secrets during dry-run; dry-run prints only the
+generated provider patch.
 
 Supported contract:
 
 ```text
-Hermes Agent >=0.15.1 <0.16.0
+Hermes Agent 0.13.0 through 0.15.2 with providers dict compatibility
 ```
 
-Hermes apply rejects provider IDs with dots until dotted key escaping is
-verified.
+Hermes custom-provider transports supported by AI Provider apply:
+
+- `openai_chat` -> `chat_completions`
+- `openai_responses` -> `codex_responses`
+- `anthropic_messages` -> `anthropic_messages`
+
+`google_generate_content` is not projected to Hermes custom providers in v1.
+Use OpenClaw for native Gemini projection, or configure Hermes' own Gemini
+provider outside AI Provider until that contract is added.
+
+## Advanced Provider Settings
+
+AI Provider v1 intentionally does not try to normalize every provider-native
+setting. The following stay outside the portable catalog until each target
+agent's contract is pinned and tested:
+
+- Static or env-backed custom HTTP headers, such as OpenRouter attribution
+  headers or OpenAI organization/project headers.
+- Query parameters, such as Azure `api-version`.
+- Provider-specific request options, retries, timeouts, proxies, or extra
+  request bodies.
+- Agent-specific plugin settings or native provider blocks that are not part of
+  the verified apply contract.
+
+For launch, keep those settings in the agent's native config. Clawdi apply is
+designed to preserve unrelated native config. For Hermes, the structured merge
+keeps existing provider fields that Clawdi does not own, such as `extra_body`,
+while replacing stale generated fields and inline `api_key` values for managed
+provider IDs.
 
 ## OpenClaw Status
 
@@ -204,7 +254,7 @@ clawdi ai-provider apply --engine openclaw
 Supported contract:
 
 ```text
-openclaw 2026.5.28
+openclaw 2026.5.12, 2026.5.18, 2026.5.27, and 2026.5.28 config patch contract
 ```
 
 Clawdi sends a patch over stdin instead of editing OpenClaw config files
