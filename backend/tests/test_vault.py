@@ -357,6 +357,45 @@ async def test_vault_credential_profile_defaults_to_personal_project(
 
 
 @pytest.mark.asyncio
+async def test_vault_credential_profile_list_metadata_for_web(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    seed_project,
+):
+    from app.services.vault_crypto import encrypt
+
+    payload = '{"kind":"local_agent_profile","secret":"codex-token"}'
+    ciphertext, nonce = encrypt(payload)
+    db_session.add(
+        VaultCredentialProfile(
+            user_id=seed_user.id,
+            project_id=seed_project.id,
+            tool="codex",
+            profile="work",
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+        )
+    )
+    await db_session.commit()
+
+    listed = await client.get("/api/vault/credential-profiles?tool=codex")
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body == [
+        {
+            "id": body[0]["id"],
+            "project_id": str(seed_project.id),
+            "tool": "codex",
+            "profile": "work",
+            "updated_at": body[0]["updated_at"],
+        }
+    ]
+    assert "payload" not in body[0]
+    assert "codex-token" not in listed.text
+
+
+@pytest.mark.asyncio
 async def test_vault_credential_profile_shared_project_viewer_cannot_resolve(
     cli_client: httpx.AsyncClient,
     db_session,
@@ -546,6 +585,9 @@ async def test_vault_credential_profile_rejects_env_bound_agent_key(db_session, 
                 json={"tool": "codex", "profile": "default"},
             )
             assert resolved.status_code == 403, resolved.text
+
+            listed = await ac.get("/api/vault/credential-profiles?tool=codex")
+            assert listed.status_code == 403, listed.text
     finally:
         app.dependency_overrides.clear()
 

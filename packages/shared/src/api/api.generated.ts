@@ -1275,7 +1275,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Credential Profiles
+         * @description List credential profile metadata without returning encrypted payloads.
+         *
+         *     The web dashboard needs this to offer profiles imported by the local CLI.
+         *     Materialization still goes through the CLI-only resolve endpoint below.
+         */
+        get: operations["list_credential_profiles_api_vault_credential_profiles_get"];
         put?: never;
         /**
          * Upsert Credential Profile
@@ -6104,6 +6111,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultItemsDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_credential_profiles_api_vault_credential_profiles_get: {
+        parameters: {
+            query?: {
+                tool?: string | null;
+                project_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCredentialProfileResponse"][];
                 };
             };
             /** @description Validation Error */

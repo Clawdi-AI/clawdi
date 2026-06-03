@@ -8,6 +8,7 @@
 #   4. seed a synthetic user + env-bound API key
 #   5. use the CLI to import vault values, read/inject/run clawdi:// refs
 #   6. use the CLI to import/materialize Codex, Claude Code, and gh credentials
+#   7. verify credential profile metadata listing with user-level auth only
 #
 # No real credentials are read. Every HOME / tool config path is under mktemp.
 #
@@ -328,6 +329,32 @@ credential_case() {
 }
 
 credential_case "codex" ".codex/auth.json" '{"token":"codex-real-e2e-secret"}'$'\n' "codex-real-e2e-secret"
+curl -sf \
+  -H "Authorization: Bearer $USER_RAW_KEY" \
+  "$API_URL/api/vault/credential-profiles?tool=codex" \
+  >"$LOG_DIR/credential-codex-list.json" \
+  || fail "credential profile metadata list failed"
+"$(command -v bun)" -e '
+const fs = require("fs");
+const rows = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+if (!rows.some((row) => row.tool === "codex" && row.profile === "e2e")) {
+  console.error("codex profile e2e was not listed");
+  process.exit(1);
+}
+if (JSON.stringify(rows).includes("codex-real-e2e-secret")) {
+  console.error("credential metadata leaked a secret");
+  process.exit(2);
+}
+' "$LOG_DIR/credential-codex-list.json" || fail "credential profile metadata response was invalid"
+ENV_BOUND_LIST_STATUS="$(
+  curl -s \
+    -o "$LOG_DIR/credential-codex-list-env-bound.out" \
+    -w "%{http_code}" \
+    -H "Authorization: Bearer $RAW_KEY" \
+    "$API_URL/api/vault/credential-profiles?tool=codex"
+)"
+[ "$ENV_BOUND_LIST_STATUS" = "403" ] || fail "env-bound agent key listed credential profile metadata"
+ok "credential profile metadata listing passed"
 credential_case "claude-code" ".claude/.credentials.json" '{"accessToken":"claude-real-e2e-secret"}'$'\n' "claude-real-e2e-secret"
 credential_case "gh" ".config/gh/hosts.yml" 'github.com:
   oauth_token: gh-real-e2e-secret

@@ -368,6 +368,53 @@ async def upsert_credential_profile(
     )
 
 
+@router.get("/credential-profiles", response_model=list[VaultCredentialProfileResponse])
+async def list_credential_profiles(
+    tool: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+    ),
+    project_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[VaultCredentialProfileResponse]:
+    """List credential profile metadata without returning encrypted payloads.
+
+    The web dashboard needs this to offer profiles imported by the local CLI.
+    Materialization still goes through the CLI-only resolve endpoint below.
+    """
+    _require_user_level_credential_profile_auth(auth)
+    if project_id is not None:
+        await validate_project_for_caller(db, auth, project_id)
+        selected_project_id = project_id
+    else:
+        selected_project_id = await resolve_personal_project(db, auth)
+
+    query = select(VaultCredentialProfile).where(
+        VaultCredentialProfile.user_id == auth.user_id,
+        VaultCredentialProfile.project_id == selected_project_id,
+    )
+    if tool is not None:
+        query = query.where(VaultCredentialProfile.tool == tool)
+    query = query.order_by(
+        VaultCredentialProfile.tool.asc(),
+        VaultCredentialProfile.profile.asc(),
+    )
+    rows = (await db.execute(query)).scalars().all()
+    return [
+        VaultCredentialProfileResponse(
+            id=str(profile.id),
+            project_id=str(profile.project_id),
+            tool=profile.tool,
+            profile=profile.profile,
+            updated_at=profile.updated_at,
+        )
+        for profile in rows
+    ]
+
+
 @router.post("/credential-profiles/resolve")
 async def resolve_credential_profile(
     body: VaultCredentialProfileResolveRequest,
