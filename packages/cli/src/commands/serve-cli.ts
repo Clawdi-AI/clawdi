@@ -28,6 +28,12 @@ export interface ServeHandlers {
 	serveRpc: (method: string, opts: Record<string, unknown>) => Promise<void> | void;
 }
 
+function addRpcEndpointOptions(cmd: Command): Command {
+	return cmd
+		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC TCP port");
+}
+
 async function defaultHandlers(): Promise<ServeHandlers> {
 	const m = await import("./serve.js");
 	return {
@@ -47,6 +53,8 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 	const serveCmd = program
 		.command("daemon")
 		.alias("serve")
+		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC TCP port")
 		.description(
 			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
 		)
@@ -57,10 +65,14 @@ Environment:
   CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
   CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
   CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
+  CLAWDI_DAEMON_RPC_HOST  Optional TCP host for daemon control RPC
+  CLAWDI_DAEMON_RPC_PORT  Optional TCP port for daemon control RPC
+  CLAWDI_DAEMON_RPC_TOKEN Bearer token for TCP RPC clients (defaults to generated token file)
   CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
 
 Examples:
   $ clawdi daemon run
+  $ clawdi daemon run --rpc-host 127.0.0.1 --rpc-port 17654
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
   $ clawdi daemon install                       # set up one launchd / systemd unit
   $ clawdi daemon status --agent claude_code    # health + supervisor state
@@ -78,18 +90,23 @@ Examples:
 	serveCmd
 		.command("run")
 		.description("Run the sync daemon in the foreground")
+		.configureHelp({ showGlobalOptions: true })
+		.addHelpText("after", "\nControl RPC TCP options are optional; Unix socket is always enabled.")
+		.option("--rpc-host <host>", "Control RPC TCP host (enables TCP when paired with --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC TCP port")
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serve(cmd.optsWithGlobals());
 		});
 
-	serveCmd
-		.command("install")
-		.description("Install the singleton daemon as a per-user OS service")
-		.action(async (_opts, cmd) => {
-			const h = await get();
-			await h.serveInstall(cmd.optsWithGlobals());
-		});
+	addRpcEndpointOptions(
+		serveCmd
+			.command("install")
+			.description("Install the singleton daemon as a per-user OS service"),
+	).action(async (_opts, cmd) => {
+		const h = await get();
+		await h.serveInstall(cmd.optsWithGlobals());
+	});
 
 	serveCmd
 		.command("uninstall")
@@ -140,6 +157,9 @@ Examples:
 		.command("rpc <method>")
 		.description("Call the local daemon control RPC socket")
 		.option("--params <json>", "JSON object passed as RPC params", "{}")
+		.option("--rpc-host <host>", "Control RPC TCP host to call (requires --rpc-port)")
+		.option("--rpc-port <port>", "Control RPC TCP port to call")
+		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
 		.action(async (method: string, _opts, cmd) => {
 			const h = await get();
 			await h.serveRpc(method, cmd.optsWithGlobals());

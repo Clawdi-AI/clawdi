@@ -252,6 +252,32 @@ describe("installer.install (macOS plist)", () => {
 	});
 });
 
+describe("installer.install (Linux systemd)", () => {
+	it("captures RPC host and port into the unit Environment", async () => {
+		const os = await import("node:os");
+		if (os.platform() !== "linux") return;
+
+		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+		const { mkdirSync, chmodSync } = await import("node:fs");
+		mkdirSync(stubBin, { recursive: true });
+		const stubSystemctl = join(stubBin, "systemctl");
+		writeFileSync(stubSystemctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		chmodSync(stubSystemctl, 0o755);
+		const oldPath = process.env.PATH;
+		process.env.PATH = `${stubBin}:${oldPath}`;
+
+		try {
+			const { install } = await import("./installer");
+			const result = install({ rpcHost: "127.0.0.1", rpcPort: 17654 });
+			const content = readFileSync(result.unit, "utf-8");
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=127.0.0.1"');
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_PORT=17654"');
+		} finally {
+			process.env.PATH = oldPath;
+		}
+	});
+});
+
 describe("installer.readHealth", () => {
 	it("returns exists=false when the file is missing", async () => {
 		const { readHealth } = await import("./installer");

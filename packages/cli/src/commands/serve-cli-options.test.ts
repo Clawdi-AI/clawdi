@@ -51,10 +51,41 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
+	it("daemon run accepts RPC TCP host and port", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"run",
+			"--rpc-host",
+			"127.0.0.1",
+			"--rpc-port",
+			"17654",
+		]);
+		expect(captured.last?.rpcHost).toBe("127.0.0.1");
+		expect(captured.last?.rpcPort).toBe("17654");
+	});
+
 	it("daemon with no subcommand still runs the foreground action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "daemon"]);
 		expect(captured.last).toEqual({});
+	});
+
+	it("daemon with no subcommand accepts RPC TCP host and port", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"--rpc-host",
+			"127.0.0.1",
+			"--rpc-port",
+			"17654",
+		]);
+		expect(captured.last?.rpcHost).toBe("127.0.0.1");
+		expect(captured.last?.rpcPort).toBe("17654");
 	});
 
 	it("legacy serve with no subcommand still runs the foreground action", async () => {
@@ -67,6 +98,22 @@ describe("registerServeCommand", () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "uninstall"]);
 		expect(captured.last).toEqual({});
+	});
+
+	it("install accepts RPC TCP host and port", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"install",
+			"--rpc-host",
+			"127.0.0.1",
+			"--rpc-port",
+			"17654",
+		]);
+		expect(captured.last?.rpcHost).toBe("127.0.0.1");
+		expect(captured.last?.rpcPort).toBe("17654");
 	});
 
 	it("restart reaches the action", async () => {
@@ -124,8 +171,17 @@ describe("registerServeCommand", () => {
 			"daemon.ping",
 			"--params",
 			'{"verbose":true}',
+			"--rpc-host",
+			"127.0.0.1",
+			"--rpc-port",
+			"17654",
+			"--rpc-token",
+			"tok-test",
 		]);
 		expect(captured.lastMethod).toBe("daemon.ping");
 		expect(captured.last?.params).toBe('{"verbose":true}');
+		expect(captured.last?.rpcHost).toBe("127.0.0.1");
+		expect(captured.last?.rpcPort).toBe("17654");
+		expect(captured.last?.rpcToken).toBe("tok-test");
 	});
 });

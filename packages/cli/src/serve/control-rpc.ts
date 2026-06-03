@@ -3,11 +3,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSy
 import {
 	createServer,
 	type IncomingMessage,
+	type RequestOptions,
 	request,
 	type Server,
 	type ServerResponse,
 } from "node:http";
-import { createConnection } from "node:net";
+import { type AddressInfo, createConnection } from "node:net";
 import {
 	getDaemonControlDir,
 	getDaemonControlSocketPath,
@@ -19,6 +20,17 @@ const MAX_RPC_BODY_BYTES = 1024 * 1024;
 export type ControlRpcHandler = (params: unknown) => Promise<unknown> | unknown;
 export type ControlRpcHandlers = Record<string, ControlRpcHandler>;
 
+export interface ControlRpcListenConfig {
+	host?: string;
+	port?: number;
+}
+
+export interface ControlRpcClientConfig {
+	host?: string;
+	port?: number;
+	token?: string;
+}
+
 interface JsonRpcRequest {
 	jsonrpc: "2.0";
 	id?: string | number | null;
@@ -29,12 +41,14 @@ interface JsonRpcRequest {
 interface ControlRpcServer {
 	socketPath: string;
 	tokenPath: string;
+	tcp: { host: string; port: number } | null;
 	close: () => Promise<void>;
 }
 
 export async function startControlRpcServer(
 	handlers: ControlRpcHandlers,
 	abort: AbortSignal,
+	config: ControlRpcListenConfig = {},
 ): Promise<ControlRpcServer> {
 	if (process.platform === "win32") {
 		throw new Error("daemon control RPC is not supported on Windows yet");
@@ -55,16 +69,35 @@ export async function startControlRpcServer(
 		unlinkSync(socketPath);
 	}
 
-	const server = createServer(async (req, res) => {
+	const socketServer = createServer(async (req, res) => {
 		await handleHttpRequest(req, res, handlers, token);
 	});
-	await listenOnSocket(server, socketPath);
+	await listenOnSocket(socketServer, socketPath);
 	try {
 		chmodSync(socketPath, 0o600);
 	} catch {
 		/* best effort */
 	}
-	const close = () => closeServer(server, socketPath);
+	let tcpServer: Server | null = null;
+	let tcp: { host: string; port: number } | null = null;
+	if (config.port !== undefined) {
+		const host = config.host ?? "127.0.0.1";
+		tcpServer = createServer(async (req, res) => {
+			await handleHttpRequest(req, res, handlers, token);
+		});
+		try {
+			await listenOnTcp(tcpServer, host, config.port);
+		} catch (error) {
+			await closeServers(socketServer, socketPath, tcpServer);
+			throw error;
+		}
+		const address = tcpServer.address();
+		tcp = {
+			host,
+			port: typeof address === "object" && address ? address.port : config.port,
+		};
+	}
+	const close = () => closeServers(socketServer, socketPath, tcpServer);
 	abort.addEventListener(
 		"abort",
 		() => {
@@ -72,11 +105,15 @@ export async function startControlRpcServer(
 		},
 		{ once: true },
 	);
-	return { socketPath, tokenPath: getDaemonControlTokenPath(), close };
+	return { socketPath, tokenPath: getDaemonControlTokenPath(), tcp, close };
 }
 
-export async function callControlRpc(method: string, params?: unknown): Promise<unknown> {
-	const token = readControlToken();
+export async function callControlRpc(
+	method: string,
+	params?: unknown,
+	config: ControlRpcClientConfig = {},
+): Promise<unknown> {
+	const token = config.token ?? process.env.CLAWDI_DAEMON_RPC_TOKEN ?? readControlToken();
 	const body = JSON.stringify({
 		jsonrpc: "2.0",
 		id: 1,
@@ -84,7 +121,7 @@ export async function callControlRpc(method: string, params?: unknown): Promise<
 		params: params ?? {},
 	});
 	const response = await new Promise<string>((resolve, reject) => {
-		const req = createServerlessRequest(body, token, resolve, reject);
+		const req = createServerlessRequest(body, token, config, resolve, reject);
 		req.write(body);
 		req.end();
 	});
@@ -101,12 +138,22 @@ export async function callControlRpc(method: string, params?: unknown): Promise<
 function createServerlessRequest(
 	body: string,
 	token: string,
+	config: ControlRpcClientConfig,
 	resolve: (value: string) => void,
 	reject: (reason?: unknown) => void,
 ) {
+	const requestOptions: RequestOptions =
+		config.host !== undefined || config.port !== undefined
+			? {
+					hostname: config.host ?? "127.0.0.1",
+					port: config.port,
+				}
+			: {
+					socketPath: getDaemonControlSocketPath(),
+				};
 	const req = request(
 		{
-			socketPath: getDaemonControlSocketPath(),
+			...requestOptions,
 			path: "/rpc",
 			method: "POST",
 			headers: {
@@ -289,11 +336,41 @@ function listenOnSocket(server: Server, socketPath: string): Promise<void> {
 	});
 }
 
-function closeServer(server: Server, socketPath: string): Promise<void> {
+function listenOnTcp(server: Server, host: string, port: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const onError = (error: Error) => {
+			server.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off("error", onError);
+			resolve();
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		server.listen(port, host);
+	});
+}
+
+async function closeServers(
+	socketServer: Server,
+	socketPath: string,
+	tcpServer: Server | null,
+): Promise<void> {
+	await Promise.all([closeServer(socketServer), tcpServer ? closeServer(tcpServer) : undefined]);
+	try {
+		if (existsSync(socketPath)) unlinkSync(socketPath);
+	} catch {
+		/* best effort */
+	}
+}
+
+function closeServer(server: Server): Promise<void> {
 	return new Promise((resolve) => {
 		server.close(() => {
 			try {
-				if (existsSync(socketPath)) unlinkSync(socketPath);
+				const address = server.address() as AddressInfo | string | null;
+				if (typeof address === "string" && existsSync(address)) unlinkSync(address);
 			} catch {
 				/* best effort */
 			}

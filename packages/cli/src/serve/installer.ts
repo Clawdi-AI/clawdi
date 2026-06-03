@@ -39,6 +39,8 @@ import { isAbsolute, join } from "node:path";
 interface InstallOpts {
 	/** Internal migration hook for removing pre-singleton per-agent units. */
 	agent?: string;
+	rpcHost?: string;
+	rpcPort?: number;
 }
 
 function home(): string {
@@ -81,6 +83,8 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * Whitelist deliberately narrow:
  *   - CLAWDI_AUTH_TOKEN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
+ *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT: optional
+ *     TCP listener for the owner-token-protected control RPC
  *   - CLAWDI_AGENT_TYPE: container fallback when no env registry exists
  *   - CLAWDI_SERVE_MODE: container/laptop mode
  *   - CLAWDI_SERVE_DEBUG: verbose log level
@@ -99,6 +103,8 @@ const PERSISTED_ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_API_URL",
 	"CLAWDI_STATE_DIR",
+	"CLAWDI_DAEMON_RPC_HOST",
+	"CLAWDI_DAEMON_RPC_PORT",
 	// CLAWDI_HOME redirects the entire CLI state tree (auth.json,
 	// environments, locks, serve queue/health) to a sibling
 	// directory; honored by `lib/config.ts:clawdiDir()` and
@@ -119,7 +125,7 @@ const PERSISTED_ENV_KEYS = [
 	"OPENCLAW_AGENT_ID",
 ] as const;
 
-function capturedEnv(): { key: string; value: string }[] {
+function capturedEnv(opts: InstallOpts = {}): { key: string; value: string }[] {
 	const out: { key: string; value: string }[] = [];
 	for (const key of PERSISTED_ENV_KEYS) {
 		const value = process.env[key];
@@ -127,7 +133,27 @@ function capturedEnv(): { key: string; value: string }[] {
 			out.push({ key, value });
 		}
 	}
+	upsertCapturedEnv(out, "CLAWDI_DAEMON_RPC_HOST", opts.rpcHost);
+	upsertCapturedEnv(
+		out,
+		"CLAWDI_DAEMON_RPC_PORT",
+		opts.rpcPort === undefined ? undefined : String(opts.rpcPort),
+	);
 	return out;
+}
+
+function upsertCapturedEnv(
+	out: { key: string; value: string }[],
+	key: string,
+	value?: string,
+): void {
+	if (value === undefined || value === "") return;
+	const existing = out.find((item) => item.key === key);
+	if (existing) {
+		existing.value = value;
+		return;
+	}
+	out.push({ key, value });
 }
 
 /** Path to the currently-running clawdi entry point. Both paths
@@ -327,7 +353,7 @@ ${programArgs}
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>${escapeXml(home())}</string>${capturedEnv()
+    <string>${escapeXml(home())}</string>${capturedEnv(opts)
 			.map(
 				({ key, value }) =>
 					`\n    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`,
@@ -478,7 +504,7 @@ function installSystemd(opts: InstallOpts): {
 	// inject newlines + extra Environment= directives); escape
 	// `\` and `"` for the rest.
 	const envLines: string[] = [`Environment="HOME=${escapedHome}"`];
-	for (const { key, value } of capturedEnv()) {
+	for (const { key, value } of capturedEnv(opts)) {
 		// biome-ignore lint/suspicious/noControlCharactersInRegex: targeting control chars on purpose
 		if (/[\x00-\x1F\x7F]/.test(value)) {
 			throw new Error(

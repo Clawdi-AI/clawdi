@@ -142,6 +142,13 @@ The install command writes a launchd unit on macOS or a systemd `--user` service
 - macOS: `tail -f ~/.clawdi/serve/logs/daemon.stderr.log`
 - Linux: `journalctl --user -u clawdi-serve.service -f`
 
+The control RPC uses an owner-only Unix socket by default. If the user needs TCP, install with an explicit host and port; every RPC request still requires the generated bearer token:
+
+```bash
+clawdi daemon install --rpc-host 127.0.0.1 --rpc-port 17654
+clawdi daemon rpc daemon.ping --rpc-host 127.0.0.1 --rpc-port 17654
+```
+
 What the user gets:
 
 - Edit a SKILL.md locally → uploaded to the cloud within ~1s
