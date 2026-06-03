@@ -68,7 +68,7 @@ import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { type QueueItem, RetryQueue } from "./queue";
 import { watchSessions } from "./sessions-watcher";
-import { consumeSse, type ServerEvent } from "./sse-client";
+import { consumeSse, type ServerEvent, type SseReconnectInfo } from "./sse-client";
 import { watchSkills } from "./watcher";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -88,6 +88,9 @@ const QUEUE_RETRY_INTERVAL_MS = 15_000;
 const QUEUE_IDLE_WAKEUP_MS = 30_000;
 const MAX_QUEUE_ATTEMPTS = 30;
 const SKILL_UPLOAD_ECHO_TTL_MS = 2 * 60_000;
+const TRANSIENT_HEARTBEAT_FAILURES = 3;
+
+type FailureClassification = "transient" | "sustained";
 
 export type PendingSkillUploadEcho = {
 	contentHash: string;
@@ -750,8 +753,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			onConnect: () => {
 				lastSyncError = null;
 			},
-			onDisconnect: (reason) => {
-				lastSyncError = `sse_disconnect:${reason}`;
+			onDisconnect: (info) => {
+				const nextError = lastSyncErrorForSseReconnect(info);
+				if (nextError !== null || lastSyncError?.startsWith("sse_disconnect:")) {
+					lastSyncError = nextError;
+				}
 			},
 			onAuthFailure: () => triggerAuthFailureAbort("sse_channel"),
 		}),
@@ -889,6 +895,16 @@ async function enqueueIfChanged(
 export function isAuthFailure(e: unknown): boolean {
 	if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return true;
 	return false;
+}
+
+export function lastSyncErrorForSseReconnect(
+	info: Pick<SseReconnectInfo, "reason" | "classification">,
+): string | null {
+	return info.classification === "sustained" ? `sse_disconnect:${info.reason}` : null;
+}
+
+export function classifyHeartbeatFailure(consecutiveFailures: number): FailureClassification {
+	return consecutiveFailures <= TRANSIENT_HEARTBEAT_FAILURES ? "transient" : "sustained";
 }
 
 /**
@@ -2161,6 +2177,7 @@ async function heartbeatLoop(
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 ): Promise<void> {
+	let heartbeatFailureStreak = 0;
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
@@ -2181,6 +2198,7 @@ async function heartbeatLoop(
 					last_sync_error: fields.last_sync_error,
 				},
 			});
+			heartbeatFailureStreak = 0;
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {
 			// POST failed — restore the unsent dropped delta so the
@@ -2188,7 +2206,18 @@ async function heartbeatLoop(
 			// count is permanently lost on every flaky-network
 			// cycle, which is precisely when drops are most likely.
 			queue.restoreDroppedDelta(dropped);
-			log.warn("engine.heartbeat_failed", { error: toErrorMessage(e) });
+			heartbeatFailureStreak += 1;
+			const classification = classifyHeartbeatFailure(heartbeatFailureStreak);
+			const fields = {
+				error: toErrorMessage(e),
+				consecutive_failures: heartbeatFailureStreak,
+				classification,
+			};
+			if (classification === "sustained") {
+				log.warn("engine.heartbeat_failed", fields);
+			} else {
+				log.info("engine.heartbeat_failed", fields);
+			}
 		}
 	};
 

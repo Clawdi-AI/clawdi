@@ -59,10 +59,9 @@ interface AgentUploadResult {
 /**
  * What `scanOneAgent` found for a single agent: the sessions and skills
  * staged for upload. Splitting scan from upload lets `push` show a
- * combined, per-agent summary across every target agent and ask for ONE
- * confirmation — instead of confirming each agent before the next is even
- * scanned (which made a multi-agent `clawdi push` look like it had only
- * picked the first agent).
+ * combined, per-agent summary across every target agent before uploading,
+ * instead of interleaving scan and upload per agent (which made a multi-agent
+ * `clawdi push` look like it had only picked the first agent).
  */
 interface AgentScanResult {
 	agentType: AgentType;
@@ -179,7 +178,7 @@ export async function push(opts: PushOpts) {
 	}
 
 	// Combined per-agent summary: every target agent, its counts, and
-	// any advisories — visible in full before the confirmation.
+	// any advisories — visible in full before uploads begin.
 	for (const scan of scans) {
 		const name = adapterRegistry[scan.agentType].displayName;
 		const bits: string[] = [];

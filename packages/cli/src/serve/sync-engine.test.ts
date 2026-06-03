@@ -6,9 +6,11 @@ import { ApiError } from "../lib/api-client";
 import type { PendingSkillUploadEcho } from "./sync-engine";
 import {
 	addInFlight,
+	classifyHeartbeatFailure,
 	consumePendingSkillUploadEcho,
 	isAuthFailure,
 	isOversizedUploadError,
+	lastSyncErrorForSseReconnect,
 	releaseInFlight,
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
@@ -49,6 +51,32 @@ describe("isAuthFailure", () => {
 		expect(isAuthFailure(undefined)).toBe(false);
 		expect(isAuthFailure("401")).toBe(false);
 		expect(isAuthFailure({ status: 401 })).toBe(false);
+	});
+});
+
+describe("live-sync transient failure classification", () => {
+	it("does not surface transient SSE reconnects as last_sync_error", () => {
+		expect(
+			lastSyncErrorForSseReconnect({
+				reason: "http_502",
+				classification: "transient",
+			}),
+		).toBeNull();
+	});
+
+	it("surfaces sustained SSE reconnects as last_sync_error", () => {
+		expect(
+			lastSyncErrorForSseReconnect({
+				reason: "http_502",
+				classification: "sustained",
+			}),
+		).toBe("sse_disconnect:http_502");
+	});
+
+	it("classifies early heartbeat failures as transient and repeated failures as sustained", () => {
+		expect(classifyHeartbeatFailure(1)).toBe("transient");
+		expect(classifyHeartbeatFailure(3)).toBe("transient");
+		expect(classifyHeartbeatFailure(4)).toBe("sustained");
 	});
 });
 

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -69,6 +70,22 @@ describe("HermesAdapter.collectSessions", () => {
 		const { sessions } = await a.collectSessions();
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json).toBeDefined();
+		expect(json?.model).toBe("gpt-5.3-codex");
+		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
+	});
+
+	it("parses Python-repr model config without uploading provider secrets as the model", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.run(
+			"UPDATE sessions SET model = ? WHERE id = ?",
+			"{'default': 'gpt-5.3-codex', 'provider': 'openai-codex', 'headers': {'x-api-key': 'sk-redacted'}}",
+			"s-json",
+		);
+		db.close();
+
+		const a = new HermesAdapter();
+		const { sessions } = await a.collectSessions();
+		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json?.model).toBe("gpt-5.3-codex");
 		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
 	});

@@ -301,7 +301,7 @@ export async function skillAdd(
 
 export async function skillInstall(
 	repoInput: string,
-	opts: { agent?: string; project?: string; list?: boolean; yes?: boolean } = {},
+	opts: { agent?: string; project?: string } = {},
 ) {
 	requireAuth();
 

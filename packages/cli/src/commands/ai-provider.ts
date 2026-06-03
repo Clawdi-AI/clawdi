@@ -139,7 +139,6 @@ interface AiProviderConnectOptions {
 	redirectUri?: string;
 	timeout?: string;
 	open?: boolean;
-	yes?: boolean;
 	dryRun?: boolean;
 	json?: boolean;
 }
@@ -925,7 +924,8 @@ function buildProvider(
 		provider.default_model = opts.defaultModel ?? existing?.default_model;
 	}
 	if (apiMode) provider.api_mode = apiMode;
-	const agentEnv = opts.agentEnv ?? existing?.runtime_env_name;
+	const agentEnv =
+		opts.agentEnv ?? (authNeedsSeparateRuntimeEnv(auth) ? existing?.runtime_env_name : undefined);
 	if (agentEnv) {
 		if (!isRuntimeEnvName(agentEnv)) throw new Error(`Invalid agent env name: ${agentEnv}`);
 		provider.runtime_env_name = agentEnv;
@@ -970,6 +970,12 @@ function parseAuth(input: string): AiProviderAuth {
 	throw new Error(
 		"Unsupported --auth. Use env:<NAME>, clawdi://..., agent:codex/<profile>, or none.",
 	);
+}
+
+function authNeedsSeparateRuntimeEnv(auth: AiProviderAuth): boolean {
+	if (auth.type === "secret_ref") return !auth.ref.startsWith("env:");
+	if (auth.type === "api_key") return auth.source !== "env";
+	return false;
 }
 
 function parseProfileRef(input: string): { provider: string; profile: string } {
@@ -1254,13 +1260,23 @@ function catalogFromOpenClawConfig(input: unknown): AiProviderCatalog {
 	for (const [id, value] of Object.entries(providerMap)) {
 		if (!isAiProviderId(id)) continue;
 		const entry = asRecord(value, `OpenClaw provider ${id}`);
-		const type = parseProviderType(
-			String(entry.type ?? entry.provider ?? "custom_openai_compatible"),
-		);
 		const baseUrl = stringField(entry, "baseUrl") ?? stringField(entry, "base_url");
 		if (!baseUrl) continue;
-		const apiModeInput = stringField(entry, "apiMode") ?? stringField(entry, "api_mode");
-		const keyEnv = stringField(entry, "keyEnv") ?? stringField(entry, "key_env");
+		const apiMode =
+			openClawApiModeFromLabel(stringField(entry, "api")) ??
+			parseApiMode(stringField(entry, "apiMode") ?? stringField(entry, "api_mode"));
+		const type = parseProviderType(
+			stringField(entry, "type") ??
+				stringField(entry, "provider") ??
+				inferProviderTypeFromEndpoint(id, baseUrl, {
+					api_mode: apiMode ?? stringField(entry, "api"),
+				}),
+		);
+		const keyEnv =
+			stringField(entry, "keyEnv") ??
+			stringField(entry, "key_env") ??
+			openClawApiKeyEnv(entry.apiKey) ??
+			openClawApiKeyEnv(entry.api_key);
 		const modelId = firstModelId(entry.models);
 		const provider: AiProvider = {
 			id,
@@ -1269,8 +1285,7 @@ function catalogFromOpenClawConfig(input: unknown): AiProviderCatalog {
 			auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
 		};
 		if (modelId) provider.default_model = modelId;
-		const apiMode = parseApiMode(apiModeInput ?? defaultAiProviderApiMode(type));
-		if (apiMode) provider.api_mode = apiMode;
+		provider.api_mode = apiMode ?? defaultAiProviderApiMode(type);
 		if (keyEnv) provider.runtime_env_name = keyEnv;
 		providers.push(provider);
 	}
@@ -1397,6 +1412,14 @@ function aiApiModeFromHermesTransport(input: string | undefined): AiProviderApiM
 	return undefined;
 }
 
+function openClawApiModeFromLabel(input: string | undefined): AiProviderApiMode | undefined {
+	if (input === "openai-completions") return "openai_chat";
+	if (input === "openai-responses") return "openai_responses";
+	if (input === "anthropic-messages") return "anthropic_messages";
+	if (input === "google-generative-ai") return "google_generate_content";
+	return undefined;
+}
+
 function normalizeHermesProviderSelector(input: string | undefined): string | undefined {
 	if (!input) return undefined;
 	const providerId = input.startsWith("custom:") ? input.slice("custom:".length) : input;
@@ -1466,9 +1489,22 @@ function defaultProviderFromOpenClaw(root: Record<string, unknown>): AiProviderC
 	if (typeof defaults !== "object" || defaults === null || Array.isArray(defaults))
 		return undefined;
 	const model = (defaults as Record<string, unknown>).model;
-	if (typeof model !== "string") return undefined;
-	const providerId = model.split("/")[0];
+	const modelRef =
+		typeof model === "string"
+			? model
+			: typeof model === "object" && model !== null && !Array.isArray(model)
+				? (model as Record<string, unknown>).primary
+				: undefined;
+	if (typeof modelRef !== "string") return undefined;
+	const providerId = modelRef.split("/")[0];
 	return isAiProviderId(providerId) ? { chat_provider_id: providerId } : undefined;
+}
+
+function openClawApiKeyEnv(input: unknown): string | undefined {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+	const record = input as Record<string, unknown>;
+	if (record.source !== "env") return undefined;
+	return typeof record.id === "string" ? record.id : undefined;
 }
 
 function describeAuth(auth: AiProviderAuth): string {

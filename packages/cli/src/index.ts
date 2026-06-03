@@ -240,7 +240,6 @@ program
 		"--dry-run",
 		"Preview without downloading. Use to check which skills will be overwritten locally.",
 	)
-	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",
 		`
@@ -376,7 +375,6 @@ aiProviderCmd
 	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")
 	.option("--timeout <seconds>", "Seconds to wait for loopback callback", "600")
 	.option("--no-open", "Do not open the browser automatically")
-	.option("-y, --yes", "Skip the post-login import confirmation prompt")
 	.option("--dry-run", "Show the OAuth start request without running it")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string, opts) => {
@@ -725,8 +723,6 @@ skillCmd
 		"-p, --project <id-or-slug>",
 		"Install into an explicit owned project (UUID, slug, or name). Mutex with --agent.",
 	)
-	.option("-l, --list", "List skills in the repo without installing (planned)")
-	.option("-y, --yes", "Skip confirmation prompts")
 	.addHelpText(
 		"after",
 		`
@@ -1161,11 +1157,13 @@ agentCredentialsCmd
 		"after",
 		`
 Examples:
-  $ clawdi agent credentials import codex
   $ clawdi agent credentials import claude-code
   $ clawdi agent credentials import claude-code --source keychain --keychain-service <service> --keychain-account <account>
   $ clawdi agent credentials import gh
-  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials`,
+  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials
+
+Codex model-provider auth:
+  $ clawdi ai-provider import-auth openai-codex --tool codex`,
 	)
 	.action(async (tool: string, opts) => {
 		const { agentCredentialsImportCommand } = await import("./commands/agent-credentials.js");
@@ -1186,10 +1184,12 @@ agentCredentialsCmd
 		"after",
 		`
 Examples:
-  $ clawdi agent credentials materialize codex
   $ clawdi agent credentials materialize claude-code
   $ clawdi agent credentials materialize gh
-  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
+  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials
+
+Codex model-provider auth:
+  $ clawdi ai-provider materialize-auth openai-codex`,
 	)
 	.action(async (tool: string, opts) => {
 		const { agentCredentialsMaterializeCommand } = await import("./commands/agent-credentials.js");

@@ -95,7 +95,7 @@ export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}
 		type: provider.type,
 		default_model: provider.default_model ?? null,
 		auth: describeAuth(provider),
-		agent_env_name: provider.runtime_env_name ?? inferredAgentEnvName(provider) ?? null,
+		agent_env_name: inferredAgentEnvName(provider) ?? provider.runtime_env_name ?? null,
 	}));
 	const agents = (["openclaw", "hermes", "codex"] as const).map((engine) =>
 		inspectAiProviderAgentApply(engine),

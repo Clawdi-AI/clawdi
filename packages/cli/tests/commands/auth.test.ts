@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { authLogin } from "../../src/commands/auth";
+import { authLogin, browserOpenCommand } from "../../src/commands/auth";
 import { addToken, listTokens } from "../../src/share/tokens";
 import { jsonResponse, mockFetch } from "./helpers";
 
@@ -51,6 +51,21 @@ afterEach(() => {
 });
 
 describe("authLogin pending share upgrade", () => {
+	it("uses a real executable for browser opening on every supported platform", () => {
+		expect(browserOpenCommand("https://example.test", "darwin")).toEqual({
+			command: "open",
+			args: ["https://example.test"],
+		});
+		expect(browserOpenCommand("https://example.test", "linux")).toEqual({
+			command: "xdg-open",
+			args: ["https://example.test"],
+		});
+		expect(browserOpenCommand("https://example.test", "win32")).toEqual({
+			command: "cmd",
+			args: ["/c", "start", "", "https://example.test"],
+		});
+	});
+
 	it("upgrades anonymous share tokens and eager-pulls shared skills", async () => {
 		addToken({
 			project_id: "project-shared",

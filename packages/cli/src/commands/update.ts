@@ -5,11 +5,12 @@ import {
 	mkdirSync,
 	openSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { getCliVersion } from "../lib/version";
@@ -26,7 +27,7 @@ const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const DAEMON_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 const DAEMON_UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
-type Installer = "bun" | "npm";
+export type Installer = "bun" | "npm";
 
 interface UpdateCache {
 	checkedAt: string;
@@ -157,11 +158,12 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 	// `--check` keeps the old display-only behavior for users who scripted
 	// against it (CI guards, custom dashboards). Default is now to install.
 	if (opts.check) {
+		const installer = detectInstaller();
 		console.log();
 		console.log(
 			chalk.cyan(`A newer version is available. Install with:`) +
 				"\n  " +
-				chalk.white("npm i -g clawdi"),
+				chalk.white(installCommand(installer)),
 		);
 		return;
 	}
@@ -172,7 +174,7 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 		console.log(
 			chalk.yellow("Neither bun nor npm is on PATH; install manually:") +
 				"\n  " +
-				chalk.white("npm i -g clawdi"),
+				chalk.white(installCommand(null)),
 		);
 		return;
 	}
@@ -186,7 +188,7 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 		console.log(
 			chalk.red(`Install failed (${installer} exited ${result.status}). Try manually:`) +
 				"\n  " +
-				chalk.white("npm i -g clawdi"),
+				chalk.white(installCommand(installer)),
 		);
 		process.exitCode = result.status ?? 1;
 		return;
@@ -212,16 +214,130 @@ function writeLastVersion(version: string): void {
 	}
 }
 
-function detectInstaller(): Installer | null {
-	for (const name of ["bun", "npm"] as const) {
-		try {
-			const r = spawnSync(name, ["--version"], { stdio: "ignore" });
-			if (r.status === 0) return name;
-		} catch {
-			// fall through
-		}
+export function detectInstaller(): Installer | null {
+	const available = {
+		bun: commandExists("bun"),
+		npm: commandExists("npm"),
+	};
+	if (!available.bun && !available.npm) return null;
+
+	const current = installerForCurrentInvocation(available);
+	if (current) return current;
+
+	// npm is the documented install path and is the safer default when the
+	// current executable cannot be mapped to a global install. If the current
+	// executable is Bun-managed, installerForCurrentInvocation catches it first.
+	if (available.npm) return "npm";
+	return available.bun ? "bun" : null;
+}
+
+function commandExists(command: string): boolean {
+	try {
+		const r = spawnSync(command, ["--version"], { stdio: "ignore" });
+		return r.status === 0;
+	} catch {
+		return false;
+	}
+}
+
+function installerForCurrentInvocation(available: Record<Installer, boolean>): Installer | null {
+	return detectInstallerFromPaths(process.argv[1], {
+		npmBin: available.npm ? npmGlobalBinDir() : null,
+		npmRoot: available.npm ? npmGlobalRootDir() : null,
+		bunBin: available.bun ? bunGlobalBinDir() : null,
+	});
+}
+
+export function detectInstallerFromPaths(
+	invokedPath: string | undefined,
+	paths: { bunBin?: string | null; npmBin?: string | null; npmRoot?: string | null },
+): Installer | null {
+	if (!invokedPath) return null;
+
+	const candidates = normalizedPathCandidates(invokedPath);
+	const npmBin = paths.npmBin ? normalizePath(paths.npmBin) : null;
+	const npmRoot = paths.npmRoot ? normalizePath(paths.npmRoot) : null;
+	const bunBin = paths.bunBin ? normalizePath(paths.bunBin) : null;
+
+	if (npmBin && candidates.some((candidate) => samePath(dirname(candidate), npmBin))) {
+		return "npm";
+	}
+	if (bunBin && candidates.some((candidate) => samePath(dirname(candidate), bunBin))) {
+		return "bun";
+	}
+	if (
+		npmRoot &&
+		candidates.some((candidate) => pathStartsWith(candidate, join(npmRoot, "clawdi")))
+	) {
+		return "npm";
+	}
+	if (
+		candidates.some((candidate) =>
+			candidate.includes(`${sep}.bun${sep}install${sep}global${sep}node_modules${sep}clawdi${sep}`),
+		)
+	) {
+		return "bun";
 	}
 	return null;
+}
+
+function npmGlobalBinDir(): string | null {
+	const prefix = commandOutput("npm", ["prefix", "-g"]);
+	if (!prefix) return null;
+	return process.platform === "win32" ? normalizePath(prefix) : normalizePath(join(prefix, "bin"));
+}
+
+function npmGlobalRootDir(): string | null {
+	const root = commandOutput("npm", ["root", "-g"]);
+	return root ? normalizePath(root) : null;
+}
+
+function bunGlobalBinDir(): string | null {
+	const bin = commandOutput("bun", ["pm", "bin", "-g"]);
+	return bin ? normalizePath(bin) : null;
+}
+
+function commandOutput(command: string, args: string[]): string | null {
+	try {
+		const result = spawnSync(command, args, { encoding: "utf-8" });
+		if (result.status !== 0) return null;
+		const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+		return stdout || null;
+	} catch {
+		return null;
+	}
+}
+
+function normalizedPathCandidates(path: string): string[] {
+	const paths = [normalizePath(path)];
+	try {
+		paths.push(normalizePath(realpathSync(path)));
+	} catch {
+		// The executable path does not need to exist in tests or unusual launchers.
+	}
+	return [...new Set(paths)];
+}
+
+function normalizePath(path: string): string {
+	return normalize(resolve(path));
+}
+
+function samePath(left: string, right: string): boolean {
+	if (process.platform === "win32") {
+		return normalizePath(left).toLowerCase() === normalizePath(right).toLowerCase();
+	}
+	return normalizePath(left) === normalizePath(right);
+}
+
+function pathStartsWith(path: string, parent: string): boolean {
+	const normalizedPath = normalizePath(path);
+	const normalizedParent = normalizePath(parent);
+	if (samePath(normalizedPath, normalizedParent)) return true;
+	const prefix = normalizedParent.endsWith(sep) ? normalizedParent : `${normalizedParent}${sep}`;
+	if (process.platform === "win32") {
+		return normalizedPath.toLowerCase().startsWith(prefix.toLowerCase());
+	}
+	return normalizedPath.startsWith(prefix);
 }
 
 function detectAutoUpdateInstaller(runtime: AutoUpdateRuntime): Installer | null {
@@ -230,6 +346,10 @@ function detectAutoUpdateInstaller(runtime: AutoUpdateRuntime): Installer | null
 
 function installArgs(installer: Installer): string[] {
 	return installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+}
+
+export function installCommand(installer: Installer | null): string {
+	return installer === "bun" ? "bun add -g clawdi" : "npm i -g clawdi";
 }
 
 // `npx clawdi …` and `bunx clawdi …` install the package into a per-call

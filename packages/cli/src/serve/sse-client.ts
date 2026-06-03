@@ -74,10 +74,39 @@ interface Opts {
 	onConnect?: () => void;
 	/** Called when the stream drops (network error, server close,
 	 * stale read). Daemon flips status to "reconnecting". */
-	onDisconnect?: (reason: string) => void;
+	onDisconnect?: (info: SseReconnectInfo) => void;
 	/** Called once on a 401, just before the consumer loop exits.
 	 * Daemon shuts down — the deploy-key won't come back. */
 	onAuthFailure?: () => void;
+}
+
+export type SseReconnectClassification = "transient" | "sustained";
+
+export interface SseReconnectInfo {
+	reason: string;
+	attempt: number;
+	wait_ms: number;
+	consecutive_failures: number;
+	classification: SseReconnectClassification;
+	first_byte_received?: boolean;
+	http_status?: number;
+	request_id?: string;
+}
+
+const TRANSIENT_RECONNECT_FAILURES = 3;
+
+class SseConnectionError extends Error {
+	readonly reason: string;
+	readonly httpStatus?: number;
+	readonly requestId?: string;
+
+	constructor(reason: string, fields?: { httpStatus?: number; requestId?: string | null }) {
+		super(reason);
+		this.name = "SseConnectionError";
+		this.reason = reason;
+		this.httpStatus = fields?.httpStatus;
+		this.requestId = fields?.requestId ?? undefined;
+	}
 }
 
 // Only reset the backoff counter if the connection survived this
@@ -108,33 +137,80 @@ export async function consumeSse(opts: Opts): Promise<void> {
 			if (firstByteAt !== null && Date.now() - firstByteAt >= STABLE_CONNECTION_MS) {
 				attempt = 0;
 			} else {
-				attempt += 1;
 				const wait = backoffMs(attempt);
-				log.warn("sse.reconnect_unstable_close", {
+				const info = buildReconnectInfo({
+					reason: "unstable_close",
 					attempt,
 					wait_ms: wait,
 					first_byte_received: firstByteAt !== null,
 				});
+				logReconnect("sse.reconnect_unstable_close", info);
+				opts.onDisconnect?.(info);
+				attempt += 1;
 				await sleep(wait, opts.abort);
 			}
 		} catch (err) {
 			if (opts.abort.aborted) return;
-			const reason = errorReason(err);
-			opts.onDisconnect?.(reason);
-			if (reason === "auth_failed") {
+			const error = errorInfo(err);
+			if (error.reason === "auth_failed") {
 				opts.onAuthFailure?.();
 				return;
 			}
 			// Honor Retry-After on 429 rate-limit. The error message
 			// carries the value as `rate_limited:<seconds>`; parse
 			// it and use as the floor for this reconnect's wait.
-			const rateLimitMs = parseRateLimit(reason);
+			const rateLimitMs = parseRateLimit(error.reason);
 			const wait = rateLimitMs ?? backoffMs(attempt);
-			log.warn("sse.reconnect", { reason, attempt, wait_ms: wait });
+			const info = buildReconnectInfo({
+				reason: error.reason,
+				attempt,
+				wait_ms: wait,
+				http_status: error.http_status,
+				request_id: error.request_id,
+			});
+			logReconnect("sse.reconnect", info);
+			opts.onDisconnect?.(info);
 			attempt += 1;
 			await sleep(wait, opts.abort);
 		}
 	}
+}
+
+export function classifySseReconnect(consecutiveFailures: number): SseReconnectClassification {
+	return consecutiveFailures <= TRANSIENT_RECONNECT_FAILURES ? "transient" : "sustained";
+}
+
+function buildReconnectInfo(
+	fields: Omit<SseReconnectInfo, "classification" | "consecutive_failures">,
+): SseReconnectInfo {
+	const consecutiveFailures = fields.attempt + 1;
+	return {
+		...fields,
+		consecutive_failures: consecutiveFailures,
+		classification: classifySseReconnect(consecutiveFailures),
+	};
+}
+
+function logReconnect(event: string, info: SseReconnectInfo): void {
+	const fields = pruneUndefined({
+		reason: info.reason,
+		attempt: info.attempt,
+		consecutive_failures: info.consecutive_failures,
+		wait_ms: info.wait_ms,
+		classification: info.classification,
+		first_byte_received: info.first_byte_received,
+		http_status: info.http_status,
+		request_id: info.request_id,
+	});
+	if (info.classification === "sustained") {
+		log.warn(event, fields);
+	} else {
+		log.info(event, fields);
+	}
+}
+
+function pruneUndefined(fields: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
 function parseRateLimit(reason: string): number | null {
@@ -179,16 +255,25 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 	});
 
 	if (res.status === 401 || res.status === 403) {
-		throw new Error("auth_failed");
+		throw new SseConnectionError("auth_failed", {
+			httpStatus: res.status,
+			requestId: res.headers.get("x-request-id"),
+		});
 	}
 	if (res.status === 429) {
-		throw new Error(`rate_limited:${res.headers.get("retry-after") ?? ""}`);
+		throw new SseConnectionError(`rate_limited:${res.headers.get("retry-after") ?? ""}`, {
+			httpStatus: res.status,
+			requestId: res.headers.get("x-request-id"),
+		});
 	}
 	if (!res.ok) {
-		throw new Error(`http_${res.status}`);
+		throw new SseConnectionError(`http_${res.status}`, {
+			httpStatus: res.status,
+			requestId: res.headers.get("x-request-id"),
+		});
 	}
 	if (!res.body) {
-		throw new Error("no_body");
+		throw new SseConnectionError("no_body", { requestId: res.headers.get("x-request-id") });
 	}
 
 	opts.onConnect?.();
@@ -283,15 +368,18 @@ export function parseRecord(record: string): ServerEvent | null {
 	}
 }
 
-function errorReason(err: unknown): string {
-	if (!(err instanceof Error)) return "unknown";
-	if (err.message === "auth_failed") return "auth_failed";
-	if (err.message === "no_body") return "no_body";
-	if (err.message === "stale") return "stale";
-	if (err.message.startsWith("http_")) return err.message;
-	if (err.message.startsWith("rate_limited")) return err.message;
-	if (err.name === "AbortError") return "aborted";
-	return err.message;
+function errorInfo(err: unknown): { reason: string; http_status?: number; request_id?: string } {
+	if (err instanceof SseConnectionError) {
+		return {
+			reason: err.reason,
+			http_status: err.httpStatus,
+			request_id: err.requestId,
+		};
+	}
+	if (!(err instanceof Error)) return { reason: "unknown" };
+	if (err.message === "stale") return { reason: "stale" };
+	if (err.name === "AbortError") return { reason: "aborted" };
+	return { reason: err.message };
 }
 
 function backoffMs(attempt: number): number {
@@ -302,6 +390,10 @@ function backoffMs(attempt: number): number {
 
 function sleep(ms: number, abort: AbortSignal): Promise<void> {
 	return new Promise((resolve) => {
+		if (abort.aborted) {
+			resolve();
+			return;
+		}
 		// Listener must be removed when timeout wins, otherwise a
 		// long reconnect storm leaks listeners on the same shared
 		// AbortSignal and eventually trips MaxListenersExceededWarning.

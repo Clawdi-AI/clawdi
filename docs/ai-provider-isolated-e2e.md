@@ -19,6 +19,7 @@ or Python packages on the host machine.
 
 - Date: 2026-06-03
 - Branch: `feat/ai-provider-abstraction`
+- Latest rerun: 2026-06-03 on `review/cli-release-readiness`
 - Container image: `node:24-bookworm-slim`
 - Container-only installs:
   - `bun@1.3.14`

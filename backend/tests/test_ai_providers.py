@@ -206,6 +206,29 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_allows_no_auth_local_endpoints(client: httpx.AsyncClient):
+    for index, base_url in enumerate(
+        [
+            "http://localhost:1234/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:1234/v1",
+            "http://0.0.0.0:1234/v1",
+        ],
+    ):
+        created = await client.post(
+            "/api/ai-providers",
+            json={
+                "provider_id": f"local-model-{index}",
+                "type": "custom_openai_compatible",
+                "base_url": base_url,
+                "api_mode": "openai_chat",
+                "auth": {"type": "none"},
+            },
+        )
+        assert created.status_code == 200, created.text
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_managed_api_key_is_redacted(client: httpx.AsyncClient):
     created = await client.post(
         "/api/ai-providers",

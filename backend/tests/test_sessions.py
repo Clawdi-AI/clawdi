@@ -76,6 +76,43 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
 
 
 @pytest.mark.asyncio
+async def test_session_batch_cleans_structured_and_long_model_values(client: httpx.AsyncClient):
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    structured_model = (
+        "{'default': 'gpt-5.3-codex', 'provider': 'openai-codex', "
+        "'base_url': 'https://example.invalid/v1', "
+        "'headers': {'x-api-key': 'sk-redacted'}}"
+    )
+    long_model = "custom-" + ("x" * 160)
+
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "sess-structured-model",
+                    "started_at": started,
+                    "model": structured_model,
+                    "models_used": [structured_model, long_model],
+                    "content_hash": "c" * 64,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    listing = (await client.get("/api/sessions")).json()
+    session = next(
+        item for item in listing["items"] if item["local_session_id"] == "sess-structured-model"
+    )
+    assert session["model"] == "gpt-5.3-codex"
+    assert session["models_used"][0] == "gpt-5.3-codex"
+    assert len(session["models_used"][1]) == 100
+
+
+@pytest.mark.asyncio
 async def test_session_batch_unchanged_when_hash_matches_and_content_uploaded(
     client: httpx.AsyncClient,
 ):

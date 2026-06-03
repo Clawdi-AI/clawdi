@@ -33,12 +33,19 @@ interface MeResponse {
  * copies the URL out of the terminal. We don't want to crash the login flow
  * over a missing `xdg-open`.
  */
+export function browserOpenCommand(
+	url: string,
+	platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+	if (platform === "darwin") return { command: "open", args: [url] };
+	if (platform === "win32") return { command: "cmd", args: ["/c", "start", "", url] };
+	return { command: "xdg-open", args: [url] };
+}
+
 function openInBrowser(url: string): void {
-	const cmd =
-		process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+	const { command, args } = browserOpenCommand(url);
 	try {
-		const args = process.platform === "win32" ? ["", url] : [url];
-		const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+		const child = spawn(command, args, { stdio: "ignore", detached: true });
 		child.on("error", () => {
 			/* opener missing — user copies URL manually */
 		});

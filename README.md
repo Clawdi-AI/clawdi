@@ -83,7 +83,7 @@ Clawdi is the shared layer underneath:
 - **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
-- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex or Hermes agent config without proxying BYOK model traffic.
+- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex, Hermes, or OpenClaw agent config without proxying BYOK model traffic.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
 - **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 
@@ -114,18 +114,61 @@ Agents should prefer `clawdi run --env-file .env.clawdi -- <command>` when they 
 
 Use `--dry-run` on `clawdi read`, `clawdi inject`, `clawdi run`, and `clawdi vault resolve` to verify provenance without requesting plaintext values. `clawdi doctor` checks vault metadata only; it does not resolve stored secrets.
 
-Sync a local agent CLI credential profile to another machine:
+Sync a local CLI credential profile to another machine. For Codex model-provider
+auth, prefer the AI Provider commands in the next section; the lower-level
+`agent credentials` commands remain available for compatibility and for
+non-provider CLI credentials such as Claude Code and GitHub CLI.
 
 ```bash
-clawdi agent credentials import codex
 clawdi agent credentials import claude-code
 clawdi agent credentials import gh
-clawdi agent credentials materialize codex
 clawdi agent credentials materialize claude-code
 clawdi agent credentials materialize gh
 ```
 
 Credential profile sync is separate from `clawdi run`: it stores and restores a supported tool's local auth file, while `run` injects explicit `clawdi://` references into one child process. Profiles default to your stable Personal Project so `import` on one machine and `materialize` on another resolve the same namespace. They are personal backup/restore artifacts: shared Project viewers and env-bound Agent keys cannot materialize them. macOS Keychain imports are guarded behind `--source keychain` and require explicit `--keychain-service` plus `--keychain-account`; Clawdi does not guess or silently scrape credential-store items, and Keychain reads cannot use `--yes`.
+
+Manage model providers without turning Clawdi into a model proxy:
+
+```bash
+clawdi ai-provider add openai-main \
+  --type openai \
+  --default-model gpt-5.2 \
+  --auth env:OPENAI_API_KEY \
+  --capability chat \
+  --capability responses \
+  --capability tools
+
+clawdi ai-provider validate openai-main
+clawdi ai-provider test openai-main        # config + auth availability
+clawdi ai-provider test openai-main --live # optional direct provider probe
+```
+
+AI Provider metadata lives in `~/.clawdi/ai-providers/catalog.json`; API keys do not. Use `env:...` refs, `clawdi://...` Vault refs, `none` for local unauthenticated endpoints, or a verified auth profile such as `agent:codex/default`. BYOK model requests still go directly from the agent runtime to OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your compatible endpoint.
+
+Apply provider config explicitly, with a dry run first:
+
+```bash
+clawdi ai-provider apply --engine codex --dry-run
+clawdi ai-provider apply --engine codex
+codex --profile clawdi-ai-provider
+
+clawdi ai-provider apply --engine hermes --dry-run
+clawdi ai-provider apply --engine openclaw --dry-run
+```
+
+Codex OAuth is managed through the AI Provider surface:
+
+```bash
+clawdi ai-provider add openai-codex \
+  --type openai \
+  --default-model gpt-5-codex \
+  --auth agent:codex/default
+clawdi ai-provider connect openai-codex --tool codex
+clawdi ai-provider materialize-auth openai-codex
+```
+
+Use `clawdi ai-provider connect ... --callback manual` in headless environments. Export/import is metadata-only by default; `--include-secrets` requires passphrase-encrypted secret export.
 
 Current vault storage is server-managed encryption. Clawdi avoids plaintext secrets in repo files and local templates, but the backend can decrypt stored vault values and credential profiles today. Do not treat this release as zero-knowledge.
 
@@ -266,9 +309,8 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
-| `clawdi agent credentials import/materialize` | Sync local CLI credential profiles for Codex, Claude Code, and GitHub CLI; explicit Keychain import requires service/account options |
-| `clawdi ai-provider ...` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, and provider-only export/import |
-| `clawdi ai-provider apply/status` | Preview AI Provider agent config changes, apply verified Codex/Hermes config, and inspect apply state |
+| `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect/materialize-auth` for Codex provider auth |
+| `clawdi ai-provider list/add/edit/remove/validate/test/connect/import-auth/materialize-auth/apply/status/export/import` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, verified Codex/Hermes/OpenClaw agent config apply, and provider-only export/import |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
 | `clawdi vault set/list/import/attach/detach/rm` | Manage encrypted secrets, Project access, and copy exact references |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
