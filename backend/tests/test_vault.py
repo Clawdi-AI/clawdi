@@ -106,6 +106,53 @@ async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.Asyn
 
 
 @pytest.mark.asyncio
+async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClient):
+    """The dashboard curation move: batch-copy items vault→vault.
+
+    Values must survive the server-side decrypt/re-encrypt hop intact
+    while plaintext never appears in the copy response. Missing source
+    names are skipped (count reflects it); self-copy is rejected.
+    """
+    await cli_client.post("/api/vault", json={"slug": "grab-bag", "name": "Grab bag"})
+    await cli_client.post("/api/vault", json={"slug": "phala", "name": "Phala"})
+    await cli_client.put(
+        "/api/vault/grab-bag/items",
+        json={"section": "", "fields": {"OPENAI_API_KEY": "sk-live-xyz", "OTHER": "keep"}},
+    )
+
+    r = await cli_client.post(
+        "/api/vault/grab-bag/items/copy",
+        json={"target_slug": "phala", "fields": ["OPENAI_API_KEY", "NOT_THERE"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"status": "ok", "copied": 1}
+
+    # Target has the name; source is untouched (copy, not move).
+    assert (await cli_client.get("/api/vault/phala/items")).json() == {
+        "(default)": ["OPENAI_API_KEY"]
+    }
+    source_names = (await cli_client.get("/api/vault/grab-bag/items")).json()
+    assert sorted(source_names["(default)"]) == ["OPENAI_API_KEY", "OTHER"]
+
+    # The re-encrypted copy decrypts to the original plaintext. Delete
+    # the source item first so resolve can only be served by the copy.
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/grab-bag/items",
+        json={"section": "", "fields": ["OPENAI_API_KEY"]},
+    )
+    assert deleted.status_code == 200, deleted.text
+    resolved = (await cli_client.post("/api/vault/resolve")).json()
+    assert resolved.get("OPENAI_API_KEY") == "sk-live-xyz"
+
+    self_copy = await cli_client.post(
+        "/api/vault/grab-bag/items/copy",
+        json={"target_slug": "grab-bag", "fields": ["OPENAI_API_KEY"]},
+    )
+    assert self_copy.status_code == 400, self_copy.text
+
+
+@pytest.mark.asyncio
 async def test_vault_resolve_exact_clawdi_reference(cli_client: httpx.AsyncClient):
     await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
     r = await cli_client.put(

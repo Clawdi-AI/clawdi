@@ -1,17 +1,29 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Plus, Share2, Trash2 } from "lucide-react";
+import {
+	ArrowLeft,
+	Check,
+	Copy as CopyIcon,
+	FolderInput,
+	ListChecks,
+	Plus,
+	Search,
+	Share2,
+	Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { BulkActionBar } from "@/components/bulk-action-bar";
 import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	Dialog,
@@ -21,6 +33,7 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
 	Select,
@@ -32,6 +45,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
+import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -39,6 +53,17 @@ import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
+
+/** Selection identity for a key row. Sections can't contain spaces. */
+function keyId(k: { section: string; name: string }): string {
+	return `${k.section} ${k.name}`;
+}
+
+/** The listing endpoint names the implicit section "(default)"; writes
+ * must address it as "" or the section validator rejects the call. */
+function apiSection(section: string): string {
+	return section === "(default)" ? "" : section;
+}
 
 /* Vault detail (journeys J5 + J6): a real page for one secret bundle —
  * keys (names only; values stay server-side), paste-to-import, project
@@ -86,6 +111,28 @@ export default function VaultDetailPage() {
 		);
 	}, [keys.data]);
 
+	// Curation toolkit for grab-bag vaults (the default vault holds
+	// hundreds of keys): search by name, batch-select, then copy/move
+	// the selection into a named vault or delete it.
+	const [search, setSearch] = useState("");
+	const [selectMode, setSelectMode] = useState(false);
+	const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+	const clearSelection = () => setSelectedKeys(new Set());
+	const filteredKeyNames = useMemo(() => {
+		const needle = search.trim().toLowerCase();
+		if (!needle) return keyNames;
+		return keyNames.filter(
+			({ section, name }) =>
+				name.toLowerCase().includes(needle) || section.toLowerCase().includes(needle),
+		);
+	}, [keyNames, search]);
+	const selectedList = useMemo(
+		() => keyNames.filter((k) => selectedKeys.has(keyId(k))),
+		[keyNames, selectedKeys],
+	);
+	const allFilteredSelected =
+		filteredKeyNames.length > 0 && filteredKeyNames.every((k) => selectedKeys.has(keyId(k)));
+
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 		qc.invalidateQueries({ queryKey: ["vault-items", slug] });
@@ -96,13 +143,50 @@ export default function VaultDetailPage() {
 			if (!anyProjectId) throw new Error("No Project attachment");
 			return unwrap(
 				await api.DELETE("/api/vault/{slug}/items", {
-					params: { path: { slug }, query: { project_id: anyProjectId } },
-					body: { section, fields: [name] },
+					params: {
+						path: { slug },
+						query: { project_id: anyProjectId, global_delete: true },
+					},
+					body: { section: apiSection(section), fields: [name] },
 				}),
 			);
 		},
 		onSuccess: () => refresh(),
 		onError: (e) => toast.error("Couldn't delete key", { description: errorMessage(e) }),
+	});
+
+	const bulkDeleteKeys = useMutation({
+		mutationFn: async (list: { section: string; name: string }[]) => {
+			if (!anyProjectId) throw new Error("No Project attachment");
+			const bySection = new Map<string, string[]>();
+			for (const k of list) {
+				const section = apiSection(k.section);
+				const bucket = bySection.get(section);
+				if (bucket) bucket.push(k.name);
+				else bySection.set(section, [k.name]);
+			}
+			// API caps fields per request at 200; chunk for big selections.
+			for (const [section, names] of bySection) {
+				for (let i = 0; i < names.length; i += 150) {
+					unwrap(
+						await api.DELETE("/api/vault/{slug}/items", {
+							params: {
+								path: { slug },
+								query: { project_id: anyProjectId, global_delete: true },
+							},
+							body: { section, fields: names.slice(i, i + 150) },
+						}),
+					);
+				}
+			}
+			return list.length;
+		},
+		onSuccess: (n) => {
+			refresh();
+			clearSelection();
+			toast.success(`${n} ${n === 1 ? "key" : "keys"} deleted`);
+		},
+		onError: (e) => toast.error("Couldn't delete keys", { description: errorMessage(e) }),
 	});
 
 	const attachProject = useMutation({
@@ -249,15 +333,68 @@ export default function VaultDetailPage() {
 							Values are write-only here — agents read them at runtime through the CLI.
 						</p>
 					</div>
-					{isOwner ? (
-						<AddKeysDialog vaultSlug={slug}>
-							<Button variant="outline" size="sm" disabled={!anyProjectId}>
-								<Plus className="size-3.5" />
-								Add keys
-							</Button>
-						</AddKeysDialog>
-					) : null}
+					<div className="flex shrink-0 items-center gap-2">
+						{keyNames.length > 0 ? (
+							<>
+								<div className="relative">
+									<Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+									<Input
+										value={search}
+										onChange={(e) => setSearch(e.target.value)}
+										placeholder="Search keys…"
+										aria-label="Search keys"
+										className="h-8 w-40 pl-8 text-sm sm:w-52"
+									/>
+								</div>
+								{isOwner ? (
+									<Button
+										variant={selectMode ? "secondary" : "outline"}
+										size="sm"
+										onClick={() => {
+											setSelectMode((on) => {
+												if (on) clearSelection();
+												return !on;
+											});
+										}}
+										aria-pressed={selectMode}
+									>
+										<ListChecks className="size-3.5" />
+										{selectMode ? "Done" : "Select"}
+									</Button>
+								) : null}
+							</>
+						) : null}
+						{isOwner ? (
+							<AddKeysDialog vaultSlug={slug}>
+								<Button variant="outline" size="sm" disabled={!anyProjectId}>
+									<Plus className="size-3.5" />
+									Add keys
+								</Button>
+							</AddKeysDialog>
+						) : null}
+					</div>
 				</div>
+				{selectMode && filteredKeyNames.length > 0 ? (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 w-fit px-2 text-xs"
+						onClick={() => {
+							setSelectedKeys((prev) => {
+								const next = new Set(prev);
+								for (const k of filteredKeyNames) {
+									if (allFilteredSelected) next.delete(keyId(k));
+									else next.add(keyId(k));
+								}
+								return next;
+							});
+						}}
+					>
+						{allFilteredSelected
+							? "Deselect all"
+							: `Select all${search.trim() ? " matching" : ""} (${filteredKeyNames.length})`}
+					</Button>
+				) : null}
 
 				{keys.isLoading ? (
 					<Skeleton className="h-32 w-full rounded-lg" />
@@ -265,46 +402,117 @@ export default function VaultDetailPage() {
 					<div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
 						No keys yet. Add one above or paste several at once with Import.
 					</div>
+				) : filteredKeyNames.length === 0 ? (
+					<div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+						No keys match that search.
+					</div>
 				) : (
 					/* Keys as compact cards: a 200-key vault scans far better in a
 				   multi-column grid than a one-column ledger. */
 					<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-						{keyNames.map(({ section, name }) => (
-							<div
-								key={`${section}/${name}`}
-								className="group flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 transition-colors duration-150 hover:border-foreground/20"
-							>
-								<span className="min-w-0 flex-1 truncate font-mono text-xs" title={name}>
-									{/* "(default)" is the backend's implicit section — noise, hide it. */}
-									{section && section !== "(default)" ? `${section}/` : ""}
-									{name}
-								</span>
-								<span className="shrink-0 font-mono text-[10px] text-muted-foreground select-none">
-									••••••
-								</span>
-								{isOwner ? (
-									<ConfirmAction
-										title={`Delete ${name}?`}
-										description={<p>The key is removed for every Project using this vault.</p>}
-										confirmLabel="Delete key"
-										destructive
-										onConfirm={() => deleteKey.mutate({ section, name })}
-									>
-										<Button
-											variant="ghost"
-											size="icon-xs"
-											className="text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-destructive group-focus-within:opacity-100 group-hover:opacity-100"
-											aria-label={`Delete ${name}`}
+						{filteredKeyNames.map(({ section, name }) => {
+							const isSelected = selectedKeys.has(keyId({ section, name }));
+							return (
+								<div
+									key={`${section}/${name}`}
+									className={cn(
+										"group relative flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 transition-colors duration-150",
+										selectMode && isSelected
+											? "border-foreground/40 bg-accent/50"
+											: "hover:border-foreground/20",
+									)}
+								>
+									{selectMode ? (
+										<Checkbox
+											checked={isSelected}
+											tabIndex={-1}
+											aria-hidden
+											className="pointer-events-none shrink-0"
+										/>
+									) : null}
+									<span className="min-w-0 flex-1 truncate font-mono text-xs" title={name}>
+										{/* "(default)" is the backend's implicit section — noise, hide it. */}
+										{section && section !== "(default)" ? `${section}/` : ""}
+										{name}
+									</span>
+									<span className="shrink-0 font-mono text-[10px] text-muted-foreground select-none">
+										••••••
+									</span>
+									{selectMode ? (
+										<button
+											type="button"
+											onClick={() => {
+												setSelectedKeys((prev) => {
+													const next = new Set(prev);
+													const id = keyId({ section, name });
+													if (next.has(id)) next.delete(id);
+													else next.add(id);
+													return next;
+												});
+											}}
+											aria-pressed={isSelected}
+											className="absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										>
-											<Trash2 className="size-3" />
-										</Button>
-									</ConfirmAction>
-								) : null}
-							</div>
-						))}
+											<span className="sr-only">
+												{isSelected ? "Deselect" : "Select"} {name}
+											</span>
+										</button>
+									) : isOwner ? (
+										<ConfirmAction
+											title={`Delete ${name}?`}
+											description={<p>The key is removed for every Project using this vault.</p>}
+											confirmLabel="Delete key"
+											destructive
+											onConfirm={() => deleteKey.mutate({ section, name })}
+										>
+											<Button
+												variant="ghost"
+												size="icon-xs"
+												className="text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-destructive group-focus-within:opacity-100 group-hover:opacity-100"
+												aria-label={`Delete ${name}`}
+											>
+												<Trash2 className="size-3" />
+											</Button>
+										</ConfirmAction>
+									) : null}
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</section>
+
+			<BulkActionBar count={selectedKeys.size} noun="key" onClear={clearSelection}>
+				<CopyKeysDialog vault={vault} keys={selectedList} mode="copy" onDone={clearSelection}>
+					<Button size="sm" variant="outline">
+						<CopyIcon className="size-3.5" />
+						Copy to vault…
+					</Button>
+				</CopyKeysDialog>
+				<CopyKeysDialog vault={vault} keys={selectedList} mode="move" onDone={clearSelection}>
+					<Button size="sm">
+						<FolderInput className="size-3.5" />
+						Move to vault…
+					</Button>
+				</CopyKeysDialog>
+				<ConfirmAction
+					title={`Delete ${selectedKeys.size} ${selectedKeys.size === 1 ? "key" : "keys"}?`}
+					description={<p>They are removed for every Project using this vault.</p>}
+					confirmLabel="Delete"
+					destructive
+					onConfirm={() => bulkDeleteKeys.mutate(selectedList)}
+				>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={bulkDeleteKeys.isPending}
+						className="text-destructive"
+					>
+						<Trash2 className="size-3.5" />
+						Delete
+					</Button>
+				</ConfirmAction>
+			</BulkActionBar>
 
 			{/* Projects */}
 			<section className="space-y-3">

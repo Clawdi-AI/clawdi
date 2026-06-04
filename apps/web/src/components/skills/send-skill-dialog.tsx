@@ -34,18 +34,22 @@ import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-/* The #1 job of this dashboard: move a skill from one agent/project to
- * another. Pure frontend composition — download the tar from the source
- * project, upload it to the target's project. Agent targets resolve to
- * the agent's own project, so users can think "send to my MacBook agent"
- * without learning the project layer. */
+/* The #1 job of this dashboard: move skills from one agent/project to
+ * another — one at a time from the card hover, or a whole batch from
+ * select mode. Pure frontend composition — download each tar from its
+ * source project, upload it to the target's project. Agent targets
+ * resolve to the agent's own project, so users can think "send to my
+ * MacBook agent" without learning the project layer. */
 
 export function SendSkillDialog({
-	skill,
+	skills,
 	children,
+	onDone,
 }: {
-	skill: SkillSummary;
+	skills: SkillSummary[];
 	children?: React.ReactNode;
+	/** Called after a successful send (bulk mode clears its selection). */
+	onDone?: () => void;
 }) {
 	const api = useApi();
 	const authedFetch = useAuthedFetch();
@@ -53,6 +57,9 @@ export function SendSkillDialog({
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
 	const [removeFromSource, setRemoveFromSource] = useState(false);
+
+	const single = skills.length === 1 ? skills[0] : null;
+	const batchLabel = single ? single.name : `${skills.length} skills`;
 
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
@@ -67,16 +74,22 @@ export function SendSkillDialog({
 
 	// Target value encodes the destination project id. Agents are listed
 	// first (that's how users think) and resolve to their own project.
+	// A destination only disappears when EVERY selected skill already
+	// lives there — mixed-source batches keep it (already-there copies
+	// are skipped at send time).
 	const agentTargets = useMemo(
 		() =>
 			(envs ?? [])
-				.filter((e) => e.default_project_id && e.default_project_id !== skill.project_id)
+				.filter(
+					(e) =>
+						e.default_project_id && !skills.every((s) => s.project_id === e.default_project_id),
+				)
 				.map((e) => ({
 					value: e.default_project_id as string,
 					label: `${cleanMachineName(e.machine_name)} (${agentTypeLabel(e.agent_type)})`,
 					emoji: identityFor(e.machine_name).emoji,
 				})),
-		[envs, skill.project_id],
+		[envs, skills],
 	);
 	const projectTargets = useMemo(
 		() =>
@@ -84,7 +97,7 @@ export function SendSkillDialog({
 				.filter(
 					(p) =>
 						p.is_owner !== false &&
-						p.id !== skill.project_id &&
+						!skills.every((s) => s.project_id === p.id) &&
 						(p.kind === "workspace" || p.kind === "personal"),
 				)
 				.map((p) => ({
@@ -92,45 +105,71 @@ export function SendSkillDialog({
 					label: displayProjectName(p),
 					emoji: identityFor(displayProjectName(p)).emoji,
 				})),
-		[projects, skill.project_id],
+		[projects, skills],
 	);
 
 	const send = useMutation({
 		mutationFn: async () => {
-			if (!skill.project_id) throw new Error("Source project unknown");
 			if (!target) throw new Error("Choose a destination first");
-			const dl = await authedFetch(
-				`/api/projects/${skill.project_id}/skills/${encodeURIComponent(skill.skill_key)}/download`,
-			);
-			if (!dl.ok) throw new Error(`Couldn't read the skill (${dl.status})`);
-			const blob = await dl.blob();
-			const form = new FormData();
-			form.append("skill_key", skill.skill_key);
-			form.append("file", blob, `${skill.skill_key.replace(/\//g, "-")}.tar.gz`);
-			const up = await authedFetch(`/api/projects/${target}/skills/upload`, {
-				method: "POST",
-				body: form,
-			});
-			if (!up.ok) throw new Error(`Couldn't install at the destination (${up.status})`);
-			if (removeFromSource) {
-				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
-				});
+			// Per-skill try/catch: in a batch, one unreadable skill must
+			// not abort the rest — report partial success instead.
+			let sent = 0;
+			const failed: string[] = [];
+			for (const skill of skills) {
+				if (!skill.project_id || skill.project_id === target) continue;
+				try {
+					const dl = await authedFetch(
+						`/api/projects/${skill.project_id}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+					);
+					const blob = await dl.blob();
+					const form = new FormData();
+					form.append("skill_key", skill.skill_key);
+					form.append("file", blob, `${skill.skill_key.replace(/\//g, "-")}.tar.gz`);
+					await authedFetch(`/api/projects/${target}/skills/upload`, {
+						method: "POST",
+						body: form,
+					});
+					if (removeFromSource) {
+						await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+							params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
+						});
+					}
+					sent += 1;
+				} catch {
+					failed.push(skill.name || skill.skill_key);
+				}
 			}
+			if (sent === 0) {
+				throw new Error(
+					failed.length > 0
+						? `Couldn't read ${failed.join(", ")} from the source`
+						: "Everything selected is already in that destination",
+				);
+			}
+			return { sent, failed };
 		},
-		onSuccess: () => {
+		onSuccess: ({ sent, failed }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			const targetLabel =
 				[...agentTargets, ...projectTargets].find((t) => t.value === target)?.label ??
 				"the destination";
-			toast.success(removeFromSource ? "Skill moved" : "Skill copied", {
-				description: `${skill.name} is now available in ${targetLabel}.`,
-			});
+			const what = sent === 1 && single ? single.name : `${sent} skills`;
+			toast.success(
+				removeFromSource
+					? `${sent === 1 ? "Skill" : "Skills"} moved`
+					: `${sent === 1 ? "Skill" : "Skills"} copied`,
+				{
+					description:
+						`${what} now available in ${targetLabel}.` +
+						(failed.length > 0 ? ` Skipped (couldn't read): ${failed.join(", ")}.` : ""),
+				},
+			);
 			setOpen(false);
 			setTarget("");
 			setRemoveFromSource(false);
+			onDone?.();
 		},
-		onError: (e) => toast.error("Couldn't send skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't send skills", { description: errorMessage(e) }),
 	});
 
 	return (
@@ -146,16 +185,17 @@ export function SendSkillDialog({
 		>
 			<DialogTrigger asChild>
 				{children ?? (
-					<Button variant="ghost" size="icon-sm" aria-label={`Send ${skill.name} to…`}>
+					<Button variant="ghost" size="icon-sm" aria-label={`Send ${batchLabel} to…`}>
 						<Send className="size-3.5" />
 					</Button>
 				)}
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Send {skill.name} to…</DialogTitle>
+					<DialogTitle>Send {batchLabel} to…</DialogTitle>
 					<DialogDescription>
-						Copy this skill to another agent or Project. The destination gets its own copy.
+						Copy {single ? "this skill" : "these skills"} to another agent or Project. The
+						destination gets its own {single ? "copy" : "copies"}.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
@@ -211,7 +251,7 @@ export function SendSkillDialog({
 						onClick={() => send.mutate()}
 					>
 						{send.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
-						{removeFromSource ? "Move skill" : "Copy skill"}
+						{removeFromSource ? `Move ${batchLabel}` : `Copy ${batchLabel}`}
 					</Button>
 				</div>
 			</DialogContent>

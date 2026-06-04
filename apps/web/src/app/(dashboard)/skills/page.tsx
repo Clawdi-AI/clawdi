@@ -8,13 +8,17 @@ import {
 	ChevronDown,
 	Download,
 	ExternalLink,
+	ListChecks,
 	Plus,
 	Search,
+	Send as SendIcon,
+	Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { BulkActionBar } from "@/components/bulk-action-bar";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -25,11 +29,13 @@ import {
 } from "@/components/projects/project-metadata";
 import { ProjectTab } from "@/components/projects/project-tab";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { SkillCardGrid } from "@/components/skills/skill-card";
+import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
+import { SkillCardGrid, skillSelectionKey } from "@/components/skills/skill-card";
 import { resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -117,7 +123,9 @@ function SkillsPageInner() {
 	//   - Legacy URL has ?target=X and envs loaded:
 	//       env found → its Agent Project
 	//       env missing → stale link, block writes
-	//   - No URL scope → first visible Project, ordered for common use
+	//   - No URL scope → "All projects": most skills live in agent/system
+	//     projects, so defaulting to one customized Project hid the bulk
+	//     of the user's inventory (Marvin: "users very hard to view them")
 	const targetEnvFromUrl = useMemo(() => {
 		if (!hasTargetParam || hasProjectParam) return null;
 		if (!envs) return undefined; // still loading
@@ -130,10 +138,11 @@ function SkillsPageInner() {
 	}, [hasProjectParam, projectParam, projects, orderedProjects]);
 	const isResolvingTarget =
 		projects === undefined || targetEnvFromUrl === undefined || projectFromUrl === undefined;
+	const isAllScope = !hasProjectParam && !hasTargetParam;
 	const targetProjectId = (() => {
 		if (hasProjectParam) return projectFromUrl?.id ?? null;
 		if (hasTargetParam) return targetEnvFromUrl?.default_project_id ?? null;
-		return orderedProjects[0]?.id ?? null;
+		return null; // All-projects view
 	})();
 	const targetProject = orderedProjects.find((project) => project.id === targetProjectId) ?? null;
 	const isStaleProject = hasProjectParam && projectFromUrl === null;
@@ -207,11 +216,66 @@ function SkillsPageInner() {
 		return baseName;
 	}, [envs, targetEnv]);
 
+	// Curation toolkit: search across every copy of every skill, then
+	// batch-select and send them somewhere better. This is how content
+	// escapes the agent/system projects it accumulates in.
+	const [search, setSearch] = useState("");
+	const [selectMode, setSelectMode] = useState(false);
+	const [selectedSkillKeys, setSelectedSkillKeys] = useState<Set<string>>(new Set());
+	const clearSelection = () => setSelectedSkillKeys(new Set());
+	const toggleSkill = (skill: SkillSummary) => {
+		setSelectedSkillKeys((prev) => {
+			const next = new Set(prev);
+			const key = skillSelectionKey(skill);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+
+	const matchesSearch = useMemo(() => {
+		const needle = search.trim().toLowerCase();
+		if (!needle) return () => true;
+		return (s: SkillSummary) =>
+			(s.name ?? "").toLowerCase().includes(needle) ||
+			s.skill_key.toLowerCase().includes(needle) ||
+			(s.description ?? "").toLowerCase().includes(needle);
+	}, [search]);
+
 	const skillsForTarget = useMemo(() => {
 		if (!skillsData?.items) return undefined;
-		if (isStaleProject || isStaleTarget || !targetProjectId) return [];
-		return skillsData.items.filter((s) => s.project_id === targetProjectId);
-	}, [skillsData, targetProjectId, isStaleProject, isStaleTarget]);
+		if (isStaleProject || isStaleTarget) return [];
+		if (isAllScope) return skillsData.items.filter(matchesSearch);
+		if (!targetProjectId) return [];
+		return skillsData.items.filter((s) => s.project_id === targetProjectId && matchesSearch(s));
+	}, [skillsData, targetProjectId, isStaleProject, isStaleTarget, isAllScope, matchesSearch]);
+
+	// All-projects view groups by source project, busiest first — this is
+	// the "where do most of my skills actually live?" answer at a glance.
+	const allGroups = useMemo(() => {
+		if (!isAllScope || !skillsForTarget) return [];
+		const byProject = new Map<string, SkillSummary[]>();
+		for (const s of skillsForTarget) {
+			const pid = s.project_id ?? "";
+			const bucket = byProject.get(pid);
+			if (bucket) bucket.push(s);
+			else byProject.set(pid, [s]);
+		}
+		return [...byProject.entries()]
+			.map(([pid, groupSkills]) => {
+				const project = orderedProjects.find((p) => p.id === pid) ?? null;
+				const label = project
+					? displayProjectName(project)
+					: (groupSkills[0]?.project_name ?? "Other");
+				return { pid, project, label, skills: groupSkills };
+			})
+			.sort((a, b) => b.skills.length - a.skills.length || a.label.localeCompare(b.label));
+	}, [isAllScope, skillsForTarget, orderedProjects]);
+
+	const selectedSkills = useMemo(
+		() => (skillsData?.items ?? []).filter((s) => selectedSkillKeys.has(skillSelectionKey(s))),
+		[skillsData, selectedSkillKeys],
+	);
 
 	const installedKeysOnTarget = useMemo(() => {
 		const items = skillsForTarget;
@@ -233,6 +297,28 @@ function SkillsPageInner() {
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
+	});
+
+	const bulkUninstall = useMutation({
+		mutationFn: async (skills: SkillSummary[]) => {
+			let removed = 0;
+			for (const s of skills) {
+				if (!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)) continue;
+				unwrap(
+					await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+						params: { path: { project_id: s.project_id, skill_key: s.skill_key } },
+					}),
+				);
+				removed += 1;
+			}
+			return removed;
+		},
+		onSuccess: (removed) => {
+			toast.success(`${removed} ${removed === 1 ? "skill" : "skills"} uninstalled`);
+			queryClient.invalidateQueries({ queryKey: ["skills"] });
+			clearSelection();
+		},
+		onError: (e) => toast.error("Couldn't uninstall skills", { description: errorMessage(e) }),
 	});
 
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
@@ -327,6 +413,15 @@ function SkillsPageInner() {
 					role="tablist"
 					aria-label="Project scope for skills"
 				>
+					<ProjectTab
+						active={isAllScope}
+						onClick={() => {
+							void setProjectParam("");
+							void setTargetEnvId("");
+						}}
+						label="All projects"
+						count={skillsData?.items.length}
+					/>
 					{tabProjects.map((p) => (
 						<ProjectTab
 							key={p.id}
@@ -421,142 +516,286 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			<section className="space-y-2">
-				<div className="flex items-center gap-2">
-					<h2 className="text-sm font-semibold">Installed</h2>
-					{skillsForTarget ? (
-						<Badge variant="secondary" className="tabular-nums">
-							{skillsForTarget.length}
-						</Badge>
-					) : null}
-					{targetProject ? (
-						<span className="text-xs text-muted-foreground">
-							in {displayProjectName(targetProject)}
-						</span>
-					) : null}
-				</div>
-				<SkillCardGrid
-					skills={skillsForTarget ?? []}
-					isLoading={skillsLoading || isResolvingTarget}
-					emptyMessage={installedSkillsEmptyMessage}
-					readOnlySkillCheck={(s) =>
-						resolveSkillProjectAccess(s, {
-							currentProjectId: targetProjectId,
-							writableProjectIds,
-						}) !== "writable"
-					}
-					onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
-					uninstallPending={uninstallSkill.isPending}
-				/>
-			</section>
-
 			<section className="space-y-3">
-				<div className="flex items-center justify-between gap-2">
-					<h2 className="text-sm font-semibold">Add a skill</h2>
-					<a
-						href="https://skills.sh"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-					>
-						More on skills.sh <ExternalLink className="size-3" />
-					</a>
-				</div>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<div className="relative min-w-0 flex-1 sm:max-w-md">
-						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							id="skill-custom-repo"
-							name="skill-custom-repo"
-							value={customRepo}
-							onChange={(e) => {
-								setCustomRepo(e.target.value);
-								setCustomRepoError(null);
-								setInstallError(null);
-							}}
-							placeholder="owner/repo or owner/repo/path…"
-							autoComplete="off"
-							spellCheck={false}
-							className="pl-9"
-							onKeyDown={(e) => {
-								if (e.key === "Enter") handleCustom();
-							}}
-							aria-invalid={!!customRepoError || undefined}
-							aria-label="GitHub skill repository"
-						/>
+				<div className="flex flex-wrap items-center gap-2">
+					<div className="flex items-center gap-2">
+						<h2 className="text-sm font-semibold">Installed</h2>
+						{skillsForTarget ? (
+							<Badge variant="secondary" className="tabular-nums">
+								{skillsForTarget.length}
+							</Badge>
+						) : null}
+						{targetProject ? (
+							<span className="text-xs text-muted-foreground">
+								in {displayProjectName(targetProject)}
+							</span>
+						) : isAllScope ? (
+							<span className="text-xs text-muted-foreground">across every Project</span>
+						) : null}
 					</div>
-					<Button
-						onClick={handleCustom}
-						disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
-						variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
-						className="sm:w-auto"
-					>
-						{installing && customRepo ? <Spinner /> : <Plus />}
-						Install
-					</Button>
+					<div className="ml-auto flex items-center gap-2">
+						<div className="relative">
+							<Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+							<Input
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+								placeholder="Search skills…"
+								aria-label="Search skills"
+								className="h-8 w-44 pl-8 text-sm sm:w-56"
+							/>
+						</div>
+						<Button
+							variant={selectMode ? "secondary" : "outline"}
+							size="sm"
+							onClick={() => {
+								setSelectMode((on) => {
+									if (on) clearSelection();
+									return !on;
+								});
+							}}
+							aria-pressed={selectMode}
+						>
+							<ListChecks className="size-3.5" />
+							{selectMode ? "Done" : "Select"}
+						</Button>
+					</div>
 				</div>
-				{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
-				{installError ? (
-					<Alert variant="destructive">
-						<AlertTitle>Install failed</AlertTitle>
-						<AlertDescription>{installError}</AlertDescription>
-					</Alert>
-				) : null}
-
-				<p className="pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-					Suggested
-				</p>
-				<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-					{FEATURED_SKILLS.map((skill) => {
-						const key = `${skill.repo}/${skill.path ?? ""}`;
-						const isInstalled = installedKeysOnTarget.has(skill.skillKey);
-						const isInstalling = installing === key;
-						return (
-							<div
-								key={key}
-								className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-foreground/20"
-							>
-								<div className="min-w-0 flex-1">
-									{isInstalled && targetProjectId ? (
-										<Link
-											href={skillDetailHref(skill.skillKey, targetProjectId)}
-											className="truncate text-sm font-medium hover:underline"
-										>
-											{skill.name}
-										</Link>
-									) : (
-										<span className="truncate text-sm font-medium">{skill.name}</span>
-									)}
-									<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-										{skill.description}
-									</p>
-									<p className="mt-1.5 font-mono text-xs text-muted-foreground">
-										{skill.repo}
-										{skill.path ? `/${skill.path}` : ""}
-									</p>
-								</div>
-								{isInstalled ? (
-									<Badge variant="secondary" className="shrink-0">
-										<Check />
-										Installed
-									</Badge>
-								) : (
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() => installSkill(skill.repo, skill.path)}
-										disabled={isInstalling || !canWriteTargetProject}
-										className="shrink-0"
-									>
-										{isInstalling ? <Spinner /> : <Download />}
-										Install
-									</Button>
-								)}
-							</div>
-						);
-					})}
-				</div>
+				{isAllScope ? (
+					skillsLoading || isResolvingTarget ? (
+						<SkillCardGrid skills={[]} isLoading emptyMessage={null} />
+					) : allGroups.length === 0 ? (
+						<div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
+							{search.trim()
+								? "No skills match that search."
+								: "No skills installed anywhere yet. Pick a Project tab to install one."}
+						</div>
+					) : (
+						<div className="space-y-6">
+							{allGroups.map((group) => {
+								const groupKeys = group.skills.map(skillSelectionKey);
+								const allSelected =
+									groupKeys.length > 0 && groupKeys.every((k) => selectedSkillKeys.has(k));
+								return (
+									<div key={group.pid || "other"} className="space-y-2">
+										<div className="flex items-center gap-2">
+											<span aria-hidden className="select-none text-sm leading-none">
+												{identityFor(group.label).emoji}
+											</span>
+											{group.project ? (
+												<button
+													type="button"
+													onClick={() => void setProjectParam(group.pid)}
+													className="text-sm font-medium hover:underline"
+												>
+													{group.label}
+												</button>
+											) : (
+												<span className="text-sm font-medium">{group.label}</span>
+											)}
+											<span className="text-xs text-muted-foreground tabular-nums">
+												{group.skills.length}
+											</span>
+											{selectMode ? (
+												<Button
+													variant="ghost"
+													size="sm"
+													className="h-6 px-2 text-xs"
+													onClick={() => {
+														setSelectedSkillKeys((prev) => {
+															const next = new Set(prev);
+															for (const k of groupKeys) {
+																if (allSelected) next.delete(k);
+																else next.add(k);
+															}
+															return next;
+														});
+													}}
+												>
+													{allSelected ? "Deselect all" : "Select all"}
+												</Button>
+											) : null}
+										</div>
+										<SkillCardGrid
+											skills={group.skills}
+											isLoading={false}
+											emptyMessage={null}
+											readOnlySkillCheck={(s) =>
+												resolveSkillProjectAccess(s, { writableProjectIds }) !== "writable"
+											}
+											onUninstall={(skillKey, projectId) =>
+												uninstallSkill.mutate({ skillKey, projectId })
+											}
+											uninstallPending={uninstallSkill.isPending}
+											selectMode={selectMode}
+											selectedKeys={selectedSkillKeys}
+											onToggleSelect={toggleSkill}
+										/>
+									</div>
+								);
+							})}
+						</div>
+					)
+				) : (
+					<SkillCardGrid
+						skills={skillsForTarget ?? []}
+						isLoading={skillsLoading || isResolvingTarget}
+						emptyMessage={installedSkillsEmptyMessage}
+						readOnlySkillCheck={(s) =>
+							resolveSkillProjectAccess(s, {
+								currentProjectId: targetProjectId,
+								writableProjectIds,
+							}) !== "writable"
+						}
+						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
+						uninstallPending={uninstallSkill.isPending}
+						selectMode={selectMode}
+						selectedKeys={selectedSkillKeys}
+						onToggleSelect={toggleSkill}
+					/>
+				)}
 			</section>
+
+			<BulkActionBar count={selectedSkillKeys.size} noun="skill" onClear={clearSelection}>
+				<SendSkillDialog skills={selectedSkills} onDone={clearSelection}>
+					<Button size="sm">
+						<SendIcon className="size-3.5" />
+						Send to…
+					</Button>
+				</SendSkillDialog>
+				<ConfirmAction
+					title={`Uninstall ${selectedSkillKeys.size} ${selectedSkillKeys.size === 1 ? "skill" : "skills"}?`}
+					description={
+						<p>Each selected copy is removed from its Project. Read-only copies are skipped.</p>
+					}
+					confirmLabel="Uninstall"
+					destructive
+					onConfirm={() => bulkUninstall.mutate(selectedSkills)}
+				>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={bulkUninstall.isPending}
+						className="text-destructive"
+					>
+						<Trash2 className="size-3.5" />
+						Uninstall
+					</Button>
+				</ConfirmAction>
+			</BulkActionBar>
+
+			{isAllScope ? (
+				<p className="text-xs text-muted-foreground">
+					Pick a Project tab above to install new skills into it.
+				</p>
+			) : (
+				<section className="space-y-3">
+					<div className="flex items-center justify-between gap-2">
+						<h2 className="text-sm font-semibold">Add a skill</h2>
+						<a
+							href="https://skills.sh"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						>
+							More on skills.sh <ExternalLink className="size-3" />
+						</a>
+					</div>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<div className="relative min-w-0 flex-1 sm:max-w-md">
+							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+							<Input
+								id="skill-custom-repo"
+								name="skill-custom-repo"
+								value={customRepo}
+								onChange={(e) => {
+									setCustomRepo(e.target.value);
+									setCustomRepoError(null);
+									setInstallError(null);
+								}}
+								placeholder="owner/repo or owner/repo/path…"
+								autoComplete="off"
+								spellCheck={false}
+								className="pl-9"
+								onKeyDown={(e) => {
+									if (e.key === "Enter") handleCustom();
+								}}
+								aria-invalid={!!customRepoError || undefined}
+								aria-label="GitHub skill repository"
+							/>
+						</div>
+						<Button
+							onClick={handleCustom}
+							disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
+							variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
+							className="sm:w-auto"
+						>
+							{installing && customRepo ? <Spinner /> : <Plus />}
+							Install
+						</Button>
+					</div>
+					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
+					{installError ? (
+						<Alert variant="destructive">
+							<AlertTitle>Install failed</AlertTitle>
+							<AlertDescription>{installError}</AlertDescription>
+						</Alert>
+					) : null}
+
+					<p className="pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+						Suggested
+					</p>
+					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+						{FEATURED_SKILLS.map((skill) => {
+							const key = `${skill.repo}/${skill.path ?? ""}`;
+							const isInstalled = installedKeysOnTarget.has(skill.skillKey);
+							const isInstalling = installing === key;
+							return (
+								<div
+									key={key}
+									className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-foreground/20"
+								>
+									<div className="min-w-0 flex-1">
+										{isInstalled && targetProjectId ? (
+											<Link
+												href={skillDetailHref(skill.skillKey, targetProjectId)}
+												className="truncate text-sm font-medium hover:underline"
+											>
+												{skill.name}
+											</Link>
+										) : (
+											<span className="truncate text-sm font-medium">{skill.name}</span>
+										)}
+										<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+											{skill.description}
+										</p>
+										<p className="mt-1.5 font-mono text-xs text-muted-foreground">
+											{skill.repo}
+											{skill.path ? `/${skill.path}` : ""}
+										</p>
+									</div>
+									{isInstalled ? (
+										<Badge variant="secondary" className="shrink-0">
+											<Check />
+											Installed
+										</Badge>
+									) : (
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => installSkill(skill.repo, skill.path)}
+											disabled={isInstalling || !canWriteTargetProject}
+											className="shrink-0"
+										>
+											{isInstalling ? <Spinner /> : <Download />}
+											Install
+										</Button>
+									)}
+								</div>
+							);
+						})}
+					</div>
+				</section>
+			)}
 		</div>
 	);
 }

@@ -37,6 +37,8 @@ from app.schemas.vault import (
     VaultCredentialProfileUpsert,
     VaultDeleteResponse,
     VaultItemDelete,
+    VaultItemsCopy,
+    VaultItemsCopyResponse,
     VaultItemsDeleteResponse,
     VaultItemsUpsertResponse,
     VaultItemUpsert,
@@ -261,6 +263,59 @@ async def upsert_vault_items(
 
     await db.commit()
     return VaultItemsUpsertResponse(status="ok", fields=len(body.fields))
+
+
+@router.post("/{slug}/items/copy")
+async def copy_vault_items(
+    slug: str,
+    body: VaultItemsCopy,
+    project_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> VaultItemsCopyResponse:
+    """Duplicate items into another vault the caller owns.
+
+    The dashboard's curation move ("batch-select keys in the default
+    vault, put them in a named one") needs values to travel between
+    vaults, but plaintext resolution stays CLI-only. So the copy happens
+    entirely server-side: decrypt + re-encrypt per item, nothing
+    returned but a count. Owner-only on both ends (`_get_vault_write`),
+    so shared-project viewers can't exfiltrate by copying into a vault
+    they control.
+    """
+    source = await _get_vault_write(auth, slug, db, project_id=project_id)
+    target = await _get_vault_write(auth, body.target_slug, db)
+    if target.id == source.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Source and target are the same vault"
+        )
+
+    source_by_name = await _load_items_by_name(db, source.id, body.section)
+    target_by_name = await _load_items_by_name(db, target.id, body.section)
+    copied = 0
+    for field_name in body.fields:
+        item = source_by_name.get(field_name)
+        if item is None:
+            continue
+        ciphertext, nonce = encrypt(decrypt(item.encrypted_value, item.nonce))
+        existing = target_by_name.get(field_name)
+        if existing:
+            existing.encrypted_value = ciphertext
+            existing.nonce = nonce
+        else:
+            db.add(
+                VaultItem(
+                    vault_id=target.id,
+                    section=body.section,
+                    item_name=field_name,
+                    encrypted_value=ciphertext,
+                    nonce=nonce,
+                )
+            )
+        copied += 1
+
+    await db.commit()
+    return VaultItemsCopyResponse(status="ok", copied=copied)
 
 
 @router.delete("/{slug}/items")

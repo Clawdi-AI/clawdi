@@ -120,6 +120,14 @@ multi-hue colors; never use them for controls or status.
   vivid identity colors for object avatars (projects, vaults), tinted stat
   tiles, pastel memory-category chips. Revises the earlier blanket
   no-emoji rule — emoji allowed as object identity only.
+- 2026-06-04 — Curation is a first-class mode (Marvin: "most skills/keys live
+  in system projects and the default vault; the real move is search → batch
+  select → move into a customized project/vault → share"). Skills defaults to
+  the All-projects view grouped by source, busiest first; both skills and
+  vault keys get search + select mode + a floating `BulkActionBar`. Key
+  values never reach the browser: batch copy/move runs through the
+  server-side `POST /api/vault/{slug}/items/copy` (decrypt + re-encrypt on
+  the server) — the one deliberate backend addition of the redesign.
 
 ## Banned (CI-greppable)
 

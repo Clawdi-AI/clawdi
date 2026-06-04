@@ -108,6 +108,39 @@ class VaultSectionsResponse(RootModel[dict[str, list[str]]]):
     pass
 
 
+class VaultItemsCopy(BaseModel):
+    """Server-side duplication of items into another owned vault.
+
+    Plaintext never reaches the caller — the server decrypts and
+    re-encrypts per item, preserving the CLI-only resolve boundary.
+    """
+
+    target_slug: str = Field(min_length=1, max_length=200)
+    section: str = Field(default="", max_length=200)
+    fields: list[str] = Field(min_length=1, max_length=200)
+
+    @field_validator("target_slug", mode="after")
+    @classmethod
+    def validate_target_slug(cls, value: str) -> str:
+        slug = value.strip()
+        if not VAULT_SLUG_RE.fullmatch(slug):
+            raise ValueError(
+                "target_slug must use lowercase letters, numbers, and hyphens, "
+                "without leading or trailing hyphens"
+            )
+        return slug
+
+    @field_validator("section", mode="after")
+    @classmethod
+    def validate_section(cls, value: str) -> str:
+        return _clean_segment(value, field_name="section", allow_empty=True)
+
+
+class VaultItemsCopyResponse(BaseModel):
+    status: Literal["ok"]
+    copied: int
+
+
 class VaultItemsUpsertResponse(BaseModel):
     status: Literal["ok"]
     fields: int
