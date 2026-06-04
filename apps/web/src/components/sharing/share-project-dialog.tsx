@@ -129,7 +129,10 @@ export function ShareProjectDialog({
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
+			{/* `sm:` prefix is load-bearing: the primitive's base classes include
+			    `sm:max-w-lg`, so an unprefixed `max-w-2xl` loses at sm+ and the
+			    content gets clipped at 512px wide. */}
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>
 						{isShareableProject ? `Share ${projectName}` : "Only Projects you create can be shared"}
