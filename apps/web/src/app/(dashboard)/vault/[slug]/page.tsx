@@ -603,12 +603,15 @@ function ShareKeysDialog({
 	onAttach: (projectId: string) => Promise<unknown>;
 }) {
 	const [open, setOpen] = useState(false);
-	const [projectId, setProjectId] = useState("");
+	const shareable = projects.filter((p) => p.is_owner !== false && isCustomProject(p));
+	const alreadyIn = shareable.filter((p) => (vault.project_ids ?? []).includes(p.id));
+	// If the vault already lives in a shareable project, that's almost
+	// certainly the one to share — preselect it so the common case is one
+	// click (journey simulation finding J6).
+	const [projectId, setProjectId] = useState(alreadyIn[0]?.id ?? "");
 	const [attached, setAttached] = useState<ProjectRow | null>(null);
 	const [isAttaching, setIsAttaching] = useState(false);
 
-	const shareable = projects.filter((p) => p.is_owner !== false && isCustomProject(p));
-	const alreadyIn = shareable.filter((p) => (vault.project_ids ?? []).includes(p.id));
 	const candidates = shareable;
 
 	const reset = () => {

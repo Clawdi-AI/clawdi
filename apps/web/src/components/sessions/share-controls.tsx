@@ -157,7 +157,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 					<ChevronDown className="size-3 text-muted-foreground" />
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent align="end" className="w-80 p-0">
+			<PopoverContent align="end" className="w-96 p-0">
 				<div className="flex items-start justify-between gap-3 px-3 py-3">
 					<div className="min-w-0 flex-1 space-y-0.5">
 						<Label htmlFor="share-toggle" className="text-sm font-medium">

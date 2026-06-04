@@ -355,6 +355,7 @@ function SessionsListInner() {
 							emptyMessage={emptyMessage}
 							grouped={groupable}
 							groupBy={params.sort === "started_at" ? "started_at" : "last_activity_at"}
+							quietAutomated={debouncedSearch === ""}
 						/>
 					</div>
 					{sessionFooter}

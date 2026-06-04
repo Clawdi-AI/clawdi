@@ -341,7 +341,10 @@ export default function SessionDetailPage() {
 							Messages appear here after the agent uploads this session.
 						</p>
 					</div>
-					<EmptyState fillHeight={false} description="Conversation not uploaded yet." />
+					<EmptyState
+						fillHeight={false}
+						description="Conversation not uploaded yet. To back-fill history from that machine, run: clawdi push --modules sessions --all-agents --all"
+					/>
 				</DetailPanel>
 			)}
 

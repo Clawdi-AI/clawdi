@@ -27,6 +27,7 @@ export function SessionFeed({
 	grouped = true,
 	groupBy = "last_activity_at",
 	showAgent = true,
+	quietAutomated = true,
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;
@@ -36,6 +37,9 @@ export function SessionFeed({
 	groupBy?: "last_activity_at" | "started_at";
 	/** Hide the per-card agent identity on pages that ARE the agent. */
 	showAgent?: boolean;
+	/** Mute Cron/heartbeat rows. Turn OFF while searching — muted search
+	 * results read as disabled (journey simulation finding J1). */
+	quietAutomated?: boolean;
 }) {
 	if (isLoading) {
 		return (
@@ -62,7 +66,12 @@ export function SessionFeed({
 		return (
 			<div className="space-y-3">
 				{sessions.map((session) => (
-					<SessionFeedCard key={session.id} session={session} showAgent={showAgent} />
+					<SessionFeedCard
+						key={session.id}
+						session={session}
+						showAgent={showAgent}
+						quietAutomated={quietAutomated}
+					/>
 				))}
 			</div>
 		);
@@ -87,7 +96,12 @@ export function SessionFeed({
 					</h3>
 					<div className="space-y-2">
 						{group.items.map((session) => (
-							<SessionFeedCard key={session.id} session={session} showAgent={showAgent} />
+							<SessionFeedCard
+								key={session.id}
+								session={session}
+								showAgent={showAgent}
+								quietAutomated={quietAutomated}
+							/>
 						))}
 					</div>
 				</section>
@@ -99,16 +113,18 @@ export function SessionFeed({
 function SessionFeedCard({
 	session,
 	showAgent = true,
+	quietAutomated = true,
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
+	quietAutomated?: boolean;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
 	const totalTokens = session.input_tokens + session.output_tokens;
 	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
 	// timeline but visually quieter than human work (taste audit round 2).
-	const isAutomated = /^(Cron:|\[)/.test(title);
+	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
 	return (
 		<article
 			className={cn(

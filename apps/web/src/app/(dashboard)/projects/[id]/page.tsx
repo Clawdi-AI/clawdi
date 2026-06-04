@@ -995,7 +995,7 @@ function InstallSkillInProjectForm({
 			setRepoInput("");
 			setError(null);
 			onChanged();
-			toast.success("Skill Installed", { description: "Saved in this Project." });
+			toast.success("Skill installed", { description: "Saved in this Project." });
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -1078,7 +1078,7 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault Created", { description: "Added to this Project." });
+			toast.success("Vault created", { description: "Added to this Project." });
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
