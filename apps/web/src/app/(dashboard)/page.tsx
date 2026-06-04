@@ -142,6 +142,12 @@ export default function DashboardPage() {
 			<Greeting
 				activeCount={selfManagedTiles.filter((t) => t.active).length}
 				total={selfManagedCount}
+				lastActive={
+					selfManagedTiles
+						.map((t) => t.lastSeenAt)
+						.filter((t): t is string => Boolean(t))
+						.sort((a, b) => b.localeCompare(a))[0] ?? null
+				}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
@@ -257,7 +263,17 @@ function ConnectAnotherCard() {
 }
 
 /** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
-function Greeting({ activeCount, total }: { activeCount: number; total: number }) {
+function Greeting({
+	activeCount,
+	total,
+	lastActive,
+}: {
+	activeCount: number;
+	total: number;
+	/** Most recent last-seen timestamp across the fleet — the one fact the
+	 * old AgentsCard header carried that the greeting didn't. */
+	lastActive?: string | null;
+}) {
 	const { user } = useCurrentUser();
 	const hour = new Date().getHours();
 	const daypart =
@@ -268,7 +284,7 @@ function Greeting({ activeCount, total }: { activeCount: number; total: number }
 			? "Connect your first agent to start syncing."
 			: activeCount > 0
 				? `${activeCount} of ${total} agents active right now.`
-				: `${total} agents connected.`;
+				: `${total} agents connected${lastActive ? ` · last active ${relativeTime(lastActive)}` : ""}.`;
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">

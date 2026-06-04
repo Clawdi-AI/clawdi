@@ -9,7 +9,6 @@ import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -80,7 +79,6 @@ export function AgentsCard({
 	hostedStatus?: { isLoading: boolean; error?: Error | null };
 }) {
 	const [showAll, setShowAll] = useState(false);
-	const activeCount = agents.filter((a) => a.active).length;
 	const total = agents.length;
 	// Active agents first, then most recently seen — and cap the wall at 6
 	// so the fleet reads as a glance, not a directory (taste audit #3).
@@ -90,30 +88,14 @@ export function AgentsCard({
 	});
 	const visible = showAll ? ordered : ordered.slice(0, 6);
 	const hiddenCount = ordered.length - visible.length;
-	const mostRecent = agents
-		.map((a) => a.lastSeenAt)
-		.filter((t): t is string => Boolean(t))
-		.sort((a, b) => b.localeCompare(a))[0];
 
-	let description: string;
-	if (total === 0 && !hostedStatus?.isLoading) {
-		description = "Connect your first AI to start syncing across all your agents.";
-	} else if (activeCount > 0) {
-		description = `${activeCount} active now · ${total} total`;
-	} else if (mostRecent) {
-		description = `${total} agents · last active ${relativeTime(mostRecent)}`;
-	} else if (total > 0) {
-		description = `${total} agents`;
-	} else {
-		description = "Loading hosted agents…";
-	}
-
+	// No section header: the greeting directly above already carries the
+	// fleet summary ("N agents connected · last active …"), and a bare
+	// text header here pushed the tile wall below the right rail's card
+	// top — the two columns read as misaligned (Marvin's screenshot).
+	// Tiles start flush with the column, level with the cards on the right.
 	return (
 		<section className="space-y-3">
-			<div>
-				<h2 className="text-sm font-semibold">Agents</h2>
-				<p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{description}</p>
-			</div>
 			<div className="space-y-3">
 				{isLoading ? (
 					<div className="grid gap-2 sm:grid-cols-2">
