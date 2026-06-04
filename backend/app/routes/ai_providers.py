@@ -716,10 +716,27 @@ def _validate_redirect_uri(input: str) -> None:
         return
     if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
         return
+    if (
+        settings.environment == "development"
+        and parsed.scheme == "http"
+        and parsed.netloc
+        and parsed.hostname in _development_oauth_redirect_hosts()
+    ):
+        return
     raise HTTPException(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         "redirect_uri must be https or loopback http",
     )
+
+
+def _development_oauth_redirect_hosts() -> set[str]:
+    origins = [settings.web_origin, *settings.cors_origins]
+    hosts: set[str] = set()
+    for origin in origins:
+        parsed = urlparse(origin)
+        if parsed.scheme == "http" and parsed.hostname:
+            hosts.add(parsed.hostname)
+    return hosts
 
 
 async def _find_provider(
