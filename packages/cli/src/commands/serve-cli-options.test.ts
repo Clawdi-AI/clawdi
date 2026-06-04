@@ -73,6 +73,22 @@ describe("registerServeCommand", () => {
 		expect(captured.last?.rpcAllowRemote).toBe(true);
 	});
 
+	it("daemon run accepts hidden legacy selector args for supervisor migration", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"run",
+			"--agent",
+			"codex",
+			"--environment-id",
+			"env-codex",
+		]);
+		expect(captured.last?.agent).toBe("codex");
+		expect(captured.last?.environmentId).toBe("env-codex");
+	});
+
 	it("daemon with no subcommand still runs the foreground action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "daemon"]);

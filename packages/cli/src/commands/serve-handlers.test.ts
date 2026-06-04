@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { rejectUnsupportedOpts } from "./serve";
 
 /**
@@ -182,3 +190,63 @@ describe("daemon HTTP RPC listener safety", () => {
 		}
 	});
 });
+
+describe("legacy daemon run migration", () => {
+	it("installs the singleton unit, persists an explicit env id, and removes the old unit", async () => {
+		if (process.platform !== "linux") return;
+
+		const originalHome = process.env.HOME;
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalPath = process.env.PATH;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalArgv1 = process.argv[1];
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-legacy-daemon-"));
+		const stubBin = join(tmpHome, "bin");
+		const fakeEntry = join(tmpHome, "clawdi-bin");
+		const singletonUnit = join(tmpHome, ".config", "systemd", "user", "clawdi-serve.service");
+		const legacyUnit = join(tmpHome, ".config", "systemd", "user", "clawdi-serve-codex.service");
+		try {
+			process.env.HOME = tmpHome;
+			delete process.env.CLAWDI_HOME;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			mkdirSync(stubBin, { recursive: true });
+			writeExecutable(join(stubBin, "systemctl"), "#!/bin/sh\nexit 0\n");
+			process.env.PATH = `${stubBin}:${originalPath ?? ""}`;
+			writeExecutable(fakeEntry, "#!/bin/sh\nexit 0\n");
+			process.argv[1] = fakeEntry;
+			mkdirSync(dirname(legacyUnit), { recursive: true });
+			writeFileSync(legacyUnit, "legacy unit\n");
+
+			const { serve } = await import("./serve");
+			await expect(
+				serve({
+					agent: "codex",
+					environmentId: "env-codex",
+				} as Record<string, unknown>),
+			).rejects.toThrow(ExitCalled);
+
+			expect(captured.exitCode).toBe(0);
+			expect(existsSync(singletonUnit)).toBe(true);
+			expect(existsSync(legacyUnit)).toBe(false);
+			expect(
+				readFileSync(join(tmpHome, ".clawdi", "environments", "codex.json"), "utf-8"),
+			).toContain('"id": "env-codex"');
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalPath === undefined) delete process.env.PATH;
+			else process.env.PATH = originalPath;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			process.argv[1] = originalArgv1 ?? "";
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+});
+
+function writeExecutable(path: string, content: string): void {
+	writeFileSync(path, content, { mode: 0o755 });
+	chmodSync(path, 0o755);
+}

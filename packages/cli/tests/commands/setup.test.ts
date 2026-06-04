@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setup } from "../../src/commands/setup";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -105,6 +105,7 @@ afterEach(() => {
 describe("setup daemon install", () => {
 	it("defaults to installing one daemon unit for all registered agents", async () => {
 		seedRegisteredAgent("claude_code", "env-claude");
+		seedDaemonUnit("claude_code");
 		const { captured } = installEnvironmentMock("env-codex");
 
 		await setup({ agent: "codex", yes: true });
@@ -324,6 +325,12 @@ function daemonUnitPath(agent: string): string {
 
 function daemonUnitExists(agent: string): boolean {
 	return existsSync(daemonUnitPath(agent));
+}
+
+function seedDaemonUnit(agent: string): void {
+	const path = daemonUnitPath(agent);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, "legacy daemon unit\n");
 }
 
 function readDaemonUnit(agent: string): string {

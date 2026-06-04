@@ -9,7 +9,7 @@
  * weakest link.
  */
 
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 
 /**
  * Handlers that the daemon command tree dispatches to. Production
@@ -33,6 +33,12 @@ function addRpcEndpointOptions(cmd: Command): Command {
 		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
 		.option("--rpc-port <port>", "Control RPC HTTP port")
 		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host");
+}
+
+function addLegacyRunOptions(cmd: Command): Command {
+	return cmd
+		.addOption(new Option("--agent <type>", "Legacy per-agent daemon selector").hideHelp())
+		.addOption(new Option("--environment-id <id>", "Legacy per-agent environment id").hideHelp());
 }
 
 async function defaultHandlers(): Promise<ServeHandlers> {
@@ -89,19 +95,27 @@ Examples:
 			const h = await get();
 			await h.serve(opts);
 		});
+	addLegacyRunOptions(serveCmd);
 
-	serveCmd
-		.command("run")
-		.description("Run the sync daemon in the foreground")
-		.configureHelp({ showGlobalOptions: true })
-		.addHelpText("after", "\nControl RPC HTTP options are optional; Unix socket is always enabled.")
-		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
-		.option("--rpc-port <port>", "Control RPC HTTP port")
-		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host")
-		.action(async (_opts, cmd) => {
-			const h = await get();
-			await h.serve(cmd.optsWithGlobals());
-		});
+	addLegacyRunOptions(
+		serveCmd
+			.command("run")
+			.description("Run the sync daemon in the foreground")
+			.configureHelp({ showGlobalOptions: true })
+			.addHelpText(
+				"after",
+				"\nControl RPC HTTP options are optional; Unix socket is always enabled.",
+			)
+			.option(
+				"--rpc-host <host>",
+				"Control RPC HTTP host (enables HTTP when paired with --rpc-port)",
+			)
+			.option("--rpc-port <port>", "Control RPC HTTP port")
+			.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host"),
+	).action(async (_opts, cmd) => {
+		const h = await get();
+		await h.serve(cmd.optsWithGlobals());
+	});
 
 	addRpcEndpointOptions(
 		serveCmd

@@ -23,9 +23,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
-import { isLoggedIn } from "../lib/config";
+import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
 import { startAutoRestart } from "../serve/auto-restart";
@@ -62,6 +63,11 @@ interface RpcListenOpts {
 	rpcHost?: unknown;
 	rpcPort?: unknown;
 	rpcAllowRemote?: unknown;
+}
+
+interface LegacyRunOpts {
+	agent?: unknown;
+	environmentId?: unknown;
 }
 
 interface ResolvedRpcListenConfig extends ControlRpcListenConfig {
@@ -141,10 +147,17 @@ function camelToFlag(name: string): string {
 }
 
 export async function serve(_opts: ServeOpts): Promise<void> {
-	const opts = _opts as RpcListenOpts;
-	const rpcListen = resolveRpcListenConfig(opts);
+	const opts = _opts as RpcListenOpts & LegacyRunOpts;
 	const mode = (process.env.CLAWDI_SERVE_MODE ?? "host").toLowerCase();
 	const isContainer = mode === "container";
+	const legacyRun = resolveLegacyRunOpts(opts);
+
+	if (legacyRun && !isContainer) {
+		migrateLegacyDaemonRun(legacyRun);
+		return;
+	}
+
+	const rpcListen = resolveRpcListenConfig(opts);
 
 	if (!isLoggedIn()) {
 		log.error("serve.no_auth", {
@@ -153,7 +166,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		process.exit(1);
 	}
 
-	const targets = pickDaemonRunTargets();
+	const targets = legacyRun ? [pickLegacyDaemonRunTarget(legacyRun)] : pickDaemonRunTargets();
 
 	log.info("serve.boot", {
 		mode,
@@ -900,8 +913,19 @@ function optionalPortParam(value: unknown, label: string): number | undefined {
 }
 
 function cleanupLegacyDaemonUnits(): number {
+	return cleanupLegacyDaemonUnitsExceptLast();
+}
+
+function cleanupLegacyDaemonUnitsExceptLast(lastAgent?: AgentType): number {
 	let failed = 0;
-	for (const agentType of listInstalledAgents()) {
+	const installedAgents = listInstalledAgents();
+	const orderedAgents = lastAgent
+		? [
+				...installedAgents.filter((agentType) => agentType !== lastAgent),
+				...installedAgents.filter((agentType) => agentType === lastAgent),
+			]
+		: installedAgents;
+	for (const agentType of orderedAgents) {
 		try {
 			const result = uninstallService({ agent: agentType });
 			if (result.removed) {
@@ -913,6 +937,98 @@ function cleanupLegacyDaemonUnits(): number {
 		}
 	}
 	return failed;
+}
+
+interface LegacyDaemonRun {
+	agentType: AgentType;
+	environmentId?: string;
+}
+
+function resolveLegacyRunOpts(opts: LegacyRunOpts): LegacyDaemonRun | null {
+	const agentType = optionalAgentParam(opts.agent);
+	const environmentId = optionalStringParam(opts.environmentId, "--environment-id");
+	if (!agentType) {
+		if (environmentId) {
+			throw new Error("--environment-id requires --agent for legacy daemon run compatibility");
+		}
+		return null;
+	}
+	return { agentType, environmentId };
+}
+
+function migrateLegacyDaemonRun(legacy: LegacyDaemonRun): void {
+	if (!isLoggedIn()) {
+		log.error("serve.legacy_daemon_migration_no_auth", {
+			agent: legacy.agentType,
+			hint: "Set CLAWDI_AUTH_TOKEN env or run `clawdi auth login`, then run `clawdi daemon install`.",
+		});
+		process.exit(1);
+	}
+	if (legacy.environmentId) {
+		persistLegacyEnvironmentId(legacy);
+	}
+	log.info("serve.legacy_daemon_migration_started", {
+		agent: legacy.agentType,
+		has_environment_id: legacy.environmentId !== undefined,
+	});
+	try {
+		const result = installService();
+		log.info("serve.legacy_daemon_migration_singleton_installed", {
+			unit: result.unit,
+			replaced: result.replaced,
+		});
+	} catch (error) {
+		log.error("serve.legacy_daemon_migration_install_failed", {
+			agent: legacy.agentType,
+			error: toErrorMessage(error),
+		});
+		process.exit(1);
+	}
+	const failed = cleanupLegacyDaemonUnitsExceptLast(legacy.agentType);
+	log.info("serve.legacy_daemon_migration_finished", {
+		agent: legacy.agentType,
+		failed,
+	});
+	process.exit(failed > 0 ? 1 : 0);
+}
+
+function persistLegacyEnvironmentId(legacy: LegacyDaemonRun): void {
+	if (!legacy.environmentId) return;
+	const envDir = join(getClawdiDir(), "environments");
+	mkdirSync(envDir, { recursive: true });
+	const envPath = join(envDir, `${legacy.agentType}.json`);
+	writeFileSync(
+		envPath,
+		`${JSON.stringify({ id: legacy.environmentId, agentType: legacy.agentType }, null, 2)}\n`,
+		{ mode: 0o600 },
+	);
+	try {
+		chmodSync(envPath, 0o600);
+	} catch {
+		/* best effort */
+	}
+}
+
+function pickLegacyDaemonRunTarget(legacy: LegacyDaemonRun): DaemonRunTarget {
+	const adapter = adapterForType(legacy.agentType);
+	if (!adapter) {
+		log.error("serve.no_agent_adapter", { agent: legacy.agentType });
+		console.error(`No adapter available for ${legacy.agentType}.`);
+		process.exit(1);
+	}
+	const environmentId = legacy.environmentId ?? resolveEnvironmentId(legacy.agentType, 1);
+	if (!environmentId) {
+		log.error("serve.no_environment", {
+			agent: legacy.agentType,
+			hint: "Pass --environment-id, set CLAWDI_ENVIRONMENT_ID, or run `clawdi setup`.",
+		});
+		process.exit(1);
+	}
+	return {
+		agentType: legacy.agentType,
+		adapter,
+		environmentId,
+	};
 }
 
 function isAgentType(s: string): s is AgentType {
