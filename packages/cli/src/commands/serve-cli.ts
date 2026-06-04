@@ -85,6 +85,7 @@ Examples:
   $ clawdi daemon ping
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
   $ clawdi daemon install                       # set up one launchd / systemd unit
+  $ clawdi daemon rotate-token                  # rotate the local control token
   $ clawdi daemon status --agent claude_code    # health + supervisor state
   $ clawdi serve status --agent claude_code     # legacy alias`,
 		)
@@ -151,6 +152,17 @@ Examples:
 		});
 
 	serveCmd
+		.command("rotate-token")
+		.description("Rotate the daemon control RPC bearer token")
+		.option("--rpc-host <host>", "Control RPC HTTP host to call")
+		.option("--rpc-port <port>", "Control RPC HTTP port to call")
+		.option("--rpc-token <token>", "Current bearer token for RPC access")
+		.action(async (_opts, cmd) => {
+			const h = await get();
+			await h.serveRpc("rotate_token", cmd.optsWithGlobals());
+		});
+
+	serveCmd
 		.command("status")
 		.description("Show daemon health (last heartbeat) and supervisor state")
 		.option("--agent <type>", "Agent to check (defaults to all registered agents)")
@@ -175,18 +187,6 @@ Examples:
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serveDoctor(cmd.optsWithGlobals());
-		});
-
-	serveCmd
-		.command("rpc <method>")
-		.description("Call an advanced daemon RPC method")
-		.option("--params <json>", "JSON object passed as RPC params", "{}")
-		.option("--rpc-host <host>", "Control RPC HTTP host to call")
-		.option("--rpc-port <port>", "Control RPC HTTP port to call")
-		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
-		.action(async (method: string, _opts, cmd) => {
-			const h = await get();
-			await h.serveRpc(method, cmd.optsWithGlobals());
 		});
 
 	return serveCmd;

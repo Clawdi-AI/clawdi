@@ -1150,7 +1150,7 @@ async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
 	const response = await fetch(`${apiUrl}/api/cli/auth/device`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ client_label: `clawdi daemon rpc · ${hostname()}` }),
+		body: JSON.stringify({ client_label: `clawdi daemon control · ${hostname()}` }),
 	});
 	if (!response.ok) {
 		throw new Error(`Failed to start device authorization: HTTP ${response.status}`);

@@ -300,7 +300,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi config list/get/set/unset` | Read or write CLI configuration |
 | `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start the singleton daemon by default |
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
-| `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rpc` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
+| `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rotate-token` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
 | `clawdi pull` | Download cloud skills into registered agents |
 | `clawdi session list/extract` | Inspect local agent sessions |

@@ -201,14 +201,21 @@ The default endpoint is `127.0.0.1:17654`. Pass `--rpc-host` and
 
 HTTP RPC requests require bearer-token auth by default. The CLI reads
 the daemon token from `~/.clawdi/daemon/control-token`. Remote clients
-can pass that token through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`.
+can pass that token through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`
+on daemon commands that call the control endpoint.
 Treat it as an admin token. Rotate it with
-`clawdi daemon rpc rotate_token`.
+`clawdi daemon rotate-token`.
 
-The RPC surface is discoverable:
+The CLI intentionally exposes specific daemon commands instead of a generic
+raw RPC command. For protocol-level tests or external control clients, call
+the HTTP JSON-RPC endpoint directly:
 
 ```sh
-clawdi daemon rpc methods --rpc-host 127.0.0.1 --rpc-port 17654
+TOKEN=$(cat ~/.clawdi/daemon/control-token)
+curl -s http://127.0.0.1:17654/rpc \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"methods","params":{}}'
 ```
 
 Daemon control methods use short names: `ping`, `methods`, `status`,
@@ -222,10 +229,15 @@ for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, `update.*`, and
 `operation.*`. Long-running commands return an operation id:
 
 ```sh
-clawdi daemon rpc sync.push \
-  --params '{"cwd":"/path/to/project","agent":"codex"}'
-clawdi daemon rpc operation.status --params '{"id":"<operation-id>"}'
-clawdi daemon rpc operation.logs --params '{"id":"<operation-id>","limit":100}'
+curl -s http://127.0.0.1:17654/rpc \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"sync.push","params":{"cwd":"/path/to/project","agent":"codex"}}'
+
+curl -s http://127.0.0.1:17654/rpc \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"operation.status","params":{"id":"<operation-id>"}}'
 ```
 
 Vault plaintext access is opt-in. `vault.resolve` defaults to a
@@ -281,7 +293,7 @@ only conduit.
 | `CLAWDI_DAEMON_RPC_HOST` | HTTP host for the daemon control RPC. Defaults to `127.0.0.1`. |
 | `CLAWDI_DAEMON_RPC_PORT` | HTTP port for the daemon control RPC. Defaults to `17654`. Requests still require bearer token auth. |
 | `CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1` | Allows the daemon to bind a non-loopback HTTP RPC host. Use only behind SSH tunneling, private networking, or TLS. |
-| `CLAWDI_DAEMON_RPC_TOKEN` | Optional client-side bearer token for `clawdi daemon rpc` when the token file is not local. |
+| `CLAWDI_DAEMON_RPC_TOKEN` | Optional client-side bearer token for daemon commands or external HTTP clients when the token file is not local. |
 
 ### Per-agent paths
 

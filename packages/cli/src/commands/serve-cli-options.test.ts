@@ -176,6 +176,39 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
+	it("rotate-token reaches the token rotation RPC", async () => {
+		const captured = {
+			lastMethod: null as string | null,
+			last: null as Record<string, unknown> | null,
+		};
+		const program = new Command();
+		registerServeCommand(program, {
+			...makeHandlers(captured),
+			serveRpc: async (method: string, opts: Record<string, unknown>) => {
+				captured.lastMethod = method;
+				captured.last = opts;
+			},
+		});
+
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"rotate-token",
+			"--rpc-host",
+			"127.0.0.1",
+			"--rpc-port",
+			"17654",
+			"--rpc-token",
+			"tok-test",
+		]);
+
+		expect(captured.lastMethod).toBe("rotate_token");
+		expect(captured.last?.rpcHost).toBe("127.0.0.1");
+		expect(captured.last?.rpcPort).toBe("17654");
+		expect(captured.last?.rpcToken).toBe("tok-test");
+	});
+
 	it("status --agent claude_code (child-side) reaches the action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "status", "--agent", "claude_code"]);
@@ -202,40 +235,5 @@ describe("registerServeCommand", () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--json"]);
 		expect(captured.last?.json).toBe(true);
-	});
-
-	it("rpc passes method params through", async () => {
-		const captured = {
-			lastMethod: null as string | null,
-			last: null as Record<string, unknown> | null,
-		};
-		const program = new Command();
-		registerServeCommand(program, {
-			...makeHandlers(captured),
-			serveRpc: async (method: string, opts: Record<string, unknown>) => {
-				captured.lastMethod = method;
-				captured.last = opts;
-			},
-		});
-		await program.parseAsync([
-			"node",
-			"clawdi",
-			"serve",
-			"rpc",
-			"sync.push",
-			"--params",
-			'{"verbose":true}',
-			"--rpc-host",
-			"127.0.0.1",
-			"--rpc-port",
-			"17654",
-			"--rpc-token",
-			"tok-test",
-		]);
-		expect(captured.lastMethod).toBe("sync.push");
-		expect(captured.last?.params).toBe('{"verbose":true}');
-		expect(captured.last?.rpcHost).toBe("127.0.0.1");
-		expect(captured.last?.rpcPort).toBe("17654");
-		expect(captured.last?.rpcToken).toBe("tok-test");
 	});
 });

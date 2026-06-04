@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -124,7 +124,6 @@ if (process.platform !== "win32") {
 
 				const httpPing = await runCli(fixture, [
 					"daemon",
-					"rpc",
 					"ping",
 					"--rpc-host",
 					"127.0.0.1",
@@ -136,6 +135,24 @@ if (process.platform !== "win32") {
 				const httpResult = JSON.parse(httpPing.stdout) as { pid?: number; version?: string };
 				expect(httpResult.pid).toBe(daemon.pid);
 				expect(httpResult.version).toBe(defaultResult.version);
+
+				const tokenPath = join(fixture.stateDir, "control", "control-token");
+				const oldToken = readFileSync(tokenPath, "utf-8").trim();
+				const rotate = await runCli(fixture, [
+					"daemon",
+					"rotate-token",
+					"--rpc-port",
+					String(rpcPort),
+				]);
+				expect(rotate.code).toBe(0);
+				expect(rotate.stderr).toBe("");
+				const rotateResult = JSON.parse(rotate.stdout) as { token?: string; rotated?: boolean };
+				expect(rotateResult.rotated).toBe(true);
+				expect(rotateResult.token).toBeString();
+				expect(rotateResult.token).not.toBe(oldToken);
+				expect(readFileSync(tokenPath, "utf-8").trim()).toBe(rotateResult.token);
+				const staleToken = await postRpcWithToken(rpcPort, oldToken);
+				expect(staleToken.status).toBe(401);
 
 				expect(apiCalls.some((call) => call.path === `/api/environments/${ENV_ID}`)).toBe(true);
 				expect(apiCalls.some((call) => call.path.startsWith("/api/skills?"))).toBe(true);
@@ -260,6 +277,17 @@ async function postRpcWithoutToken(port: number): Promise<Response> {
 	return await fetch(`http://127.0.0.1:${port}/rpc`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
+	});
+}
+
+async function postRpcWithToken(port: number, token: string): Promise<Response> {
+	return await fetch(`http://127.0.0.1:${port}/rpc`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"Content-Type": "application/json",
+		},
 		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
 	});
 }
