@@ -23,7 +23,7 @@ export default function RootError({
 	}, [error]);
 
 	return (
-		<div className="min-h-screen flex items-center justify-center p-6 bg-background">
+		<div className="min-h-dvh flex items-center justify-center p-6 bg-background">
 			<div className="max-w-md w-full text-center space-y-4">
 				<AlertTriangle className="size-10 text-destructive mx-auto" />
 				<div>

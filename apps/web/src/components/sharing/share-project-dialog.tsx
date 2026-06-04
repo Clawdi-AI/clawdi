@@ -132,7 +132,7 @@ export function ShareProjectDialog({
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
+			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
 						{isShareableProject ? `Share ${projectName}` : "Only Projects You Create Can Be Shared"}

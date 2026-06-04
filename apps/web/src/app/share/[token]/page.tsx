@@ -416,7 +416,7 @@ function describeError(code: ShareErrorCode): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-background p-6">
+		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
 			<div className="w-full max-w-md space-y-4">{children}</div>
 		</main>
 	);
