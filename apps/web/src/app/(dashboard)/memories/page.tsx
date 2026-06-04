@@ -4,25 +4,26 @@ import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
-import {
-	DashboardSection,
-	DashboardSectionHeader,
-	DashboardSectionToolbar,
-} from "@/components/dashboard/section";
-import { makeMemoryColumns } from "@/components/memories/memory-columns";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
-import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
 	Select,
 	SelectContent,
@@ -118,8 +119,6 @@ export default function MemoriesPage() {
 
 	const requestDeleteMemory = useCallback((id: string) => deleteMemory.mutate(id), [deleteMemory]);
 
-	const columns = useMemo(() => makeMemoryColumns(requestDeleteMemory), [requestDeleteMemory]);
-
 	const emptyMessage =
 		debouncedSearch || apiCategory
 			? "No matches — try a different search or category."
@@ -133,16 +132,53 @@ export default function MemoriesPage() {
 			onPageSizeChange={(size) => setPagination(() => ({ pageIndex: 0, pageSize: size }))}
 		/>
 	);
-	const tableToolbar = (
-		<DashboardSectionToolbar>
-			<DataTableToolbar
-				value={search}
-				onChange={(v) => {
-					setSearch(v);
-					setPagination((p) => ({ ...p, pageIndex: 0 }));
-				}}
-				placeholder="Search memories…"
-			>
+	return (
+		<div className="space-y-6 px-4 lg:px-6">
+			<PageHeader
+				title="Memories"
+				description={MEMORIES_RESOURCE.managementDescription}
+				actions={
+					<>
+						<ToggleGroup
+							type="single"
+							value={provider}
+							onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
+							disabled={updateSettings.isPending}
+							variant="outline"
+							size="sm"
+						>
+							<ToggleGroupItem value="builtin">
+								<Database />
+								Built-in
+							</ToggleGroupItem>
+							<ToggleGroupItem value="mem0">
+								<Brain />
+								Mem0
+							</ToggleGroupItem>
+						</ToggleGroup>
+						<AddMemoryForm />
+					</>
+				}
+			/>
+
+			{provider === "mem0" && !hasMem0Key ? (
+				<Mem0KeyForm
+					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
+					isPending={updateSettings.isPending}
+				/>
+			) : null}
+
+			{/* Notes toolbar — search front and center, category chips beside. */}
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+				<SearchInput
+					value={search}
+					onChange={(v) => {
+						setSearch(v);
+						setPagination((p) => ({ ...p, pageIndex: 0 }));
+					}}
+					placeholder="Search memories…"
+					className="w-full sm:max-w-md"
+				/>
 				<ToggleGroup
 					type="single"
 					value={category}
@@ -162,101 +198,30 @@ export default function MemoriesPage() {
 						</ToggleGroupItem>
 					))}
 				</ToggleGroup>
-			</DataTableToolbar>
-		</DashboardSectionToolbar>
-	);
+			</div>
 
-	return (
-		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Memories"
-				description={MEMORIES_RESOURCE.managementDescription}
-				actions={
-					<ToggleGroup
-						type="single"
-						value={provider}
-						onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
-						disabled={updateSettings.isPending}
-						variant="outline"
-						size="sm"
-					>
-						<ToggleGroupItem value="builtin">
-							<Database />
-							Built-in
-						</ToggleGroupItem>
-						<ToggleGroupItem value="mem0">
-							<Brain />
-							Mem0
-						</ToggleGroupItem>
-					</ToggleGroup>
-				}
-			/>
-
-			{provider === "mem0" && !hasMem0Key ? (
-				<Mem0KeyForm
-					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
-					isPending={updateSettings.isPending}
-				/>
-			) : null}
-
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Brain}
-					title="Memory library"
-					count={data ? `${total} memor${total === 1 ? "y" : "ies"}` : undefined}
-					description="Account-level notes agents can recall across runs. They are not shared through Projects."
-				/>
-				<div className="border-b px-4 py-3">
-					<AddMemoryForm />
-				</div>
-
-				{error ? (
-					<div className="p-4">
-						<Alert variant="destructive">
-							<AlertCircle />
-							<AlertTitle>Couldn't load memories</AlertTitle>
-							<AlertDescription>{errorMessage(error)}</AlertDescription>
-						</Alert>
-					</div>
-				) : (
-					<>
-						<div className="md:hidden">
-							{tableToolbar}
-							<div className="p-4">
-								<MobileMemoryList
-									memories={memories ?? []}
-									isLoading={isLoading}
-									emptyMessage={emptyMessage}
-									onDelete={requestDeleteMemory}
-								/>
-								<div className="mt-3">{paginationFooter}</div>
-							</div>
-						</div>
-						<div className="hidden md:block">
-							<DataTable
-								columns={columns}
-								data={memories ?? []}
-								isLoading={isLoading}
-								getRowHref={(m) => memoryDetailHref(m.id)}
-								rowAriaLabel={(m) => `Open memory ${m.id.slice(0, 8)}`}
-								emptyMessage={emptyMessage}
-								pagination={pagination}
-								onPaginationChange={setPagination}
-								pageCount={Math.max(1, Math.ceil(total / pagination.pageSize))}
-								toolbar={tableToolbar}
-								footer={<div className="border-t px-4 py-3">{paginationFooter}</div>}
-								className="space-y-0"
-								tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
-							/>
-						</div>
-					</>
-				)}
-			</DashboardSection>
+			{error ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Couldn't load memories</AlertTitle>
+					<AlertDescription>{errorMessage(error)}</AlertDescription>
+				</Alert>
+			) : (
+				<>
+					<MemoryNotesGrid
+						memories={memories ?? []}
+						isLoading={isLoading}
+						emptyMessage={emptyMessage}
+						onDelete={requestDeleteMemory}
+					/>
+					{paginationFooter}
+				</>
+			)}
 		</div>
 	);
 }
 
-function MobileMemoryList({
+function MemoryNotesGrid({
 	memories,
 	isLoading,
 	emptyMessage,
@@ -269,12 +234,12 @@ function MobileMemoryList({
 }) {
 	if (isLoading) {
 		return (
-			<div className="mt-3 space-y-2">
-				{Array.from({ length: 3 }).map((_, index) => (
-					<div key={index} className="rounded-lg border bg-card p-3">
+			<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+				{Array.from({ length: 9 }).map((_, index) => (
+					<div key={index} className="rounded-xl border bg-card p-4">
 						<Skeleton className="h-4 w-5/6" />
 						<Skeleton className="mt-2 h-4 w-2/3" />
-						<Skeleton className="mt-3 h-5 w-24" />
+						<Skeleton className="mt-4 h-5 w-24" />
 					</div>
 				))}
 			</div>
@@ -283,64 +248,65 @@ function MobileMemoryList({
 
 	if (!memories.length) {
 		return (
-			<div className="mt-3 rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+			<div className="rounded-xl border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
 				{emptyMessage}
 			</div>
 		);
 	}
 
 	return (
-		<div className="mt-3 divide-y rounded-lg border bg-card">
+		<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
 			{memories.map((memory) => (
-				<article key={memory.id} className="relative p-3">
+				<article
+					key={memory.id}
+					className="group relative z-0 rounded-xl border bg-card p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20"
+				>
 					<Link
 						href={memoryDetailHref(memory.id)}
 						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
-						className="absolute inset-0 rounded-lg"
+						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					/>
-					<div className="pointer-events-none relative z-10 flex items-start justify-between gap-3">
-						<div className="min-w-0 flex-1 space-y-2">
-							<p className="break-words text-sm leading-relaxed">{memory.content}</p>
-							<div className="flex flex-wrap items-center gap-1.5">
-								<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
-									{memory.category}
-								</Badge>
-								{memory.tags?.slice(0, 3).map((tag) => (
-									<span key={tag} className="text-xs text-muted-foreground">
-										#{tag}
-									</span>
-								))}
-							</div>
-							<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-								{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
-								{memory.source_machine_name ? (
-									<span className="inline-flex min-w-0 items-center gap-1">
-										<Laptop className="size-3 shrink-0" />
-										<span className="truncate">Learned on {memory.source_machine_name}</span>
-									</span>
-								) : null}
-							</div>
-						</div>
+					<p className="line-clamp-[8] break-words text-sm leading-relaxed">{memory.content}</p>
+					<div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+						<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
+							{memory.category}
+						</Badge>
+						{memory.tags?.slice(0, 3).map((tag) => (
+							<span key={tag} className="text-xs text-muted-foreground">
+								#{tag}
+							</span>
+						))}
+						<span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
+							{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
+							{memory.source_machine_name ? (
+								<span
+									className="inline-flex min-w-0 items-center gap-1"
+									title={`Learned on ${memory.source_machine_name}`}
+								>
+									<Laptop className="size-3 shrink-0" />
+									<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+								</span>
+							) : null}
+						</span>
+					</div>
+					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
 							description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
-							confirmLabel="Delete Memory"
+							confirmLabel="Delete memory"
 							destructive
 							onConfirm={() => onDelete(memory.id)}
 						>
 							<Button
 								variant="ghost"
 								size="icon-sm"
-								onClick={(event) => {
-									event.stopPropagation();
-								}}
-								className="pointer-events-auto shrink-0 text-muted-foreground hover:text-destructive"
+								className="bg-card/80 text-muted-foreground backdrop-blur-sm hover:text-destructive"
 								aria-label="Delete memory"
 							>
 								<Trash2 className="size-3.5" />
 							</Button>
 						</ConfirmAction>
-					</div>
+					</span>
 				</article>
 			))}
 		</div>
@@ -412,81 +378,78 @@ function AddMemoryForm() {
 		onError: (e) => toast.error("Couldn't add memory", { description: errorMessage(e) }),
 	});
 
-	if (!open) {
-		return (
-			<Button
-				variant="outline"
-				onClick={() => setOpen(true)}
-				className="border-dashed text-muted-foreground"
-			>
-				<Plus />
-				Add memory
-			</Button>
-		);
-	}
-
 	return (
-		<Card>
-			<CardContent className="space-y-3">
-				<div className="space-y-1.5">
-					<Label htmlFor="memory-content" className="sr-only">
-						Memory content
-					</Label>
-					<Textarea
-						id="memory-content"
-						name="memory-content"
-						value={content}
-						onChange={(e) => setContent(e.target.value)}
-						placeholder="Prefer concise PR summaries…"
-						rows={3}
-						className="resize-none"
-					/>
-				</div>
-				{secretFinding ? (
-					<Alert variant="destructive">
-						<AlertCircle />
-						<AlertTitle>Use Vault for Secrets</AlertTitle>
-						<AlertDescription>{formatSecretMemoryWarning(secretFinding)}</AlertDescription>
-					</Alert>
-				) : null}
-				<div className="flex items-center justify-between gap-2">
-					<div className="flex items-center gap-2">
-						<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
-							Category
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				setOpen(next);
+				if (!next) setContent("");
+			}}
+		>
+			<DialogTrigger asChild>
+				<Button size="sm">
+					<Plus />
+					New memory
+				</Button>
+			</DialogTrigger>
+			<DialogContent className="sm:max-w-lg">
+				<DialogHeader>
+					<DialogTitle>New memory</DialogTitle>
+					<DialogDescription>
+						A note your AI recalls on every agent, across machines.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-3">
+					<div className="space-y-1.5">
+						<Label htmlFor="memory-content" className="sr-only">
+							Memory content
 						</Label>
-						<Select value={addCategory} onValueChange={setAddCategory}>
-							<SelectTrigger id="memory-category" size="sm" className="w-32">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{CATEGORIES.filter((c) => c.value !== ALL).map((c) => (
-									<SelectItem key={c.value} value={c.value}>
-										{c.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+						<Textarea
+							id="memory-content"
+							name="memory-content"
+							value={content}
+							onChange={(e) => setContent(e.target.value)}
+							placeholder="Prefer concise PR summaries…"
+							rows={5}
+							autoFocus
+							className="resize-none"
+						/>
 					</div>
-					<div className="flex items-center gap-2">
-						<Button
-							variant="ghost"
-							onClick={() => {
-								setOpen(false);
-								setContent("");
-							}}
-						>
-							Cancel
-						</Button>
+					{secretFinding ? (
+						<Alert variant="destructive">
+							<AlertCircle />
+							<AlertTitle>Use Vault for secrets</AlertTitle>
+							<AlertDescription>{formatSecretMemoryWarning(secretFinding)}</AlertDescription>
+						</Alert>
+					) : null}
+					<div className="flex items-center justify-between gap-2">
+						<div className="flex items-center gap-2">
+							<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
+								Category
+							</Label>
+							<Select value={addCategory} onValueChange={setAddCategory}>
+								<SelectTrigger id="memory-category" size="sm" className="w-32">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{CATEGORIES.filter((c) => c.value !== ALL).map((c) => (
+										<SelectItem key={c.value} value={c.value}>
+											{c.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
 						<Button
 							onClick={() => content.trim() && createMemory.mutate()}
 							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
-							Add memory
+							Save memory
 						</Button>
 					</div>
 				</div>
-			</CardContent>
-		</Card>
+			</DialogContent>
+		</Dialog>
 	);
 }
