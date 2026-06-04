@@ -286,9 +286,7 @@ async def copy_vault_items(
     source = await _get_vault_write(auth, slug, db, project_id=project_id)
     target = await _get_vault_write(auth, body.target_slug, db)
     if target.id == source.id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Source and target are the same vault"
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Source and target are the same vault")
 
     source_by_name = await _load_items_by_name(db, source.id, body.section)
     target_by_name = await _load_items_by_name(db, target.id, body.section)
