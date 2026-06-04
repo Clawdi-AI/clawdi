@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { relativeTime } from "@/lib/utils";
 
@@ -100,12 +100,12 @@ export function AgentsCard({
 	}
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Agents</CardTitle>
-				<CardDescription>{description}</CardDescription>
-			</CardHeader>
-			<CardContent className="space-y-3">
+		<section className="space-y-3">
+			<div>
+				<h2 className="text-sm font-semibold">Agents</h2>
+				<p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{description}</p>
+			</div>
+			<div className="space-y-3">
 				{isLoading ? (
 					<div className="grid gap-2 sm:grid-cols-2">
 						{Array.from({ length: 4 }).map((_, i) => (
@@ -133,8 +133,8 @@ export function AgentsCard({
 						<span>Hosted agents unavailable. Self-managed agents listed above.</span>
 					</div>
 				) : null}
-			</CardContent>
-		</Card>
+			</div>
+		</section>
 	);
 }
 
@@ -216,7 +216,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	const card = (
 		<Card className="h-full py-0 transition-colors group-hover:bg-accent/40">
-			<CardContent className="flex items-center gap-3 p-3">
+			<CardContent className="flex items-center gap-3 p-4">
 				<AgentLabel
 					machineName={tile.name}
 					type={tile.agentType}
@@ -266,7 +266,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 function TileSkeleton() {
 	return (
 		<Card className="py-0">
-			<CardContent className="flex items-center gap-3 p-3">
+			<CardContent className="flex items-center gap-3 p-4">
 				<Skeleton className="size-8 shrink-0 rounded-md" />
 				<div className="min-w-0 flex-1 space-y-1.5">
 					<Skeleton className="h-4 w-24" />

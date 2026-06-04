@@ -10,13 +10,13 @@ import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
-import { PageHeader } from "@/components/page-header";
 import { sessionColumnsCompact } from "@/components/sessions/session-columns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
+import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
@@ -138,9 +138,9 @@ export default function DashboardPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Overview"
-				description="Your agents, activity, and recent sessions at a glance."
+			<Greeting
+				activeCount={selfManagedTiles.filter((t) => t.active).length}
+				total={selfManagedCount}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
@@ -231,6 +231,30 @@ export default function DashboardPage() {
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
+function Greeting({ activeCount, total }: { activeCount: number; total: number }) {
+	const { user } = useCurrentUser();
+	const hour = new Date().getHours();
+	const daypart =
+		hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+	const firstName = user?.fullName?.split(" ")[0];
+	const summary =
+		total === 0
+			? "Connect your first agent to start syncing."
+			: activeCount > 0
+				? `${activeCount} of ${total} agents active right now.`
+				: `${total} agents connected.`;
+	return (
+		<div>
+			<h1 className="text-2xl font-semibold tracking-tight">
+				Good {daypart}
+				{firstName ? `, ${firstName}` : ""}
+			</h1>
+			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>
 		</div>
 	);
 }
