@@ -211,9 +211,15 @@ The RPC surface is discoverable:
 clawdi daemon rpc methods --rpc-host 127.0.0.1 --rpc-port 17654
 ```
 
-Besides daemon control methods, the daemon exposes headless command
-methods for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, and
-`update.*`. Long-running commands return an operation id:
+Daemon control methods use short names: `ping`, `methods`, `status`,
+`doctor`, `logs`, `install`, `uninstall`, `restart`, and `rotate_token`.
+The user-facing CLI wrappers stay as normal commands such as
+`clawdi daemon status`, `clawdi daemon doctor`, and
+`clawdi daemon logs`.
+
+Besides daemon control methods, the daemon exposes headless command methods
+for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, `update.*`, and
+`operation.*`. Long-running commands return an operation id:
 
 ```sh
 clawdi daemon rpc sync.push \
