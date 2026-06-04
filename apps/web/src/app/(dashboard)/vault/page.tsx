@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
+import { ProjectTab } from "@/components/projects/project-tab";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -162,40 +163,6 @@ export default function VaultPage() {
 				</>
 			)}
 		</div>
-	);
-}
-
-function ProjectTab({
-	active,
-	onClick,
-	label,
-	emoji,
-}: {
-	active: boolean;
-	onClick: () => void;
-	label: string;
-	emoji?: string;
-}) {
-	return (
-		<button
-			type="button"
-			role="tab"
-			aria-selected={active}
-			onClick={onClick}
-			className={cn(
-				"inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
-				active
-					? "border-foreground/20 bg-accent font-medium text-foreground"
-					: "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-			)}
-		>
-			{emoji ? (
-				<span aria-hidden className="select-none text-[13px] leading-none">
-					{emoji}
-				</span>
-			) : null}
-			{label}
-		</button>
 	);
 }
 

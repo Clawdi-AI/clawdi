@@ -2,7 +2,15 @@
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Download, ExternalLink, Plus, Search } from "lucide-react";
+import {
+	AlertCircle,
+	Check,
+	ChevronDown,
+	Download,
+	ExternalLink,
+	Plus,
+	Search,
+} from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
@@ -14,21 +22,28 @@ import {
 	displayProjectName,
 	isCustomProject,
 	isProjectOwner,
-	ProjectCompactPicker,
 } from "@/components/projects/project-metadata";
+import { ProjectTab } from "@/components/projects/project-tab";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
+import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -80,6 +95,17 @@ function SkillsPageInner() {
 		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
 		[projects],
 	);
+	// Tab row shows custom + personal projects; the per-agent long tail
+	// lives behind one overflow menu (a 16-tab row teaches nothing).
+	const tabProjects = useMemo(
+		() => orderedProjects.filter((p) => p.kind === "workspace" || p.kind === "personal"),
+		[orderedProjects],
+	);
+	const overflowProjects = useMemo(
+		() => orderedProjects.filter((p) => p.kind !== "workspace" && p.kind !== "personal"),
+		[orderedProjects],
+	);
+
 	const writableProjectIds = useMemo(
 		() =>
 			projects
@@ -148,6 +174,7 @@ function SkillsPageInner() {
 	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;
 	const canWriteTargetProject = !!targetProject && isProjectReady && isProjectOwner(targetProject);
 	const targetProjectLabel = targetProject ? displayProjectName(targetProject) : "Project";
+	const overflowActive = !!targetProject && overflowProjects.some((p) => p.id === targetProject.id);
 	const targetEnv = envs?.find((e) => e.default_project_id === targetProjectId);
 
 	const targetAgentLabel = useMemo(() => {
@@ -265,31 +292,71 @@ function SkillsPageInner() {
 
 	return (
 		<div className="space-y-6 px-4 lg:px-6">
-			{/* Flat layout: scope picker lives in the header action slot —
-			    no boxed "Project scope" section, no instructional prose.
-			    The picker IS the scope affordance. */}
 			<PageHeader
 				title="Skills"
 				description={SKILLS_RESOURCE.managementDescription}
-				actions={
-					orderedProjects.length > 0 ? (
-						<>
-							<ProjectCompactPicker
-								projects={orderedProjects}
-								agents={envs ?? []}
-								value={targetProjectId ?? ""}
-								onValueChange={(projectId) => {
-									void setProjectParam(projectId);
-									void setTargetEnvId("");
-								}}
-								placeholder="Choose Project…"
-								ariaLabel="Choose Project for skills"
-							/>
-							{renderShareProjectAction()}
-						</>
-					) : null
-				}
+				actions={orderedProjects.length > 0 ? renderShareProjectAction() : null}
 			/>
+
+			{/* Project scope as visible tabs, mirroring the vault page: custom
+			    projects + Global up front, the long tail of per-agent projects
+			    behind one overflow menu. */}
+			{orderedProjects.length > 0 ? (
+				<div
+					className="flex flex-wrap items-center gap-1.5"
+					role="tablist"
+					aria-label="Project scope for skills"
+				>
+					{tabProjects.map((p) => (
+						<ProjectTab
+							key={p.id}
+							active={targetProjectId === p.id}
+							onClick={() => {
+								void setProjectParam(p.id);
+								void setTargetEnvId("");
+							}}
+							label={displayProjectName(p)}
+							emoji={identityFor(displayProjectName(p)).emoji}
+						/>
+					))}
+					{overflowProjects.length > 0 ? (
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<button
+									type="button"
+									className={cn(
+										"inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-sm transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
+										overflowActive
+											? "border-foreground/20 bg-accent font-medium text-foreground"
+											: "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+									)}
+								>
+									{overflowActive && targetProject
+										? `${identityFor(displayProjectName(targetProject)).emoji} ${displayProjectName(targetProject)}`
+										: `Agent projects (${overflowProjects.length})`}
+									<ChevronDown className="size-3.5" />
+								</button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+								{overflowProjects.map((p) => (
+									<DropdownMenuItem
+										key={p.id}
+										onSelect={() => {
+											void setProjectParam(p.id);
+											void setTargetEnvId("");
+										}}
+									>
+										<span aria-hidden className="select-none">
+											{identityFor(displayProjectName(p)).emoji}
+										</span>
+										{displayProjectName(p)}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuContent>
+						</DropdownMenu>
+					) : null}
+				</div>
+			) : null}
 
 			{projectsError ? (
 				<Alert variant="destructive">
