@@ -195,7 +195,7 @@ export default function ProjectDetailPage() {
 			router.push(projectResourceHref("projects"));
 		},
 		onError: (e) => {
-			toast.error("Failed to Leave Shared Project", {
+			toast.error("Couldn't leave shared project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -703,7 +703,7 @@ function UseProjectWithAgentDialog({
 			onOpenChange(false);
 		},
 		onError: (e) => {
-			toast.error("Failed to Add Project", {
+			toast.error("Couldn't add project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -990,7 +990,7 @@ function CreateVaultInProjectForm({
 			onChanged();
 			toast.success("Vault Created", { description: "Added to this Project." });
 		},
-		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
 
 	return (

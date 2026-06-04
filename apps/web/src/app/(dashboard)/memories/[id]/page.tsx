@@ -51,7 +51,7 @@ export default function MemoryDetailPage() {
 			});
 			router.push(projectResourceHref("memories"));
 		},
-		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
 	const onDelete = () => deleteMemory.mutate();

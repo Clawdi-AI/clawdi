@@ -200,7 +200,7 @@ export default function AgentDetailPage() {
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(
@@ -287,7 +287,7 @@ export default function AgentDetailPage() {
 			});
 			router.push("/");
 		},
-		onError: (e) => toast.error("Failed to Disconnect Agent", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
 	});
 
 	const onDisconnect = () => {
@@ -500,7 +500,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Added");
 		},
-		onError: (e) => toast.error("Failed to Add Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't add project", { description: errorMessage(e) }),
 	});
 
 	const removeBinding = useMutation({
@@ -513,7 +513,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Removed");
 		},
-		onError: (e) => toast.error("Failed to Remove Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't remove project", { description: errorMessage(e) }),
 	});
 
 	const reorder = useMutation({
@@ -528,7 +528,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Order Updated");
 		},
-		onError: (e) => toast.error("Failed to Reorder Projects", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't reorder projects", { description: errorMessage(e) }),
 	});
 
 	const moveContext = (bindingId: string, direction: -1 | 1) => {

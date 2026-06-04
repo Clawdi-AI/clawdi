@@ -131,7 +131,7 @@ function ConnectorDetail() {
 						return next;
 					});
 				},
-				onError: (e) => toast.error("Failed to Disconnect", { description: errorMessage(e) }),
+				onError: (e) => toast.error("Couldn't disconnect", { description: errorMessage(e) }),
 			},
 		);
 	};
@@ -226,7 +226,7 @@ function ConnectorDetail() {
 				},
 				onError: (e) => {
 					popup.close();
-					toast.error("Failed to Start Connection", { description: errorMessage(e) });
+					toast.error("Couldn't start connection", { description: errorMessage(e) });
 				},
 				onSettled: () => {
 					inflightConnectRef.current = false;

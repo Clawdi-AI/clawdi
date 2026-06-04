@@ -638,7 +638,7 @@ function projectPickerGroups(projects: ProjectMetadata[]) {
 		},
 		{
 			id: "shared",
-			label: "Shared by Others",
+			label: "Shared by others",
 			projects: shared,
 		},
 	];

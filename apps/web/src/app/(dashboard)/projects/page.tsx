@@ -144,7 +144,7 @@ export default function ProjectsPage() {
 			router.push(projectDetailHref(project.id));
 		},
 		onError: (e) => {
-			toast.error("Failed to Create Project", {
+			toast.error("Couldn't create project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},

@@ -257,7 +257,7 @@ function VaultPageInner() {
 			const projectName = project ? displayProjectName(project) : "the selected Project";
 			toast.success("Vault Created", { description: `Added to ${projectName}.` });
 		},
-		onError: (e) => toast.error("Failed to Create Vault", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
 
 	const addVaultToProject = useMutation({
@@ -277,7 +277,7 @@ function VaultPageInner() {
 				description: `${variables.slug} is now available in ${projectName}.`,
 			});
 		},
-		onError: (e) => toast.error("Failed to Add to Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't add to project", { description: errorMessage(e) }),
 	});
 
 	const detachVaultProject = useMutation({
@@ -291,7 +291,7 @@ function VaultPageInner() {
 			await queryClient.invalidateQueries({ queryKey: ["vaults"] });
 			toast.success("Vault Removed from Project");
 		},
-		onError: (e) => toast.error("Failed to Remove from Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't remove from project", { description: errorMessage(e) }),
 	});
 
 	const deleteVault = useMutation({
@@ -308,7 +308,7 @@ function VaultPageInner() {
 				description: `${variables.slug} and its keys were removed.`,
 			});
 		},
-		onError: (e) => toast.error("Failed to Delete Vault", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't delete vault", { description: errorMessage(e) }),
 	});
 
 	return (
@@ -636,7 +636,7 @@ function VaultInventoryList({
 					onSelect={onSelect}
 				/>
 				<VaultInventorySection
-					title="Shared by Others"
+					title="Shared by others"
 					count={sharedEntries.length}
 					emptyText="No read-only vaults in this view."
 					entries={sharedEntries}
@@ -1045,7 +1045,7 @@ function VaultKeysPanel({
 			);
 			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 		},
-		onError: (e) => toast.error("Failed to Save Key", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't save key", { description: errorMessage(e) }),
 	});
 
 	const importItems = useMutation({
@@ -1077,7 +1077,7 @@ function VaultKeysPanel({
 						: `${changed} key${changed === 1 ? "" : "s"} added to ${vault.name || vault.slug}.`,
 			});
 		},
-		onError: (e) => toast.error("Failed to Import Keys", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't import keys", { description: errorMessage(e) }),
 	});
 
 	const deleteItem = useMutation({
@@ -1100,7 +1100,7 @@ function VaultKeysPanel({
 			);
 			void queryClient.invalidateQueries({ queryKey: vaultItemsCacheKey });
 		},
-		onError: (e) => toast.error("Failed to Delete Key", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't delete key", { description: errorMessage(e) }),
 	});
 
 	const allFields: VaultField[] = items
@@ -1220,7 +1220,7 @@ function VaultKeysPanel({
 								className="text-muted-foreground"
 							>
 								<Plus className="size-3.5" />
-								Add Key
+								Add key
 							</Button>
 							<VaultKeyImportDialog
 								existingKeys={defaultKeyNames}

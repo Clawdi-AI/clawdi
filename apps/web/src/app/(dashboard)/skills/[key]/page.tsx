@@ -217,7 +217,7 @@ function SkillDetailPageInner() {
 				queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
 				return;
 			}
-			toast.error("Failed to Save Skill", { description: errorMessage(e) });
+			toast.error("Couldn't save skill", { description: errorMessage(e) });
 		},
 	});
 
@@ -239,7 +239,7 @@ function SkillDetailPageInner() {
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			router.push(projectResourceHref("skills"));
 		},
-		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
 
 	const onUninstall = () => {

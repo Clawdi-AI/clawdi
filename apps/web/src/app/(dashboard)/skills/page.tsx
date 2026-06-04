@@ -204,7 +204,7 @@ function SkillsPageInner() {
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
 
 	const skillColumns = useMemo(

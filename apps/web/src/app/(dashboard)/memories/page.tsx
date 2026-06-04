@@ -82,7 +82,7 @@ export default function MemoriesPage() {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
-		onError: (e) => toast.error("Failed to Update Settings", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
 	});
 
 	const { data, isLoading, error } = useQuery({
@@ -113,7 +113,7 @@ export default function MemoriesPage() {
 				}),
 			),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
-		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
 	const requestDeleteMemory = useCallback((id: string) => deleteMemory.mutate(id), [deleteMemory]);
@@ -409,7 +409,7 @@ function AddMemoryForm() {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
-		onError: (e) => toast.error("Failed to Add Memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't add memory", { description: errorMessage(e) }),
 	});
 
 	if (!open) {
@@ -420,7 +420,7 @@ function AddMemoryForm() {
 				className="border-dashed text-muted-foreground"
 			>
 				<Plus />
-				Add Memory
+				Add memory
 			</Button>
 		);
 	}
@@ -482,7 +482,7 @@ function AddMemoryForm() {
 							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
-							Add Memory
+							Add memory
 						</Button>
 					</div>
 				</div>

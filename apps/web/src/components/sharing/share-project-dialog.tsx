@@ -283,7 +283,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					? "Set a display name on your profile before sharing."
 					: e instanceof Error
 						? e.message
-						: "Failed to Create Link",
+						: "Couldn't create link",
 			);
 		},
 	});
@@ -299,7 +299,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			toast.success("Share Link Turned Off");
 		},
 		onError: (e) => {
-			toast.error("Failed to Turn Off Link", {
+			toast.error("Couldn't turn off link", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -595,7 +595,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			});
 		},
 		onError: (e) => {
-			toast.error("Failed to Send Invitation", {
+			toast.error("Couldn't send invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -612,7 +612,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			toast.success("Invitation Cancelled");
 		},
 		onError: (e) => {
-			toast.error("Failed to Cancel Invitation", {
+			toast.error("Couldn't cancel invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -767,7 +767,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			toast.success("Member Removed");
 		},
 		onError: (e) =>
-			toast.error("Failed to Remove Member", {
+			toast.error("Couldn't remove member", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});
@@ -788,7 +788,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			});
 		},
 		onError: (e) =>
-			toast.error("Failed to Stop Sharing", {
+			toast.error("Couldn't stop sharing", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});

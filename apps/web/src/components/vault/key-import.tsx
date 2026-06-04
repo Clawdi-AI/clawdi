@@ -82,12 +82,12 @@ export function VaultKeyImportDialog({
 					aria-label="Import keys from env or JSON"
 				>
 					<Upload className="size-3.5" />
-					Import Keys
+					Import keys
 				</Button>
 			</DialogTrigger>
 			<DialogContent className="max-h-[min(88vh,720px)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
-					<DialogTitle>Import Keys</DialogTitle>
+					<DialogTitle>Import keys</DialogTitle>
 					<DialogDescription>
 						Paste KEY=value lines from an env file or a flat JSON object. Review conflicts before
 						anything is saved.
@@ -215,7 +215,7 @@ export function VaultKeyImportDialog({
 						{isPending ? <Spinner /> : <Upload className="size-3.5" />}
 						{importableRows.length > 0
 							? `Import ${importableRows.length} Key${importableRows.length === 1 ? "" : "s"}`
-							: "Import Keys"}
+							: "Import keys"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
