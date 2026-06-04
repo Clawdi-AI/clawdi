@@ -154,7 +154,7 @@ describe("full control RPC handler surface", () => {
 		const { createControlRpcHandlers } = await import("./serve");
 		const handlers = createControlRpcHandlers();
 		const methodsResult = (await handlers["daemon.methods"]?.({})) as
-			| { capabilities?: string[]; methods?: string[] }
+			| { methods?: string[] }
 			| undefined;
 
 		expect(methodsResult?.methods).toContain("sync.push");
@@ -163,8 +163,6 @@ describe("full control RPC handler surface", () => {
 		expect(methodsResult?.methods).toContain("auth.login");
 		expect(methodsResult?.methods).toContain("update.install");
 		expect(methodsResult?.methods).toContain("operation.status");
-		expect(methodsResult?.methods).toContain("daemon.issue_token");
-		expect(methodsResult?.capabilities).toContain("vault:secrets");
 	});
 
 	it("requires an explicit cwd, project, or all=true for sync.push", async () => {
@@ -194,14 +192,11 @@ describe("full control RPC handler surface", () => {
 
 		await expect(
 			(async () =>
-				handler(
-					{
-						input: "OPENAI_API_KEY=clawdi://prod/openai/key",
-						confirm_secret_access: true,
-						wait: false,
-					},
-					{ tokenKind: "root", capabilities: "*", transport: "socket" },
-				))(),
+				handler({
+					input: "OPENAI_API_KEY=clawdi://prod/openai/key",
+					confirm_secret_access: true,
+					wait: false,
+				}))(),
 		).rejects.toThrow("vault.inject secret rendering cannot run as a background operation");
 	});
 });

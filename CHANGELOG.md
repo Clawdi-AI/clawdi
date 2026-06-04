@@ -41,14 +41,11 @@ Package: `clawdi@0.11.0`
 - Daemon control RPC now requires bearer-token auth on every request. The
   generated token is stored owner-only, can be rotated with
   `daemon.rotate_token`, and is checked with timing-safe comparison.
-- Added scoped daemon RPC tokens through `daemon.issue_token`. Non-loopback HTTP
-  listeners reject the local root control token and require scoped tokens.
 - HTTP RPC listeners bind to loopback by default. Non-loopback binds require
   explicit `--rpc-allow-remote` opt-in and should only be used behind SSH
   tunneling, private networking, or TLS termination.
-- Vault plaintext RPC calls require both explicit confirmation and the
-  `vault:secrets` capability; plaintext rendering cannot be sent to background
-  operation logs.
+- Vault plaintext RPC calls require explicit confirmation; plaintext rendering
+  cannot be sent to background operation logs.
 
 ## Clawdi CLI v0.10.1
 

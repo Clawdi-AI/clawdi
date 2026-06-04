@@ -11,14 +11,7 @@ import {
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-	callControlRpc,
-	issueScopedControlToken,
-	rootOnlyRpcHandler,
-	rotateControlToken,
-	startControlRpcServer,
-	withRpcCapabilities,
-} from "./control-rpc";
+import { callControlRpc, rotateControlToken, startControlRpcServer } from "./control-rpc";
 import { getDaemonControlTokenPath } from "./paths";
 
 if (process.platform !== "win32") {
@@ -185,77 +178,25 @@ if (process.platform !== "win32") {
 			expect(result).toEqual({ params: { accepted: true } });
 		});
 
-		it("requires scoped tokens on non-loopback HTTP listeners", async () => {
+		it("allows explicit non-loopback HTTP listeners with the bearer token", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": withRpcCapabilities((params) => ({ params }), ["daemon:read"]),
+					"daemon.echo": (params) => ({ params }),
 				},
 				abort.signal,
 				{ host: "0.0.0.0", port: 0, allowRemote: true },
 			);
 			closeServer = server.close;
 			if (!server.http) throw new Error("expected HTTP listener");
-			const rootToken = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
+			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
-			await expect(
-				callControlRpc(
-					"daemon.echo",
-					{ rejected: true },
-					{ host: "127.0.0.1", port: server.http.port, token: rootToken },
-				),
-			).rejects.toThrow("root_token_not_allowed_on_remote_http");
-
-			const scoped = issueScopedControlToken({
-				capabilities: ["daemon:read"],
-				expiresInSeconds: 60,
-			});
 			const result = await callControlRpc(
 				"daemon.echo",
 				{ accepted: true },
-				{ host: "127.0.0.1", port: server.http.port, token: scoped.token },
+				{ host: "127.0.0.1", port: server.http.port, token },
 			);
 
 			expect(result).toEqual({ params: { accepted: true } });
-		});
-
-		it("enforces scoped token capabilities per method", async () => {
-			const server = await startControlRpcServer(
-				{
-					"vault.secret": withRpcCapabilities(() => ({ ok: true }), ["vault:secrets"]),
-				},
-				abort.signal,
-				{ host: "127.0.0.1", port: 0 },
-			);
-			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
-			const scoped = issueScopedControlToken({
-				capabilities: ["daemon:read"],
-				expiresInSeconds: 60,
-			});
-
-			await expect(
-				callControlRpc("vault.secret", {}, { ...server.http, token: scoped.token }),
-			).rejects.toThrow("requires RPC capability vault:secrets");
-		});
-
-		it("keeps root-only methods unavailable to scoped tokens", async () => {
-			const server = await startControlRpcServer(
-				{
-					"daemon.rotate_token": rootOnlyRpcHandler(() => ({ rotated: true })),
-				},
-				abort.signal,
-				{ host: "127.0.0.1", port: 0 },
-			);
-			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
-			const scoped = issueScopedControlToken({
-				capabilities: ["daemon:control"],
-				expiresInSeconds: 60,
-			});
-
-			await expect(
-				callControlRpc("daemon.rotate_token", {}, { ...server.http, token: scoped.token }),
-			).rejects.toThrow("requires the daemon root control token");
 		});
 	});
 }
