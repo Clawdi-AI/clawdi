@@ -67,6 +67,26 @@
 	--chart-4: oklch(0.62 0.01 95);
 	--chart-5: oklch(0.42 0.008 95);
 
+	/* identity palette — vivid flat pairs for object avatars (projects,
+	 * vaults). Deterministically assigned by name hash; these are the ONLY
+	 * sanctioned multi-hue colors besides the semantic status set. */
+	--identity-1-bg: oklch(0.92 0.06 25);
+	--identity-1-fg: oklch(0.45 0.15 25);
+	--identity-2-bg: oklch(0.93 0.07 70);
+	--identity-2-fg: oklch(0.46 0.12 70);
+	--identity-3-bg: oklch(0.93 0.07 130);
+	--identity-3-fg: oklch(0.42 0.12 135);
+	--identity-4-bg: oklch(0.92 0.06 175);
+	--identity-4-fg: oklch(0.4 0.1 180);
+	--identity-5-bg: oklch(0.92 0.05 235);
+	--identity-5-fg: oklch(0.44 0.12 245);
+	--identity-6-bg: oklch(0.92 0.06 285);
+	--identity-6-fg: oklch(0.45 0.14 290);
+	--identity-7-bg: oklch(0.92 0.06 330);
+	--identity-7-fg: oklch(0.46 0.15 335);
+	--identity-8-bg: oklch(0.93 0.05 0);
+	--identity-8-fg: oklch(0.47 0.15 5);
+
 	/* sidebar — same plane as the page background */
 	--sidebar: oklch(0.975 0.003 95);
 	--sidebar-foreground: oklch(0.32 0.008 95);
@@ -144,6 +164,23 @@
 	--chart-4: oklch(0.6 0.008 95);
 	--chart-5: oklch(0.8 0.006 95);
 
+	--identity-1-bg: oklch(0.32 0.07 25);
+	--identity-1-fg: oklch(0.84 0.09 30);
+	--identity-2-bg: oklch(0.33 0.07 70);
+	--identity-2-fg: oklch(0.86 0.09 75);
+	--identity-3-bg: oklch(0.32 0.07 135);
+	--identity-3-fg: oklch(0.84 0.1 135);
+	--identity-4-bg: oklch(0.31 0.06 180);
+	--identity-4-fg: oklch(0.84 0.08 180);
+	--identity-5-bg: oklch(0.31 0.06 245);
+	--identity-5-fg: oklch(0.83 0.08 240);
+	--identity-6-bg: oklch(0.32 0.07 290);
+	--identity-6-fg: oklch(0.84 0.09 290);
+	--identity-7-bg: oklch(0.32 0.07 335);
+	--identity-7-fg: oklch(0.85 0.1 335);
+	--identity-8-bg: oklch(0.32 0.07 5);
+	--identity-8-fg: oklch(0.85 0.1 10);
+
 	--sidebar: oklch(0.16 0.004 95);
 	--sidebar-foreground: oklch(0.84 0.005 95);
 	--sidebar-primary: oklch(0.6724 0.1308 38.7559);
@@ -193,6 +230,22 @@
 	--color-chart-3: var(--chart-3);
 	--color-chart-4: var(--chart-4);
 	--color-chart-5: var(--chart-5);
+	--color-identity-1-bg: var(--identity-1-bg);
+	--color-identity-1-fg: var(--identity-1-fg);
+	--color-identity-2-bg: var(--identity-2-bg);
+	--color-identity-2-fg: var(--identity-2-fg);
+	--color-identity-3-bg: var(--identity-3-bg);
+	--color-identity-3-fg: var(--identity-3-fg);
+	--color-identity-4-bg: var(--identity-4-bg);
+	--color-identity-4-fg: var(--identity-4-fg);
+	--color-identity-5-bg: var(--identity-5-bg);
+	--color-identity-5-fg: var(--identity-5-fg);
+	--color-identity-6-bg: var(--identity-6-bg);
+	--color-identity-6-fg: var(--identity-6-fg);
+	--color-identity-7-bg: var(--identity-7-bg);
+	--color-identity-7-fg: var(--identity-7-fg);
+	--color-identity-8-bg: var(--identity-8-bg);
+	--color-identity-8-fg: var(--identity-8-fg);
 	--color-sidebar: var(--sidebar);
 	--color-sidebar-foreground: var(--sidebar-foreground);
 	--color-sidebar-primary: var(--sidebar-primary);

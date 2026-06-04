@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
@@ -219,7 +220,7 @@ export default function DashboardPage() {
 							cloudEnvs={environments ?? []}
 						/>
 					) : hasAgents ? (
-						<OnboardingCard variant="additional-agent" />
+						<ConnectAnotherCard />
 					) : null}
 					<ResourcesCard
 						stats={stats}
@@ -232,6 +233,26 @@ export default function DashboardPage() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/** Slim replacement for the embedded wizard duplicate (taste audit round
+ * 2): one line + one button that opens the same Add-agent dialog. */
+function ConnectAnotherCard() {
+	const [open, setOpen] = useState(false);
+	return (
+		<Card className="py-4">
+			<CardContent className="flex items-center justify-between gap-3 px-4">
+				<div className="min-w-0">
+					<div className="text-sm font-medium">Connect another machine</div>
+					<p className="mt-0.5 text-xs text-muted-foreground">One command in a terminal.</p>
+				</div>
+				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+					Add agent
+				</Button>
+			</CardContent>
+			<AddAgentDialog open={open} onClose={() => setOpen(false)} />
+		</Card>
 	);
 }
 

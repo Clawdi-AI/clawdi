@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Key, Lock, Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -195,11 +196,16 @@ function VaultCard({
 		<div className="group relative z-0 flex min-h-36 flex-col gap-3 rounded-xl border bg-card p-5 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20">
 			<span
 				className={cn(
-					"flex size-9 shrink-0 items-center justify-center rounded-lg",
-					shared ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
+					"relative flex size-10 shrink-0 select-none items-center justify-center rounded-lg text-xl leading-none",
+					identityFor(vault.name).colorClasses,
 				)}
 			>
-				{shared ? <Lock className="size-4" /> : <Key className="size-4" />}
+				{identityFor(vault.name).emoji}
+				{shared ? (
+					<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
+						<Lock className="size-2.5 text-muted-foreground" />
+					</span>
+				) : null}
 			</span>
 			<div className="min-w-0">
 				<h3 className="truncate text-base font-semibold tracking-tight">{vault.name}</h3>

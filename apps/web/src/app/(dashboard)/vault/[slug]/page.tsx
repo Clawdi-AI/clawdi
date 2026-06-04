@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ClipboardPaste, Key, Lock, Plus, Share2, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ClipboardPaste, Plus, Share2, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
@@ -35,7 +35,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { errorMessage } from "@/lib/utils";
+import { identityFor } from "@/lib/identity";
+import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -202,8 +203,13 @@ export default function VaultDetailPage() {
 
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 items-start gap-3">
-					<span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-						{isOwner ? <Key className="size-5" /> : <Lock className="size-5" />}
+					<span
+						className={cn(
+							"flex size-11 shrink-0 select-none items-center justify-center rounded-xl text-2xl leading-none",
+							identityFor(vault.name).colorClasses,
+						)}
+					>
+						{identityFor(vault.name).emoji}
 					</span>
 					<div className="min-w-0">
 						<h1 className="truncate text-xl font-semibold tracking-tight">{vault.name}</h1>

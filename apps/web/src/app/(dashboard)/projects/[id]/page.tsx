@@ -6,9 +6,8 @@ import {
 	BookOpen,
 	Bot,
 	CheckCircle2,
-	ExternalLink,
+	ChevronRight,
 	Eye,
-	FolderKanban,
 	LogOut,
 	Plus,
 	Share2,
@@ -68,12 +67,13 @@ import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
+import { identityFor } from "@/lib/identity";
 import {
 	projectDetailHref,
 	projectResourceHref,
 	skillDetailHref,
 } from "@/lib/project-resource-model";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -320,8 +320,13 @@ export default function ProjectDetailPage() {
 			{/* Hub identity header — who this project is, in one glance. */}
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 items-start gap-3">
-					<span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-						<FolderKanban className="size-5" />
+					<span
+						className={cn(
+							"flex size-11 shrink-0 select-none items-center justify-center rounded-xl text-2xl leading-none",
+							identityFor(displayProjectName(project)).colorClasses,
+						)}
+					>
+						{identityFor(displayProjectName(project)).emoji}
 					</span>
 					<div className="min-w-0">
 						<div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -583,16 +588,29 @@ export default function ProjectDetailPage() {
 	);
 }
 
+const STAT_TILE_TINTS: Record<string, string> = {
+	Skills: "bg-identity-2-bg/50",
+	Vaults: "bg-identity-4-bg/50",
+	People: "bg-identity-6-bg/50",
+	Agents: "bg-identity-5-bg/50",
+};
+
 function StatTile({ label, value, href }: { label: string; value?: number; href: string }) {
 	return (
 		<a
 			href={href}
-			className="rounded-xl border bg-card p-4 transition-colors duration-150 hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+			className={cn(
+				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
+				STAT_TILE_TINTS[label] ?? "bg-card",
+			)}
 		>
 			<div className="text-2xl font-semibold tabular-nums">
 				{value === undefined ? <Skeleton className="h-8 w-8" /> : value}
 			</div>
-			<div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+			<div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+				{label}
+				<ChevronRight className="size-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+			</div>
 		</a>
 	);
 }
@@ -1105,7 +1123,7 @@ function CreateVaultInProjectForm({
 function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: string }) {
 	const savedHere = skill.project_id === ownProjectId;
 	return (
-		<div className="flex items-center justify-between gap-3 p-3">
+		<div className="group relative flex items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/30">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
@@ -1117,36 +1135,38 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 					{skill.skill_key}
 				</div>
 			</div>
-			<Button asChild variant="ghost" size="icon-sm">
-				<Link
-					href={skillDetailHref(skill.skill_key, skill.project_id ?? ownProjectId)}
-					aria-label={`Open ${skill.name}`}
-				>
-					<ExternalLink className="size-3.5" />
-				</Link>
-			</Button>
+			<ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+			<Link
+				href={skillDetailHref(skill.skill_key, skill.project_id ?? ownProjectId)}
+				aria-label={`Open ${skill.name}`}
+				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			/>
 		</div>
 	);
 }
 
-function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: string }) {
-	const attachedHere = vault.project_ids.includes(ownProjectId);
+function VaultRow({ vault }: { vault: VaultSummary; ownProjectId: string }) {
+	const id = identityFor(vault.name);
 	return (
-		<div className="flex items-center justify-between gap-3 p-3">
-			<div className="min-w-0">
-				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium">{vault.name}</span>
-					<Badge variant={attachedHere ? "secondary" : "outline"}>
-						{attachedHere ? "Used here" : "Used elsewhere"}
-					</Badge>
-				</div>
-				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
+		<div className="group relative flex items-center gap-3 p-3 transition-colors hover:bg-muted/30">
+			<span
+				className={cn(
+					"flex size-7 shrink-0 select-none items-center justify-center rounded-md text-sm leading-none",
+					id.colorClasses,
+				)}
+			>
+				{id.emoji}
+			</span>
+			<div className="min-w-0 flex-1">
+				<span className="block truncate text-sm font-medium">{vault.name}</span>
+				<span className="mt-0.5 block font-mono text-xs text-muted-foreground">{vault.slug}</span>
 			</div>
-			<Button asChild variant="ghost" size="icon-sm">
-				<Link href={projectResourceHref("vaults", ownProjectId)} aria-label="Open vault page">
-					<ExternalLink className="size-3.5" />
-				</Link>
-			</Button>
+			<ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+			<Link
+				href={`/vault/${encodeURIComponent(vault.slug)}`}
+				aria-label={`Open vault ${vault.name}`}
+				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			/>
 		</div>
 	);
 }

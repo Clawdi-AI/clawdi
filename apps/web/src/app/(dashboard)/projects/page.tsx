@@ -1,16 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	ChevronDown,
-	FolderKanban,
-	Globe2,
-	Key,
-	Plus,
-	Share2,
-	Sparkles,
-	Users,
-} from "lucide-react";
+import { ChevronDown, Key, Plus, Share2, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -43,6 +34,7 @@ import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
+import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -395,11 +387,11 @@ function ProjectCard({
 			<div className="flex items-start justify-between gap-2">
 				<span
 					className={cn(
-						"flex size-9 shrink-0 items-center justify-center rounded-lg",
-						shared ? "bg-info-muted text-info-muted-foreground" : "bg-primary/10 text-primary",
+						"flex size-10 shrink-0 select-none items-center justify-center rounded-lg text-xl leading-none",
+						identityFor(projectName).colorClasses,
 					)}
 				>
-					{shared ? <Users className="size-4" /> : <FolderKanban className="size-4" />}
+					{identityFor(projectName).emoji}
 				</span>
 				{!shared && isCustomProject(project) ? (
 					<span className="relative z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
@@ -482,8 +474,13 @@ function SystemProjectRow({
 	const isGlobal = project.kind === "personal";
 	return (
 		<div className="group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/20">
-			<span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-				{isGlobal ? <Globe2 className="size-3.5" /> : <FolderKanban className="size-3.5" />}
+			<span
+				className={cn(
+					"flex size-7 shrink-0 select-none items-center justify-center rounded-md text-sm leading-none",
+					identityFor(displayProjectName(project)).colorClasses,
+				)}
+			>
+				{isGlobal ? "🌐" : identityFor(displayProjectName(project)).emoji}
 			</span>
 			<div className="min-w-0 flex-1">
 				<ProjectIdentity

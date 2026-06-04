@@ -12,6 +12,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { identityFor } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 export interface ProjectMetadata {
@@ -150,22 +151,24 @@ function ProjectIcon({
 	project,
 	className,
 }: {
-	project: Pick<ProjectMetadata, "kind">;
+	project: Pick<ProjectMetadata, "kind" | "name" | "slug">;
 	agent?: ProjectAgentMetadata | null;
 	className?: string;
 }) {
 	const meta = projectKindMeta(project.kind ?? "workspace");
-	const Icon = meta.icon;
+	// Emoji avatar + vivid tile, deterministic per project name — so a list
+	// of 100 projects reads as 100 different objects, not 100 folders.
+	const id = identityFor(project.name ?? project.slug);
 	return (
 		<span
 			className={cn(
-				"mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md border",
-				meta.iconClassName,
+				"mt-0.5 flex size-6 shrink-0 select-none items-center justify-center rounded-md text-[13px] leading-none",
+				id.colorClasses,
 				className,
 			)}
 			title={meta.label}
 		>
-			<Icon className="size-3.5" />
+			{id.emoji}
 		</span>
 	);
 }

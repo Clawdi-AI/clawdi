@@ -26,8 +26,11 @@ use them. When a PR and this document disagree, fix one of them.
    with one getting-started action; inline errors with retry. No bare
    spinners on whole pages, no `window.alert`, no "Oops!", no exclamation
    marks, active voice.
-9. **No emoji as icons.** Lucide only, via the central re-export
-   (`@/components/icons`) which pins size/stroke.
+9. **Emoji are object avatars, not UI icons.** Controls and nav use lucide
+   only (central re-export pins size/stroke). But every *object* the user
+   owns — project, vault — wears a deterministic emoji + vivid identity
+   color (`lib/identity.ts`), so a hundred objects never share one folder
+   icon. Identity tiles are the sanctioned splash of color on cards.
 
 ## Tokens
 
@@ -91,6 +94,12 @@ Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
 
 `--chart-1..5`: orange ramp + warm grays. No purple/blue "AI gradient".
 
+### Identity palette
+
+`--identity-1..8` (bg+fg pairs, light and dark): vivid flat hues assigned by
+name hash for object avatars. These plus the semantic status set are the only
+multi-hue colors; never use them for controls or status.
+
 ## Decisions log
 
 - 2026-06-03 — Light-first (Marvin override of the earlier dark-first plan);
@@ -103,10 +112,14 @@ Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
   no structural/API rewrites.
 - 2026-06-03 — `--destructive` changed from near-black to a true red;
   status colors moved from `emerald/amber/rose-*` utilities to semantic tokens.
+- 2026-06-03 — Art direction shifted "modern, flat, vivid" (Marvin): emoji +
+  vivid identity colors for object avatars (projects, vaults), tinted stat
+  tiles, pastel memory-category chips. Revises the earlier blanket
+  no-emoji rule — emoji allowed as object identity only.
 
 ## Banned (CI-greppable)
 
-Emoji in UI strings · `Lorem` · `Elevate/Seamless/Unleash/Next-Gen/Delve`
+Emoji in UI strings outside object-identity tiles · `Lorem` · `Elevate/Seamless/Unleash/Next-Gen/Delve`
 copy · three-equal-card feature rows · `z-index: 9999` · inline color styles ·
 hex colors in tsx · `(text|bg|border|ring|from|to)-(red|green|blue|amber|yellow|emerald|rose|purple|indigo|sky|zinc|slate|gray|neutral|stone)-[0-9]{3}` ·
 `h-screen`/`100vh` (use `dvh`/`svh`) · `shadow-md` and above · `rounded-full`

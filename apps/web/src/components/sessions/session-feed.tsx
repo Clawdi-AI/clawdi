@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailHref } from "@/lib/project-resource-model";
 import {
+	cn,
 	formatAbsoluteTooltip,
 	formatNumber,
 	formatSessionSummary,
@@ -105,8 +106,16 @@ function SessionFeedCard({
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
 	const totalTokens = session.input_tokens + session.output_tokens;
+	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
+	// timeline but visually quieter than human work (taste audit round 2).
+	const isAutomated = /^(Cron:|\[)/.test(title);
 	return (
-		<article className="group relative z-0 rounded-xl border bg-card p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20">
+		<article
+			className={cn(
+				"group relative z-0 rounded-xl border bg-card transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
+				isAutomated ? "border-transparent bg-muted/40 p-3" : "p-4",
+			)}
+		>
 			<Link
 				href={sessionDetailHref(session.id)}
 				className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -114,7 +123,14 @@ function SessionFeedCard({
 				<span className="sr-only">Open session {session.local_session_id}</span>
 			</Link>
 			<div className="flex items-start justify-between gap-3">
-				<h4 className="min-w-0 truncate text-sm font-medium">{title}</h4>
+				<h4
+					className={cn(
+						"min-w-0 truncate text-sm",
+						isAutomated ? "font-normal text-muted-foreground" : "font-medium",
+					)}
+				>
+					{title}
+				</h4>
 				<span
 					className="shrink-0 text-xs text-muted-foreground"
 					title={formatAbsoluteTooltip(session.last_activity_at)}
