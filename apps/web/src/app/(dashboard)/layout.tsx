@@ -24,7 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 		<SidebarProvider
 			style={
 				{
-					"--sidebar-width": "calc(var(--spacing) * 72)",
+					"--sidebar-width": "calc(var(--spacing) * 64)",
 					"--header-height": "calc(var(--spacing) * 12)",
 				} as React.CSSProperties
 			}
@@ -40,7 +40,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 						<div className="flex flex-1 flex-col">
 							<div className="@container/main flex flex-1 flex-col gap-2">
 								<div
-									className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-6 md:py-6`}
+									className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-5 md:py-5`}
 								>
 									{children}
 								</div>
