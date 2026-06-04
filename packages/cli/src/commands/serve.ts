@@ -582,14 +582,14 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 		}
 	}
 	const rpcTarget = resolveRpcClientConfig(opts);
-	const result = await callControlRpc(normalizeDaemonRpcMethod(method), params, rpcTarget);
+	const result = await callControlRpc(normalizeRpcMethod(method), params, rpcTarget);
 	console.log(JSON.stringify(result, null, 2));
 }
 
-function normalizeDaemonRpcMethod(method: string): string {
+function normalizeRpcMethod(method: string): string {
 	const trimmed = method.trim();
 	if (!trimmed) throw new Error("RPC method is required");
-	return trimmed.includes(".") ? trimmed : `daemon.${trimmed}`;
+	return trimmed;
 }
 
 interface ControlRpcHandlerOptions {
@@ -598,15 +598,15 @@ interface ControlRpcHandlerOptions {
 
 export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): ControlRpcHandlers {
 	const handlers: ControlRpcHandlers = {};
-	handlers["daemon.ping"] = () => ({
+	handlers.ping = () => ({
 		pid: process.pid,
 		version: getCliVersion(),
 		uptime_seconds: Math.round(process.uptime()),
 	});
-	handlers["daemon.methods"] = () => ({
+	handlers.methods = () => ({
 		methods: Object.keys(handlers).sort(),
 	});
-	handlers["daemon.status"] = (params) => {
+	handlers.status = (params) => {
 		const record = rpcParamsRecord(params);
 		rejectRpcParams(record, new Set(["agent"]));
 		const agent = optionalAgentParam(record.agent);
@@ -617,12 +617,12 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 			agents: targets.map(buildStatusReport),
 		};
 	};
-	handlers["daemon.doctor"] = () => buildDoctorReport();
-	handlers["daemon.install"] = (params) => daemonInstallRpc(params);
-	handlers["daemon.uninstall"] = (params) => daemonUninstallRpc(params);
-	handlers["daemon.restart"] = (params) => daemonRestartRpc(params);
-	handlers["daemon.logs"] = (params) => daemonLogsRpc(params);
-	handlers["daemon.rotate_token"] = (params) => daemonRotateTokenRpc(params);
+	handlers.doctor = () => buildDoctorReport();
+	handlers.install = (params) => daemonInstallRpc(params);
+	handlers.uninstall = (params) => daemonUninstallRpc(params);
+	handlers.restart = (params) => daemonRestartRpc(params);
+	handlers.logs = (params) => daemonLogsRpc(params);
+	handlers.rotate_token = (params) => daemonRotateTokenRpc(params);
 	handlers["operation.list"] = (params) => operationListRpc(params);
 	handlers["operation.status"] = (params) => operationStatusRpc(params);
 	handlers["operation.logs"] = (params) => operationLogsRpc(params);

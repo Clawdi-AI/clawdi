@@ -48,14 +48,14 @@ if (process.platform !== "win32") {
 		it("serves JSON-RPC methods over HTTP", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
+					echo: (params) => ({ params }),
 				},
 				abort.signal,
 				{ port: 0 },
 			);
 			closeServer = server.close;
 
-			const result = await callControlRpc("daemon.echo", { ok: true }, server.http);
+			const result = await callControlRpc("echo", { ok: true }, server.http);
 
 			expect(result).toEqual({ params: { ok: true } });
 		});
@@ -64,22 +64,22 @@ if (process.platform !== "win32") {
 			const server = await startControlRpcServer({}, abort.signal, { port: 0 });
 			closeServer = server.close;
 
-			await expect(callControlRpc("daemon.missing", {}, server.http)).rejects.toThrow(
-				"Unknown RPC method: daemon.missing",
+			await expect(callControlRpc("missing", {}, server.http)).rejects.toThrow(
+				"Unknown RPC method: missing",
 			);
 		});
 
 		it("serves HTTP RPC when a host and port are configured", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
+					echo: (params) => ({ params }),
 				},
 				abort.signal,
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
 
-			const result = await callControlRpc("daemon.echo", { via: "http" }, server.http);
+			const result = await callControlRpc("echo", { via: "http" }, server.http);
 
 			expect(result).toEqual({ params: { via: "http" } });
 		});
@@ -102,7 +102,7 @@ if (process.platform !== "win32") {
 		it("requires a bearer token for HTTP RPC access", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
+					echo: (params) => ({ params }),
 				},
 				abort.signal,
 				{ host: "127.0.0.1", port: 0 },
@@ -118,7 +118,7 @@ if (process.platform !== "win32") {
 		it("allows explicit RPC tokens for HTTP clients", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
+					echo: (params) => ({ params }),
 				},
 				abort.signal,
 				{ host: "127.0.0.1", port: 0 },
@@ -127,7 +127,7 @@ if (process.platform !== "win32") {
 			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const result = await callControlRpc(
-				"daemon.echo",
+				"echo",
 				{ token: "explicit" },
 				{
 					...server.http,
@@ -153,8 +153,8 @@ if (process.platform !== "win32") {
 		it("rotates the bearer token without restarting the server", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
-					"daemon.rotate_token": () => ({ token: rotateControlToken() }),
+					echo: (params) => ({ params }),
+					rotate_token: () => ({ token: rotateControlToken() }),
 				},
 				abort.signal,
 				{ host: "127.0.0.1", port: 0 },
@@ -162,14 +162,14 @@ if (process.platform !== "win32") {
 			closeServer = server.close;
 			const oldToken = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
-			const rotated = (await callControlRpc("daemon.rotate_token", {}, server.http)) as {
+			const rotated = (await callControlRpc("rotate_token", {}, server.http)) as {
 				token: string;
 			};
 
 			expect(rotated.token).not.toBe(oldToken);
 			await expect(
 				callControlRpc(
-					"daemon.echo",
+					"echo",
 					{ rejected: true },
 					{
 						...server.http,
@@ -179,7 +179,7 @@ if (process.platform !== "win32") {
 			).rejects.toThrow("unauthorized");
 
 			const result = await callControlRpc(
-				"daemon.echo",
+				"echo",
 				{ accepted: true },
 				{
 					...server.http,
@@ -193,7 +193,7 @@ if (process.platform !== "win32") {
 		it("allows explicit non-loopback HTTP listeners with the bearer token", async () => {
 			const server = await startControlRpcServer(
 				{
-					"daemon.echo": (params) => ({ params }),
+					echo: (params) => ({ params }),
 				},
 				abort.signal,
 				{ host: "0.0.0.0", port: 0, allowRemote: true },
@@ -202,7 +202,7 @@ if (process.platform !== "win32") {
 			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const result = await callControlRpc(
-				"daemon.echo",
+				"echo",
 				{ accepted: true },
 				{ host: "127.0.0.1", port: server.http.port, token },
 			);
@@ -216,7 +216,7 @@ function postWithoutToken(
 	host: string,
 	port: number,
 ): Promise<{ statusCode: number; body: string }> {
-	const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "daemon.echo", params: {} });
+	const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "echo", params: {} });
 	return new Promise((resolve, reject) => {
 		const req = request(
 			{

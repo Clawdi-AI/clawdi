@@ -153,10 +153,11 @@ describe("full control RPC handler surface", () => {
 	it("advertises sync, vault, auth, update, and operation RPC methods", async () => {
 		const { createControlRpcHandlers } = await import("./serve");
 		const handlers = createControlRpcHandlers();
-		const methodsResult = (await handlers["daemon.methods"]?.({})) as
-			| { methods?: string[] }
-			| undefined;
+		const methodsResult = (await handlers.methods?.({})) as { methods?: string[] } | undefined;
 
+		expect(methodsResult?.methods).toContain("ping");
+		expect(methodsResult?.methods).toContain("status");
+		expect(methodsResult?.methods?.some((method) => method.startsWith("daemon."))).toBe(false);
 		expect(methodsResult?.methods).toContain("sync.push");
 		expect(methodsResult?.methods).toContain("sync.pull");
 		expect(methodsResult?.methods).toContain("vault.resolve");

@@ -260,7 +260,7 @@ async function postRpcWithoutToken(port: number): Promise<Response> {
 	return await fetch(`http://127.0.0.1:${port}/rpc`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "daemon.ping", params: {} }),
+		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
 	});
 }
 

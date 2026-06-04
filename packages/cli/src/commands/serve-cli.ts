@@ -147,7 +147,7 @@ Examples:
 		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
 		.action(async (_opts, cmd) => {
 			const h = await get();
-			await h.serveRpc("daemon.ping", cmd.optsWithGlobals());
+			await h.serveRpc("ping", cmd.optsWithGlobals());
 		});
 
 	serveCmd

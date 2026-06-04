@@ -172,7 +172,7 @@ describe("registerServeCommand", () => {
 
 		await program.parseAsync(["node", "clawdi", "daemon", "ping"]);
 
-		expect(captured.lastMethod).toBe("daemon.ping");
+		expect(captured.lastMethod).toBe("ping");
 		expect(captured.last).toEqual({});
 	});
 
