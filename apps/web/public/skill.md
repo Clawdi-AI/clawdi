@@ -149,7 +149,7 @@ clawdi daemon run
 clawdi daemon ping
 ```
 
-For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and pass the generated daemon token through `--rpc-token` or `CLAWDI_DAEMON_RPC_TOKEN`; treat it as an admin token.
+For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and pass the generated daemon token through `--token` on daemon commands or `CLAWDI_DAEMON_RPC_TOKEN`; treat it as an admin token.
 
 What the user gets:
 

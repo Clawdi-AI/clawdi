@@ -110,12 +110,7 @@ if (process.platform !== "win32") {
 				const noToken = await postRpcWithoutToken(rpcPort);
 				expect(noToken.status).toBe(401);
 
-				const defaultPing = await runCli(fixture, [
-					"daemon",
-					"ping",
-					"--rpc-port",
-					String(rpcPort),
-				]);
+				const defaultPing = await runCli(fixture, ["daemon", "ping", "--port", String(rpcPort)]);
 				expect(defaultPing.code).toBe(0);
 				expect(defaultPing.stderr).toBe("");
 				const defaultResult = JSON.parse(defaultPing.stdout) as { pid?: number; version?: string };
@@ -125,9 +120,9 @@ if (process.platform !== "win32") {
 				const httpPing = await runCli(fixture, [
 					"daemon",
 					"ping",
-					"--rpc-host",
+					"--host",
 					"127.0.0.1",
-					"--rpc-port",
+					"--port",
 					String(rpcPort),
 				]);
 				expect(httpPing.code).toBe(0);
@@ -138,12 +133,7 @@ if (process.platform !== "win32") {
 
 				const tokenPath = join(fixture.stateDir, "control", "control-token");
 				const oldToken = readFileSync(tokenPath, "utf-8").trim();
-				const rotate = await runCli(fixture, [
-					"daemon",
-					"rotate-token",
-					"--rpc-port",
-					String(rpcPort),
-				]);
+				const rotate = await runCli(fixture, ["daemon", "rotate-token", "--port", String(rpcPort)]);
 				expect(rotate.code).toBe(0);
 				expect(rotate.stderr).toBe("");
 				const rotateResult = JSON.parse(rotate.stdout) as { token?: string; rotated?: boolean };
@@ -187,16 +177,7 @@ function createFixture(): Fixture {
 
 function startDaemon(fixture: Fixture, rpcPort: number): ReturnType<typeof Bun.spawn> {
 	return Bun.spawn(
-		[
-			process.execPath,
-			srcEntry,
-			"daemon",
-			"run",
-			"--rpc-host",
-			"127.0.0.1",
-			"--rpc-port",
-			String(rpcPort),
-		],
+		[process.execPath, srcEntry, "daemon", "run", "--host", "127.0.0.1", "--port", String(rpcPort)],
 		{
 			cwd: fixture.root,
 			stdout: "pipe",

@@ -41,7 +41,7 @@ Package: `clawdi@0.11.0`
   generated token is stored owner-only, can be rotated with
   `clawdi daemon rotate-token`, and is checked with timing-safe comparison.
 - HTTP RPC listeners bind to loopback by default. Non-loopback binds require
-  explicit `--rpc-allow-remote` opt-in and should only be used behind SSH
+  explicit `--allow-remote` opt-in and should only be used behind SSH
   tunneling, private networking, or TLS termination.
 - Vault plaintext RPC calls require explicit confirmation; plaintext rendering
   cannot be sent to background operation logs.

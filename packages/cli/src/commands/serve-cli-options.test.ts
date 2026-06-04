@@ -51,26 +51,26 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
-	it("daemon run accepts RPC HTTP host and port", async () => {
+	it("daemon run accepts control HTTP RPC host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
 			"clawdi",
 			"daemon",
 			"run",
-			"--rpc-host",
+			"--host",
 			"127.0.0.1",
-			"--rpc-port",
+			"--port",
 			"17654",
 		]);
-		expect(captured.last?.rpcHost).toBe("127.0.0.1");
-		expect(captured.last?.rpcPort).toBe("17654");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
 	});
 
 	it("daemon run accepts the non-loopback HTTP RPC opt-in", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "daemon", "run", "--rpc-allow-remote"]);
-		expect(captured.last?.rpcAllowRemote).toBe(true);
+		await program.parseAsync(["node", "clawdi", "daemon", "run", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
 	});
 
 	it("daemon run accepts hidden legacy selector args for supervisor migration", async () => {
@@ -95,25 +95,25 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
-	it("daemon with no subcommand accepts RPC HTTP host and port", async () => {
+	it("daemon with no subcommand accepts control HTTP RPC host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
 			"clawdi",
 			"daemon",
-			"--rpc-host",
+			"--host",
 			"127.0.0.1",
-			"--rpc-port",
+			"--port",
 			"17654",
 		]);
-		expect(captured.last?.rpcHost).toBe("127.0.0.1");
-		expect(captured.last?.rpcPort).toBe("17654");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
 	});
 
 	it("daemon with no subcommand accepts the non-loopback HTTP RPC opt-in", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "daemon", "--rpc-allow-remote"]);
-		expect(captured.last?.rpcAllowRemote).toBe(true);
+		await program.parseAsync(["node", "clawdi", "daemon", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
 	});
 
 	it("legacy serve with no subcommand still runs the foreground action", async () => {
@@ -128,26 +128,26 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
-	it("install accepts RPC HTTP host and port", async () => {
+	it("install accepts control HTTP RPC host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
 			"clawdi",
 			"daemon",
 			"install",
-			"--rpc-host",
+			"--host",
 			"127.0.0.1",
-			"--rpc-port",
+			"--port",
 			"17654",
 		]);
-		expect(captured.last?.rpcHost).toBe("127.0.0.1");
-		expect(captured.last?.rpcPort).toBe("17654");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
 	});
 
 	it("install accepts the non-loopback HTTP RPC opt-in", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "daemon", "install", "--rpc-allow-remote"]);
-		expect(captured.last?.rpcAllowRemote).toBe(true);
+		await program.parseAsync(["node", "clawdi", "daemon", "install", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
 	});
 
 	it("restart reaches the action", async () => {
@@ -195,18 +195,18 @@ describe("registerServeCommand", () => {
 			"clawdi",
 			"daemon",
 			"rotate-token",
-			"--rpc-host",
+			"--host",
 			"127.0.0.1",
-			"--rpc-port",
+			"--port",
 			"17654",
-			"--rpc-token",
+			"--token",
 			"tok-test",
 		]);
 
 		expect(captured.lastMethod).toBe("rotate_token");
-		expect(captured.last?.rpcHost).toBe("127.0.0.1");
-		expect(captured.last?.rpcPort).toBe("17654");
-		expect(captured.last?.rpcToken).toBe("tok-test");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
+		expect(captured.last?.token).toBe("tok-test");
 	});
 
 	it("status --agent claude_code (child-side) reaches the action", async () => {

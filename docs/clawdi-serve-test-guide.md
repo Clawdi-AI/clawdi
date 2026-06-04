@@ -196,13 +196,15 @@ clawdi daemon run
 clawdi daemon ping
 ```
 
-The default endpoint is `127.0.0.1:17654`. Pass `--rpc-host` and
-`--rpc-port` to change it.
+The default endpoint is `127.0.0.1:17654`. Pass `--host` and
+`--port` on `clawdi daemon run`, `install`, `ping`, or `rotate-token`
+to change it.
 
 HTTP RPC requests require bearer-token auth by default. The CLI reads
 the daemon token from `~/.clawdi/daemon/control-token`. Remote clients
-can pass that token through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`
-on daemon commands that call the control endpoint.
+can pass that token with an `Authorization: Bearer <token>` header, and
+daemon commands that call the control endpoint accept
+`CLAWDI_DAEMON_RPC_TOKEN` or `--token`.
 Treat it as an admin token. Rotate it with
 `clawdi daemon rotate-token`.
 
@@ -248,7 +250,7 @@ into an operation log. Mutating vault calls that would otherwise prompt
 must pass their non-interactive confirmation, such as `yes: true`.
 
 Non-loopback HTTP binds are rejected unless the daemon is started or
-installed with `--rpc-allow-remote` (or
+installed with `--allow-remote` (or
 `CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Do not expose that listener
 directly on the public internet: the protocol is cleartext HTTP with an
 admin bearer token. Use an SSH tunnel, a private network, or a

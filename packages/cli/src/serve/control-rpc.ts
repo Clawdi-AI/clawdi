@@ -52,7 +52,7 @@ export async function startControlRpcServer(
 	if (config.allowRemote !== true && !isLoopbackRpcHost(host)) {
 		throw new Error(
 			`Refusing to listen on non-loopback HTTP RPC host ${host}. ` +
-				"Use --rpc-allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
+				"Use --allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
 		);
 	}
 	const controlDir = getDaemonControlDir();

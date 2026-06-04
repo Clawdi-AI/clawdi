@@ -286,14 +286,14 @@ describe("daemon HTTP RPC listener safety", () => {
 		const { serve } = await import("./serve");
 
 		await expect(
-			serve({ rpcHost: "0.0.0.0", rpcPort: "17654" } as Record<string, unknown>),
+			serve({ host: "0.0.0.0", port: "17654" } as Record<string, unknown>),
 		).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
 	});
 
 	it("allows a loopback listen host without an explicit port before continuing to the auth gate", async () => {
 		const { serve } = await import("./serve");
 
-		await expect(serve({ rpcHost: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
+		await expect(serve({ host: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
 			ExitCalled,
 		);
 	});
@@ -308,9 +308,9 @@ describe("daemon HTTP RPC listener safety", () => {
 			const { serve } = await import("./serve");
 			await expect(
 				serve({
-					rpcHost: "0.0.0.0",
-					rpcPort: "17654",
-					rpcAllowRemote: true,
+					host: "0.0.0.0",
+					port: "17654",
+					allowRemote: true,
 				} as Record<string, unknown>),
 			).rejects.toThrow(ExitCalled);
 		} finally {

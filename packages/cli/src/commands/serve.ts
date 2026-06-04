@@ -74,9 +74,9 @@ import { daemonAutoUpdateOnce, startDaemonAutoUpdate } from "./update";
 type ServeOpts = Record<string, unknown>;
 
 interface RpcListenOpts {
-	rpcHost?: unknown;
-	rpcPort?: unknown;
-	rpcAllowRemote?: unknown;
+	host?: unknown;
+	port?: unknown;
+	allowRemote?: unknown;
 }
 
 interface LegacyRunOpts {
@@ -320,11 +320,11 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	if (failed > 0) process.exit(1);
 }
 
-const INSTALL_ALLOWED = new Set(["rpcHost", "rpcPort", "rpcAllowRemote"]);
+const INSTALL_ALLOWED = new Set(["host", "port", "allowRemote"]);
 const UNINSTALL_ALLOWED = new Set<string>();
 const STATUS_ALLOWED = new Set(["agent"]);
 const DOCTOR_ALLOWED = new Set(["json"]);
-const RPC_ALLOWED = new Set(["params", "rpcHost", "rpcPort", "rpcToken"]);
+const RPC_ALLOWED = new Set(["host", "port", "token"]);
 
 export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 	rejectUnsupportedOpts("uninstall", opts as Record<string, unknown>, UNINSTALL_ALLOWED);
@@ -565,24 +565,20 @@ function buildDoctorReport(): DaemonDoctorReport {
 }
 
 interface ServeRpcOpts {
-	params?: string;
-	rpcHost?: unknown;
-	rpcPort?: unknown;
-	rpcToken?: unknown;
+	host?: unknown;
+	port?: unknown;
+	token?: unknown;
 }
 
 export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void> {
-	rejectUnsupportedOpts("rpc", opts as Record<string, unknown>, RPC_ALLOWED);
-	let params: unknown = {};
-	if (opts.params !== undefined) {
-		try {
-			params = JSON.parse(opts.params);
-		} catch (error) {
-			throw new Error(`--params must be valid JSON: ${toErrorMessage(error)}`);
-		}
-	}
+	const normalizedMethod = normalizeRpcMethod(method);
+	rejectUnsupportedOpts(
+		rpcMethodCommandName(normalizedMethod),
+		opts as Record<string, unknown>,
+		RPC_ALLOWED,
+	);
 	const rpcTarget = resolveRpcClientConfig(opts);
-	const result = await callControlRpc(normalizeRpcMethod(method), params, rpcTarget);
+	const result = await callControlRpc(normalizedMethod, {}, rpcTarget);
 	console.log(JSON.stringify(result, null, 2));
 }
 
@@ -590,6 +586,11 @@ function normalizeRpcMethod(method: string): string {
 	const trimmed = method.trim();
 	if (!trimmed) throw new Error("RPC method is required");
 	return trimmed;
+}
+
+function rpcMethodCommandName(method: string): string {
+	if (method === "rotate_token") return "rotate-token";
+	return method;
 }
 
 interface ControlRpcHandlerOptions {
@@ -1255,21 +1256,19 @@ function isAuthPollResponse(value: unknown): value is AuthPollResponse {
 
 function daemonInstallRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["rpc_host", "rpc_port", "rpc_allow_remote"]));
+	rejectRpcParams(record, new Set(["host", "port", "allow_remote"]));
 	const hasExplicitRpcConfig =
-		record.rpc_host !== undefined ||
-		record.rpc_port !== undefined ||
-		record.rpc_allow_remote !== undefined;
+		record.host !== undefined || record.port !== undefined || record.allow_remote !== undefined;
 	const rpcListen = hasExplicitRpcConfig
 		? resolveRpcListenConfig({
-				rpcHost: record.rpc_host,
-				rpcPort: record.rpc_port,
-				rpcAllowRemote: record.rpc_allow_remote,
+				host: record.host,
+				port: record.port,
+				allowRemote: record.allow_remote,
 			})
 		: resolveRpcListenConfig({
-				rpcHost: activeControlRpcHttp?.host,
-				rpcPort: activeControlRpcHttp?.port,
-				rpcAllowRemote: activeControlRpcHttp?.allow_remote,
+				host: activeControlRpcHttp?.host,
+				port: activeControlRpcHttp?.port,
+				allowRemote: activeControlRpcHttp?.allow_remote,
 			});
 	return scheduleDaemonControlAction(
 		"install",
@@ -1485,13 +1484,13 @@ function optionalAgentParam(value: unknown): AgentType | undefined {
 
 function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
 	const host =
-		optionalStringParam(opts.rpcHost, "--rpc-host") ??
+		optionalStringParam(opts.host, "--host") ??
 		process.env.CLAWDI_DAEMON_RPC_HOST ??
 		DEFAULT_CONTROL_RPC_HOST;
-	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
-	const port = optionalPortParam(portValue, "--rpc-port") ?? DEFAULT_CONTROL_RPC_PORT;
+	const portValue = opts.port ?? process.env.CLAWDI_DAEMON_RPC_PORT;
+	const port = optionalPortParam(portValue, "--port") ?? DEFAULT_CONTROL_RPC_PORT;
 	const allowRemote =
-		optionalBooleanParam(opts.rpcAllowRemote, "--rpc-allow-remote") ??
+		optionalBooleanParam(opts.allowRemote, "--allow-remote") ??
 		optionalBooleanParam(
 			process.env.CLAWDI_DAEMON_RPC_ALLOW_REMOTE,
 			"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
@@ -1500,22 +1499,20 @@ function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
 	if (!allowRemote && !isLoopbackRpcHost(host)) {
 		throw new Error(
 			`Refusing to listen on non-loopback HTTP RPC host ${host}. ` +
-				"Use --rpc-allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
+				"Use --allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
 		);
 	}
 	return { host, port, allowRemote };
 }
 
-function resolveRpcClientConfig(
-	opts: RpcListenOpts & { rpcToken?: unknown },
-): ControlRpcClientConfig {
+function resolveRpcClientConfig(opts: RpcListenOpts & { token?: unknown }): ControlRpcClientConfig {
 	const host =
-		optionalStringParam(opts.rpcHost, "--rpc-host") ??
+		optionalStringParam(opts.host, "--host") ??
 		process.env.CLAWDI_DAEMON_RPC_HOST ??
 		DEFAULT_CONTROL_RPC_HOST;
-	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
-	const port = optionalPortParam(portValue, "--rpc-port") ?? DEFAULT_CONTROL_RPC_PORT;
-	const token = optionalStringParam(opts.rpcToken, "--rpc-token");
+	const portValue = opts.port ?? process.env.CLAWDI_DAEMON_RPC_PORT;
+	const port = optionalPortParam(portValue, "--port") ?? DEFAULT_CONTROL_RPC_PORT;
+	const token = optionalStringParam(opts.token, "--token");
 	return { host, port, token };
 }
 

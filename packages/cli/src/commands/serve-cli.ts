@@ -30,9 +30,9 @@ export interface ServeHandlers {
 
 function addRpcEndpointOptions(cmd: Command): Command {
 	return cmd
-		.option("--rpc-host <host>", "Control RPC HTTP host")
-		.option("--rpc-port <port>", "Control RPC HTTP port")
-		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host");
+		.option("--host <host>", "Control HTTP RPC host")
+		.option("--port <port>", "Control HTTP RPC port")
+		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host");
 }
 
 function addLegacyRunOptions(cmd: Command): Command {
@@ -60,9 +60,9 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 	const serveCmd = program
 		.command("daemon")
 		.alias("serve")
-		.option("--rpc-host <host>", "Control RPC HTTP host")
-		.option("--rpc-port <port>", "Control RPC HTTP port")
-		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host")
+		.option("--host <host>", "Control HTTP RPC host")
+		.option("--port <port>", "Control HTTP RPC port")
+		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
 		.description(
 			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
 		)
@@ -81,7 +81,7 @@ Environment:
 
 Examples:
   $ clawdi daemon run
-  $ clawdi daemon run --rpc-host 127.0.0.1 --rpc-port 17654
+  $ clawdi daemon run --host 127.0.0.1 --port 17654
   $ clawdi daemon ping
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
   $ clawdi daemon install                       # set up one launchd / systemd unit
@@ -105,9 +105,9 @@ Examples:
 			.description("Run the sync daemon in the foreground")
 			.configureHelp({ showGlobalOptions: true })
 			.addHelpText("after", "\nControl RPC listens on loopback HTTP by default.")
-			.option("--rpc-host <host>", "Control RPC HTTP host")
-			.option("--rpc-port <port>", "Control RPC HTTP port")
-			.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host"),
+			.option("--host <host>", "Control HTTP RPC host")
+			.option("--port <port>", "Control HTTP RPC port")
+			.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host"),
 	).action(async (_opts, cmd) => {
 		const h = await get();
 		await h.serve(cmd.optsWithGlobals());
@@ -143,9 +143,9 @@ Examples:
 	serveCmd
 		.command("ping")
 		.description("Check whether the daemon control RPC is reachable")
-		.option("--rpc-host <host>", "Control RPC HTTP host to call")
-		.option("--rpc-port <port>", "Control RPC HTTP port to call")
-		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
+		.option("--host <host>", "Control HTTP RPC host to call")
+		.option("--port <port>", "Control HTTP RPC port to call")
+		.option("--token <token>", "Bearer token for control RPC access (defaults to token file/env)")
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serveRpc("ping", cmd.optsWithGlobals());
@@ -154,9 +154,9 @@ Examples:
 	serveCmd
 		.command("rotate-token")
 		.description("Rotate the daemon control RPC bearer token")
-		.option("--rpc-host <host>", "Control RPC HTTP host to call")
-		.option("--rpc-port <port>", "Control RPC HTTP port to call")
-		.option("--rpc-token <token>", "Current bearer token for RPC access")
+		.option("--host <host>", "Control HTTP RPC host to call")
+		.option("--port <port>", "Control HTTP RPC port to call")
+		.option("--token <token>", "Current bearer token for control RPC access")
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serveRpc("rotate_token", cmd.optsWithGlobals());
