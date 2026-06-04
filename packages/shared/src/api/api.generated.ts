@@ -4680,6 +4680,8 @@ export interface operations {
                 min_duration?: number | null;
                 /** @description Filter to sessions that referenced a GitHub PR */
                 has_pr?: boolean | null;
+                /** @description Filter cron/heartbeat sessions. Automated = summary starts with 'Cron:' or '[' — the same heuristic the dashboard feed uses to mute them visually. */
+                automated?: boolean | null;
                 sort?: string;
                 order?: string;
                 page?: number;

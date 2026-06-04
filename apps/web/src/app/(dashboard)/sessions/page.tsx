@@ -94,6 +94,9 @@ function SessionsListInner() {
 			// `has_pr=true/false` is tri-state via the undefined default
 			// (no filter) — nuqs's nullable boolean handles all three.
 			has_pr: parseAsBoolean,
+			// Same tri-state shape: true = cron/heartbeat only,
+			// false = manual work only, null = everything.
+			automated: parseAsBoolean,
 			// Feed (human cards) is the default; the data table stays one
 			// toggle away for power users.
 			view: parseAsStringLiteral(["feed", "table"] as const).withDefault("feed"),
@@ -108,7 +111,11 @@ function SessionsListInner() {
 	// onSortingChange.
 	const sorting: SortingState = [{ id: params.sort, desc: params.order !== "asc" }];
 
-	const isFiltered = params.agent !== "" || debouncedSearch !== "" || params.has_pr !== null;
+	const isFiltered =
+		params.agent !== "" ||
+		debouncedSearch !== "" ||
+		params.has_pr !== null ||
+		params.automated !== null;
 
 	const { data, isLoading, isFetching, error } = useQuery({
 		queryKey: [
@@ -120,6 +127,7 @@ function SessionsListInner() {
 			params.order,
 			params.agent,
 			params.has_pr,
+			params.automated,
 		],
 		queryFn: async () =>
 			unwrap(
@@ -133,6 +141,7 @@ function SessionsListInner() {
 							order: params.order,
 							agent: params.agent || undefined,
 							has_pr: params.has_pr ?? undefined,
+							automated: params.automated ?? undefined,
 						},
 					},
 				}),
@@ -170,6 +179,16 @@ function SessionsListInner() {
 		() => [
 			{ label: "Has PR links", value: "true" },
 			{ label: "No PR links", value: "false" },
+		],
+		[],
+	);
+
+	// Cron + heartbeat sessions usually outnumber real work many times
+	// over; "Manual" is how users find the sessions they actually ran.
+	const typeFilterOptions = useMemo(
+		() => [
+			{ label: "Manual", value: "false" },
+			{ label: "Automated (cron, heartbeat)", value: "true" },
 		],
 		[],
 	);
@@ -227,6 +246,20 @@ function SessionsListInner() {
 				/>
 			) : null}
 			<DataTableFacetedFilter
+				title="Type"
+				options={typeFilterOptions}
+				selected={
+					params.automated === true ? ["true"] : params.automated === false ? ["false"] : []
+				}
+				onChange={(arr) => {
+					const v = arr[0];
+					void setParams({
+						automated: v === "true" ? true : v === "false" ? false : null,
+						page: 1,
+					});
+				}}
+			/>
+			<DataTableFacetedFilter
 				title="PR links"
 				options={prFilterOptions}
 				selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
@@ -248,6 +281,7 @@ function SessionsListInner() {
 							q: "",
 							agent: "",
 							has_pr: null,
+							automated: null,
 							page: 1,
 						})
 					}
