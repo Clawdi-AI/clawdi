@@ -197,11 +197,20 @@ clawdi daemon install --rpc-host 127.0.0.1 --rpc-port 17654
 clawdi daemon rpc daemon.ping --rpc-host 127.0.0.1 --rpc-port 17654
 ```
 
-HTTP RPC requests require the generated bearer token by default. The
-CLI reads it from `~/.clawdi/daemon/control-token`; remote clients can
-pass it through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`.
-Rotate the token with `clawdi daemon rpc daemon.rotate_token`; update
-remote clients with the returned token.
+HTTP RPC requests require bearer-token auth by default. The CLI reads
+the local root token from `~/.clawdi/daemon/control-token`; remote
+clients should use scoped tokens instead of the root token. Issue one
+from the owner-only Unix socket:
+
+```sh
+clawdi daemon rpc daemon.issue_token \
+  --params '{"label":"remote-dev","capabilities":["daemon:read","sync:run"],"expires_in_seconds":86400}'
+```
+
+Remote clients can pass the returned token through
+`CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`. Rotate the root token with
+`clawdi daemon rpc daemon.rotate_token`; this invalidates all scoped
+tokens because they are signed by the root token.
 
 The RPC surface is discoverable:
 
@@ -228,10 +237,11 @@ must pass their non-interactive confirmation, such as `yes: true`.
 
 Non-loopback HTTP binds are rejected unless the daemon is started or
 installed with `--rpc-allow-remote` (or
-`CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Do not expose that listener directly
-on the public internet: the protocol is cleartext HTTP with bearer-token
-auth. Use an SSH tunnel, a private network, or a TLS-terminating reverse
-proxy.
+`CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Non-loopback HTTP listeners reject
+the local root token and require a scoped token. Do not expose that
+listener directly on the public internet: the protocol is cleartext HTTP
+with bearer-token auth. Use an SSH tunnel, a private network, or a
+TLS-terminating reverse proxy.
 
 ## Troubleshooting
 

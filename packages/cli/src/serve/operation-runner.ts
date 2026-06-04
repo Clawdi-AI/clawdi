@@ -5,6 +5,7 @@ import { stripTerminalEscapes } from "../lib/sanitize";
 
 const MAX_OUTPUT_LINES = 1000;
 const MAX_OPERATIONS = 100;
+const MAX_RUNNING_OPERATIONS = 4;
 const DEFAULT_IMMEDIATE_TIMEOUT_MS = 60_000;
 
 export type OperationStatus = "running" | "succeeded" | "failed" | "cancelled";
@@ -20,6 +21,7 @@ export interface OperationSnapshot {
 	id: string;
 	name: string;
 	status: OperationStatus;
+	exclusive_key?: string;
 	command: string[];
 	cwd: string;
 	started_at: string;
@@ -40,6 +42,7 @@ export interface CommandOperationOptions {
 	cwd?: string;
 	stdin?: string;
 	redactedArgs?: string[];
+	exclusiveKey?: string;
 }
 
 export interface ImmediateCommandOptions extends CommandOperationOptions {
@@ -50,17 +53,20 @@ class OperationManager {
 	private operations = new Map<string, OperationRecord>();
 
 	start(options: CommandOperationOptions): OperationSnapshot {
+		this.assertCanStart(options);
 		const invocation = buildCliInvocation(options.args);
 		const cwd = resolveOperationCwd(options.cwd);
 		const child = spawn(invocation.command, invocation.args, {
 			cwd,
 			env: nestedCliEnv(),
+			detached: process.platform !== "win32",
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		const operation: OperationRecord = {
 			id: randomUUID(),
 			name: options.name,
 			status: "running",
+			exclusive_key: options.exclusiveKey,
 			command: [invocation.command, ...(options.redactedArgs ?? invocation.args)],
 			cwd,
 			started_at: new Date().toISOString(),
@@ -120,9 +126,24 @@ class OperationManager {
 		if (operation.status === "running") {
 			operation.status = "cancelled";
 			operation.finished_at = new Date().toISOString();
-			operation.child.kill("SIGTERM");
+			terminateChild(operation.child);
 		}
 		return snapshotOperation(operation);
+	}
+
+	private assertCanStart(options: CommandOperationOptions): void {
+		const running = [...this.operations.values()].filter(
+			(operation) => operation.status === "running",
+		);
+		if (running.length >= MAX_RUNNING_OPERATIONS) {
+			throw new Error(`Too many running daemon operations (max ${MAX_RUNNING_OPERATIONS}).`);
+		}
+		if (
+			options.exclusiveKey &&
+			running.some((operation) => operation.exclusive_key === options.exclusiveKey)
+		) {
+			throw new Error(`Another ${options.exclusiveKey} operation is already running.`);
+		}
 	}
 
 	private prune(): void {
@@ -152,6 +173,7 @@ export async function runCliCommandImmediate(
 		const child = spawn(invocation.command, invocation.args, {
 			cwd,
 			env: nestedCliEnv(),
+			detached: process.platform !== "win32",
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		const finish = (result: CommandResult) => {
@@ -165,7 +187,7 @@ export async function runCliCommandImmediate(
 			});
 		};
 		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
+			terminateChild(child);
 			finish({
 				exit_code: null,
 				signal: "SIGTERM",
@@ -200,6 +222,7 @@ function snapshotOperation(operation: OperationRecord): OperationSnapshot {
 		id: operation.id,
 		name: operation.name,
 		status: operation.status,
+		exclusive_key: operation.exclusive_key,
 		command: operation.command,
 		cwd: operation.cwd,
 		started_at: operation.started_at,
@@ -240,10 +263,63 @@ function resolveOperationCwd(cwd: string | undefined): string {
 	return resolve(cwd ?? process.cwd());
 }
 
+const NESTED_CLI_ENV_KEYS = [
+	"PATH",
+	"HOME",
+	"USER",
+	"LOGNAME",
+	"SHELL",
+	"LANG",
+	"LC_ALL",
+	"TMPDIR",
+	"TEMP",
+	"TMP",
+	"CI",
+	"GITHUB_ACTIONS",
+	"CLAWDI_AUTH_TOKEN",
+	"CLAWDI_API_URL",
+	"CLAWDI_HOME",
+	"CLAWDI_STATE_DIR",
+	"CLAWDI_AGENT_TYPE",
+	"CLAWDI_SERVE_MODE",
+	"CLAWDI_SERVE_DEBUG",
+	"CLAUDE_CONFIG_DIR",
+	"CODEX_HOME",
+	"HERMES_HOME",
+	"OPENCLAW_STATE_DIR",
+	"OPENCLAW_AGENT_ID",
+	"HTTP_PROXY",
+	"HTTPS_PROXY",
+	"NO_PROXY",
+	"http_proxy",
+	"https_proxy",
+	"no_proxy",
+	"SSL_CERT_FILE",
+	"SSL_CERT_DIR",
+	"NODE_EXTRA_CA_CERTS",
+	"BUN_INSTALL",
+] as const;
+
 function nestedCliEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
+	const env: NodeJS.ProcessEnv = {
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_NO_AUTO_UPDATE: "1",
 	};
+	for (const key of NESTED_CLI_ENV_KEYS) {
+		const value = process.env[key];
+		if (value !== undefined) env[key] = value;
+	}
+	return env;
+}
+
+function terminateChild(child: ChildProcess): void {
+	if (process.platform !== "win32" && child.pid) {
+		try {
+			process.kill(-child.pid, "SIGTERM");
+			return;
+		} catch {
+			// Fall back to signalling the direct child.
+		}
+	}
+	child.kill("SIGTERM");
 }

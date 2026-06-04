@@ -42,12 +42,19 @@ import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../li
 import { getCliVersion } from "../lib/version";
 import { startAutoRestart } from "../serve/auto-restart";
 import {
+	CONTROL_RPC_CAPABILITIES,
+	type ControlRpcAuthContext,
 	type ControlRpcClientConfig,
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
 	callControlRpc,
+	issueScopedControlToken,
+	type RpcCapability,
+	requireRpcCapability,
+	rootOnlyRpcHandler,
 	rotateControlToken,
 	startControlRpcServer,
+	withRpcCapabilities,
 } from "../serve/control-rpc";
 import {
 	install as installService,
@@ -141,6 +148,7 @@ interface RpcCommandOptions {
 	parseJson?: boolean;
 	redactedArgs?: string[];
 	timeoutMs?: number;
+	exclusiveKey?: string;
 }
 
 interface RpcCommandResponse extends CommandResult {
@@ -242,7 +250,11 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		}
 	}
 
-	const rpc = await startControlRpcServer(createControlRpcHandlers(), abort.signal, rpcListen);
+	const rpc = await startControlRpcServer(
+		createControlRpcHandlers({ abortController: abort }),
+		abort.signal,
+		rpcListen,
+	);
 	activeControlRpcHttp = rpc.http
 		? { ...rpc.http, allow_remote: rpcListen.allowRemote === true }
 		: null;
@@ -596,17 +608,33 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 	console.log(JSON.stringify(result, null, 2));
 }
 
-export function createControlRpcHandlers(): ControlRpcHandlers {
+interface ControlRpcHandlerOptions {
+	abortController?: AbortController;
+}
+
+export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): ControlRpcHandlers {
 	const handlers: ControlRpcHandlers = {};
-	handlers["daemon.ping"] = () => ({
+	handlers["daemon.ping"] = rpcHandler(["daemon:read"], () => ({
 		pid: process.pid,
 		version: getCliVersion(),
 		uptime_seconds: Math.round(process.uptime()),
-	});
-	handlers["daemon.methods"] = () => ({
+	}));
+	handlers["daemon.methods"] = rpcHandler(["daemon:read"], () => ({
+		capabilities: CONTROL_RPC_CAPABILITIES,
 		methods: Object.keys(handlers).sort(),
-	});
-	handlers["daemon.status"] = (params) => {
+		requirements: Object.fromEntries(
+			Object.entries(handlers)
+				.sort(([left], [right]) => left.localeCompare(right))
+				.map(([method, handler]) => [
+					method,
+					{
+						capabilities: handler.requiredCapabilities ?? [],
+						root_only: handler.rootOnly === true,
+					},
+				]),
+		),
+	}));
+	handlers["daemon.status"] = rpcHandler(["daemon:read"], (params) => {
 		const record = rpcParamsRecord(params);
 		rejectRpcParams(record, new Set(["agent"]));
 		const agent = optionalAgentParam(record.agent);
@@ -616,37 +644,65 @@ export function createControlRpcHandlers(): ControlRpcHandlers {
 			legacy_daemon_units: listInstalledAgents(),
 			agents: targets.map(buildStatusReport),
 		};
-	};
-	handlers["daemon.doctor"] = () => buildDoctorReport();
-	handlers["daemon.install"] = (params) => daemonInstallRpc(params);
-	handlers["daemon.uninstall"] = (params) => daemonUninstallRpc(params);
-	handlers["daemon.restart"] = (params) => daemonRestartRpc(params);
-	handlers["daemon.logs"] = (params) => daemonLogsRpc(params);
-	handlers["daemon.rotate_token"] = (params) => daemonRotateTokenRpc(params);
-	handlers["operation.list"] = (params) => operationListRpc(params);
-	handlers["operation.status"] = (params) => operationStatusRpc(params);
-	handlers["operation.logs"] = (params) => operationLogsRpc(params);
-	handlers["operation.cancel"] = (params) => operationCancelRpc(params);
-	handlers["sync.push"] = (params) => syncPushRpc(params);
-	handlers["sync.pull"] = (params) => syncPullRpc(params);
-	handlers["sync.push_dry_run"] = (params) => syncPushDryRunRpc(params);
-	handlers["sync.pull_dry_run"] = (params) => syncPullDryRunRpc(params);
-	handlers["vault.set"] = (params) => vaultSetRpc(params);
-	handlers["vault.list"] = (params) => vaultListRpc(params);
-	handlers["vault.import"] = (params) => vaultImportRpc(params);
-	handlers["vault.attach"] = (params) => vaultAttachRpc(params);
-	handlers["vault.detach"] = (params) => vaultDetachRpc(params);
-	handlers["vault.rm"] = (params) => vaultRmRpc(params);
-	handlers["vault.resolve"] = (params) => vaultResolveRpc(params);
-	handlers["vault.read"] = (params) => vaultReadRpc(params);
-	handlers["vault.inject"] = (params) => vaultInjectRpc(params);
-	handlers["auth.status"] = (params) => authStatusRpc(params);
-	handlers["auth.login"] = (params) => authLoginRpc(params);
-	handlers["auth.complete"] = (params) => authCompleteRpc(params);
-	handlers["auth.logout"] = (params) => authLogoutRpc(params);
-	handlers["update.check"] = (params) => updateCheckRpc(params);
-	handlers["update.install"] = (params) => updateInstallRpc(params);
+	});
+	handlers["daemon.doctor"] = rpcHandler(["daemon:read"], () => buildDoctorReport());
+	handlers["daemon.install"] = rpcHandler(["daemon:control"], (params) => daemonInstallRpc(params));
+	handlers["daemon.uninstall"] = rpcHandler(["daemon:control"], (params) =>
+		daemonUninstallRpc(params),
+	);
+	handlers["daemon.restart"] = rpcHandler(["daemon:control"], (params) => daemonRestartRpc(params));
+	handlers["daemon.logs"] = rpcHandler(["daemon:read"], (params) => daemonLogsRpc(params));
+	handlers["daemon.issue_token"] = rootRpcHandler((params) => daemonIssueTokenRpc(params));
+	handlers["daemon.rotate_token"] = rootRpcHandler((params) => daemonRotateTokenRpc(params));
+	handlers["operation.list"] = rpcHandler(["operation:read"], (params) => operationListRpc(params));
+	handlers["operation.status"] = rpcHandler(["operation:read"], (params) =>
+		operationStatusRpc(params),
+	);
+	handlers["operation.logs"] = rpcHandler(["operation:read"], (params) => operationLogsRpc(params));
+	handlers["operation.cancel"] = rpcHandler(["operation:control"], (params) =>
+		operationCancelRpc(params),
+	);
+	handlers["sync.push"] = rpcHandler(["sync:run"], (params) => syncPushRpc(params));
+	handlers["sync.pull"] = rpcHandler(["sync:run"], (params) => syncPullRpc(params));
+	handlers["sync.push_dry_run"] = rpcHandler(["sync:run"], (params) => syncPushDryRunRpc(params));
+	handlers["sync.pull_dry_run"] = rpcHandler(["sync:run"], (params) => syncPullDryRunRpc(params));
+	handlers["vault.set"] = rpcHandler(["vault:write"], (params) => vaultSetRpc(params));
+	handlers["vault.list"] = rpcHandler(["vault:read"], (params) => vaultListRpc(params));
+	handlers["vault.import"] = rpcHandler(["vault:write"], (params) => vaultImportRpc(params));
+	handlers["vault.attach"] = rpcHandler(["vault:write"], (params) => vaultAttachRpc(params));
+	handlers["vault.detach"] = rpcHandler(["vault:write"], (params) => vaultDetachRpc(params));
+	handlers["vault.rm"] = rpcHandler(["vault:write"], (params) => vaultRmRpc(params));
+	handlers["vault.resolve"] = rpcHandler(["vault:read"], (params, context) =>
+		vaultResolveRpc(params, context),
+	);
+	handlers["vault.read"] = rpcHandler(["vault:read"], (params, context) =>
+		vaultReadRpc(params, context),
+	);
+	handlers["vault.inject"] = rpcHandler(["vault:read"], (params, context) =>
+		vaultInjectRpc(params, context),
+	);
+	handlers["auth.status"] = rpcHandler(["auth:read"], (params) => authStatusRpc(params));
+	handlers["auth.login"] = rpcHandler(["auth:write"], (params) => authLoginRpc(params));
+	handlers["auth.complete"] = rpcHandler(["auth:write"], (params) => authCompleteRpc(params));
+	handlers["auth.logout"] = rpcHandler(["auth:write"], (params) => authLogoutRpc(params));
+	handlers["update.check"] = rpcHandler(["update:read"], (params) => updateCheckRpc(params));
+	handlers["update.install"] = rpcHandler(["update:install"], (params) =>
+		updateInstallRpc(params, opts.abortController),
+	);
 	return handlers;
+}
+
+function rpcHandler(
+	capabilities: readonly RpcCapability[],
+	handler: (params: unknown, context?: ControlRpcAuthContext) => Promise<unknown> | unknown,
+) {
+	return withRpcCapabilities(handler, capabilities);
+}
+
+function rootRpcHandler(
+	handler: (params: unknown, context?: ControlRpcAuthContext) => Promise<unknown> | unknown,
+) {
+	return rootOnlyRpcHandler(handler);
 }
 
 function operationListRpc(params: unknown): unknown {
@@ -747,6 +803,7 @@ async function syncCommandRpc(
 		args,
 		cwd,
 		wait: optionalBooleanParam(record.wait, "wait") ?? opts.defaultWait,
+		exclusiveKey: dryRun ? undefined : "sync",
 	});
 }
 
@@ -842,7 +899,10 @@ function vaultRmRpc(params: unknown): Promise<unknown> {
 	});
 }
 
-function vaultResolveRpc(params: unknown): Promise<unknown> {
+function vaultResolveRpc(
+	params: unknown,
+	context: ControlRpcAuthContext | undefined,
+): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(
 		record,
@@ -864,6 +924,7 @@ function vaultResolveRpc(params: unknown): Promise<unknown> {
 	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
 	if (includeValue) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "vault.resolve plaintext access");
+		requireRpcCapability(context, "vault:secrets", "vault.resolve plaintext access");
 		if (!wait)
 			throw new Error(
 				"vault.resolve with include_value=true cannot run as a background operation.",
@@ -882,7 +943,10 @@ function vaultResolveRpc(params: unknown): Promise<unknown> {
 	});
 }
 
-function vaultReadRpc(params: unknown): Promise<unknown> {
+function vaultReadRpc(
+	params: unknown,
+	context: ControlRpcAuthContext | undefined,
+): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(
 		record,
@@ -903,6 +967,7 @@ function vaultReadRpc(params: unknown): Promise<unknown> {
 	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
 	if (!dryRun) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "vault.read plaintext access");
+		requireRpcCapability(context, "vault:secrets", "vault.read plaintext access");
 		if (!wait) throw new Error("vault.read plaintext access cannot run as a background operation.");
 	}
 	const args = ["read", requiredStringParam(record, "reference")];
@@ -918,7 +983,10 @@ function vaultReadRpc(params: unknown): Promise<unknown> {
 	});
 }
 
-function vaultInjectRpc(params: unknown): Promise<unknown> {
+function vaultInjectRpc(
+	params: unknown,
+	context: ControlRpcAuthContext | undefined,
+): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(
 		record,
@@ -938,8 +1006,13 @@ function vaultInjectRpc(params: unknown): Promise<unknown> {
 		]),
 	);
 	const dryRun = optionalBooleanParam(record.dry_run, "dry_run") ?? false;
-	if (!dryRun)
+	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
+	if (!dryRun) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "vault.inject secret rendering");
+		requireRpcCapability(context, "vault:secrets", "vault.inject secret rendering");
+		if (!wait)
+			throw new Error("vault.inject secret rendering cannot run as a background operation.");
+	}
 	const args = ["inject"];
 	const stdin = optionalStringParam(record.input, "input");
 	const inPath = optionalStringParam(record.in, "in") ?? (stdin !== undefined ? "-" : undefined);
@@ -958,7 +1031,7 @@ function vaultInjectRpc(params: unknown): Promise<unknown> {
 		args,
 		cwd: optionalStringParam(record.cwd, "cwd"),
 		stdin,
-		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+		wait,
 	});
 }
 
@@ -1042,7 +1115,10 @@ function updateCheckRpc(params: unknown): Promise<unknown> {
 	});
 }
 
-async function updateInstallRpc(params: unknown): Promise<unknown> {
+async function updateInstallRpc(
+	params: unknown,
+	abortController: AbortController | undefined,
+): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["confirm"]));
 	requireBooleanConfirmation(record, "confirm", "update.install");
@@ -1050,7 +1126,17 @@ async function updateInstallRpc(params: unknown): Promise<unknown> {
 		currentVersion: getCliVersion(),
 		ignoreDisabled: true,
 	});
-	return { result };
+	const restartScheduled = result === "installed" && abortController !== undefined;
+	if (restartScheduled) {
+		setTimeout(() => {
+			log.info("daemon.update_install_restart_scheduled", {});
+			abortController.abort();
+		}, CONTROL_ACTION_DELAY_MS);
+	}
+	return {
+		result,
+		restart_scheduled: restartScheduled,
+	};
 }
 
 async function runCommandRpc(options: RpcCommandOptions): Promise<unknown> {
@@ -1062,6 +1148,7 @@ async function runCommandRpc(options: RpcCommandOptions): Promise<unknown> {
 				cwd: options.cwd,
 				stdin: options.stdin,
 				redactedArgs: options.redactedArgs,
+				exclusiveKey: options.exclusiveKey,
 			}),
 		};
 	}
@@ -1319,6 +1406,30 @@ function daemonRotateTokenRpc(params: unknown): unknown {
 	};
 }
 
+function daemonIssueTokenRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["capabilities", "label", "expires_in_seconds"]));
+	const capabilities = requiredCapabilityListParam(record, "capabilities");
+	const expiresInSeconds = optionalLimitParam(
+		record.expires_in_seconds,
+		"expires_in_seconds",
+		60,
+		30 * 24 * 60 * 60,
+		24 * 60 * 60,
+	);
+	const issued = issueScopedControlToken({
+		capabilities,
+		label: optionalStringParam(record.label, "label"),
+		expiresInSeconds,
+	});
+	return {
+		token: issued.token,
+		token_type: "scoped",
+		capabilities: issued.capabilities,
+		expires_at: issued.expires_at,
+	};
+}
+
 function scheduleDaemonControlAction(
 	action: string,
 	run: () => void,
@@ -1452,6 +1563,25 @@ function optionalStringListParam(value: unknown, label: string): string[] | unde
 		items.push(optionalStringParam(item, label) ?? "");
 	}
 	return items;
+}
+
+function requiredCapabilityListParam(
+	record: Record<string, unknown>,
+	key: string,
+): RpcCapability[] {
+	const items = optionalStringListParam(record[key], key);
+	if (!items || items.length === 0) throw new Error(`${key} is required`);
+	const capabilities: RpcCapability[] = [];
+	for (const item of items) {
+		if (!(CONTROL_RPC_CAPABILITIES as readonly string[]).includes(item)) {
+			throw new Error(
+				`Unknown RPC capability: ${item}. Expected one of: ${CONTROL_RPC_CAPABILITIES.join(", ")}`,
+			);
+		}
+		const capability = item as RpcCapability;
+		if (!capabilities.includes(capability)) capabilities.push(capability);
+	}
+	return capabilities;
 }
 
 function optionalAgentParam(value: unknown): AgentType | undefined {

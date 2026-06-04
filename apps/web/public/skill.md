@@ -149,6 +149,8 @@ clawdi daemon install --rpc-host 127.0.0.1 --rpc-port 17654
 clawdi daemon rpc daemon.ping --rpc-host 127.0.0.1 --rpc-port 17654
 ```
 
+For non-loopback HTTP RPC, issue a scoped token from the local socket with `clawdi daemon rpc daemon.issue_token` and pass the returned token through `--rpc-token` or `CLAWDI_DAEMON_RPC_TOKEN`; don't send the local root token to remote clients.
+
 What the user gets:
 
 - Edit a SKILL.md locally → uploaded to the cloud within ~1s
