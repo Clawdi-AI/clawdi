@@ -175,6 +175,16 @@ describe("full control RPC handler surface", () => {
 		);
 	});
 
+	it("rejects push-only sync params on pull", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["sync.pull"];
+		if (!handler) throw new Error("missing sync.pull handler");
+
+		await expect(
+			(async () => handler({ exclude_project: "/tmp/private", wait: true }))(),
+		).rejects.toThrow("Unsupported RPC params: exclude_project");
+	});
+
 	it("blocks vault plaintext reads unless explicitly confirmed", async () => {
 		const { createControlRpcHandlers } = await import("./serve");
 		const handler = createControlRpcHandlers()["vault.resolve"];
@@ -230,6 +240,37 @@ describe("full control RPC handler surface", () => {
 			expect(getAuth()?.apiKey).toBe("old-key");
 		} finally {
 			globalThis.fetch = originalFetch;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects device-flow auth replacement while existing auth is present", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-replace-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			const [{ createControlRpcHandlers }, { setAuth }] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			setAuth({ apiKey: "old-key", userId: "old-user", email: "old@example.com" });
+			const handler = createControlRpcHandlers()["auth.login"];
+			if (!handler) throw new Error("missing auth.login handler");
+
+			await expect(
+				(async () =>
+					handler({
+						replace: true,
+						confirm_secret_access: true,
+					}))(),
+			).rejects.toThrow("auth.login replace requires api_key");
+		} finally {
 			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
 			else process.env.CLAWDI_HOME = originalClawdiHome;
 			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;

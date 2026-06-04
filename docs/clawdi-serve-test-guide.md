@@ -222,9 +222,10 @@ clawdi daemon rpc operation.status --params '{"id":"<operation-id>"}'
 clawdi daemon rpc operation.logs --params '{"id":"<operation-id>","limit":100}'
 ```
 
-Vault plaintext access is opt-in. `vault.resolve` and `vault.read`
-default to redacted dry-runs unless the request explicitly passes
-`confirm_secret_access: true`; plaintext access cannot be backgrounded
+Vault plaintext access is opt-in. `vault.resolve` defaults to a
+redacted dry-run unless the request explicitly asks for plaintext.
+`vault.read` and `vault.inject` require `confirm_secret_access: true`
+before rendering plaintext, and plaintext access cannot be backgrounded
 into an operation log. Mutating vault calls that would otherwise prompt
 must pass their non-interactive confirmation, such as `yes: true`.
 

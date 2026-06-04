@@ -435,13 +435,8 @@ const LOGS_ALLOWED = new Set(["follow"]);
 export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 	rejectUnsupportedOpts("logs", opts as Record<string, unknown>, LOGS_ALLOWED);
 	const { spawn } = await import("node:child_process");
-	// Per-platform log access. macOS launchd routes the unit's
-	// `StandardErrorPath` to a file we own (we wrote it in the
-	// plist), so `tail` works. Linux systemd routes
-	// `StandardError=journal` to journald — there's no file to
-	// tail, so we delegate to `journalctl --user -u <unit>`.
-	// Linux daemon logs live in journald, while macOS launchd writes
-	// to the file path configured by the plist.
+	// Per-platform log access. macOS launchd writes to the plist's
+	// StandardErrorPath; Linux systemd writes to journald.
 	const platform = process.platform;
 	let cmd: string;
 	let args: string[];
@@ -710,20 +705,18 @@ async function syncCommandRpc(
 	opts: { forceDryRun: boolean; defaultWait: boolean },
 ): Promise<unknown> {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(
-		record,
-		new Set([
-			"modules",
-			"project",
-			"exclude_project",
-			"all",
-			"all_agents",
-			"agent",
-			"dry_run",
-			"cwd",
-			"wait",
-		]),
-	);
+	const allowedParams = new Set([
+		"modules",
+		"project",
+		"all",
+		"all_agents",
+		"agent",
+		"dry_run",
+		"cwd",
+		"wait",
+	]);
+	if (command === "push") allowedParams.add("exclude_project");
+	rejectRpcParams(record, allowedParams);
 	const args: string[] = [command];
 	const modules = optionalStringParam(record.modules, "modules");
 	const project = optionalStringParam(record.project, "project");
@@ -1006,6 +999,11 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	}
 	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? getConfig().apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
+	if (existing && replace && !apiKey) {
+		throw new Error(
+			"auth.login replace requires api_key, or call auth.logout before device login.",
+		);
+	}
 	if (apiKey) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
 		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey);
