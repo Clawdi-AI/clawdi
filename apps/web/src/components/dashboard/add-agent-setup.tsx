@@ -100,11 +100,11 @@ export function AddAgentSetup() {
 			<TabsList className="grid w-full grid-cols-2">
 				<TabsTrigger value="agent" className="min-w-0 px-2">
 					<Rocket />
-					Send to Agent
+					Send to agent
 				</TabsTrigger>
 				<TabsTrigger value="cli" className="min-w-0 px-2">
 					<Terminal />
-					Manual Setup
+					Manual setup
 				</TabsTrigger>
 			</TabsList>
 			<TabsContent value="agent">

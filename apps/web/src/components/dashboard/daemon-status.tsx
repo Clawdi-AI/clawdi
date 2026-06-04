@@ -477,7 +477,7 @@ function SyncHelpDialog({
 
 /** Install-tutorial body for the help dialog. Two modes mirroring
  * `<AddAgentSetup>` on the onboarding card so the user reads the
- * same Tabs (Send to Agent / Manual Setup) pattern everywhere a
+ * same Tabs (Send to agent / Manual setup) pattern everywhere a
  * Clawdi setup is offered. */
 function SyncSetupSnippet({ env }: { env: Env }) {
 	return (
@@ -485,11 +485,11 @@ function SyncSetupSnippet({ env }: { env: Env }) {
 			<TabsList>
 				<TabsTrigger value="agent">
 					<Rocket />
-					Send to Agent
+					Send to agent
 				</TabsTrigger>
 				<TabsTrigger value="cli">
 					<Terminal />
-					Manual Setup
+					Manual setup
 				</TabsTrigger>
 			</TabsList>
 			<TabsContent value="agent" className="mt-3">
