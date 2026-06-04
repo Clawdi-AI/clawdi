@@ -2,27 +2,12 @@
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	AlertCircle,
-	Check,
-	Download,
-	ExternalLink,
-	FolderKanban,
-	Plus,
-	Search,
-	Sparkles,
-	Trash2,
-} from "lucide-react";
+import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
-import {
-	DashboardSection,
-	DashboardSectionHeader,
-	DashboardSectionToolbar,
-} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
 import {
 	compareProjectsForUse,
@@ -36,11 +21,9 @@ import { makeSkillColumns, resolveSkillProjectAccess } from "@/components/skills
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
@@ -293,8 +276,32 @@ function SkillsPageInner() {
 		) : null;
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+		<div className="space-y-6 px-4 lg:px-6">
+			{/* Flat layout: scope picker lives in the header action slot —
+			    no boxed "Project scope" section, no instructional prose.
+			    The picker IS the scope affordance. */}
+			<PageHeader
+				title="Skills"
+				description={SKILLS_RESOURCE.managementDescription}
+				actions={
+					orderedProjects.length > 0 ? (
+						<>
+							<ProjectCompactPicker
+								projects={orderedProjects}
+								agents={envs ?? []}
+								value={targetProjectId ?? ""}
+								onValueChange={(projectId) => {
+									void setProjectParam(projectId);
+									void setTargetEnvId("");
+								}}
+								placeholder="Choose Project…"
+								ariaLabel="Choose Project for skills"
+							/>
+							{renderShareProjectAction()}
+						</>
+					) : null
+				}
+			/>
 
 			{projectsError ? (
 				<Alert variant="destructive">
@@ -324,44 +331,6 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			{orderedProjects.length > 0 ? (
-				<DashboardSection priority="primary">
-					<DashboardSectionHeader
-						icon={FolderKanban}
-						title="Project scope"
-						count={targetProject ? displayProjectName(targetProject) : undefined}
-						description="Choose the Project whose skills you want to view or change."
-						toolbar={
-							canShareTargetProject ? (
-								<div className="hidden sm:block">{renderShareProjectAction()}</div>
-							) : null
-						}
-						priority="primary"
-					/>
-					<DashboardSectionToolbar>
-						<div className="grid gap-2 sm:grid-cols-[minmax(260px,420px)_auto] sm:items-center sm:justify-start">
-							<ProjectCompactPicker
-								projects={orderedProjects}
-								agents={envs ?? []}
-								value={targetProjectId ?? ""}
-								onValueChange={(projectId) => {
-									void setProjectParam(projectId);
-									void setTargetEnvId("");
-								}}
-								placeholder="Choose Project…"
-								ariaLabel="Choose Project for skills"
-							/>
-							<p className="text-xs text-muted-foreground">
-								Installs, removals, and marketplace choices apply only to this Project.
-							</p>
-							{canShareTargetProject ? (
-								<div className="sm:hidden [&_button]:w-full">{renderShareProjectAction()}</div>
-							) : null}
-						</div>
-					</DashboardSectionToolbar>
-				</DashboardSection>
-			) : null}
-
 			{!canWriteTargetProject && targetProject ? (
 				<Alert>
 					<AlertCircle />
@@ -373,18 +342,21 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Sparkles}
-					title="Installed skills"
-					count={skillsForTarget ? skillsForTarget.length : undefined}
-					description={
-						targetProject
-							? `Skills saved in ${displayProjectName(targetProject)}.`
-							: "Pick a Project above to see its skills."
-					}
-				/>
-				<div className="md:hidden">
+			<section className="space-y-2">
+				<div className="flex items-center gap-2">
+					<h2 className="text-sm font-semibold">Installed</h2>
+					{skillsForTarget ? (
+						<Badge variant="secondary" className="tabular-nums">
+							{skillsForTarget.length}
+						</Badge>
+					) : null}
+					{targetProject ? (
+						<span className="text-xs text-muted-foreground">
+							in {displayProjectName(targetProject)}
+						</span>
+					) : null}
+				</div>
+				<div className="overflow-hidden rounded-lg border bg-card md:hidden">
 					<MobileSkillList
 						skills={skillsForTarget ?? []}
 						isLoading={skillsLoading || isResolvingTarget}
@@ -402,139 +374,117 @@ function SkillsPageInner() {
 						isLoading={skillsLoading || isResolvingTarget}
 						rowAriaLabel={(s) => `Open ${s.name}`}
 						emptyMessage={installedSkillsEmptyMessage}
-						className="space-y-0"
-						tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
 					/>
 				</div>
-			</DashboardSection>
+			</section>
 
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Download}
-					title="Add a skill"
-					description={
-						targetProject
-							? `Install into ${displayProjectName(targetProject)} by repository path or from suggested skills.`
-							: "Pick a Project before installing a skill."
-					}
-					toolbar={
-						<a
-							href="https://skills.sh"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-						>
-							More on skills.sh <ExternalLink className="size-3" />
-						</a>
-					}
-				/>
-				<div className="grid gap-1.5 border-b px-4 py-3">
-					<Label htmlFor="skill-custom-repo" className="text-xs font-medium">
-						GitHub skill repository
-					</Label>
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<div className="relative min-w-0 flex-1">
-							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-							<Input
-								id="skill-custom-repo"
-								name="skill-custom-repo"
-								value={customRepo}
-								onChange={(e) => {
-									setCustomRepo(e.target.value);
-									setCustomRepoError(null);
-									setInstallError(null);
-								}}
-								placeholder="owner/repo or owner/repo/path…"
-								autoComplete="off"
-								spellCheck={false}
-								className="pl-9"
-								onKeyDown={(e) => {
-									if (e.key === "Enter") handleCustom();
-								}}
-								aria-invalid={!!customRepoError || undefined}
-							/>
-						</div>
-						<Button
-							onClick={handleCustom}
-							disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
-							variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
-							className="sm:w-auto"
-						>
-							{installing && customRepo ? <Spinner /> : <Plus />}
-							Install skill
-						</Button>
-					</div>
+			<section className="space-y-3">
+				<div className="flex items-center justify-between gap-2">
+					<h2 className="text-sm font-semibold">Add a skill</h2>
+					<a
+						href="https://skills.sh"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+					>
+						More on skills.sh <ExternalLink className="size-3" />
+					</a>
 				</div>
-				{customRepoError ? (
-					<p className="px-4 pt-3 text-xs text-destructive">{customRepoError}</p>
-				) : null}
+				<div className="flex flex-col gap-2 sm:flex-row">
+					<div className="relative min-w-0 flex-1 sm:max-w-md">
+						<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+						<Input
+							id="skill-custom-repo"
+							name="skill-custom-repo"
+							value={customRepo}
+							onChange={(e) => {
+								setCustomRepo(e.target.value);
+								setCustomRepoError(null);
+								setInstallError(null);
+							}}
+							placeholder="owner/repo or owner/repo/path…"
+							autoComplete="off"
+							spellCheck={false}
+							className="pl-9"
+							onKeyDown={(e) => {
+								if (e.key === "Enter") handleCustom();
+							}}
+							aria-invalid={!!customRepoError || undefined}
+							aria-label="GitHub skill repository"
+						/>
+					</div>
+					<Button
+						onClick={handleCustom}
+						disabled={!customRepo.trim() || !!installing || !canWriteTargetProject}
+						variant={customRepo.trim() && canWriteTargetProject ? "default" : "outline"}
+						className="sm:w-auto"
+					>
+						{installing && customRepo ? <Spinner /> : <Plus />}
+						Install
+					</Button>
+				</div>
+				{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
 				{installError ? (
-					<div className="px-4 pt-3">
-						<Alert variant="destructive">
-							<AlertTitle>Install failed</AlertTitle>
-							<AlertDescription>{installError}</AlertDescription>
-						</Alert>
-					</div>
+					<Alert variant="destructive">
+						<AlertTitle>Install failed</AlertTitle>
+						<AlertDescription>{installError}</AlertDescription>
+					</Alert>
 				) : null}
 
-				<div className="space-y-2 p-4">
-					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Suggested skills
-					</p>
-					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-						{FEATURED_SKILLS.map((skill) => {
-							const key = `${skill.repo}/${skill.path ?? ""}`;
-							const isInstalled = installedKeysOnTarget.has(skill.skillKey);
-							const isInstalling = installing === key;
-							return (
-								<Card key={key} className="py-0">
-									<CardContent className="flex items-start justify-between gap-3 p-3">
-										<div className="min-w-0 flex-1">
-											<div className="flex items-center gap-2">
-												<Sparkles className="size-4 shrink-0 text-primary" />
-												{isInstalled && targetProjectId ? (
-													<Link
-														href={skillDetailHref(skill.skillKey, targetProjectId)}
-														className="truncate text-sm font-medium hover:underline"
-													>
-														{skill.name}
-													</Link>
-												) : (
-													<span className="truncate text-sm font-medium">{skill.name}</span>
-												)}
-											</div>
-											<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-												{skill.description}
-											</p>
-											<p className="mt-1.5 text-xs text-muted-foreground">
-												{skill.repo}
-												{skill.path ? `/${skill.path}` : ""}
-											</p>
-										</div>
-										{isInstalled ? (
-											<Badge variant="secondary" className="shrink-0">
-												<Check />
-												Installed
-											</Badge>
-										) : (
-											<Button
-												variant="outline"
-												size="sm"
-												onClick={() => installSkill(skill.repo, skill.path)}
-												disabled={isInstalling || !canWriteTargetProject}
-												className="shrink-0"
-											>
-												{isInstalling ? <Spinner /> : <Download />}
-												Install
-											</Button>
-										)}
-									</CardContent>
-								</Card>
-							);
-						})}
-					</div>
+				<p className="pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+					Suggested
+				</p>
+				<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+					{FEATURED_SKILLS.map((skill) => {
+						const key = `${skill.repo}/${skill.path ?? ""}`;
+						const isInstalled = installedKeysOnTarget.has(skill.skillKey);
+						const isInstalling = installing === key;
+						return (
+							<div
+								key={key}
+								className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-foreground/20"
+							>
+								<div className="min-w-0 flex-1">
+									{isInstalled && targetProjectId ? (
+										<Link
+											href={skillDetailHref(skill.skillKey, targetProjectId)}
+											className="truncate text-sm font-medium hover:underline"
+										>
+											{skill.name}
+										</Link>
+									) : (
+										<span className="truncate text-sm font-medium">{skill.name}</span>
+									)}
+									<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+										{skill.description}
+									</p>
+									<p className="mt-1.5 font-mono text-xs text-muted-foreground">
+										{skill.repo}
+										{skill.path ? `/${skill.path}` : ""}
+									</p>
+								</div>
+								{isInstalled ? (
+									<Badge variant="secondary" className="shrink-0">
+										<Check />
+										Installed
+									</Badge>
+								) : (
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => installSkill(skill.repo, skill.path)}
+										disabled={isInstalling || !canWriteTargetProject}
+										className="shrink-0"
+									>
+										{isInstalling ? <Spinner /> : <Download />}
+										Install
+									</Button>
+								)}
+							</div>
+						);
+					})}
 				</div>
-			</DashboardSection>
+			</section>
 		</div>
 	);
 }
@@ -587,7 +537,6 @@ function MobileSkillList({
 						<div className="flex items-start justify-between gap-3">
 							<div className="min-w-0 flex-1">
 								<div className="flex min-w-0 items-center gap-2">
-									<Sparkles className="size-4 shrink-0 text-primary" />
 									<Link
 										href={skillDetailHref(skill.skill_key, skill.project_id)}
 										className="truncate text-sm font-medium hover:underline"
