@@ -17,8 +17,10 @@ from app.models import (  # noqa: F401 - register models
     session,
     session_permission,
     skill,
+    skill_chunk,
     user,
     vault,
+    xtrace_ingest,
 )
 from app.models.base import Base
 

@@ -47,6 +47,69 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
 
 
 @pytest.mark.asyncio
+async def test_skill_upload_indexes_file_content_for_search(
+    client: httpx.AsyncClient, project_id: str
+):
+    content = (
+        "---\n"
+        "name: deploy helper\n"
+        "description: ordinary deployment instructions\n"
+        "---\n"
+        "# Deploy\n"
+        "Use the zephyr-coolify-handshake checklist before preview rollout.\n"
+    )
+    tar_bytes, _ = tar_from_content("deploy-helper", content)
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper"},
+        files={"file": ("deploy-helper.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    search = await client.get("/api/search?q=zephyr-coolify-handshake")
+    assert search.status_code == 200, search.text
+    skill_hits = [h for h in search.json()["results"] if h["type"] == "skill"]
+    assert skill_hits, search.json()
+    assert skill_hits[0]["title"] == "deploy helper"
+    assert "SKILL.md" in (skill_hits[0]["subtitle"] or "")
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_indexes_reference_file_content_for_search(
+    client: httpx.AsyncClient, project_id: str
+):
+    buf = io.BytesIO()
+    files = {
+        "multi-file/SKILL.md": "---\nname: multi file\ndescription: docs bundle\n---\n# Multi\n",
+        "multi-file/references/deploy.md": (
+            "# Preview\nUse the nebula-reference-marker before promoting a preview.\n"
+        ),
+    }
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, content in files.items():
+            encoded = content.encode("utf-8")
+            info = tarfile.TarInfo(name=name)
+            info.size = len(encoded)
+            tf.addfile(info, io.BytesIO(encoded))
+    tar_bytes = buf.getvalue()
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "multi-file"},
+        files={"file": ("multi-file.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    search = await client.get("/api/search?q=nebula-reference-marker")
+    assert search.status_code == 200, search.text
+    skill_hits = [h for h in search.json()["results"] if h["type"] == "skill"]
+    assert skill_hits, search.json()
+    assert skill_hits[0]["title"] == "multi file"
+    assert "references/deploy.md" in (skill_hits[0]["subtitle"] or "")
+
+
+@pytest.mark.asyncio
 async def test_dashboard_edit_with_stale_content_hash_returns_412(
     client: httpx.AsyncClient, project_id: str
 ):

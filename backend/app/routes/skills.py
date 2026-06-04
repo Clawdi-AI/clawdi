@@ -42,6 +42,7 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.skill_index import index_skill_archive
 from app.services.sync_events import bump_skills_revision, get_skills_revision
 from app.services.tar_utils import (
     TarValidationError,
@@ -977,6 +978,7 @@ async def _do_upload_skill(
         source="local",
         source_repo=None,
     )
+    await index_skill_archive(db, skill, data)
     # Single commit at the route boundary — _upsert_skill now
     # only flushes, so the advisory lock acquired at line 317
     # holds across the upsert + revision bump and is released
@@ -1314,6 +1316,7 @@ async def _do_install_skill(
         source="marketplace",
         source_repo=body.repo,
     )
+    await index_skill_archive(db, skill, fetched.tar_bytes)
     # Single commit at the route boundary — see upload_skill.
     await db.commit()
 

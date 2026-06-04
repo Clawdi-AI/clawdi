@@ -126,6 +126,10 @@ for each service.
     COMPOSIO_API_KEY=...
     MEMORY_EMBEDDING_MODE=...
     MEMORY_EMBEDDING_MODEL=...
+    XTRACE_MEMORY_ENABLED=false
+    XTRACE_API_KEY=
+    XTRACE_ORG_ID=
+    XTRACE_MEMORY_BASE_URL=https://api.production.xtrace.ai
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
     CLERK_SECRET_KEY=...
     NEXT_PUBLIC_DEPLOY_API_URL=https://<your-public-prod-api>
@@ -140,12 +144,42 @@ for each service.
     command from the auto-injected `SERVICE_FQDN_*` — no need to set them
     in the Coolify UI.
 
+    To enable XTrace session memory in a preview, set
+    `XTRACE_MEMORY_ENABLED=true` plus the preview XTrace key/org values,
+    then redeploy the preview so the API container starts with those env vars.
+
 11. **Clerk dashboard:** add `https://*.<your-domain>` to **Allowed Origins**
     and `https://*.<your-domain>/sign-in/sso-callback` to **Authorized Redirect
     URLs** for the production Clerk app. (Wildcard at the apex covers all
     one-label preview hostnames.)
 
 After all eleven, opening a PR on the repo deploys a preview automatically.
+
+## XTrace memory preview checks
+
+After deploying a preview with XTrace enabled, upload or re-upload one session,
+then run this inside the preview API container:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.debug_xtrace_session_ingest \
+  --local-session-id <local-session-id> \
+  --user-id <user-uuid> \
+  --print-response
+```
+
+The output prints `job_id`, `status`, `created_ref_count`,
+`updated_ref_count`, and `mirrored_count`. The same data is also stored in
+`xtrace_memory_ingests`, including cases where XTrace returns a pending job or
+zero memory refs. API logs include `xtrace_memory_ingested ... job_id=...`.
+
+Existing skill archives from the restored snapshot need one backfill after the
+migration so skill-file content search works:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.reindex_skill_chunks --all
+```
 
 ## Refreshing the snapshot
 
