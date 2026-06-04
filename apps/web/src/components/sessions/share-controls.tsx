@@ -122,7 +122,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 			<PopoverTrigger asChild>
 				<Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5">
 					<Share2
-						className={cn("size-3.5", sharedNow ? "text-emerald-600" : "text-muted-foreground")}
+						className={cn("size-3.5", sharedNow ? "text-success" : "text-muted-foreground")}
 					/>
 					Share
 					<ChevronDown className="size-3 text-muted-foreground" />
@@ -189,7 +189,7 @@ function CopyLinkButton({ sessionId }: { sessionId: string }) {
 		<Button
 			variant="outline"
 			size="icon"
-			className={cn("size-8", copied && "text-emerald-600")}
+			className={cn("size-8", copied && "text-success")}
 			onClick={copy}
 			aria-label="Copy Share Link"
 			title="Copy Share Link"
@@ -242,7 +242,7 @@ function PrimaryCopy({ url }: { url: string }) {
 			<Button
 				variant="outline"
 				size="sm"
-				className={cn("h-8 shrink-0 gap-1.5", copied && "text-emerald-600")}
+				className={cn("h-8 shrink-0 gap-1.5", copied && "text-success")}
 				onClick={copy}
 			>
 				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -258,7 +258,7 @@ function SecondaryCopy({ url, label }: { url: string; label: string }) {
 		<Button
 			variant="outline"
 			size="sm"
-			className={cn("h-7 flex-1 gap-1.5 text-xs", copied && "text-emerald-600")}
+			className={cn("h-7 flex-1 gap-1.5 text-xs", copied && "text-success")}
 			onClick={copy}
 		>
 			{copied ? <Check className="size-3" /> : <Copy className="size-3" />}

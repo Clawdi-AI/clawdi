@@ -110,17 +110,17 @@ const STATUS_TOOLTIP: Record<Status, string> = {
 };
 
 const DOT_TONE: Record<Status, string> = {
-	live: "bg-emerald-500 ring-2 ring-emerald-500/20",
+	live: "bg-success ring-2 ring-success/20",
 	"set-up": "border-dashed border border-muted-foreground/50 bg-transparent",
-	errored: "bg-amber-500 ring-2 ring-amber-500/20",
-	paused: "bg-rose-500 ring-2 ring-rose-500/20",
+	errored: "bg-warning ring-2 ring-warning/20",
+	paused: "bg-destructive ring-2 ring-destructive/20",
 };
 
 const TEXT_TONE: Record<Status, string> = {
 	live: "text-foreground",
 	"set-up": "text-muted-foreground",
-	errored: "text-amber-700 dark:text-amber-300 font-medium",
-	paused: "text-rose-700 dark:text-rose-300 font-medium",
+	errored: "text-warning-muted-foreground font-medium",
+	paused: "text-destructive-muted-foreground font-medium",
 };
 
 /** Inline meta item — sits in the SAME meta/sub-line as
@@ -440,8 +440,8 @@ function SyncHelpDialog({
 							) : null}
 
 							{dropped > 0 ? (
-								<div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-									<p className="font-medium text-amber-700 dark:text-amber-300">
+								<div className="rounded-md border border-warning/30 bg-warning-muted p-3 text-sm">
+									<p className="font-medium text-warning-muted-foreground">
 										{dropped} change{dropped === 1 ? "" : "s"} dropped
 									</p>
 									<p className="mt-1 text-xs text-muted-foreground">

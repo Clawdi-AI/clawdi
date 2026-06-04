@@ -36,10 +36,7 @@ export function ConnectorCard({
 						<div className="flex items-center gap-1.5">
 							<span className="truncate text-sm font-medium leading-5">{app.display_name}</span>
 							{isConnected ? (
-								<Check
-									className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500"
-									aria-label="Connected"
-								/>
+								<Check className="size-3.5 shrink-0 text-success" aria-label="Connected" />
 							) : null}
 						</div>
 						<p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">

@@ -234,4 +234,9 @@
 	h4 {
 		text-wrap: balance;
 	}
+	/* Pin lucide stroke weight app-wide (default 2 is too heavy at small
+	 * sizes for the crisp/dense aesthetic). */
+	svg.lucide {
+		stroke-width: 1.75;
+	}
 }

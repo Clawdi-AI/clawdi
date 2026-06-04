@@ -347,7 +347,7 @@ export default function AgentDetailPage() {
 								disabled={disconnect.isPending}
 								className="shrink-0"
 							>
-								<Unplug className="text-amber-600 dark:text-amber-500" />
+								<Unplug className="text-warning" />
 								Disconnect
 							</Button>
 						</ConfirmAction>
