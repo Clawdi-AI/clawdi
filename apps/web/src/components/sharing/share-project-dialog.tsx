@@ -406,7 +406,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	return (
 		<Alert>
 			<CheckCircle2 />
-			<AlertTitle>Copy This Link Now</AlertTitle>
+			<AlertTitle>Copy this link now</AlertTitle>
 			<AlertDescription>
 				<p className="text-xs text-muted-foreground">
 					Send this URL to the person you want to invite. They sign in or create an account, accept

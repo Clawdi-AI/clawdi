@@ -249,7 +249,7 @@ export default function ProjectsPage() {
 
 			<ProjectGroupSection
 				icon={FolderKanban}
-				title="Custom Projects"
+				title="Custom projects"
 				count={
 					customProjectSearch.trim()
 						? `${filteredCustomProjects.length}/${customProjects.length}`
@@ -282,7 +282,7 @@ export default function ProjectsPage() {
 
 			<ProjectGroupSection
 				icon={Settings2}
-				title="Managed Projects"
+				title="Managed projects"
 				count={managedProjects.length}
 				description="Your main Project (Global) is the account default. Each connected agent gets its own Project automatically. They are not shareable."
 				projects={managedProjects}
@@ -295,7 +295,7 @@ export default function ProjectsPage() {
 			{otherOwnedProjects.length > 0 ? (
 				<ProjectGroupSection
 					icon={FolderKanban}
-					title="Other Projects"
+					title="Other projects"
 					count={otherOwnedProjects.length}
 					description="Projects with a newer type that this UI does not classify yet."
 					projects={otherOwnedProjects}
@@ -309,14 +309,14 @@ export default function ProjectsPage() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Users}
-					title="Shared Projects"
+					title="Shared projects"
 					count={sharedProjects.length}
 					description="Projects others shared with you. These are invites you already accepted. New invites stay under the top-right Notification Center bell until you accept them."
 					priority="quiet"
 				/>
 				{sharedProjects.length === 0 ? (
 					<DashboardEmptyLine
-						title="No Shared Projects Yet"
+						title="No shared projects yet"
 						message="Accepted invites and share links appear here with Viewer access."
 					/>
 				) : (

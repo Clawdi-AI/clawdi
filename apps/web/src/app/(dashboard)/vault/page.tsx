@@ -317,7 +317,7 @@ function VaultPageInner() {
 
 			<Alert>
 				<Lock className="size-4" />
-				<AlertTitle>Vault Privacy</AlertTitle>
+				<AlertTitle>Vault privacy</AlertTitle>
 				<AlertDescription>
 					A Vault is a shared bundle of API keys and secrets. Add a Vault to each Project where
 					members or agents should use those keys. Project members can see Vault names and key names
@@ -335,7 +335,7 @@ function VaultPageInner() {
 			{projectsError ? (
 				<Alert>
 					<AlertCircle />
-					<AlertTitle>Project List Unavailable</AlertTitle>
+					<AlertTitle>Project list unavailable</AlertTitle>
 					<AlertDescription>
 						Vault write actions are hidden until we can reload your Project list. Please refresh or
 						try again later.
@@ -345,7 +345,7 @@ function VaultPageInner() {
 			{isStaleProjectFilter ? (
 				<Alert>
 					<AlertCircle />
-					<AlertTitle>Project Unavailable</AlertTitle>
+					<AlertTitle>Project unavailable</AlertTitle>
 					<AlertDescription>
 						This vault view points to a Project you can no longer access. Pick another Project.
 					</AlertDescription>
@@ -379,7 +379,7 @@ function VaultPageInner() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Key}
-					title="Vault Inventory"
+					title="Vault inventory"
 					count={
 						vaults
 							? `${ownedVaultCatalog.length} mine · ${sharedVaultCatalog.length} shared`
@@ -576,7 +576,7 @@ function CreateVaultDialog({
 				) : (
 					<Alert>
 						<AlertCircle />
-						<AlertTitle>No Writable Projects</AlertTitle>
+						<AlertTitle>No writable projects</AlertTitle>
 						<AlertDescription>
 							You need Owner access to a Project before you can create vaults.
 						</AlertDescription>
@@ -628,7 +628,7 @@ function VaultInventoryList({
 			</div>
 			<div className="divide-y">
 				<VaultInventorySection
-					title="My Vaults"
+					title="My vaults"
 					count={ownedEntries.length}
 					emptyText="No editable vaults in this view."
 					entries={ownedEntries}

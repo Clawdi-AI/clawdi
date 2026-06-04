@@ -120,7 +120,7 @@ export function VaultKeyImportDialog({
 					{parsed.errors.length > 0 ? (
 						<Alert variant="destructive">
 							<AlertCircle />
-							<AlertTitle>Fix Import Text</AlertTitle>
+							<AlertTitle>Fix import text</AlertTitle>
 							<AlertDescription>
 								<ul className="max-h-40 list-disc space-y-1 overflow-auto pl-4">
 									{parsed.errors.map((error, index) => (

@@ -224,7 +224,7 @@ export default function AgentDetailPage() {
 		activeTab === "skills"
 			? {
 					icon: Sparkles,
-					title: "Installed Skills",
+					title: "Installed skills",
 					description:
 						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
 				}
@@ -390,7 +390,7 @@ export default function AgentDetailPage() {
 												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
 											>
 												<Plus />
-												Install Skills
+												Install skills
 											</Link>
 										</Button>
 									) : null

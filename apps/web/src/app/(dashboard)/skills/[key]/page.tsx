@@ -273,7 +273,7 @@ function SkillDetailPageInner() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			{error ? (
-				<DetailNotFound title="Skill Not Found" message={errorMessage(error)} />
+				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
 			) : isLoading ? (
 				<div className="space-y-3 py-2">
 					<Skeleton className="h-6 w-48" />

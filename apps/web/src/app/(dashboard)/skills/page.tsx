@@ -328,7 +328,7 @@ function SkillsPageInner() {
 				<DashboardSection priority="primary">
 					<DashboardSectionHeader
 						icon={FolderKanban}
-						title="Project Scope"
+						title="Project scope"
 						count={targetProject ? displayProjectName(targetProject) : undefined}
 						description="Choose the Project whose skills you want to view or change."
 						toolbar={
@@ -376,7 +376,7 @@ function SkillsPageInner() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Sparkles}
-					title="Installed Skills"
+					title="Installed skills"
 					count={skillsForTarget ? skillsForTarget.length : undefined}
 					description={
 						targetProject
@@ -411,7 +411,7 @@ function SkillsPageInner() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Download}
-					title="Add a Skill"
+					title="Add a skill"
 					description={
 						targetProject
 							? `Install into ${displayProjectName(targetProject)} by repository path or from suggested skills.`
@@ -461,7 +461,7 @@ function SkillsPageInner() {
 							className="sm:w-auto"
 						>
 							{installing && customRepo ? <Spinner /> : <Plus />}
-							Install Skill
+							Install skill
 						</Button>
 					</div>
 				</div>
@@ -471,7 +471,7 @@ function SkillsPageInner() {
 				{installError ? (
 					<div className="px-4 pt-3">
 						<Alert variant="destructive">
-							<AlertTitle>Install Failed</AlertTitle>
+							<AlertTitle>Install failed</AlertTitle>
 							<AlertDescription>{installError}</AlertDescription>
 						</Alert>
 					</div>
@@ -479,7 +479,7 @@ function SkillsPageInner() {
 
 				<div className="space-y-2 p-4">
 					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Suggested Skills
+						Suggested skills
 					</p>
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{FEATURED_SKILLS.map((skill) => {

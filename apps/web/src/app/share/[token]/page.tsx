@@ -192,7 +192,7 @@ export default function SharePage() {
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This Is Your Project</AlertTitle>
+							<AlertTitle>This is your project</AlertTitle>
 							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
@@ -363,7 +363,7 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Something Went Wrong</AlertTitle>
+					<AlertTitle>Something went wrong</AlertTitle>
 					<AlertDescription>
 						{error instanceof Error
 							? error.message

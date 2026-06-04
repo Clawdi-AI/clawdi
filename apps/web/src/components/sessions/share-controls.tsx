@@ -192,7 +192,7 @@ function CopyLinkButton({ sessionId }: { sessionId: string }) {
 			className={cn("size-8", copied && "text-success")}
 			onClick={copy}
 			aria-label="Copy Share Link"
-			title="Copy Share Link"
+			title="Copy share link"
 		>
 			{copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
 		</Button>

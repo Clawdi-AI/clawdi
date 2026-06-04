@@ -283,7 +283,7 @@ export default function ProjectDetailPage() {
 			{joinedFromShare ? (
 				<Alert>
 					<CheckCircle2 className="size-4" />
-					<AlertTitle>Project Added</AlertTitle>
+					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
 							Skills and Vault keys are used by agents. Add this Project to an agent to make them
@@ -726,7 +726,7 @@ function UseProjectWithAgentDialog({
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
 						<Bot className="size-4" />
-						<AlertTitle>No Agents Connected</AlertTitle>
+						<AlertTitle>No agents connected</AlertTitle>
 						<AlertDescription>
 							Add an agent from Overview first, then add this Project here or from the agent&apos;s
 							Projects tab.
@@ -959,7 +959,7 @@ function InstallSkillInProjectForm({
 					className="w-full sm:w-auto"
 				>
 					{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Install Skill
+					Install skill
 				</Button>
 			</div>
 			<p className="text-xs text-muted-foreground">Paste a GitHub skill path to add it here.</p>

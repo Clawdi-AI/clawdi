@@ -202,7 +202,7 @@ export default function MemoriesPage() {
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Brain}
-					title="Memory Library"
+					title="Memory library"
 					count={data ? `${total} memor${total === 1 ? "y" : "ies"}` : undefined}
 					description="Account-level notes agents can recall across runs. They are not shared through Projects."
 				/>

@@ -110,7 +110,7 @@ function CliAuthorizeContent() {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Authorization Request Unavailable</AlertTitle>
+					<AlertTitle>Authorization request unavailable</AlertTitle>
 					<AlertDescription>{message}</AlertDescription>
 				</Alert>
 			</Shell>
