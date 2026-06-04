@@ -10,6 +10,39 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.11.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.11.0
+
+Package: `clawdi@0.11.0`
+
+### Changed
+
+- `clawdi daemon` now installs one singleton launchd/systemd unit that syncs
+  every registered local agent. User-facing per-agent daemon install, restart,
+  uninstall, logs, and `--all` controls were removed; use
+  `clawdi daemon status --agent <type>` when you need a focused status view.
+- Existing per-agent daemon units are migrated automatically. Re-running
+  `clawdi setup` or `clawdi daemon install` installs the singleton and removes
+  old per-agent supervisor units.
+
+### Added
+
+- Added `clawdi daemon rpc` for local daemon control operations such as
+  `daemon.ping`, `daemon.status`, `daemon.doctor`, `daemon.logs`, lifecycle
+  actions, and control-token rotation.
+- Added optional HTTP JSON-RPC host/port binding for daemon control. The
+  owner-only Unix socket remains enabled by default.
+
+### Security
+
+- Daemon control RPC now requires bearer-token auth on every request. The
+  generated token is stored owner-only, can be rotated with
+  `daemon.rotate_token`, and is checked with timing-safe comparison.
+- HTTP RPC listeners bind to loopback by default. Non-loopback binds require
+  explicit `--rpc-allow-remote` opt-in and should only be used behind SSH
+  tunneling, private networking, or TLS termination.
+
 ## Clawdi CLI v0.10.1
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.10.1
