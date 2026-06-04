@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { rejectUnsupportedOpts } from "./serve";
 
 /**
- * Behavior tests for the post-codex-review fixes:
+ * Behavior tests for daemon singleton handler behavior:
  *   - rejectUnsupportedOpts (helper used by status/uninstall/restart/logs/doctor)
  *   - singleton daemon handlers rejecting legacy target selectors
  *
@@ -198,6 +198,44 @@ describe("full control RPC handler surface", () => {
 					wait: false,
 				}))(),
 		).rejects.toThrow("vault.inject secret rendering cannot run as a background operation");
+	});
+
+	it("does not overwrite existing auth with an unverified imported API key", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalFetch = globalThis.fetch;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		globalThis.fetch = Object.assign(async () => new Response("", { status: 401 }), {
+			preconnect: originalFetch.preconnect,
+		});
+		try {
+			const [{ createControlRpcHandlers }, { getAuth, setAuth }] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			setAuth({ apiKey: "old-key", userId: "old-user", email: "old@example.com" });
+			const handler = createControlRpcHandlers()["auth.login"];
+			if (!handler) throw new Error("missing auth.login handler");
+
+			await expect(
+				(async () =>
+					handler({
+						api_key: "bad-key",
+						replace: true,
+						confirm_secret_access: true,
+					}))(),
+			).rejects.toThrow("API key verification failed with HTTP 401");
+			expect(getAuth()?.apiKey).toBe("old-key");
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
 	});
 });
 

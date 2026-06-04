@@ -2978,13 +2978,12 @@ control-plane operations, but it should be a narrow **CLI Control RPC**, not
 4. It must distinguish secret resolution calls from model traffic. RPC may ask
    the CLI to resolve a `clawdi://` ref or managed provider payload, but model
    calls still go runtime to provider.
-5. It must be local-first: Unix domain socket on macOS/Linux and named pipe on
-   Windows by default. Loopback HTTP RPC should require an explicit flag such as
-   `--listen 127.0.0.1:<port>` plus a bearer token stored under
-   `$CLAWDI_HOME/daemon/control-token`.
+5. It must be local-first: loopback HTTP RPC by default, with bearer-token auth
+   and a token stored under `$CLAWDI_HOME/daemon/control-token`. Non-loopback
+   binds must require an explicit opt-in.
 6. It must never bind to public interfaces by default. If a hosted agent
    runtime exposes a control channel, Clawdi Cloud should reach it through the
-   hosting control plane or a localhost-only control socket, not through an
+   hosting control plane or a localhost-only control endpoint, not through an
    internet-facing listener.
 7. Mutating methods need idempotency keys, dry-run support, and redacted
    before/after plans. Runtime activation remains an explicit apply step.
@@ -3029,14 +3028,14 @@ Implementation shape:
    Commander or shell command parsing.
 6. Keep the existing sync daemon loop focused on sync/SSE/heartbeats. The
    control RPC can live in the same installed daemon process later, but it
-   should be implemented as a separate Module with its own auth token, socket,
+   should be implemented as a separate Module with its own auth token, endpoint,
    logs, and tests. If that makes lifecycle coupling messy, ship it as
    `clawdi control run` first and have `clawdi daemon install` opt into it.
 
 Security tests required before enabling RPC:
 
-1. Socket/token permissions prevent another local user from invoking mutating
-   methods.
+1. Token-file permissions and loopback binding prevent another local or remote
+   user from invoking mutating methods.
 2. Loopback mode rejects missing/invalid bearer tokens and sends no CORS
    wildcard headers.
 3. RPC responses redact env values, Vault values, managed API keys, OAuth
@@ -3109,10 +3108,9 @@ Security tests required before enabling RPC:
     while `clawdi://` secret refs may resolve through Clawdi Vault.
 29. Extract AI Provider command behavior into deep service modules before
     adding remote invocation.
-30. Add a local CLI Control RPC adapter over Unix domain socket / named pipe
-    with an explicit loopback HTTP RPC opt-in, allowlisted methods, token auth,
-    dry-run support, and redacted JSON responses.
-30. Teach hosted deployment code to prefer one-shot CLI invocation for
+30. Add a local CLI Control RPC adapter over loopback HTTP, allowlisted methods,
+    token auth, dry-run support, and redacted JSON responses.
+31. Teach hosted deployment code to prefer one-shot CLI invocation for
     deployment-time materialization, then migrate to Control RPC only when
     runtime-local long-lived control is needed.
 

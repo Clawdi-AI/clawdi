@@ -48,6 +48,7 @@ import {
 	callControlRpc,
 	DEFAULT_CONTROL_RPC_HOST,
 	DEFAULT_CONTROL_RPC_PORT,
+	isLoopbackRpcHost,
 	rotateControlToken,
 	startControlRpcServer,
 } from "../serve/control-rpc";
@@ -246,9 +247,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		abort.signal,
 		rpcListen,
 	);
-	activeControlRpcHttp = rpc.http
-		? { ...rpc.http, allow_remote: rpcListen.allowRemote === true }
-		: null;
+	activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
 	log.info("serve.rpc_listening", {
 		token_path: rpc.tokenPath,
 		http: rpc.http,
@@ -441,10 +440,8 @@ export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 	// plist), so `tail` works. Linux systemd routes
 	// `StandardError=journal` to journald — there's no file to
 	// tail, so we delegate to `journalctl --user -u <unit>`.
-	// Codex flagged the original implementation: it used `tail`
-	// unconditionally and silently failed (or worse, errored) on
-	// Linux because `~/.clawdi/serve/logs/daemon.stderr.log`
-	// never gets created.
+	// Linux daemon logs live in journald, while macOS launchd writes
+	// to the file path configured by the plist.
 	const platform = process.platform;
 	let cmd: string;
 	let args: string[];
@@ -1140,12 +1137,10 @@ interface AuthPollResponse {
 }
 
 async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<AuthMeResponse> {
-	setAuth({ apiKey });
 	const response = await fetch(`${apiUrl}/api/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!response.ok) {
-		clearAuth();
 		throw new Error(`API key verification failed with HTTP ${response.status}`);
 	}
 	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/api/auth/me");
@@ -1596,18 +1591,6 @@ function requireBooleanConfirmation(
 	if (optionalBooleanParam(record[key], key) !== true) {
 		throw new Error(`${action} requires ${key}=true.`);
 	}
-}
-
-function isLoopbackRpcHost(host: string): boolean {
-	const normalized = host.trim().toLowerCase();
-	return (
-		normalized === "localhost" ||
-		normalized === "::1" ||
-		normalized === "[::1]" ||
-		normalized === "0:0:0:0:0:0:0:1" ||
-		normalized === "127.0.0.1" ||
-		normalized.startsWith("127.")
-	);
 }
 
 function optionalPortParam(value: unknown, label: string): number | undefined {

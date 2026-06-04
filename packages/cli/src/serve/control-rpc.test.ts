@@ -11,7 +11,12 @@ import {
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { callControlRpc, rotateControlToken, startControlRpcServer } from "./control-rpc";
+import {
+	callControlRpc,
+	isLoopbackRpcHost,
+	rotateControlToken,
+	startControlRpcServer,
+} from "./control-rpc";
 import { getDaemonControlTokenPath } from "./paths";
 
 if (process.platform !== "win32") {
@@ -83,6 +88,15 @@ if (process.platform !== "win32") {
 			await expect(
 				startControlRpcServer({}, abort.signal, { host: "0.0.0.0", port: 0 }),
 			).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
+		});
+
+		it("only treats numeric 127/8 hosts and localhost as loopback", () => {
+			expect(isLoopbackRpcHost("localhost")).toBe(true);
+			expect(isLoopbackRpcHost("127.0.0.1")).toBe(true);
+			expect(isLoopbackRpcHost("127.42.0.1")).toBe(true);
+			expect(isLoopbackRpcHost("[::1]")).toBe(true);
+			expect(isLoopbackRpcHost("127.evil.com")).toBe(false);
+			expect(isLoopbackRpcHost("0.0.0.0")).toBe(false);
 		});
 
 		it("requires a bearer token for HTTP RPC access", async () => {

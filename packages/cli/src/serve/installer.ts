@@ -56,7 +56,7 @@ function home(): string {
  * `$HOME/.clawdi/serve/logs/...` into the plist while `daemon logs`
  * (which DID honor CLAWDI_HOME via `getServeLogPath`) looked at
  * `/foo/serve/logs/...` — `daemon logs` couldn't find the file.
- * Codex flagged this as P2 in PR-#74 review. */
+ * The installer and log command must resolve the same state root. */
 function clawdiRoot(): string {
 	const homeOverride = process.env.CLAWDI_HOME;
 	if (homeOverride) return homeOverride;

@@ -7,6 +7,7 @@ import {
 	type Server,
 	type ServerResponse,
 } from "node:http";
+import { isIP } from "node:net";
 import { getDaemonControlDir, getDaemonControlTokenPath } from "./paths";
 
 const MAX_RPC_BODY_BYTES = 1024 * 1024;
@@ -92,9 +93,6 @@ export async function callControlRpc(
 	params?: unknown,
 	config: ControlRpcClientConfig = {},
 ): Promise<unknown> {
-	if (config.host !== undefined && config.port === undefined) {
-		config = { ...config, port: DEFAULT_CONTROL_RPC_PORT };
-	}
 	const token = config.token ?? process.env.CLAWDI_DAEMON_RPC_TOKEN ?? readControlToken();
 	const body = JSON.stringify({
 		jsonrpc: "2.0",
@@ -264,15 +262,15 @@ function bearerTokenMatches(auth: string | undefined, token: string): boolean {
 	);
 }
 
-function isLoopbackRpcHost(host: string): boolean {
+export function isLoopbackRpcHost(host: string): boolean {
 	const normalized = host.trim().toLowerCase();
+	const unbracketed =
+		normalized.startsWith("[") && normalized.endsWith("]") ? normalized.slice(1, -1) : normalized;
 	return (
-		normalized === "localhost" ||
-		normalized === "::1" ||
-		normalized === "[::1]" ||
-		normalized === "0:0:0:0:0:0:0:1" ||
-		normalized === "127.0.0.1" ||
-		normalized.startsWith("127.")
+		unbracketed === "localhost" ||
+		unbracketed === "::1" ||
+		unbracketed === "0:0:0:0:0:0:0:1" ||
+		(isIP(unbracketed) === 4 && unbracketed.split(".")[0] === "127")
 	);
 }
 
