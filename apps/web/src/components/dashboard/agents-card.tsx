@@ -232,7 +232,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 
 	const linkClassName =
-		"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 	return (
 		// `z-0` is load-bearing: without an explicit z-index on this

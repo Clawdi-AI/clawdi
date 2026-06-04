@@ -140,7 +140,7 @@ export default function DashboardPage() {
 		<div className="space-y-5 px-4 lg:px-6">
 			<PageHeader
 				title="Overview"
-				description="Connect agents first. Then create Projects to organize reusable skills and credentials you can share with teammates."
+				description="Your agents, activity, and recent sessions at a glance."
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
