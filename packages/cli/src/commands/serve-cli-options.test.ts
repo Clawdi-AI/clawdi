@@ -25,6 +25,9 @@ function makeHandlers(captured: { last: Record<string, unknown> | null }): Serve
 		serveStatus: recordOpts,
 		serveLogs: recordOpts,
 		serveDoctor: recordOpts,
+		serveRpc: async (_method: string, opts: Record<string, unknown>) => {
+			captured.last = opts;
+		},
 	};
 }
 
@@ -36,13 +39,41 @@ function buildTree(): { program: Command; captured: { last: Record<string, unkno
 }
 
 describe("registerServeCommand", () => {
-	it("daemon install --agent codex reaches the action", async () => {
+	it("daemon install reaches the action with no target selector", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "daemon", "install", "--agent", "codex"]);
-		expect(captured.last?.agent).toBe("codex");
+		await program.parseAsync(["node", "clawdi", "daemon", "install"]);
+		expect(captured.last).toEqual({});
 	});
 
-	it("daemon run --agent codex --environment-id <uuid> reaches the foreground action", async () => {
+	it("daemon run reaches the foreground action with no target selector", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "run"]);
+		expect(captured.last).toEqual({});
+	});
+
+	it("daemon run accepts control HTTP RPC host and port", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"run",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"17654",
+		]);
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
+	});
+
+	it("daemon run accepts the non-loopback HTTP RPC opt-in", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "run", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
+	});
+
+	it("daemon run accepts hidden legacy selector args for supervisor migration", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
@@ -52,60 +83,130 @@ describe("registerServeCommand", () => {
 			"--agent",
 			"codex",
 			"--environment-id",
-			"00000000-0000-0000-0000-000000000001",
+			"env-codex",
 		]);
 		expect(captured.last?.agent).toBe("codex");
-		expect(captured.last?.environmentId).toBe("00000000-0000-0000-0000-000000000001");
+		expect(captured.last?.environmentId).toBe("env-codex");
 	});
 
 	it("daemon with no subcommand still runs the foreground action", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "daemon", "--agent", "codex"]);
-		expect(captured.last?.agent).toBe("codex");
+		await program.parseAsync(["node", "clawdi", "daemon"]);
+		expect(captured.last).toEqual({});
 	});
 
-	it("legacy serve with no subcommand still runs the foreground action", async () => {
-		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "--agent", "codex"]);
-		expect(captured.last?.agent).toBe("codex");
-	});
-
-	it("install --agent codex (child-side) reaches the action", async () => {
-		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "install", "--agent", "codex"]);
-		expect(captured.last?.agent).toBe("codex");
-	});
-
-	it("install with --agent on parent side also reaches the action", async () => {
-		// `clawdi serve --agent codex install` — the user passed
-		// --agent before the subcommand. Without optsWithGlobals,
-		// the action received `agent: undefined`.
-		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "--agent", "codex", "install"]);
-		expect(captured.last?.agent).toBe("codex");
-	});
-
-	it("install --agent codex --environment-id <uuid> flows through", async () => {
+	it("daemon with no subcommand accepts control HTTP RPC host and port", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync([
 			"node",
 			"clawdi",
-			"serve",
-			"install",
-			"--agent",
-			"codex",
-			"--environment-id",
-			"00000000-0000-0000-0000-000000000001",
+			"daemon",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"17654",
 		]);
-		expect(captured.last?.agent).toBe("codex");
-		expect(captured.last?.environmentId).toBe("00000000-0000-0000-0000-000000000001");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
 	});
 
-	it("uninstall --all is visible to action", async () => {
+	it("daemon with no subcommand accepts the non-loopback HTTP RPC opt-in", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "uninstall", "--all"]);
-		expect(captured.last?.all).toBe(true);
-		expect(captured.last?.agent).toBeUndefined();
+		await program.parseAsync(["node", "clawdi", "daemon", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
+	});
+
+	it("legacy serve with no subcommand still runs the foreground action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve"]);
+		expect(captured.last).toEqual({});
+	});
+
+	it("uninstall reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "uninstall"]);
+		expect(captured.last).toEqual({});
+	});
+
+	it("install accepts control HTTP RPC host and port", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"install",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"17654",
+		]);
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
+	});
+
+	it("install accepts the non-loopback HTTP RPC opt-in", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "install", "--allow-remote"]);
+		expect(captured.last?.allowRemote).toBe(true);
+	});
+
+	it("restart reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "serve", "restart"]);
+		expect(captured.last).toEqual({});
+	});
+
+	it("ping reaches the daemon ping RPC", async () => {
+		const captured = {
+			lastMethod: null as string | null,
+			last: null as Record<string, unknown> | null,
+		};
+		const program = new Command();
+		registerServeCommand(program, {
+			...makeHandlers(captured),
+			serveRpc: async (method: string, opts: Record<string, unknown>) => {
+				captured.lastMethod = method;
+				captured.last = opts;
+			},
+		});
+
+		await program.parseAsync(["node", "clawdi", "daemon", "ping"]);
+
+		expect(captured.lastMethod).toBe("ping");
+		expect(captured.last).toEqual({});
+	});
+
+	it("rotate-token reaches the token rotation RPC", async () => {
+		const captured = {
+			lastMethod: null as string | null,
+			last: null as Record<string, unknown> | null,
+		};
+		const program = new Command();
+		registerServeCommand(program, {
+			...makeHandlers(captured),
+			serveRpc: async (method: string, opts: Record<string, unknown>) => {
+				captured.lastMethod = method;
+				captured.last = opts;
+			},
+		});
+
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"rotate-token",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"17654",
+			"--token",
+			"tok-test",
+		]);
+
+		expect(captured.lastMethod).toBe("rotate_token");
+		expect(captured.last?.host).toBe("127.0.0.1");
+		expect(captured.last?.port).toBe("17654");
+		expect(captured.last?.token).toBe("tok-test");
 	});
 
 	it("status --agent claude_code (child-side) reaches the action", async () => {
@@ -124,35 +225,15 @@ describe("registerServeCommand", () => {
 		expect(captured.last?.agent).toBeUndefined();
 	});
 
-	it("restart --all reaches the action", async () => {
-		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "restart", "--all"]);
-		expect(captured.last?.all).toBe(true);
-	});
-
 	it("logs --follow flows through", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "logs", "--follow", "--agent", "codex"]);
+		await program.parseAsync(["node", "clawdi", "serve", "logs", "--follow"]);
 		expect(captured.last?.follow).toBe(true);
-		expect(captured.last?.agent).toBe("codex");
 	});
 
 	it("doctor --json reaches the action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--json"]);
 		expect(captured.last?.json).toBe(true);
-	});
-
-	it("doctor passes through --agent (validated/rejected by handler, not parser)", async () => {
-		// Commander accepts `--agent X` on doctor because parent
-		// defines it, even though doctor itself doesn't. The handler
-		// is the one that says "doctor doesn't accept --agent" via
-		// `rejectUnsupportedOpts`. This test pins the parser-level
-		// invariant: agent IS visible to the action so the handler
-		// can produce the right error message.
-		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--agent", "codex"]);
-		expect(captured.last?.agent).toBe("codex");
-		expect(captured.last?.json).toBeUndefined();
 	});
 });

@@ -19,7 +19,11 @@ import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
-import { install as installDaemonService } from "../serve/installer";
+import {
+	install as installDaemonService,
+	listInstalledAgents,
+	uninstall as uninstallDaemonService,
+} from "../serve/installer";
 
 interface SetupOpts {
 	agent?: string;
@@ -170,20 +174,38 @@ async function registerEnv(
 	}
 }
 
-function installDaemon(agentType: AgentType) {
+function installDaemonForAllRegisteredAgents() {
 	try {
-		const result = installDaemonService({ agent: agentType });
+		const result = installDaemonService();
 		const verb = result.replaced ? "updated" : "installed";
-		console.log(chalk.green(`✓ Daemon ${verb} for ${adapterRegistry[agentType].displayName}`));
+		console.log(chalk.green(`✓ Singleton daemon ${verb}`));
 		console.log(chalk.gray(`  ${result.instructions}`));
+		const failed = cleanupLegacyDaemonUnits();
+		if (failed > 0) process.exitCode = 1;
 	} catch (e) {
-		console.log(
-			chalk.yellow(
-				`⚠ Could not install daemon for ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`,
-			),
-		);
-		console.log(chalk.gray(`  Run manually: clawdi daemon install --agent ${agentType}`));
+		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
+		console.log(chalk.gray("  Run manually: clawdi daemon install"));
 	}
+}
+
+function cleanupLegacyDaemonUnits(): number {
+	let failed = 0;
+	for (const agentType of listInstalledAgents()) {
+		try {
+			const result = uninstallDaemonService({ agent: agentType });
+			if (result.removed) {
+				console.log(chalk.green(`✓ Removed legacy per-agent daemon unit for ${agentType}`));
+			}
+		} catch (e) {
+			console.log(
+				chalk.yellow(
+					`⚠ Could not remove legacy per-agent daemon unit for ${agentType}: ${errMessage(e)}`,
+				),
+			);
+			failed += 1;
+		}
+	}
+	return failed;
 }
 
 async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
@@ -211,10 +233,8 @@ function installDaemonsForRegisteredAgents() {
 		return;
 	}
 	console.log();
-	console.log(chalk.cyan("Installing background sync daemons..."));
-	for (const agentType of registered) {
-		installDaemon(agentType);
-	}
+	console.log(chalk.cyan("Installing background sync daemon..."));
+	installDaemonForAllRegisteredAgents();
 }
 
 async function installBuiltinSkill(agentType: AgentType) {

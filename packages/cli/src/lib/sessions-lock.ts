@@ -73,13 +73,13 @@ export function writeSessionsLock(lock: SessionsLock): void {
 		if (entry) sortedSessions[key] = entry;
 	}
 	const sorted: SessionsLock = { version: lock.version, sessions: sortedSessions };
-	// Atomic write: temp file + rename. `--all` mode runs N daemons
-	// (one per agent) on the same machine, all sharing this single
-	// lock file. Without atomic rename the read-modify-write would
-	// truncate-and-overwrite, allowing two daemons writing within
-	// the same OS-scheduled tick to lose each other's keys (or
-	// produce a half-written file the next reader rejects). The
-	// rename is atomic on POSIX so the worst case is "one daemon's
+	// Atomic write: temp file + rename. The singleton daemon runs
+	// multiple agent engines on the same machine, all sharing this
+	// single lock file. Without atomic rename the read-modify-write
+	// would truncate-and-overwrite, allowing two engines writing
+	// within the same OS-scheduled tick to lose each other's keys
+	// (or produce a half-written file the next reader rejects). The
+	// rename is atomic on POSIX so the worst case is "one engine's
 	// hash didn't land, next push catches it" — never corruption.
 	const tmp = `${path}.tmp.${process.pid}`;
 	writeFileSync(tmp, `${JSON.stringify(sorted, null, 2)}\n`, { mode: 0o600 });

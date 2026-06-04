@@ -1,10 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { rejectUnsupportedOpts } from "./serve";
 
 /**
- * Behavior tests for the post-codex-review fixes:
+ * Behavior tests for daemon singleton handler behavior:
  *   - rejectUnsupportedOpts (helper used by status/uninstall/restart/logs/doctor)
- *   - --all + --agent mutex (install / uninstall / restart) via integration
+ *   - singleton daemon handlers rejecting legacy target selectors
  *
  * Strategy: swap `process.exit` to throw a tagged error so we can
  * `expect(...).toThrow()` and inspect the captured `console.error`
@@ -84,27 +95,31 @@ describe("rejectUnsupportedOpts", () => {
 	});
 });
 
-describe("--all + --agent mutex", () => {
-	it("uninstall errors with both flags", async () => {
-		const { serveUninstall } = await import("./serve");
-		await expect(serveUninstall({ all: true, agent: "codex" })).rejects.toThrow(ExitCalled);
-		expect(captured.exitCode).toBe(1);
-		expect(captured.stderr.join("\n")).toMatch(/--all and --agent are mutually exclusive/);
-	});
-
-	it("restart errors with both flags", async () => {
-		const { serveRestart } = await import("./serve");
-		await expect(serveRestart({ all: true, agent: "codex" })).rejects.toThrow(ExitCalled);
-		expect(captured.exitCode).toBe(1);
-		expect(captured.stderr.join("\n")).toMatch(/--all and --agent are mutually exclusive/);
-	});
-
-	// install's mutex is also tested via parser path (serve-cli-options.test.ts)
-	// — the handler-level test would need to stub `isLoggedIn` so we can reach
-	// the `if (opts.all)` branch. Skip in favor of the integration test.
-});
-
 describe("subcommand handler rejects parent-leaked options", () => {
+	it("install rejects legacy selectors", async () => {
+		const { serveInstall } = await import("./serve");
+		await expect(serveInstall({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon install.*--agent/);
+	});
+
+	it("uninstall rejects legacy selectors", async () => {
+		const { serveUninstall } = await import("./serve");
+		await expect(serveUninstall({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon uninstall.*--agent/);
+	});
+
+	it("restart rejects legacy selectors", async () => {
+		const { serveRestart } = await import("./serve");
+		await expect(serveRestart({ agent: "codex" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+		expect(captured.stderr.join("\n")).toMatch(/daemon restart.*--agent/);
+	});
+
 	it("uninstall rejects --environment-id", async () => {
 		const { serveUninstall } = await import("./serve");
 		await expect(
@@ -133,3 +148,237 @@ describe("subcommand handler rejects parent-leaked options", () => {
 		expect(captured.stderr.join("\n")).toMatch(/daemon doctor.*--agent/);
 	});
 });
+
+describe("full control RPC handler surface", () => {
+	it("advertises sync, vault, auth, update, and operation RPC methods", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handlers = createControlRpcHandlers();
+		const methodsResult = (await handlers.methods?.({})) as { methods?: string[] } | undefined;
+
+		expect(methodsResult?.methods).toContain("ping");
+		expect(methodsResult?.methods).toContain("status");
+		expect(methodsResult?.methods?.some((method) => method.startsWith("daemon."))).toBe(false);
+		expect(methodsResult?.methods).toContain("sync.push");
+		expect(methodsResult?.methods).toContain("sync.pull");
+		expect(methodsResult?.methods).toContain("vault.resolve");
+		expect(methodsResult?.methods).toContain("auth.login");
+		expect(methodsResult?.methods).toContain("update.install");
+		expect(methodsResult?.methods).toContain("operation.status");
+	});
+
+	it("requires an explicit cwd, project, or all=true for sync.push", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["sync.push"];
+		if (!handler) throw new Error("missing sync.push handler");
+
+		await expect((async () => handler({}))()).rejects.toThrow(
+			"sync.push RPC requires cwd or project unless all=true",
+		);
+	});
+
+	it("rejects push-only sync params on pull", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["sync.pull"];
+		if (!handler) throw new Error("missing sync.pull handler");
+
+		await expect(
+			(async () => handler({ exclude_project: "/tmp/private", wait: true }))(),
+		).rejects.toThrow("Unsupported RPC params: exclude_project");
+	});
+
+	it("blocks vault plaintext reads unless explicitly confirmed", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["vault.resolve"];
+		if (!handler) throw new Error("missing vault.resolve handler");
+
+		await expect(
+			(async () => handler({ key: "OPENAI_API_KEY", include_value: true }))(),
+		).rejects.toThrow("vault.resolve plaintext access requires confirm_secret_access=true");
+	});
+
+	it("does not allow vault.inject secret rendering in background operation logs", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["vault.inject"];
+		if (!handler) throw new Error("missing vault.inject handler");
+
+		await expect(
+			(async () =>
+				handler({
+					input: "OPENAI_API_KEY=clawdi://prod/openai/key",
+					confirm_secret_access: true,
+					wait: false,
+				}))(),
+		).rejects.toThrow("vault.inject secret rendering cannot run as a background operation");
+	});
+
+	it("does not overwrite existing auth with an unverified imported API key", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalFetch = globalThis.fetch;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		globalThis.fetch = Object.assign(async () => new Response("", { status: 401 }), {
+			preconnect: originalFetch.preconnect,
+		});
+		try {
+			const [{ createControlRpcHandlers }, { getAuth, setAuth }] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			setAuth({ apiKey: "old-key", userId: "old-user", email: "old@example.com" });
+			const handler = createControlRpcHandlers()["auth.login"];
+			if (!handler) throw new Error("missing auth.login handler");
+
+			await expect(
+				(async () =>
+					handler({
+						api_key: "bad-key",
+						replace: true,
+						confirm_secret_access: true,
+					}))(),
+			).rejects.toThrow("API key verification failed with HTTP 401");
+			expect(getAuth()?.apiKey).toBe("old-key");
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects device-flow auth replacement while existing auth is present", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-replace-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			const [{ createControlRpcHandlers }, { setAuth }] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			setAuth({ apiKey: "old-key", userId: "old-user", email: "old@example.com" });
+			const handler = createControlRpcHandlers()["auth.login"];
+			if (!handler) throw new Error("missing auth.login handler");
+
+			await expect(
+				(async () =>
+					handler({
+						replace: true,
+						confirm_secret_access: true,
+					}))(),
+			).rejects.toThrow("auth.login replace requires api_key");
+		} finally {
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("daemon HTTP RPC listener safety", () => {
+	it("rejects non-loopback listen hosts unless explicitly allowed", async () => {
+		const { serve } = await import("./serve");
+
+		await expect(
+			serve({ host: "0.0.0.0", port: "17654" } as Record<string, unknown>),
+		).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
+	});
+
+	it("allows a loopback listen host without an explicit port before continuing to the auth gate", async () => {
+		const { serve } = await import("./serve");
+
+		await expect(serve({ host: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
+			ExitCalled,
+		);
+	});
+
+	it("allows explicit non-loopback opt-in before continuing to the auth gate", async () => {
+		const originalHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-listen-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			const { serve } = await import("./serve");
+			await expect(
+				serve({
+					host: "0.0.0.0",
+					port: "17654",
+					allowRemote: true,
+				} as Record<string, unknown>),
+			).rejects.toThrow(ExitCalled);
+		} finally {
+			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("legacy daemon run migration", () => {
+	it("installs the singleton unit, persists an explicit env id, and removes the old unit", async () => {
+		if (process.platform !== "linux") return;
+
+		const originalHome = process.env.HOME;
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalPath = process.env.PATH;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalArgv1 = process.argv[1];
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-legacy-daemon-"));
+		const stubBin = join(tmpHome, "bin");
+		const fakeEntry = join(tmpHome, "clawdi-bin");
+		const singletonUnit = join(tmpHome, ".config", "systemd", "user", "clawdi-serve.service");
+		const legacyUnit = join(tmpHome, ".config", "systemd", "user", "clawdi-serve-codex.service");
+		try {
+			process.env.HOME = tmpHome;
+			delete process.env.CLAWDI_HOME;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			mkdirSync(stubBin, { recursive: true });
+			writeExecutable(join(stubBin, "systemctl"), "#!/bin/sh\nexit 0\n");
+			process.env.PATH = `${stubBin}:${originalPath ?? ""}`;
+			writeExecutable(fakeEntry, "#!/bin/sh\nexit 0\n");
+			process.argv[1] = fakeEntry;
+			mkdirSync(dirname(legacyUnit), { recursive: true });
+			writeFileSync(legacyUnit, "legacy unit\n");
+
+			const { serve } = await import("./serve");
+			await expect(
+				serve({
+					agent: "codex",
+					environmentId: "env-codex",
+				} as Record<string, unknown>),
+			).rejects.toThrow(ExitCalled);
+
+			expect(captured.exitCode).toBe(0);
+			expect(existsSync(singletonUnit)).toBe(true);
+			expect(existsSync(legacyUnit)).toBe(false);
+			expect(
+				readFileSync(join(tmpHome, ".clawdi", "environments", "codex.json"), "utf-8"),
+			).toContain('"id": "env-codex"');
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalPath === undefined) delete process.env.PATH;
+			else process.env.PATH = originalPath;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			process.argv[1] = originalArgv1 ?? "";
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+});
+
+function writeExecutable(path: string, content: string): void {
+	writeFileSync(path, content, { mode: 0o755 });
+	chmodSync(path, 0o755);
+}

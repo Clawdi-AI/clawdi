@@ -336,7 +336,7 @@ describe("maybeAutoUpdate", () => {
 			restore();
 		}
 		expect(captured).toContain("Updated clawdi to");
-		expect(captured).toContain("Restart the daemon to pick it up: clawdi daemon restart --all");
+		expect(captured).toContain("Restart the daemon to pick it up: clawdi daemon restart");
 	});
 
 	it("keeps post-update notice out of non-TTY stdout", async () => {

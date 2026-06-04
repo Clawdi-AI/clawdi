@@ -77,12 +77,15 @@ describe("installer.install (macOS plist)", () => {
 			if (os.platform() !== "darwin") return;
 
 			const { install } = await import("./installer");
-			const result = install({ agent: "claude_code" });
+			const result = install();
 			expect(existsSync(result.unit)).toBe(true);
 			const content = readFileSync(result.unit, "utf-8");
 			expect(content).toContain("<key>Label</key>");
-			expect(content).toContain("<string>ai.clawdi.serve.claude_code</string>");
+			expect(content).toContain("<string>ai.clawdi.serve</string>");
 			expect(content).toContain(process.argv[1] ?? "");
+			expect(content).toContain("<string>daemon</string>");
+			expect(content).toContain("<string>run</string>");
+			expect(content).not.toContain("<string>--agent</string>");
 			expect(content).toContain("<key>RunAtLoad</key>");
 			expect(content).toContain("<key>KeepAlive</key>");
 		} finally {
@@ -106,7 +109,7 @@ describe("installer.install (macOS plist)", () => {
 
 		try {
 			const { install } = await import("./installer");
-			const result = install({ agent: "claude_code" });
+			const result = install();
 			const content = readFileSync(result.unit, "utf-8");
 			expect(content).toContain("<key>HOME</key>");
 			expect(content).toContain(process.env.HOME ?? "");
@@ -136,7 +139,7 @@ describe("installer.install (macOS plist)", () => {
 
 		try {
 			const { install } = await import("./installer");
-			const result = install({ agent: "claude_code" });
+			const result = install();
 			const content = readFileSync(result.unit, "utf-8");
 			// Both keys baked into the plist so the daemon spawned by
 			// launchd after reboot still sees them. Without this, env-
@@ -161,7 +164,7 @@ describe("installer.install (macOS plist)", () => {
 		// daemon's `resolveEnvironmentId` prefers env vars over the
 		// per-agent file, so a captured CLAWDI_ENVIRONMENT_ID would
 		// pin every installed agent to that one env id during
-		// `clawdi daemon install --all` — all daemons trampling the
+		// singleton daemon — every engine could be routed to the
 		// same project.
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;
@@ -178,7 +181,7 @@ describe("installer.install (macOS plist)", () => {
 		process.env.CLAWDI_ENVIRONMENT_ID = "00000000-0000-0000-0000-deadbeef0001";
 		try {
 			const { install } = await import("./installer");
-			const result = install({ agent: "claude_code" });
+			const result = install();
 			const content = readFileSync(result.unit, "utf-8");
 			// CLAWDI_ENVIRONMENT_ID must NOT appear under
 			// EnvironmentVariables — neither key nor value.
@@ -191,62 +194,6 @@ describe("installer.install (macOS plist)", () => {
 			process.env.PATH = oldPath;
 			if (oldEnv === undefined) delete process.env.CLAWDI_ENVIRONMENT_ID;
 			else process.env.CLAWDI_ENVIRONMENT_ID = oldEnv;
-		}
-	});
-
-	it("bakes explicit environmentId into ProgramArguments (not EnvironmentVariables)", async () => {
-		const os = await import("node:os");
-		if (os.platform() !== "darwin") return;
-
-		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
-		const { mkdirSync, chmodSync } = await import("node:fs");
-		mkdirSync(stubBin, { recursive: true });
-		const stubLaunchctl = join(stubBin, "launchctl");
-		writeFileSync(stubLaunchctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		chmodSync(stubLaunchctl, 0o755);
-		const oldPath = process.env.PATH;
-		process.env.PATH = `${stubBin}:${oldPath}`;
-		try {
-			const { install } = await import("./installer");
-			const result = install({
-				agent: "claude_code",
-				environmentId: "11111111-2222-3333-4444-555555555555",
-			});
-			const content = readFileSync(result.unit, "utf-8");
-			// Pinned id appears as a CLI argument (scoped to this
-			// unit), not as an env var (would leak across multi-agent
-			// installs if every unit picked up the shell var).
-			expect(content).toContain("<string>--environment-id</string>");
-			expect(content).toContain("<string>11111111-2222-3333-4444-555555555555</string>");
-			expect(content).not.toContain("<key>CLAWDI_ENVIRONMENT_ID</key>");
-		} finally {
-			process.env.PATH = oldPath;
-		}
-	});
-
-	it("rejects non-UUID environmentId at install time (defense-in-depth)", async () => {
-		const os = await import("node:os");
-		if (os.platform() !== "darwin") return;
-
-		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
-		const { mkdirSync, chmodSync } = await import("node:fs");
-		mkdirSync(stubBin, { recursive: true });
-		const stubLaunchctl = join(stubBin, "launchctl");
-		writeFileSync(stubLaunchctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		chmodSync(stubLaunchctl, 0o755);
-		const oldPath = process.env.PATH;
-		process.env.PATH = `${stubBin}:${oldPath}`;
-		try {
-			const { install } = await import("./installer");
-			expect(() =>
-				install({
-					agent: "claude_code",
-					// Shell metachar that could append `--flag` if not validated.
-					environmentId: "abc -- --flag injected",
-				}),
-			).toThrow(/non-UUID/);
-		} finally {
-			process.env.PATH = oldPath;
 		}
 	});
 
@@ -270,7 +217,7 @@ describe("installer.install (macOS plist)", () => {
 		process.env.PATH = `${stubBin}:${oldPath}`;
 		try {
 			const { install } = await import("./installer");
-			const result = install({ agent: "claude_code" });
+			const result = install();
 			const mode = statSync(result.unit).mode & 0o777;
 			expect(mode).toBe(0o600);
 		} finally {
@@ -293,12 +240,43 @@ describe("installer.install (macOS plist)", () => {
 
 		try {
 			const { install, uninstall } = await import("./installer");
-			install({ agent: "claude_code" });
-			const result = uninstall({ agent: "claude_code" });
+			install();
+			const result = uninstall();
 			expect(result.removed).toBe(true);
 			// Second uninstall is a no-op — no file, no error.
-			const result2 = uninstall({ agent: "claude_code" });
+			const result2 = uninstall();
 			expect(result2.removed).toBe(false);
+		} finally {
+			process.env.PATH = oldPath;
+		}
+	});
+});
+
+describe("installer.install (Linux systemd)", () => {
+	it("captures RPC host, port, and remote opt-in into the unit Environment", async () => {
+		const os = await import("node:os");
+		if (os.platform() !== "linux") return;
+
+		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+		const { mkdirSync, chmodSync } = await import("node:fs");
+		mkdirSync(stubBin, { recursive: true });
+		const stubSystemctl = join(stubBin, "systemctl");
+		writeFileSync(stubSystemctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		chmodSync(stubSystemctl, 0o755);
+		const oldPath = process.env.PATH;
+		process.env.PATH = `${stubBin}:${oldPath}`;
+
+		try {
+			const { install } = await import("./installer");
+			const result = install({
+				rpcHost: "0.0.0.0",
+				rpcPort: 17654,
+				rpcAllowRemote: true,
+			});
+			const content = readFileSync(result.unit, "utf-8");
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=0.0.0.0"');
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_PORT=17654"');
+			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1"');
 		} finally {
 			process.env.PATH = oldPath;
 		}

@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setup } from "../../src/commands/setup";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -103,8 +103,9 @@ afterEach(() => {
 });
 
 describe("setup daemon install", () => {
-	it("defaults to installing daemon units for every registered agent", async () => {
+	it("defaults to installing one daemon unit for all registered agents", async () => {
 		seedRegisteredAgent("claude_code", "env-claude");
+		seedDaemonUnit("claude_code");
 		const { captured } = installEnvironmentMock("env-codex");
 
 		await setup({ agent: "codex", yes: true });
@@ -117,8 +118,9 @@ describe("setup daemon install", () => {
 					(req.body as { agent_type?: string } | undefined)?.agent_type === "codex",
 			),
 		).toBe(true);
-		expectDaemonRun("claude_code");
-		expectDaemonRun("codex");
+		expectDaemonRunSingleton();
+		expect(daemonUnitExists("claude_code")).toBe(false);
+		expect(daemonUnitExists("codex")).toBe(false);
 	});
 
 	it("honors --no-daemon while still registering the requested agent", async () => {
@@ -127,6 +129,7 @@ describe("setup daemon install", () => {
 		await setup({ agent: "codex", yes: true, daemon: false });
 
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(true);
+		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
 	});
 
@@ -138,6 +141,7 @@ describe("setup daemon install", () => {
 		expect(process.exitCode).toBe(1);
 		process.exitCode = 0;
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(false);
+		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
 	});
 });
@@ -307,6 +311,12 @@ function seedRegisteredAgent(agent: string, envId: string): void {
 }
 
 function daemonUnitPath(agent: string): string {
+	if (agent === "daemon") {
+		if (process.platform === "darwin") {
+			return join(home, "Library", "LaunchAgents", "ai.clawdi.serve.plist");
+		}
+		return join(home, ".config", "systemd", "user", "clawdi-serve.service");
+	}
 	if (process.platform === "darwin") {
 		return join(home, "Library", "LaunchAgents", `ai.clawdi.serve.${agent}.plist`);
 	}
@@ -317,19 +327,28 @@ function daemonUnitExists(agent: string): boolean {
 	return existsSync(daemonUnitPath(agent));
 }
 
+function seedDaemonUnit(agent: string): void {
+	const path = daemonUnitPath(agent);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, "legacy daemon unit\n");
+}
+
 function readDaemonUnit(agent: string): string {
 	return readFileSync(daemonUnitPath(agent), "utf-8");
 }
 
-function expectDaemonRun(agent: string): void {
-	const content = readDaemonUnit(agent);
+function expectDaemonRunSingleton(): void {
+	const content = readDaemonUnit("daemon");
 	if (process.platform === "darwin") {
 		expect(content).toContain("<string>daemon</string>");
 		expect(content).toContain("<string>run</string>");
-		expect(content).toContain(`<string>${agent}</string>`);
+		expect(content).not.toContain("<string>--all</string>");
+		expect(content).not.toContain("<string>--agent</string>");
 		return;
 	}
-	expect(content).toContain(`daemon run --agent ${agent}`);
+	expect(content).toContain("daemon run");
+	expect(content).not.toContain("--all");
+	expect(content).not.toContain("--agent");
 }
 
 function writeExecutable(path: string, content: string): void {

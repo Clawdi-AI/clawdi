@@ -17,24 +17,28 @@
  *      isolation guarantee. Mirrors `getClawdiDir()` in
  *      `lib/config.ts`.
  *
- *   3. Default `$HOME/.clawdi/serve/<agent>/` so the queue file
- *      sits alongside auth.json. Per-agent suffix matters: a
- *      laptop running both Claude Code and Codex daemons can't
- *      share `queue.jsonl` — atomic-rename would race and one
- *      daemon's view of the queue would silently overwrite the
- *      other's.
+ *   3. Default `$HOME/.clawdi/serve/<agent>/` so each sync engine's
+ *      queue file sits alongside auth.json. Per-agent suffix still
+ *      matters inside the singleton daemon: Claude Code and Codex
+ *      engines can't share `queue.jsonl` — atomic-rename would race
+ *      and one engine's view of the queue would silently overwrite
+ *      the other's.
  */
 
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+function clawdiRoot(): string {
+	const homeOverride = process.env.CLAWDI_HOME;
+	if (homeOverride) return homeOverride;
+	const home = process.env.HOME || homedir();
+	return join(home, ".clawdi");
+}
+
 export function getServeStateDir(agentType: string): string {
 	const stateOverride = process.env.CLAWDI_STATE_DIR;
 	if (stateOverride) return join(stateOverride, agentType);
-	const homeOverride = process.env.CLAWDI_HOME;
-	if (homeOverride) return join(homeOverride, "serve", agentType);
-	const home = process.env.HOME || homedir();
-	return join(home, ".clawdi", "serve", agentType);
+	return join(clawdiRoot(), "serve", agentType);
 }
 
 /** Path to a daemon's stderr/stdout log file. The daemon writes
@@ -43,7 +47,15 @@ export function getServeStateDir(agentType: string): string {
  * launchd/systemd at unit-load time per the path baked into the
  * unit definition (see `installer.ts`). */
 export function getServeLogPath(agentType: string, stream: "stderr" | "stdout"): string {
-	const homeOverride = process.env.CLAWDI_HOME;
-	const root = homeOverride ?? join(process.env.HOME || homedir(), ".clawdi");
-	return join(root, "serve", "logs", `${agentType}.${stream}.log`);
+	return join(clawdiRoot(), "serve", "logs", `${agentType}.${stream}.log`);
+}
+
+export function getDaemonControlDir(): string {
+	const stateOverride = process.env.CLAWDI_STATE_DIR;
+	if (stateOverride) return join(stateOverride, "control");
+	return join(clawdiRoot(), "daemon");
+}
+
+export function getDaemonControlTokenPath(): string {
+	return join(getDaemonControlDir(), "control-token");
 }

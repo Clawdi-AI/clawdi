@@ -13,8 +13,9 @@ import {
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
+import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
-import { listInstalledAgents, readHealth } from "../serve/installer";
+import { isSingletonDaemonInstalled, listInstalledAgents, readHealth } from "../serve/installer";
 import { log } from "../serve/log";
 import { getServeStateDir } from "../serve/paths";
 
@@ -396,7 +397,10 @@ function isInformationalInvocation(args = process.argv.slice(2)): boolean {
 
 function outdatedDaemonAgents(current: string): string[] {
 	try {
-		return listInstalledAgents().filter((agent) => {
+		const targets = isSingletonDaemonInstalled()
+			? listRegisteredAgentTypes()
+			: listInstalledAgents();
+		return targets.filter((agent) => {
 			const health = readHealth(getServeStateDir(agent));
 			if (!health.exists) return false;
 			if (!health.version) return true;
@@ -513,10 +517,11 @@ export async function daemonAutoUpdateOnce(
 		currentVersion?: string;
 		installer?: Installer | null;
 		installRunner?: InstallRunner;
+		ignoreDisabled?: boolean;
 		signal?: AbortSignal;
 	} = {},
 ): Promise<DaemonAutoUpdateResult> {
-	if (autoUpdateDisabled()) return "disabled";
+	if (!opts.ignoreDisabled && autoUpdateDisabled()) return "disabled";
 	if (opts.signal?.aborted) return "disabled";
 
 	const current = opts.currentVersion ?? getCliVersion();
@@ -618,11 +623,7 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 				);
 				const outdatedDaemons = outdatedDaemonAgents(current);
 				if (outdatedDaemons.length > 0) {
-					console.log(
-						chalk.gray(
-							`  Restart ${outdatedDaemons.length === 1 ? "the daemon" : "daemons"} to pick it up: clawdi daemon restart --all`,
-						),
-					);
+					console.log(chalk.gray("  Restart the daemon to pick it up: clawdi daemon restart"));
 				}
 			}
 		}

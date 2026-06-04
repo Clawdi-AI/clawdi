@@ -35,13 +35,13 @@ const CLI_STEPS = [
 		title: "Connect and enable sync",
 		code: "clawdi setup",
 		description:
-			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account, and installs background daemons by default.",
+			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account, and installs the background daemon by default.",
 	},
 	{
 		title: "Check live sync",
 		code: "clawdi daemon status",
 		description:
-			"Shows the daemon state for every registered agent. If you opted out during setup, run `clawdi daemon install --all`.",
+			"Shows the daemon state for every registered agent. If you opted out during setup, run `clawdi daemon install`.",
 	},
 	{
 		title: "One-time history backup (optional)",
