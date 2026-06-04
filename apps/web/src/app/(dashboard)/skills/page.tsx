@@ -2,10 +2,10 @@
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Download, ExternalLink, Plus, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Check, Download, ExternalLink, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
-import { type ReactNode, Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
@@ -17,20 +17,18 @@ import {
 	ProjectCompactPicker,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { makeSkillColumns, resolveSkillProjectAccess } from "@/components/skills/skill-columns";
+import { SkillCardGrid } from "@/components/skills/skill-card";
+import { resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
-import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
-import { errorMessage, relativeTime } from "@/lib/utils";
+import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -190,16 +188,6 @@ function SkillsPageInner() {
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
 
-	const skillColumns = useMemo(
-		() =>
-			makeSkillColumns(
-				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
-				uninstallSkill.isPending,
-				{ currentProjectId: targetProjectId, writableProjectIds },
-			),
-		[uninstallSkill.mutate, uninstallSkill.isPending, targetProjectId, writableProjectIds],
-	);
-
 	const installSkill = async (repo: string, path?: string): Promise<boolean> => {
 		const key = `${repo}/${path || ""}`;
 		setInstalling(key);
@@ -356,26 +344,19 @@ function SkillsPageInner() {
 						</span>
 					) : null}
 				</div>
-				<div className="overflow-hidden rounded-lg border bg-card md:hidden">
-					<MobileSkillList
-						skills={skillsForTarget ?? []}
-						isLoading={skillsLoading || isResolvingTarget}
-						emptyMessage={installedSkillsEmptyMessage}
-						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
-						uninstallPending={uninstallSkill.isPending}
-						currentProjectId={targetProjectId}
-						writableProjectIds={writableProjectIds}
-					/>
-				</div>
-				<div className="hidden md:block">
-					<DataTable
-						columns={skillColumns}
-						data={skillsForTarget ?? []}
-						isLoading={skillsLoading || isResolvingTarget}
-						rowAriaLabel={(s) => `Open ${s.name}`}
-						emptyMessage={installedSkillsEmptyMessage}
-					/>
-				</div>
+				<SkillCardGrid
+					skills={skillsForTarget ?? []}
+					isLoading={skillsLoading || isResolvingTarget}
+					emptyMessage={installedSkillsEmptyMessage}
+					readOnlySkillCheck={(s) =>
+						resolveSkillProjectAccess(s, {
+							currentProjectId: targetProjectId,
+							writableProjectIds,
+						}) !== "writable"
+					}
+					onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
+					uninstallPending={uninstallSkill.isPending}
+				/>
 			</section>
 
 			<section className="space-y-3">
@@ -485,110 +466,6 @@ function SkillsPageInner() {
 					})}
 				</div>
 			</section>
-		</div>
-	);
-}
-
-function MobileSkillList({
-	skills,
-	isLoading,
-	emptyMessage,
-	onUninstall,
-	uninstallPending,
-	currentProjectId,
-	writableProjectIds,
-}: {
-	skills: SkillSummary[];
-	isLoading: boolean;
-	emptyMessage: ReactNode;
-	onUninstall: (skillKey: string, projectId: string) => void;
-	uninstallPending: boolean;
-	currentProjectId?: string | null;
-	writableProjectIds?: ReadonlySet<string> | null;
-}) {
-	if (isLoading) {
-		return (
-			<div className="divide-y">
-				{Array.from({ length: 3 }).map((_, index) => (
-					<div key={index} className="px-4 py-3">
-						<Skeleton className="h-4 w-3/4" />
-						<Skeleton className="mt-2 h-3 w-full" />
-						<Skeleton className="mt-2 h-3 w-1/2" />
-					</div>
-				))}
-			</div>
-		);
-	}
-
-	if (skills.length === 0) {
-		return <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>;
-	}
-
-	return (
-		<div className="divide-y">
-			{skills.map((skill) => {
-				const access = resolveSkillProjectAccess(skill, { currentProjectId, writableProjectIds });
-				const canUninstall = access === "writable" && !!skill.project_id;
-				return (
-					<article
-						key={`${skill.project_id ?? "unknown"}-${skill.skill_key}`}
-						className="px-4 py-3"
-					>
-						<div className="flex items-start justify-between gap-3">
-							<div className="min-w-0 flex-1">
-								<div className="flex min-w-0 items-center gap-2">
-									<Link
-										href={skillDetailHref(skill.skill_key, skill.project_id)}
-										className="truncate text-sm font-medium hover:underline"
-									>
-										{skill.name}
-									</Link>
-									<Badge variant="outline" className="shrink-0">
-										v{skill.version}
-									</Badge>
-									{access === "read-only" ? (
-										<Badge variant="secondary" className="shrink-0">
-											Shared
-										</Badge>
-									) : null}
-								</div>
-								{skill.description ? (
-									<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-										{skill.description}
-									</p>
-								) : null}
-								<div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-									<span className="truncate" translate="no">
-										{skill.source_repo ?? skill.source}
-									</span>
-									{skill.updated_at ? <span>{relativeTime(skill.updated_at)}</span> : null}
-								</div>
-							</div>
-							{canUninstall ? (
-								<ConfirmAction
-									title={`Uninstall ${skill.name}?`}
-									description={<p>Other Projects keep their copies.</p>}
-									confirmLabel="Uninstall Skill"
-									destructive
-									onConfirm={() => {
-										if (skill.project_id) onUninstall(skill.skill_key, skill.project_id);
-									}}
-								>
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										disabled={uninstallPending}
-										className="shrink-0 text-muted-foreground hover:text-destructive"
-										aria-label={`Uninstall ${skill.name}`}
-									>
-										<Trash2 className="size-3.5" />
-									</Button>
-								</ConfirmAction>
-							) : null}
-						</div>
-					</article>
-				);
-			})}
 		</div>
 	);
 }

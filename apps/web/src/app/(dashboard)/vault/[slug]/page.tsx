@@ -305,16 +305,21 @@ export default function VaultDetailPage() {
 						No keys yet. Add one above or paste several at once with Import.
 					</div>
 				) : (
-					<div className="divide-y overflow-hidden rounded-lg border bg-card">
+					/* Keys as compact cards: a 200-key vault scans far better in a
+				   multi-column grid than a one-column ledger. */
+					<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 						{keyNames.map(({ section, name }) => (
-							<div key={`${section}/${name}`} className="flex items-center gap-3 px-4 py-2.5">
-								<span className="min-w-0 flex-1 truncate font-mono text-sm">
+							<div
+								key={`${section}/${name}`}
+								className="group flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 transition-colors duration-150 hover:border-foreground/20"
+							>
+								<span className="min-w-0 flex-1 truncate font-mono text-xs" title={name}>
 									{/* "(default)" is the backend's implicit section — noise, hide it. */}
 									{section && section !== "(default)" ? `${section}/` : ""}
 									{name}
 								</span>
-								<span className="font-mono text-xs text-muted-foreground select-none">
-									••••••••
+								<span className="shrink-0 font-mono text-[10px] text-muted-foreground select-none">
+									••••••
 								</span>
 								{isOwner ? (
 									<ConfirmAction
@@ -326,11 +331,11 @@ export default function VaultDetailPage() {
 									>
 										<Button
 											variant="ghost"
-											size="icon-sm"
-											className="text-muted-foreground hover:text-destructive"
+											size="icon-xs"
+											className="text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-destructive group-focus-within:opacity-100 group-hover:opacity-100"
 											aria-label={`Delete ${name}`}
 										>
-											<Trash2 className="size-3.5" />
+											<Trash2 className="size-3" />
 										</Button>
 									</ConfirmAction>
 								) : null}

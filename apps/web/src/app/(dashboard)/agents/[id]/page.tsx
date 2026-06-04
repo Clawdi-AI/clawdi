@@ -27,11 +27,10 @@ import {
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
 import { SessionFeed } from "@/components/sessions/session-feed";
-import { makeSkillColumns } from "@/components/skills/skill-columns";
+import { SkillCardGrid } from "@/components/skills/skill-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -196,16 +195,6 @@ export default function AgentDetailPage() {
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
-
-	const skillColumns = useMemo(
-		() =>
-			makeSkillColumns(
-				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
-				uninstallSkill.isPending,
-				{ currentProjectId: agentProjectId, writableProjectIds },
-			),
-		[uninstallSkill.mutate, uninstallSkill.isPending, agentProjectId, writableProjectIds],
-	);
 
 	const sessionTotal = sessionsPage?.total ?? 0;
 
@@ -400,12 +389,17 @@ export default function AgentDetailPage() {
 							</TabsContent>
 
 							<TabsContent value="skills" className="m-0">
-								<DataTable
-									columns={skillColumns}
-									data={skillsForThisEnv ?? []}
+								<SkillCardGrid
+									skills={skillsForThisEnv ?? []}
 									isLoading={skillsLoading}
-									rowAriaLabel={(s) => `Open ${s.name}`}
 									emptyMessage="No skills installed on this agent yet."
+									readOnlySkillCheck={(s) =>
+										!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+									}
+									onUninstall={(skillKey, projectId) =>
+										uninstallSkill.mutate({ skillKey, projectId })
+									}
+									uninstallPending={uninstallSkill.isPending}
 								/>
 							</TabsContent>
 

@@ -12,6 +12,10 @@ use them. When a PR and this document disagree, fix one of them.
    (`green-500`, `amber-400`, …) and never hex in components.
 2. **Hierarchy from type and hairlines, not boxes.** Prefer a heading +
    1px `border-border` separator over a nested card. Card-in-card is a smell.
+   **Objects get cards; only logs and settings get rows.** Projects, vaults,
+   skills, memories, keys render as (compact) cards in responsive grids;
+   tables/rows are reserved for time-ordered logs (sessions table view) and
+   configuration lists.
 3. **Dense but breathing.** This is a data product: Linear density, not
    marketing whitespace. Tables and lists earn their vertical space.
 4. **Shadows are near-nonexistent.** `shadow-xs`/`shadow-sm` only (≤0.05

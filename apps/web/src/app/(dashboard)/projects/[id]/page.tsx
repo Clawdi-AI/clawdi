@@ -30,6 +30,7 @@ import {
 	projectKindMeta,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
+import { SkillCardGrid } from "@/components/skills/skill-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -68,11 +69,7 @@ import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import {
-	projectDetailHref,
-	projectResourceHref,
-	skillDetailHref,
-} from "@/lib/project-resource-model";
+import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -416,22 +413,14 @@ export default function ProjectDetailPage() {
 				{isOwner && showInstallSkill ? (
 					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 				) : null}
-				{skills.isLoading ? (
-					<Skeleton className="h-24 w-full" />
-				) : skills.error ? (
+				{skills.error ? (
 					<ErrorLine message={errorMessage(skills.error)} />
-				) : skills.data?.items.length ? (
-					<div className="divide-y overflow-hidden rounded-lg border bg-card">
-						{skills.data.items.map((skill) => (
-							<SkillRow
-								key={`${skill.project_id}:${skill.skill_key}`}
-								skill={skill}
-								ownProjectId={project.id}
-							/>
-						))}
-					</div>
 				) : (
-					<EmptyLine message="No skills are visible in this Project yet." />
+					<SkillCardGrid
+						skills={skills.data?.items ?? []}
+						isLoading={skills.isLoading}
+						emptyMessage="No skills are visible in this Project yet."
+					/>
 				)}
 			</HubSection>
 
@@ -1116,31 +1105,6 @@ function CreateVaultInProjectForm({
 			<p className="text-xs text-muted-foreground">
 				Use lowercase letters, numbers, and hyphens. Add keys from the Vaults page after creation.
 			</p>
-		</div>
-	);
-}
-
-function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: string }) {
-	const savedHere = skill.project_id === ownProjectId;
-	return (
-		<div className="group relative flex items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/30">
-			<div className="min-w-0">
-				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium">{skill.name}</span>
-					<Badge variant={savedHere ? "secondary" : "outline"}>
-						{savedHere ? "Saved here" : "From another Project"}
-					</Badge>
-				</div>
-				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-					{skill.skill_key}
-				</div>
-			</div>
-			<ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
-			<Link
-				href={skillDetailHref(skill.skill_key, skill.project_id ?? ownProjectId)}
-				aria-label={`Open ${skill.name}`}
-				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-			/>
 		</div>
 	);
 }
