@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
-import { AlertCircle, MessageSquare } from "lucide-react";
+import { AlertCircle, LayoutList, Table2 } from "lucide-react";
 import {
 	createParser,
 	parseAsBoolean,
@@ -13,20 +13,16 @@ import {
 import { Suspense, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
-import {
-	DashboardSection,
-	DashboardSectionHeader,
-	DashboardSectionToolbar,
-} from "@/components/dashboard/section";
 import { PageHeader } from "@/components/page-header";
-import { MobileSessionList } from "@/components/sessions/mobile-session-list";
 import { sessionColumns } from "@/components/sessions/session-columns";
+import { SessionFeed } from "@/components/sessions/session-feed";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, sessionDetailHref } from "@/lib/project-resource-model";
@@ -98,6 +94,9 @@ function SessionsListInner() {
 			// `has_pr=true/false` is tri-state via the undefined default
 			// (no filter) — nuqs's nullable boolean handles all three.
 			has_pr: parseAsBoolean,
+			// Feed (human cards) is the default; the data table stays one
+			// toggle away for power users.
+			view: parseAsStringLiteral(["feed", "table"] as const).withDefault("feed"),
 		},
 		{ clearOnDefault: true, history: "replace" },
 	);
@@ -196,72 +195,70 @@ function SessionsListInner() {
 		? "No sessions match your filters."
 		: "No sessions yet. Once your agent has a conversation, it'll show up here.";
 	const sessionToolbar = (
-		<DashboardSectionToolbar>
-			<DataTableToolbar
-				value={params.q}
-				onChange={(v) => {
-					// Switch sort to relevance the moment the user
-					// starts typing — mirrors Amp's "type and rank by
-					// match quality" UX. Restore the date sort if the
-					// box is cleared so the empty-search default goes
-					// back to the activity timeline.
-					void setParams({
-						q: v,
-						page: 1,
-						sort:
-							v && params.sort === "last_activity_at"
-								? "relevance"
-								: !v && params.sort === "relevance"
-									? "last_activity_at"
-									: params.sort,
-					});
-				}}
-				placeholder="Search summary, folder, or session ID…"
-			>
-				{agentOptions.length > 0 ? (
-					<DataTableFacetedFilter
-						title="Agent"
-						options={agentOptions}
-						selected={params.agent ? [params.agent] : []}
-						onChange={(arr) => {
-							void setParams({ agent: arr[0] ?? "", page: 1 });
-						}}
-					/>
-				) : null}
+		<DataTableToolbar
+			value={params.q}
+			onChange={(v) => {
+				// Switch sort to relevance the moment the user
+				// starts typing — mirrors Amp's "type and rank by
+				// match quality" UX. Restore the date sort if the
+				// box is cleared so the empty-search default goes
+				// back to the activity timeline.
+				void setParams({
+					q: v,
+					page: 1,
+					sort:
+						v && params.sort === "last_activity_at"
+							? "relevance"
+							: !v && params.sort === "relevance"
+								? "last_activity_at"
+								: params.sort,
+				});
+			}}
+			placeholder="Search summary, folder, or session ID…"
+		>
+			{agentOptions.length > 0 ? (
 				<DataTableFacetedFilter
-					title="PR links"
-					options={prFilterOptions}
-					selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
+					title="Agent"
+					options={agentOptions}
+					selected={params.agent ? [params.agent] : []}
 					onChange={(arr) => {
-						const v = arr[0];
-						void setParams({
-							has_pr: v === "true" ? true : v === "false" ? false : null,
-							page: 1,
-						});
+						void setParams({ agent: arr[0] ?? "", page: 1 });
 					}}
 				/>
-				{isFiltered ? (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-8 px-2"
-						onClick={() =>
-							void setParams({
-								q: "",
-								agent: "",
-								has_pr: null,
-								page: 1,
-							})
-						}
-					>
-						Reset
-					</Button>
-				) : null}
-			</DataTableToolbar>
-		</DashboardSectionToolbar>
+			) : null}
+			<DataTableFacetedFilter
+				title="PR links"
+				options={prFilterOptions}
+				selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
+				onChange={(arr) => {
+					const v = arr[0];
+					void setParams({
+						has_pr: v === "true" ? true : v === "false" ? false : null,
+						page: 1,
+					});
+				}}
+			/>
+			{isFiltered ? (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-8 px-2"
+					onClick={() =>
+						void setParams({
+							q: "",
+							agent: "",
+							has_pr: null,
+							page: 1,
+						})
+					}
+				>
+					Reset
+				</Button>
+			) : null}
+		</DataTableToolbar>
 	);
 	const sessionFooter = (
-		<div className="border-t px-4 py-3">
+		<div>
 			<DataTablePagination
 				page={params.page}
 				pageSize={params.pageSize}
@@ -274,7 +271,28 @@ function SessionsListInner() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
+			<PageHeader
+				title="Sessions"
+				description={SESSIONS_RESOURCE.managementDescription}
+				actions={
+					<ToggleGroup
+						type="single"
+						value={params.view}
+						onValueChange={(v) => v && void setParams({ view: v as "feed" | "table" })}
+						variant="outline"
+						size="sm"
+						className="hidden md:flex"
+						aria-label="List style"
+					>
+						<ToggleGroupItem value="feed" aria-label="Feed view">
+							<LayoutList />
+						</ToggleGroupItem>
+						<ToggleGroupItem value="table" aria-label="Table view">
+							<Table2 />
+						</ToggleGroupItem>
+					</ToggleGroup>
+				}
+			/>
 
 			{error ? (
 				<Alert variant="destructive">
@@ -283,28 +301,14 @@ function SessionsListInner() {
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
-				<DashboardSection>
-					<DashboardSectionHeader
-						icon={MessageSquare}
-						title="Session history"
-						count={data ? `${total} session${total === 1 ? "" : "s"}` : undefined}
-						description="Agent conversations and activity. Use filters when you need a specific agent, PR, or summary."
-					/>
-					<div
-						className={cn(
-							"transition-opacity",
-							isFetching && !isLoading ? "opacity-60" : "opacity-100",
-						)}
-					>
-						<div className="md:hidden">
-							{sessionToolbar}
-							<MobileSessionList
-								sessions={data?.items ?? []}
-								isLoading={isLoading}
-								emptyMessage={emptyMessage}
-							/>
-							{sessionFooter}
-						</div>
+				<div
+					className={cn(
+						"space-y-4 transition-opacity",
+						isFetching && !isLoading ? "opacity-60" : "opacity-100",
+					)}
+				>
+					{sessionToolbar}
+					{params.view === "table" ? (
 						<div className="hidden md:block">
 							<DataTable
 								columns={sessionColumns}
@@ -340,14 +344,21 @@ function SessionsListInner() {
 												)
 										: undefined
 								}
-								toolbar={sessionToolbar}
-								footer={sessionFooter}
 								className="space-y-0"
-								tableContainerClassName="rounded-none border-x-0 border-b-0 bg-transparent"
 							/>
 						</div>
+					) : null}
+					<div className={params.view === "table" ? "md:hidden" : undefined}>
+						<SessionFeed
+							sessions={data?.items ?? []}
+							isLoading={isLoading}
+							emptyMessage={emptyMessage}
+							grouped={groupable}
+							groupBy={params.sort === "started_at" ? "started_at" : "last_activity_at"}
+						/>
 					</div>
-				</DashboardSection>
+					{sessionFooter}
+				</div>
 			)}
 		</div>
 	);
