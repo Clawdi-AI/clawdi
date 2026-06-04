@@ -25,6 +25,7 @@ export function SessionFeed({
 	emptyMessage,
 	grouped = true,
 	groupBy = "last_activity_at",
+	showAgent = true,
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;
@@ -32,6 +33,8 @@ export function SessionFeed({
 	/** Group under Today / Yesterday / … headers (only meaningful for date sorts). */
 	grouped?: boolean;
 	groupBy?: "last_activity_at" | "started_at";
+	/** Hide the per-card agent identity on pages that ARE the agent. */
+	showAgent?: boolean;
 }) {
 	if (isLoading) {
 		return (
@@ -58,7 +61,7 @@ export function SessionFeed({
 		return (
 			<div className="space-y-3">
 				{sessions.map((session) => (
-					<SessionFeedCard key={session.id} session={session} />
+					<SessionFeedCard key={session.id} session={session} showAgent={showAgent} />
 				))}
 			</div>
 		);
@@ -83,7 +86,7 @@ export function SessionFeed({
 					</h3>
 					<div className="space-y-2">
 						{group.items.map((session) => (
-							<SessionFeedCard key={session.id} session={session} />
+							<SessionFeedCard key={session.id} session={session} showAgent={showAgent} />
 						))}
 					</div>
 				</section>
@@ -92,7 +95,13 @@ export function SessionFeed({
 	);
 }
 
-function SessionFeedCard({ session }: { session: SessionListItem }) {
+function SessionFeedCard({
+	session,
+	showAgent = true,
+}: {
+	session: SessionListItem;
+	showAgent?: boolean;
+}) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
 	const totalTokens = session.input_tokens + session.output_tokens;
@@ -114,7 +123,9 @@ function SessionFeedCard({ session }: { session: SessionListItem }) {
 				</span>
 			</div>
 			<div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-				<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
+				{showAgent ? (
+					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
+				) : null}
 				{projectFolder ? (
 					<span className="truncate font-mono" title={session.project_path ?? undefined}>
 						{projectFolder}

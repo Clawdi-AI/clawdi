@@ -50,6 +50,8 @@ export default function VaultDetailPage() {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	// Content first, inputs on demand (taste audit #2).
+	const [showAddKey, setShowAddKey] = useState(false);
 
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
@@ -263,15 +265,27 @@ export default function VaultDetailPage() {
 						</p>
 					</div>
 					{isOwner ? (
-						<ImportKeysDialog
-							disabled={!anyProjectId}
-							isPending={upsertKeys.isPending}
-							onImport={(fields) => upsertKeys.mutate(fields)}
-						/>
+						<div className="flex items-center gap-2">
+							<Button
+								variant="outline"
+								size="sm"
+								aria-expanded={showAddKey}
+								onClick={() => setShowAddKey((v) => !v)}
+								disabled={!anyProjectId}
+							>
+								<Plus className="size-3.5" />
+								Add key
+							</Button>
+							<ImportKeysDialog
+								disabled={!anyProjectId}
+								isPending={upsertKeys.isPending}
+								onImport={(fields) => upsertKeys.mutate(fields)}
+							/>
+						</div>
 					) : null}
 				</div>
 
-				{isOwner ? (
+				{isOwner && showAddKey ? (
 					<AddKeyRow
 						disabled={!anyProjectId || upsertKeys.isPending}
 						onAdd={(name, value) => upsertKeys.mutate({ [name]: value })}

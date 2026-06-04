@@ -104,6 +104,10 @@ export default function ProjectDetailPage() {
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
+	// Forms are progressive-disclosure (taste audit #2): content first,
+	// inputs on demand.
+	const [showInstallSkill, setShowInstallSkill] = useState(false);
+	const [showCreateVault, setShowCreateVault] = useState(false);
 	const joinedFromShare = searchParams.get("joined") === "share";
 
 	const projects = useQuery({
@@ -390,8 +394,23 @@ export default function ProjectDetailPage() {
 						? "Reusable instructions stored in this Project."
 						: "Readable instructions shared by the owner."
 				}
+				action={
+					isOwner ? (
+						<Button
+							variant="outline"
+							size="sm"
+							aria-expanded={showInstallSkill}
+							onClick={() => setShowInstallSkill((v) => !v)}
+						>
+							<Plus className="size-3.5" />
+							Install skill
+						</Button>
+					) : null
+				}
 			>
-				{isOwner ? <InstallSkillInProjectForm projectId={project.id} onChanged={refresh} /> : null}
+				{isOwner && showInstallSkill ? (
+					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
+				) : null}
 				{skills.isLoading ? (
 					<Skeleton className="h-24 w-full" />
 				) : skills.error ? (
@@ -420,8 +439,23 @@ export default function ProjectDetailPage() {
 						? "API keys and secrets this Project can use."
 						: "Read-only vaults shared through this Project."
 				}
+				action={
+					isOwner ? (
+						<Button
+							variant="outline"
+							size="sm"
+							aria-expanded={showCreateVault}
+							onClick={() => setShowCreateVault((v) => !v)}
+						>
+							<Plus className="size-3.5" />
+							New vault
+						</Button>
+					) : null
+				}
 			>
-				{isOwner ? <CreateVaultInProjectForm projectId={project.id} onChanged={refresh} /> : null}
+				{isOwner && showCreateVault ? (
+					<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
+				) : null}
 				{vaults.isLoading ? (
 					<Skeleton className="h-24 w-full" />
 				) : vaults.error ? (
@@ -1076,7 +1110,7 @@ function SkillRow({ skill, ownProjectId }: { skill: SkillSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{skill.name}</span>
 					<Badge variant={savedHere ? "secondary" : "outline"}>
-						{savedHere ? "Saved Here" : "From Another Project"}
+						{savedHere ? "Saved here" : "From another Project"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
@@ -1103,7 +1137,7 @@ function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: 
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{vault.name}</span>
 					<Badge variant={attachedHere ? "secondary" : "outline"}>
-						{attachedHere ? "Used Here" : "Used Elsewhere"}
+						{attachedHere ? "Used here" : "Used elsewhere"}
 					</Badge>
 				</div>
 				<div className="mt-0.5 font-mono text-xs text-muted-foreground">{vault.slug}</div>
