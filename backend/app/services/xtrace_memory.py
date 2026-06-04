@@ -1,11 +1,13 @@
-"""XTrace Memory API integration for cloud session uploads."""
+"""XTrace Memory API integration for Clawdi sessions and skills."""
 
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 import httpx
 from sqlalchemy import select
@@ -14,12 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.memory import Memory
 from app.models.session import Session
+from app.models.skill import Skill
 from app.models.xtrace_ingest import XTraceMemoryIngest
+from app.services.skill_index import SkillTextFile, extract_skill_text_files
 
 log = logging.getLogger(__name__)
 
 _XTRACE_ROLES = {"user", "assistant", "system"}
-_SOURCE = "xtrace_session"
+_SESSION_SOURCE = "xtrace_session"
+_SKILL_SOURCE = "xtrace_skill"
+_MAX_SKILL_FILE_CHARS = 24_000
+_MAX_SKILL_INGEST_CHARS = 160_000
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,15 @@ def xtrace_memory_configured() -> bool:
     )
 
 
+def xtrace_session_source_key(session: Session) -> str:
+    version = session.content_hash or session.local_session_id
+    return f"session:{session.id}:{version}"
+
+
+def xtrace_skill_source_key(skill: Skill) -> str:
+    return f"skill:{skill.id}:{skill.content_hash}"
+
+
 async def ingest_xtrace_session_memories(
     db: AsyncSession,
     *,
@@ -73,22 +89,33 @@ async def ingest_xtrace_session_memories(
     if not normalized:
         return None
 
-    remote = await _ingest(normalized, session=session)
+    source_key = xtrace_session_source_key(session)
+    remote = await _ingest(_build_session_payload(session, normalized))
     refs = [*remote.created_refs, *remote.updated_refs]
-    mirrored_count = await _store_refs(db, session=session, refs=refs) if refs else 0
-    result = XTraceMemoryIngestResult(
-        job_id=_string_or_none(remote.payload.get("id")),
-        status=_string_or_none(remote.payload.get("status")),
-        created_ref_count=len(remote.created_refs),
-        updated_ref_count=len(remote.updated_refs),
-        mirrored_count=mirrored_count,
-        response=remote.payload,
+    mirrored_count = (
+        await _store_refs(
+            db,
+            user_id=session.user_id,
+            source=_SESSION_SOURCE,
+            source_session_id=session.id,
+            refs=refs,
+            metadata={
+                "source_type": "session",
+                "source_key": source_key,
+                "local_session_id": session.local_session_id,
+            },
+        )
+        if refs
+        else 0
     )
+    result = _result_from_remote(remote, mirrored_count)
     db.add(
         XTraceMemoryIngest(
             user_id=session.user_id,
+            source_type="session",
             session_id=session.id,
             local_session_id=session.local_session_id,
+            source_key=source_key,
             job_id=result.job_id,
             status=result.status,
             created_ref_count=result.created_ref_count,
@@ -101,28 +128,191 @@ async def ingest_xtrace_session_memories(
     return result
 
 
-async def _ingest(messages: list[dict[str, str]], *, session: Session) -> XTraceRemoteIngest:
+async def ingest_xtrace_skill_memories(
+    db: AsyncSession,
+    *,
+    skill: Skill,
+    data: bytes,
+) -> XTraceMemoryIngestResult | None:
+    """Send a skill archive to XTrace as an artifact-shaped memory source."""
+    if not xtrace_memory_configured():
+        return None
+
+    text_files = extract_skill_text_files(data, skill.skill_key)
+    if not text_files:
+        return None
+
+    source_key = xtrace_skill_source_key(skill)
+    remote = await _ingest(_build_skill_payload(skill, text_files))
+    refs = [*remote.created_refs, *remote.updated_refs]
+    mirrored_count = (
+        await _store_refs(
+            db,
+            user_id=skill.user_id,
+            source=_SKILL_SOURCE,
+            source_session_id=None,
+            refs=refs,
+            metadata={
+                "source_type": "skill",
+                "source_key": source_key,
+                "skill_id": str(skill.id),
+                "skill_key": skill.skill_key,
+                "content_hash": skill.content_hash,
+            },
+        )
+        if refs
+        else 0
+    )
+    result = _result_from_remote(remote, mirrored_count)
+    db.add(
+        XTraceMemoryIngest(
+            user_id=skill.user_id,
+            source_type="skill",
+            skill_id=skill.id,
+            source_key=source_key,
+            job_id=result.job_id,
+            status=result.status,
+            created_ref_count=result.created_ref_count,
+            updated_ref_count=result.updated_ref_count,
+            mirrored_count=result.mirrored_count,
+            response=result.response,
+        )
+    )
+    await db.commit()
+    return result
+
+
+def _build_session_payload(
+    session: Session,
+    messages: list[dict[str, str]],
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "messages": [_session_context_message(session), *messages],
+        "user_id": str(session.user_id),
+        "conv_id": str(session.id),
+        "app_id": settings.xtrace_memory_app_id,
+        "extract_artifacts": True,
+        "metadata": {
+            "source": "clawdi_cloud_session",
+            "source_type": "session",
+            "source_key": xtrace_session_source_key(session),
+            "local_session_id": session.local_session_id,
+            "project_path": session.project_path,
+            "content_hash": session.content_hash,
+            "summary": session.summary,
+            "message_count": session.message_count,
+            "started_at": _iso_or_none(session.started_at),
+            "ended_at": _iso_or_none(session.ended_at),
+            "last_activity_at": _iso_or_none(session.last_activity_at),
+            "model": session.model,
+            "models_used": session.models_used,
+            "tags": session.tags,
+            "related_refs": session.related_refs,
+        },
+    }
+    if session.environment_id is not None:
+        body["agent_id"] = str(session.environment_id)
+        body["metadata"]["agent_environment_id"] = str(session.environment_id)
+    return body
+
+
+def _session_context_message(session: Session) -> dict[str, str]:
+    parts = [
+        "Clawdi Cloud session context.",
+        "The following messages are from an AI coding or operations agent "
+        "session synced to Clawdi.",
+        "Extract durable beliefs, decisions, preferences, project facts, episodes, and artifacts.",
+        "Ignore transient shell output unless it establishes a reusable "
+        "decision, result, or failure mode.",
+    ]
+    if session.project_path:
+        parts.append(f"Project path: {session.project_path}")
+    if session.summary:
+        parts.append(f"Session summary: {session.summary}")
+    return {"role": "system", "content": "\n".join(parts)}
+
+
+def _build_skill_payload(skill: Skill, text_files: list[SkillTextFile]) -> dict[str, Any]:
+    messages = _skill_messages(skill, text_files)
+    return {
+        "messages": messages,
+        "user_id": str(skill.user_id),
+        "conv_id": f"skill:{skill.id}:{skill.content_hash[:12]}",
+        "app_id": settings.xtrace_memory_app_id,
+        "extract_artifacts": True,
+        "metadata": {
+            "source": "clawdi_cloud_skill",
+            "source_type": "skill",
+            "source_key": xtrace_skill_source_key(skill),
+            "skill_id": str(skill.id),
+            "skill_key": skill.skill_key,
+            "name": skill.name,
+            "description": skill.description,
+            "version": skill.version,
+            "project_id": str(skill.project_id),
+            "source_repo": skill.source_repo,
+            "content_hash": skill.content_hash,
+            "file_count": skill.file_count,
+            "agent_types": skill.agent_types,
+        },
+    }
+
+
+def _skill_messages(skill: Skill, text_files: list[SkillTextFile]) -> list[dict[str, str]]:
+    messages = [
+        {
+            "role": "system",
+            "content": "\n".join(
+                [
+                    "Clawdi Cloud skill bundle context.",
+                    "The following files define an agent skill available in Clawdi.",
+                    "Extract the reusable workflow, operating constraints, "
+                    "artifact content, and when the skill should be used.",
+                    "Treat SKILL.md and reference files as durable artifacts, not casual chat.",
+                ]
+            ),
+        },
+        {
+            "role": "user",
+            "content": "\n".join(
+                [
+                    "Skill metadata:",
+                    f"key: {skill.skill_key}",
+                    f"name: {skill.name}",
+                    f"description: {skill.description or ''}",
+                    f"version: {skill.version}",
+                    f"source: {skill.source}",
+                    f"project_id: {skill.project_id}",
+                    f"content_hash: {skill.content_hash}",
+                ]
+            ),
+        },
+    ]
+
+    used_chars = sum(len(m["content"]) for m in messages)
+    for text_file in text_files:
+        if used_chars >= _MAX_SKILL_INGEST_CHARS:
+            break
+        remaining = _MAX_SKILL_INGEST_CHARS - used_chars
+        content = text_file.content[: min(_MAX_SKILL_FILE_CHARS, remaining)]
+        if len(text_file.content) > len(content):
+            content = f"{content}\n\n[truncated]"
+        message = {
+            "role": "user",
+            "content": f"Skill file: {text_file.path}\n\n{content}",
+        }
+        messages.append(message)
+        used_chars += len(message["content"])
+    return messages
+
+
+async def _ingest(body: dict[str, Any]) -> XTraceRemoteIngest:
     url = f"{settings.xtrace_memory_base_url.rstrip('/')}/v1/memories"
     headers = {
         "Authorization": f"Bearer {settings.xtrace_api_key}",
         "X-Org-Id": settings.xtrace_org_id,
         "Accept": "application/json",
     }
-    body: dict[str, Any] = {
-        "messages": messages,
-        "user_id": str(session.user_id),
-        "conv_id": str(session.id),
-        "app_id": settings.xtrace_memory_app_id,
-        "extract_artifacts": False,
-        "metadata": {
-            "source": "clawdi_cloud_session",
-            "local_session_id": session.local_session_id,
-            "project_path": session.project_path,
-            "content_hash": session.content_hash,
-        },
-    }
-    if session.environment_id is not None:
-        body["agent_id"] = str(session.environment_id)
 
     async with httpx.AsyncClient(timeout=settings.xtrace_memory_timeout_seconds) as client:
         response = await client.post(
@@ -164,6 +354,9 @@ def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
         date = message.get("date") or message.get("timestamp") or message.get("created_at")
         if isinstance(date, str) and date:
             item["date"] = date
+        dia_id = message.get("dia_id") or message.get("id")
+        if isinstance(dia_id, str) and dia_id:
+            item["dia_id"] = dia_id
         normalized.append(item)
     return normalized
 
@@ -228,23 +421,26 @@ def _parse_ref(raw: Any) -> XTraceMemoryRef | None:
 async def _store_refs(
     db: AsyncSession,
     *,
-    session: Session,
+    user_id: UUID,
+    source: str,
+    source_session_id: UUID | None,
     refs: list[XTraceMemoryRef],
+    metadata: dict[str, Any],
 ) -> int:
     if not refs:
         return 0
 
     texts = [r.text for r in refs]
-    existing = (
-        await db.execute(
-            select(Memory.content).where(
-                Memory.user_id == session.user_id,
-                Memory.source_session_id == session.id,
-                Memory.source == _SOURCE,
-                Memory.content.in_(texts),
-            )
-        )
-    ).scalars()
+    stmt = select(Memory.content).where(
+        Memory.user_id == user_id,
+        Memory.source == source,
+        Memory.content.in_(texts),
+    )
+    if source_session_id is None:
+        stmt = stmt.where(Memory.source_session_id.is_(None))
+    else:
+        stmt = stmt.where(Memory.source_session_id == source_session_id)
+    existing = (await db.execute(stmt)).scalars()
     existing_texts = set(existing.all())
 
     created = 0
@@ -253,13 +449,17 @@ async def _store_refs(
             continue
         db.add(
             Memory(
-                user_id=session.user_id,
+                user_id=user_id,
                 content=ref.text,
                 category=_category_for_xtrace_type(ref.type),
-                source=_SOURCE,
-                source_session_id=session.id,
-                tags=["xtrace", f"xtrace:{ref.type}"],
-                metadata_={"xtrace_memory_id": ref.id, "xtrace_type": ref.type},
+                source=source,
+                source_session_id=source_session_id,
+                tags=["xtrace", f"xtrace:{ref.type}", source],
+                metadata_={
+                    **metadata,
+                    "xtrace_memory_id": ref.id,
+                    "xtrace_type": ref.type,
+                },
             )
         )
         existing_texts.add(ref.text)
@@ -270,10 +470,32 @@ async def _store_refs(
     return created
 
 
+def _result_from_remote(
+    remote: XTraceRemoteIngest,
+    mirrored_count: int,
+) -> XTraceMemoryIngestResult:
+    return XTraceMemoryIngestResult(
+        job_id=_string_or_none(remote.payload.get("id")),
+        status=_string_or_none(remote.payload.get("status")),
+        created_ref_count=len(remote.created_refs),
+        updated_ref_count=len(remote.updated_refs),
+        mirrored_count=mirrored_count,
+        response=remote.payload,
+    )
+
+
 def _category_for_xtrace_type(memory_type: str) -> str:
     if memory_type == "fact":
         return "fact"
+    if memory_type == "artifact":
+        return "artifact"
     return "context"
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
 
 
 def _string_or_none(value: Any) -> str | None:

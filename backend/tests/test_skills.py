@@ -76,6 +76,123 @@ async def test_skill_upload_indexes_file_content_for_search(
 
 
 @pytest.mark.asyncio
+async def test_skill_upload_auto_ingests_xtrace_artifacts_when_configured(
+    client: httpx.AsyncClient,
+    db_session,
+    project_id: str,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.models.skill import Skill
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_skill",
+                    "status": "succeeded",
+                    "result": {
+                        "object": "ingest_result",
+                        "memories_created": [
+                            {
+                                "id": "artifact_skill",
+                                "type": "artifact",
+                                "text": (
+                                    "Deploy helper skill captures the preview rollout checklist."
+                                ),
+                            }
+                        ],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    content = (
+        "---\n"
+        "name: deploy helper\n"
+        "description: preview deployment workflow\n"
+        "---\n"
+        "# Deploy\n"
+        "Use Coolify preview and verify health checks before sharing the URL.\n"
+    )
+    tar_bytes, _ = tar_from_content("deploy-helper", content)
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper"},
+        files={"file": ("deploy-helper.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    skill = (
+        await db_session.execute(
+            select(Skill).where(Skill.user_id == seed_user.id, Skill.skill_key == "deploy-helper")
+        )
+    ).scalar_one()
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["url"] == "https://xtrace.test/v1/memories"
+    assert call["params"] == {"wait": "true"}
+    assert call["json"]["user_id"] == str(seed_user.id)
+    assert call["json"]["conv_id"].startswith(f"skill:{skill.id}:")
+    assert call["json"]["extract_artifacts"] is True
+    assert call["json"]["metadata"]["source_type"] == "skill"
+    assert call["json"]["metadata"]["skill_key"] == "deploy-helper"
+    assert call["json"]["messages"][0]["role"] == "system"
+    assert "Clawdi Cloud skill bundle context" in call["json"]["messages"][0]["content"]
+    assert any(
+        "Skill file: SKILL.md" in message["content"] for message in call["json"]["messages"]
+    )
+
+    memory = (
+        await db_session.execute(
+            select(Memory).where(Memory.user_id == seed_user.id, Memory.source == "xtrace_skill")
+        )
+    ).scalar_one()
+    assert memory.content == "Deploy helper skill captures the preview rollout checklist."
+    assert memory.category == "artifact"
+    assert memory.source_session_id is None
+    assert memory.tags == ["xtrace", "xtrace:artifact", "xtrace_skill"]
+    assert memory.metadata_["skill_key"] == "deploy-helper"
+
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.skill_id == skill.id)
+        )
+    ).scalar_one()
+    assert audit.source_type == "skill"
+    assert audit.source_key == call["json"]["metadata"]["source_key"]
+    assert audit.mirrored_count == 1
+
+
+@pytest.mark.asyncio
 async def test_skill_upload_indexes_reference_file_content_for_search(
     client: httpx.AsyncClient, project_id: str
 ):

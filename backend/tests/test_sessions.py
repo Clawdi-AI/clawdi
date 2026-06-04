@@ -480,6 +480,7 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
     from app.core.config import settings as app_settings
     from app.models.memory import Memory
     from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
 
     calls: list[dict] = []
 
@@ -552,7 +553,12 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
     assert call["json"]["conv_id"] == str(session.id)
     assert call["json"]["agent_id"] == str(session.environment_id)
     assert call["json"]["app_id"] == "clawdi-cloud"
-    assert call["json"]["messages"] == [{"role": "user", "content": "I prefer Bun over npm."}]
+    assert call["json"]["extract_artifacts"] is True
+    assert call["json"]["metadata"]["source_type"] == "session"
+    assert call["json"]["metadata"]["source_key"].startswith(f"session:{session.id}:")
+    assert call["json"]["messages"][0]["role"] == "system"
+    assert "Clawdi Cloud session context" in call["json"]["messages"][0]["content"]
+    assert call["json"]["messages"][1] == {"role": "user", "content": "I prefer Bun over npm."}
 
     memories = (
         (await db_session.execute(select(Memory).where(Memory.user_id == seed_user.id)))
@@ -564,7 +570,15 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
     assert memories[0].category == "fact"
     assert memories[0].source == "xtrace_session"
     assert memories[0].source_session_id == session.id
-    assert memories[0].tags == ["xtrace", "xtrace:fact"]
+    assert memories[0].tags == ["xtrace", "xtrace:fact", "xtrace_session"]
+
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    assert audit.source_type == "session"
+    assert audit.source_key == call["json"]["metadata"]["source_key"]
 
 
 @pytest.mark.asyncio
@@ -688,6 +702,8 @@ async def test_session_upload_records_xtrace_ingest_when_no_memories_returned(
         )
     ).scalar_one()
     assert audit.job_id == "job_pending"
+    assert audit.source_type == "session"
+    assert audit.source_key.startswith(f"session:{session.id}:")
     assert audit.status == "pending"
     assert audit.created_ref_count == 0
     assert audit.updated_ref_count == 0

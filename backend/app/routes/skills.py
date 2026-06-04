@@ -51,6 +51,7 @@ from app.services.tar_utils import (
     tar_from_content,
     validate_tar,
 )
+from app.services.xtrace_memory import ingest_xtrace_skill_memories, xtrace_memory_configured
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -984,6 +985,7 @@ async def _do_upload_skill(
     # holds across the upsert + revision bump and is released
     # only when this commit lands.
     await db.commit()
+    await _ingest_skill_to_xtrace(db, skill, data)
 
     return SkillUploadResponse(
         skill_key=skill.skill_key,
@@ -1319,6 +1321,7 @@ async def _do_install_skill(
     await index_skill_archive(db, skill, fetched.tar_bytes)
     # Single commit at the route boundary — see upload_skill.
     await db.commit()
+    await _ingest_skill_to_xtrace(db, skill, fetched.tar_bytes)
 
     return SkillInstallResponse(
         skill_key=skill_key,
@@ -1333,6 +1336,27 @@ async def _do_install_skill(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _ingest_skill_to_xtrace(db: AsyncSession, skill: Skill, data: bytes) -> None:
+    if not xtrace_memory_configured():
+        return
+    try:
+        result = await ingest_xtrace_skill_memories(db, skill=skill, data=data)
+        if result is not None:
+            log.info(
+                "xtrace_skill_memory_ingested skill_key=%s job_id=%s status=%s "
+                "created_refs=%s updated_refs=%s mirrored=%s",
+                skill.skill_key,
+                result.job_id,
+                result.status,
+                result.created_ref_count,
+                result.updated_ref_count,
+                result.mirrored_count,
+            )
+    except Exception:
+        await db.rollback()
+        log.exception("xtrace_skill_memory_ingest_failed skill_key=%s", skill.skill_key)
 
 
 async def _upsert_skill(

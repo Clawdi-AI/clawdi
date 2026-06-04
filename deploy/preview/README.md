@@ -144,7 +144,7 @@ for each service.
     command from the auto-injected `SERVICE_FQDN_*` — no need to set them
     in the Coolify UI.
 
-    To enable XTrace session memory in a preview, set
+    To enable XTrace session and skill memory in a preview, set
     `XTRACE_MEMORY_ENABLED=true` plus the preview XTrace key/org values,
     then redeploy the preview so the API container starts with those env vars.
 
@@ -157,8 +157,22 @@ After all eleven, opening a PR on the repo deploys a preview automatically.
 
 ## XTrace memory preview checks
 
-After deploying a preview with XTrace enabled, upload or re-upload one session,
-then run this inside the preview API container:
+After deploying a preview with XTrace enabled, run the backfill from inside the
+preview API container so existing stored sessions and skills are sent to XTrace:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.backfill_xtrace_memory --all
+```
+
+For a smaller validation run:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.backfill_xtrace_memory --all --limit 10
+```
+
+To inspect one session directly:
 
 ```bash
 cd /app/backend
@@ -170,8 +184,10 @@ pdm run python -m scripts.debug_xtrace_session_ingest \
 
 The output prints `job_id`, `status`, `created_ref_count`,
 `updated_ref_count`, and `mirrored_count`. The same data is also stored in
-`xtrace_memory_ingests`, including cases where XTrace returns a pending job or
-zero memory refs. API logs include `xtrace_memory_ingested ... job_id=...`.
+`xtrace_memory_ingests` with `source_type=session` or `source_type=skill`,
+including cases where XTrace returns a pending job or zero memory refs. API logs
+include `xtrace_memory_ingested ... job_id=...` and
+`xtrace_skill_memory_ingested ... job_id=...`.
 
 Existing skill archives from the restored snapshot need one backfill after the
 migration so skill-file content search works:

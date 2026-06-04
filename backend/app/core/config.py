@@ -153,15 +153,16 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
 
     # Optional XTrace Memory API integration. When enabled and configured,
-    # uploaded cloud sessions are forwarded to XTrace for memory extraction,
-    # and returned memory refs are mirrored into Clawdi's builtin memory table.
+    # uploaded cloud sessions and skill bundles are forwarded to XTrace for
+    # belief, episode, and artifact extraction, and returned memory refs are
+    # mirrored into Clawdi's builtin memory table.
     xtrace_memory_enabled: bool = False
     xtrace_api_key: str = ""
     xtrace_org_id: str = ""
     xtrace_memory_base_url: str = "https://api.production.xtrace.ai"
     xtrace_memory_app_id: str = "clawdi-cloud"
     xtrace_memory_timeout_seconds: float = 35.0
-    xtrace_memory_max_messages: int = 200
+    xtrace_memory_max_messages: int = 1000
 
     # JSON object keyed by provider/tool id. Each value can include:
     # authorization_url, token_url, client_id, client_secret, scope, audience,
