@@ -149,6 +149,43 @@ describe("subcommand handler rejects parent-leaked options", () => {
 	});
 });
 
+describe("full control RPC handler surface", () => {
+	it("advertises sync, vault, auth, update, and operation RPC methods", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handlers = createControlRpcHandlers();
+		const methodsResult = (await handlers["daemon.methods"]?.({})) as
+			| { methods?: string[] }
+			| undefined;
+
+		expect(methodsResult?.methods).toContain("sync.push");
+		expect(methodsResult?.methods).toContain("sync.pull");
+		expect(methodsResult?.methods).toContain("vault.resolve");
+		expect(methodsResult?.methods).toContain("auth.login");
+		expect(methodsResult?.methods).toContain("update.install");
+		expect(methodsResult?.methods).toContain("operation.status");
+	});
+
+	it("requires an explicit cwd, project, or all=true for sync.push", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["sync.push"];
+		if (!handler) throw new Error("missing sync.push handler");
+
+		await expect((async () => handler({}))()).rejects.toThrow(
+			"sync.push RPC requires cwd or project unless all=true",
+		);
+	});
+
+	it("blocks vault plaintext reads unless explicitly confirmed", async () => {
+		const { createControlRpcHandlers } = await import("./serve");
+		const handler = createControlRpcHandlers()["vault.resolve"];
+		if (!handler) throw new Error("missing vault.resolve handler");
+
+		await expect(
+			(async () => handler({ key: "OPENAI_API_KEY", include_value: true }))(),
+		).rejects.toThrow("vault.resolve plaintext access requires confirm_secret_access=true");
+	});
+});
+
 describe("daemon HTTP RPC listener safety", () => {
 	it("rejects non-loopback listen hosts unless explicitly allowed", async () => {
 		const { serve } = await import("./serve");

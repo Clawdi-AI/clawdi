@@ -517,10 +517,11 @@ export async function daemonAutoUpdateOnce(
 		currentVersion?: string;
 		installer?: Installer | null;
 		installRunner?: InstallRunner;
+		ignoreDisabled?: boolean;
 		signal?: AbortSignal;
 	} = {},
 ): Promise<DaemonAutoUpdateResult> {
-	if (autoUpdateDisabled()) return "disabled";
+	if (!opts.ignoreDisabled && autoUpdateDisabled()) return "disabled";
 	if (opts.signal?.aborted) return "disabled";
 
 	const current = opts.currentVersion ?? getCliVersion();

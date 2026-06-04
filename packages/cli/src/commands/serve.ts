@@ -24,9 +24,20 @@
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
-import { getClawdiDir, isLoggedIn } from "../lib/config";
+import {
+	clearAuth,
+	clearPendingAuth,
+	getAuth,
+	getClawdiDir,
+	getConfig,
+	getPendingAuth,
+	isLoggedIn,
+	setAuth,
+	setPendingAuth,
+} from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
 import { startAutoRestart } from "../serve/auto-restart";
@@ -49,13 +60,18 @@ import {
 } from "../serve/installer";
 import { log, toErrorMessage } from "../serve/log";
 import {
+	type CommandResult,
+	operationManager,
+	runCliCommandImmediate,
+} from "../serve/operation-runner";
+import {
 	getDaemonControlSocketPath,
 	getDaemonControlTokenPath,
 	getServeLogPath,
 	getServeStateDir,
 } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
-import { startDaemonAutoUpdate } from "./update";
+import { daemonAutoUpdateOnce, startDaemonAutoUpdate } from "./update";
 
 type ServeOpts = Record<string, unknown>;
 
@@ -114,6 +130,21 @@ interface DaemonDoctorReport {
 			};
 		}
 	>;
+}
+
+interface RpcCommandOptions {
+	name: string;
+	args: string[];
+	cwd?: string;
+	stdin?: string;
+	wait: boolean;
+	parseJson?: boolean;
+	redactedArgs?: string[];
+	timeoutMs?: number;
+}
+
+interface RpcCommandResponse extends CommandResult {
+	json?: unknown;
 }
 
 /**
@@ -565,7 +596,7 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 	console.log(JSON.stringify(result, null, 2));
 }
 
-function createControlRpcHandlers(): ControlRpcHandlers {
+export function createControlRpcHandlers(): ControlRpcHandlers {
 	const handlers: ControlRpcHandlers = {};
 	handlers["daemon.ping"] = () => ({
 		pid: process.pid,
@@ -592,7 +623,614 @@ function createControlRpcHandlers(): ControlRpcHandlers {
 	handlers["daemon.restart"] = (params) => daemonRestartRpc(params);
 	handlers["daemon.logs"] = (params) => daemonLogsRpc(params);
 	handlers["daemon.rotate_token"] = (params) => daemonRotateTokenRpc(params);
+	handlers["operation.list"] = (params) => operationListRpc(params);
+	handlers["operation.status"] = (params) => operationStatusRpc(params);
+	handlers["operation.logs"] = (params) => operationLogsRpc(params);
+	handlers["operation.cancel"] = (params) => operationCancelRpc(params);
+	handlers["sync.push"] = (params) => syncPushRpc(params);
+	handlers["sync.pull"] = (params) => syncPullRpc(params);
+	handlers["sync.push_dry_run"] = (params) => syncPushDryRunRpc(params);
+	handlers["sync.pull_dry_run"] = (params) => syncPullDryRunRpc(params);
+	handlers["vault.set"] = (params) => vaultSetRpc(params);
+	handlers["vault.list"] = (params) => vaultListRpc(params);
+	handlers["vault.import"] = (params) => vaultImportRpc(params);
+	handlers["vault.attach"] = (params) => vaultAttachRpc(params);
+	handlers["vault.detach"] = (params) => vaultDetachRpc(params);
+	handlers["vault.rm"] = (params) => vaultRmRpc(params);
+	handlers["vault.resolve"] = (params) => vaultResolveRpc(params);
+	handlers["vault.read"] = (params) => vaultReadRpc(params);
+	handlers["vault.inject"] = (params) => vaultInjectRpc(params);
+	handlers["auth.status"] = (params) => authStatusRpc(params);
+	handlers["auth.login"] = (params) => authLoginRpc(params);
+	handlers["auth.complete"] = (params) => authCompleteRpc(params);
+	handlers["auth.logout"] = (params) => authLogoutRpc(params);
+	handlers["update.check"] = (params) => updateCheckRpc(params);
+	handlers["update.install"] = (params) => updateInstallRpc(params);
 	return handlers;
+}
+
+function operationListRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["limit"]));
+	const limit = optionalLimitParam(record.limit, "limit", 1, 1000, 50);
+	return { operations: operationManager.list(limit) };
+}
+
+function operationStatusRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["id"]));
+	const operation = operationManager.get(requiredStringParam(record, "id"));
+	if (!operation) throw new Error("Unknown operation id");
+	return operation;
+}
+
+function operationLogsRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["id", "limit"]));
+	const logs = operationManager.logs(
+		requiredStringParam(record, "id"),
+		optionalLimitParam(record.limit, "limit", 1, 1000, 200),
+	);
+	if (!logs) throw new Error("Unknown operation id");
+	return logs;
+}
+
+function operationCancelRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["id"]));
+	const operation = operationManager.cancel(requiredStringParam(record, "id"));
+	if (!operation) throw new Error("Unknown operation id");
+	return operation;
+}
+
+function syncPushRpc(params: unknown): Promise<unknown> {
+	return syncCommandRpc("push", params, { forceDryRun: false, defaultWait: false });
+}
+
+function syncPullRpc(params: unknown): Promise<unknown> {
+	return syncCommandRpc("pull", params, { forceDryRun: false, defaultWait: false });
+}
+
+function syncPushDryRunRpc(params: unknown): Promise<unknown> {
+	return syncCommandRpc("push", params, { forceDryRun: true, defaultWait: true });
+}
+
+function syncPullDryRunRpc(params: unknown): Promise<unknown> {
+	return syncCommandRpc("pull", params, { forceDryRun: true, defaultWait: true });
+}
+
+async function syncCommandRpc(
+	command: "push" | "pull",
+	params: unknown,
+	opts: { forceDryRun: boolean; defaultWait: boolean },
+): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(
+		record,
+		new Set([
+			"modules",
+			"project",
+			"exclude_project",
+			"all",
+			"all_agents",
+			"agent",
+			"dry_run",
+			"cwd",
+			"wait",
+		]),
+	);
+	const args: string[] = [command];
+	const modules = optionalStringParam(record.modules, "modules");
+	const project = optionalStringParam(record.project, "project");
+	const agent = optionalStringParam(record.agent, "agent");
+	const cwd = optionalStringParam(record.cwd, "cwd");
+	const all = optionalBooleanParam(record.all, "all") ?? false;
+	const allAgents = optionalBooleanParam(record.all_agents, "all_agents") ?? false;
+	const dryRun = opts.forceDryRun || (optionalBooleanParam(record.dry_run, "dry_run") ?? false);
+	if (modules) args.push("--modules", modules);
+	if (project) args.push("--project", project);
+	if (agent) args.push("--agent", agent);
+	if (all) args.push("--all");
+	if (allAgents) args.push("--all-agents");
+	if (dryRun) args.push("--dry-run");
+	if (command === "push") {
+		for (const excluded of optionalStringListParam(record.exclude_project, "exclude_project") ??
+			[]) {
+			args.push("--exclude-project", excluded);
+		}
+		if (!all && !project && !cwd) {
+			throw new Error("sync.push RPC requires cwd or project unless all=true.");
+		}
+	}
+	return runCommandRpc({
+		name: `sync.${command}`,
+		args,
+		cwd,
+		wait: optionalBooleanParam(record.wait, "wait") ?? opts.defaultWait,
+	});
+}
+
+function vaultSetRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["key", "value", "project", "allow_empty", "cwd", "wait"]));
+	const key = requiredStringParam(record, "key");
+	const value = requiredStringParam(record, "value");
+	const args = ["vault", "set", key, "--stdin"];
+	appendOptionalStringFlag(args, "--project", record.project);
+	if (optionalBooleanParam(record.allow_empty, "allow_empty")) args.push("--allow-empty");
+	return runCommandRpc({
+		name: "vault.set",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		stdin: value,
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function vaultListRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["project", "cwd", "wait"]));
+	const args = ["vault", "list", "--json"];
+	appendOptionalStringFlag(args, "--project", record.project);
+	return runCommandRpc({
+		name: "vault.list",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+		parseJson: true,
+	});
+}
+
+function vaultImportRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["file", "project", "vault", "section", "yes", "cwd", "wait"]));
+	if (!optionalBooleanParam(record.yes, "yes")) {
+		throw new Error("vault.import RPC requires yes=true to avoid an interactive confirmation.");
+	}
+	const args = ["vault", "import", requiredStringParam(record, "file"), "--yes"];
+	appendOptionalStringFlag(args, "--project", record.project);
+	appendOptionalStringFlag(args, "--vault", record.vault);
+	appendOptionalStringFlag(args, "--section", record.section);
+	return runCommandRpc({
+		name: "vault.import",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function vaultAttachRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["vault", "project", "cwd", "wait"]));
+	const args = ["vault", "attach", requiredStringParam(record, "vault")];
+	args.push("--project", requiredStringParam(record, "project"));
+	return runCommandRpc({
+		name: "vault.attach",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function vaultDetachRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["vault", "project", "cwd", "wait"]));
+	const args = ["vault", "detach", requiredStringParam(record, "vault")];
+	args.push("--project", requiredStringParam(record, "project"));
+	return runCommandRpc({
+		name: "vault.detach",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function vaultRmRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["key", "project", "yes", "global", "cwd", "wait"]));
+	if (!optionalBooleanParam(record.yes, "yes")) {
+		throw new Error("vault.rm RPC requires yes=true to avoid an interactive confirmation.");
+	}
+	const args = ["vault", "rm", requiredStringParam(record, "key"), "--yes"];
+	appendOptionalStringFlag(args, "--project", record.project);
+	if (optionalBooleanParam(record.global, "global")) args.push("--global");
+	return runCommandRpc({
+		name: "vault.rm",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function vaultResolveRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(
+		record,
+		new Set([
+			"key",
+			"project",
+			"agent",
+			"allow_conflicts",
+			"debug",
+			"dry_run",
+			"include_value",
+			"confirm_secret_access",
+			"json",
+			"cwd",
+			"wait",
+		]),
+	);
+	const includeValue = optionalBooleanParam(record.include_value, "include_value") ?? false;
+	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
+	if (includeValue) {
+		requireBooleanConfirmation(record, "confirm_secret_access", "vault.resolve plaintext access");
+		if (!wait)
+			throw new Error(
+				"vault.resolve with include_value=true cannot run as a background operation.",
+			);
+	}
+	const args = ["vault", "resolve", requiredStringParam(record, "key")];
+	appendVaultResolveFlags(args, record);
+	if (!includeValue || optionalBooleanParam(record.dry_run, "dry_run")) args.push("--dry-run");
+	if (optionalBooleanParam(record.json, "json")) args.push("--json");
+	return runCommandRpc({
+		name: "vault.resolve",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait,
+		parseJson: optionalBooleanParam(record.json, "json") ?? false,
+	});
+}
+
+function vaultReadRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(
+		record,
+		new Set([
+			"reference",
+			"project",
+			"agent",
+			"allow_conflicts",
+			"debug",
+			"dry_run",
+			"confirm_secret_access",
+			"json",
+			"cwd",
+			"wait",
+		]),
+	);
+	const dryRun = optionalBooleanParam(record.dry_run, "dry_run") ?? false;
+	const wait = optionalBooleanParam(record.wait, "wait") ?? true;
+	if (!dryRun) {
+		requireBooleanConfirmation(record, "confirm_secret_access", "vault.read plaintext access");
+		if (!wait) throw new Error("vault.read plaintext access cannot run as a background operation.");
+	}
+	const args = ["read", requiredStringParam(record, "reference")];
+	appendVaultResolveFlags(args, record);
+	if (dryRun) args.push("--dry-run");
+	if (optionalBooleanParam(record.json, "json")) args.push("--json");
+	return runCommandRpc({
+		name: "vault.read",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait,
+		parseJson: optionalBooleanParam(record.json, "json") ?? false,
+	});
+}
+
+function vaultInjectRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(
+		record,
+		new Set([
+			"in",
+			"out",
+			"input",
+			"project",
+			"agent",
+			"allow_conflicts",
+			"no_project_folder",
+			"force",
+			"dry_run",
+			"confirm_secret_access",
+			"cwd",
+			"wait",
+		]),
+	);
+	const dryRun = optionalBooleanParam(record.dry_run, "dry_run") ?? false;
+	if (!dryRun)
+		requireBooleanConfirmation(record, "confirm_secret_access", "vault.inject secret rendering");
+	const args = ["inject"];
+	const stdin = optionalStringParam(record.input, "input");
+	const inPath = optionalStringParam(record.in, "in") ?? (stdin !== undefined ? "-" : undefined);
+	appendOptionalStringFlag(args, "--in", inPath);
+	appendOptionalStringFlag(args, "--out", record.out);
+	appendOptionalStringFlag(args, "--project", record.project);
+	appendOptionalStringFlag(args, "--agent", record.agent);
+	if (optionalBooleanParam(record.allow_conflicts, "allow_conflicts"))
+		args.push("--allow-conflicts");
+	if (optionalBooleanParam(record.no_project_folder, "no_project_folder"))
+		args.push("--no-project-folder");
+	if (optionalBooleanParam(record.force, "force")) args.push("--force");
+	if (dryRun) args.push("--dry-run");
+	return runCommandRpc({
+		name: "vault.inject",
+		args,
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		stdin,
+		wait: optionalBooleanParam(record.wait, "wait") ?? true,
+	});
+}
+
+function authStatusRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set());
+	const auth = getAuth();
+	const pending = getPendingAuth();
+	return {
+		logged_in: auth !== null,
+		user: auth ? { email: auth.email, id: auth.userId } : null,
+		api_url: getConfig().apiUrl,
+		pending_auth: pending
+			? {
+					user_code: pending.userCode,
+					verification_uri: pending.verificationUri,
+					expires_at: pending.expiresAt,
+					interval_ms: pending.intervalMs,
+					api_url: pending.apiUrl,
+				}
+			: null,
+	};
+}
+
+async function authLoginRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["api_key", "api_url", "replace", "confirm_secret_access"]));
+	const existing = getAuth();
+	const replace = optionalBooleanParam(record.replace, "replace") ?? false;
+	if (existing && !replace) {
+		return { status: "already_logged_in", user: { email: existing.email, id: existing.userId } };
+	}
+	if (existing && replace) {
+		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login replace existing auth");
+	}
+	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? getConfig().apiUrl;
+	const apiKey = optionalStringParam(record.api_key, "api_key");
+	if (apiKey) {
+		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
+		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey);
+		return { status: "logged_in", user: me, api_url: apiUrl };
+	}
+	return startDeviceAuthRpc(apiUrl);
+}
+
+async function authCompleteRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["wait_ms"]));
+	if (getAuth()) return { status: "already_logged_in" };
+	const pending = getPendingAuth();
+	if (!pending) return { status: "no_pending_auth" };
+	if (Date.now() / 1000 >= pending.expiresAt) {
+		clearPendingAuth();
+		return { status: "expired" };
+	}
+	return pollPendingAuthRpc(
+		pending,
+		optionalLimitParam(record.wait_ms, "wait_ms", 0, 600_000, 30_000),
+	);
+}
+
+function authLogoutRpc(params: unknown): unknown {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["confirm"]));
+	requireBooleanConfirmation(record, "confirm", "auth.logout");
+	const wasLoggedIn = isLoggedIn();
+	clearAuth();
+	clearPendingAuth();
+	return { logged_out: wasLoggedIn };
+}
+
+function updateCheckRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["cwd"]));
+	return runCommandRpc({
+		name: "update.check",
+		args: ["update", "--json"],
+		cwd: optionalStringParam(record.cwd, "cwd"),
+		wait: true,
+		parseJson: true,
+	});
+}
+
+async function updateInstallRpc(params: unknown): Promise<unknown> {
+	const record = rpcParamsRecord(params);
+	rejectRpcParams(record, new Set(["confirm"]));
+	requireBooleanConfirmation(record, "confirm", "update.install");
+	const result = await daemonAutoUpdateOnce({
+		currentVersion: getCliVersion(),
+		ignoreDisabled: true,
+	});
+	return { result };
+}
+
+async function runCommandRpc(options: RpcCommandOptions): Promise<unknown> {
+	if (!options.wait) {
+		return {
+			operation: operationManager.start({
+				name: options.name,
+				args: options.args,
+				cwd: options.cwd,
+				stdin: options.stdin,
+				redactedArgs: options.redactedArgs,
+			}),
+		};
+	}
+	const result = await runCliCommandImmediate({
+		name: options.name,
+		args: options.args,
+		cwd: options.cwd,
+		stdin: options.stdin,
+		redactedArgs: options.redactedArgs,
+		timeoutMs: options.timeoutMs,
+	});
+	const response: RpcCommandResponse = { ...result };
+	if (options.parseJson && result.stdout.trim()) {
+		response.json = JSON.parse(result.stdout);
+	}
+	return response;
+}
+
+function appendVaultResolveFlags(args: string[], record: Record<string, unknown>): void {
+	appendOptionalStringFlag(args, "--project", record.project);
+	appendOptionalStringFlag(args, "--agent", record.agent);
+	if (optionalBooleanParam(record.allow_conflicts, "allow_conflicts"))
+		args.push("--allow-conflicts");
+	if (optionalBooleanParam(record.debug, "debug")) args.push("--debug");
+}
+
+function appendOptionalStringFlag(args: string[], flag: string, value: unknown): void {
+	const parsed = optionalStringParam(value, flag);
+	if (parsed !== undefined) args.push(flag, parsed);
+}
+
+interface AuthMeResponse {
+	id: string;
+	email?: string;
+	name?: string;
+}
+
+interface DeviceStartResponse {
+	device_code: string;
+	user_code: string;
+	verification_uri: string;
+	expires_in: number;
+	interval: number;
+}
+
+interface AuthPollResponse {
+	status: string;
+	api_key?: string | null;
+}
+
+async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<AuthMeResponse> {
+	setAuth({ apiKey });
+	const response = await fetch(`${apiUrl}/api/auth/me`, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+	});
+	if (!response.ok) {
+		clearAuth();
+		throw new Error(`API key verification failed with HTTP ${response.status}`);
+	}
+	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/api/auth/me");
+	setAuth({ apiKey, userId: me.id, email: me.email });
+	return me;
+}
+
+async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
+	const response = await fetch(`${apiUrl}/api/cli/auth/device`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ client_label: `clawdi daemon rpc · ${hostname()}` }),
+	});
+	if (!response.ok) {
+		throw new Error(`Failed to start device authorization: HTTP ${response.status}`);
+	}
+	const start = await readJsonObject<DeviceStartResponse>(
+		response,
+		isDeviceStartResponse,
+		"/api/cli/auth/device",
+	);
+	const pending = {
+		deviceCode: start.device_code,
+		userCode: start.user_code,
+		verificationUri: start.verification_uri,
+		expiresAt: Math.floor(Date.now() / 1000) + start.expires_in,
+		intervalMs: Math.max(1, start.interval) * 1000,
+		apiUrl,
+	};
+	setPendingAuth(pending);
+	return {
+		status: "pending",
+		user_code: pending.userCode,
+		verification_uri: pending.verificationUri,
+		expires_at: pending.expiresAt,
+		interval_ms: pending.intervalMs,
+		api_url: pending.apiUrl,
+	};
+}
+
+async function pollPendingAuthRpc(
+	pending: NonNullable<ReturnType<typeof getPendingAuth>>,
+	waitMs: number,
+): Promise<unknown> {
+	const deadline = Date.now() + waitMs;
+	while (true) {
+		const poll = await pollAuthOnce(pending.apiUrl, pending.deviceCode);
+		if (poll.status === "approved" && poll.api_key) {
+			setAuth({ apiKey: poll.api_key });
+			const me = await verifyAndSaveRpcAuth(pending.apiUrl, poll.api_key);
+			clearPendingAuth();
+			return { status: "logged_in", user: me };
+		}
+		if (poll.status === "denied" || poll.status === "expired") {
+			clearPendingAuth();
+			return { status: poll.status };
+		}
+		if (Date.now() >= deadline || waitMs === 0) {
+			return {
+				status: "pending",
+				user_code: pending.userCode,
+				expires_at: pending.expiresAt,
+			};
+		}
+		await new Promise((resolve) =>
+			setTimeout(resolve, Math.min(pending.intervalMs, Math.max(0, deadline - Date.now()))),
+		);
+	}
+}
+
+async function pollAuthOnce(apiUrl: string, deviceCode: string): Promise<AuthPollResponse> {
+	const response = await fetch(`${apiUrl}/api/cli/auth/poll`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ device_code: deviceCode }),
+	});
+	if (!response.ok) throw new Error(`Auth polling failed with HTTP ${response.status}`);
+	return readJsonObject<AuthPollResponse>(response, isAuthPollResponse, "/api/cli/auth/poll");
+}
+
+async function readJsonObject<T>(
+	response: Response,
+	guard: (value: unknown) => value is T,
+	label: string,
+): Promise<T> {
+	const value: unknown = await response.json();
+	if (!guard(value)) throw new Error(`Unexpected response body from ${label}`);
+	return value;
+}
+
+function isAuthMeResponse(value: unknown): value is AuthMeResponse {
+	if (!isRecord(value)) return false;
+	return typeof value.id === "string";
+}
+
+function isDeviceStartResponse(value: unknown): value is DeviceStartResponse {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.device_code === "string" &&
+		typeof value.user_code === "string" &&
+		typeof value.verification_uri === "string" &&
+		typeof value.expires_in === "number" &&
+		typeof value.interval === "number"
+	);
+}
+
+function isAuthPollResponse(value: unknown): value is AuthPollResponse {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.status === "string" &&
+		(value.api_key === undefined || value.api_key === null || typeof value.api_key === "string")
+	);
 }
 
 function daemonInstallRpc(params: unknown): unknown {
@@ -788,11 +1426,32 @@ function rpcParamsRecord(params: unknown): Record<string, unknown> {
 	return params as Record<string, unknown>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredStringParam(record: Record<string, unknown>, key: string): string {
+	const value = optionalStringParam(record[key], key);
+	if (value === undefined) throw new Error(`${key} is required`);
+	return value;
+}
+
 function optionalStringParam(value: unknown, label: string): string | undefined {
 	if (value === undefined || value === null) return undefined;
 	if (typeof value !== "string") throw new Error(`${label} must be a string`);
 	if (!value.trim()) throw new Error(`${label} must not be empty`);
 	return value;
+}
+
+function optionalStringListParam(value: unknown, label: string): string[] | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === "string") return [optionalStringParam(value, label) ?? ""];
+	if (!Array.isArray(value)) throw new Error(`${label} must be a string or string array`);
+	const items: string[] = [];
+	for (const item of value) {
+		items.push(optionalStringParam(item, label) ?? "");
+	}
+	return items;
 }
 
 function optionalAgentParam(value: unknown): AgentType | undefined {
@@ -882,6 +1541,38 @@ function optionalLogLimitParam(value: unknown): number {
 		throw new Error("limit must be an integer from 1 to 1000");
 	}
 	return limit;
+}
+
+function optionalLimitParam(
+	value: unknown,
+	label: string,
+	min: number,
+	max: number,
+	defaultValue: number,
+): number {
+	if (value === undefined || value === null) return defaultValue;
+	let parsed: number;
+	if (typeof value === "number") {
+		parsed = value;
+	} else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+		parsed = Number(value);
+	} else {
+		throw new Error(`${label} must be an integer from ${min} to ${max}`);
+	}
+	if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+		throw new Error(`${label} must be an integer from ${min} to ${max}`);
+	}
+	return parsed;
+}
+
+function requireBooleanConfirmation(
+	record: Record<string, unknown>,
+	key: string,
+	action: string,
+): void {
+	if (optionalBooleanParam(record[key], key) !== true) {
+		throw new Error(`${action} requires ${key}=true.`);
+	}
 }
 
 function isLoopbackRpcHost(host: string): boolean {

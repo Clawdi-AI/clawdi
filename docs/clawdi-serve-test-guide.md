@@ -203,6 +203,29 @@ pass it through `CLAWDI_DAEMON_RPC_TOKEN` or `--rpc-token`.
 Rotate the token with `clawdi daemon rpc daemon.rotate_token`; update
 remote clients with the returned token.
 
+The RPC surface is discoverable:
+
+```sh
+clawdi daemon rpc daemon.methods --rpc-host 127.0.0.1 --rpc-port 17654
+```
+
+Besides daemon control methods, the daemon exposes headless command
+methods for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, and
+`update.*`. Long-running commands return an operation id:
+
+```sh
+clawdi daemon rpc sync.push \
+  --params '{"cwd":"/path/to/project","agent":"codex"}'
+clawdi daemon rpc operation.status --params '{"id":"<operation-id>"}'
+clawdi daemon rpc operation.logs --params '{"id":"<operation-id>","limit":100}'
+```
+
+Vault plaintext access is opt-in. `vault.resolve` and `vault.read`
+default to redacted dry-runs unless the request explicitly passes
+`confirm_secret_access: true`; plaintext access cannot be backgrounded
+into an operation log. Mutating vault calls that would otherwise prompt
+must pass their non-interactive confirmation, such as `yes: true`.
+
 Non-loopback HTTP binds are rejected unless the daemon is started or
 installed with `--rpc-allow-remote` (or
 `CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Do not expose that listener directly
