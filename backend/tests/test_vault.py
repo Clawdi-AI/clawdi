@@ -25,9 +25,11 @@ from app.models.api_key import ApiKey
 from app.models.vault import (
     Vault,
     VaultCredentialProfile,
+    VaultItem,
     VaultProjectAttachment,
     VaultProjectSlugAlias,
 )
+from app.services.vault_crypto import encrypt as vault_crypto_encrypt
 
 
 @pytest.mark.asyncio
@@ -150,6 +152,50 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
         json={"target_slug": "grab-bag", "fields": ["OPENAI_API_KEY"]},
     )
     assert self_copy.status_code == 400, self_copy.text
+
+
+@pytest.mark.asyncio
+async def test_vault_copy_and_delete_accept_legacy_field_names(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    """Legacy imports left names the upsert validator now rejects (e.g.
+    slash-namespaced `app/DATABASE_URL`). Copy and delete are exact
+    matches against existing rows, so both must accept those names —
+    otherwise they are permanently stuck in the source vault (the bug
+    Marvin hit moving keys out of his 700-key default vault)."""
+    created = await cli_client.post("/api/vault", json={"slug": "legacy", "name": "Legacy"})
+    assert created.status_code == 200, created.text
+    await cli_client.post("/api/vault", json={"slug": "tidy", "name": "Tidy"})
+
+    legacy_name = "clawdi-backend/DATABASE_URL"
+    ciphertext, nonce = vault_crypto_encrypt("postgres://legacy")
+    db_session.add(
+        VaultItem(
+            vault_id=uuid.UUID(created.json()["id"]),
+            section="",
+            item_name=legacy_name,
+            encrypted_value=ciphertext,
+            nonce=nonce,
+        )
+    )
+    await db_session.commit()
+
+    copied = await cli_client.post(
+        "/api/vault/legacy/items/copy",
+        json={"target_slug": "tidy", "fields": [legacy_name]},
+    )
+    assert copied.status_code == 200, copied.text
+    assert copied.json() == {"status": "ok", "copied": 1}
+    assert (await cli_client.get("/api/vault/tidy/items")).json() == {"(default)": [legacy_name]}
+
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/legacy/items",
+        json={"section": "", "fields": [legacy_name]},
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert (await cli_client.get("/api/vault/legacy/items")).json() == {}
 
 
 @pytest.mark.asyncio

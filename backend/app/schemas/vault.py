@@ -67,6 +67,11 @@ class VaultItemUpsert(BaseModel):
 
 
 class VaultItemDelete(BaseModel):
+    # Field names here are NOT charset-validated: legacy vaults hold
+    # names the upsert validator would reject today (e.g. slash-
+    # namespaced `app/DATABASE_URL` imports). Deleting is an exact match
+    # against existing rows, so refusing those names would make them
+    # permanently undeletable. Only writes of *new* names stay strict.
     section: str = Field(default="", max_length=200)
     fields: list[str] = Field(min_length=1, max_length=200)
 
@@ -78,7 +83,15 @@ class VaultItemDelete(BaseModel):
     @field_validator("fields", mode="after")
     @classmethod
     def validate_field_names(cls, value: list[str]) -> list[str]:
-        return [_clean_segment(field_name, field_name="field name") for field_name in value]
+        cleaned = []
+        for field_name in value:
+            stripped = field_name.strip()
+            if not stripped:
+                raise ValueError("field name cannot be empty")
+            if len(stripped) > 200:
+                raise ValueError("field name must be at most 200 characters")
+            cleaned.append(stripped)
+        return cleaned
 
 
 class VaultResponse(BaseModel):
