@@ -214,7 +214,7 @@ export default function MemoriesPage() {
 					<div className="p-4">
 						<Alert variant="destructive">
 							<AlertCircle />
-							<AlertTitle>Failed to Load Memories</AlertTitle>
+							<AlertTitle>Couldn't load memories</AlertTitle>
 							<AlertDescription>{errorMessage(error)}</AlertDescription>
 						</Alert>
 					</div>

@@ -169,8 +169,8 @@ function SessionsListInner() {
 
 	const prFilterOptions = useMemo(
 		() => [
-			{ label: "Has PR Links", value: "true" },
-			{ label: "No PR Links", value: "false" },
+			{ label: "Has PR links", value: "true" },
+			{ label: "No PR links", value: "false" },
 		],
 		[],
 	);
@@ -229,7 +229,7 @@ function SessionsListInner() {
 					/>
 				) : null}
 				<DataTableFacetedFilter
-					title="PR Links"
+					title="PR links"
 					options={prFilterOptions}
 					selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
 					onChange={(arr) => {
@@ -279,14 +279,14 @@ function SessionsListInner() {
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to Load Sessions</AlertTitle>
+					<AlertTitle>Couldn't load sessions</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
 				<DashboardSection>
 					<DashboardSectionHeader
 						icon={MessageSquare}
-						title="Session History"
+						title="Session history"
 						count={data ? `${total} session${total === 1 ? "" : "s"}` : undefined}
 						description="Agent conversations and activity. Use filters when you need a specific agent, PR, or summary."
 					/>

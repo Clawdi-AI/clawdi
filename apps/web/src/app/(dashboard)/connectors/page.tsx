@@ -223,7 +223,7 @@ function ConnectedRail({
 				// the header with no way to find their connections.
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to Load Connections</AlertTitle>
+					<AlertTitle>Couldn't load connections</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : isLoading && apps.length === 0 ? (
@@ -274,7 +274,7 @@ function CatalogSection({
 		return (
 			<Alert variant="destructive">
 				<AlertCircle />
-				<AlertTitle>Failed to Load Connectors</AlertTitle>
+				<AlertTitle>Couldn't load connectors</AlertTitle>
 				<AlertDescription>{errorMessage(error)}</AlertDescription>
 			</Alert>
 		);

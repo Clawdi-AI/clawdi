@@ -328,7 +328,7 @@ function VaultPageInner() {
 			{error ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to Load Vaults</AlertTitle>
+					<AlertTitle>Couldn't load vaults</AlertTitle>
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : null}
@@ -1306,7 +1306,7 @@ function VaultKeysPanel({
 			{itemsError ? (
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Failed to Load Keys</AlertTitle>
+					<AlertTitle>Couldn't load keys</AlertTitle>
 					<AlertDescription>{errorMessage(itemsError)}</AlertDescription>
 				</Alert>
 			) : itemsLoading ? (

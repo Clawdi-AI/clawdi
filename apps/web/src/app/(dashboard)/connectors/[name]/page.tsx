@@ -315,7 +315,7 @@ function ConnectorDetail() {
 						// just couldn't load the list.
 						<Alert variant="destructive">
 							<AlertCircle />
-							<AlertTitle>Failed to Load Connections</AlertTitle>
+							<AlertTitle>Couldn't load connections</AlertTitle>
 							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
 						</Alert>
 					) : usesNoAuth ? (
@@ -514,7 +514,7 @@ function ConnectorToolsList({
 				<div className="p-4">
 					<Alert variant="destructive">
 						<AlertCircle />
-						<AlertTitle>Failed to Load Tools</AlertTitle>
+						<AlertTitle>Couldn't load tools</AlertTitle>
 						<AlertDescription>{errorMessage(error)}</AlertDescription>
 					</Alert>
 				</div>

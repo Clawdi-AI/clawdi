@@ -151,4 +151,15 @@ describe("formatSessionSummary", () => {
 			"<command-args>backend</command-args>";
 		expect(formatSessionSummary(raw)).toBe("/test backend");
 	});
+
+	test("strips protocol wrapper tags, keeping inner text", () => {
+		const raw = "<ide_opened_file>The user opened the file /tmp/foo.ts</ide_opened_file>";
+		expect(formatSessionSummary(raw)).toBe("The user opened the file /tmp/foo.ts");
+	});
+
+	test("leaves angle-bracket generics alone", () => {
+		expect(formatSessionSummary("Refactor Vec<string> parsing")).toBe(
+			"Refactor Vec<string> parsing",
+		);
+	});
 });

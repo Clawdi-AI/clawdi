@@ -237,7 +237,7 @@ export default function AgentDetailPage() {
 					}
 				: {
 						icon: MessageSquare,
-						title: "Session History",
+						title: "Session history",
 						description: "Review sessions synced by this agent.",
 					};
 
