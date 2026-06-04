@@ -20,13 +20,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
@@ -88,21 +81,6 @@ export default function VaultPage() {
 				description={VAULTS_RESOURCE.managementDescription}
 				actions={
 					<>
-						{filterableProjects.length > 1 ? (
-							<Select value={projectFilter} onValueChange={setProjectFilter}>
-								<SelectTrigger size="sm" className="w-40" aria-label="Filter vaults by Project">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">All projects</SelectItem>
-									{filterableProjects.map((p) => (
-										<SelectItem key={p.id} value={p.id}>
-											{p.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						) : null}
 						<SearchInput
 							value={search}
 							onChange={setSearch}
@@ -113,6 +91,31 @@ export default function VaultPage() {
 					</>
 				}
 			/>
+
+			{/* Project tabs, not a dropdown — a visible row teaches that vaults
+			    are scoped through Projects (Marvin: dropdowns get ignored). */}
+			{filterableProjects.length > 1 ? (
+				<div
+					className="flex flex-wrap items-center gap-1.5"
+					role="tablist"
+					aria-label="Filter vaults by Project"
+				>
+					<ProjectTab
+						active={projectFilter === "all"}
+						onClick={() => setProjectFilter("all")}
+						label="All projects"
+					/>
+					{filterableProjects.map((p) => (
+						<ProjectTab
+							key={p.id}
+							active={projectFilter === p.id}
+							onClick={() => setProjectFilter(p.id)}
+							label={p.name}
+							emoji={identityFor(p.name).emoji}
+						/>
+					))}
+				</div>
+			) : null}
 
 			{vaults.error ? (
 				<Alert variant="destructive">
@@ -159,6 +162,40 @@ export default function VaultPage() {
 				</>
 			)}
 		</div>
+	);
+}
+
+function ProjectTab({
+	active,
+	onClick,
+	label,
+	emoji,
+}: {
+	active: boolean;
+	onClick: () => void;
+	label: string;
+	emoji?: string;
+}) {
+	return (
+		<button
+			type="button"
+			role="tab"
+			aria-selected={active}
+			onClick={onClick}
+			className={cn(
+				"inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
+				active
+					? "border-foreground/20 bg-accent font-medium text-foreground"
+					: "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+			)}
+		>
+			{emoji ? (
+				<span aria-hidden className="select-none text-[13px] leading-none">
+					{emoji}
+				</span>
+			) : null}
+			{label}
+		</button>
 	);
 }
 
