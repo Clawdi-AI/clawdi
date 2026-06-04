@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -101,6 +102,7 @@ export default function VaultPage() {
 							placeholder="Search vaults…"
 							className="w-full sm:w-56"
 						/>
+						<AddKeysDialog />
 						<NewVaultDialog />
 					</>
 				}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ClipboardPaste, Plus, Share2, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Plus, Share2, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
@@ -21,7 +21,6 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
 	Select,
@@ -32,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
+import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -51,8 +50,6 @@ export default function VaultDetailPage() {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	// Content first, inputs on demand (taste audit #2).
-	const [showAddKey, setShowAddKey] = useState(false);
 
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
@@ -93,24 +90,6 @@ export default function VaultDetailPage() {
 		qc.invalidateQueries({ queryKey: ["vaults"] });
 		qc.invalidateQueries({ queryKey: ["vault-items", slug] });
 	};
-
-	const upsertKeys = useMutation({
-		mutationFn: async (fields: Record<string, string>) => {
-			if (!anyProjectId) throw new Error("Attach this vault to a Project first");
-			return unwrap(
-				await api.PUT("/api/vault/{slug}/items", {
-					params: { path: { slug }, query: { project_id: anyProjectId } },
-					body: { section: "", fields },
-				}),
-			);
-		},
-		onSuccess: (_d, fields) => {
-			refresh();
-			const n = Object.keys(fields).length;
-			toast.success(`${n} ${n === 1 ? "key" : "keys"} saved`);
-		},
-		onError: (e) => toast.error("Couldn't save keys", { description: errorMessage(e) }),
-	});
 
 	const deleteKey = useMutation({
 		mutationFn: async ({ section, name }: { section: string; name: string }) => {
@@ -271,32 +250,14 @@ export default function VaultDetailPage() {
 						</p>
 					</div>
 					{isOwner ? (
-						<div className="flex items-center gap-2">
-							<Button
-								variant="outline"
-								size="sm"
-								aria-expanded={showAddKey}
-								onClick={() => setShowAddKey((v) => !v)}
-								disabled={!anyProjectId}
-							>
+						<AddKeysDialog vaultSlug={slug}>
+							<Button variant="outline" size="sm" disabled={!anyProjectId}>
 								<Plus className="size-3.5" />
-								Add key
+								Add keys
 							</Button>
-							<ImportKeysDialog
-								disabled={!anyProjectId}
-								isPending={upsertKeys.isPending}
-								onImport={(fields) => upsertKeys.mutate(fields)}
-							/>
-						</div>
+						</AddKeysDialog>
 					) : null}
 				</div>
-
-				{isOwner && showAddKey ? (
-					<AddKeyRow
-						disabled={!anyProjectId || upsertKeys.isPending}
-						onAdd={(name, value) => upsertKeys.mutate({ [name]: value })}
-					/>
-				) : null}
 
 				{keys.isLoading ? (
 					<Skeleton className="h-32 w-full rounded-lg" />
@@ -408,147 +369,6 @@ export default function VaultDetailPage() {
 				)}
 			</section>
 		</div>
-	);
-}
-
-function AddKeyRow({
-	disabled,
-	onAdd,
-}: {
-	disabled: boolean;
-	onAdd: (name: string, value: string) => void;
-}) {
-	const [name, setName] = useState("");
-	const [value, setValue] = useState("");
-	const normalized = name.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-	const submit = () => {
-		if (!normalized || !value) return;
-		onAdd(normalized, value);
-		setName("");
-		setValue("");
-	};
-	return (
-		<div className="flex flex-col gap-2 sm:flex-row">
-			<Input
-				value={name}
-				onChange={(e) => setName(e.target.value)}
-				placeholder="OPENAI_API_KEY"
-				aria-label="Key name"
-				autoComplete="off"
-				spellCheck={false}
-				className="font-mono sm:max-w-60"
-			/>
-			<Input
-				type="password"
-				value={value}
-				onChange={(e) => setValue(e.target.value)}
-				placeholder="value"
-				aria-label="Key value"
-				autoComplete="off"
-				className="min-w-0 flex-1 font-mono"
-				onKeyDown={(e) => {
-					if (e.key === "Enter") submit();
-				}}
-			/>
-			<Button onClick={submit} disabled={disabled || !normalized || !value} className="sm:w-auto">
-				<Plus className="size-3.5" />
-				Add key
-			</Button>
-		</div>
-	);
-}
-
-function ImportKeysDialog({
-	disabled,
-	isPending,
-	onImport,
-}: {
-	disabled: boolean;
-	isPending: boolean;
-	onImport: (fields: Record<string, string>) => void;
-}) {
-	const [open, setOpen] = useState(false);
-	const [text, setText] = useState("");
-
-	// `KEY=value` lines (dotenv-style). Quotes around values are stripped;
-	// comments and blank lines ignored.
-	const fields = useMemo(() => {
-		const out: Record<string, string> = {};
-		for (const rawLine of text.split("\n")) {
-			const line = rawLine.trim();
-			if (!line || line.startsWith("#")) continue;
-			const eq = line.indexOf("=");
-			if (eq <= 0) continue;
-			const key = line
-				.slice(0, eq)
-				.trim()
-				.replace(/^export\s+/, "")
-				.toUpperCase()
-				.replace(/[^A-Z0-9_]/g, "_");
-			let value = line.slice(eq + 1).trim();
-			if (
-				(value.startsWith('"') && value.endsWith('"')) ||
-				(value.startsWith("'") && value.endsWith("'"))
-			) {
-				value = value.slice(1, -1);
-			}
-			if (key && value) out[key] = value;
-		}
-		return out;
-	}, [text]);
-	const count = Object.keys(fields).length;
-
-	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
-				if (!next) setText("");
-			}}
-		>
-			<DialogTrigger asChild>
-				<Button variant="outline" size="sm" disabled={disabled}>
-					<ClipboardPaste className="mr-1.5 size-3.5" />
-					Import
-				</Button>
-			</DialogTrigger>
-			<DialogContent className="sm:max-w-lg">
-				<DialogHeader>
-					<DialogTitle>Import keys</DialogTitle>
-					<DialogDescription>
-						Paste <span className="font-mono">KEY=value</span> lines — straight from a .env file
-						works.
-					</DialogDescription>
-				</DialogHeader>
-				<div className="space-y-3">
-					<Textarea
-						value={text}
-						onChange={(e) => setText(e.target.value)}
-						placeholder={"OPENAI_API_KEY=sk-…\nGITHUB_TOKEN=ghp_…"}
-						rows={8}
-						autoFocus
-						spellCheck={false}
-						className="resize-none font-mono text-xs"
-					/>
-					<div className="flex items-center justify-between gap-2">
-						<span className="text-xs text-muted-foreground tabular-nums">
-							{count} {count === 1 ? "key" : "keys"} detected
-						</span>
-						<Button
-							onClick={() => {
-								onImport(fields);
-								setOpen(false);
-								setText("");
-							}}
-							disabled={count === 0 || isPending}
-						>
-							{isPending ? <Spinner /> : <Check className="size-3.5" />}
-							Import {count > 0 ? count : ""}
-						</Button>
-					</div>
-				</div>
-			</DialogContent>
-		</Dialog>
 	);
 }
 

@@ -2,6 +2,7 @@
 
 import { Trash2 } from "lucide-react";
 import Link from "next/link";
+import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -41,8 +42,9 @@ export function SkillCard({
 				>
 					{id.emoji}
 				</span>
-				{canUninstall ? (
-					<span className="relative z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+				<span className="relative z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+					{skill.project_id ? <SendSkillDialog skill={skill} /> : null}
+					{canUninstall ? (
 						<ConfirmAction
 							title={`Uninstall ${skill.name}?`}
 							description={<p>Other Projects keep their copies.</p>}
@@ -62,8 +64,8 @@ export function SkillCard({
 								<Trash2 className="size-3.5" />
 							</Button>
 						</ConfirmAction>
-					</span>
-				) : null}
+					) : null}
+				</span>
 			</div>
 			<div className="min-w-0">
 				<div className="flex min-w-0 items-center gap-1.5">
