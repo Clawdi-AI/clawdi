@@ -291,7 +291,7 @@ export default function ProjectDetailPage() {
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
-							Add to Agent
+							Add to agent
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -308,7 +308,7 @@ export default function ProjectDetailPage() {
 				<div className="space-y-6">
 					<DetailPanel className="space-y-5">
 						<ContentHeader
-							title="Resources in This Project"
+							title="Resources in this Project"
 							description={
 								isOwner
 									? "Skills and vaults available in this Project."
@@ -392,7 +392,7 @@ export default function ProjectDetailPage() {
 								>
 									<Button variant="outline" className="w-full" size="sm">
 										<Bot className="mr-1.5 size-3.5" />
-										Add to Agent
+										Add to agent
 									</Button>
 								</UseProjectWithAgentDialog>
 							}
@@ -415,7 +415,7 @@ export default function ProjectDetailPage() {
 								>
 									<Button size="sm" className="w-full">
 										<Bot className="mr-1.5 size-3.5" />
-										Add to Agent
+										Add to agent
 									</Button>
 								</UseProjectWithAgentDialog>
 							}
@@ -495,7 +495,7 @@ function OwnerAccessPanel({
 			<div className="space-y-1">
 				<div className="flex items-center gap-2">
 					<Users className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Sharing and Collaboration</h2>
+					<h2 className="text-sm font-semibold">Sharing and collaboration</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
 					Manage people, pending invites, and share links for this Project. New members join as
@@ -529,7 +529,7 @@ function OwnerAccessPanel({
 			>
 				<Button className="w-full" size="sm">
 					<Share2 className="mr-1.5 size-3.5" />
-					Manage Sharing
+					Manage sharing
 				</Button>
 			</ShareProjectDialog>
 			{useWithAgentControl}

@@ -82,7 +82,7 @@ export function ResourcesCard({
 }) {
 	const ready = stats && (!projectCountLoading || projectCount !== undefined);
 	const waitingForAgent = hasConnectedAgent === false;
-	const finalStep = waitingForAgent ? "Ready to Add to Agent" : "Add to Agent";
+	const finalStep = waitingForAgent ? "Ready to Add to agent" : "Add to agent";
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">

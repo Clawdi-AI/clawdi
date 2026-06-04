@@ -425,7 +425,7 @@ function SkillDetailPageInner() {
 							<div className="space-y-1">
 								<div className="flex items-center gap-2">
 									<FolderKanban className="size-4 text-muted-foreground" />
-									<h2 className="text-sm font-semibold">Project Availability</h2>
+									<h2 className="text-sm font-semibold">Project availability</h2>
 								</div>
 								<p className="text-xs text-muted-foreground">
 									Skills live in a Project. Agents can use this Skill when that Project is added to
@@ -484,7 +484,7 @@ function SkillDetailPageInner() {
 								<div className="space-y-1">
 									<div className="flex items-center gap-2">
 										<BookOpen className="size-4 text-muted-foreground" />
-										<h2 className="text-sm font-semibold">Instruction File</h2>
+										<h2 className="text-sm font-semibold">Instruction file</h2>
 									</div>
 									<p className="text-xs text-muted-foreground">
 										Agents read this file when the Project provides the Skill.
@@ -510,7 +510,7 @@ function SkillDetailPageInner() {
 								<div className="space-y-1">
 									<div className="flex items-center gap-2">
 										<BookOpen className="size-4 text-muted-foreground" />
-										<h2 className="text-sm font-semibold">Instruction File</h2>
+										<h2 className="text-sm font-semibold">Instruction file</h2>
 									</div>
 									<p className="text-xs text-muted-foreground">
 										The Skill is installed, but no editable instruction body is available from the

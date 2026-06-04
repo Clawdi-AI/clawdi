@@ -461,7 +461,7 @@ function SharedProjectRow({
 					<Button asChild variant="outline" size="sm">
 						<Link href={`${projectDetailHref(project.id)}?useWithAgent=1`}>
 							<Bot className="mr-1.5 size-3.5" />
-							Add to Agent
+							Add to agent
 						</Link>
 					</Button>
 				</div>
