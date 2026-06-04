@@ -23,7 +23,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -52,7 +52,6 @@ export function CopyKeysDialog({
 	children: React.ReactNode;
 }) {
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [targetChoice, setTargetChoice] = useState("");
@@ -110,15 +109,18 @@ export function CopyKeysDialog({
 				if (bucket) bucket.push(k.name);
 				else bySection.set(section, [k.name]);
 			}
-			const query = anyProjectId ? `?project_id=${anyProjectId}` : "";
 			for (const [section, names] of bySection) {
 				for (let i = 0; i < names.length; i += CHUNK) {
 					const fields = names.slice(i, i + CHUNK);
-					await authedFetch(`/api/vault/${encodeURIComponent(vault.slug)}/items/copy${query}`, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ target_slug: targetSlug, section, fields }),
-					});
+					await unwrap(
+						await api.POST("/api/vault/{slug}/items/copy", {
+							params: {
+								path: { slug: vault.slug },
+								query: { project_id: anyProjectId ?? undefined },
+							},
+							body: { target_slug: targetSlug, section, fields },
+						}),
+					);
 					if (mode === "move") {
 						await unwrap(
 							await api.DELETE("/api/vault/{slug}/items", {
