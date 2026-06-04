@@ -20,6 +20,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
@@ -38,6 +45,7 @@ const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 export default function VaultPage() {
 	const api = useApi();
 	const [search, setSearch] = useState("");
+	const [projectFilter, setProjectFilter] = useState<string>("all");
 
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
@@ -57,9 +65,18 @@ export default function VaultPage() {
 	const items = vaults.data?.items ?? [];
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
-		if (!q) return items;
-		return items.filter((v) => [v.name, v.slug].join(" ").toLowerCase().includes(q));
-	}, [items, search]);
+		let rows = items;
+		if (projectFilter !== "all") {
+			rows = rows.filter((v) => (v.project_ids ?? []).includes(projectFilter));
+		}
+		if (!q) return rows;
+		return rows.filter((v) => [v.name, v.slug].join(" ").toLowerCase().includes(q));
+	}, [items, search, projectFilter]);
+	// Only projects that actually hold a vault — an empty filter option is noise.
+	const filterableProjects = useMemo(() => {
+		const used = new Set(items.flatMap((v) => v.project_ids ?? []));
+		return (projects.data ?? []).filter((p) => used.has(p.id));
+	}, [items, projects.data]);
 	const mine = filtered.filter((v) => v.is_owner !== false);
 	const shared = filtered.filter((v) => v.is_owner === false);
 
@@ -70,6 +87,21 @@ export default function VaultPage() {
 				description={VAULTS_RESOURCE.managementDescription}
 				actions={
 					<>
+						{filterableProjects.length > 1 ? (
+							<Select value={projectFilter} onValueChange={setProjectFilter}>
+								<SelectTrigger size="sm" className="w-40" aria-label="Filter vaults by Project">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="all">All projects</SelectItem>
+									{filterableProjects.map((p) => (
+										<SelectItem key={p.id} value={p.id}>
+											{p.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						) : null}
 						<SearchInput
 							value={search}
 							onChange={setSearch}
