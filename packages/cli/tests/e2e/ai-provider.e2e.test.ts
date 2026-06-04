@@ -143,7 +143,7 @@ describe("ai-provider CLI process e2e", () => {
 			writeFileSync(codexPrimaryConfig, 'model = "user-model"\n');
 			const codexApplied = await runCli(
 				destination,
-				["ai-provider", "apply", "--engine", "codex", "--json"],
+				["ai-provider", "apply", "openai-main", "--target", "codex", "--json"],
 				{ CODEX_HOME: codexHome },
 			);
 			expect(codexApplied.code).toBe(0);
@@ -161,7 +161,8 @@ describe("ai-provider CLI process e2e", () => {
 			const dryRun = await runCli(destination, [
 				"ai-provider",
 				"apply",
-				"--engine",
+				"openai-main",
+				"--target",
 				"hermes",
 				"--dry-run",
 				"--json",
@@ -186,11 +187,11 @@ describe("ai-provider CLI process e2e", () => {
 
 			const openClawApplied = await runCli(
 				destination,
-				["ai-provider", "apply", "--engine", "openclaw", "--json"],
+				["ai-provider", "apply", "openai-main", "--target", "openclaw", "--json"],
 				{ PATH: `${stubDir}:${process.env.PATH ?? ""}` },
 			);
 			expect(openClawApplied.code).toBe(0);
-			expect(openClawApplied.stdout).toContain('"engine": "openclaw"');
+			expect(openClawApplied.stdout).toContain('"target": "openclaw"');
 			expect(openClawApplied.stdout).not.toContain(SECRET);
 			expect(openClawApplied.stderr).not.toContain(SECRET);
 			expect(readFileSync(openClawArgs, "utf8").trim().split("\n")).toEqual([

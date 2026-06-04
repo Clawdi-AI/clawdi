@@ -15,8 +15,8 @@ const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
 const CREDENTIAL_FILE_MODE = 0o600;
 const execFileAsync = promisify(execFile);
 
-type TargetStrategy = "adapter_default" | "explicit";
-type SourceKind = "file" | "keychain";
+export type TargetStrategy = "adapter_default" | "explicit";
+export type SourceKind = "file" | "keychain";
 
 interface BuiltInCredentialAdapter {
 	logicalName: string;
@@ -47,7 +47,7 @@ const BUILTIN_CREDENTIAL_ADAPTERS: Record<string, BuiltInCredentialAdapter> = {
 	},
 };
 
-interface CredentialFileSnapshot {
+export interface CredentialFileSnapshot {
 	logicalName: string;
 	sourcePath: string;
 	targetPath?: string;
@@ -58,7 +58,7 @@ interface CredentialFileSnapshot {
 	size: number;
 }
 
-interface CredentialProfileEnvelope {
+export interface CredentialProfileEnvelope {
 	schemaVersion: 1;
 	kind: "local_agent_profile";
 	tool: string;
@@ -410,6 +410,20 @@ function parseEnvelope(payload: string): CredentialProfileEnvelope {
 	};
 }
 
+export function parseAgentCredentialProfilePayload(
+	toolInput: string,
+	profileInput: string,
+	payload: string,
+): CredentialProfileEnvelope {
+	const tool = canonicalTool(normalizeName(toolInput, "tool"));
+	const profile = normalizeName(profileInput, "profile", 120);
+	const envelope = parseEnvelope(payload);
+	if (envelope.tool !== tool || envelope.profile !== profile) {
+		throw new Error("Stored credential profile metadata does not match the requested profile.");
+	}
+	return envelope;
+}
+
 async function resolveProjectOption(project?: string): Promise<string | undefined> {
 	if (!project) return undefined;
 	const { apiUrl } = getConfig();
@@ -605,10 +619,7 @@ export async function materializeAgentCredentialProfilePayload(
 ): Promise<AgentCredentialMaterializeResult | null> {
 	const tool = canonicalTool(normalizeName(toolInput, "tool"));
 	const profile = normalizeName(profileInput, "profile", 120);
-	const envelope = parseEnvelope(payload);
-	if (envelope.tool !== tool || envelope.profile !== profile) {
-		throw new Error("Stored credential profile metadata does not match the requested profile.");
-	}
+	const envelope = parseAgentCredentialProfilePayload(tool, profile, payload);
 	if (opts.to && envelope.files.length !== 1) {
 		throw new Error("--to can only be used with single-file credential profiles.");
 	}

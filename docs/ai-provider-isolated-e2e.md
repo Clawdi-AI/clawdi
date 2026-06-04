@@ -19,12 +19,13 @@ or Python packages on the host machine.
 
 - Date: 2026-06-03
 - Branch: `feat/ai-provider-abstraction`
-- Latest rerun: 2026-06-03 on `review/cli-release-readiness`
+- Latest rerun: 2026-06-04 after source/target apply and Codex OAuth
+  target-native auth store changes
 - Container image: `node:24-bookworm-slim`
 - Container-only installs:
   - `bun@1.3.14`
   - `@openai/codex@0.136.0`
-  - `openclaw@2026.5.28`
+  - `openclaw@2026.6.1`
   - `hermes-agent==0.15.2`
   - Debian `git`, `python3`, and `python3-venv`
 - Repository mount: read-only at `/repo`
@@ -53,7 +54,14 @@ or Python packages on the host machine.
    existing `mcp_servers` config is preserved.
 9. Apply OpenClaw config through the real OpenClaw CLI and read it back with
    `openclaw config get`.
-10. Assert the fake secret is not present in Clawdi CLI output, generated
+10. Add a Codex OAuth source backed by a fake Clawdi auth-resolve endpoint, then
+    run `clawdi ai-provider apply openai-codex` with the default target set.
+11. Verify target-native Codex OAuth auth stores are written for Codex, Hermes,
+    and OpenClaw. The OpenClaw auth profile is the canonical
+    `openai:default` entry with `order.openai`.
+12. Assert fake env secrets and fake OAuth tokens are not present in Clawdi CLI
+    output or generated non-secret runtime config.
+13. Assert the fake secret is not present in Clawdi CLI output, generated
     runtime config, or the smoke summary.
 
 ## Automated But Not Smoke-Covered
@@ -74,7 +82,8 @@ Covered by automated tests:
 - CLI manual paste flow through `ai-provider complete-oauth`.
 - OAuth provider error handling, which must not complete auth or replace the
   provider's existing auth.
-- Codex auth profile materialization into the local Codex auth file.
+- Backend route coverage for Codex auth profile import/resolve and OAuth
+  start/complete is covered by `backend/tests/test_ai_providers.py`.
 
 Not covered by automated smoke:
 
@@ -98,14 +107,13 @@ Recorded on 2026-06-03 with `@openai/codex@0.136.0`:
 4. Completed OAuth through `clawdi ai-provider complete-oauth`.
 5. Verified the provider auth changed to `agent_profile` for `codex/default`.
 6. Created a temporary CLI API key for the same local test user and ran
-   `clawdi ai-provider materialize-auth`.
-7. Verified the isolated Codex `auth.json` was written with mode `0600`,
+   `clawdi ai-provider apply openai-codex --target codex`.
+7. Verified the isolated Codex profile and `auth.json` were written with mode `0600`,
    `auth_mode: "chatgpt"`, and OAuth token fields.
-8. Ran `clawdi ai-provider apply --engine codex`.
-9. Verified the generated Codex profile uses `model_provider = "openai"` and
+8. Verified the generated Codex profile uses `model_provider = "openai"` and
    omits `model`, allowing Codex to choose its ChatGPT-account-compatible
    default model.
-10. Ran real `codex exec --profile clawdi-ai-provider` without
+9. Ran real `codex exec --profile clawdi-ai-provider` without
     `OPENAI_API_KEY`; Codex used `model: gpt-5.5` and returned the expected
     response.
 
@@ -128,6 +136,22 @@ package caches:
 - OpenClaw: `openclaw@2026.5.12`, `2026.5.18`, `2026.5.27`, and
   `2026.5.28` each accepted the AI Provider patch shape through
   `openclaw config patch --stdin --dry-run --json`.
+- OpenClaw: `openclaw@2026.6.1` accepted the env-backed AI Provider patch shape
+  through the real `openclaw config patch --stdin` path and used the canonical
+  `openai:default` auth profile for Codex OAuth target-native apply.
+
+## Backend Docker Postgres Check
+
+Recorded on 2026-06-04:
+
+1. Started an isolated Compose Postgres service from `pgvector/pgvector:pg16`
+   with a throwaway project name and volume.
+2. Enabled `vector` and `pg_trgm`.
+3. Ran `uv run alembic upgrade head`.
+4. Ran `uv run pytest tests/test_ai_providers.py`.
+5. Removed the Compose project and volume.
+
+Result: `14 passed`.
 
 ## Final Result
 
@@ -139,7 +163,7 @@ The recorded isolated run exited with code `0` and printed:
   "image": "node:24-bookworm-slim",
   "bun": "1.3.14",
   "codex": "0.136.0",
-  "openclaw": "2026.5.28",
+  "openclaw": "2026.6.1",
   "hermes": "0.15.2",
   "addProvider": "openai-main",
   "defaultProbe": "skipped",
@@ -154,7 +178,19 @@ The recorded isolated run exited with code `0` and printed:
   "openclawDefaultModel": "openai-main/gpt-5.2",
   "openclawProviderApi": "openai-responses",
   "openclawModels": ["gpt-5.2"],
-  "fakeProviderRequests": ["GET /v1/models", "POST /v1/responses"],
+  "codexOauthTargets": ["codex", "hermes", "openclaw"],
+  "codexOauthProfileUsesBuiltInOpenAI": true,
+  "codexOauthAuthStoresWritten": ["codex", "hermes", "openclaw"],
+  "openclawOauthProfile": "openai:default",
+  "openclawOauthDefaultModel": "openai/gpt-5.2",
+  "backendAuthResolveCalls": 3,
+  "fakeProviderRequests": [
+    "GET /v1/models",
+    "POST /v1/responses",
+    "POST /api/ai-providers/openai-codex/auth/resolve",
+    "POST /api/ai-providers/openai-codex/auth/resolve",
+    "POST /api/ai-providers/openai-codex/auth/resolve"
+  ],
   "secretLeakedInOutputs": false
 }
 ```

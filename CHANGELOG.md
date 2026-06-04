@@ -10,6 +10,36 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.0
+
+Package: `clawdi@0.12.0`
+
+### Added
+
+- Added source-to-target AI Provider apply flows. `clawdi ai-provider apply
+  openai-codex` now materializes one Codex OAuth source into every matching
+  local target by default: Codex, Hermes, and OpenClaw.
+- Added target-native Codex OAuth writes for Hermes and OpenClaw, including
+  Hermes credential-pool state and OpenClaw auth profiles.
+
+### Changed
+
+- Replaced the previous `--engine` selector with `--target`; use
+  `--target codex|hermes|openclaw|all` when you need to apply a source to a
+  specific runtime.
+- Codex OAuth application now uses the upstream target contracts instead of
+  env-style API-key projection for subscription OAuth.
+
+### Fixed
+
+- Fixed OpenClaw Codex OAuth profiles to use OpenClaw's canonical
+  `openai:<profile>` auth profile IDs and `auth.order.openai` configuration.
+- Tightened AI Provider apply/export/test output redaction so OAuth tokens and
+  env-backed secrets stay out of generated non-secret config and command
+  output.
+
 ## Clawdi CLI v0.11.0
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.11.0

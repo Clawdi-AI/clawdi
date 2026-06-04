@@ -31,7 +31,7 @@ import {
 	aiProviderStatusCommand,
 } from "../../src/commands/ai-provider-apply";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
-import { buildAgentEngineProjection } from "../../src/lib/ai-provider-projection";
+import { buildAgentTargetProjection } from "../../src/lib/ai-provider-projection";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -805,22 +805,168 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe("new-auth");
 	});
 
-	it("does not project agent profiles into key-env agent config", async () => {
+	it("projects Codex auth profiles to native Hermes config without key env", () => {
+		const projection = buildAgentTargetProjection("hermes", {
+			schema_version: 1,
+			providers: [
+				{
+					id: "openai-codex",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					default_model: "gpt-5.2",
+					api_mode: "openai_responses",
+					auth: { type: "agent_profile", tool: "codex", profile: "default" },
+					runtime_env_name: "OPENAI_API_KEY",
+				},
+			],
+		});
+
+		const patch = projection.files[0]?.content ?? "";
+		expect(patch).toContain('provider: "openai-codex"');
+		expect(patch).toContain("https://chatgpt.com/backend-api/codex");
+		expect(patch).not.toContain("key_env");
+		expect(patch).not.toContain("OPENAI_API_KEY");
+	});
+
+	it("applies Hermes Codex OAuth through the native provider selector", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		writeFileSync(
+			hermesConfig,
+			[
+				"model:",
+				"  provider: custom:old",
+				"  base_url: https://stale.example/v1",
+				"  api_key: sk-stale",
+				"providers:",
+				"  local-legacy:",
+				"    keep_me: true",
+				"",
+			].join("\n"),
+		);
+		const { restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-codex", {
 				type: "openai",
 				defaultModel: "gpt-5.2",
 				auth: "agent:codex/default",
-				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(
-				aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true }),
-			).rejects.toThrow("does not have a verified agent config apply path");
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
+			restoreFetch();
 		}
+
+		const parsed = parseYaml(readFileSync(hermesConfig, "utf-8"));
+		expect(parsed.model).toMatchObject({
+			provider: "openai-codex",
+			default: "gpt-5.2",
+			base_url: "https://chatgpt.com/backend-api/codex",
+		});
+		expect(parsed.model.api_key).toBeUndefined();
+		expect(parsed.providers["local-legacy"]).toMatchObject({ keep_me: true });
+		const authStore = JSON.parse(readFileSync(join(hermesDir, "auth.json"), "utf-8"));
+		expect(authStore.providers["openai-codex"].tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
+		expect(authStore.credential_pool["openai-codex"][0]).toMatchObject({
+			source: "device_code",
+			auth_type: "oauth",
+			access_token: FAKE_CODEX_ACCESS_TOKEN,
+			refresh_token: FAKE_CODEX_REFRESH_TOKEN,
+			base_url: "https://chatgpt.com/backend-api/codex",
+		});
+	});
+
+	it("applies one Codex OAuth source to all matching targets by default", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const stubDir = join(tmpHome, "bin");
+		const openClawArgs = join(tmpHome, "openclaw-args");
+		const openClawStdin = join(tmpHome, "openclaw-stdin.json");
+		mkdirSync(stubDir, { recursive: true });
+		writeFileSync(
+			join(stubDir, "openclaw"),
+			`#!/bin/sh\nprintf "%s\\n" "$@" > "${openClawArgs}"\ncat > "${openClawStdin}"\nexit 0\n`,
+		);
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		const { captured, restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
+		const setup = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderAddCommand("anthropic-main", {
+				type: "anthropic",
+				defaultModel: "claude-opus-4-6",
+				auth: "env:ANTHROPIC_API_KEY",
+				json: true,
+			});
+		} finally {
+			setup.restore();
+		}
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderApplyCommand({ source: "openai-codex", json: true });
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		expect(output()).toContain('"source": "openai-codex"');
+		expect(output()).toContain('"target": "codex"');
+		expect(output()).toContain('"target": "hermes"');
+		expect(output()).toContain('"target": "openclaw"');
+		expect(output()).toContain('"secret_writes"');
+		expect(output()).toContain("Hermes openai-codex auth store");
+		expect(output()).toContain("OpenClaw OpenAI auth profile");
+		expect(output()).not.toContain(FAKE_CODEX_ACCESS_TOKEN);
+		expect(output()).not.toContain(FAKE_CODEX_REFRESH_TOKEN);
+		expect(output()).not.toContain("anthropic-main");
+		expect(
+			captured.filter((request) => request.path === "/api/ai-providers/openai-codex/auth/resolve"),
+		).toHaveLength(3);
+		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
+		expect(codexProfile).toContain('model_provider = "openai"');
+		const codexAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
+		expect(codexAuth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
+		const hermesConfig = parseYaml(readFileSync(join(hermesDir, "config.yaml"), "utf-8"));
+		expect(hermesConfig.model.provider).toBe("openai-codex");
+		const hermesAuth = JSON.parse(readFileSync(join(hermesDir, "auth.json"), "utf-8"));
+		expect(hermesAuth.active_provider).toBe("openai-codex");
+		expect(hermesAuth.providers["openai-codex"].tokens.refresh_token).toBe(
+			FAKE_CODEX_REFRESH_TOKEN,
+		);
+		const openClawPatch = JSON.parse(readFileSync(openClawStdin, "utf-8"));
+		expect(readFileSync(openClawArgs, "utf-8").trim().split("\n")).toEqual([
+			"config",
+			"patch",
+			"--stdin",
+		]);
+		expect(openClawPatch.plugins.entries.codex.enabled).toBe(true);
+		expect(openClawPatch.agents.defaults.model.primary).toBe("openai/gpt-5.2");
+		expect(openClawPatch.models).toBeUndefined();
+		const openClawAuth = JSON.parse(
+			readFileSync(
+				join(tmpHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
+				"utf-8",
+			),
+		);
+		expect(openClawAuth.profiles["openai:default"]).toMatchObject({
+			type: "oauth",
+			provider: "openai",
+			access: FAKE_CODEX_ACCESS_TOKEN,
+			refresh: FAKE_CODEX_REFRESH_TOKEN,
+			accountId: "acct-test",
+		});
+		expect(openClawAuth.order.openai[0]).toBe("openai:default");
 	});
 
 	it("dry-runs Codex apply without writing the Codex profile", async () => {
@@ -834,14 +980,14 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
 
 		const profilePath = join(codexHome, "clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": true');
-		expect(output()).toContain('"engine_contract"');
+		expect(output()).toContain('"target_contract"');
 		expect(output()).toContain('"provider_ids"');
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain("codex --profile clawdi-ai-provider");
@@ -863,7 +1009,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ target: "codex", json: true });
 		} finally {
 			restore();
 		}
@@ -903,7 +1049,7 @@ describe("ai-provider commands", () => {
 				auth: "env:GATEWAY_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ target: "codex", json: true });
 		} finally {
 			restore();
 		}
@@ -938,15 +1084,15 @@ describe("ai-provider commands", () => {
 		} finally {
 			before.restore();
 		}
-		expect(before.output()).toContain('"engine": "codex"');
+		expect(before.output()).toContain('"target": "codex"');
 		expect(before.output()).toContain('"agent_env_name": "OPENAI_API_KEY"');
-		expect(before.output()).toContain('"engine_contract"');
+		expect(before.output()).toContain('"target_contract"');
 		expect(before.output()).toContain('"applied": false');
 		expect(before.output()).toContain("clawdi-ai-provider.config.toml");
 
 		const apply = captureConsole();
 		try {
-			await aiProviderApplyCommand({ engine: "codex", json: true });
+			await aiProviderApplyCommand({ target: "codex", json: true });
 		} finally {
 			apply.restore();
 		}
@@ -957,7 +1103,7 @@ describe("ai-provider commands", () => {
 		} finally {
 			after.restore();
 		}
-		expect(after.output()).toContain('"engine": "codex"');
+		expect(after.output()).toContain('"target": "codex"');
 		expect(after.output()).toContain('"applied": true');
 	});
 
@@ -1001,7 +1147,7 @@ describe("ai-provider commands", () => {
 				auth: "agent:codex/default",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1010,6 +1156,34 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain('model = \\"gpt-5.2\\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
+	});
+
+	it("applies a Codex auth source to the Codex profile and auth store", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const { restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+		} finally {
+			restore();
+			restoreFetch();
+		}
+
+		const profile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
+		expect(profile).toContain('model_provider = "openai"');
+		const auth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
+		expect(auth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
+		expect(auth.tokens.refresh_token).toBe(FAKE_CODEX_REFRESH_TOKEN);
+		expect(output()).toContain("Codex auth.json from agent:codex profile");
+		expect(output()).not.toContain(FAKE_CODEX_ACCESS_TOKEN);
+		expect(output()).not.toContain(FAKE_CODEX_REFRESH_TOKEN);
 	});
 
 	it("rejects Codex apply for chat-only providers", async () => {
@@ -1022,7 +1196,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(
-				aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true }),
+				aiProviderApplyCommand({ target: "codex", dryRun: true, json: true }),
 			).rejects.toThrow("Responses-compatible providers only");
 		} finally {
 			restore();
@@ -1047,7 +1221,7 @@ describe("ai-provider commands", () => {
 				auth: "agent:codex/default",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "codex", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1072,7 +1246,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1104,7 +1278,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
@@ -1145,7 +1319,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1197,7 +1371,7 @@ describe("ai-provider commands", () => {
 				setDefault: true,
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1224,7 +1398,7 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("lets Hermes apply compatible providers while skipping Codex-only auth", async () => {
+	it("lets Hermes apply Codex OAuth with compatible provider entries", async () => {
 		const binDir = join(tmpHome, "bin");
 		mkdirSync(binDir, { recursive: true });
 		const hermesPath = join(binDir, "hermes");
@@ -1243,17 +1417,19 @@ describe("ai-provider commands", () => {
 				type: "anthropic",
 				defaultModel: "claude-opus-4-6",
 				auth: "env:ANTHROPIC_API_KEY",
-				setDefault: true,
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "hermes", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
 
-		expect(output()).toContain("Provider openai-codex skipped for hermes");
-		expect(output()).toContain("custom:anthropic-main");
+		expect(output()).toContain('provider: \\"openai-codex\\"');
+		expect(output()).toContain("https://chatgpt.com/backend-api/codex");
+		expect(output()).toContain("anthropic-main");
 		expect(output()).toContain("ANTHROPIC_API_KEY");
+		expect(output()).toContain("Hermes openai-codex auth store");
+		expect(output()).not.toContain("Provider openai-codex skipped for hermes");
 		expect(output()).not.toContain("openai-codex:");
 	});
 
@@ -1270,7 +1446,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1294,7 +1470,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1317,7 +1493,7 @@ describe("ai-provider commands", () => {
 				auth: "env:OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "hermes", json: true });
+			await aiProviderApplyCommand({ target: "hermes", json: true });
 		} finally {
 			restore();
 		}
@@ -1341,7 +1517,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(
-				aiProviderApplyCommand({ engine: "codex", dryRun: true, json: true }),
+				aiProviderApplyCommand({ target: "codex", dryRun: true, json: true }),
 			).rejects.toThrow("requires default_model");
 		} finally {
 			restore();
@@ -1363,12 +1539,12 @@ describe("ai-provider commands", () => {
 				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "openclaw", dryRun: true, json: true });
+			await aiProviderApplyCommand({ target: "openclaw", dryRun: true, json: true });
 		} finally {
 			restore();
 		}
 		expect(output()).not.toContain("sk-ai-provider");
-		expect(output()).toContain('"engine": "openclaw"');
+		expect(output()).toContain('"target": "openclaw"');
 		expect(output()).toContain('"command": "openclaw"');
 		expect(output()).toContain('"stdin"');
 		expect(output()).toContain("apiKey");
@@ -1395,12 +1571,12 @@ describe("ai-provider commands", () => {
 				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await aiProviderApplyCommand({ engine: "openclaw", json: true });
+			await aiProviderApplyCommand({ target: "openclaw", json: true });
 		} finally {
 			restore();
 		}
 
-		expect(output()).toContain('"engine": "openclaw"');
+		expect(output()).toContain('"target": "openclaw"');
 		expect(readFileSync(argsPath, "utf-8").trim().split("\n")).toEqual([
 			"config",
 			"patch",
@@ -1432,7 +1608,7 @@ describe("ai-provider commands", () => {
 				agentEnv: "OPENAI_API_KEY",
 				json: true,
 			});
-			await expect(aiProviderApplyCommand({ engine: "openclaw", json: true })).rejects.toThrow(
+			await expect(aiProviderApplyCommand({ target: "openclaw", json: true })).rejects.toThrow(
 				"Failed to run openclaw config patch --stdin (exit 42)",
 			);
 		} finally {
@@ -1444,7 +1620,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("keeps the OpenClaw default model registered when catalog models omit it", () => {
-		const projection = buildAgentEngineProjection("openclaw", {
+		const projection = buildAgentTargetProjection("openclaw", {
 			schema_version: 1,
 			defaults: { chat_provider_id: "openai-main" },
 			providers: [
@@ -1468,7 +1644,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("projects multiple OpenClaw providers with merge mode and one default", () => {
-		const projection = buildAgentEngineProjection("openclaw", {
+		const projection = buildAgentTargetProjection("openclaw", {
 			schema_version: 1,
 			defaults: { chat_provider_id: "anthropic-main" },
 			providers: [
@@ -1499,6 +1675,30 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers["anthropic-main"].api).toBe("anthropic-messages");
 		expect(patch.models.providers["openai-main"].apiKey.id).toBe("OPENAI_API_KEY");
 		expect(patch.models.providers["anthropic-main"].apiKey.id).toBe("ANTHROPIC_API_KEY");
+	});
+
+	it("projects Codex OAuth to OpenClaw native OpenAI route without apiKey", () => {
+		const projection = buildAgentTargetProjection("openclaw", {
+			schema_version: 1,
+			defaults: { chat_provider_id: "openai-codex" },
+			providers: [
+				{
+					id: "openai-codex",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					default_model: "gpt-5.2",
+					api_mode: "openai_responses",
+					auth: { type: "agent_profile", tool: "codex", profile: "default" },
+				},
+			],
+		});
+
+		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
+		expect(patch.plugins.entries.codex.enabled).toBe(true);
+		expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.2");
+		expect(patch.models).toBeUndefined();
+		expect(JSON.stringify(patch)).not.toContain("apiKey");
+		expect(projection.warnings).toEqual([]);
 	});
 
 	it("imports provider metadata from a Hermes config without secrets", async () => {
@@ -1550,7 +1750,7 @@ describe("ai-provider commands", () => {
 
 	it("imports provider metadata from the current OpenClaw patch shape", async () => {
 		const openclawConfig = join(tmpHome, "openclaw-config.json");
-		const projection = buildAgentEngineProjection("openclaw", {
+		const projection = buildAgentTargetProjection("openclaw", {
 			schema_version: 1,
 			defaults: { chat_provider_id: "anthropic-main" },
 			providers: [
@@ -1804,6 +2004,58 @@ function captureConsole(): { output: () => string; restore: () => void } {
 			process.stdout.write = origWrite;
 		},
 	};
+}
+
+const FAKE_CODEX_ACCESS_TOKEN = "codex-access-secret";
+const FAKE_CODEX_REFRESH_TOKEN = "codex-refresh-secret";
+const FAKE_CODEX_ID_TOKEN = "codex-id-secret";
+
+function codexAuthResolveHandler() {
+	return {
+		method: "POST",
+		path: "/api/ai-providers/openai-codex/auth/resolve",
+		response: () =>
+			jsonResponse({
+				provider_id: "openai-codex",
+				auth_type: "agent_profile",
+				payload: codexAuthEnvelope(),
+				profile: "default",
+				tool: "codex",
+			}),
+	};
+}
+
+function codexAuthEnvelope(): string {
+	const content = JSON.stringify(
+		{
+			tokens: {
+				access_token: FAKE_CODEX_ACCESS_TOKEN,
+				refresh_token: FAKE_CODEX_REFRESH_TOKEN,
+				id_token: FAKE_CODEX_ID_TOKEN,
+				account_id: "acct-test",
+			},
+			last_refresh: "2026-06-04T00:00:00Z",
+		},
+		null,
+		2,
+	);
+	return JSON.stringify({
+		schemaVersion: 1,
+		kind: "local_agent_profile",
+		tool: "codex",
+		profile: "default",
+		importedAt: "2026-06-04T00:00:00Z",
+		files: [
+			{
+				logicalName: "auth.json",
+				sourcePath: "/source/.codex/auth.json",
+				targetStrategy: "adapter_default",
+				content,
+				mode: 0o600,
+				size: content.length,
+			},
+		],
+	});
 }
 
 async function waitForStartRedirectUri(

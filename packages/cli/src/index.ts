@@ -427,14 +427,25 @@ aiProviderCmd
 	});
 
 aiProviderCmd
-	.command("apply")
-	.description("Apply AI Provider config to a verified agent entrypoint")
-	.requiredOption("--engine <engine>", "Agent engine: openclaw, hermes, or codex")
+	.command("apply [source]")
+	.description("Apply AI Provider config and target-native auth to verified agent entrypoints")
+	.option("--source <source>", "AI Provider source: provider id, default, or all")
+	.option("--target <target>", "Agent target: all, codex, hermes, or openclaw (default: all)")
 	.option("--dry-run", "Preview writes and agent CLI commands without changing files")
 	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts) => {
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi ai-provider apply openai-main --target codex --dry-run
+  $ clawdi ai-provider apply openai-codex
+
+Codex OAuth sources are applied as source -> target. Non-dry-run apply writes
+the compatible target config and the target's native auth store.`,
+	)
+	.action(async (source: string | undefined, opts) => {
 		const { aiProviderApplyCommand } = await import("./commands/ai-provider-apply.js");
-		await aiProviderApplyCommand(opts);
+		await aiProviderApplyCommand({ ...opts, source: opts.source ?? source });
 	});
 
 aiProviderCmd

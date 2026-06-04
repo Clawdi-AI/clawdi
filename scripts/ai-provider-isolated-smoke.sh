@@ -41,6 +41,13 @@ dump_failure_logs() {
       /tmp/openclaw-apply.json \
       /tmp/openclaw-provider.json \
       /tmp/openclaw-default.json \
+      /tmp/oauth-add.json \
+      /tmp/oauth-apply.json \
+      /tmp/oauth-openclaw-default.json \
+      /tmp/oauth-openclaw-auth-profiles.json \
+      /tmp/oauth-codex-auth.json \
+      /tmp/oauth-hermes-config.yaml \
+      /tmp/oauth-hermes-auth.json \
       /tmp/ai-provider-smoke-summary.json \
       /tmp/fake-provider-requests.jsonl; do
       if [ -f "$f" ]; then
@@ -60,7 +67,7 @@ apt-get install -y git python3 python3-venv >/tmp/apt.log 2>&1
 step "installing pinned agent CLIs"
 npm install -g \
   bun@1.3.14 \
-  openclaw@2026.5.28 \
+  openclaw@2026.6.1 \
   @openai/codex@0.136.0 >/tmp/npm-install.log 2>&1
 
 step "installing pinned Hermes package"
@@ -102,6 +109,9 @@ import fs from "node:fs";
 
 const logPath = "/tmp/fake-provider-requests.jsonl";
 const readyPath = "/tmp/fake-provider-ready";
+const oauthAccessToken = "codex-oauth-access-smoke";
+const oauthRefreshToken = "codex-oauth-refresh-smoke";
+const oauthIdToken = "codex-oauth-id-smoke";
 
 function writeJson(res, status, body) {
   const text = JSON.stringify(body);
@@ -147,6 +157,40 @@ function writeSse(res) {
   res.end();
 }
 
+function codexAuthEnvelope() {
+  const content = JSON.stringify(
+    {
+      tokens: {
+        access_token: oauthAccessToken,
+        refresh_token: oauthRefreshToken,
+        id_token: oauthIdToken,
+        account_id: "acct-smoke",
+      },
+      last_refresh: "2026-06-04T00:00:00Z",
+      auth_mode: "chatgpt",
+    },
+    null,
+    2,
+  );
+  return JSON.stringify({
+    schemaVersion: 1,
+    kind: "local_agent_profile",
+    tool: "codex",
+    profile: "default",
+    importedAt: "2026-06-04T00:00:00Z",
+    files: [
+      {
+        logicalName: "auth.json",
+        sourcePath: "/source/.codex/auth.json",
+        targetStrategy: "adapter_default",
+        content,
+        mode: 0o600,
+        size: Buffer.byteLength(content),
+      },
+    ],
+  });
+}
+
 const server = http.createServer((req, res) => {
   const chunks = [];
   req.on("data", (chunk) => chunks.push(chunk));
@@ -171,6 +215,16 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === "POST" && req.url === "/v1/responses") {
       writeSse(res);
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/ai-providers/openai-codex/auth/resolve") {
+      writeJson(res, 200, {
+        provider_id: "openai-codex",
+        auth_type: "agent_profile",
+        payload: codexAuthEnvelope(),
+        profile: "default",
+        tool: "codex",
+      });
       return;
     }
     writeJson(res, 404, { error: { message: `unexpected ${req.method} ${req.url}` } });
@@ -203,6 +257,9 @@ DST_CLAWDI=/tmp/dst-clawdi
 CODEX_HOME=/tmp/codex-home
 HERMES_HOME=/tmp/hermes-home
 OPENCLAW_STATE_DIR=/tmp/openclaw-state
+OAUTH_CODEX_HOME=/tmp/oauth-codex-home
+OAUTH_HERMES_HOME=/tmp/oauth-hermes-home
+OAUTH_OPENCLAW_STATE_DIR=/tmp/oauth-openclaw-state
 EXPORT_FILE=/tmp/ai-providers-with-secrets.json
 ENV_FILE=/tmp/providers.env
 mkdir -p \
@@ -212,14 +269,26 @@ mkdir -p \
   "$DST_CLAWDI" \
   "$CODEX_HOME" \
   "$HERMES_HOME" \
-  "$OPENCLAW_STATE_DIR"
+  "$OPENCLAW_STATE_DIR" \
+  "$OAUTH_CODEX_HOME" \
+  "$OAUTH_HERMES_HOME" \
+  "$OAUTH_OPENCLAW_STATE_DIR"
 
 printf 'model = "user-existing-model"\n' > "$CODEX_HOME/config.toml"
+printf 'model = "oauth-user-existing-model"\n' > "$OAUTH_CODEX_HOME/config.toml"
 cat >"$HERMES_HOME/config.yaml" <<'YAML'
 # user hermes config
 mcp_servers:
   clawdi:
     command: clawdi # keep this comment
+model: old-model
+providers:
+YAML
+cat >"$OAUTH_HERMES_HOME/config.yaml" <<'YAML'
+# user hermes oauth config
+mcp_servers:
+  clawdi:
+    command: clawdi
 model: old-model
 providers:
 YAML
@@ -269,7 +338,7 @@ grep -q "$SECRET" "$ENV_FILE"
 
 step "applying Codex projection"
 HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" CODEX_HOME="$CODEX_HOME" \
-  "${CLI[@]}" ai-provider apply --engine codex --json >/tmp/codex-apply.json
+  "${CLI[@]}" ai-provider apply openai-main --target codex --json >/tmp/codex-apply.json
 
 test -f "$CODEX_HOME/clawdi-ai-provider.config.toml"
 grep -q "user-existing-model" "$CODEX_HOME/config.toml"
@@ -280,7 +349,7 @@ fi
 
 step "applying Hermes projection and loading it with Hermes"
 HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" HERMES_HOME="$HERMES_HOME" \
-  "${CLI[@]}" ai-provider apply --engine hermes --json >/tmp/hermes-apply.json
+  "${CLI[@]}" ai-provider apply openai-main --target hermes --json >/tmp/hermes-apply.json
 
 if grep -q "$SECRET" "$HERMES_HOME/config.yaml" /tmp/hermes-apply.json; then
   echo "secret leaked into hermes config or apply output" >&2
@@ -321,7 +390,7 @@ PY
 
 step "applying OpenClaw projection and reading it with OpenClaw"
 HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
-  "${CLI[@]}" ai-provider apply --engine openclaw --json >/tmp/openclaw-apply.json
+  "${CLI[@]}" ai-provider apply openai-main --target openclaw --json >/tmp/openclaw-apply.json
 
 HOME="$DST_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
   openclaw config get models.providers.openai-main --json >/tmp/openclaw-provider.json
@@ -339,10 +408,51 @@ OPENAI_API_KEY="$SECRET" CODEX_HOME="$CODEX_HOME" \
 
 grep -q "clawdi smoke ok" /tmp/codex-exec.out
 
+step "applying Codex OAuth source to all native targets"
+HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" \
+  "${CLI[@]}" ai-provider add openai-codex \
+  --type openai \
+  --base-url https://api.openai.com/v1 \
+  --default-model gpt-5.2 \
+  --api-mode openai_responses \
+  --auth agent:codex/default \
+  --json >/tmp/oauth-add.json
+
+HOME="$DST_HOME" \
+  CLAWDI_HOME="$DST_CLAWDI" \
+  CLAWDI_API_URL="http://127.0.0.1:18080" \
+  CLAWDI_AUTH_TOKEN="smoke-api-key" \
+  CODEX_HOME="$OAUTH_CODEX_HOME" \
+  HERMES_HOME="$OAUTH_HERMES_HOME" \
+  OPENCLAW_STATE_DIR="$OAUTH_OPENCLAW_STATE_DIR" \
+  "${CLI[@]}" ai-provider apply openai-codex --json >/tmp/oauth-apply.json
+
+test -f "$OAUTH_CODEX_HOME/clawdi-ai-provider.config.toml"
+test -f "$OAUTH_CODEX_HOME/auth.json"
+test -f "$OAUTH_HERMES_HOME/auth.json"
+test -f "$OAUTH_OPENCLAW_STATE_DIR/agents/main/agent/auth-profiles.json"
+cp "$OAUTH_CODEX_HOME/auth.json" /tmp/oauth-codex-auth.json
+cp "$OAUTH_HERMES_HOME/config.yaml" /tmp/oauth-hermes-config.yaml
+cp "$OAUTH_HERMES_HOME/auth.json" /tmp/oauth-hermes-auth.json
+cp "$OAUTH_OPENCLAW_STATE_DIR/agents/main/agent/auth-profiles.json" /tmp/oauth-openclaw-auth-profiles.json
+
+HOME="$DST_HOME" OPENCLAW_STATE_DIR="$OAUTH_OPENCLAW_STATE_DIR" \
+  openclaw config get agents.defaults.model.primary --json >/tmp/oauth-openclaw-default.json
+
+if grep -q "codex-oauth-access-smoke" \
+  /tmp/oauth-apply.json \
+  "$OAUTH_CODEX_HOME/clawdi-ai-provider.config.toml" \
+  "$OAUTH_HERMES_HOME/config.yaml"; then
+  echo "Codex OAuth token leaked into apply output or non-secret config" >&2
+  exit 1
+fi
+
 step "validating smoke artifacts"
 node - <<'NODE' >/tmp/ai-provider-smoke-summary.json
 const fs = require("fs");
 const secret = "sk-smoke-secret-value";
+const oauthAccessToken = "codex-oauth-access-smoke";
+const oauthRefreshToken = "codex-oauth-refresh-smoke";
 const add = JSON.parse(fs.readFileSync("/tmp/add.json", "utf8"));
 const authTest = JSON.parse(fs.readFileSync("/tmp/auth-test.json", "utf8"));
 const liveTest = JSON.parse(fs.readFileSync("/tmp/live-test.json", "utf8"));
@@ -353,7 +463,14 @@ const hermesSmoke = JSON.parse(fs.readFileSync("/tmp/hermes-smoke.json", "utf8")
 const openclawApply = JSON.parse(fs.readFileSync("/tmp/openclaw-apply.json", "utf8"));
 const provider = JSON.parse(fs.readFileSync("/tmp/openclaw-provider.json", "utf8"));
 const def = JSON.parse(fs.readFileSync("/tmp/openclaw-default.json", "utf8"));
+const oauthApply = JSON.parse(fs.readFileSync("/tmp/oauth-apply.json", "utf8"));
+const oauthDefault = JSON.parse(fs.readFileSync("/tmp/oauth-openclaw-default.json", "utf8"));
+const oauthCodexAuth = JSON.parse(fs.readFileSync("/tmp/oauth-codex-auth.json", "utf8"));
+const oauthHermesAuth = JSON.parse(fs.readFileSync("/tmp/oauth-hermes-auth.json", "utf8"));
+const oauthOpenClawAuth = JSON.parse(fs.readFileSync("/tmp/oauth-openclaw-auth-profiles.json", "utf8"));
 const codexProfile = fs.readFileSync("/tmp/codex-home/clawdi-ai-provider.config.toml", "utf8");
+const oauthCodexProfile = fs.readFileSync("/tmp/oauth-codex-home/clawdi-ai-provider.config.toml", "utf8");
+const oauthHermesConfig = fs.readFileSync("/tmp/oauth-hermes-config.yaml", "utf8");
 const codexStdout = fs.readFileSync("/tmp/codex-exec.out", "utf8");
 const requestLog = fs
   .readFileSync("/tmp/fake-provider-requests.jsonl", "utf8")
@@ -372,10 +489,17 @@ const rawWithoutEnvFile = JSON.stringify({
   openclawApply,
   provider,
   def,
+  oauthApply,
+  oauthDefault,
   codexProfile,
+  oauthCodexProfile,
+  oauthHermesConfig,
   codexStdout,
 });
 if (rawWithoutEnvFile.includes(secret)) throw new Error("secret leaked into CLI/runtime outputs");
+if (rawWithoutEnvFile.includes(oauthAccessToken) || rawWithoutEnvFile.includes(oauthRefreshToken)) {
+  throw new Error("Codex OAuth token leaked into CLI/runtime outputs");
+}
 if (authTest.provider_probe?.status !== "skipped") throw new Error("default ai-provider test should skip live probe");
 if (liveTest.provider_probe?.status !== "ok") throw new Error("live provider probe failed");
 if (imported.imported !== 1) throw new Error("import count mismatch");
@@ -401,12 +525,35 @@ if (!responsesCall) throw new Error("fake provider did not receive /v1/responses
 if (modelsProbe.authorization !== `Bearer ${secret}`) throw new Error("live probe did not use env secret");
 if (responsesCall.authorization !== `Bearer ${secret}`) throw new Error("Codex did not use env secret");
 if (responsesCall.body?.model !== "gpt-5.2") throw new Error("Codex request model mismatch");
+const oauthTargets = oauthApply.targets?.map((target) => target.target).sort() ?? [];
+if (oauthTargets.join(",") !== "codex,hermes,openclaw") throw new Error("Codex OAuth did not apply to all targets");
+if (!oauthCodexProfile.includes('model_provider = "openai"')) throw new Error("Codex OAuth profile should use built-in openai provider");
+if (oauthCodexProfile.includes('model = "')) throw new Error("Codex OAuth profile should omit fixed model");
+if (oauthCodexAuth.tokens?.access_token !== oauthAccessToken) throw new Error("Codex auth.json token mismatch");
+if (oauthCodexAuth.tokens?.refresh_token !== oauthRefreshToken) throw new Error("Codex auth.json refresh mismatch");
+if (!/provider:\s*["']?openai-codex["']?/.test(oauthHermesConfig)) throw new Error("Hermes OAuth config missing native provider");
+if (oauthHermesAuth.active_provider !== "openai-codex") throw new Error("Hermes auth active provider mismatch");
+if (oauthHermesAuth.providers?.["openai-codex"]?.tokens?.access_token !== oauthAccessToken) {
+  throw new Error("Hermes auth token mismatch");
+}
+if (oauthHermesAuth.credential_pool?.["openai-codex"]?.[0]?.source !== "device_code") {
+  throw new Error("Hermes credential pool missing device_code entry");
+}
+const openClawProfile = oauthOpenClawAuth.profiles?.["openai:default"];
+if (openClawProfile?.type !== "oauth") throw new Error("OpenClaw OAuth profile missing");
+if (openClawProfile?.provider !== "openai") throw new Error("OpenClaw OAuth profile provider mismatch");
+if (openClawProfile?.access !== oauthAccessToken) throw new Error("OpenClaw OAuth access mismatch");
+if (oauthOpenClawAuth.order?.openai?.[0] !== "openai:default") throw new Error("OpenClaw auth order mismatch");
+const oauthDefaultValue = oauthDefault.value ?? oauthDefault;
+if (oauthDefaultValue !== "openai/gpt-5.2") throw new Error("OpenClaw OAuth default model mismatch");
+const authResolveCalls = requestLog.filter((entry) => entry.method === "POST" && entry.url === "/api/ai-providers/openai-codex/auth/resolve");
+if (authResolveCalls.length !== 3) throw new Error("expected one Codex auth resolve call per target");
 console.log(JSON.stringify({
   ok: true,
   image: "node:24-bookworm-slim",
   bun: "1.3.14",
   codex: "0.136.0",
-  openclaw: "2026.5.28",
+  openclaw: "2026.6.1",
   hermes: "0.15.2",
   addProvider: add.added,
   defaultProbe: authTest.provider_probe.status,
@@ -421,6 +568,12 @@ console.log(JSON.stringify({
   openclawDefaultModel: defaultValue,
   openclawProviderApi: value.api,
   openclawModels: modelIds,
+  codexOauthTargets: oauthTargets,
+  codexOauthProfileUsesBuiltInOpenAI: true,
+  codexOauthAuthStoresWritten: ["codex", "hermes", "openclaw"],
+  openclawOauthProfile: "openai:default",
+  openclawOauthDefaultModel: oauthDefaultValue,
+  backendAuthResolveCalls: authResolveCalls.length,
   fakeProviderRequests: requestLog.map((entry) => `${entry.method} ${entry.url}`),
   secretLeakedInOutputs: false
 }, null, 2));

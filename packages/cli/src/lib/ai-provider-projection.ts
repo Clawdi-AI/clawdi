@@ -10,12 +10,12 @@ import {
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
 
-export type AgentEngine = "openclaw" | "hermes" | "codex";
+export type AgentTarget = "openclaw" | "hermes" | "codex";
 
 export const CODEX_PROFILE_NAME = "clawdi-ai-provider";
 
-export const AGENT_ENGINE_CONTRACTS: Record<
-	AgentEngine,
+export const AGENT_TARGET_CONTRACTS: Record<
+	AgentTarget,
 	{
 		settingMethod: string;
 		supportedVersionRange: string;
@@ -36,7 +36,7 @@ export const AGENT_ENGINE_CONTRACTS: Record<
 	openclaw: {
 		settingMethod: "openclaw config patch --stdin",
 		supportedVersionRange:
-			"openclaw 2026.5.12, 2026.5.18, 2026.5.27, and 2026.5.28 config patch contract",
+			"openclaw 2026.5.12 through 2026.6.1 config patch contract and canonical openai auth-profiles",
 		status: "enabled",
 	},
 };
@@ -46,11 +46,11 @@ export interface ProjectionFile {
 	content: string;
 }
 
-export interface AgentEngineProjection {
-	engine: AgentEngine;
+export interface AgentTargetProjection {
+	target: AgentTarget;
 	files: ProjectionFile[];
 	warnings: string[];
-	contract: (typeof AGENT_ENGINE_CONTRACTS)[AgentEngine];
+	contract: (typeof AGENT_TARGET_CONTRACTS)[AgentTarget];
 	provider_ids: string[];
 	default_provider_id: string;
 }
@@ -80,54 +80,56 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	anthropic_messages: "anthropic_messages",
 };
 
-export function buildAgentEngineProjection(
-	engine: AgentEngine,
+const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+
+export function buildAgentTargetProjection(
+	target: AgentTarget,
 	catalog: AiProviderCatalog,
-): AgentEngineProjection {
+): AgentTargetProjection {
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
 		throw new Error(`AI Provider catalog is invalid:\n${validation.errors.join("\n")}`);
 	}
-	const selection = selectProjectionProviders(engine, catalog);
+	const selection = selectProjectionProviders(target, catalog);
 	const providers = selection.providers;
 	const defaultProvider = selection.defaultProvider;
 	const warnings = [...validation.warnings, ...selection.warnings];
 	const projection =
-		engine === "openclaw"
+		target === "openclaw"
 			? buildOpenClawProjection(providers, defaultProvider)
-			: engine === "hermes"
+			: target === "hermes"
 				? buildHermesProjection(providers, defaultProvider)
 				: buildCodexProjection(providers, defaultProvider);
-	const extension = engine === "openclaw" ? "json" : engine === "hermes" ? "yaml" : "toml";
+	const extension = target === "openclaw" ? "json" : target === "hermes" ? "yaml" : "toml";
 	return {
-		engine,
+		target,
 		files: [
 			{
-				path: `ai-providers.${engine}.${extension}`,
+				path: `ai-providers.${target}.${extension}`,
 				content: projection,
 			},
 		],
 		warnings,
-		contract: AGENT_ENGINE_CONTRACTS[engine],
+		contract: AGENT_TARGET_CONTRACTS[target],
 		provider_ids: providers.map((provider) => provider.id),
 		default_provider_id: defaultProvider.id,
 	};
 }
 
 function selectProjectionProviders(
-	engine: AgentEngine,
+	target: AgentTarget,
 	catalog: AiProviderCatalog,
 ): { providers: ProjectionProvider[]; defaultProvider: ProjectionProvider; warnings: string[] } {
 	const warnings: string[] = [];
 	const providers: ProjectionProvider[] = [];
 	for (const provider of catalog.providers) {
-		const result = normalizeProjectionProvider(engine, provider);
+		const result = normalizeProjectionProvider(target, provider);
 		if (typeof result === "string") warnings.push(result);
 		else providers.push(result);
 	}
 	if (providers.length === 0) {
 		throw new Error(
-			`No AI Providers can be applied to ${engine}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
+			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
 	}
 	const preferredDefaultId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
@@ -138,32 +140,32 @@ function selectProjectionProviders(
 	const defaultProvider = providers[0];
 	if (preferredDefaultId) {
 		warnings.push(
-			`Default provider ${preferredDefaultId} cannot be applied to ${engine}; using ${defaultProvider.id}.`,
+			`Default provider ${preferredDefaultId} cannot be applied to ${target}; using ${defaultProvider.id}.`,
 		);
 	}
 	return { providers, defaultProvider, warnings };
 }
 
 function normalizeProjectionProvider(
-	engine: AgentEngine,
+	target: AgentTarget,
 	provider: AiProvider,
 ): ProjectionProvider | string {
 	if (!provider.default_model) {
-		return `Provider ${provider.id} skipped for ${engine}: requires default_model before agent config apply.`;
+		return `Provider ${provider.id} skipped for ${target}: requires default_model before agent config apply.`;
 	}
-	if (
-		engine !== "codex" &&
-		(provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile")
-	) {
-		return `Provider ${provider.id} skipped for ${engine}: uses ${provider.auth.type} auth, which does not have a verified agent config apply path yet. Materialize the profile for its native tool or use env/Vault/managed API key auth for key-env agents.`;
+	if (provider.auth.type === "oauth_profile") {
+		return `Provider ${provider.id} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
+	}
+	if (provider.auth.type === "agent_profile" && !usesCodexNativeAuth(provider)) {
+		return `Provider ${provider.id} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
 	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName && !usesCodexNativeAuth(provider)) {
-		return `Provider ${provider.id} skipped for ${engine}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
+		return `Provider ${provider.id} skipped for ${target}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
 	}
 	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
 	if (!apiMode) {
-		return `Provider ${provider.id} skipped for ${engine}: requires api_mode before agent config apply.`;
+		return `Provider ${provider.id} skipped for ${target}: requires api_mode before agent config apply.`;
 	}
 	const projectionProvider = {
 		id: provider.id,
@@ -176,12 +178,16 @@ function normalizeProjectionProvider(
 		env_name: envName,
 		auth: provider.auth,
 	};
-	if (engine === "codex") {
+	if (target === "codex") {
 		const reason = codexProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
-	if (engine === "hermes") {
+	if (target === "hermes") {
 		const reason = hermesProjectionSkipReason(projectionProvider);
+		if (reason) return reason;
+	}
+	if (target === "openclaw") {
+		const reason = openClawProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
 	return projectionProvider;
@@ -203,31 +209,39 @@ function buildOpenClawProjection(
 	providers: ProjectionProvider[],
 	defaultProvider: ProjectionProvider,
 ): string {
-	const body = {
+	const projectedProviders = Object.fromEntries(
+		providers
+			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
+			.map((provider) => [
+				provider.id,
+				compactObject({
+					baseUrl: provider.base_url,
+					api: openClawApiLabel(provider.api_mode),
+					apiKey: provider.env_name
+						? { source: "env", provider: "default", id: provider.env_name }
+						: undefined,
+					models: openClawModels(provider),
+				}),
+			]),
+	);
+	const usesNativeCodex = providers.some(usesNativeCodexOpenAiProvider);
+	const body = compactObject({
+		plugins: usesNativeCodex ? { entries: { codex: { enabled: true } } } : undefined,
 		agents: {
 			defaults: {
 				model: {
-					primary: `${defaultProvider.id}/${defaultProvider.default_model}`,
+					primary: openClawDefaultModelRef(defaultProvider),
 				},
 			},
 		},
-		models: {
-			mode: "merge",
-			providers: Object.fromEntries(
-				providers.map((provider) => [
-					provider.id,
-					compactObject({
-						baseUrl: provider.base_url,
-						api: openClawApiLabel(provider.api_mode),
-						apiKey: provider.env_name
-							? { source: "env", provider: "default", id: provider.env_name }
-							: undefined,
-						models: openClawModels(provider),
-					}),
-				]),
-			),
-		},
-	};
+		models:
+			Object.keys(projectedProviders).length > 0
+				? {
+						mode: "merge",
+						providers: projectedProviders,
+					}
+				: undefined,
+	});
 	return `${JSON.stringify(body, null, 2)}\n`;
 }
 
@@ -259,6 +273,24 @@ function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
 	return OPENCLAW_API_LABELS[apiMode];
 }
 
+function openClawProjectionSkipReason(provider: ProjectionProvider): string | undefined {
+	if (!usesCodexNativeAuth(provider)) return undefined;
+	if (provider.api_mode !== "openai_responses") {
+		return `Provider ${provider.id} skipped for openclaw: Codex OAuth native apply requires api_mode openai_responses.`;
+	}
+	if (!usesNativeCodexOpenAiProvider(provider)) {
+		return `Provider ${provider.id} skipped for openclaw: Codex OAuth native apply requires an openai provider with the default OpenAI base_url.`;
+	}
+	return undefined;
+}
+
+function openClawDefaultModelRef(provider: ProjectionProvider): string {
+	if (usesNativeCodexOpenAiProvider(provider)) {
+		return `openai/${codexNativeModelId(provider.default_model)}`;
+	}
+	return `${provider.id}/${provider.default_model}`;
+}
+
 function positiveNumber(input: number | undefined): number | undefined {
 	return typeof input === "number" && Number.isFinite(input) && input > 0 ? input : undefined;
 }
@@ -267,15 +299,23 @@ function buildHermesProjection(
 	providers: ProjectionProvider[],
 	defaultProvider: ProjectionProvider,
 ): string {
+	const nativeCodexDefault = usesNativeCodexOpenAiProvider(defaultProvider);
+	const customProviders = providers.filter((provider) => !usesNativeCodexOpenAiProvider(provider));
 	const lines: string[] = [
 		"# Generated by Clawdi. Merge this patch into Hermes config.yaml.",
-		`# Contract: ${AGENT_ENGINE_CONTRACTS.hermes.supportedVersionRange}; ${AGENT_ENGINE_CONTRACTS.hermes.settingMethod}.`,
+		`# Contract: ${AGENT_TARGET_CONTRACTS.hermes.supportedVersionRange}; ${AGENT_TARGET_CONTRACTS.hermes.settingMethod}.`,
 		"model:",
-		`  provider: ${quoteYaml(hermesProviderSelector(defaultProvider.id))}`,
-		`  default: ${quoteYaml(defaultProvider.default_model)}`,
-		"providers:",
 	];
-	for (const provider of providers) {
+	if (nativeCodexDefault) {
+		lines.push('  provider: "openai-codex"');
+		lines.push(`  default: ${quoteYaml(codexNativeModelId(defaultProvider.default_model))}`);
+		lines.push(`  base_url: ${quoteYaml(HERMES_CODEX_BASE_URL)}`);
+	} else {
+		lines.push(`  provider: ${quoteYaml(hermesProviderSelector(defaultProvider.id))}`);
+		lines.push(`  default: ${quoteYaml(defaultProvider.default_model)}`);
+	}
+	if (customProviders.length > 0) lines.push("providers:");
+	for (const provider of customProviders) {
 		const transport = hermesTransportLabel(provider.api_mode);
 		if (!transport) {
 			throw new Error(
@@ -293,6 +333,15 @@ function buildHermesProjection(
 }
 
 function hermesProjectionSkipReason(provider: ProjectionProvider): string | undefined {
+	if (usesCodexNativeAuth(provider)) {
+		if (provider.api_mode !== "openai_responses") {
+			return `Provider ${provider.id} skipped for hermes: Codex OAuth native apply requires api_mode openai_responses.`;
+		}
+		if (!usesNativeCodexOpenAiProvider(provider)) {
+			return `Provider ${provider.id} skipped for hermes: Codex OAuth native apply requires an openai provider with the default OpenAI base_url.`;
+		}
+		return undefined;
+	}
 	if (!hermesTransportLabel(provider.api_mode)) {
 		return `Provider ${provider.id} skipped for hermes: api_mode ${provider.api_mode} does not map to a verified Hermes custom-provider transport.`;
 	}
@@ -314,7 +363,7 @@ function buildCodexProjection(
 	for (const provider of providers) validateCodexProjectionProvider(provider);
 	const lines: string[] = [
 		"# Generated by Clawdi. Do not put API keys in this file.",
-		`# Contract: ${AGENT_ENGINE_CONTRACTS.codex.supportedVersionRange}; ${AGENT_ENGINE_CONTRACTS.codex.settingMethod}.`,
+		`# Contract: ${AGENT_TARGET_CONTRACTS.codex.supportedVersionRange}; ${AGENT_TARGET_CONTRACTS.codex.settingMethod}.`,
 	];
 	if (shouldWriteCodexModel(defaultProvider)) {
 		lines.push(`model = ${quoteTomlString(defaultProvider.default_model)}`);
@@ -363,6 +412,10 @@ function shouldWriteCodexModel(provider: ProjectionProvider): boolean {
 }
 
 function usesBuiltInCodexOpenAiProvider(provider: ProjectionProvider): boolean {
+	return usesNativeCodexOpenAiProvider(provider);
+}
+
+function usesNativeCodexOpenAiProvider(provider: ProjectionProvider): boolean {
 	return (
 		provider.type === "openai" &&
 		usesCodexNativeAuth(provider) &&
@@ -372,6 +425,10 @@ function usesBuiltInCodexOpenAiProvider(provider: ProjectionProvider): boolean {
 
 function usesCodexNativeAuth(provider: Pick<ProjectionProvider, "auth">): boolean {
 	return provider.auth.type === "agent_profile" && provider.auth.tool === "codex";
+}
+
+function codexNativeModelId(model: string): string {
+	return model.startsWith("openai/") ? model.slice("openai/".length) : model;
 }
 
 function normalizeUrl(input: string): string {

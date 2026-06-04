@@ -58,7 +58,7 @@ describe("CLI smoke — src entry", () => {
 	});
 
 	it("runtime namespace is not a top-level command", async () => {
-		const { code } = await runCli(["runtime", "apply", "--engine", "hermes"]);
+		const { code } = await runCli(["runtime", "apply", "--target", "hermes"]);
 		expect(code).not.toBe(0);
 	});
 

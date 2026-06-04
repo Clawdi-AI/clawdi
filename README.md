@@ -149,12 +149,12 @@ AI Provider metadata lives in `~/.clawdi/ai-providers/catalog.json`; API keys do
 Apply provider config explicitly, with a dry run first:
 
 ```bash
-clawdi ai-provider apply --engine codex --dry-run
-clawdi ai-provider apply --engine codex
+clawdi ai-provider apply openai-main --dry-run
+clawdi ai-provider apply openai-main
 codex --profile clawdi-ai-provider
 
-clawdi ai-provider apply --engine hermes --dry-run
-clawdi ai-provider apply --engine openclaw --dry-run
+clawdi ai-provider apply openai-main --target hermes --dry-run
+clawdi ai-provider apply openai-main --target openclaw --dry-run
 ```
 
 Codex OAuth is managed through the AI Provider surface:
@@ -165,8 +165,14 @@ clawdi ai-provider add openai-codex \
   --default-model gpt-5-codex \
   --auth agent:codex/default
 clawdi ai-provider connect openai-codex --tool codex
-clawdi ai-provider materialize-auth openai-codex
+clawdi ai-provider apply openai-codex
 ```
+
+`apply openai-codex` writes compatible target config and materializes the Codex
+OAuth profile into each selected target's native auth store. For the default
+target set, that means `$CODEX_HOME/auth.json`, `$HERMES_HOME/auth.json`, and
+OpenClaw's `agents/<agentId>/agent/auth-profiles.json`. Those projections do
+not write API key refs for OAuth-backed providers.
 
 Use `clawdi ai-provider connect ... --callback manual` in headless environments. Export/import is metadata-only by default; `--include-secrets` requires passphrase-encrypted secret export.
 
