@@ -40,25 +40,26 @@ if (process.platform !== "win32") {
 			rmSync(tmpHome, { recursive: true, force: true });
 		});
 
-		it("serves JSON-RPC methods over the daemon control socket", async () => {
+		it("serves JSON-RPC methods over HTTP", async () => {
 			const server = await startControlRpcServer(
 				{
 					"daemon.echo": (params) => ({ params }),
 				},
 				abort.signal,
+				{ port: 0 },
 			);
 			closeServer = server.close;
 
-			const result = await callControlRpc("daemon.echo", { ok: true });
+			const result = await callControlRpc("daemon.echo", { ok: true }, server.http);
 
 			expect(result).toEqual({ params: { ok: true } });
 		});
 
 		it("returns JSON-RPC errors for unknown methods", async () => {
-			const server = await startControlRpcServer({}, abort.signal);
+			const server = await startControlRpcServer({}, abort.signal, { port: 0 });
 			closeServer = server.close;
 
-			await expect(callControlRpc("daemon.missing")).rejects.toThrow(
+			await expect(callControlRpc("daemon.missing", {}, server.http)).rejects.toThrow(
 				"Unknown RPC method: daemon.missing",
 			);
 		});
@@ -73,7 +74,7 @@ if (process.platform !== "win32") {
 			);
 			closeServer = server.close;
 
-			const result = await callControlRpc("daemon.echo", { via: "http" }, server.http ?? undefined);
+			const result = await callControlRpc("daemon.echo", { via: "http" }, server.http);
 
 			expect(result).toEqual({ params: { via: "http" } });
 		});
@@ -93,7 +94,6 @@ if (process.platform !== "win32") {
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
 
 			const response = await postWithoutToken(server.http.host, server.http.port);
 
@@ -110,7 +110,6 @@ if (process.platform !== "win32") {
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
 			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const result = await callControlRpc(
@@ -131,7 +130,7 @@ if (process.platform !== "win32") {
 			writeFileSync(tokenPath, "fixed-token\n", { mode: 0o644 });
 			chmodSync(tokenPath, 0o644);
 
-			const server = await startControlRpcServer({}, abort.signal);
+			const server = await startControlRpcServer({}, abort.signal, { port: 0 });
 			closeServer = server.close;
 
 			expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
@@ -147,7 +146,6 @@ if (process.platform !== "win32") {
 				{ host: "127.0.0.1", port: 0 },
 			);
 			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
 			const oldToken = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const rotated = (await callControlRpc("daemon.rotate_token", {}, server.http)) as {
@@ -187,7 +185,6 @@ if (process.platform !== "win32") {
 				{ host: "0.0.0.0", port: 0, allowRemote: true },
 			);
 			closeServer = server.close;
-			if (!server.http) throw new Error("expected HTTP listener");
 			const token = readFileSync(getDaemonControlTokenPath(), "utf-8").trim();
 
 			const result = await callControlRpc(

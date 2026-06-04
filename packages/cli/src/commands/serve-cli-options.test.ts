@@ -156,6 +156,26 @@ describe("registerServeCommand", () => {
 		expect(captured.last).toEqual({});
 	});
 
+	it("ping reaches the daemon ping RPC", async () => {
+		const captured = {
+			lastMethod: null as string | null,
+			last: null as Record<string, unknown> | null,
+		};
+		const program = new Command();
+		registerServeCommand(program, {
+			...makeHandlers(captured),
+			serveRpc: async (method: string, opts: Record<string, unknown>) => {
+				captured.lastMethod = method;
+				captured.last = opts;
+			},
+		});
+
+		await program.parseAsync(["node", "clawdi", "daemon", "ping"]);
+
+		expect(captured.lastMethod).toBe("daemon.ping");
+		expect(captured.last).toEqual({});
+	});
+
 	it("status --agent claude_code (child-side) reaches the action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "status", "--agent", "claude_code"]);
@@ -202,7 +222,7 @@ describe("registerServeCommand", () => {
 			"clawdi",
 			"serve",
 			"rpc",
-			"daemon.ping",
+			"sync.push",
 			"--params",
 			'{"verbose":true}',
 			"--rpc-host",
@@ -212,7 +232,7 @@ describe("registerServeCommand", () => {
 			"--rpc-token",
 			"tok-test",
 		]);
-		expect(captured.lastMethod).toBe("daemon.ping");
+		expect(captured.lastMethod).toBe("sync.push");
 		expect(captured.last?.params).toBe('{"verbose":true}');
 		expect(captured.last?.rpcHost).toBe("127.0.0.1");
 		expect(captured.last?.rpcPort).toBe("17654");

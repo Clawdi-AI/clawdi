@@ -210,11 +210,11 @@ describe("daemon HTTP RPC listener safety", () => {
 		).rejects.toThrow("Refusing to listen on non-loopback HTTP RPC host 0.0.0.0");
 	});
 
-	it("rejects a listen host without a port", async () => {
+	it("allows a loopback listen host without an explicit port before continuing to the auth gate", async () => {
 		const { serve } = await import("./serve");
 
 		await expect(serve({ rpcHost: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
-			"--rpc-host requires --rpc-port",
+			ExitCalled,
 		);
 	});
 

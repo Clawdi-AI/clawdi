@@ -46,6 +46,8 @@ import {
 	type ControlRpcHandlers,
 	type ControlRpcListenConfig,
 	callControlRpc,
+	DEFAULT_CONTROL_RPC_HOST,
+	DEFAULT_CONTROL_RPC_PORT,
 	rotateControlToken,
 	startControlRpcServer,
 } from "../serve/control-rpc";
@@ -64,12 +66,7 @@ import {
 	operationManager,
 	runCliCommandImmediate,
 } from "../serve/operation-runner";
-import {
-	getDaemonControlSocketPath,
-	getDaemonControlTokenPath,
-	getServeLogPath,
-	getServeStateDir,
-} from "../serve/paths";
+import { getDaemonControlTokenPath, getServeLogPath, getServeStateDir } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
 import { daemonAutoUpdateOnce, startDaemonAutoUpdate } from "./update";
 
@@ -87,6 +84,8 @@ interface LegacyRunOpts {
 }
 
 interface ResolvedRpcListenConfig extends ControlRpcListenConfig {
+	host: string;
+	port: number;
 	allowRemote?: boolean;
 }
 
@@ -115,9 +114,8 @@ interface DaemonDoctorReport {
 	singleton_unit_installed: boolean;
 	legacy_daemon_units: AgentType[];
 	control_rpc: {
-		socket_path: string;
 		token_path: string;
-		http: { host: string; port: number; allow_remote: boolean } | null;
+		http: { host: string; port: number; allow_remote: boolean };
 	};
 	api_url: string | null;
 	agents: Array<
@@ -252,7 +250,6 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		? { ...rpc.http, allow_remote: rpcListen.allowRemote === true }
 		: null;
 	log.info("serve.rpc_listening", {
-		socket: rpc.socketPath,
 		token_path: rpc.tokenPath,
 		http: rpc.http,
 	});
@@ -501,10 +498,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	if (summary.legacy_daemon_units.length > 0) {
 		console.log(`legacy:      ${summary.legacy_daemon_units.join(", ")}`);
 	}
-	console.log(`rpc socket:  ${summary.control_rpc.socket_path}`);
-	if (summary.control_rpc.http) {
-		console.log(`rpc http:    ${summary.control_rpc.http.host}:${summary.control_rpc.http.port}`);
-	}
+	console.log(`rpc http:    ${summary.control_rpc.http.host}:${summary.control_rpc.http.port}`);
 	console.log("");
 	if (summary.registered_agents === 0) {
 		console.log("No agents registered yet — run `clawdi setup` first.");
@@ -570,7 +564,6 @@ function buildDoctorReport(): DaemonDoctorReport {
 		singleton_unit_installed: isSingletonDaemonInstalled(),
 		legacy_daemon_units: listInstalledAgents(),
 		control_rpc: {
-			socket_path: getDaemonControlSocketPath(),
 			token_path: getDaemonControlTokenPath(),
 			http: activeControlRpcHttp ?? normalizeRpcHttpConfig(resolveRpcListenConfig({})),
 		},
@@ -597,8 +590,14 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 		}
 	}
 	const rpcTarget = resolveRpcClientConfig(opts);
-	const result = await callControlRpc(method, params, rpcTarget);
+	const result = await callControlRpc(normalizeDaemonRpcMethod(method), params, rpcTarget);
 	console.log(JSON.stringify(result, null, 2));
+}
+
+function normalizeDaemonRpcMethod(method: string): string {
+	const trimmed = method.trim();
+	if (!trimmed) throw new Error("RPC method is required");
+	return trimmed.includes(".") ? trimmed : `daemon.${trimmed}`;
 }
 
 interface ControlRpcHandlerOptions {
@@ -1493,9 +1492,11 @@ function optionalAgentParam(value: unknown): AgentType | undefined {
 
 function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
 	const host =
-		optionalStringParam(opts.rpcHost, "--rpc-host") ?? process.env.CLAWDI_DAEMON_RPC_HOST;
+		optionalStringParam(opts.rpcHost, "--rpc-host") ??
+		process.env.CLAWDI_DAEMON_RPC_HOST ??
+		DEFAULT_CONTROL_RPC_HOST;
 	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
-	const port = optionalPortParam(portValue, "--rpc-port");
+	const port = optionalPortParam(portValue, "--rpc-port") ?? DEFAULT_CONTROL_RPC_PORT;
 	const allowRemote =
 		optionalBooleanParam(opts.rpcAllowRemote, "--rpc-allow-remote") ??
 		optionalBooleanParam(
@@ -1503,41 +1504,35 @@ function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
 			"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
 		) ??
 		false;
-	if (host !== undefined && port === undefined) {
-		throw new Error("--rpc-host requires --rpc-port (or CLAWDI_DAEMON_RPC_PORT)");
-	}
-	if (host === undefined && port === undefined) return {};
-	const resolvedHost = host ?? "127.0.0.1";
-	if (!allowRemote && !isLoopbackRpcHost(resolvedHost)) {
+	if (!allowRemote && !isLoopbackRpcHost(host)) {
 		throw new Error(
-			`Refusing to listen on non-loopback HTTP RPC host ${resolvedHost}. ` +
+			`Refusing to listen on non-loopback HTTP RPC host ${host}. ` +
 				"Use --rpc-allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
 		);
 	}
-	return { host: resolvedHost, port, allowRemote };
+	return { host, port, allowRemote };
 }
 
 function resolveRpcClientConfig(
 	opts: RpcListenOpts & { rpcToken?: unknown },
 ): ControlRpcClientConfig {
 	const host =
-		optionalStringParam(opts.rpcHost, "--rpc-host") ?? process.env.CLAWDI_DAEMON_RPC_HOST;
+		optionalStringParam(opts.rpcHost, "--rpc-host") ??
+		process.env.CLAWDI_DAEMON_RPC_HOST ??
+		DEFAULT_CONTROL_RPC_HOST;
 	const portValue = opts.rpcPort ?? process.env.CLAWDI_DAEMON_RPC_PORT;
-	const port = optionalPortParam(portValue, "--rpc-port");
-	if (host !== undefined && port === undefined) {
-		throw new Error("--rpc-host requires --rpc-port (or CLAWDI_DAEMON_RPC_PORT)");
-	}
+	const port = optionalPortParam(portValue, "--rpc-port") ?? DEFAULT_CONTROL_RPC_PORT;
 	const token = optionalStringParam(opts.rpcToken, "--rpc-token");
-	if (host === undefined && port === undefined) return { token };
-	return { host: host ?? "127.0.0.1", port, token };
+	return { host, port, token };
 }
 
-function normalizeRpcHttpConfig(
-	config: ResolvedRpcListenConfig,
-): { host: string; port: number; allow_remote: boolean } | null {
-	if (config.port === undefined) return null;
+function normalizeRpcHttpConfig(config: ResolvedRpcListenConfig): {
+	host: string;
+	port: number;
+	allow_remote: boolean;
+} {
 	return {
-		host: config.host ?? "127.0.0.1",
+		host: config.host,
 		port: config.port,
 		allow_remote: config.allowRemote === true,
 	};

@@ -56,10 +56,6 @@ export function getDaemonControlDir(): string {
 	return join(clawdiRoot(), "daemon");
 }
 
-export function getDaemonControlSocketPath(): string {
-	return join(getDaemonControlDir(), "control.sock");
-}
-
 export function getDaemonControlTokenPath(): string {
 	return join(getDaemonControlDir(), "control-token");
 }

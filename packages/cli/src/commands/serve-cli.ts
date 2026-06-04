@@ -30,7 +30,7 @@ export interface ServeHandlers {
 
 function addRpcEndpointOptions(cmd: Command): Command {
 	return cmd
-		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
+		.option("--rpc-host <host>", "Control RPC HTTP host")
 		.option("--rpc-port <port>", "Control RPC HTTP port")
 		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host");
 }
@@ -60,7 +60,7 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 	const serveCmd = program
 		.command("daemon")
 		.alias("serve")
-		.option("--rpc-host <host>", "Control RPC HTTP host (enables HTTP when paired with --rpc-port)")
+		.option("--rpc-host <host>", "Control RPC HTTP host")
 		.option("--rpc-port <port>", "Control RPC HTTP port")
 		.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host")
 		.description(
@@ -73,8 +73,8 @@ Environment:
   CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
   CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
   CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
-  CLAWDI_DAEMON_RPC_HOST         Optional HTTP host for daemon control RPC
-  CLAWDI_DAEMON_RPC_PORT         Optional HTTP port for daemon control RPC
+  CLAWDI_DAEMON_RPC_HOST         HTTP RPC host (default 127.0.0.1)
+  CLAWDI_DAEMON_RPC_PORT         HTTP RPC port (default 17654)
   CLAWDI_DAEMON_RPC_ALLOW_REMOTE Set to 1 to allow non-loopback HTTP bind
   CLAWDI_DAEMON_RPC_TOKEN        Bearer token for HTTP RPC clients (defaults to generated token file)
   CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr
@@ -82,6 +82,7 @@ Environment:
 Examples:
   $ clawdi daemon run
   $ clawdi daemon run --rpc-host 127.0.0.1 --rpc-port 17654
+  $ clawdi daemon ping
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
   $ clawdi daemon install                       # set up one launchd / systemd unit
   $ clawdi daemon status --agent claude_code    # health + supervisor state
@@ -102,14 +103,8 @@ Examples:
 			.command("run")
 			.description("Run the sync daemon in the foreground")
 			.configureHelp({ showGlobalOptions: true })
-			.addHelpText(
-				"after",
-				"\nControl RPC HTTP options are optional; Unix socket is always enabled.",
-			)
-			.option(
-				"--rpc-host <host>",
-				"Control RPC HTTP host (enables HTTP when paired with --rpc-port)",
-			)
+			.addHelpText("after", "\nControl RPC listens on loopback HTTP by default.")
+			.option("--rpc-host <host>", "Control RPC HTTP host")
 			.option("--rpc-port <port>", "Control RPC HTTP port")
 			.option("--rpc-allow-remote", "Allow the HTTP RPC listener to bind a non-loopback host"),
 	).action(async (_opts, cmd) => {
@@ -145,6 +140,17 @@ Examples:
 		});
 
 	serveCmd
+		.command("ping")
+		.description("Check whether the daemon control RPC is reachable")
+		.option("--rpc-host <host>", "Control RPC HTTP host to call")
+		.option("--rpc-port <port>", "Control RPC HTTP port to call")
+		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
+		.action(async (_opts, cmd) => {
+			const h = await get();
+			await h.serveRpc("daemon.ping", cmd.optsWithGlobals());
+		});
+
+	serveCmd
 		.command("status")
 		.description("Show daemon health (last heartbeat) and supervisor state")
 		.option("--agent <type>", "Agent to check (defaults to all registered agents)")
@@ -173,9 +179,9 @@ Examples:
 
 	serveCmd
 		.command("rpc <method>")
-		.description("Call the local daemon control RPC socket")
+		.description("Call an advanced daemon RPC method")
 		.option("--params <json>", "JSON object passed as RPC params", "{}")
-		.option("--rpc-host <host>", "Control RPC HTTP host to call (requires --rpc-port)")
+		.option("--rpc-host <host>", "Control RPC HTTP host to call")
 		.option("--rpc-port <port>", "Control RPC HTTP port to call")
 		.option("--rpc-token <token>", "Bearer token for RPC access (defaults to token file/env)")
 		.action(async (method: string, _opts, cmd) => {

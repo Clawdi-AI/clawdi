@@ -28,19 +28,19 @@ Package: `clawdi@0.11.0`
 
 ### Added
 
-- Added `clawdi daemon rpc` for local daemon control operations such as
-  `daemon.ping`, `daemon.status`, `daemon.doctor`, `daemon.logs`, lifecycle
+- Added `clawdi daemon ping` plus advanced `clawdi daemon rpc` access for
+  local daemon control operations such as status, doctor, logs, lifecycle
   actions, and control-token rotation.
 - Added headless daemon RPC methods for sync, vault, auth, update, and
   long-running operation status/log inspection.
-- Added optional HTTP JSON-RPC host/port binding for daemon control. The
-  owner-only Unix socket remains enabled by default.
+- Added HTTP JSON-RPC host/port binding for daemon control. It listens on
+  `127.0.0.1:17654` by default and supports custom host/port configuration.
 
 ### Security
 
 - Daemon control RPC now requires bearer-token auth on every request. The
   generated token is stored owner-only, can be rotated with
-  `daemon.rotate_token`, and is checked with timing-safe comparison.
+  `clawdi daemon rpc rotate_token`, and is checked with timing-safe comparison.
 - HTTP RPC listeners bind to loopback by default. Non-loopback binds require
   explicit `--rpc-allow-remote` opt-in and should only be used behind SSH
   tunneling, private networking, or TLS termination.

@@ -142,11 +142,11 @@ The install command writes a launchd unit on macOS or a systemd `--user` service
 - macOS: `tail -f ~/.clawdi/serve/logs/daemon.stderr.log`
 - Linux: `journalctl --user -u clawdi-serve.service -f`
 
-The control RPC uses an owner-only Unix socket by default. If the user needs local HTTP RPC, install with an explicit loopback host and port; every RPC request still requires the generated bearer token:
+The control RPC listens on loopback HTTP by default; every RPC request requires the generated bearer token:
 
 ```bash
-clawdi daemon install --rpc-host 127.0.0.1 --rpc-port 17654
-clawdi daemon rpc daemon.ping --rpc-host 127.0.0.1 --rpc-port 17654
+clawdi daemon run
+clawdi daemon ping
 ```
 
 For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and pass the generated daemon token through `--rpc-token` or `CLAWDI_DAEMON_RPC_TOKEN`; treat it as an admin token.

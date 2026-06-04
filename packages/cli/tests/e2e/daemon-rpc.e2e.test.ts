@@ -96,7 +96,7 @@ beforeEach(() => {
 
 if (process.platform !== "win32") {
 	describe("daemon RPC process e2e", () => {
-		it("serves daemon RPC over the control socket and configured HTTP port", async () => {
+		it("serves daemon RPC over the configured HTTP port", async () => {
 			const fixture = createFixture();
 			const rpcPort = await getFreePort();
 			const daemon = startDaemon(fixture, rpcPort);
@@ -110,17 +110,22 @@ if (process.platform !== "win32") {
 				const noToken = await postRpcWithoutToken(rpcPort);
 				expect(noToken.status).toBe(401);
 
-				const socketPing = await runCli(fixture, ["daemon", "rpc", "daemon.ping"]);
-				expect(socketPing.code).toBe(0);
-				expect(socketPing.stderr).toBe("");
-				const socketResult = JSON.parse(socketPing.stdout) as { pid?: number; version?: string };
-				expect(socketResult.pid).toBe(daemon.pid);
-				expect(socketResult.version).toBeString();
+				const defaultPing = await runCli(fixture, [
+					"daemon",
+					"ping",
+					"--rpc-port",
+					String(rpcPort),
+				]);
+				expect(defaultPing.code).toBe(0);
+				expect(defaultPing.stderr).toBe("");
+				const defaultResult = JSON.parse(defaultPing.stdout) as { pid?: number; version?: string };
+				expect(defaultResult.pid).toBe(daemon.pid);
+				expect(defaultResult.version).toBeString();
 
 				const httpPing = await runCli(fixture, [
 					"daemon",
 					"rpc",
-					"daemon.ping",
+					"ping",
 					"--rpc-host",
 					"127.0.0.1",
 					"--rpc-port",
@@ -130,7 +135,7 @@ if (process.platform !== "win32") {
 				expect(httpPing.stderr).toBe("");
 				const httpResult = JSON.parse(httpPing.stdout) as { pid?: number; version?: string };
 				expect(httpResult.pid).toBe(daemon.pid);
-				expect(httpResult.version).toBe(socketResult.version);
+				expect(httpResult.version).toBe(defaultResult.version);
 
 				expect(apiCalls.some((call) => call.path === `/api/environments/${ENV_ID}`)).toBe(true);
 				expect(apiCalls.some((call) => call.path.startsWith("/api/skills?"))).toBe(true);
