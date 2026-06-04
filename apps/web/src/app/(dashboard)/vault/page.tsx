@@ -67,11 +67,24 @@ export default function VaultPage() {
 		if (!q) return rows;
 		return rows.filter((v) => [v.name, v.slug].join(" ").toLowerCase().includes(q));
 	}, [items, search, projectFilter]);
-	// Only projects that actually hold a vault — an empty filter option is noise.
+	// Only projects that actually hold a vault — an empty filter option is
+	// noise. Ranked by how many vaults they hold, busiest first.
+	const vaultCountByProject = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const v of items) {
+			for (const pid of v.project_ids ?? []) m.set(pid, (m.get(pid) ?? 0) + 1);
+		}
+		return m;
+	}, [items]);
 	const filterableProjects = useMemo(() => {
-		const used = new Set(items.flatMap((v) => v.project_ids ?? []));
-		return (projects.data ?? []).filter((p) => used.has(p.id));
-	}, [items, projects.data]);
+		return (projects.data ?? [])
+			.filter((p) => (vaultCountByProject.get(p.id) ?? 0) > 0)
+			.sort(
+				(a, b) =>
+					(vaultCountByProject.get(b.id) ?? 0) - (vaultCountByProject.get(a.id) ?? 0) ||
+					a.name.localeCompare(b.name),
+			);
+	}, [projects.data, vaultCountByProject]);
 	const mine = filtered.filter((v) => v.is_owner !== false);
 	const shared = filtered.filter((v) => v.is_owner === false);
 
@@ -105,6 +118,7 @@ export default function VaultPage() {
 						active={projectFilter === "all"}
 						onClick={() => setProjectFilter("all")}
 						label="All projects"
+						count={items.length}
 					/>
 					{filterableProjects.map((p) => (
 						<ProjectTab
@@ -113,6 +127,7 @@ export default function VaultPage() {
 							onClick={() => setProjectFilter(p.id)}
 							label={p.name}
 							emoji={identityFor(p.name).emoji}
+							count={vaultCountByProject.get(p.id) ?? 0}
 						/>
 					))}
 				</div>

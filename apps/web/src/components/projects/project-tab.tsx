@@ -11,12 +11,15 @@ export function ProjectTab({
 	onClick,
 	label,
 	emoji,
+	count,
 	trailing,
 }: {
 	active: boolean;
 	onClick: () => void;
 	label: string;
 	emoji?: string;
+	/** Object count inside this scope — rendered as a quiet tabular suffix. */
+	count?: number;
 	trailing?: React.ReactNode;
 }) {
 	return (
@@ -38,6 +41,16 @@ export function ProjectTab({
 				</span>
 			) : null}
 			{label}
+			{count !== undefined ? (
+				<span
+					className={cn(
+						"text-xs tabular-nums",
+						active ? "text-muted-foreground" : "text-muted-foreground/70",
+					)}
+				>
+					{count}
+				</span>
+			) : null}
 			{trailing}
 		</button>
 	);

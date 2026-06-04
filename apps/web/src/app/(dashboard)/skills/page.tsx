@@ -95,17 +95,6 @@ function SkillsPageInner() {
 		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
 		[projects],
 	);
-	// Tab row shows custom + personal projects; the per-agent long tail
-	// lives behind one overflow menu (a 16-tab row teaches nothing).
-	const tabProjects = useMemo(
-		() => orderedProjects.filter((p) => p.kind === "workspace" || p.kind === "personal"),
-		[orderedProjects],
-	);
-	const overflowProjects = useMemo(
-		() => orderedProjects.filter((p) => p.kind !== "workspace" && p.kind !== "personal"),
-		[orderedProjects],
-	);
-
 	const writableProjectIds = useMemo(
 		() =>
 			projects
@@ -171,6 +160,37 @@ function SkillsPageInner() {
 			),
 		enabled: !isResolvingTarget,
 	});
+	// Tab row shows custom + personal projects; the per-agent long tail
+	// lives behind one overflow menu (a 16-tab row teaches nothing).
+	// Both ranked by installed-skill count, busiest first.
+	const skillCountByProject = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const s of skillsData?.items ?? []) {
+			if (s.project_id) m.set(s.project_id, (m.get(s.project_id) ?? 0) + 1);
+		}
+		return m;
+	}, [skillsData]);
+	const byCountDesc = useMemo(
+		() => (a: { id: string; name: string }, b: { id: string; name: string }) =>
+			(skillCountByProject.get(b.id) ?? 0) - (skillCountByProject.get(a.id) ?? 0) ||
+			a.name.localeCompare(b.name),
+		[skillCountByProject],
+	);
+	const tabProjects = useMemo(
+		() =>
+			orderedProjects
+				.filter((p) => p.kind === "workspace" || p.kind === "personal")
+				.sort(byCountDesc),
+		[orderedProjects, byCountDesc],
+	);
+	const overflowProjects = useMemo(
+		() =>
+			orderedProjects
+				.filter((p) => p.kind !== "workspace" && p.kind !== "personal")
+				.sort(byCountDesc),
+		[orderedProjects, byCountDesc],
+	);
+
 	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;
 	const canWriteTargetProject = !!targetProject && isProjectReady && isProjectOwner(targetProject);
 	const targetProjectLabel = targetProject ? displayProjectName(targetProject) : "Project";
@@ -317,6 +337,7 @@ function SkillsPageInner() {
 							}}
 							label={displayProjectName(p)}
 							emoji={identityFor(displayProjectName(p)).emoji}
+							count={skillCountByProject.get(p.id) ?? 0}
 						/>
 					))}
 					{overflowProjects.length > 0 ? (
@@ -349,7 +370,10 @@ function SkillsPageInner() {
 										<span aria-hidden className="select-none">
 											{identityFor(displayProjectName(p)).emoji}
 										</span>
-										{displayProjectName(p)}
+										<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
+										<span className="text-xs text-muted-foreground tabular-nums">
+											{skillCountByProject.get(p.id) ?? 0}
+										</span>
 									</DropdownMenuItem>
 								))}
 							</DropdownMenuContent>
