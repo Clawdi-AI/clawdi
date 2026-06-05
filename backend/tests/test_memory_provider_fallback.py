@@ -12,6 +12,7 @@ from app.models.user import User, UserSetting
 from app.services.memory_provider import (
     BuiltinProvider,
     Mem0Provider,
+    XTraceProvider,
     get_memory_provider,
 )
 from app.services.vault_crypto import encrypt_field
@@ -85,6 +86,25 @@ async def test_get_memory_provider_uses_builtin_when_no_setting(
 ):
     provider = await get_memory_provider(str(seed_user.id), db_session)
     assert isinstance(provider, BuiltinProvider)
+
+
+@pytest.mark.asyncio
+async def test_get_memory_provider_uses_xtrace_when_configured(
+    db_session: AsyncSession, seed_user: User, monkeypatch
+):
+    setting = UserSetting(
+        user_id=seed_user.id,
+        settings={"memory_provider": "xtrace"},
+    )
+    db_session.add(setting)
+    await db_session.commit()
+
+    import app.services.memory_provider as mp
+
+    monkeypatch.setattr(mp, "xtrace_memory_configured", lambda: True)
+
+    provider = await get_memory_provider(str(seed_user.id), db_session)
+    assert isinstance(provider, XTraceProvider)
 
 
 @pytest.mark.asyncio

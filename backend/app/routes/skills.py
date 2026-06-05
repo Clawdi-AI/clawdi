@@ -51,7 +51,8 @@ from app.services.tar_utils import (
     tar_from_content,
     validate_tar,
 )
-from app.services.xtrace_memory import ingest_xtrace_skill_memories, xtrace_memory_configured
+from app.services.xtrace_ingest_queue import enqueue_xtrace_skill_ingest
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -1342,17 +1343,13 @@ async def _ingest_skill_to_xtrace(db: AsyncSession, skill: Skill, data: bytes) -
     if not xtrace_memory_configured():
         return
     try:
-        result = await ingest_xtrace_skill_memories(db, skill=skill, data=data)
-        if result is not None:
+        job = await enqueue_xtrace_skill_ingest(db, skill=skill)
+        if job is not None:
             log.info(
-                "xtrace_skill_memory_ingested skill_key=%s job_id=%s status=%s "
-                "created_refs=%s updated_refs=%s mirrored=%s",
+                "xtrace_skill_memory_ingest_queued skill_key=%s ingest_id=%s status=%s",
                 skill.skill_key,
-                result.job_id,
-                result.status,
-                result.created_ref_count,
-                result.updated_ref_count,
-                result.mirrored_count,
+                job.id,
+                job.status,
             )
     except Exception:
         await db.rollback()

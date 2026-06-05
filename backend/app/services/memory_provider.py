@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.memory import Memory
 from app.services.embedding import Embedder, resolve_embedder
 from app.services.vault_crypto import decrypt_field
+from app.services.xtrace_memory import xtrace_memory_configured
 
 log = logging.getLogger(__name__)
 
@@ -256,6 +257,16 @@ class BuiltinProvider:
         if memory:
             await self.db.delete(memory)
             await self.db.commit()
+
+
+class XTraceProvider(BuiltinProvider):
+    """Provider facade for XTrace-backed memory.
+
+    XTrace owns extraction, belief revision, and lineage on the write side.
+    Clawdi mirrors returned refs into the local memory table, so dashboard
+    browse/search/delete can keep using the builtin provider contract while
+    XTrace recall/search endpoints are added on top.
+    """
 
 
 class Mem0Provider:
@@ -640,6 +651,12 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == uuid.UUID(user_id)))
     setting = result.scalar_one_or_none()
     s = (setting.settings if setting else {}) or {}
+
+    if s.get("memory_provider") == "xtrace":
+        if xtrace_memory_configured():
+            return XTraceProvider(db, embedder=resolve_embedder())
+        log.warning("memory_provider=xtrace but XTrace is not configured; falling back to builtin.")
+        return BuiltinProvider(db, embedder=resolve_embedder())
 
     if s.get("memory_provider") == "mem0":
         raw_key = s.get("mem0_api_key", "")

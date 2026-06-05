@@ -13,6 +13,7 @@ from app.schemas.settings import (
 )
 from app.services.memory_provider import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -100,6 +101,14 @@ async def update_settings(
                     "Mem0 memory provider isn't available on this deployment. "
                     "The operator must install the [mem0] extra on the backend."
                 ),
+            },
+        )
+    if raw_patch.get("memory_provider") == "xtrace" and not xtrace_memory_configured():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "memory_provider_unavailable",
+                "message": "XTrace memory provider isn't configured on this deployment.",
             },
         )
 

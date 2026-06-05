@@ -58,7 +58,8 @@ from app.services.session_content import (
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
-from app.services.xtrace_memory import ingest_xtrace_session_memories, xtrace_memory_configured
+from app.services.xtrace_ingest_queue import enqueue_xtrace_session_ingest
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
@@ -1252,21 +1253,13 @@ async def upload_session_content(
 
     if parsed_messages is not None and xtrace_memory_configured():
         try:
-            xtrace_result = await ingest_xtrace_session_memories(
-                db,
-                session=session,
-                messages=parsed_messages,
-            )
-            if xtrace_result is not None:
+            xtrace_job = await enqueue_xtrace_session_ingest(db, session=session)
+            if xtrace_job is not None:
                 log.info(
-                    "xtrace_memory_ingested local_session_id=%s job_id=%s status=%s "
-                    "created_refs=%s updated_refs=%s mirrored=%s",
+                    "xtrace_memory_ingest_queued local_session_id=%s ingest_id=%s status=%s",
                     local_session_id,
-                    xtrace_result.job_id,
-                    xtrace_result.status,
-                    xtrace_result.created_ref_count,
-                    xtrace_result.updated_ref_count,
-                    xtrace_result.mirrored_count,
+                    xtrace_job.id,
+                    xtrace_job.status,
                 )
         except Exception:
             await db.rollback()

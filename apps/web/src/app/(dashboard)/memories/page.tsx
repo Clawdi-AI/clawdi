@@ -57,6 +57,11 @@ const CATEGORIES = [
 // for the All chip (Radix does not treat "" as a selected value).
 const ALL = "all";
 const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");
+const PROVIDER_OPTIONS = {
+	builtin: { label: "Built-in", icon: Database },
+	mem0: { label: "Mem0", icon: Brain },
+	xtrace: { label: "XTrace", icon: GitBranch },
+} as const;
 
 export default function MemoriesPage() {
 	const api = useApi();
@@ -71,9 +76,17 @@ export default function MemoriesPage() {
 		queryKey: ["settings"],
 		queryFn: async () => unwrap(await api.GET("/api/settings")),
 	});
+	const { data: capabilities } = useQuery({
+		queryKey: ["capabilities"],
+		queryFn: async () => unwrap(await api.GET("/api/capabilities")),
+	});
 
 	const provider =
 		typeof settings?.memory_provider === "string" ? settings.memory_provider : "builtin";
+	const availableProviders = new Set(capabilities?.memory_providers ?? ["builtin"]);
+	const providerOptions = (Object.keys(PROVIDER_OPTIONS) as Array<keyof typeof PROVIDER_OPTIONS>)
+		.filter((value) => value === provider || availableProviders.has(value))
+		.map((value) => ({ value, ...PROVIDER_OPTIONS[value] }));
 	const mem0Key = typeof settings?.mem0_api_key === "string" ? settings.mem0_api_key : "";
 	const hasMem0Key = mem0Key !== "";
 
@@ -148,14 +161,12 @@ export default function MemoriesPage() {
 							variant="outline"
 							size="sm"
 						>
-							<ToggleGroupItem value="builtin">
-								<Database />
-								Built-in
-							</ToggleGroupItem>
-							<ToggleGroupItem value="mem0">
-								<Brain />
-								Mem0
-							</ToggleGroupItem>
+							{providerOptions.map(({ value, label, icon: Icon }) => (
+								<ToggleGroupItem key={value} value={value}>
+									<Icon />
+									{label}
+								</ToggleGroupItem>
+							))}
 						</ToggleGroup>
 						<AddMemoryForm />
 					</>

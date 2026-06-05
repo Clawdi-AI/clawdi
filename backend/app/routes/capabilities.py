@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.core.auth import AuthContext, require_user_auth
 from app.services.memory_provider import mem0_available
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(prefix="/api", tags=["capabilities"])
 
@@ -47,4 +48,6 @@ async def get_capabilities(
     providers = ["builtin"]
     if mem0_available():
         providers.append("mem0")
+    if xtrace_memory_configured():
+        providers.append("xtrace")
     return CapabilitiesResponse(memory_providers=providers)

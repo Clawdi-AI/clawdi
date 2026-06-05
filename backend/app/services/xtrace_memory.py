@@ -87,6 +87,7 @@ async def ingest_xtrace_session_memories(
     session: Session,
     messages: list[dict[str, Any]],
     max_messages: int | None = None,
+    ingest_record: XTraceMemoryIngest | None = None,
 ) -> XTraceMemoryIngestResult | None:
     """Send session messages to XTrace and mirror returned memory refs.
 
@@ -121,21 +122,21 @@ async def ingest_xtrace_session_memories(
         else 0
     )
     result = _result_from_remote(remote, mirrored_count)
-    db.add(
-        XTraceMemoryIngest(
-            user_id=session.user_id,
-            source_type="session",
-            session_id=session.id,
-            local_session_id=session.local_session_id,
-            source_key=source_key,
-            job_id=result.job_id,
-            status=result.status,
-            created_ref_count=result.created_ref_count,
-            updated_ref_count=result.updated_ref_count,
-            mirrored_count=result.mirrored_count,
-            response=result.response,
-        )
+    record = ingest_record or XTraceMemoryIngest(
+        user_id=session.user_id,
+        source_type="session",
+        session_id=session.id,
+        local_session_id=session.local_session_id,
+        source_key=source_key,
     )
+    record.job_id = result.job_id
+    record.status = result.status
+    record.created_ref_count = result.created_ref_count
+    record.updated_ref_count = result.updated_ref_count
+    record.mirrored_count = result.mirrored_count
+    record.response = result.response
+    if ingest_record is None:
+        db.add(record)
     await db.commit()
     return result
 
@@ -145,6 +146,7 @@ async def ingest_xtrace_skill_memories(
     *,
     skill: Skill,
     data: bytes,
+    ingest_record: XTraceMemoryIngest | None = None,
 ) -> XTraceMemoryIngestResult | None:
     """Send a skill archive to XTrace as an artifact-shaped memory source."""
     if not xtrace_memory_configured():
@@ -176,20 +178,20 @@ async def ingest_xtrace_skill_memories(
         else 0
     )
     result = _result_from_remote(remote, mirrored_count)
-    db.add(
-        XTraceMemoryIngest(
-            user_id=skill.user_id,
-            source_type="skill",
-            skill_id=skill.id,
-            source_key=source_key,
-            job_id=result.job_id,
-            status=result.status,
-            created_ref_count=result.created_ref_count,
-            updated_ref_count=result.updated_ref_count,
-            mirrored_count=result.mirrored_count,
-            response=result.response,
-        )
+    record = ingest_record or XTraceMemoryIngest(
+        user_id=skill.user_id,
+        source_type="skill",
+        skill_id=skill.id,
+        source_key=source_key,
     )
+    record.job_id = result.job_id
+    record.status = result.status
+    record.created_ref_count = result.created_ref_count
+    record.updated_ref_count = result.updated_ref_count
+    record.mirrored_count = result.mirrored_count
+    record.response = result.response
+    if ingest_record is None:
+        db.add(record)
     await db.commit()
     return result
 
