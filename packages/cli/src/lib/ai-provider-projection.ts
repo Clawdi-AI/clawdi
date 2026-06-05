@@ -408,7 +408,7 @@ function codexModelProviderId(provider: ProjectionProvider): string {
 }
 
 function shouldWriteCodexModel(provider: ProjectionProvider): boolean {
-	return !usesBuiltInCodexOpenAiProvider(provider);
+	return Boolean(provider.default_model);
 }
 
 function usesBuiltInCodexOpenAiProvider(provider: ProjectionProvider): boolean {
