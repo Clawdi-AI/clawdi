@@ -10,6 +10,28 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.1
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.1
+
+Package: `clawdi@0.12.1`
+
+### Fixed
+
+- Fixed Codex AI Provider apply so provider-bound Codex OAuth profiles write
+  the selected default model even when they use Codex's built-in OpenAI
+  provider configuration.
+
+## Clawdi 2026-06-05
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-2026-06-05
+
+### Fixed
+
+- Fixed Codex AI Provider OAuth setup in development environments whose web
+  dashboard runs on a configured HTTP origin other than loopback. Unconfigured
+  hosts and ports are still rejected.
+
 ## Clawdi CLI v0.12.0
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.0

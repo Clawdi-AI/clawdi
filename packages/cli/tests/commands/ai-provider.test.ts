@@ -1153,7 +1153,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('model_provider = \\"openai\\"');
-		expect(output()).not.toContain('model = \\"gpt-5.2\\"');
+		expect(output()).toContain('model = \\"gpt-5.2\\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
@@ -1228,6 +1228,7 @@ describe("ai-provider commands", () => {
 
 		expect(output()).toContain("Provider anthropic-main skipped for codex");
 		expect(output()).toContain("Default provider anthropic-main cannot be applied to codex");
+		expect(output()).toContain('model = \\"gpt-5.2\\"');
 		expect(output()).toContain('model_provider = \\"openai\\"');
 	});
 

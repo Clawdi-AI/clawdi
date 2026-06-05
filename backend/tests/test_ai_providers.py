@@ -548,6 +548,54 @@ async def test_ai_provider_oauth_start_uses_builtin_codex_config(client: httpx.A
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_oauth_start_allows_dev_web_origin_http_redirect(
+    client: httpx.AsyncClient,
+):
+    created = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous_environment = settings.environment
+    previous_web_origin = settings.web_origin
+    previous_cors_origins = settings.cors_origins
+    settings.environment = "development"
+    settings.web_origin = "http://phala-dev:33221"
+    settings.cors_origins = ["http://localhost:33221"]
+    try:
+        started = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "redirect_uri": "http://phala-dev:33221/onboarding?step=provider&provider_oauth=codex",
+            },
+        )
+        wrong_port = await client.post(
+            "/api/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "redirect_uri": "http://phala-dev:33222/onboarding?step=provider&provider_oauth=codex",
+            },
+        )
+    finally:
+        settings.environment = previous_environment
+        settings.web_origin = previous_web_origin
+        settings.cors_origins = previous_cors_origins
+
+    assert started.status_code == 200, started.text
+    assert wrong_port.status_code == 422, wrong_port.text
+    params = parse_qs(urlparse(started.json()["auth_url"]).query)
+    assert params["redirect_uri"] == [
+        "http://phala-dev:33221/onboarding?step=provider&provider_oauth=codex"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
     client: httpx.AsyncClient,
 ):
