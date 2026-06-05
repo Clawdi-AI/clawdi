@@ -658,6 +658,153 @@ async def test_session_upload_skips_automated_xtrace_ingest(
 
 
 @pytest.mark.asyncio
+async def test_session_upload_skips_xtrace_when_user_budget_exceeded(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_daily_message_budget_per_user", 1)
+
+    local_id = f"sess-xtrace-budget-skip-{uuid.uuid4().hex[:8]}"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"manual but over budget"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+
+    assert audit.status == "skipped"
+    assert audit.response["skip_reason"] == "budget_exceeded"
+    assert audit.response["budget"]["limit"] == 1
+    assert audit.response["policy"]["estimated_xtrace_messages"] == 3
+
+
+@pytest.mark.asyncio
+async def test_xtrace_session_ingest_sends_only_new_messages_on_append(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    calls: list[list[dict]] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append(kwargs["json"]["messages"])
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": f"job_delta_{len(calls)}",
+                    "status": "succeeded",
+                    "result": {"memories_created": [], "memories_updated": []},
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    local_id = f"sess-xtrace-delta-{uuid.uuid4().hex[:8]}"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"first"},{"role":"assistant","content":"second"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    first_job = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    await run_xtrace_ingest_job(first_job.id, db=db_session)
+
+    upload = await client.post(
+        f"/api/sessions/{local_id}/upload",
+        files={
+            "file": (
+                f"{local_id}.json",
+                (
+                    b'[{"role":"user","content":"first"},'
+                    b'{"role":"assistant","content":"second"},'
+                    b'{"role":"user","content":"third"}]'
+                ),
+                "application/json",
+            )
+        },
+    )
+    assert upload.status_code == 200, upload.text
+    jobs = (
+        (
+            await db_session.execute(
+                select(XTraceMemoryIngest)
+                .where(XTraceMemoryIngest.session_id == session.id)
+                .order_by(XTraceMemoryIngest.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(jobs) == 2
+    await run_xtrace_ingest_job(jobs[-1].id, db=db_session)
+
+    assert len(calls) == 2
+    assert [m["content"] for m in calls[0][1:]] == ["first", "second"]
+    assert [m["content"] for m in calls[1][1:]] == ["third"]
+    await db_session.refresh(jobs[-1])
+    assert jobs[-1].response["_clawdi"]["cost"]["payload_message_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_xtrace_session_ingest_worker_processes_queued_upload(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

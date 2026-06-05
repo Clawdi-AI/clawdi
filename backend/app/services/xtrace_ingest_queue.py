@@ -18,8 +18,10 @@ from app.models.session import Session
 from app.models.skill import Skill
 from app.models.xtrace_ingest import XTraceMemoryIngest
 from app.services.file_store import get_file_store
+from app.services.xtrace_ingest_budget import decide_xtrace_user_budget, xtrace_cost_metadata
 from app.services.xtrace_ingest_policy import (
     decide_xtrace_session_ingest,
+    xtrace_policy_response,
     xtrace_skip_response,
 )
 from app.services.xtrace_memory import (
@@ -77,6 +79,34 @@ async def enqueue_xtrace_session_ingest(
         await db.refresh(job)
         return job
 
+    budget = await decide_xtrace_user_budget(
+        db,
+        user_id=session.user_id,
+        requested_messages=decision.estimated_xtrace_messages,
+    )
+    if budget is not None and not budget.allowed:
+        job = XTraceMemoryIngest(
+            user_id=session.user_id,
+            source_type="session",
+            session_id=session.id,
+            local_session_id=session.local_session_id,
+            source_key=source_key,
+            status="skipped",
+            attempt_count=0,
+            created_ref_count=0,
+            updated_ref_count=0,
+            mirrored_count=0,
+            response=xtrace_skip_response(
+                decision,
+                reason="budget_exceeded",
+                budget=budget.as_response(),
+            ),
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        return job
+
     job = XTraceMemoryIngest(
         user_id=session.user_id,
         source_type="session",
@@ -88,7 +118,14 @@ async def enqueue_xtrace_session_ingest(
         created_ref_count=0,
         updated_ref_count=0,
         mirrored_count=0,
-        response=None,
+        response={
+            "queued_at": datetime.now(UTC).isoformat(),
+            "policy": xtrace_policy_response(decision),
+            "_clawdi": xtrace_cost_metadata(
+                estimated_source_messages=decision.estimated_source_messages,
+                estimated_xtrace_messages=decision.estimated_xtrace_messages,
+            ),
+        },
     )
     db.add(job)
     await db.commit()

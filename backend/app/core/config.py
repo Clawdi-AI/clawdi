@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     xtrace_memory_worker_poll_seconds: float = 60.0
     xtrace_memory_max_attempts: int = 3
     xtrace_memory_retry_base_seconds: float = 60.0
+    xtrace_memory_daily_message_budget_per_user: int = 0
     xtrace_memory_skip_automated_sessions: bool = True
     xtrace_memory_skip_tiny_sessions: bool = False
     xtrace_memory_low_quality_max_messages: int = 3

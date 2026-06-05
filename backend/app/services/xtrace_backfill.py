@@ -19,6 +19,7 @@ from app.models.skill import Skill
 from app.models.xtrace_backfill_job import XTraceBackfillJob
 from app.models.xtrace_ingest import XTraceMemoryIngest
 from app.services.file_store import get_file_store
+from app.services.xtrace_ingest_budget import decide_xtrace_user_budget
 from app.services.xtrace_ingest_policy import (
     decide_xtrace_session_ingest,
     xtrace_skip_response,
@@ -200,6 +201,23 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
             _increment_skipped(job, "session")
             await _commit_periodically(db, job)
             continue
+        budget = await decide_xtrace_user_budget(
+            db,
+            user_id=session.user_id,
+            requested_messages=decision.estimated_xtrace_messages,
+        )
+        if budget is not None and not budget.allowed:
+            await _record_skipped_session_ingest(
+                db,
+                session,
+                source_key,
+                decision,
+                reason="budget_exceeded",
+                budget=budget.as_response(),
+            )
+            _increment_skipped(job, "session")
+            await _commit_periodically(db, job)
+            continue
         if job.dry_run:
             _increment_skipped(job, "session")
             await _commit_periodically(db, job)
@@ -304,6 +322,9 @@ async def _record_skipped_session_ingest(
     session: SimpleNamespace,
     source_key: str,
     decision,
+    *,
+    reason: str | None = None,
+    budget: dict[str, Any] | None = None,
 ) -> None:
     existing = (
         await db.execute(
@@ -330,7 +351,7 @@ async def _record_skipped_session_ingest(
             created_ref_count=0,
             updated_ref_count=0,
             mirrored_count=0,
-            response=xtrace_skip_response(decision),
+            response=xtrace_skip_response(decision, reason=reason, budget=budget),
         )
     )
     await db.flush()

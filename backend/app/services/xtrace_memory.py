@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from app.models.session import Session
 from app.models.skill import Skill
 from app.models.xtrace_ingest import XTraceMemoryIngest
 from app.services.skill_index import SkillTextFile, extract_skill_text_files
+from app.services.xtrace_ingest_budget import xtrace_cost_metadata
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +105,55 @@ async def ingest_xtrace_session_memories(
         return None
 
     source_key = xtrace_session_source_key(session)
-    remote = await _ingest(_build_session_payload(session, normalized))
+    previous_hashes = await _previous_xtrace_session_message_hashes(
+        db,
+        session_id=session.id,
+        exclude_ingest_id=ingest_record.id if ingest_record is not None else None,
+    )
+    message_pairs = [(message, _message_hash(message)) for message in normalized]
+    new_pairs = [
+        (message, digest) for message, digest in message_pairs if digest not in previous_hashes
+    ]
+    new_messages = [message for message, _digest in new_pairs]
+    new_hashes = [digest for _message, digest in new_pairs]
+    payload_message_count = len(new_messages) + 1
+    cost = xtrace_cost_metadata(
+        estimated_source_messages=len(normalized),
+        estimated_xtrace_messages=len(normalized) + 1,
+        payload_message_count=payload_message_count,
+        accounted_xtrace_messages=payload_message_count,
+        message_hashes=new_hashes,
+    )
+    if not new_messages:
+        skip_cost = xtrace_cost_metadata(
+            estimated_source_messages=len(normalized),
+            estimated_xtrace_messages=len(normalized) + 1,
+            payload_message_count=0,
+            accounted_xtrace_messages=0,
+            message_hashes=[],
+        )
+        record = ingest_record or XTraceMemoryIngest(
+            user_id=session.user_id,
+            source_type="session",
+            session_id=session.id,
+            local_session_id=session.local_session_id,
+            source_key=source_key,
+        )
+        record.status = "skipped"
+        record.created_ref_count = 0
+        record.updated_ref_count = 0
+        record.mirrored_count = 0
+        record.response = {
+            "skipped_at": datetime.now(UTC).isoformat(),
+            "skip_reason": "no_new_messages",
+            "_clawdi": skip_cost,
+        }
+        if ingest_record is None:
+            db.add(record)
+        await db.commit()
+        return None
+
+    remote = await _ingest(_build_session_payload(session, new_messages))
     refs = [*remote.created_refs, *remote.updated_refs]
     mirrored_count = (
         await _store_refs(
@@ -121,7 +171,7 @@ async def ingest_xtrace_session_memories(
         if refs
         else 0
     )
-    result = _result_from_remote(remote, mirrored_count)
+    result = _result_from_remote(remote, mirrored_count, clawdi_metadata=cost)
     record = ingest_record or XTraceMemoryIngest(
         user_id=session.user_id,
         source_type="session",
@@ -406,6 +456,38 @@ def _normalize_messages(
     return normalized
 
 
+async def _previous_xtrace_session_message_hashes(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    exclude_ingest_id: UUID | None,
+) -> set[str]:
+    stmt = select(XTraceMemoryIngest.response).where(
+        XTraceMemoryIngest.source_type == "session",
+        XTraceMemoryIngest.session_id == session_id,
+    )
+    if exclude_ingest_id is not None:
+        stmt = stmt.where(XTraceMemoryIngest.id != exclude_ingest_id)
+
+    rows = (await db.execute(stmt)).scalars().all()
+    hashes: set[str] = set()
+    for response in rows:
+        if not isinstance(response, dict):
+            continue
+        clawdi = response.get("_clawdi")
+        if not isinstance(clawdi, dict):
+            continue
+        raw_hashes = clawdi.get("message_hashes")
+        if isinstance(raw_hashes, list):
+            hashes.update(str(item) for item in raw_hashes if item)
+    return hashes
+
+
+def _message_hash(message: dict[str, str]) -> str:
+    encoded = json.dumps(message, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _extract_remote_ingest(payload: dict[str, Any]) -> XTraceRemoteIngest:
     created_refs: list[XTraceMemoryRef] = []
     updated_refs: list[XTraceMemoryRef] = []
@@ -657,14 +739,23 @@ def _existing_timeline(memory: Memory) -> list[dict[str, Any]]:
 def _result_from_remote(
     remote: XTraceRemoteIngest,
     mirrored_count: int,
+    *,
+    clawdi_metadata: dict[str, Any] | None = None,
 ) -> XTraceMemoryIngestResult:
+    response = dict(remote.payload)
+    if clawdi_metadata is not None:
+        existing = response.get("_clawdi")
+        response["_clawdi"] = {
+            **(existing if isinstance(existing, dict) else {}),
+            **clawdi_metadata,
+        }
     return XTraceMemoryIngestResult(
         job_id=_string_or_none(remote.payload.get("id")),
         status=_string_or_none(remote.payload.get("status")),
         created_ref_count=len(remote.created_refs),
         updated_ref_count=len(remote.updated_refs),
         mirrored_count=mirrored_count,
-        response=remote.payload,
+        response=response,
     )
 
 

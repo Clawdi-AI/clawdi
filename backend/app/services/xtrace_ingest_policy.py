@@ -63,18 +63,38 @@ def decide_xtrace_session_ingest(
     )
 
 
-def xtrace_skip_response(decision: XTraceSessionIngestDecision) -> dict[str, Any]:
-    return {
+def xtrace_skip_response(
+    decision: XTraceSessionIngestDecision,
+    *,
+    reason: str | None = None,
+    budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    skip_reason = reason or decision.reason
+    response: dict[str, Any] = {
         "skipped_at": datetime.now(UTC).isoformat(),
-        "skip_reason": decision.reason,
-        "policy": {
-            "quality": decision.quality,
-            "automated": decision.automated,
-            "tiny": decision.tiny,
-            "estimated_source_messages": decision.estimated_source_messages,
-            "estimated_xtrace_messages": decision.estimated_xtrace_messages,
-            "max_messages": decision.max_messages,
+        "skip_reason": skip_reason,
+        "policy": xtrace_policy_response(decision),
+        "_clawdi": {
+            "cost": {
+                "estimated_source_messages": decision.estimated_source_messages,
+                "estimated_xtrace_messages": decision.estimated_xtrace_messages,
+                "accounted_xtrace_messages": 0,
+            }
         },
+    }
+    if budget is not None:
+        response["budget"] = budget
+    return response
+
+
+def xtrace_policy_response(decision: XTraceSessionIngestDecision) -> dict[str, Any]:
+    return {
+        "quality": decision.quality,
+        "automated": decision.automated,
+        "tiny": decision.tiny,
+        "estimated_source_messages": decision.estimated_source_messages,
+        "estimated_xtrace_messages": decision.estimated_xtrace_messages,
+        "max_messages": decision.max_messages,
     }
 
 
