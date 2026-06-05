@@ -157,19 +157,33 @@ After all eleven, opening a PR on the repo deploys a preview automatically.
 
 ## XTrace memory preview checks
 
-After deploying a preview with XTrace enabled, run the backfill from inside the
-preview API container so existing stored sessions and skills are sent to XTrace:
+After deploying a preview with XTrace enabled, trigger a backend-managed
+backfill job so existing stored sessions and skills are sent to XTrace:
 
 ```bash
-cd /app/backend
-pdm run python -m scripts.backfill_xtrace_memory --all
+API_KEY=<preview-api-key>
+curl -s -X POST \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills \
+  -d '{"include_sessions":true,"include_skills":true}'
 ```
 
 For a smaller validation run:
 
 ```bash
-cd /app/backend
-pdm run python -m scripts.backfill_xtrace_memory --all --limit 10
+curl -s -X POST \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills \
+  -d '{"include_sessions":true,"include_skills":true,"limit":10}'
+```
+
+Poll the job until `status` leaves `queued`/`running`:
+
+```bash
+curl -s -H "Authorization: Bearer $API_KEY" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills/<job-id>
 ```
 
 To inspect one session directly:
@@ -184,9 +198,10 @@ pdm run python -m scripts.debug_xtrace_session_ingest \
 
 The output prints `job_id`, `status`, `created_ref_count`,
 `updated_ref_count`, and `mirrored_count`. The same data is also stored in
-`xtrace_memory_ingests` with `source_type=session` or `source_type=skill`,
-including cases where XTrace returns a pending job or zero memory refs. API logs
-include `xtrace_memory_ingested ... job_id=...` and
+`xtrace_backfill_jobs` tracks job progress and per-source counters.
+`xtrace_memory_ingests` stores each XTrace request with `source_type=session`
+or `source_type=skill`, including cases where XTrace returns a pending job or
+zero memory refs. API logs include `xtrace_memory_ingested ... job_id=...` and
 `xtrace_skill_memory_ingested ... job_id=...`.
 
 Existing skill archives from the restored snapshot need one backfill after the

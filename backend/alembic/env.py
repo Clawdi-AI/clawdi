@@ -20,6 +20,7 @@ from app.models import (  # noqa: F401 - register models
     skill_chunk,
     user,
     vault,
+    xtrace_backfill_job,
     xtrace_ingest,
 )
 from app.models.base import Base

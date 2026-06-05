@@ -36,6 +36,7 @@ from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.routes.xtrace import router as xtrace_router
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 
@@ -187,6 +188,7 @@ app.include_router(share_redeem_router)
 app.include_router(sharing_router)
 app.include_router(me_router)
 app.include_router(agent_project_bindings_router)
+app.include_router(xtrace_router)
 
 
 @app.get("/health")
