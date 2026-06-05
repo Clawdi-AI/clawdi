@@ -3839,6 +3839,11 @@ export interface components {
              */
             is_owner: boolean;
             /**
+             * Item Count
+             * @default 0
+             */
+            item_count: number;
+            /**
              * Created At
              * Format: date-time
              */

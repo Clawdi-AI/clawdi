@@ -86,8 +86,13 @@ export default function VaultPage() {
 					a.name.localeCompare(b.name),
 			);
 	}, [projects.data, vaultCountByProject]);
-	const mine = filtered.filter((v) => v.is_owner !== false);
-	const shared = filtered.filter((v) => v.is_owner === false);
+	// Busiest vaults first — same ranking rule as the project tabs.
+	// The grab-bag default vault usually tops the list, which is exactly
+	// where the curation work starts.
+	const byKeysDesc = (a: VaultSummary, b: VaultSummary) =>
+		(b.item_count ?? 0) - (a.item_count ?? 0) || a.name.localeCompare(b.name);
+	const mine = filtered.filter((v) => v.is_owner !== false).sort(byKeysDesc);
+	const shared = filtered.filter((v) => v.is_owner === false).sort(byKeysDesc);
 
 	return (
 		<div className="space-y-6 px-4 lg:px-6">
@@ -192,23 +197,9 @@ function VaultCard({
 	projectNameById: ReadonlyMap<string, string>;
 	shared?: boolean;
 }) {
-	const api = useApi();
-	// Key names only — values never leave the backend for dashboard reads.
-	const keys = useQuery({
-		queryKey: ["vault-items", vault.slug, vault.project_ids?.[0]],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/vault/{slug}/items", {
-					params: {
-						path: { slug: vault.slug },
-						query: { project_id: vault.project_ids?.[0] ?? undefined },
-					},
-				}),
-			),
-	});
-	const keyCount = keys.data
-		? Object.values(keys.data).reduce((n, arr) => n + arr.length, 0)
-		: null;
+	// Key count ships on the list response (names only, never values) —
+	// no per-card items fetch.
+	const keyCount = vault.item_count ?? 0;
 	const usedBy = (vault.project_ids ?? [])
 		.map((id) => projectNameById.get(id))
 		.filter((n): n is string => !!n);
@@ -233,7 +224,7 @@ function VaultCard({
 				<p className="truncate font-mono text-xs text-muted-foreground">{vault.slug}</p>
 			</div>
 			<div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-				<span>{keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
+				<span>{`${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
 				{usedBy.length > 0 ? (
 					<span className="truncate" title={usedBy.join(", ")}>
 						used by {usedBy.slice(0, 2).join(", ")}

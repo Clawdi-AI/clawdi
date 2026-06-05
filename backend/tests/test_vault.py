@@ -136,6 +136,13 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
     source_names = (await cli_client.get("/api/vault/grab-bag/items")).json()
     assert sorted(source_names["(default)"]) == ["OPENAI_API_KEY", "OTHER"]
 
+    # The list endpoint carries per-vault key counts (names only) so the
+    # dashboard can rank vaults busiest-first without N+1 item fetches.
+    listing = (await cli_client.get("/api/vault")).json()
+    counts = {v["slug"]: v["item_count"] for v in listing["items"]}
+    assert counts["grab-bag"] == 2
+    assert counts["phala"] == 1
+
     # The re-encrypted copy decrypts to the original plaintext. Delete
     # the source item first so resolve can only be served by the copy.
     deleted = await cli_client.request(

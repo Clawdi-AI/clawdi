@@ -105,6 +105,9 @@ class VaultResponse(BaseModel):
     # current caller. Key rows belong to the vault, not to Projects.
     project_ids: list[str]
     is_owner: bool = True
+    # Number of key rows (names only — never values). Lets the dashboard
+    # rank vaults busiest-first and label cards without N+1 item fetches.
+    item_count: int = 0
     created_at: datetime
 
 

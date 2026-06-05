@@ -112,6 +112,17 @@ async def list_vaults(
         [v.id for v in rows],
         visible_project_ids=visible_project_ids,
     )
+    # One grouped count for the page — key NAMES only, never values.
+    # Saves the dashboard an items request per vault card and powers
+    # busiest-first ranking.
+    item_counts: dict[UUID, int] = {}
+    if rows:
+        count_rows = await db.execute(
+            select(VaultItem.vault_id, func.count())
+            .where(VaultItem.vault_id.in_([v.id for v in rows]))
+            .group_by(VaultItem.vault_id)
+        )
+        item_counts = {vault_id: count for vault_id, count in count_rows.all()}
     default_project_id = (
         selected_project_id
         if selected_project_id is not None
@@ -134,6 +145,7 @@ async def list_vaults(
                 ),
                 project_ids=[str(pid) for pid in project_ids_by_vault.get(v.id, [])],
                 is_owner=v.user_id == auth.user_id,
+                item_count=item_counts.get(v.id, 0),
                 created_at=v.created_at,
             )
             for v in rows
