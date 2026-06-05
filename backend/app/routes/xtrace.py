@@ -73,9 +73,7 @@ async def list_backfills(
         )
         .order_by(desc(XTraceBackfillJob.created_at))
     )
-    rows = (
-        await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
-    ).scalars().all()
+    rows = (await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))).scalars().all()
     total = len(
         (
             await db.execute(
