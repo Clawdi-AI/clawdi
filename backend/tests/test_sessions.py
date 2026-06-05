@@ -576,6 +576,88 @@ async def test_session_upload_enqueues_xtrace_ingest_when_configured(
 
 
 @pytest.mark.asyncio
+async def test_session_upload_skips_automated_xtrace_ingest(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    class UnexpectedXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise AssertionError("automated sessions should not be sent to XTrace")
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", UnexpectedXTraceClient)
+
+    env_id = await _register_env(client)
+    local_id = f"sess-xtrace-cron-skip-{uuid.uuid4().hex[:8]}"
+    started = datetime.now(UTC).isoformat()
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": local_id,
+                    "started_at": started,
+                    "message_count": 12,
+                    "content_hash": "d" * 64,
+                    "summary": "Cron: portfolio-watch",
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    upload = await client.post(
+        f"/api/sessions/{local_id}/upload",
+        files={
+            "file": (
+                f"{local_id}.json",
+                b'[{"role":"user","content":"automated price scan"}]',
+                "application/json",
+            )
+        },
+    )
+    assert upload.status_code == 200, upload.text
+
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    assert audit.status == "skipped"
+    assert audit.attempt_count == 0
+    assert audit.response["skip_reason"] == "automated_session"
+    assert audit.response["policy"]["quality"] == "automated"
+    assert audit.response["policy"]["estimated_source_messages"] == 12
+
+
+@pytest.mark.asyncio
 async def test_xtrace_session_ingest_worker_processes_queued_upload(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

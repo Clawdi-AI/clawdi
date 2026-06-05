@@ -211,3 +211,74 @@ async def test_xtrace_backfill_continues_after_session_rollback(
     assert refreshed.sent_count == 1
     assert refreshed.mirrored_count == 2
     assert "simulated ingest failure" in (refreshed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_xtrace_backfill_records_automated_session_skip(
+    db_session,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.models.session import Session
+    from app.models.xtrace_backfill_job import XTraceBackfillJob
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    local_id = f"xtrace-cron-skip-{uuid4().hex[:8]}"
+    payload = json.dumps([{"role": "user", "content": "automated cron output"}]).encode()
+    file_key = f"sessions/{seed_user.id}/{local_id}.json"
+    await get_file_store().put(file_key, payload)
+    db_session.add(
+        Session(
+            user_id=seed_user.id,
+            local_session_id=local_id,
+            started_at=datetime.now(UTC),
+            last_activity_at=datetime.now(UTC),
+            duration_seconds=600,
+            message_count=20,
+            file_key=file_key,
+            content_hash=hashlib.sha256(payload).hexdigest(),
+            summary="Cron: portfolio-watch",
+        )
+    )
+    job = XTraceBackfillJob(
+        requested_by_user_id=seed_user.id,
+        scope_user_id=seed_user.id,
+        include_sessions=True,
+        include_skills=False,
+        status="queued",
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    async def unexpected_ingest(*args, **kwargs):
+        raise AssertionError("automated sessions should not be sent to XTrace")
+
+    monkeypatch.setattr(
+        "app.services.xtrace_backfill.ingest_xtrace_session_memories",
+        unexpected_ingest,
+    )
+
+    test_session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    await run_xtrace_backfill_job(job.id, session_factory=test_session_factory)
+
+    refreshed = await db_session.get(XTraceBackfillJob, job.id)
+    assert refreshed is not None
+    await db_session.refresh(refreshed)
+    assert refreshed.status == "succeeded"
+    assert refreshed.considered_count == 1
+    assert refreshed.sent_count == 0
+    assert refreshed.skipped_count == 1
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(
+                XTraceMemoryIngest.user_id == seed_user.id,
+                XTraceMemoryIngest.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    assert audit.status == "skipped"
+    assert audit.response["skip_reason"] == "automated_session"
+    assert audit.response["policy"]["estimated_xtrace_messages"] == 21

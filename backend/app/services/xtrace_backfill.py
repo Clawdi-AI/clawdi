@@ -19,6 +19,10 @@ from app.models.skill import Skill
 from app.models.xtrace_backfill_job import XTraceBackfillJob
 from app.models.xtrace_ingest import XTraceMemoryIngest
 from app.services.file_store import get_file_store
+from app.services.xtrace_ingest_policy import (
+    decide_xtrace_session_ingest,
+    xtrace_skip_response,
+)
 from app.services.xtrace_memory import (
     ingest_xtrace_session_memories,
     ingest_xtrace_skill_memories,
@@ -187,6 +191,15 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
             _increment_skipped(job, "session")
             await _commit_periodically(db, job)
             continue
+        decision = decide_xtrace_session_ingest(
+            session,
+            max_messages=settings.xtrace_memory_backfill_max_messages,
+        )
+        if not job.force and not decision.should_ingest:
+            await _record_skipped_session_ingest(db, session, source_key, decision)
+            _increment_skipped(job, "session")
+            await _commit_periodically(db, job)
+            continue
         if job.dry_run:
             _increment_skipped(job, "session")
             await _commit_periodically(db, job)
@@ -284,6 +297,43 @@ async def _already_ingested(db: AsyncSession, source_type: str, source_key: str)
         )
     ).scalar_one_or_none()
     return row is not None
+
+
+async def _record_skipped_session_ingest(
+    db: AsyncSession,
+    session: SimpleNamespace,
+    source_key: str,
+    decision,
+) -> None:
+    existing = (
+        await db.execute(
+            select(XTraceMemoryIngest)
+            .where(
+                XTraceMemoryIngest.source_type == "session",
+                XTraceMemoryIngest.source_key == source_key,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    db.add(
+        XTraceMemoryIngest(
+            user_id=session.user_id,
+            source_type="session",
+            session_id=session.id,
+            local_session_id=session.local_session_id,
+            source_key=source_key,
+            status="skipped",
+            attempt_count=0,
+            created_ref_count=0,
+            updated_ref_count=0,
+            mirrored_count=0,
+            response=xtrace_skip_response(decision),
+        )
+    )
+    await db.flush()
 
 
 def _session_source(session: Session) -> SimpleNamespace:

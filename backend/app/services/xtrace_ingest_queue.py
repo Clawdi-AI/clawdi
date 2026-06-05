@@ -18,6 +18,10 @@ from app.models.session import Session
 from app.models.skill import Skill
 from app.models.xtrace_ingest import XTraceMemoryIngest
 from app.services.file_store import get_file_store
+from app.services.xtrace_ingest_policy import (
+    decide_xtrace_session_ingest,
+    xtrace_skip_response,
+)
 from app.services.xtrace_memory import (
     ingest_xtrace_session_memories,
     ingest_xtrace_skill_memories,
@@ -52,6 +56,26 @@ async def enqueue_xtrace_session_ingest(
     ).scalar_one_or_none()
     if existing is not None:
         return existing
+
+    decision = decide_xtrace_session_ingest(session)
+    if not decision.should_ingest:
+        job = XTraceMemoryIngest(
+            user_id=session.user_id,
+            source_type="session",
+            session_id=session.id,
+            local_session_id=session.local_session_id,
+            source_key=source_key,
+            status="skipped",
+            attempt_count=0,
+            created_ref_count=0,
+            updated_ref_count=0,
+            mirrored_count=0,
+            response=xtrace_skip_response(decision),
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        return job
 
     job = XTraceMemoryIngest(
         user_id=session.user_id,
@@ -146,7 +170,7 @@ async def _run_xtrace_ingest_job_in_session(db: AsyncSession, job_id: UUID) -> N
             raise ValueError(f"unsupported XTrace ingest source type: {job.source_type}")
         if result is None:
             job.status = "skipped"
-            job.response = {"skipped_at": datetime.now(UTC).isoformat()}
+            job.response = job.response or {"skipped_at": datetime.now(UTC).isoformat()}
         job.claimed_at = None
         job.claimed_by = None
         job.error = None
@@ -289,6 +313,12 @@ async def _run_session_job(db: AsyncSession, job: XTraceMemoryIngest):
         raise ValueError(f"session not found: {job.session_id}")
     if not session.file_key:
         raise ValueError(f"session content not uploaded: {job.session_id}")
+
+    decision = decide_xtrace_session_ingest(session)
+    if not decision.should_ingest:
+        job.status = "skipped"
+        job.response = xtrace_skip_response(decision)
+        return None
 
     data = await get_file_store().get(session.file_key)
     parsed = json.loads(data)
