@@ -46,6 +46,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
+import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -130,6 +131,9 @@ export default function VaultDetailPage() {
 		() => keyNames.filter((k) => selectedKeys.has(keyId(k))),
 		[keyNames, selectedKeys],
 	);
+	// App-prefixed keys (`clawdi-backend/DATABASE_URL`) are a grab-bag
+	// smell — offer the split wizard when at least two app groups exist.
+	const prefixGroups = useMemo(() => prefixGroupsFor(keyNames), [keyNames]);
 	const allFilteredSelected =
 		filteredKeyNames.length > 0 && filteredKeyNames.every((k) => selectedKeys.has(keyId(k)));
 
@@ -363,6 +367,13 @@ export default function VaultDetailPage() {
 									</Button>
 								) : null}
 							</>
+						) : null}
+						{isOwner && prefixGroups.length >= 2 ? (
+							<SplitVaultDialog
+								vault={vault}
+								groups={prefixGroups}
+								onDone={() => clearSelection()}
+							/>
 						) : null}
 						{isOwner ? (
 							<AddKeysDialog vaultSlug={slug}>

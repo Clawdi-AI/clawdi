@@ -3772,6 +3772,8 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /** Strip Prefix */
+            strip_prefix?: string | null;
         };
         /** VaultItemsCopyResponse */
         VaultItemsCopyResponse: {

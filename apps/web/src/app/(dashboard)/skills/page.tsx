@@ -6,10 +6,12 @@ import {
 	AlertCircle,
 	Check,
 	ChevronDown,
+	Copy as CopyIcon,
 	Download,
 	ExternalLink,
 	ListChecks,
 	Plus,
+	RefreshCw,
 	Search,
 	Send as SendIcon,
 	Trash2,
@@ -44,7 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -75,6 +77,7 @@ export default function SkillsPage() {
 
 function SkillsPageInner() {
 	const api = useApi();
+	const authedFetch = useAuthedFetch();
 	const queryClient = useQueryClient();
 	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
 	// remains supported for older deep links from agent detail pages.
@@ -250,6 +253,40 @@ function SkillsPageInner() {
 		return skillsData.items.filter((s) => s.project_id === targetProjectId && matchesSearch(s));
 	}, [skillsData, targetProjectId, isStaleProject, isStaleTarget, isAllScope, matchesSearch]);
 
+	// Duplicates lens: the same skill_key installed in several Projects is
+	// N independent copies (see DESIGN.md copy-vs-reference) — and on real
+	// fleets a third of installs are duplicates, many at drifted versions.
+	// Group them by key, flag drift via content_hash (catches same-version
+	// content edits too), and offer one-click "sync all copies to newest".
+	const duplicateGroups = useMemo(() => {
+		if (!skillsData?.items) return [];
+		const byKey = new Map<string, SkillSummary[]>();
+		for (const s of skillsData.items) {
+			if (!s.project_id) continue;
+			const arr = byKey.get(s.skill_key);
+			if (arr) arr.push(s);
+			else byKey.set(s.skill_key, [s]);
+		}
+		return [...byKey.entries()]
+			.filter(([, copies]) => copies.length > 1)
+			.map(([key, copies]) => {
+				const newest = [...copies].sort(
+					(a, b) => b.version - a.version || b.updated_at.localeCompare(a.updated_at),
+				)[0];
+				const drift = new Set(copies.map((c) => c.content_hash)).size > 1;
+				return { key, copies, newest, drift };
+			})
+			.filter((g) => matchesSearch(g.newest))
+			.sort(
+				(a, b) =>
+					Number(b.drift) - Number(a.drift) ||
+					b.copies.length - a.copies.length ||
+					a.newest.name.localeCompare(b.newest.name),
+			);
+	}, [skillsData, matchesSearch]);
+	const [showDuplicates, setShowDuplicates] = useState(false);
+	const duplicatesView = showDuplicates && isAllScope;
+
 	// All-projects view groups by source project, busiest first — this is
 	// the "where do most of my skills actually live?" answer at a glance.
 	const allGroups = useMemo(() => {
@@ -297,6 +334,53 @@ function SkillsPageInner() {
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
+	});
+
+	const syncGroup = useMutation({
+		mutationFn: async (group: { newest: SkillSummary; copies: SkillSummary[] }) => {
+			const { newest, copies } = group;
+			const stale = copies.filter(
+				(c) =>
+					c.project_id &&
+					c.project_id !== newest.project_id &&
+					c.content_hash !== newest.content_hash,
+			);
+			if (stale.length === 0) return { name: newest.name, updated: 0, failed: [] as string[] };
+			const dl = await authedFetch(
+				`/api/projects/${newest.project_id}/skills/${encodeURIComponent(newest.skill_key)}/download`,
+			);
+			const blob = await dl.blob();
+			let updated = 0;
+			const failed: string[] = [];
+			for (const copy of stale) {
+				try {
+					const form = new FormData();
+					form.append("skill_key", newest.skill_key);
+					form.append("file", blob, `${newest.skill_key.replace(/\//g, "-")}.tar.gz`);
+					await authedFetch(`/api/projects/${copy.project_id}/skills/upload`, {
+						method: "POST",
+						body: form,
+					});
+					updated += 1;
+				} catch {
+					failed.push(copy.project_name ?? "unknown project");
+				}
+			}
+			return { name: newest.name, updated, failed };
+		},
+		onSuccess: ({ name, updated, failed }) => {
+			queryClient.invalidateQueries({ queryKey: ["skills"] });
+			if (updated === 0 && failed.length === 0) {
+				toast.success(`${name} copies already match`);
+				return;
+			}
+			toast.success(`${name} synced`, {
+				description:
+					`${updated} ${updated === 1 ? "copy" : "copies"} updated to the newest content.` +
+					(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
+			});
+		},
+		onError: (e) => toast.error("Couldn't sync copies", { description: errorMessage(e) }),
 	});
 
 	const bulkUninstall = useMutation({
@@ -544,6 +628,20 @@ function SkillsPageInner() {
 								className="h-8 w-44 pl-8 text-sm sm:w-56"
 							/>
 						</div>
+						{isAllScope && duplicateGroups.length > 0 ? (
+							<Button
+								variant={showDuplicates ? "secondary" : "outline"}
+								size="sm"
+								onClick={() => setShowDuplicates((on) => !on)}
+								aria-pressed={showDuplicates}
+							>
+								<CopyIcon className="size-3.5" />
+								Duplicates
+								<span className="text-xs text-muted-foreground tabular-nums">
+									{duplicateGroups.length}
+								</span>
+							</Button>
+						) : null}
 						<Button
 							variant={selectMode ? "secondary" : "outline"}
 							size="sm"
@@ -560,7 +658,91 @@ function SkillsPageInner() {
 						</Button>
 					</div>
 				</div>
-				{isAllScope ? (
+				{duplicatesView ? (
+					duplicateGroups.length === 0 ? (
+						<div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
+							No duplicated skills{search.trim() ? " match that search" : ""}.
+						</div>
+					) : (
+						<div className="space-y-6">
+							{duplicateGroups.map((group) => {
+								const versions = [...new Set(group.copies.map((c) => c.version))].sort(
+									(a, b) => b - a,
+								);
+								const staleCount = group.copies.filter(
+									(c) => c.content_hash !== group.newest.content_hash,
+								).length;
+								return (
+									<div key={group.key} className="space-y-2">
+										<div className="flex flex-wrap items-center gap-2">
+											<span aria-hidden className="select-none text-sm leading-none">
+												{identityFor(group.newest.name || group.key).emoji}
+											</span>
+											<span className="text-sm font-medium">{group.newest.name}</span>
+											<span className="text-xs text-muted-foreground tabular-nums">
+												in {group.copies.length} projects
+											</span>
+											{group.drift ? (
+												<Badge
+													variant="secondary"
+													className="bg-warning-muted text-warning-muted-foreground"
+												>
+													content differs · {versions.map((v) => `v${v}`).join(" / ")}
+												</Badge>
+											) : (
+												<Badge variant="secondary">identical copies · v{versions[0]}</Badge>
+											)}
+											{group.drift ? (
+												<ConfirmAction
+													title={`Sync ${group.newest.name} everywhere?`}
+													description={
+														<p>
+															Overwrites {staleCount} older {staleCount === 1 ? "copy" : "copies"}{" "}
+															with v{group.newest.version} from{" "}
+															{group.newest.project_name ?? "the newest Project"}. Local edits in
+															those Projects are replaced.
+														</p>
+													}
+													confirmLabel="Sync copies"
+													onConfirm={() => syncGroup.mutate(group)}
+												>
+													<Button
+														variant="outline"
+														size="sm"
+														className="h-6 px-2 text-xs"
+														disabled={syncGroup.isPending}
+													>
+														<RefreshCw className="size-3" />
+														Sync all to newest
+													</Button>
+												</ConfirmAction>
+											) : null}
+										</div>
+										<SkillCardGrid
+											skills={group.copies}
+											isLoading={false}
+											emptyMessage={null}
+											readOnlySkillCheck={(sk) =>
+												resolveSkillProjectAccess(sk, { writableProjectIds }) !== "writable"
+											}
+											onUninstall={(skillKey, projectId) =>
+												uninstallSkill.mutate({ skillKey, projectId })
+											}
+											uninstallPending={uninstallSkill.isPending}
+											sourceLabelFor={(sk) => {
+												const project = orderedProjects.find((p) => p.id === sk.project_id);
+												const label = project
+													? displayProjectName(project)
+													: (sk.project_name ?? "Unknown");
+												return { name: label, emoji: identityFor(label).emoji };
+											}}
+										/>
+									</div>
+								);
+							})}
+						</div>
+					)
+				) : isAllScope ? (
 					skillsLoading || isResolvingTarget ? (
 						<SkillCardGrid skills={[]} isLoading emptyMessage={null} />
 					) : allGroups.length === 0 ? (

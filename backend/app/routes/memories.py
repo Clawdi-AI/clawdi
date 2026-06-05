@@ -188,6 +188,27 @@ async def list_memories(
         # Re-cap to page_size so the response shape stays predictable
         # regardless of how much we overfetched.
         hits = hits[:page_size]
+        # A ranked search from an AGENT (api-key auth) is a recall — bump
+        # access_count on the returned memories so "does anything ever use
+        # this memory?" has a real answer (the dashboard shows it; keep-vs-
+        # delete decisions key on it). Dashboard/JWT browsing doesn't count.
+        # Mem0-backed hits without local rows no-op by construction.
+        if auth.is_cli and hits:
+            from sqlalchemy import update
+
+            hit_ids = []
+            for m in hits:
+                try:
+                    hit_ids.append(UUID(str(m["id"])))
+                except (KeyError, ValueError):
+                    continue
+            if hit_ids:
+                await db.execute(
+                    update(Memory)
+                    .where(Memory.user_id == auth.user_id, Memory.id.in_(hit_ids))
+                    .values(access_count=Memory.access_count + 1)
+                )
+                await db.commit()
         items = [MemoryResponse.model_validate(m) for m in hits]
         return Paginated[MemoryResponse](
             items=items,
@@ -216,8 +237,6 @@ async def list_memories(
             # memories to see (consistent with `_project_filter_memories`).
             return Paginated[MemoryResponse](items=[], total=0, page=page, page_size=page_size)
         from sqlalchemy import desc, func
-
-        from app.models.memory import Memory
 
         bound_env = auth.api_key.environment_id
         base = (

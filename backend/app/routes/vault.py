@@ -307,21 +307,29 @@ async def copy_vault_items(
         item = source_by_name.get(field_name)
         if item is None:
             continue
+        target_name = field_name
+        if body.strip_prefix and field_name.startswith(body.strip_prefix):
+            stripped = field_name[len(body.strip_prefix) :]
+            if stripped:
+                target_name = stripped
         ciphertext, nonce = encrypt(decrypt(item.encrypted_value, item.nonce))
-        existing = target_by_name.get(field_name)
+        existing = target_by_name.get(target_name)
         if existing:
             existing.encrypted_value = ciphertext
             existing.nonce = nonce
         else:
-            db.add(
-                VaultItem(
-                    vault_id=target.id,
-                    section=body.section,
-                    item_name=field_name,
-                    encrypted_value=ciphertext,
-                    nonce=nonce,
-                )
+            created = VaultItem(
+                vault_id=target.id,
+                section=body.section,
+                item_name=target_name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
             )
+            db.add(created)
+            # Two source names can collapse onto one stripped target name —
+            # track the insert so the second becomes an update, not a
+            # duplicate row.
+            target_by_name[target_name] = created
         copied += 1
 
     await db.commit()

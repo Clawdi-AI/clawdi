@@ -134,6 +134,11 @@ class VaultItemsCopy(BaseModel):
     target_slug: str = Field(min_length=1, max_length=200)
     section: str = Field(default="", max_length=200)
     fields: list[str] = Field(min_length=1, max_length=200)
+    # Optional rename-on-copy: strip this prefix from each item name at
+    # the destination (`clawdi-backend/DATABASE_URL` → `DATABASE_URL`).
+    # Powers the "split a grab-bag vault into per-app vaults" flow —
+    # names get clean, values still never leave the server.
+    strip_prefix: str | None = Field(default=None, max_length=200)
 
     @field_validator("target_slug", mode="after")
     @classmethod

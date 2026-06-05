@@ -162,6 +162,51 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
+async def test_vault_copy_strip_prefix_renames_at_destination(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    """Split-by-prefix: copying `app/KEY` with strip_prefix='app/' lands
+    as plain `KEY` in the destination vault, and the value survives."""
+    created = await cli_client.post("/api/vault", json={"slug": "bag", "name": "Bag"})
+    await cli_client.post("/api/vault", json={"slug": "app", "name": "App"})
+    for name, value in [("clawdi-backend/DATABASE_URL", "postgres://x"), ("KEEP_ME", "y")]:
+        ciphertext, nonce = vault_crypto_encrypt(value)
+        db_session.add(
+            VaultItem(
+                vault_id=uuid.UUID(created.json()["id"]),
+                section="",
+                item_name=name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+        )
+    await db_session.commit()
+
+    r = await cli_client.post(
+        "/api/vault/bag/items/copy",
+        json={
+            "target_slug": "app",
+            "fields": ["clawdi-backend/DATABASE_URL"],
+            "strip_prefix": "clawdi-backend/",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["copied"] == 1
+    assert (await cli_client.get("/api/vault/app/items")).json() == {"(default)": ["DATABASE_URL"]}
+
+    # Value round-trips under the NEW name.
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/bag/items",
+        json={"section": "", "fields": ["clawdi-backend/DATABASE_URL"]},
+    )
+    assert deleted.status_code == 200
+    resolved = (await cli_client.post("/api/vault/resolve")).json()
+    assert resolved.get("DATABASE_URL") == "postgres://x"
+
+
+@pytest.mark.asyncio
 async def test_vault_copy_and_delete_accept_legacy_field_names(
     cli_client: httpx.AsyncClient,
     db_session: AsyncSession,
