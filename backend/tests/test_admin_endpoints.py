@@ -101,6 +101,112 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
 
 
 @pytest.mark.asyncio
+async def test_admin_session_stats_splits_automated_and_manual(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.session import Session
+    from app.models.user import User
+
+    other_user = User(clerk_id=f"stats_user_{uuid.uuid4().hex[:12]}", email="stats@example.com")
+    db_session.add(other_user)
+    await db_session.flush()
+
+    base = datetime(2100, 1, 1, tzinfo=UTC) + timedelta(minutes=uuid.uuid4().int % 500_000)
+    db_session.add_all(
+        [
+            Session(
+                user_id=seed_user.id,
+                local_session_id=f"stats-manual-{uuid.uuid4().hex[:8]}",
+                started_at=base,
+                last_activity_at=base,
+                duration_seconds=900,
+                message_count=12,
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_tokens=25,
+                summary="Manual debugging session",
+                file_key="sessions/manual.json",
+            ),
+            Session(
+                user_id=seed_user.id,
+                local_session_id=f"stats-cron-{uuid.uuid4().hex[:8]}",
+                started_at=base + timedelta(minutes=1),
+                last_activity_at=base + timedelta(minutes=1),
+                duration_seconds=20,
+                message_count=2,
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=0,
+                summary="Cron: portfolio-watch",
+                file_key="sessions/cron.json",
+            ),
+            Session(
+                user_id=other_user.id,
+                local_session_id=f"stats-heartbeat-{uuid.uuid4().hex[:8]}",
+                started_at=base + timedelta(minutes=2),
+                last_activity_at=base + timedelta(minutes=2),
+                duration_seconds=5,
+                message_count=1,
+                input_tokens=7,
+                output_tokens=3,
+                cache_read_tokens=0,
+                summary="[OpenClaw heartbeat poll]",
+            ),
+            Session(
+                user_id=other_user.id,
+                local_session_id=f"stats-outside-{uuid.uuid4().hex[:8]}",
+                started_at=base - timedelta(days=1),
+                last_activity_at=base - timedelta(days=1),
+                duration_seconds=900,
+                message_count=100,
+                input_tokens=1000,
+                output_tokens=1000,
+                cache_read_tokens=0,
+                summary="Outside window",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    r = await admin_client.get(
+        "/api/admin/stats/sessions",
+        headers=_AUTH,
+        params={
+            "since": (base - timedelta(seconds=1)).isoformat(),
+            "until": (base + timedelta(minutes=3)).isoformat(),
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    totals = payload["totals"]
+    assert totals["active_users"] == 2
+    assert totals["sessions"] == 3
+    assert totals["messages"] == 15
+    assert totals["tokens"] == 200
+    assert totals["sessions_with_content"] == 2
+    assert totals["manual_sessions"] == 1
+    assert totals["manual_messages"] == 12
+    assert totals["automated_sessions"] == 2
+    assert totals["automated_messages"] == 3
+    assert totals["automated_users"] == 2
+    assert totals["manual_users"] == 1
+    assert totals["tiny_sessions"] == 2
+    assert payload["per_user"]["max_sessions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_session_stats_requires_admin_key(admin_client):
+    r = await admin_client.get("/api/admin/stats/sessions")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_default_grants_full_account_access(admin_client, db_session, seed_user):
     """Mint via admin endpoint with no `scopes` field defaults to
     full account access — same as user-self-mint via Clerk JWT."""
