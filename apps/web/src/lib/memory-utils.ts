@@ -11,5 +11,6 @@ export const MEMORY_CATEGORY_COLORS: Record<string, string> = {
 	preference: "border-transparent bg-info-muted text-info-muted-foreground",
 	pattern: "border-transparent bg-success-muted text-success-muted-foreground",
 	decision: "border-transparent bg-warning-muted text-warning-muted-foreground",
+	artifact: "border-transparent bg-accent text-accent-foreground",
 	context: "border-transparent bg-primary/10 text-primary",
 };

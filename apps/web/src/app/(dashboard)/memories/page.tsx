@@ -48,6 +48,7 @@ const CATEGORIES = [
 	{ value: "preference", label: "Preference" },
 	{ value: "pattern", label: "Pattern" },
 	{ value: "decision", label: "Decision" },
+	{ value: "artifact", label: "Artifact" },
 	{ value: "context", label: "Context" },
 ] as const;
 
