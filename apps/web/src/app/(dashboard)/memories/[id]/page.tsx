@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { MemoryRelationshipList } from "@/components/memories/memory-relationship-list";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,10 +34,27 @@ export default function MemoryDetailPage() {
 			unwrap(await api.GET("/api/memories/{memory_id}", { params: { path: { memory_id: id } } })),
 	});
 
+	const { data: relatedMemories, isLoading: relatedMemoriesLoading } = useQuery({
+		queryKey: ["memories", "session", memory?.source_session_id],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/memories", {
+					params: {
+						query: {
+							source_session_id: memory?.source_session_id ?? "",
+							page_size: 10,
+						},
+					},
+				}),
+			),
+		enabled: !!memory?.source_session_id,
+	});
+
 	// First sentence (or 80 chars) — keeps the breadcrumb readable.
 	const memoryTitle = memory?.content
 		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
 		: null;
+	const siblingMemories = (relatedMemories?.items ?? []).filter((item) => item.id !== memory?.id);
 	useSetBreadcrumbTitle(memoryTitle);
 
 	const deleteMemory = useMutation({
@@ -75,9 +93,7 @@ export default function MemoryDetailPage() {
 								<Brain className="size-3.5" />
 								<span>Memory</span>
 							</div>
-							<DetailTitle className="whitespace-pre-wrap leading-snug">
-								{memory.content}
-							</DetailTitle>
+							<DetailTitle>Memory</DetailTitle>
 							<DetailMeta>
 								<Badge
 									variant="secondary"
@@ -128,13 +144,25 @@ export default function MemoryDetailPage() {
 						</ConfirmAction>
 					</div>
 
+					<DetailPanel>
+						<p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+							{memory.content}
+						</p>
+					</DetailPanel>
+
 					<DetailPanel className="space-y-4">
 						<div className="space-y-1">
-							<h2 className="text-sm font-semibold">Recall Scope</h2>
+							<h2 className="text-sm font-semibold">Source relationship</h2>
 							<p className="text-xs text-muted-foreground">
-								This is account-level context. Agents can recall it across runs; it is not shared
-								through Projects.
+								This memory is account-level context. Its source tells you which agent/session
+								taught it to Clawdi.
 							</p>
+						</div>
+						<div className="grid gap-2 text-sm sm:grid-cols-2">
+							<DetailField label="source" value={memory.source} />
+							<DetailField label="agent" value={memory.source_machine_name} />
+							<DetailField label="session" value={memory.source_session_id} />
+							<DetailField label="environment" value={memory.source_environment_id} />
 						</div>
 						{memory.tags?.length ? (
 							<div className="flex flex-wrap items-center gap-1.5">
@@ -173,6 +201,25 @@ export default function MemoryDetailPage() {
 							</div>
 						) : null}
 
+						{memory.source_session_id ? (
+							<div className="space-y-3 border-t pt-4">
+								<div className="flex items-center justify-between gap-3">
+									<h2 className="text-sm font-semibold">Learned in the same session</h2>
+									{siblingMemories.length ? (
+										<span className="text-xs tabular-nums text-muted-foreground">
+											{siblingMemories.length}
+										</span>
+									) : null}
+								</div>
+								<MemoryRelationshipList
+									memories={siblingMemories}
+									isLoading={relatedMemoriesLoading}
+									emptyMessage="No other memories are linked to this source session."
+									limit={5}
+								/>
+							</div>
+						) : null}
+
 						{memory.xtrace ? <XTraceMemoryDetails xtrace={memory.xtrace} /> : null}
 					</DetailPanel>
 				</>
@@ -183,6 +230,16 @@ export default function MemoryDetailPage() {
 					<AlertDescription>This memory doesn't exist.</AlertDescription>
 				</Alert>
 			)}
+		</div>
+	);
+}
+
+function DetailField({ label, value }: { label: string; value?: string | null }) {
+	if (!value) return null;
+	return (
+		<div className="min-w-0">
+			<span className="text-muted-foreground">{label}: </span>
+			<span className="break-words font-mono text-xs">{value}</span>
 		</div>
 	);
 }

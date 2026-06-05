@@ -586,6 +586,16 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
     assert api_memory["xtrace"]["supersedes"] == ["mem_old"]
     assert api_memory["xtrace"]["timeline"][0]["operation"] == "add"
 
+    by_session = await client.get(f"/api/memories?source_session_id={session.id}")
+    assert by_session.status_code == 200, by_session.text
+    assert by_session.json()["total"] == 1
+    assert by_session.json()["items"][0]["id"] == api_memory["id"]
+
+    by_agent = await client.get(f"/api/memories?environment_id={session.environment_id}")
+    assert by_agent.status_code == 200, by_agent.text
+    assert by_agent.json()["total"] == 1
+    assert by_agent.json()["items"][0]["id"] == api_memory["id"]
+
     audit = (
         await db_session.execute(
             select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)

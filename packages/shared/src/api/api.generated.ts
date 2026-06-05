@@ -5917,6 +5917,8 @@ export interface operations {
                 category?: string | null;
                 q?: string | null;
                 order?: string;
+                source_session_id?: string | null;
+                environment_id?: string | null;
             };
             header?: never;
             path?: never;
