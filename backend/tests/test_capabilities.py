@@ -104,3 +104,11 @@ async def test_settings_accepts_xtrace_when_configured(client: httpx.AsyncClient
     _patch_xtrace_configured(monkeypatch, configured=True)
     r = await client.patch("/api/settings", json={"settings": {"memory_provider": "xtrace"}})
     assert r.status_code == 200, r.text
+
+
+def test_xtrace_worker_is_opt_in_by_default():
+    from app.core.config import Settings
+
+    settings = Settings()
+    assert settings.xtrace_memory_worker_enabled is False
+    assert settings.xtrace_memory_worker_batch_size == 1
