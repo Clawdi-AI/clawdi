@@ -719,8 +719,7 @@ def _validate_redirect_uri(input: str) -> None:
     if (
         settings.environment == "development"
         and parsed.scheme == "http"
-        and parsed.netloc
-        and parsed.hostname in _development_oauth_redirect_hosts()
+        and _url_origin(parsed) in _development_oauth_redirect_origins()
     ):
         return
     raise HTTPException(
@@ -729,14 +728,22 @@ def _validate_redirect_uri(input: str) -> None:
     )
 
 
-def _development_oauth_redirect_hosts() -> set[str]:
+def _url_origin(parsed) -> str | None:
+    if not parsed.scheme or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _development_oauth_redirect_origins() -> set[str]:
     origins = [settings.web_origin, *settings.cors_origins]
-    hosts: set[str] = set()
+    allowed_origins: set[str] = set()
     for origin in origins:
         parsed = urlparse(origin)
-        if parsed.scheme == "http" and parsed.hostname:
-            hosts.add(parsed.hostname)
-    return hosts
+        if parsed.scheme == "http":
+            parsed_origin = _url_origin(parsed)
+            if parsed_origin:
+                allowed_origins.add(parsed_origin)
+    return allowed_origins
 
 
 async def _find_provider(
