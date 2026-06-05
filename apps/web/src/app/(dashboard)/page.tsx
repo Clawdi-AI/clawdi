@@ -95,12 +95,15 @@ export default function DashboardPage() {
 		queryFn: async () => unwrap(await api.GET("/api/dashboard/contribution")),
 	});
 
+	// Manual sessions only: on a working fleet ~3/4 of sessions are
+	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
+	// work under them. Automation is one click away via View all.
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
-		queryKey: ["recent-sessions"],
+		queryKey: ["recent-sessions", "manual"],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/sessions", {
-					params: { query: { page_size: RECENT_SESSIONS_LIMIT } },
+					params: { query: { page_size: RECENT_SESSIONS_LIMIT, automated: false } },
 				}),
 			),
 	});
@@ -192,7 +195,9 @@ export default function DashboardPage() {
 						<div className="flex items-end justify-between">
 							<div>
 								<h2 className="text-base font-semibold">Recent sessions</h2>
-								<p className="text-sm text-muted-foreground">Latest syncs from your agents.</p>
+								<p className="text-sm text-muted-foreground">
+									Your latest work — automated runs live under View all.
+								</p>
 							</div>
 							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
 								<Link href={projectResourceHref("sessions")}>
