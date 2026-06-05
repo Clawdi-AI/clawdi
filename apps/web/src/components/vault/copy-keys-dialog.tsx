@@ -170,9 +170,16 @@ export function CopyKeysDialog({
 					<DialogTitle>
 						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"} to…
 					</DialogTitle>
+					{/* Copy-vs-reference semantics must be explicit (Kingsley's
+					    review): a copied key is an independent secret — rotating
+					    one later does NOT update the other. When the user's real
+					    goal is "use these keys elsewhere too", the reference move
+					    (add this vault to that Project) is the right tool, so
+					    offer it right here. */}
 					<DialogDescription>
-						Values stay server-side — they are re-encrypted into the destination vault.
-						{mode === "move" ? " The originals are removed from this vault." : ""}
+						{mode === "move"
+							? "Values stay server-side; the originals are removed from this vault."
+							: "Each key becomes an independent copy — changing a value later updates only one vault, not both."}
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
@@ -213,6 +220,13 @@ export function CopyKeysDialog({
 						<p className="text-xs font-medium text-warning-muted-foreground">
 							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from
 							all of those Projects.
+						</p>
+					) : null}
+					{mode === "copy" ? (
+						<p className="text-xs text-muted-foreground">
+							Just want these keys available in another Project? Use{" "}
+							<span className="font-medium text-foreground">Add to Project</span> on this vault
+							instead — one source of truth, changes apply everywhere.
 						</p>
 					) : null}
 					<Button

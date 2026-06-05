@@ -525,7 +525,8 @@ export default function VaultDetailPage() {
 							</Badge>
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">
-							Agents bound to these Projects can resolve this vault&apos;s keys at runtime.
+							Same vault everywhere — key changes apply to every Project here. Agents bound to these
+							Projects resolve the keys at runtime.
 						</p>
 					</div>
 					{isOwner ? (

@@ -128,6 +128,15 @@ multi-hue colors; never use them for controls or status.
   values never reach the browser: batch copy/move runs through the
   server-side `POST /api/vault/{slug}/items/copy` (decrypt + re-encrypt on
   the server) — the one deliberate backend addition of the redesign.
+- 2026-06-05 — Copy-vs-reference vocabulary (Kingsley's review): the domain
+  mixes reference semantics (vault→Project attach, Project sharing — one
+  object, live everywhere) with true-copy semantics (skill→Project send,
+  key→vault copy — independent duplicates that diverge). The UI must say
+  which world an action lives in AT the action: reference verbs are
+  Add/Share and state "changes apply everywhere"; duplication verbs are
+  Copy/Move and state "won't sync after this". Every copy dialog also
+  offers the reference alternative when that's likely the real goal
+  ("Add this vault to the Project instead").
 
 ## Banned (CI-greppable)
 

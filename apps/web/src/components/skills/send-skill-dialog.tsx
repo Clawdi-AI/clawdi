@@ -193,9 +193,14 @@ export function SendSkillDialog({
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Send {batchLabel} to…</DialogTitle>
+					{/* Copy-vs-reference semantics must be explicit (Kingsley's
+					    review): skills duplicate per Project, so the destination's
+					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
-						Copy {single ? "this skill" : "these skills"} to another agent or Project. The
-						destination gets its own {single ? "copy" : "copies"}.
+						The destination gets {single ? "an independent copy" : "independent copies"} — later
+						changes to the source won&apos;t sync. To give people the{" "}
+						<em className="not-italic font-medium">same</em> {single ? "skill" : "skills"}, share
+						the Project instead.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
