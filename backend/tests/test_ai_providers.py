@@ -103,6 +103,22 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert invalid_mode.status_code == 422, invalid_mode.text
     assert "incompatible" in invalid_mode.text
 
+    codex_mode = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "clawdi-managed",
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "default_model": "openai-codex/gpt-5.5",
+            "api_mode": "codex_responses",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "clawdi",
+            "runtime_env_name": "CLAWDI_OPENAI_API_KEY",
+        },
+    )
+    assert codex_mode.status_code == 200, codex_mode.text
+    assert codex_mode.json()["api_mode"] == "codex_responses"
+
     plaintext_extra = await client.post(
         "/api/ai-providers",
         json={

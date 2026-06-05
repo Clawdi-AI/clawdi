@@ -12,6 +12,7 @@ export type AiProviderType = (typeof AI_PROVIDER_TYPES)[number];
 export const AI_PROVIDER_API_MODES = [
 	"openai_chat",
 	"openai_responses",
+	"codex_responses",
 	"anthropic_messages",
 	"google_generate_content",
 ] as const;
@@ -101,7 +102,7 @@ const COMPATIBLE_API_MODES: Record<AiProviderType, readonly AiProviderApiMode[]>
 	openrouter: ["openai_chat"],
 	gemini: ["google_generate_content"],
 	mistral: ["openai_chat"],
-	custom_openai_compatible: ["openai_chat", "openai_responses"],
+	custom_openai_compatible: ["openai_chat", "openai_responses", "codex_responses"],
 };
 
 const DEFAULT_API_MODE: Partial<Record<AiProviderType, AiProviderApiMode>> = {

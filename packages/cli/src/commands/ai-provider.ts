@@ -950,7 +950,7 @@ function parseApiMode(input: string | undefined): AiProviderApiMode | undefined 
 	if (!input) return undefined;
 	if (!isAiProviderApiMode(input)) {
 		throw new Error(
-			`Invalid --api-mode. Supported modes: openai_chat, openai_responses, anthropic_messages, google_generate_content.`,
+			`Invalid --api-mode. Supported modes: openai_chat, openai_responses, codex_responses, anthropic_messages, google_generate_content.`,
 		);
 	}
 	return input;
@@ -1376,7 +1376,10 @@ function providerFromHermesEntry(
 		stringField(provider, "default");
 	if (model) entry.default_model = model;
 	const apiMode = parseApiMode(
-		aiApiModeFromHermesTransport(stringField(provider, "transport")) ??
+		aiApiModeFromHermesTransport(stringField(provider, "transport"), {
+			providerId: id,
+			defaultModel: model,
+		}) ??
 			stringField(provider, "api_mode") ??
 			defaultAiProviderApiMode(type),
 	);
@@ -1405,9 +1408,20 @@ function inferProviderTypeFromEndpoint(
 	return "custom_openai_compatible";
 }
 
-function aiApiModeFromHermesTransport(input: string | undefined): AiProviderApiMode | undefined {
+function aiApiModeFromHermesTransport(
+	input: string | undefined,
+	context: { providerId?: string; defaultModel?: string } = {},
+): AiProviderApiMode | undefined {
 	if (input === "chat_completions") return "openai_chat";
-	if (input === "codex_responses") return "openai_responses";
+	if (input === "codex_responses") {
+		if (
+			context.providerId === "clawdi-managed" ||
+			context.defaultModel?.startsWith("openai-codex/")
+		) {
+			return "codex_responses";
+		}
+		return "openai_responses";
+	}
 	if (input === "anthropic_messages") return "anthropic_messages";
 	return undefined;
 }
@@ -1415,6 +1429,7 @@ function aiApiModeFromHermesTransport(input: string | undefined): AiProviderApiM
 function openClawApiModeFromLabel(input: string | undefined): AiProviderApiMode | undefined {
 	if (input === "openai-completions") return "openai_chat";
 	if (input === "openai-responses") return "openai_responses";
+	if (input === "openai-codex-responses") return "codex_responses";
 	if (input === "anthropic-messages") return "anthropic_messages";
 	if (input === "google-generative-ai") return "google_generate_content";
 	return undefined;

@@ -71,6 +71,7 @@ interface ProjectionProvider {
 const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "openai-completions",
 	openai_responses: "openai-responses",
+	codex_responses: "openai-codex-responses",
 	anthropic_messages: "anthropic-messages",
 	google_generate_content: "google-generative-ai",
 };
@@ -78,6 +79,7 @@ const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "chat_completions",
 	openai_responses: "codex_responses",
+	codex_responses: "codex_responses",
 	anthropic_messages: "anthropic_messages",
 };
 
@@ -418,7 +420,7 @@ function validateCodexProjectionProvider(provider: ProjectionProvider): void {
 }
 
 function codexProjectionSkipReason(provider: ProjectionProvider): string | undefined {
-	if (provider.api_mode !== "openai_responses") {
+	if (provider.api_mode !== "openai_responses" && provider.api_mode !== "codex_responses") {
 		return `Provider ${provider.id} skipped for codex: Codex provider config supports Responses-compatible providers only; got api_mode ${provider.api_mode}.`;
 	}
 	if (provider.auth.type === "oauth_profile") {

@@ -1632,7 +1632,7 @@ describe("ai-provider commands", () => {
 						label: "Clawdi AI",
 						base_url: "https://sub2api.example.test/v1",
 						default_model: "openai-codex/gpt-5.5",
-						api_mode: "openai_responses",
+						api_mode: "codex_responses",
 						auth: { type: "api_key", source: "managed" },
 						managed_by: "clawdi",
 						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
@@ -1665,7 +1665,7 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("projects Clawdi-managed Responses providers to OpenClaw Codex transport", async () => {
+	it("projects Clawdi-managed Codex Responses providers to OpenClaw Codex transport", async () => {
 		const catalog = {
 			schema_version: 1,
 			providers: [
@@ -1675,7 +1675,7 @@ describe("ai-provider commands", () => {
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
 					default_model: "openai-codex/gpt-5.5",
-					api_mode: "openai_responses",
+					api_mode: "codex_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
@@ -1854,6 +1854,40 @@ describe("ai-provider commands", () => {
 		expect(openrouter.auth).toEqual({
 			type: "secret_ref",
 			ref: "env:OPENROUTER_API_KEY",
+		});
+	});
+
+	it("imports Clawdi-managed Hermes providers as Codex Responses", async () => {
+		const hermesConfig = join(tmpHome, "managed-hermes-config.yaml");
+		writeFileSync(
+			hermesConfig,
+			[
+				"model:",
+				'  provider: "custom:clawdi-managed"',
+				"providers:",
+				"  clawdi-managed:",
+				'    name: "Clawdi AI"',
+				'    api: "https://sub2api.example.test/v1"',
+				'    transport: "codex_responses"',
+				'    default_model: "openai-codex/gpt-5.5"',
+				'    key_env: "CLAWDI_OPENAI_API_KEY"',
+				"",
+			].join("\n"),
+		);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(undefined, { fromHermes: hermesConfig, json: true });
+		} finally {
+			restore();
+		}
+
+		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
+		expect(catalog.providers[0]).toMatchObject({
+			id: "clawdi-managed",
+			type: "custom_openai_compatible",
+			default_model: "openai-codex/gpt-5.5",
+			api_mode: "codex_responses",
+			auth: { type: "secret_ref", ref: "env:CLAWDI_OPENAI_API_KEY" },
 		});
 	});
 

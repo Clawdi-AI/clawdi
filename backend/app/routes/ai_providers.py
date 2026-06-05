@@ -47,7 +47,11 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
     "openrouter": {"openai_chat"},
     "gemini": {"google_generate_content"},
     "mistral": {"openai_chat"},
-    "custom_openai_compatible": {"openai_chat", "openai_responses"},
+    "custom_openai_compatible": {
+        "openai_chat",
+        "openai_responses",
+        "codex_responses",
+    },
 }
 
 OAUTH_STATE_TTL_SECONDS = 10 * 60
