@@ -88,13 +88,22 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 		return s;
 	}, [query.data]);
 
+	// CORS/network-level failures (fetch throws TypeError before any HTTP
+	// response is readable) mean this ORIGIN can't talk to the deploy API
+	// at all — api.clawdi.ai's CORS allowlist covers cloud.clawdi.ai, not
+	// preview/self-hosted mirrors. That's "hosted isn't available here",
+	// not an outage: stay silent. Readable HTTP errors (5xx/4xx from an
+	// allowed origin) keep the banner — those are real failures on hosts
+	// where the integration genuinely works.
+	const unreachableFromOrigin = query.error instanceof TypeError;
+
 	return {
 		tiles,
 		claimedEnvIds,
 		// Disabled queries report isLoading=true forever in v5 (status
 		// stays 'pending'); mask both flags when we never fetch.
 		isLoading: configured ? query.isLoading : false,
-		error: configured ? query.error : null,
+		error: configured && !unreachableFromOrigin ? query.error : null,
 	};
 }
 
