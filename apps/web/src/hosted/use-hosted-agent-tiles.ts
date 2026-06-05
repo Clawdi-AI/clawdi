@@ -4,7 +4,7 @@ import type { components, Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
+import { isDeployApiConfigured, unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 import { env } from "@/lib/env";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -26,8 +26,13 @@ type Env = components["schemas"]["EnvironmentResponse"];
  */
 export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const api = useClawdiApi();
+	// Not configured (preview/self-hosted mirror pointing at the default
+	// localhost deploy API) → don't fetch, don't error-banner. See
+	// isDeployApiConfigured.
+	const configured = isDeployApiConfigured();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
+		enabled: configured,
 		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
 		// Status changes (Provisioning → Ready) — refetch periodically
 		// while a deployment is still spinning up. 10s is the balance
@@ -86,8 +91,10 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	return {
 		tiles,
 		claimedEnvIds,
-		isLoading: query.isLoading,
-		error: query.error,
+		// Disabled queries report isLoading=true forever in v5 (status
+		// stays 'pending'); mask both flags when we never fetch.
+		isLoading: configured ? query.isLoading : false,
+		error: configured ? query.error : null,
 	};
 }
 
