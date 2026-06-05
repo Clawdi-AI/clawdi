@@ -190,7 +190,7 @@ async def test_xtrace_backfill_continues_after_session_rollback(
 
     calls = 0
 
-    async def fake_ingest(db, *, session, messages):
+    async def fake_ingest(db, *, session, messages, max_messages=None):
         nonlocal calls
         calls += 1
         if calls == 1:

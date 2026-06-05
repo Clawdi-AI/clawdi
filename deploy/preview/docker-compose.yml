@@ -151,6 +151,8 @@ services:
       XTRACE_ORG_ID: ${XTRACE_ORG_ID:-}
       XTRACE_MEMORY_BASE_URL: ${XTRACE_MEMORY_BASE_URL:-https://api.production.xtrace.ai}
       XTRACE_MEMORY_APP_ID: ${XTRACE_MEMORY_APP_ID:-clawdi-cloud-preview}
+      XTRACE_MEMORY_MAX_MESSAGES: ${XTRACE_MEMORY_MAX_MESSAGES:-80}
+      XTRACE_MEMORY_BACKFILL_MAX_MESSAGES: ${XTRACE_MEMORY_BACKFILL_MAX_MESSAGES:-20}
     ports:
       - "8000"
     command: >

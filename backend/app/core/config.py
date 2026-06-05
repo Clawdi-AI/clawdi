@@ -162,7 +162,8 @@ class Settings(BaseSettings):
     xtrace_memory_base_url: str = "https://api.production.xtrace.ai"
     xtrace_memory_app_id: str = "clawdi-cloud"
     xtrace_memory_timeout_seconds: float = 35.0
-    xtrace_memory_max_messages: int = 1000
+    xtrace_memory_max_messages: int = 80
+    xtrace_memory_backfill_max_messages: int = 20
 
     # JSON object keyed by provider/tool id. Each value can include:
     # authorization_url, token_url, client_id, client_secret, scope, audience,

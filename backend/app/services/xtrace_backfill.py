@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.core.database import async_session_factory
 from app.models.session import Session
 from app.models.skill import Skill
@@ -197,7 +198,12 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
             if not isinstance(parsed, list):
                 raise ValueError("session content is not a JSON message list")
             messages: list[dict[str, Any]] = [m for m in parsed if isinstance(m, dict)]
-            result = await ingest_xtrace_session_memories(db, session=session, messages=messages)
+            result = await ingest_xtrace_session_memories(
+                db,
+                session=session,
+                messages=messages,
+                max_messages=settings.xtrace_memory_backfill_max_messages,
+            )
         except Exception as exc:
             await db.rollback()
             await db.refresh(job)

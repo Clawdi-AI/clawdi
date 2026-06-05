@@ -29,6 +29,7 @@ _SESSION_SOURCE = "xtrace_session"
 _SKILL_SOURCE = "xtrace_skill"
 _MAX_SKILL_FILE_CHARS = 24_000
 _MAX_SKILL_INGEST_CHARS = 160_000
+_MAX_SKILL_FILES = 20
 _INGEST_RETRY_STATUSES = {429, 500, 502, 503, 504}
 _INGEST_MAX_ATTEMPTS = 5
 
@@ -85,6 +86,7 @@ async def ingest_xtrace_session_memories(
     *,
     session: Session,
     messages: list[dict[str, Any]],
+    max_messages: int | None = None,
 ) -> XTraceMemoryIngestResult | None:
     """Send session messages to XTrace and mirror returned memory refs.
 
@@ -95,7 +97,7 @@ async def ingest_xtrace_session_memories(
     if not xtrace_memory_configured():
         return None
 
-    normalized = _normalize_messages(messages)
+    normalized = _normalize_messages(messages, max_messages=max_messages)
     if not normalized:
         return None
 
@@ -300,7 +302,7 @@ def _skill_messages(skill: Skill, text_files: list[SkillTextFile]) -> list[dict[
     ]
 
     used_chars = sum(len(m["content"]) for m in messages)
-    for text_file in text_files:
+    for text_file in text_files[:_MAX_SKILL_FILES]:
         if used_chars >= _MAX_SKILL_INGEST_CHARS:
             break
         remaining = _MAX_SKILL_INGEST_CHARS - used_chars
@@ -364,9 +366,13 @@ def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
     return min(2.0 * (2 ** (attempt - 1)), 30.0)
 
 
-def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    max_messages = max(1, settings.xtrace_memory_max_messages)
-    selected = messages[-max_messages:] if len(messages) > max_messages else messages
+def _normalize_messages(
+    messages: list[dict[str, Any]],
+    *,
+    max_messages: int | None = None,
+) -> list[dict[str, str]]:
+    message_limit = max(1, max_messages or settings.xtrace_memory_max_messages)
+    selected = messages[-message_limit:] if len(messages) > message_limit else messages
     normalized: list[dict[str, str]] = []
     for message in selected:
         if not isinstance(message, dict):

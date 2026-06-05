@@ -130,6 +130,8 @@ for each service.
     XTRACE_API_KEY=
     XTRACE_ORG_ID=
     XTRACE_MEMORY_BASE_URL=https://api.production.xtrace.ai
+    XTRACE_MEMORY_MAX_MESSAGES=80
+    XTRACE_MEMORY_BACKFILL_MAX_MESSAGES=20
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
     CLERK_SECRET_KEY=...
     NEXT_PUBLIC_DEPLOY_API_URL=https://<your-public-prod-api>
@@ -203,6 +205,12 @@ The output prints `job_id`, `status`, `created_ref_count`,
 or `source_type=skill`, including cases where XTrace returns a pending job or
 zero memory refs. API logs include `xtrace_memory_ingested ... job_id=...` and
 `xtrace_skill_memory_ingested ... job_id=...`.
+
+Preview defaults intentionally cap XTrace payload size. Live session uploads
+send at most `XTRACE_MEMORY_MAX_MESSAGES` messages, and historical backfills
+send at most `XTRACE_MEMORY_BACKFILL_MAX_MESSAGES` messages per session. Keep
+the backfill cap low so a bulk run does not exhaust the XTrace message quota by
+replaying full transcripts.
 
 Existing skill archives from the restored snapshot need one backfill after the
 migration so skill-file content search works:
