@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Brain, Laptop, Trash2 } from "lucide-react";
+import { Brain, GitBranch, Laptop, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
+import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -171,6 +172,8 @@ export default function MemoryDetailPage() {
 								) : null}
 							</div>
 						) : null}
+
+						{memory.xtrace ? <XTraceMemoryDetails xtrace={memory.xtrace} /> : null}
 					</DetailPanel>
 				</>
 			) : (
@@ -180,6 +183,62 @@ export default function MemoryDetailPage() {
 					<AlertDescription>This memory doesn't exist.</AlertDescription>
 				</Alert>
 			)}
+		</div>
+	);
+}
+
+function XTraceMemoryDetails({ xtrace }: { xtrace: NonNullable<Memory["xtrace"]> }) {
+	const timeline = xtrace.timeline ?? [];
+	return (
+		<div className="space-y-3 border-t pt-4">
+			<div className="flex items-center gap-2">
+				<GitBranch className="size-4 text-muted-foreground" />
+				<h2 className="text-sm font-semibold">XTrace details</h2>
+			</div>
+			<div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+				<XTraceField label="type" value={xtrace.type} />
+				<XTraceField label="status" value={xtrace.status} />
+				<XTraceField label="operation" value={xtrace.operation} />
+				<XTraceField label="source" value={xtrace.source_type} />
+				<XTraceField label="supersedes" value={xtrace.supersedes?.join(", ")} />
+				<XTraceField label="superseded by" value={xtrace.superseded_by} />
+			</div>
+			{xtrace.memory_id ? (
+				<div className="break-all rounded-md bg-muted px-2.5 py-2 font-mono text-xs text-muted-foreground">
+					{xtrace.memory_id}
+				</div>
+			) : null}
+			{timeline.length ? (
+				<div className="space-y-2">
+					<h3 className="text-xs font-medium text-muted-foreground">Versioning timeline</h3>
+					<div className="space-y-2">
+						{timeline.map((item, index) => (
+							<div key={`${item.memory_id ?? index}-${index}`} className="flex gap-3 text-sm">
+								<Badge variant="outline" className="h-fit shrink-0 uppercase">
+									{item.operation}
+								</Badge>
+								<div className="min-w-0 space-y-1">
+									<p className="break-words leading-relaxed">{item.content}</p>
+									<div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+										{item.status ? <span>{item.status}</span> : null}
+										{item.at ? <span>{new Date(item.at).toLocaleString()}</span> : null}
+									</div>
+								</div>
+							</div>
+						))}
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function XTraceField({ label, value }: { label: string; value?: string | null }) {
+	if (!value) return null;
+	return (
+		<div className="min-w-0">
+			<span className="text-muted-foreground">{label}: </span>
+			<span className="break-words font-mono text-xs">{value}</span>
 		</div>
 	);
 }

@@ -2,7 +2,7 @@
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Brain, Database, GitBranch, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -277,6 +277,15 @@ function MemoryNotesGrid({
 								#{tag}
 							</span>
 						))}
+						{memory.xtrace?.status ? (
+							<span
+								className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground"
+								title="XTrace memory status"
+							>
+								<GitBranch className="size-3" />
+								{memory.xtrace.status}
+							</span>
+						) : null}
 						<span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
 							{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
 							{memory.source_machine_name ? (

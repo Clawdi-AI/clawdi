@@ -118,6 +118,7 @@ async def test_skill_upload_auto_ingests_xtrace_artifacts_when_configured(
                             {
                                 "id": "artifact_skill",
                                 "type": "artifact",
+                                "status": "active",
                                 "text": (
                                     "Deploy helper skill captures the preview rollout checklist."
                                 ),
@@ -181,6 +182,9 @@ async def test_skill_upload_auto_ingests_xtrace_artifacts_when_configured(
     assert memory.source_session_id is None
     assert memory.tags == ["xtrace", "xtrace:artifact", "xtrace_skill"]
     assert memory.metadata_["skill_key"] == "deploy-helper"
+    assert memory.metadata_["xtrace_memory_id"] == "artifact_skill"
+    assert memory.metadata_["xtrace_type"] == "artifact"
+    assert memory.metadata_["xtrace_status"] == "active"
 
     audit = (
         await db_session.execute(

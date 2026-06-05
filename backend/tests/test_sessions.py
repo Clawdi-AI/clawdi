@@ -511,11 +511,13 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
                             {
                                 "id": "mem_test",
                                 "type": "fact",
+                                "status": "active",
+                                "created_at": "2026-06-04T12:01:00Z",
                                 "text": "User prefers Bun over npm.",
                             }
                         ],
                         "memories_updated": [],
-                        "memories_superseded_by": {},
+                        "memories_superseded_by": {"mem_old": "mem_test"},
                         "stage_timings": {},
                     },
                 },
@@ -571,6 +573,18 @@ async def test_session_upload_auto_ingests_xtrace_memories_when_configured(
     assert memories[0].source == "xtrace_session"
     assert memories[0].source_session_id == session.id
     assert memories[0].tags == ["xtrace", "xtrace:fact", "xtrace_session"]
+    assert memories[0].metadata_["xtrace_memory_id"] == "mem_test"
+    assert memories[0].metadata_["xtrace_status"] == "active"
+    assert memories[0].metadata_["xtrace_operation"] == "add"
+    assert memories[0].metadata_["xtrace_supersedes"] == ["mem_old"]
+
+    list_response = await client.get("/api/memories")
+    assert list_response.status_code == 200, list_response.text
+    api_memory = list_response.json()["items"][0]
+    assert api_memory["xtrace"]["memory_id"] == "mem_test"
+    assert api_memory["xtrace"]["status"] == "active"
+    assert api_memory["xtrace"]["supersedes"] == ["mem_old"]
+    assert api_memory["xtrace"]["timeline"][0]["operation"] == "add"
 
     audit = (
         await db_session.execute(

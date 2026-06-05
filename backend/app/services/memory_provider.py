@@ -367,6 +367,7 @@ def memory_to_dict(m: Memory) -> dict:
         # source machine in one bulk query. None when the memory was
         # added manually.
         "source_session_id": str(m.source_session_id) if m.source_session_id else None,
+        "xtrace": _xtrace_details(m.metadata_, m.content),
     }
 
 
@@ -374,6 +375,7 @@ def _row_to_dict(r) -> dict:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
     created_at = r["created_at"]
     sid = r.get("source_session_id") if hasattr(r, "get") else None
+    metadata = r.get("metadata") if hasattr(r, "get") else None
     return {
         "id": str(r["id"]),
         "content": r["content"],
@@ -383,7 +385,86 @@ def _row_to_dict(r) -> dict:
         "access_count": r["access_count"],
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         "source_session_id": str(sid) if sid else None,
+        "xtrace": _xtrace_details(metadata, r["content"]),
     }
+
+
+def _xtrace_details(metadata: object, content: str) -> dict | None:
+    if not isinstance(metadata, dict):
+        return None
+    memory_id = _string_or_none(metadata.get("xtrace_memory_id"))
+    memory_type = _string_or_none(metadata.get("xtrace_type"))
+    if memory_id is None and memory_type is None:
+        return None
+
+    operation = _string_or_none(metadata.get("xtrace_operation"))
+    status = _string_or_none(metadata.get("xtrace_status")) or "active"
+    timeline = metadata.get("xtrace_timeline")
+    return {
+        "memory_id": memory_id,
+        "type": memory_type,
+        "status": status,
+        "operation": operation,
+        "source_type": _string_or_none(metadata.get("source_type")),
+        "source_key": _string_or_none(metadata.get("source_key")),
+        "local_session_id": _string_or_none(metadata.get("local_session_id")),
+        "skill_key": _string_or_none(metadata.get("skill_key")),
+        "supersedes": _string_list(metadata.get("xtrace_supersedes")),
+        "superseded_by": _string_or_none(metadata.get("xtrace_superseded_by")),
+        "timeline": _timeline_items(timeline, content, memory_id, status, operation),
+    }
+
+
+def _timeline_items(
+    raw: object,
+    content: str,
+    memory_id: str | None,
+    status: str,
+    operation: str | None,
+) -> list[dict]:
+    if isinstance(raw, list):
+        out: list[dict] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            item_content = _string_or_none(item.get("content"))
+            if item_content is None:
+                continue
+            out.append(
+                {
+                    "operation": _string_or_none(item.get("operation")) or "add",
+                    "content": item_content,
+                    "memory_id": _string_or_none(item.get("memory_id")),
+                    "status": _string_or_none(item.get("status")),
+                    "at": _string_or_none(item.get("at")),
+                }
+            )
+        if out:
+            return out
+
+    return [
+        {
+            "operation": operation or "add",
+            "content": content,
+            "memory_id": memory_id,
+            "status": status,
+            "at": None,
+        }
+    ]
+
+
+def _string_or_none(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str) and value:
+        return [value]
+    if isinstance(value, list):
+        return [str(v) for v in value if isinstance(v, str) and v]
+    return []
 
 
 def _row_to_search_dict(r, score_key: str) -> dict:

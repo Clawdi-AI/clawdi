@@ -1934,6 +1934,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/xtrace/backfills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Backfills */
+        get: operations["list_backfills_api_xtrace_backfills_get"];
+        put?: never;
+        /** Create Backfill */
+        post: operations["create_backfill_api_xtrace_backfills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/xtrace/backfills/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Backfill */
+        get: operations["get_backfill_api_xtrace_backfills__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2839,6 +2874,7 @@ export interface components {
             source_environment_id?: string | null;
             /** Source Machine Name */
             source_machine_name?: string | null;
+            xtrace?: components["schemas"]["XTraceMemoryDetails"] | null;
         };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
@@ -2888,6 +2924,17 @@ export interface components {
         Paginated_VaultResponse_: {
             /** Items */
             items: components["schemas"]["VaultResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+        };
+        /** Paginated[XTraceBackfillJobResponse] */
+        Paginated_XTraceBackfillJobResponse_: {
+            /** Items */
+            items: components["schemas"]["XTraceBackfillJobResponse"][];
             /** Total */
             total: number;
             /** Page */
@@ -3847,6 +3894,142 @@ export interface components {
         /** VaultSectionsResponse */
         VaultSectionsResponse: {
             [key: string]: string[];
+        };
+        /** XTraceBackfillCreate */
+        XTraceBackfillCreate: {
+            /**
+             * Include Sessions
+             * @default true
+             */
+            include_sessions: boolean;
+            /**
+             * Include Skills
+             * @default true
+             */
+            include_skills: boolean;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Limit */
+            limit?: number | null;
+            /**
+             * All Users
+             * @default false
+             */
+            all_users: boolean;
+        };
+        /** XTraceBackfillJobResponse */
+        XTraceBackfillJobResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /** Requested By User Id */
+            requested_by_user_id: string | null;
+            /** Scope User Id */
+            scope_user_id: string | null;
+            /** Include Sessions */
+            include_sessions: boolean;
+            /** Include Skills */
+            include_skills: boolean;
+            /** Force */
+            force: boolean;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Limit */
+            limit: number | null;
+            /** Current Source Type */
+            current_source_type: string | null;
+            /** Current Source Key */
+            current_source_key: string | null;
+            /** Considered Count */
+            considered_count: number;
+            /** Sent Count */
+            sent_count: number;
+            /** Skipped Count */
+            skipped_count: number;
+            /** Failed Count */
+            failed_count: number;
+            /** Mirrored Count */
+            mirrored_count: number;
+            /** Sessions Considered */
+            sessions_considered: number;
+            /** Sessions Sent */
+            sessions_sent: number;
+            /** Sessions Skipped */
+            sessions_skipped: number;
+            /** Sessions Failed */
+            sessions_failed: number;
+            /** Sessions Mirrored */
+            sessions_mirrored: number;
+            /** Skills Considered */
+            skills_considered: number;
+            /** Skills Sent */
+            skills_sent: number;
+            /** Skills Skipped */
+            skills_skipped: number;
+            /** Skills Failed */
+            skills_failed: number;
+            /** Skills Mirrored */
+            skills_mirrored: number;
+            /** Error */
+            error: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Updated At */
+            updated_at: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+        };
+        /** XTraceMemoryDetails */
+        XTraceMemoryDetails: {
+            /** Memory Id */
+            memory_id?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Operation */
+            operation?: string | null;
+            /** Source Type */
+            source_type?: string | null;
+            /** Source Key */
+            source_key?: string | null;
+            /** Local Session Id */
+            local_session_id?: string | null;
+            /** Skill Key */
+            skill_key?: string | null;
+            /** Supersedes */
+            supersedes?: string[];
+            /** Superseded By */
+            superseded_by?: string | null;
+            /** Timeline */
+            timeline?: components["schemas"]["XTraceMemoryTimelineItem"][];
+        };
+        /** XTraceMemoryTimelineItem */
+        XTraceMemoryTimelineItem: {
+            /** Operation */
+            operation: string;
+            /** Content */
+            content: string;
+            /** Memory Id */
+            memory_id?: string | null;
+            /** Status */
+            status?: string | null;
+            /** At */
+            at?: string | null;
         };
     };
     responses: never;
@@ -7297,6 +7480,106 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_backfills_api_xtrace_backfills_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Paginated_XTraceBackfillJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_backfill_api_xtrace_backfills_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XTraceBackfillCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XTraceBackfillJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backfill_api_xtrace_backfills__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XTraceBackfillJobResponse"];
                 };
             };
             /** @description Validation Error */

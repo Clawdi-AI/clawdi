@@ -12,6 +12,7 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.memory import Memory
@@ -34,6 +35,11 @@ class XTraceMemoryRef:
     id: str
     type: str
     text: str
+    status: str | None = None
+    operation: str | None = None
+    supersedes: list[str] | None = None
+    superseded_by: str | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ class XTraceRemoteIngest:
     payload: dict[str, Any]
     created_refs: list[XTraceMemoryRef]
     updated_refs: list[XTraceMemoryRef]
+    memories_superseded_by: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -364,11 +371,13 @@ def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
 def _extract_remote_ingest(payload: dict[str, Any]) -> XTraceRemoteIngest:
     created_refs: list[XTraceMemoryRef] = []
     updated_refs: list[XTraceMemoryRef] = []
+    memories_superseded_by: dict[str, str] = {}
 
     result = payload.get("result")
     if isinstance(result, dict):
         created_refs.extend(_parse_ref_list(result.get("memories_created")))
         updated_refs.extend(_parse_ref_list(result.get("memories_updated")))
+        memories_superseded_by = _parse_superseded_by(result.get("memories_superseded_by"))
 
     # Older quickstart-style response: {"results": [{data: {memory: "..."}}]}.
     raw_results = payload.get("results")
@@ -389,8 +398,9 @@ def _extract_remote_ingest(payload: dict[str, Any]) -> XTraceRemoteIngest:
 
     return XTraceRemoteIngest(
         payload=payload,
-        created_refs=created_refs,
-        updated_refs=updated_refs,
+        created_refs=_with_lineage(created_refs, "add", memories_superseded_by),
+        updated_refs=_with_lineage(updated_refs, "update", memories_superseded_by),
+        memories_superseded_by=memories_superseded_by,
     )
 
 
@@ -415,7 +425,51 @@ def _parse_ref(raw: Any) -> XTraceMemoryRef | None:
         id=str(raw.get("id") or ""),
         type=str(raw.get("type") or "fact"),
         text=text.strip(),
+        status=_string_or_none(raw.get("status")) or "active",
+        operation=_string_or_none(raw.get("operation")),
+        supersedes=_string_list(raw.get("supersedes")),
+        superseded_by=_string_or_none(raw.get("superseded_by")),
+        created_at=_string_or_none(raw.get("created_at")),
     )
+
+
+def _parse_superseded_by(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for old_id, new_id in raw.items():
+        if old_id and new_id:
+            out[str(old_id)] = str(new_id)
+    return out
+
+
+def _with_lineage(
+    refs: list[XTraceMemoryRef],
+    operation: str,
+    superseded_by: dict[str, str],
+) -> list[XTraceMemoryRef]:
+    if not refs:
+        return []
+    supersedes_by_new_id: dict[str, list[str]] = {}
+    for old_id, new_id in superseded_by.items():
+        supersedes_by_new_id.setdefault(new_id, []).append(old_id)
+
+    out: list[XTraceMemoryRef] = []
+    for ref in refs:
+        supersedes = [*(ref.supersedes or []), *supersedes_by_new_id.get(ref.id, [])]
+        out.append(
+            XTraceMemoryRef(
+                id=ref.id,
+                type=ref.type,
+                text=ref.text,
+                status=ref.status or "active",
+                operation=ref.operation or operation,
+                supersedes=supersedes,
+                superseded_by=ref.superseded_by,
+                created_at=ref.created_at,
+            )
+        )
+    return out
 
 
 async def _store_refs(
@@ -431,7 +485,9 @@ async def _store_refs(
         return 0
 
     texts = [r.text for r in refs]
-    stmt = select(Memory.content).where(
+    await _mark_superseded_refs(db, user_id=user_id, source=source, refs=refs)
+
+    stmt = select(Memory).where(
         Memory.user_id == user_id,
         Memory.source == source,
         Memory.content.in_(texts),
@@ -440,11 +496,23 @@ async def _store_refs(
         stmt = stmt.where(Memory.source_session_id.is_(None))
     else:
         stmt = stmt.where(Memory.source_session_id == source_session_id)
-    existing = (await db.execute(stmt)).scalars()
-    existing_texts = set(existing.all())
+    existing = (await db.execute(stmt)).scalars().all()
+    existing_by_text = {m.content: m for m in existing}
+    existing_texts = set(existing_by_text)
 
     created = 0
     for ref in refs:
+        metadata_ = _memory_metadata(metadata, ref)
+        existing_memory = existing_by_text.get(ref.text)
+        if existing_memory is not None:
+            existing_memory.category = _category_for_xtrace_type(ref.type)
+            existing_memory.tags = ["xtrace", f"xtrace:{ref.type}", source]
+            existing_memory.metadata_ = {
+                **(existing_memory.metadata_ or {}),
+                **metadata_,
+            }
+            flag_modified(existing_memory, "metadata_")
+            continue
         if ref.text in existing_texts:
             continue
         db.add(
@@ -455,11 +523,7 @@ async def _store_refs(
                 source=source,
                 source_session_id=source_session_id,
                 tags=["xtrace", f"xtrace:{ref.type}", source],
-                metadata_={
-                    **metadata,
-                    "xtrace_memory_id": ref.id,
-                    "xtrace_type": ref.type,
-                },
+                metadata_=metadata_,
             )
         )
         existing_texts.add(ref.text)
@@ -468,6 +532,88 @@ async def _store_refs(
     if created:
         await db.flush()
     return created
+
+
+async def _mark_superseded_refs(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    source: str,
+    refs: list[XTraceMemoryRef],
+) -> None:
+    superseded_pairs: list[tuple[str, str]] = []
+    for ref in refs:
+        if not ref.id:
+            continue
+        for old_id in ref.supersedes or []:
+            superseded_pairs.append((old_id, ref.id))
+    if not superseded_pairs:
+        return
+
+    superseded_by = dict(superseded_pairs)
+    old_ids = list(superseded_by)
+    rows = (
+        (
+            await db.execute(
+                select(Memory).where(
+                    Memory.user_id == user_id,
+                    Memory.source == source,
+                    Memory.metadata_["xtrace_memory_id"].astext.in_(old_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for memory in rows:
+        metadata = dict(memory.metadata_ or {})
+        remote_id = _string_or_none(metadata.get("xtrace_memory_id"))
+        if remote_id is None:
+            continue
+        metadata["xtrace_status"] = "superseded"
+        metadata["xtrace_superseded_by"] = superseded_by.get(remote_id)
+        metadata["xtrace_timeline"] = [
+            *_existing_timeline(memory),
+            {
+                "operation": "superseded",
+                "content": memory.content,
+                "memory_id": remote_id,
+                "status": "superseded",
+                "at": None,
+            },
+        ]
+        memory.metadata_ = metadata
+        flag_modified(memory, "metadata_")
+
+
+def _memory_metadata(metadata: dict[str, Any], ref: XTraceMemoryRef) -> dict[str, Any]:
+    return {
+        **metadata,
+        "xtrace_memory_id": ref.id,
+        "xtrace_type": ref.type,
+        "xtrace_status": ref.status or "active",
+        "xtrace_operation": ref.operation or "add",
+        "xtrace_supersedes": ref.supersedes or [],
+        "xtrace_superseded_by": ref.superseded_by,
+        "xtrace_created_at": ref.created_at,
+        "xtrace_timeline": [
+            {
+                "operation": ref.operation or "add",
+                "content": ref.text,
+                "memory_id": ref.id,
+                "status": ref.status or "active",
+                "at": ref.created_at,
+            }
+        ],
+    }
+
+
+def _existing_timeline(memory: Memory) -> list[dict[str, Any]]:
+    metadata = memory.metadata_ if isinstance(memory.metadata_, dict) else {}
+    raw = metadata.get("xtrace_timeline")
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return []
 
 
 def _result_from_remote(
@@ -501,4 +647,13 @@ def _iso_or_none(value: datetime | None) -> str | None:
 def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
-    return str(value)
+    text = str(value)
+    return text if text else None
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str) and value:
+        return [value]
+    if isinstance(value, list):
+        return [str(v) for v in value if v]
+    return []
