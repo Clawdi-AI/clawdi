@@ -167,6 +167,8 @@ class Settings(BaseSettings):
     xtrace_memory_worker_enabled: bool = False
     xtrace_memory_worker_batch_size: int = 1
     xtrace_memory_worker_poll_seconds: float = 60.0
+    xtrace_memory_max_attempts: int = 3
+    xtrace_memory_retry_base_seconds: float = 60.0
 
     # JSON object keyed by provider/tool id. Each value can include:
     # authorization_url, token_url, client_id, client_secret, scope, audience,

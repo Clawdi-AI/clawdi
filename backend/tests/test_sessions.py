@@ -733,6 +733,127 @@ async def test_xtrace_ingest_queue_drain_dispatches_queued_jobs(
 
 
 @pytest.mark.asyncio
+async def test_xtrace_ingest_queue_claims_due_jobs_once(
+    db_session: AsyncSession,
+    seed_user,
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import claim_queued_xtrace_ingest_jobs
+
+    old_enough_to_claim_first = datetime(2000, 1, 1, tzinfo=UTC)
+    due = XTraceMemoryIngest(
+        user_id=seed_user.id,
+        source_type="session",
+        source_key="session:claim-due",
+        status="queued",
+        created_at=old_enough_to_claim_first,
+    )
+    future = XTraceMemoryIngest(
+        user_id=seed_user.id,
+        source_type="session",
+        source_key="session:claim-future",
+        status="queued",
+        created_at=old_enough_to_claim_first,
+        next_attempt_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add_all([due, future])
+    await db_session.commit()
+
+    claimed = await claim_queued_xtrace_ingest_jobs(db_session, limit=10, worker_id="worker-a")
+
+    assert due.id in [job.id for job in claimed]
+    await db_session.refresh(due)
+    await db_session.refresh(future)
+    assert due.status == "running"
+    assert due.claimed_by == "worker-a"
+    assert due.claimed_at is not None
+    assert due.attempt_count == 1
+    assert future.status == "queued"
+    assert future.attempt_count == 0
+
+    claimed_again = await claim_queued_xtrace_ingest_jobs(
+        db_session, limit=10, worker_id="worker-b"
+    )
+    claimed_again_ids = [job.id for job in claimed_again]
+    assert due.id not in claimed_again_ids
+    assert future.id not in claimed_again_ids
+
+
+@pytest.mark.asyncio
+async def test_xtrace_ingest_worker_requeues_failed_jobs_with_backoff(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import (
+        claim_queued_xtrace_ingest_jobs,
+        run_xtrace_ingest_job,
+    )
+
+    class BrokenXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise httpx.ConnectError("xtrace unavailable")
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_max_attempts", 3)
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", BrokenXTraceClient)
+
+    await _seed_session_with_content(
+        client,
+        "sess-xtrace-retry-queue",
+        content=b'[{"role":"user","content":"retry later"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == "sess-xtrace-retry-queue",
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    queued.created_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+    claimed = await claim_queued_xtrace_ingest_jobs(db_session, limit=10, worker_id="worker-retry")
+    assert queued.id in [job.id for job in claimed]
+
+    await run_xtrace_ingest_job(queued.id, db=db_session)
+    await db_session.refresh(queued)
+
+    assert queued.status == "queued"
+    assert queued.attempt_count == 1
+    assert queued.next_attempt_at is not None
+    assert queued.claimed_by is None
+    assert queued.claimed_at is None
+    assert "xtrace unavailable" in (queued.error or "")
+
+
+@pytest.mark.asyncio
 async def test_session_upload_xtrace_error_does_not_fail_upload(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

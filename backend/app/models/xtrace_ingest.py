@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,4 +35,9 @@ class XTraceMemoryIngest(Base, TimestampMixin):
     created_ref_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     updated_ref_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     mirrored_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     response: Mapped[dict | None] = mapped_column(JSONB)

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
-from uuid import UUID
+import socket
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -27,7 +28,7 @@ from app.services.xtrace_memory import (
 
 log = logging.getLogger(__name__)
 
-_RUNNABLE_STATUSES = {"queued"}
+_DEFAULT_WORKER_ID = f"{socket.gethostname()}:{uuid4()}"
 
 
 async def enqueue_xtrace_session_ingest(
@@ -59,6 +60,7 @@ async def enqueue_xtrace_session_ingest(
         local_session_id=session.local_session_id,
         source_key=source_key,
         status="queued",
+        attempt_count=0,
         created_ref_count=0,
         updated_ref_count=0,
         mirrored_count=0,
@@ -98,6 +100,7 @@ async def enqueue_xtrace_skill_ingest(
         skill_id=skill.id,
         source_key=source_key,
         status="queued",
+        attempt_count=0,
         created_ref_count=0,
         updated_ref_count=0,
         mirrored_count=0,
@@ -128,12 +131,11 @@ async def _run_xtrace_ingest_job_in_session(db: AsyncSession, job_id: UUID) -> N
     if job is None:
         log.error("xtrace_ingest_job_missing job_id=%s", job_id)
         return
-    if job.status not in _RUNNABLE_STATUSES:
+    if job.status == "queued":
+        await _mark_job_claimed(db, job, worker_id=_DEFAULT_WORKER_ID)
+    elif job.status not in {"running"}:
         log.info("xtrace_ingest_job_not_active job_id=%s status=%s", job_id, job.status)
         return
-
-    job.status = "running"
-    await db.commit()
 
     try:
         if job.source_type == "session":
@@ -145,13 +147,15 @@ async def _run_xtrace_ingest_job_in_session(db: AsyncSession, job_id: UUID) -> N
         if result is None:
             job.status = "skipped"
             job.response = {"skipped_at": datetime.now(UTC).isoformat()}
-            await db.commit()
+        job.claimed_at = None
+        job.claimed_by = None
+        job.error = None
+        await db.commit()
     except Exception as exc:
         await db.rollback()
         job = await db.get(XTraceMemoryIngest, job_id)
         if job is not None:
-            job.status = "failed"
-            job.response = {"error": str(exc)[:4000]}
+            _schedule_failed_job(job, exc)
             await db.commit()
         log.exception("xtrace_ingest_job_failed job_id=%s", job_id)
 
@@ -163,30 +167,98 @@ async def run_queued_xtrace_ingest_jobs(
     db: AsyncSession | None = None,
 ) -> int:
     if db is not None:
-        job_ids = await _queued_job_ids(db, limit)
-        for job_id in job_ids:
-            await run_xtrace_ingest_job(job_id, session_factory=session_factory, db=db)
-        return len(job_ids)
+        jobs = await claim_queued_xtrace_ingest_jobs(db, limit=limit, worker_id=_DEFAULT_WORKER_ID)
+        for job in jobs:
+            await run_xtrace_ingest_job(job.id, session_factory=session_factory, db=db)
+        return len(jobs)
 
     async with session_factory() as session:
-        job_ids = await _queued_job_ids(session, limit)
+        jobs = await claim_queued_xtrace_ingest_jobs(
+            session, limit=limit, worker_id=_DEFAULT_WORKER_ID
+        )
+        job_ids = [job.id for job in jobs]
     for job_id in job_ids:
         await run_xtrace_ingest_job(job_id, session_factory=session_factory)
     return len(job_ids)
 
 
-async def _queued_job_ids(db: AsyncSession, limit: int) -> list[UUID]:
-    return [
-        row[0]
-        for row in (
+async def claim_queued_xtrace_ingest_jobs(
+    db: AsyncSession,
+    *,
+    limit: int,
+    worker_id: str,
+) -> list[XTraceMemoryIngest]:
+    now = datetime.now(UTC)
+    rows = (
+        (
             await db.execute(
-                select(XTraceMemoryIngest.id)
-                .where(XTraceMemoryIngest.status == "queued")
+                select(XTraceMemoryIngest)
+                .where(
+                    XTraceMemoryIngest.status == "queued",
+                    or_(
+                        XTraceMemoryIngest.next_attempt_at.is_(None),
+                        XTraceMemoryIngest.next_attempt_at <= now,
+                    ),
+                )
                 .order_by(XTraceMemoryIngest.created_at.asc())
                 .limit(limit)
+                .with_for_update(skip_locked=True)
             )
-        ).all()
-    ]
+        )
+        .scalars()
+        .all()
+    )
+    for job in rows:
+        _mark_job_claimed_in_memory(job, worker_id=worker_id, now=now)
+    if rows:
+        await db.commit()
+    return rows
+
+
+async def _mark_job_claimed(
+    db: AsyncSession,
+    job: XTraceMemoryIngest,
+    *,
+    worker_id: str,
+) -> None:
+    _mark_job_claimed_in_memory(job, worker_id=worker_id, now=datetime.now(UTC))
+    await db.commit()
+
+
+def _mark_job_claimed_in_memory(
+    job: XTraceMemoryIngest,
+    *,
+    worker_id: str,
+    now: datetime,
+) -> None:
+    job.status = "running"
+    job.claimed_at = now
+    job.claimed_by = worker_id
+    job.next_attempt_at = None
+    job.error = None
+    job.attempt_count = (job.attempt_count or 0) + 1
+
+
+def _schedule_failed_job(job: XTraceMemoryIngest, exc: Exception) -> None:
+    attempts = job.attempt_count or 0
+    error = str(exc)[:4000]
+    job.error = error
+    job.response = {
+        **(job.response or {}),
+        "error": error,
+        "attempt_count": attempts,
+        "failed_at": datetime.now(UTC).isoformat(),
+    }
+    job.claimed_at = None
+    job.claimed_by = None
+    if attempts >= max(1, settings.xtrace_memory_max_attempts):
+        job.status = "failed"
+        job.next_attempt_at = None
+        return
+
+    delay = settings.xtrace_memory_retry_base_seconds * (2 ** max(0, attempts - 1))
+    job.status = "queued"
+    job.next_attempt_at = datetime.now(UTC) + timedelta(seconds=max(1.0, delay))
 
 
 async def run_xtrace_ingest_worker(
