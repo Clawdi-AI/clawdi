@@ -27,6 +27,7 @@ import {
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { cn, formatNumber } from "@/lib/utils";
 
 type Resource = {
@@ -229,7 +230,16 @@ function ResourceRow({
 			href={definition.href}
 			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
 		>
-			<Icon className="size-4 shrink-0 text-muted-foreground" />
+			{/* Same identity hue as this resource's sidebar chip — the rail
+			    and the nav read as one system. */}
+			<span
+				className={cn(
+					"flex size-7 shrink-0 items-center justify-center rounded-lg",
+					RESOURCE_TINT_CLASSES[definition.id],
+				)}
+			>
+				<Icon className="size-3.5" />
+			</span>
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
 				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">

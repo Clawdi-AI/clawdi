@@ -57,6 +57,8 @@ import {
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
+import { cn } from "@/lib/utils";
 
 // Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
 // builds collapse the conditional, the bundler eliminates the
@@ -74,6 +76,24 @@ const RESOURCE_ICONS = {
 	memories: Brain,
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
+
+/** Tinted chip around a nav icon — the identity-palette hue carries the
+ * "vivid, colourful" art direction into the app chrome itself, and each
+ * resource keeps the same hue here, in the overview Resources rail, and
+ * on its own pages. The chip (not the glyph) is colored so icons stay
+ * one visual weight. */
+function NavIconChip({ tint, children }: { tint: string; children: React.ReactNode }) {
+	return (
+		<span
+			className={cn(
+				"flex size-5 shrink-0 items-center justify-center rounded-md [&>svg]:size-3.5",
+				tint,
+			)}
+		>
+			{children}
+		</span>
+	);
+}
 
 function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 	return (
@@ -140,7 +160,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 								<SidebarMenuItem>
 									<SidebarMenuButton asChild isActive={pathname === "/"} tooltip="Overview">
 										<Link href="/">
-											<LayoutDashboard />
+											<NavIconChip tint={RESOURCE_TINT_CLASSES.overview}>
+												<LayoutDashboard />
+											</NavIconChip>
 											<span>Overview</span>
 										</Link>
 									</SidebarMenuButton>
@@ -168,7 +190,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 													)}`}
 												>
 													<Link href={definition.href}>
-														<Icon />
+														<NavIconChip tint={RESOURCE_TINT_CLASSES[definition.id]}>
+															<Icon />
+														</NavIconChip>
 														<span>{definition.navLabel}</span>
 													</Link>
 												</SidebarMenuButton>
