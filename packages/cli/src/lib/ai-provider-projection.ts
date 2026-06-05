@@ -62,6 +62,7 @@ interface ProjectionProvider {
 	base_url: string;
 	default_model: string;
 	api_mode: AiProviderApiMode;
+	managed_by?: AiProvider["managed_by"];
 	models?: AiProvider["models"];
 	env_name?: string;
 	auth: AiProviderAuth;
@@ -81,6 +82,7 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 };
 
 const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+const OPENCLAW_MANAGED_CODEX_PROVIDER_ID = "openai-codex";
 
 export function buildAgentTargetProjection(
 	target: AgentTarget,
@@ -174,6 +176,7 @@ function normalizeProjectionProvider(
 		base_url: provider.base_url,
 		default_model: provider.default_model,
 		api_mode: apiMode,
+		managed_by: provider.managed_by,
 		models: provider.models,
 		env_name: envName,
 		auth: provider.auth,
@@ -213,10 +216,11 @@ function buildOpenClawProjection(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
 			.map((provider) => [
-				provider.id,
+				openClawProjectedProviderId(provider),
 				compactObject({
 					baseUrl: provider.base_url,
-					api: openClawApiLabel(provider.api_mode),
+					api: openClawApiLabelForProvider(provider, provider.api_mode),
+					agentRuntime: isClawdiManagedProvider(provider) ? { id: "pi" } : undefined,
 					apiKey: provider.env_name
 						? { source: "env", provider: "default", id: provider.env_name }
 						: undefined,
@@ -248,9 +252,9 @@ function buildOpenClawProjection(
 function openClawModels(provider: ProjectionProvider): Array<Record<string, unknown>> {
 	const models = (provider.models ?? [])
 		.map((model) => {
-			const api = openClawApiLabel(model.api_mode ?? provider.api_mode);
+			const api = openClawApiLabelForProvider(provider, model.api_mode ?? provider.api_mode);
 			return compactObject({
-				id: model.id,
+				id: openClawModelId(provider, model.id),
 				name: model.label ?? model.id,
 				api,
 				input: model.input_modalities,
@@ -262,15 +266,30 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 		.filter(
 			(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
 		);
-	const api = openClawApiLabel(provider.api_mode);
-	if (!models.some((model) => model.id === provider.default_model)) {
-		models.unshift({ id: provider.default_model, name: provider.default_model, api });
+	const api = openClawApiLabelForProvider(provider, provider.api_mode);
+	const defaultModelId = openClawModelId(provider, provider.default_model);
+	if (!models.some((model) => model.id === defaultModelId)) {
+		models.unshift({ id: defaultModelId, name: provider.default_model, api });
 	}
 	return models;
 }
 
+function openClawApiLabelForProvider(
+	provider: ProjectionProvider,
+	apiMode: AiProviderApiMode,
+): string | undefined {
+	if (apiMode === "openai_responses" && isClawdiManagedProvider(provider)) {
+		return "openai-codex-responses";
+	}
+	return openClawApiLabel(apiMode);
+}
+
 function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
 	return OPENCLAW_API_LABELS[apiMode];
+}
+
+function isClawdiManagedProvider(provider: ProjectionProvider): boolean {
+	return provider.managed_by === "clawdi" || provider.id === "clawdi-managed";
 }
 
 function openClawProjectionSkipReason(provider: ProjectionProvider): string | undefined {
@@ -288,7 +307,15 @@ function openClawDefaultModelRef(provider: ProjectionProvider): string {
 	if (usesNativeCodexOpenAiProvider(provider)) {
 		return `openai/${codexNativeModelId(provider.default_model)}`;
 	}
-	return `${provider.id}/${provider.default_model}`;
+	return `${openClawProjectedProviderId(provider)}/${openClawModelId(provider, provider.default_model)}`;
+}
+
+function openClawProjectedProviderId(provider: ProjectionProvider): string {
+	return isClawdiManagedProvider(provider) ? OPENCLAW_MANAGED_CODEX_PROVIDER_ID : provider.id;
+}
+
+function openClawModelId(provider: ProjectionProvider, modelId: string): string {
+	return isClawdiManagedProvider(provider) ? codexNativeModelId(modelId) : modelId;
 }
 
 function positiveNumber(input: number | undefined): number | undefined {
@@ -428,7 +455,10 @@ function usesCodexNativeAuth(provider: Pick<ProjectionProvider, "auth">): boolea
 }
 
 function codexNativeModelId(model: string): string {
-	return model.startsWith("openai/") ? model.slice("openai/".length) : model;
+	for (const prefix of ["openai/", "openai-codex/"]) {
+		if (model.startsWith(prefix)) return model.slice(prefix.length);
+	}
+	return model;
 }
 
 function normalizeUrl(input: string): string {
