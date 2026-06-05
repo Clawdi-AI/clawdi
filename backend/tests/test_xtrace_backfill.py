@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import httpx
@@ -149,3 +150,63 @@ async def test_xtrace_backfill_replaces_stale_active_job(
     assert stale["status"] == "failed"
     assert stale["current_source_key"] is None
     assert "interrupted" in stale["error"]
+
+
+@pytest.mark.asyncio
+async def test_xtrace_backfill_continues_after_session_rollback(
+    db_session,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.models.session import Session
+    from app.models.xtrace_backfill_job import XTraceBackfillJob
+
+    for local_id in ("rollback-first", "rollback-second"):
+        payload = json.dumps([{"role": "user", "content": local_id}]).encode()
+        file_key = f"sessions/{seed_user.id}/{local_id}.json"
+        await get_file_store().put(file_key, payload)
+        db_session.add(
+            Session(
+                user_id=seed_user.id,
+                local_session_id=local_id,
+                started_at=datetime.now(UTC),
+                last_activity_at=datetime.now(UTC),
+                message_count=1,
+                file_key=file_key,
+                content_hash=hashlib.sha256(payload).hexdigest(),
+            )
+        )
+    job = XTraceBackfillJob(
+        requested_by_user_id=seed_user.id,
+        scope_user_id=seed_user.id,
+        include_sessions=True,
+        include_skills=False,
+        force=True,
+        status="queued",
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    calls = 0
+
+    async def fake_ingest(db, *, session, messages):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("simulated ingest failure")
+        return SimpleNamespace(mirrored_count=2)
+
+    monkeypatch.setattr("app.services.xtrace_backfill.ingest_xtrace_session_memories", fake_ingest)
+
+    test_session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    await run_xtrace_backfill_job(job.id, session_factory=test_session_factory)
+
+    refreshed = await db_session.get(XTraceBackfillJob, job.id)
+    assert refreshed is not None
+    await db_session.refresh(refreshed)
+    assert refreshed.status == "failed"
+    assert refreshed.considered_count == 2
+    assert refreshed.failed_count == 1
+    assert refreshed.sent_count == 1
+    assert refreshed.mirrored_count == 2

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -173,7 +174,7 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
     if job.limit is not None:
         stmt = stmt.limit(job.limit)
 
-    sessions = (await db.execute(stmt)).scalars().all()
+    sessions = [_session_source(session) for session in (await db.execute(stmt)).scalars().all()]
     file_store = get_file_store()
     for session in sessions:
         source_key = xtrace_session_source_key(session)
@@ -200,6 +201,10 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
         except Exception:
             await db.rollback()
             await db.refresh(job)
+            job.current_source_type = "session"
+            job.current_source_key = source_key
+            job.considered_count += 1
+            job.sessions_considered += 1
             _increment_failed(job, "session")
             await db.commit()
             log.exception("xtrace_backfill_session_failed source_key=%s", source_key)
@@ -220,7 +225,7 @@ async def _backfill_skills(db: AsyncSession, job: XTraceBackfillJob) -> None:
     if job.limit is not None:
         stmt = stmt.limit(job.limit)
 
-    skills = (await db.execute(stmt)).scalars().all()
+    skills = [_skill_source(skill) for skill in (await db.execute(stmt)).scalars().all()]
     file_store = get_file_store()
     for skill in skills:
         source_key = xtrace_skill_source_key(skill)
@@ -243,6 +248,10 @@ async def _backfill_skills(db: AsyncSession, job: XTraceBackfillJob) -> None:
         except Exception:
             await db.rollback()
             await db.refresh(job)
+            job.current_source_type = "skill"
+            job.current_source_key = source_key
+            job.considered_count += 1
+            job.skills_considered += 1
             _increment_failed(job, "skill")
             await db.commit()
             log.exception("xtrace_backfill_skill_failed source_key=%s", source_key)
@@ -267,6 +276,45 @@ async def _already_ingested(db: AsyncSession, source_type: str, source_key: str)
         )
     ).scalar_one_or_none()
     return row is not None
+
+
+def _session_source(session: Session) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=session.id,
+        user_id=session.user_id,
+        environment_id=session.environment_id,
+        local_session_id=session.local_session_id,
+        project_path=session.project_path,
+        content_hash=session.content_hash,
+        summary=session.summary,
+        message_count=session.message_count,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        last_activity_at=session.last_activity_at,
+        model=session.model,
+        models_used=session.models_used,
+        tags=session.tags,
+        related_refs=session.related_refs,
+        file_key=session.file_key,
+    )
+
+
+def _skill_source(skill: Skill) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=skill.id,
+        user_id=skill.user_id,
+        project_id=skill.project_id,
+        skill_key=skill.skill_key,
+        name=skill.name,
+        description=skill.description,
+        content_hash=skill.content_hash,
+        version=skill.version,
+        source=skill.source,
+        source_repo=skill.source_repo,
+        file_count=skill.file_count,
+        agent_types=skill.agent_types,
+        file_key=skill.file_key,
+    )
 
 
 def _increment_skipped(job: XTraceBackfillJob, source_type: str) -> None:
