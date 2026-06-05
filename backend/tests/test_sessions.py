@@ -652,6 +652,84 @@ async def test_session_upload_xtrace_error_does_not_fail_upload(
 
 
 @pytest.mark.asyncio
+async def test_session_upload_retries_xtrace_rate_limit(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+
+    calls = 0
+
+    class RateLimitedXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            nonlocal calls
+            calls += 1
+            request = httpx.Request("POST", str(url))
+            if calls == 1:
+                return httpx.Response(
+                    429,
+                    request=request,
+                    headers={"Retry-After": "0.01"},
+                    json={"detail": "rate limited"},
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "job_retry",
+                    "status": "succeeded",
+                    "result": {
+                        "memories_created": [
+                            {
+                                "id": "mem_retry",
+                                "type": "fact",
+                                "text": "User retries XTrace rate limits.",
+                            }
+                        ],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", RateLimitedXTraceClient)
+
+    await _seed_session_with_content(
+        client,
+        "sess-xtrace-rate-limit",
+        content=b'[{"role":"user","content":"Retry XTrace rate limits."}]',
+    )
+
+    assert calls == 2
+    memory = (
+        await db_session.execute(
+            select(Memory).where(
+                Memory.user_id == seed_user.id,
+                Memory.content == "User retries XTrace rate limits.",
+            )
+        )
+    ).scalar_one()
+    assert memory.metadata_["xtrace_memory_id"] == "mem_retry"
+
+
+@pytest.mark.asyncio
 async def test_session_upload_records_xtrace_ingest_when_no_memories_returned(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

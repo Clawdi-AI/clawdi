@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ _SESSION_SOURCE = "xtrace_session"
 _SKILL_SOURCE = "xtrace_skill"
 _MAX_SKILL_FILE_CHARS = 24_000
 _MAX_SKILL_INGEST_CHARS = 160_000
+_INGEST_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_INGEST_MAX_ATTEMPTS = 5
 
 
 @dataclass(frozen=True)
@@ -322,16 +325,43 @@ async def _ingest(body: dict[str, Any]) -> XTraceRemoteIngest:
     }
 
     async with httpx.AsyncClient(timeout=settings.xtrace_memory_timeout_seconds) as client:
-        response = await client.post(
-            url,
-            headers=headers,
-            params={"wait": "true"},
-            json=body,
-        )
+        response: httpx.Response | None = None
+        for attempt in range(1, _INGEST_MAX_ATTEMPTS + 1):
+            response = await client.post(
+                url,
+                headers=headers,
+                params={"wait": "true"},
+                json=body,
+            )
+            if response.status_code not in _INGEST_RETRY_STATUSES:
+                break
+            if attempt == _INGEST_MAX_ATTEMPTS:
+                break
+            delay = _retry_delay_seconds(response, attempt)
+            log.warning(
+                "xtrace_memory_ingest_retry status=%s attempt=%s delay_seconds=%s",
+                response.status_code,
+                attempt,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+        if response is None:
+            raise RuntimeError("XTrace ingest did not return a response")
         response.raise_for_status()
         payload = response.json()
 
     return _extract_remote_ingest(payload)
+
+
+def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 1.0), 60.0)
+        except ValueError:
+            pass
+    return min(2.0 * (2 ** (attempt - 1)), 30.0)
 
 
 def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
