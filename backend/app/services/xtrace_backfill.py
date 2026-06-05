@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = {"queued", "running"}
 _COMMIT_EVERY = 10
+_STALE_ACTIVE_AFTER = timedelta(minutes=10)
 
 
 async def create_xtrace_backfill_job(
@@ -56,6 +57,7 @@ async def create_xtrace_backfill_job(
             XTraceBackfillJob.scope_user_id == scope_user_id,
         )
     )
+    await _fail_stale_active_jobs(db, scope_filter=scope_filter)
     active = (
         await db.execute(
             select(XTraceBackfillJob.id)
@@ -83,6 +85,34 @@ async def create_xtrace_backfill_job(
     await db.commit()
     await db.refresh(job)
     return job
+
+
+async def _fail_stale_active_jobs(db: AsyncSession, *, scope_filter: Any) -> None:
+    stale_before = datetime.now(UTC) - _STALE_ACTIVE_AFTER
+    rows = (
+        (
+            await db.execute(
+                select(XTraceBackfillJob).where(
+                    scope_filter,
+                    XTraceBackfillJob.status.in_(_ACTIVE_STATUSES),
+                    XTraceBackfillJob.updated_at < stale_before,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return
+
+    now = datetime.now(UTC)
+    for job in rows:
+        job.status = "failed"
+        job.error = "Backfill worker was interrupted before completion; start a new job to resume."
+        job.finished_at = now
+        job.current_source_type = None
+        job.current_source_key = None
+    await db.commit()
 
 
 async def run_xtrace_backfill_job(

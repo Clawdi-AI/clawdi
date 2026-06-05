@@ -102,6 +102,7 @@ async def get_backfill(
     job = await db.get(XTraceBackfillJob, job_id)
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "backfill job not found")
+    await db.refresh(job)
     if job.scope_user_id == auth.user_id or job.requested_by_user_id == auth.user_id:
         return _job_response(job)
     _require_admin_key(x_admin_key)

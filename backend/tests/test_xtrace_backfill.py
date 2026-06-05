@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -109,3 +109,43 @@ async def test_xtrace_backfill_requires_xtrace_configuration(
     response = await client.post("/api/xtrace/backfills", json={"dry_run": True})
     assert response.status_code == 503
     assert "not configured" in response.text
+
+
+@pytest.mark.asyncio
+async def test_xtrace_backfill_replaces_stale_active_job(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.core.config import settings as app_settings
+    from app.models.xtrace_backfill_job import XTraceBackfillJob
+
+    stale_job_id = uuid4()
+    stale_job = XTraceBackfillJob(
+        id=stale_job_id,
+        requested_by_user_id=seed_user.id,
+        scope_user_id=seed_user.id,
+        status="running",
+        updated_at=datetime.now(UTC) - timedelta(minutes=30),
+        current_source_type="session",
+        current_source_key="session:stale",
+    )
+    db_session.add(stale_job)
+    await db_session.commit()
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr("app.routes.xtrace._start_job", lambda job_id: None)
+
+    created = await client.post("/api/xtrace/backfills", json={"dry_run": True})
+    assert created.status_code == 202, created.text
+    assert created.json()["id"] != str(stale_job_id)
+
+    status = await client.get(f"/api/xtrace/backfills/{stale_job_id}")
+    assert status.status_code == 200, status.text
+    stale = status.json()
+    assert stale["status"] == "failed"
+    assert stale["current_source_key"] is None
+    assert "interrupted" in stale["error"]
