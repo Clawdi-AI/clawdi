@@ -37,7 +37,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import {
+	MEMORY_CATEGORY_COLORS,
+	MEMORY_CATEGORY_EMOJI,
+	MEMORY_CATEGORY_TILE_CLASSES,
+	MEMORY_FALLBACK_EMOJI,
+} from "@/lib/memory-utils";
 import { getProjectResourceDefinition, memoryDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -278,7 +283,20 @@ function MemoryNotesGrid({
 						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
 						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					/>
-					<p className="line-clamp-[8] break-words text-sm leading-relaxed">{memory.content}</p>
+					<div className="flex items-start gap-2.5">
+						<span
+							aria-hidden
+							className={cn(
+								"flex size-7 shrink-0 select-none items-center justify-center rounded-lg text-sm leading-none",
+								MEMORY_CATEGORY_TILE_CLASSES[memory.category] ?? "bg-muted",
+							)}
+						>
+							{MEMORY_CATEGORY_EMOJI[memory.category] ?? MEMORY_FALLBACK_EMOJI}
+						</span>
+						<p className="line-clamp-[8] min-w-0 break-words text-sm leading-relaxed">
+							{memory.content}
+						</p>
+					</div>
 					<div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 						<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
 							{memory.category}

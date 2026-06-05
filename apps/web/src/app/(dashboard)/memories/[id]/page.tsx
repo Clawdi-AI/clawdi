@@ -32,7 +32,12 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import {
+	MEMORY_CATEGORY_COLORS,
+	MEMORY_CATEGORY_EMOJI,
+	MEMORY_CATEGORY_TILE_CLASSES,
+	MEMORY_FALLBACK_EMOJI,
+} from "@/lib/memory-utils";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
@@ -105,52 +110,65 @@ export default function MemoryDetailPage() {
 			) : memory ? (
 				<>
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-						<div className="min-w-0 flex-1 space-y-2">
-							<div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-								<Brain className="size-3.5" />
-								<span>Memory</span>
-							</div>
-							<DetailTitle className="break-words">{detailTitle}</DetailTitle>
-							<DetailMeta>
-								<Badge
-									variant="secondary"
-									className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
-								>
-									{memory.category}
-								</Badge>
-								<span>{memory.source}</span>
-								{memory.created_at ? (
-									<>
-										<span>·</span>
-										<span title={new Date(memory.created_at).toLocaleString()}>
-											Saved {relativeTime(memory.created_at)}
-										</span>
-									</>
+						{/* Category emoji tile — the same identity treatment every
+						    other object card/detail header gets (vivid art direction). */}
+						<div className="flex min-w-0 flex-1 items-start gap-3">
+							<span
+								aria-hidden
+								className={cn(
+									"flex size-11 shrink-0 select-none items-center justify-center rounded-xl text-2xl leading-none",
+									MEMORY_CATEGORY_TILE_CLASSES[memory.category] ?? "bg-muted",
+								)}
+							>
+								{MEMORY_CATEGORY_EMOJI[memory.category] ?? MEMORY_FALLBACK_EMOJI}
+							</span>
+							<div className="min-w-0 flex-1 space-y-2">
+								<div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+									<Brain className="size-3.5" />
+									<span>Memory</span>
+								</div>
+								<DetailTitle className="break-words">{detailTitle}</DetailTitle>
+								<DetailMeta>
+									<Badge
+										variant="secondary"
+										className={cn("h-5", MEMORY_CATEGORY_COLORS[memory.category])}
+									>
+										{memory.category}
+									</Badge>
+									<span>{memory.source}</span>
+									{memory.created_at ? (
+										<>
+											<span>·</span>
+											<span title={new Date(memory.created_at).toLocaleString()}>
+												Saved {relativeTime(memory.created_at)}
+											</span>
+										</>
+									) : null}
+									<span>·</span>
+									<span className="tabular-nums">
+										{(memory.access_count ?? 0) > 0
+											? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
+											: "Never recalled yet"}
+									</span>
+								</DetailMeta>
+								{memory.source_machine_name || memory.source_session_id || memory.xtrace?.status ? (
+									<DetailStats>
+										{memory.source_machine_name ? (
+											<Stat icon={Laptop} label={memory.source_machine_name} />
+										) : null}
+										{memory.source_session_id ? (
+											<Stat
+												icon={Link2}
+												label={`Session ${shortId(memory.source_session_id)}`}
+												title={memory.source_session_id}
+											/>
+										) : null}
+										{memory.xtrace?.status ? (
+											<Stat icon={GitBranch} label={`XTrace ${memory.xtrace.status}`} />
+										) : null}
+									</DetailStats>
 								) : null}
-								<span>·</span>
-								<span className="tabular-nums">
-									{(memory.access_count ?? 0) > 0
-										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
-										: "Never recalled yet"}
-								</span>
-							</DetailMeta>
-							{memory.source_machine_name || memory.source_session_id || memory.xtrace?.status ? (
-								<DetailStats>
-									{memory.source_machine_name ? (
-										<Stat icon={Laptop} label={memory.source_machine_name} />
-									) : null}
-									{memory.source_session_id ? (
-										<Stat
-											icon={Link2}
-											label={`Session ${shortId(memory.source_session_id)}`}
-											title={memory.source_session_id}
-										/>
-									) : null}
-									{memory.xtrace?.status ? (
-										<Stat icon={GitBranch} label={`XTrace ${memory.xtrace.status}`} />
-									) : null}
-								</DetailStats>
-							) : null}
+							</div>
 						</div>
 						<ConfirmAction
 							title="Delete this memory?"
