@@ -1020,7 +1020,7 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
-		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.136.0");
+		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.137.0");
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": false');
 		expect(output()).toContain("codex --profile clawdi-ai-provider");

@@ -25,7 +25,7 @@ export const AGENT_TARGET_CONTRACTS: Record<
 	codex: {
 		settingMethod: "$CODEX_HOME/clawdi-ai-provider.config.toml selected with codex --profile",
 		supportedVersionRange:
-			"@openai/codex 0.134.0 through 0.136.0 with profile config, model_providers, and responses wire_api support",
+			"@openai/codex 0.134.0 through 0.137.0 with profile config, model_providers, and responses wire_api support",
 		status: "enabled",
 	},
 	hermes: {
