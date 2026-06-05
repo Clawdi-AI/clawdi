@@ -198,11 +198,12 @@ async def _backfill_sessions(db: AsyncSession, job: XTraceBackfillJob) -> None:
                 raise ValueError("session content is not a JSON message list")
             messages: list[dict[str, Any]] = [m for m in parsed if isinstance(m, dict)]
             result = await ingest_xtrace_session_memories(db, session=session, messages=messages)
-        except Exception:
+        except Exception as exc:
             await db.rollback()
             await db.refresh(job)
             job.current_source_type = "session"
             job.current_source_key = source_key
+            job.error = _source_error("session", source_key, exc)
             job.considered_count += 1
             job.sessions_considered += 1
             _increment_failed(job, "session")
@@ -245,11 +246,12 @@ async def _backfill_skills(db: AsyncSession, job: XTraceBackfillJob) -> None:
         try:
             data = await file_store.get(skill.file_key)
             result = await ingest_xtrace_skill_memories(db, skill=skill, data=data)
-        except Exception:
+        except Exception as exc:
             await db.rollback()
             await db.refresh(job)
             job.current_source_type = "skill"
             job.current_source_key = source_key
+            job.error = _source_error("skill", source_key, exc)
             job.considered_count += 1
             job.skills_considered += 1
             _increment_failed(job, "skill")
@@ -315,6 +317,10 @@ def _skill_source(skill: Skill) -> SimpleNamespace:
         agent_types=skill.agent_types,
         file_key=skill.file_key,
     )
+
+
+def _source_error(source_type: str, source_key: str, exc: Exception) -> str:
+    return f"{source_type} {source_key} failed: {exc}"[:4000]
 
 
 def _increment_skipped(job: XTraceBackfillJob, source_type: str) -> None:

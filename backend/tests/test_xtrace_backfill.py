@@ -210,3 +210,4 @@ async def test_xtrace_backfill_continues_after_session_rollback(
     assert refreshed.failed_count == 1
     assert refreshed.sent_count == 1
     assert refreshed.mirrored_count == 2
+    assert "simulated ingest failure" in (refreshed.error or "")
