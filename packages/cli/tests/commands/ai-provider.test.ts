@@ -1594,6 +1594,77 @@ describe("ai-provider commands", () => {
 		});
 	});
 
+	it("preserves existing OpenClaw provider models during apply", async () => {
+		const stubDir = join(tmpHome, "bin");
+		const stdinPath = join(tmpHome, "openclaw-stdin.json");
+		const openclawDir = join(tmpHome, ".openclaw");
+		const catalogPath = join(tmpHome, "managed-catalog.json");
+		mkdirSync(stubDir, { recursive: true });
+		mkdirSync(openclawDir, { recursive: true });
+		writeFileSync(join(stubDir, "openclaw"), `#!/bin/sh\ncat > "${stdinPath}"\nexit 0\n`);
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		writeFileSync(
+			join(openclawDir, "openclaw.json"),
+			JSON.stringify({
+				models: {
+					providers: {
+						"openai-codex": {
+							models: [
+								{ id: "gpt-5.5", name: "GPT-5.5", contextWindow: 272000 },
+								{ id: "gpt-5.4", name: "GPT-5.4", contextWindow: 272000 },
+								{ id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+								{ id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
+							],
+						},
+					},
+				},
+			}),
+		);
+		writeFileSync(
+			catalogPath,
+			JSON.stringify({
+				schema_version: 1,
+				providers: [
+					{
+						id: "clawdi-managed",
+						type: "custom_openai_compatible",
+						label: "Clawdi AI",
+						base_url: "https://sub2api.example.test/v1",
+						default_model: "openai-codex/gpt-5.5",
+						api_mode: "openai_responses",
+						auth: { type: "api_key", source: "managed" },
+						managed_by: "clawdi",
+						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+					},
+				],
+				defaults: { chat_provider_id: "clawdi-managed" },
+			}),
+		);
+
+		const { restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(catalogPath, { json: true });
+			await aiProviderApplyCommand({ target: "openclaw", json: true });
+		} finally {
+			restore();
+		}
+
+		const patch = JSON.parse(readFileSync(stdinPath, "utf-8"));
+		expect(
+			patch.models.providers["openai-codex"].models.map((model: { id: string }) => model.id),
+		).toEqual(["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"]);
+		expect(patch.models.providers["openai-codex"].models[0]).toMatchObject({
+			id: "gpt-5.5",
+			name: "openai-codex/gpt-5.5",
+			contextWindow: 272000,
+		});
+		expect(patch.models.providers["openai-codex"].models[1]).toMatchObject({
+			id: "gpt-5.4",
+			contextWindow: 272000,
+		});
+	});
+
 	it("projects Clawdi-managed Responses providers to OpenClaw Codex transport", async () => {
 		const catalog = {
 			schema_version: 1,

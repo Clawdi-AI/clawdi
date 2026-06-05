@@ -304,6 +304,7 @@ function buildOpenClawApplyPlan(
 ): AiProviderApplyPlanBody {
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+	const patch = preserveExistingOpenClawProviderModels(file.content);
 	return {
 		target: "openclaw",
 		target_contract: projection.contract,
@@ -317,12 +318,70 @@ function buildOpenClawApplyPlan(
 				command: "openclaw",
 				args: ["config", "patch", "--stdin"],
 				display: "openclaw config patch --stdin",
-				stdin: file.content,
+				stdin: patch,
 			},
 		],
 		next_steps: [],
 		warnings: projection.warnings,
 	};
+}
+
+function preserveExistingOpenClawProviderModels(patchContent: string): string {
+	const patch = parseJsonText(patchContent, "OpenClaw AI Provider patch");
+	const patchModels = isPlainRecord(patch.models) ? patch.models : undefined;
+	const patchProviders = isPlainRecord(patchModels?.providers) ? patchModels.providers : undefined;
+	if (!patchProviders) return patchContent;
+
+	const existing = readOpenClawConfig();
+	const existingModels = isPlainRecord(existing.models) ? existing.models : undefined;
+	const existingProviders = isPlainRecord(existingModels?.providers)
+		? existingModels.providers
+		: undefined;
+	if (!existingProviders) return patchContent;
+
+	let changed = false;
+	for (const [providerId, providerPatch] of Object.entries(patchProviders)) {
+		if (!isPlainRecord(providerPatch) || !Array.isArray(providerPatch.models)) continue;
+		const providerModels = providerPatch.models;
+		const existingProvider = existingProviders[providerId];
+		if (!isPlainRecord(existingProvider) || !Array.isArray(existingProvider.models)) continue;
+
+		const existingModelsById = new Map(
+			existingProvider.models
+				.filter(isPlainRecord)
+				.map((model) => [openClawModelEntryId(model), model])
+				.filter((entry): entry is [string, Record<string, unknown>] => isNonEmptyString(entry[0])),
+		);
+		const nextModels = providerModels.map((model) => {
+			const modelId = openClawModelEntryId(model);
+			const existingModel = modelId ? existingModelsById.get(modelId) : undefined;
+			return isPlainRecord(model) && existingModel ? { ...existingModel, ...model } : model;
+		});
+		const seen = new Set(nextModels.map(openClawModelEntryId).filter(isNonEmptyString));
+		let providerChanged = false;
+		for (const existingModel of existingProvider.models) {
+			const modelId = openClawModelEntryId(existingModel);
+			if (!modelId || seen.has(modelId)) continue;
+			nextModels.push(existingModel);
+			seen.add(modelId);
+			providerChanged = true;
+		}
+		if (providerChanged || nextModels.some((model, index) => model !== providerModels[index])) {
+			providerPatch.models = nextModels;
+			changed = true;
+		}
+	}
+
+	return changed ? stringifyJson(patch) : patchContent;
+}
+
+function openClawModelEntryId(input: unknown): string | undefined {
+	if (!isPlainRecord(input)) return undefined;
+	return typeof input.id === "string" && input.id.trim() ? input.id.trim() : undefined;
+}
+
+function isNonEmptyString(input: unknown): input is string {
+	return typeof input === "string" && input.length > 0;
 }
 
 function buildCodexApplyPlan(
