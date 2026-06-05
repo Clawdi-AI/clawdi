@@ -1,13 +1,30 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Brain, GitBranch, Laptop, Trash2 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+	Brain,
+	CalendarClock,
+	GitBranch,
+	History,
+	Laptop,
+	Link2,
+	Tags,
+	Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import {
+	DetailMeta,
+	DetailNotFound,
+	DetailPanel,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { MemoryRelationshipList } from "@/components/memories/memory-relationship-list";
+import { Stat } from "@/components/meta/stat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,10 +67,10 @@ export default function MemoryDetailPage() {
 		enabled: !!memory?.source_session_id,
 	});
 
-	// First sentence (or 80 chars) — keeps the breadcrumb readable.
 	const memoryTitle = memory?.content
 		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
 		: null;
+	const detailTitle = memoryTitle || "Memory";
 	const siblingMemories = (relatedMemories?.items ?? []).filter((item) => item.id !== memory?.id);
 	useSetBreadcrumbTitle(memoryTitle);
 
@@ -89,11 +106,11 @@ export default function MemoryDetailPage() {
 				<>
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 						<div className="min-w-0 flex-1 space-y-2">
-							<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+							<div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
 								<Brain className="size-3.5" />
 								<span>Memory</span>
 							</div>
-							<DetailTitle>Memory</DetailTitle>
+							<DetailTitle className="break-words">{detailTitle}</DetailTitle>
 							<DetailMeta>
 								<Badge
 									variant="secondary"
@@ -110,8 +127,6 @@ export default function MemoryDetailPage() {
 										</span>
 									</>
 								) : null}
-								{/* Whether agents actually USE a memory is the
-								    fact that decides keep-vs-delete — surface it. */}
 								<span>·</span>
 								<span className="tabular-nums">
 									{(memory.access_count ?? 0) > 0
@@ -119,6 +134,23 @@ export default function MemoryDetailPage() {
 										: "Never recalled yet"}
 								</span>
 							</DetailMeta>
+							{memory.source_machine_name || memory.source_session_id || memory.xtrace?.status ? (
+								<DetailStats>
+									{memory.source_machine_name ? (
+										<Stat icon={Laptop} label={memory.source_machine_name} />
+									) : null}
+									{memory.source_session_id ? (
+										<Stat
+											icon={Link2}
+											label={`Session ${shortId(memory.source_session_id)}`}
+											title={memory.source_session_id}
+										/>
+									) : null}
+									{memory.xtrace?.status ? (
+										<Stat icon={GitBranch} label={`XTrace ${memory.xtrace.status}`} />
+									) : null}
+								</DetailStats>
+							) : null}
 						</div>
 						<ConfirmAction
 							title="Delete this memory?"
@@ -144,84 +176,80 @@ export default function MemoryDetailPage() {
 						</ConfirmAction>
 					</div>
 
-					<DetailPanel>
-						<p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+					<DetailPanel className="space-y-3">
+						<SectionHeader icon={Brain} title="Content" />
+						<p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
 							{memory.content}
 						</p>
 					</DetailPanel>
 
 					<DetailPanel className="space-y-4">
-						<div className="space-y-1">
-							<h2 className="text-sm font-semibold">Source relationship</h2>
-							<p className="text-xs text-muted-foreground">
-								This memory is account-level context. Its source tells you which agent/session
-								taught it to Clawdi.
-							</p>
+						<SectionHeader icon={Link2} title="Source" />
+						<div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+							<MetadataItem label="Source" value={memory.source} />
+							<MetadataItem label="Agent" value={memory.source_machine_name} />
+							<MetadataItem
+								label="Session"
+								value={memory.source_session_id}
+								href={
+									memory.source_session_id ? sessionDetailHref(memory.source_session_id) : undefined
+								}
+								valueTitle={memory.source_session_id}
+								compact
+								mono
+							/>
+							<MetadataItem
+								label="Environment"
+								value={memory.source_environment_id}
+								valueTitle={memory.source_environment_id}
+								compact
+								mono
+							/>
 						</div>
-						<div className="grid gap-2 text-sm sm:grid-cols-2">
-							<DetailField label="source" value={memory.source} />
-							<DetailField label="agent" value={memory.source_machine_name} />
-							<DetailField label="session" value={memory.source_session_id} />
-							<DetailField label="environment" value={memory.source_environment_id} />
-						</div>
-						{memory.tags?.length ? (
-							<div className="flex flex-wrap items-center gap-1.5">
-								<span className="text-xs text-muted-foreground">Tags:</span>
-								{memory.tags.map((t) => (
-									<Badge key={t} variant="outline" className="font-normal">
-										#{t}
-									</Badge>
-								))}
-							</div>
-						) : (
-							<p className="text-xs text-muted-foreground">No tags saved for this memory.</p>
-						)}
 
-						{/* Provenance renders whenever ANY of it is known — machine
-						    name alone is still useful without a session link. */}
-						{memory.source_session_id || memory.source_machine_name ? (
-							<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-								<Laptop className="size-3" />
-								<span>
-									{memory.source_machine_name
-										? `Learned on ${memory.source_machine_name}`
-										: "Learned from a session"}
-								</span>
-								{memory.source_session_id ? (
-									<>
-										<span>·</span>
-										<Link
-											href={sessionDetailHref(memory.source_session_id)}
-											className="underline hover:text-foreground"
-										>
-											View session
-										</Link>
-									</>
-								) : null}
-							</div>
-						) : null}
+						<div className="flex flex-wrap items-center gap-1.5">
+							<Tags className="size-3.5 text-muted-foreground" />
+							{memory.tags?.length ? (
+								memory.tags.map((tag) => (
+									<Badge key={tag} variant="outline" className="h-5 font-normal">
+										#{tag}
+									</Badge>
+								))
+							) : (
+								<span className="text-xs text-muted-foreground">No tags</span>
+							)}
+						</div>
 
 						{memory.source_session_id ? (
-							<div className="space-y-3 border-t pt-4">
-								<div className="flex items-center justify-between gap-3">
-									<h2 className="text-sm font-semibold">Learned in the same session</h2>
-									{siblingMemories.length ? (
-										<span className="text-xs tabular-nums text-muted-foreground">
-											{siblingMemories.length}
-										</span>
-									) : null}
-								</div>
-								<MemoryRelationshipList
-									memories={siblingMemories}
-									isLoading={relatedMemoriesLoading}
-									emptyMessage="No other memories are linked to this source session."
-									limit={5}
-								/>
-							</div>
+							<Button variant="outline" size="sm" className="w-fit" asChild>
+								<Link href={sessionDetailHref(memory.source_session_id)}>
+									<Link2 />
+									View session
+								</Link>
+							</Button>
 						) : null}
-
-						{memory.xtrace ? <XTraceMemoryDetails xtrace={memory.xtrace} /> : null}
 					</DetailPanel>
+
+					{memory.xtrace ? <XTraceMemoryDetails xtrace={memory.xtrace} /> : null}
+
+					{memory.source_session_id ? (
+						<section className="space-y-3">
+							<div className="flex items-center justify-between gap-3">
+								<SectionHeader icon={History} title="Same Session" />
+								{siblingMemories.length ? (
+									<span className="text-xs tabular-nums text-muted-foreground">
+										{siblingMemories.length}
+									</span>
+								) : null}
+							</div>
+							<MemoryRelationshipList
+								memories={siblingMemories}
+								isLoading={relatedMemoriesLoading}
+								emptyMessage="No other memories are linked to this source session."
+								limit={5}
+							/>
+						</section>
+					) : null}
 				</>
 			) : (
 				<Alert>
@@ -234,12 +262,50 @@ export default function MemoryDetailPage() {
 	);
 }
 
-function DetailField({ label, value }: { label: string; value?: string | null }) {
-	if (!value) return null;
+function SectionHeader({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
 	return (
-		<div className="min-w-0">
-			<span className="text-muted-foreground">{label}: </span>
-			<span className="break-words font-mono text-xs">{value}</span>
+		<div className="flex items-center gap-2 text-sm font-semibold">
+			<Icon className="size-4 text-muted-foreground" />
+			<h2>{title}</h2>
+		</div>
+	);
+}
+
+function MetadataItem({
+	label,
+	value,
+	href,
+	valueTitle,
+	compact = false,
+	mono = false,
+}: {
+	label: string;
+	value?: string | null;
+	href?: string;
+	valueTitle?: string | null;
+	compact?: boolean;
+	mono?: boolean;
+}) {
+	if (!value) return null;
+	const displayValue = compact && shouldShorten(value) ? shortId(value) : value;
+	const valueClassName = cn("break-words text-foreground", mono ? "font-mono text-xs" : "text-sm");
+
+	return (
+		<div className="min-w-0 space-y-1">
+			<div className="text-xs font-medium text-muted-foreground">{label}</div>
+			{href ? (
+				<Link
+					href={href}
+					title={valueTitle ?? value}
+					className={cn(valueClassName, "underline-offset-4 hover:underline")}
+				>
+					{displayValue}
+				</Link>
+			) : (
+				<div title={valueTitle ?? value} className={valueClassName}>
+					{displayValue}
+				</div>
+			)}
 		</div>
 	);
 }
@@ -247,38 +313,58 @@ function DetailField({ label, value }: { label: string; value?: string | null })
 function XTraceMemoryDetails({ xtrace }: { xtrace: NonNullable<Memory["xtrace"]> }) {
 	const timeline = xtrace.timeline ?? [];
 	return (
-		<div className="space-y-3 border-t pt-4">
-			<div className="flex items-center gap-2">
-				<GitBranch className="size-4 text-muted-foreground" />
-				<h2 className="text-sm font-semibold">XTrace details</h2>
-			</div>
-			<div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-				<XTraceField label="type" value={xtrace.type} />
-				<XTraceField label="status" value={xtrace.status} />
-				<XTraceField label="operation" value={xtrace.operation} />
-				<XTraceField label="source" value={xtrace.source_type} />
-				<XTraceField label="supersedes" value={xtrace.supersedes?.join(", ")} />
-				<XTraceField label="superseded by" value={xtrace.superseded_by} />
+		<DetailPanel className="space-y-4">
+			<SectionHeader icon={GitBranch} title="XTrace" />
+			<div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+				<MetadataItem label="Type" value={xtrace.type} />
+				<MetadataItem label="Status" value={xtrace.status} />
+				<MetadataItem label="Operation" value={xtrace.operation} />
+				<MetadataItem label="Source" value={xtrace.source_type} />
+				<MetadataItem
+					label="Supersedes"
+					value={xtrace.supersedes?.map((id) => shortId(id)).join(", ")}
+					valueTitle={xtrace.supersedes?.join(", ")}
+					mono
+				/>
+				<MetadataItem
+					label="Superseded by"
+					value={xtrace.superseded_by}
+					valueTitle={xtrace.superseded_by}
+					compact
+					mono
+				/>
 			</div>
 			{xtrace.memory_id ? (
-				<div className="break-all rounded-md bg-muted px-2.5 py-2 font-mono text-xs text-muted-foreground">
-					{xtrace.memory_id}
-				</div>
+				<MetadataItem
+					label="XTrace ID"
+					value={xtrace.memory_id}
+					valueTitle={xtrace.memory_id}
+					compact
+					mono
+				/>
 			) : null}
 			{timeline.length ? (
 				<div className="space-y-2">
-					<h3 className="text-xs font-medium text-muted-foreground">Versioning timeline</h3>
-					<div className="space-y-2">
+					<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+						<CalendarClock className="size-3.5" />
+						<span>Timeline</span>
+					</div>
+					<div className="divide-y border-y">
 						{timeline.map((item, index) => (
-							<div key={`${item.memory_id ?? index}-${index}`} className="flex gap-3 text-sm">
-								<Badge variant="outline" className="h-fit shrink-0 uppercase">
-									{item.operation}
+							<div key={`${item.memory_id ?? index}-${index}`} className="flex gap-3 py-3">
+								<Badge variant="outline" className="h-5 shrink-0 uppercase">
+									{item.operation ?? "event"}
 								</Badge>
 								<div className="min-w-0 space-y-1">
-									<p className="break-words leading-relaxed">{item.content}</p>
+									<p className="line-clamp-3 break-words text-sm leading-relaxed">{item.content}</p>
 									<div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
 										{item.status ? <span>{item.status}</span> : null}
-										{item.at ? <span>{new Date(item.at).toLocaleString()}</span> : null}
+										{item.status && item.at ? <span>·</span> : null}
+										{item.at ? (
+											<span title={new Date(item.at).toLocaleString()}>
+												{relativeTime(item.at)}
+											</span>
+										) : null}
 									</div>
 								</div>
 							</div>
@@ -286,16 +372,15 @@ function XTraceMemoryDetails({ xtrace }: { xtrace: NonNullable<Memory["xtrace"]>
 					</div>
 				</div>
 			) : null}
-		</div>
+		</DetailPanel>
 	);
 }
 
-function XTraceField({ label, value }: { label: string; value?: string | null }) {
-	if (!value) return null;
-	return (
-		<div className="min-w-0">
-			<span className="text-muted-foreground">{label}: </span>
-			<span className="break-words font-mono text-xs">{value}</span>
-		</div>
-	);
+function shouldShorten(value: string) {
+	return value.length > 28 && /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function shortId(value: string) {
+	if (value.length <= 16) return value;
+	return `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
