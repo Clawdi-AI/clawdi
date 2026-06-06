@@ -51,7 +51,7 @@ export default function MemoryDetailPage() {
 			});
 			router.push(projectResourceHref("memories"));
 		},
-		onError: (e) => toast.error("Failed to Delete Memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
 	const onDelete = () => deleteMemory.mutate();
@@ -89,10 +89,18 @@ export default function MemoryDetailPage() {
 									<>
 										<span>·</span>
 										<span title={new Date(memory.created_at).toLocaleString()}>
-											{relativeTime(memory.created_at)}
+											Saved {relativeTime(memory.created_at)}
 										</span>
 									</>
 								) : null}
+								{/* Whether agents actually USE a memory is the
+								    fact that decides keep-vs-delete — surface it. */}
+								<span>·</span>
+								<span className="tabular-nums">
+									{(memory.access_count ?? 0) > 0
+										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
+										: "Never recalled yet"}
+								</span>
 							</DetailMeta>
 						</div>
 						<ConfirmAction
@@ -140,21 +148,27 @@ export default function MemoryDetailPage() {
 							<p className="text-xs text-muted-foreground">No tags saved for this memory.</p>
 						)}
 
-						{memory.source_session_id ? (
+						{/* Provenance renders whenever ANY of it is known — machine
+						    name alone is still useful without a session link. */}
+						{memory.source_session_id || memory.source_machine_name ? (
 							<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
 								<Laptop className="size-3" />
 								<span>
 									{memory.source_machine_name
 										? `Learned on ${memory.source_machine_name}`
 										: "Learned from a session"}
-									{" · "}
 								</span>
-								<Link
-									href={sessionDetailHref(memory.source_session_id)}
-									className="underline hover:text-foreground"
-								>
-									View session
-								</Link>
+								{memory.source_session_id ? (
+									<>
+										<span>·</span>
+										<Link
+											href={sessionDetailHref(memory.source_session_id)}
+											className="underline hover:text-foreground"
+										>
+											View session
+										</Link>
+									</>
+								) : null}
 							</div>
 						) : null}
 					</DetailPanel>

@@ -52,12 +52,10 @@ export function DashboardSectionHeader({
 		>
 			<div className="min-w-0 space-y-1">
 				<div className="flex min-w-0 items-center gap-2">
-					<span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-						<Icon className="size-3.5" />
-					</span>
-					<h2 className="truncate text-base font-semibold">{title}</h2>
+					<Icon className="size-4 shrink-0 text-muted-foreground" />
+					<h2 className="truncate text-sm font-semibold">{title}</h2>
 					{count !== undefined ? (
-						<Badge variant="secondary" className="text-xs">
+						<Badge variant="secondary" className="text-xs tabular-nums">
 							{count}
 						</Badge>
 					) : null}

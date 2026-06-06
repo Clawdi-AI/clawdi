@@ -1,10 +1,13 @@
 "use client";
 
-import { Check, Copy, Rocket, Terminal } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, ChevronDown, Copy } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
@@ -12,13 +15,17 @@ import { cn, errorMessage } from "@/lib/utils";
 // swapped in post-mount.
 const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
 
-function useAgentPrompt() {
+function useOrigin() {
 	const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
 	useEffect(() => {
 		setOrigin(window.location.origin);
 	}, []);
-	return `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+	return origin;
 }
+
+// One paste connects the machine: install, authorize (opens the browser),
+// then auto-detect every local agent and start the sync daemons.
+const ONE_COMMAND = "bun add -g clawdi && clawdi auth login && clawdi setup";
 
 const CLI_STEPS = [
 	{
@@ -59,7 +66,7 @@ function useCopy(duration = 2000) {
 				setCopied(true);
 				setTimeout(() => setCopied(false), duration);
 			})
-			.catch((e) => toast.error("Copy Failed", { description: errorMessage(e) }));
+			.catch((e) => toast.error("Copy failed", { description: errorMessage(e) }));
 	};
 	return { copied, copy };
 }
@@ -79,113 +86,184 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 	);
 }
 
-function StepNumber({ n }: { n: number }) {
-	return (
-		<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-			{n}
-		</span>
-	);
-}
-
 /**
- * Tabs + steps body for adding an agent. Shared between:
- *   - `OnboardingCard` (renders it as the Overview hero card when the user
- *     has no agents yet)
- *   - `AddAgentDialog` (opened from the sidebar Quick Create button, for
- *     users who already have an agent and want to connect another)
+ * Connect-an-agent wizard (journey J7). One primary path — copy one
+ * command — plus two quieter alternatives (send a prompt to the agent
+ * itself, or step-by-step commands). While open it watches for newly
+ * registered environments and flips into an explicit success card the
+ * moment the agent checks in, so the win is designed rather than implied.
+ *
+ * Shared between `OnboardingCard` (Overview hero when no agents exist)
+ * and `AddAgentDialog` (sidebar Quick Create).
  */
 export function AddAgentSetup() {
-	return (
-		<Tabs defaultValue="agent">
-			<TabsList className="grid w-full grid-cols-2">
-				<TabsTrigger value="agent" className="min-w-0 px-2">
-					<Rocket />
-					Send to Agent
-				</TabsTrigger>
-				<TabsTrigger value="cli" className="min-w-0 px-2">
-					<Terminal />
-					Manual Setup
-				</TabsTrigger>
-			</TabsList>
-			<TabsContent value="agent">
-				<AgentTab />
-			</TabsContent>
-			<TabsContent value="cli">
-				<CliTab />
-			</TabsContent>
-		</Tabs>
-	);
-}
-
-function AgentTab() {
+	const api = useApi();
+	const origin = useOrigin();
 	const { copied, copy } = useCopy();
-	const prompt = useAgentPrompt();
+	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+
+	// Live success detection: snapshot the env ids on first load, then poll
+	// while mounted. Anything new is "your agent just connected".
+	const envs = useQuery({
+		queryKey: ["environments"],
+		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		refetchInterval: 5_000,
+	});
+	const baseline = useRef<Set<string> | null>(null);
+	useEffect(() => {
+		if (envs.data && baseline.current === null) {
+			baseline.current = new Set(envs.data.map((e) => e.id));
+		}
+	}, [envs.data]);
+	const newAgents = (envs.data ?? []).filter(
+		(e) => baseline.current !== null && !baseline.current.has(e.id),
+	);
 
 	return (
 		<div className="space-y-4">
-			<p className="text-sm text-muted-foreground">
-				Copy this prompt and send it to your AI agent (Claude Code, Codex, OpenClaw, or Hermes):
-			</p>
-
-			<div className="rounded-lg border bg-muted/30">
-				<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-					<span className="text-xs uppercase tracking-wide text-muted-foreground">Prompt</span>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => copy(prompt)}
-						className="h-7 gap-1.5 px-2 text-xs"
-					>
-						{copied ? (
-							<>
-								<Check className="size-3.5" />
-								Copied
-							</>
-						) : (
-							<>
-								<Copy className="size-3.5" />
-								Copy
-							</>
-						)}
-					</Button>
+			{/* Step 1 — the one command */}
+			<div>
+				<div className="flex items-center gap-2">
+					<StepNumber n={1} />
+					<span className="text-sm font-medium">Run this in a terminal on the machine</span>
 				</div>
-				<pre className="whitespace-pre-wrap p-4 font-mono text-sm leading-relaxed">{prompt}</pre>
+				<div className="mt-2 rounded-lg border bg-muted/30">
+					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+						<span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+							One command
+						</span>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => copy(ONE_COMMAND)}
+							className="h-7 gap-1.5 px-2 text-xs"
+						>
+							{copied ? (
+								<>
+									<Check className="size-3.5" />
+									Copied
+								</>
+							) : (
+								<>
+									<Copy className="size-3.5" />
+									Copy
+								</>
+							)}
+						</Button>
+					</div>
+					<pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-sm leading-relaxed">
+						{ONE_COMMAND}
+					</pre>
+				</div>
+				<p className="mt-1.5 text-xs text-muted-foreground">
+					Installs the CLI, opens your browser to authorize, then finds Claude Code / Codex / Hermes
+					/ OpenClaw on the machine and turns on live sync.
+				</p>
 			</div>
 
-			<div className="flex flex-col gap-3">
-				{[
-					"Send this prompt to your AI agent",
-					"The agent reads the skill and configures itself",
-					"Come back here — your sessions and tools will appear",
-				].map((step, i) => (
-					<div key={step} className="flex items-center gap-3">
-						<StepNumber n={i + 1} />
-						<span className="text-sm">{step}</span>
+			{/* Step 2 — designed win moment */}
+			<div>
+				<div className="flex items-center gap-2">
+					<StepNumber n={2} done={newAgents.length > 0} />
+					<span className="text-sm font-medium">
+						{newAgents.length > 0 ? "Agent connected" : "Watch it appear here"}
+					</span>
+				</div>
+				{newAgents.length > 0 ? (
+					<div className="mt-2 space-y-2 rounded-lg border border-success/30 bg-success-muted p-3">
+						{newAgents.map((env) => (
+							<div key={env.id} className="flex items-center justify-between gap-3">
+								<AgentLabel
+									machineName={env.machine_name}
+									type={env.agent_type}
+									size="sm"
+									className="min-w-0 flex-1"
+								/>
+								<Button asChild size="sm" variant="outline">
+									<Link href={`/agents/${env.id}`}>Open agent</Link>
+								</Button>
+							</div>
+						))}
+						<p className="text-xs text-success-muted-foreground">
+							Sessions from this machine sync automatically from now on.
+						</p>
 					</div>
-				))}
+				) : (
+					<div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+						<span className="relative flex size-2">
+							<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+							<span className="relative inline-flex size-2 rounded-full bg-primary" />
+						</span>
+						Waiting for your agent to connect…
+					</div>
+				)}
 			</div>
+
+			{/* Quieter alternatives */}
+			<Disclosure summary="Prefer to let the AI set itself up? Send it this prompt">
+				<div className="rounded-lg border bg-muted/30">
+					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+						<span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+							Prompt
+						</span>
+						<CopyButton text={prompt} />
+					</div>
+					<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">{prompt}</pre>
+				</div>
+			</Disclosure>
+
+			<Disclosure summary="Step-by-step commands">
+				<div className="space-y-3">
+					{CLI_STEPS.map((step, i) => (
+						<div key={step.title} className="flex gap-3">
+							<StepNumber n={i + 1} />
+							<div className="min-w-0 flex-1">
+								<div className="text-sm font-medium">{step.title}</div>
+								<div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-1.5">
+									<code className="flex-1 font-mono text-xs">{step.code}</code>
+									<CopyButton text={step.code} />
+								</div>
+								{step.description ? (
+									<p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
+								) : null}
+							</div>
+						</div>
+					))}
+				</div>
+			</Disclosure>
 		</div>
 	);
 }
 
-function CliTab() {
+function StepNumber({ n, done = false }: { n: number; done?: boolean }) {
 	return (
-		<div className="space-y-3">
-			{CLI_STEPS.map((step, i) => (
-				<div key={step.title} className="flex gap-3">
-					<StepNumber n={i + 1} />
-					<div className="min-w-0 flex-1">
-						<div className="text-sm font-medium">{step.title}</div>
-						<div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-1.5">
-							<code className="flex-1 font-mono text-xs">{step.code}</code>
-							<CopyButton text={step.code} />
-						</div>
-						{step.description ? (
-							<p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
-						) : null}
-					</div>
-				</div>
-			))}
+		<span
+			className={cn(
+				"flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+				done ? "bg-success text-success-foreground" : "bg-primary/10 text-primary",
+			)}
+		>
+			{done ? <Check className="size-3.5" /> : n}
+		</span>
+	);
+}
+
+function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div>
+			<button
+				type="button"
+				onClick={() => setOpen((v) => !v)}
+				aria-expanded={open}
+				className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+			>
+				<ChevronDown
+					className={cn("size-3.5 transition-transform duration-150", !open && "-rotate-90")}
+				/>
+				{summary}
+			</button>
+			{open ? <div className="mt-2">{children}</div> : null}
 		</div>
 	);
 }

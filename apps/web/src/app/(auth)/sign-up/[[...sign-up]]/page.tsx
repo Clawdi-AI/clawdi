@@ -8,7 +8,7 @@ export default function SignUpPage() {
 	if (isDevAuthBypass) return <DevAuthBypassPage mode="sign-up" />;
 
 	return (
-		<main className="flex min-h-screen items-center justify-center">
+		<main className="flex min-h-dvh items-center justify-center">
 			<SignUp />
 		</main>
 	);

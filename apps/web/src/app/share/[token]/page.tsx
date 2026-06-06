@@ -192,7 +192,7 @@ export default function SharePage() {
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This Is Your Project</AlertTitle>
+							<AlertTitle>This is your project</AlertTitle>
 							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
@@ -363,7 +363,7 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Something Went Wrong</AlertTitle>
+					<AlertTitle>Something went wrong</AlertTitle>
 					<AlertDescription>
 						{error instanceof Error
 							? error.message
@@ -416,7 +416,7 @@ function describeError(code: ShareErrorCode): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-background p-6">
+		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
 			<div className="w-full max-w-md space-y-4">{children}</div>
 		</main>
 	);

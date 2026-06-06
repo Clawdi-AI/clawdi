@@ -8,7 +8,7 @@ export default function SignInPage() {
 	if (isDevAuthBypass) return <DevAuthBypassPage mode="sign-in" />;
 
 	return (
-		<main className="flex min-h-screen items-center justify-center">
+		<main className="flex min-h-dvh items-center justify-center">
 			<SignIn />
 		</main>
 	);

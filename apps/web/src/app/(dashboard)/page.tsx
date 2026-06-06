@@ -4,19 +4,20 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
-import { PageHeader } from "@/components/page-header";
 import { sessionColumnsCompact } from "@/components/sessions/session-columns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
+import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
@@ -94,12 +95,15 @@ export default function DashboardPage() {
 		queryFn: async () => unwrap(await api.GET("/api/dashboard/contribution")),
 	});
 
+	// Manual sessions only: on a working fleet ~3/4 of sessions are
+	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
+	// work under them. Automation is one click away via View all.
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
-		queryKey: ["recent-sessions"],
+		queryKey: ["recent-sessions", "manual"],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/api/sessions", {
-					params: { query: { page_size: RECENT_SESSIONS_LIMIT } },
+					params: { query: { page_size: RECENT_SESSIONS_LIMIT, automated: false } },
 				}),
 			),
 	});
@@ -138,9 +142,15 @@ export default function DashboardPage() {
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			<PageHeader
-				title="Overview"
-				description="Connect agents first. Then create Projects to organize reusable skills and credentials you can share with teammates."
+			<Greeting
+				activeCount={selfManagedTiles.filter((t) => t.active).length}
+				total={selfManagedCount}
+				lastActive={
+					selfManagedTiles
+						.map((t) => t.lastSeenAt)
+						.filter((t): t is string => Boolean(t))
+						.sort((a, b) => b.localeCompare(a))[0] ?? null
+				}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">
@@ -185,7 +195,9 @@ export default function DashboardPage() {
 						<div className="flex items-end justify-between">
 							<div>
 								<h2 className="text-base font-semibold">Recent sessions</h2>
-								<p className="text-sm text-muted-foreground">Latest syncs from your agents.</p>
+								<p className="text-sm text-muted-foreground">
+									Your latest work — automated runs live under View all.
+								</p>
 							</div>
 							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
 								<Link href={projectResourceHref("sessions")}>
@@ -219,7 +231,7 @@ export default function DashboardPage() {
 							cloudEnvs={environments ?? []}
 						/>
 					) : hasAgents ? (
-						<OnboardingCard variant="additional-agent" />
+						<ConnectAnotherCard />
 					) : null}
 					<ResourcesCard
 						stats={stats}
@@ -231,6 +243,60 @@ export default function DashboardPage() {
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/** Slim replacement for the embedded wizard duplicate (taste audit round
+ * 2): one line + one button that opens the same Add-agent dialog. */
+function ConnectAnotherCard() {
+	const [open, setOpen] = useState(false);
+	return (
+		<Card className="py-4">
+			<CardContent className="flex items-center justify-between gap-3 px-4">
+				<div className="min-w-0">
+					<div className="text-sm font-medium">Connect another machine</div>
+					<p className="mt-0.5 text-xs text-muted-foreground">One command in a terminal.</p>
+				</div>
+				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+					Add agent
+				</Button>
+			</CardContent>
+			<AddAgentDialog open={open} onClose={() => setOpen(false)} />
+		</Card>
+	);
+}
+
+/** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
+function Greeting({
+	activeCount,
+	total,
+	lastActive,
+}: {
+	activeCount: number;
+	total: number;
+	/** Most recent last-seen timestamp across the fleet — the one fact the
+	 * old AgentsCard header carried that the greeting didn't. */
+	lastActive?: string | null;
+}) {
+	const { user } = useCurrentUser();
+	const hour = new Date().getHours();
+	const daypart =
+		hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+	const firstName = user?.fullName?.split(" ")[0];
+	const summary =
+		total === 0
+			? "Connect your first agent to start syncing."
+			: activeCount > 0
+				? `${activeCount} of ${total} agents active right now.`
+				: `${total} agents connected${lastActive ? ` · last active ${relativeTime(lastActive)}` : ""}.`;
+	return (
+		<div>
+			<h1 className="text-2xl font-semibold tracking-tight">
+				Good {daypart}
+				{firstName ? `, ${firstName}` : ""}
+			</h1>
+			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>
 		</div>
 	);
 }

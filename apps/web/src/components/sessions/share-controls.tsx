@@ -77,6 +77,21 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 		qc.invalidateQueries({ queryKey: ["sessions"] });
 	}
 
+	// Optimistic toggle: flip the cached link permission immediately so the
+	// switch responds on click; roll back on error. The snapshot/rollback
+	// pair guards against the enable/disable racing a slow network.
+	type PermsCache = { permissions: Array<{ kind: string }> } | undefined;
+	const permsKey = ["session-permissions", sessionId] as const;
+
+	function optimisticSet(shared: boolean) {
+		const previous = qc.getQueryData<PermsCache>(permsKey);
+		qc.setQueryData<PermsCache>(permsKey, (old) => {
+			const others = (old?.permissions ?? []).filter((p) => p.kind !== "link");
+			return { permissions: shared ? [...others, { kind: "link" }] : others };
+		});
+		return previous;
+	}
+
 	const enableMutation = useMutation({
 		mutationFn: async () =>
 			unwrap(
@@ -85,11 +100,18 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 					body: { kind: "link" },
 				}),
 			),
+		onMutate: async () => {
+			await qc.cancelQueries({ queryKey: permsKey });
+			return { previous: optimisticSet(true) };
+		},
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public Access Enabled");
+			toast.success("Public access enabled");
 		},
-		onError: (err) => toast.error(errorMessage(err)),
+		onError: (err, _vars, ctx) => {
+			qc.setQueryData(permsKey, ctx?.previous);
+			toast.error(errorMessage(err));
+		},
 	});
 
 	const disableMutation = useMutation({
@@ -101,11 +123,18 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 				throw new ApiError(res.response.status, JSON.stringify(res.error));
 			}
 		},
+		onMutate: async () => {
+			await qc.cancelQueries({ queryKey: permsKey });
+			return { previous: optimisticSet(false) };
+		},
 		onSuccess: () => {
 			invalidate();
-			toast.success("Public Access Disabled");
+			toast.success("Public access disabled");
 		},
-		onError: (err) => toast.error(errorMessage(err)),
+		onError: (err, _vars, ctx) => {
+			qc.setQueryData(permsKey, ctx?.previous);
+			toast.error(errorMessage(err));
+		},
 	});
 
 	const pending = enableMutation.isPending || disableMutation.isPending;
@@ -122,17 +151,17 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 			<PopoverTrigger asChild>
 				<Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5">
 					<Share2
-						className={cn("size-3.5", sharedNow ? "text-emerald-600" : "text-muted-foreground")}
+						className={cn("size-3.5", sharedNow ? "text-success" : "text-muted-foreground")}
 					/>
 					Share
 					<ChevronDown className="size-3 text-muted-foreground" />
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent align="end" className="w-80 p-0">
+			<PopoverContent align="end" className="w-96 p-0">
 				<div className="flex items-start justify-between gap-3 px-3 py-3">
 					<div className="min-w-0 flex-1 space-y-0.5">
 						<Label htmlFor="share-toggle" className="text-sm font-medium">
-							Public Access
+							Public access
 						</Label>
 						<p className="text-xs text-muted-foreground">
 							{sharedNow
@@ -155,7 +184,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 					<PrimaryCopy url={url} />
 					{sharedNow ? (
 						<div className="space-y-1.5">
-							<div className="text-xs text-muted-foreground">Agent Formats</div>
+							<div className="text-xs text-muted-foreground">Agent formats</div>
 							<div className="flex gap-2">
 								<SecondaryCopy url={`${url}.md`} label="Markdown" />
 								<SecondaryCopy url={`${url}.json`} label="JSON" />
@@ -189,10 +218,10 @@ function CopyLinkButton({ sessionId }: { sessionId: string }) {
 		<Button
 			variant="outline"
 			size="icon"
-			className={cn("size-8", copied && "text-emerald-600")}
+			className={cn("size-8", copied && "text-success")}
 			onClick={copy}
-			aria-label="Copy Share Link"
-			title="Copy Share Link"
+			aria-label="Copy share link"
+			title="Copy share link"
 		>
 			{copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
 		</Button>
@@ -242,7 +271,7 @@ function PrimaryCopy({ url }: { url: string }) {
 			<Button
 				variant="outline"
 				size="sm"
-				className={cn("h-8 shrink-0 gap-1.5", copied && "text-emerald-600")}
+				className={cn("h-8 shrink-0 gap-1.5", copied && "text-success")}
 				onClick={copy}
 			>
 				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -258,7 +287,7 @@ function SecondaryCopy({ url, label }: { url: string; label: string }) {
 		<Button
 			variant="outline"
 			size="sm"
-			className={cn("h-7 flex-1 gap-1.5 text-xs", copied && "text-emerald-600")}
+			className={cn("h-7 flex-1 gap-1.5 text-xs", copied && "text-success")}
 			onClick={copy}
 		>
 			{copied ? <Check className="size-3" /> : <Copy className="size-3" />}

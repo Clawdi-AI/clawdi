@@ -4,10 +4,12 @@
  * (command palette preview, card view) stay colour-coordinated.
  */
 
+// Category carries meaning, so each gets a distinct muted pastel from the
+// semantic token set (taste audit #6) — desaturated, never a raw palette hue.
 export const MEMORY_CATEGORY_COLORS: Record<string, string> = {
-	fact: "border-border bg-muted/60 text-muted-foreground",
-	preference: "border-border bg-muted/60 text-muted-foreground",
-	pattern: "border-border bg-muted/60 text-muted-foreground",
-	decision: "border-border bg-muted/60 text-muted-foreground",
-	context: "border-border bg-muted/60 text-muted-foreground",
+	fact: "border-transparent bg-muted text-muted-foreground",
+	preference: "border-transparent bg-info-muted text-info-muted-foreground",
+	pattern: "border-transparent bg-success-muted text-success-muted-foreground",
+	decision: "border-transparent bg-warning-muted text-warning-muted-foreground",
+	context: "border-transparent bg-primary/10 text-primary",
 };

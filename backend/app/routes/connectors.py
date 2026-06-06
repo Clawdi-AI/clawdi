@@ -35,6 +35,21 @@ from app.services.composio import (
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
 
+
+def _is_composio_auth_error(exc: Exception) -> bool:
+    """True when the configured Composio key is invalid/rotated.
+
+    Read endpoints degrade to "nothing connected" instead of 500ing the
+    whole Connectors page — a placeholder or expired key (preview
+    deployments, fresh self-hosted installs) should look like an
+    unconfigured integration, not an outage. Lazy import for the same
+    cold-start reason as `_map_composio_error`.
+    """
+    import composio_client
+
+    return isinstance(exc, composio_client.AuthenticationError)
+
+
 _REDIRECT_AUTH_TYPES = {
     "oauth",
     "oauth1",
@@ -129,7 +144,13 @@ async def list_connections(
     """List user's connected services."""
     if not settings.composio_api_key:
         return []
-    accounts = await get_connected_accounts(auth.user.clerk_id)
+    try:
+        accounts = await get_connected_accounts(auth.user.clerk_id)
+    except Exception as exc:
+        if _is_composio_auth_error(exc):
+            log.warning("composio_key_invalid path=connectors_list")
+            return []
+        raise
     # The dashboard refetches connections after OAuth redirects complete.
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
@@ -154,7 +175,15 @@ async def list_available_apps(
         return Paginated[ConnectorAvailableAppResponse](
             items=[], total=0, page=page, page_size=page_size
         )
-    page_data = await get_available_apps(search=search, page=page, page_size=page_size)
+    try:
+        page_data = await get_available_apps(search=search, page=page, page_size=page_size)
+    except Exception as exc:
+        if _is_composio_auth_error(exc):
+            log.warning("composio_key_invalid path=connectors_available")
+            return Paginated[ConnectorAvailableAppResponse](
+                items=[], total=0, page=page, page_size=page_size
+            )
+        raise
     return Paginated[ConnectorAvailableAppResponse](
         items=[ConnectorAvailableAppResponse.model_validate(a) for a in page_data["items"]],
         total=page_data["total"],

@@ -1268,6 +1268,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/vault/{slug}/items/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Vault Items
+         * @description Duplicate items into another vault the caller owns.
+         *
+         *     The dashboard's curation move ("batch-select keys in the default
+         *     vault, put them in a named one") needs values to travel between
+         *     vaults, but plaintext resolution stays CLI-only. So the copy happens
+         *     entirely server-side: decrypt + re-encrypt per item, nothing
+         *     returned but a count. Owner-only on both ends (`_get_vault_write`),
+         *     so shared-project viewers can't exfiltrate by copying into a vault
+         *     they control.
+         */
+        post: operations["copy_vault_items_api_vault__slug__items_copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/vault/credential-profiles": {
         parameters: {
             query?: never;
@@ -3727,6 +3755,36 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * VaultItemsCopy
+         * @description Server-side duplication of items into another owned vault.
+         *
+         *     Plaintext never reaches the caller — the server decrypts and
+         *     re-encrypts per item, preserving the CLI-only resolve boundary.
+         */
+        VaultItemsCopy: {
+            /** Target Slug */
+            target_slug: string;
+            /**
+             * Section
+             * @default
+             */
+            section: string;
+            /** Fields */
+            fields: string[];
+            /** Strip Prefix */
+            strip_prefix?: string | null;
+        };
+        /** VaultItemsCopyResponse */
+        VaultItemsCopyResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "ok";
+            /** Copied */
+            copied: number;
+        };
         /** VaultItemsDeleteResponse */
         VaultItemsDeleteResponse: {
             /**
@@ -3782,6 +3840,11 @@ export interface components {
              * @default true
              */
             is_owner: boolean;
+            /**
+             * Item Count
+             * @default 0
+             */
+            item_count: number;
             /**
              * Created At
              * Format: date-time
@@ -4624,6 +4687,8 @@ export interface operations {
                 min_duration?: number | null;
                 /** @description Filter to sessions that referenced a GitHub PR */
                 has_pr?: boolean | null;
+                /** @description Filter cron/heartbeat sessions. Automated = summary starts with 'Cron:' or '[' — the same heuristic the dashboard feed uses to mute them visually. */
+                automated?: boolean | null;
                 sort?: string;
                 order?: string;
                 page?: number;
@@ -6104,6 +6169,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultItemsDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_vault_items_api_vault__slug__items_copy_post: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultItemsCopy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultItemsCopyResponse"];
                 };
             };
             /** @description Validation Error */

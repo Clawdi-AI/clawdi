@@ -674,6 +674,50 @@ async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncC
 
 
 @pytest.mark.asyncio
+async def test_sessions_list_automated_filter(client: httpx.AsyncClient):
+    """`automated=` splits cron/heartbeat noise from manual work using the
+    same summary-prefix heuristic the dashboard feed mutes with. NULL
+    summaries count as manual (a session you ran that never got a
+    summary must not vanish from 'Manual only')."""
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": f"sess-auto-{i}",
+                    "started_at": started,
+                    "message_count": 1,
+                    "model": "claude-opus-4",
+                    **({} if summary is None else {"summary": summary}),
+                }
+                for i, summary in enumerate(
+                    [
+                        "Cron: telegram-scan",
+                        "[OpenClaw heartbeat poll]",
+                        "Fix the share dialog clipping",
+                        None,
+                    ]
+                )
+            ]
+        },
+    )
+
+    automated = (await client.get("/api/sessions?automated=true")).json()
+    assert automated["total"] == 2
+    assert all(s["summary"].startswith(("Cron:", "[")) for s in automated["items"])
+
+    manual = (await client.get("/api/sessions?automated=false")).json()
+    assert manual["total"] == 2
+    assert {s["local_session_id"] for s in manual["items"]} == {"sess-auto-2", "sess-auto-3"}
+
+    everything = (await client.get("/api/sessions")).json()
+    assert everything["total"] == 4
+
+
+@pytest.mark.asyncio
 async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()

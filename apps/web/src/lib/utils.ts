@@ -122,12 +122,20 @@ export function errorMessage(e: unknown): string {
 
 const COMMAND_TAG_RE = /<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>/g;
 
+// Agent-protocol wrapper tags that leak into summaries verbatim —
+// `<ide_opened_file>`, `<system-reminder>`, `<local-command-stdout>`, etc.
+// Match only tag names containing `_` or `-` so legit angle-bracket text
+// like `Vec<string>` survives.
+const PROTOCOL_TAG_RE = /<\/?[a-z][a-z0-9]*[_-][a-z0-9_-]*>/gi;
+
 /**
  * Turn a raw session summary into something readable for list rows and headers.
  *
  * Claude Code slash commands come through as XML-tagged user messages like
  *   <command-message>foo</command-message><command-name>/foo</command-name><command-args>bar</command-args>
- * which look awful rendered raw. Collapse them to `/foo bar`.
+ * which look awful rendered raw. Collapse them to `/foo bar`. Other protocol
+ * wrapper tags (`<ide_opened_file>…</ide_opened_file>`) are stripped, keeping
+ * their inner text.
  */
 export function formatSessionSummary(summary: string | null | undefined): string {
 	if (!summary) return "";
@@ -139,5 +147,8 @@ export function formatSessionSummary(summary: string | null | undefined): string
 		const remaining = summary.replace(COMMAND_TAG_RE, "").trim();
 		return [name, args, remaining].filter(Boolean).join(" ");
 	}
-	return summary;
+	return summary
+		.replace(PROTOCOL_TAG_RE, " ")
+		.replace(/\s{2,}/g, " ")
+		.trim();
 }

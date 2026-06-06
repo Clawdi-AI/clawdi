@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 export function DevAuthBypassPage({ mode }: { mode: "sign-in" | "sign-up" }) {
 	const title = mode === "sign-in" ? "Local Dev Sign In" : "Local Dev Sign Up";
 	return (
-		<main className="flex min-h-screen items-center justify-center px-4">
+		<main className="flex min-h-dvh items-center justify-center px-4">
 			<section className="w-full max-w-md rounded-lg border bg-card p-6 shadow-sm">
 				<div className="flex items-start gap-3">
 					<div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">

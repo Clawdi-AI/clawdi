@@ -143,7 +143,7 @@ export const PROJECT_RESOURCE_GROUPS = [
 	},
 	{
 		id: "project-resources",
-		label: "Project Resources",
+		label: "Project resources",
 		resourceIds: ["skills", "vaults"],
 	},
 	{

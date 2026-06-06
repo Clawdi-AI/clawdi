@@ -131,7 +131,7 @@ function ConnectorDetail() {
 						return next;
 					});
 				},
-				onError: (e) => toast.error("Failed to Disconnect", { description: errorMessage(e) }),
+				onError: (e) => toast.error("Couldn't disconnect", { description: errorMessage(e) }),
 			},
 		);
 	};
@@ -226,7 +226,7 @@ function ConnectorDetail() {
 				},
 				onError: (e) => {
 					popup.close();
-					toast.error("Failed to Start Connection", { description: errorMessage(e) });
+					toast.error("Couldn't start connection", { description: errorMessage(e) });
 				},
 				onSettled: () => {
 					inflightConnectRef.current = false;
@@ -255,7 +255,7 @@ function ConnectorDetail() {
 			<div className="flex flex-col gap-4 px-4 lg:px-6">
 				<EmptyState
 					icon={Plug}
-					title="Connector Unavailable"
+					title="Connector unavailable"
 					description={errorMessage(appQ.error)}
 				/>
 			</div>
@@ -286,7 +286,7 @@ function ConnectorDetail() {
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Connected Accounts"
+					title="Connected accounts"
 					count={usesNoAuth ? "No account required" : `${activeConnections.length} connected`}
 					description={
 						usesNoAuth
@@ -315,7 +315,7 @@ function ConnectorDetail() {
 						// just couldn't load the list.
 						<Alert variant="destructive">
 							<AlertCircle />
-							<AlertTitle>Failed to Load Connections</AlertTitle>
+							<AlertTitle>Couldn't load connections</AlertTitle>
 							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
 						</Alert>
 					) : usesNoAuth ? (
@@ -327,7 +327,7 @@ function ConnectorDetail() {
 					) : hasUnsupportedAuthType ? (
 						<Alert variant="destructive">
 							<AlertCircle />
-							<AlertTitle>Connector Metadata Error</AlertTitle>
+							<AlertTitle>Connector metadata error</AlertTitle>
 							<AlertDescription>
 								This connector did not return a supported auth type. Refresh the page and try again.
 							</AlertDescription>
@@ -336,7 +336,7 @@ function ConnectorDetail() {
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
-								<AlertTitle>Connector Setup Required</AlertTitle>
+								<AlertTitle>Connector setup required</AlertTitle>
 								<AlertDescription>{setupBlockedReason}</AlertDescription>
 							</Alert>
 						) : (
@@ -483,7 +483,7 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available Tools"
+					title="Available tools"
 					description={
 						requiresConnection
 							? "Tools this connector exposes after an account is connected."
@@ -504,7 +504,7 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available Tools"
+					title="Available tools"
 					description={
 						requiresConnection
 							? "Tools this connector exposes after an account is connected."
@@ -514,7 +514,7 @@ function ConnectorToolsList({
 				<div className="p-4">
 					<Alert variant="destructive">
 						<AlertCircle />
-						<AlertTitle>Failed to Load Tools</AlertTitle>
+						<AlertTitle>Couldn't load tools</AlertTitle>
 						<AlertDescription>{errorMessage(error)}</AlertDescription>
 					</Alert>
 				</div>
@@ -527,7 +527,7 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available Tools"
+					title="Available tools"
 					count="0 tools"
 					description={
 						requiresConnection
@@ -544,7 +544,7 @@ function ConnectorToolsList({
 		<DashboardSection>
 			<DashboardSectionHeader
 				icon={Wrench}
-				title="Available Tools"
+				title="Available tools"
 				count={`${tools.length} tools`}
 				description={
 					requiresConnection

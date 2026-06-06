@@ -43,7 +43,7 @@ function CopyLinkButton({ url }: { url: string }) {
 			size="icon"
 			// 36px on mobile (matches Button's default `size="icon"`), 32px
 			// at `sm:` and up — denser desktop cluster, thumb-safe phone.
-			className={cn("size-9 sm:size-8", copied && "text-emerald-600")}
+			className={cn("size-9 sm:size-8", copied && "text-success")}
 			onClick={copy}
 			aria-label="Copy share link"
 			title="Copy share link"
