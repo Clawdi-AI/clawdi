@@ -67,6 +67,11 @@ class VaultItemUpsert(BaseModel):
 
 
 class VaultItemDelete(BaseModel):
+    # Field names here are NOT charset-validated: legacy vaults hold
+    # names the upsert validator would reject today (e.g. slash-
+    # namespaced `app/DATABASE_URL` imports). Deleting is an exact match
+    # against existing rows, so refusing those names would make them
+    # permanently undeletable. Only writes of *new* names stay strict.
     section: str = Field(default="", max_length=200)
     fields: list[str] = Field(min_length=1, max_length=200)
 
@@ -78,7 +83,15 @@ class VaultItemDelete(BaseModel):
     @field_validator("fields", mode="after")
     @classmethod
     def validate_field_names(cls, value: list[str]) -> list[str]:
-        return [_clean_segment(field_name, field_name="field name") for field_name in value]
+        cleaned = []
+        for field_name in value:
+            stripped = field_name.strip()
+            if not stripped:
+                raise ValueError("field name cannot be empty")
+            if len(stripped) > 200:
+                raise ValueError("field name must be at most 200 characters")
+            cleaned.append(stripped)
+        return cleaned
 
 
 class VaultResponse(BaseModel):
@@ -92,6 +105,9 @@ class VaultResponse(BaseModel):
     # current caller. Key rows belong to the vault, not to Projects.
     project_ids: list[str]
     is_owner: bool = True
+    # Number of key rows (names only — never values). Lets the dashboard
+    # rank vaults busiest-first and label cards without N+1 item fetches.
+    item_count: int = 0
     created_at: datetime
 
 
@@ -106,6 +122,44 @@ class VaultDeleteResponse(BaseModel):
 
 class VaultSectionsResponse(RootModel[dict[str, list[str]]]):
     pass
+
+
+class VaultItemsCopy(BaseModel):
+    """Server-side duplication of items into another owned vault.
+
+    Plaintext never reaches the caller — the server decrypts and
+    re-encrypts per item, preserving the CLI-only resolve boundary.
+    """
+
+    target_slug: str = Field(min_length=1, max_length=200)
+    section: str = Field(default="", max_length=200)
+    fields: list[str] = Field(min_length=1, max_length=200)
+    # Optional rename-on-copy: strip this prefix from each item name at
+    # the destination (`clawdi-backend/DATABASE_URL` → `DATABASE_URL`).
+    # Powers the "split a grab-bag vault into per-app vaults" flow —
+    # names get clean, values still never leave the server.
+    strip_prefix: str | None = Field(default=None, max_length=200)
+
+    @field_validator("target_slug", mode="after")
+    @classmethod
+    def validate_target_slug(cls, value: str) -> str:
+        slug = value.strip()
+        if not VAULT_SLUG_RE.fullmatch(slug):
+            raise ValueError(
+                "target_slug must use lowercase letters, numbers, and hyphens, "
+                "without leading or trailing hyphens"
+            )
+        return slug
+
+    @field_validator("section", mode="after")
+    @classmethod
+    def validate_section(cls, value: str) -> str:
+        return _clean_segment(value, field_name="section", allow_empty=True)
+
+
+class VaultItemsCopyResponse(BaseModel):
+    status: Literal["ok"]
+    copied: int
 
 
 class VaultItemsUpsertResponse(BaseModel):

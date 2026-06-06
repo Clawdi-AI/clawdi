@@ -7,9 +7,9 @@ const DEV_AUTH_BEARER = env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
 
 const DEV_USER = {
 	id: "dev_browser",
-	fullName: "Dev User",
+	fullName: env.NEXT_PUBLIC_DEV_AUTH_NAME,
 	imageUrl: "",
-	primaryEmailAddress: { emailAddress: "dev@clawdi.local" },
+	primaryEmailAddress: { emailAddress: env.NEXT_PUBLIC_DEV_AUTH_EMAIL },
 	publicMetadata: {
 		project_owner_handle: "dev-user",
 		owner_handle: "dev-user",

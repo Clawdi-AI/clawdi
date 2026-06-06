@@ -3,13 +3,12 @@
 import type { components } from "@clawdi/shared/api";
 import { AlertCircle, ArrowUpRight, Cloud } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -79,33 +78,25 @@ export function AgentsCard({
 	 */
 	hostedStatus?: { isLoading: boolean; error?: Error | null };
 }) {
-	const activeCount = agents.filter((a) => a.active).length;
+	const [showAll, setShowAll] = useState(false);
 	const total = agents.length;
-	const mostRecent = agents
-		.map((a) => a.lastSeenAt)
-		.filter((t): t is string => Boolean(t))
-		.sort((a, b) => b.localeCompare(a))[0];
+	// Active agents first, then most recently seen — and cap the wall at 6
+	// so the fleet reads as a glance, not a directory (taste audit #3).
+	const ordered = [...agents].sort((a, b) => {
+		if (!!a.active !== !!b.active) return a.active ? -1 : 1;
+		return (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "");
+	});
+	const visible = showAll ? ordered : ordered.slice(0, 6);
+	const hiddenCount = ordered.length - visible.length;
 
-	let description: string;
-	if (total === 0 && !hostedStatus?.isLoading) {
-		description = "Connect your first AI to start syncing across all your agents.";
-	} else if (activeCount > 0) {
-		description = `${activeCount} active now · ${total} total`;
-	} else if (mostRecent) {
-		description = `${total} agents · last active ${relativeTime(mostRecent)}`;
-	} else if (total > 0) {
-		description = `${total} agents`;
-	} else {
-		description = "Loading hosted agents…";
-	}
-
+	// No section header: the greeting directly above already carries the
+	// fleet summary ("N agents connected · last active …"), and a bare
+	// text header here pushed the tile wall below the right rail's card
+	// top — the two columns read as misaligned (Marvin's screenshot).
+	// Tiles start flush with the column, level with the cards on the right.
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Agents</CardTitle>
-				<CardDescription>{description}</CardDescription>
-			</CardHeader>
-			<CardContent className="space-y-3">
+		<section className="space-y-3">
+			<div className="space-y-3">
 				{isLoading ? (
 					<div className="grid gap-2 sm:grid-cols-2">
 						{Array.from({ length: 4 }).map((_, i) => (
@@ -113,12 +104,23 @@ export function AgentsCard({
 						))}
 					</div>
 				) : agents.length || hostedStatus?.isLoading ? (
-					<div className="grid gap-2 sm:grid-cols-2">
-						{agents.map((tile) => (
-							<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
-						))}
-						{hostedStatus?.isLoading ? <TileSkeleton /> : null}
-					</div>
+					<>
+						<div className="grid gap-2 sm:grid-cols-2">
+							{visible.map((tile) => (
+								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
+							))}
+							{hostedStatus?.isLoading ? <TileSkeleton /> : null}
+						</div>
+						{hiddenCount > 0 || showAll ? (
+							<button
+								type="button"
+								onClick={() => setShowAll((v) => !v)}
+								className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+							>
+								{showAll ? "Show fewer" : `Show all ${total} agents`}
+							</button>
+						) : null}
+					</>
 				) : hostedStatus?.error ? null : (
 					// When the hosted fetch failed, the error banner below carries
 					// the message — render no empty state to avoid contradicting it.
@@ -133,8 +135,8 @@ export function AgentsCard({
 						<span>Hosted agents unavailable. Self-managed agents listed above.</span>
 					</div>
 				) : null}
-			</CardContent>
-		</Card>
+			</div>
+		</section>
 	);
 }
 
@@ -216,7 +218,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	const card = (
 		<Card className="h-full py-0 transition-colors group-hover:bg-accent/40">
-			<CardContent className="flex items-center gap-3 p-3">
+			<CardContent className="flex items-center gap-3 p-4">
 				<AgentLabel
 					machineName={tile.name}
 					type={tile.agentType}
@@ -232,7 +234,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 
 	const linkClassName =
-		"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 	return (
 		// `z-0` is load-bearing: without an explicit z-index on this
@@ -266,7 +268,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 function TileSkeleton() {
 	return (
 		<Card className="py-0">
-			<CardContent className="flex items-center gap-3 p-3">
+			<CardContent className="flex items-center gap-3 p-4">
 				<Skeleton className="size-8 shrink-0 rounded-md" />
 				<div className="min-w-0 flex-1 space-y-1.5">
 					<Skeleton className="h-4 w-24" />

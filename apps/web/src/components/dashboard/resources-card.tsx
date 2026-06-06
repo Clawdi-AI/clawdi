@@ -27,6 +27,7 @@ import {
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
+import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { cn, formatNumber } from "@/lib/utils";
 
 type Resource = {
@@ -82,7 +83,11 @@ export function ResourcesCard({
 }) {
 	const ready = stats && (!projectCountLoading || projectCount !== undefined);
 	const waitingForAgent = hasConnectedAgent === false;
-	const finalStep = waitingForAgent ? "Ready to Add to Agent" : "Add to Agent";
+	const finalStep = waitingForAgent ? "Ready to Add to agent" : "Add to agent";
+	// The "First path" walkthrough is onboarding — once the user has
+	// created a custom Project they've walked the path, and the banner
+	// is just permanent noise above their real counts. Hide it then.
+	const established = (projectTypeCounts?.custom ?? 0) > 0;
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -93,30 +98,32 @@ export function ResourcesCard({
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
-				<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="font-medium text-foreground">
-							{waitingForAgent ? "After connecting an agent" : "First path"}
-						</span>
-						{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
-							<span
-								key={step}
-								className={cn(
-									"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
-									waitingForAgent && index === 2 && "border-dashed opacity-60",
-								)}
-							>
-								<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
-								{step}
+				{established ? null : (
+					<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="font-medium text-foreground">
+								{waitingForAgent ? "After connecting an agent" : "First path"}
 							</span>
-						))}
+							{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
+								<span
+									key={step}
+									className={cn(
+										"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
+										waitingForAgent && index === 2 && "border-dashed opacity-60",
+									)}
+								>
+									<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
+									{step}
+								</span>
+							))}
+						</div>
+						<p className="text-muted-foreground">
+							Create Projects to share with teammates. Use the Global Project for defaults. Agent
+							Projects stay private to one agent. Skills and Vaults live in Projects; Sessions,
+							Memories, and Connectors apply account-wide.
+						</p>
 					</div>
-					<p className="text-muted-foreground">
-						Create Projects to share with teammates. Use the Global Project for defaults. Agent
-						Projects stay private to one agent. Skills and Vaults live in Projects; Sessions,
-						Memories, and Connectors apply account-wide.
-					</p>
-				</div>
+				)}
 				<div className="divide-y">
 					{ready ? (
 						<ProjectResourceGroups
@@ -223,7 +230,16 @@ function ResourceRow({
 			href={definition.href}
 			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
 		>
-			<Icon className="size-4 shrink-0 text-muted-foreground" />
+			{/* Same identity hue as this resource's sidebar chip — the rail
+			    and the nav read as one system. */}
+			<span
+				className={cn(
+					"flex size-7 shrink-0 items-center justify-center rounded-lg",
+					RESOURCE_TINT_CLASSES[definition.id],
+				)}
+			>
+				<Icon className="size-3.5" />
+			</span>
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
 				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">

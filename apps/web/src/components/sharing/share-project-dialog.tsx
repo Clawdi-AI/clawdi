@@ -42,7 +42,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, useAuthedFetch } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { errorMessage } from "@/lib/utils";
@@ -50,11 +49,9 @@ import { errorMessage } from "@/lib/utils";
 /**
  * Owner-side project-sharing surface.
  *
- * Two surfaces in one dialog:
- *   - People tab: accepted members and owner-side removal.
- *   - Invitations tab: email-based invitations (in-dashboard "you've been
- *     added" entries on the invitee's side, no public token).
- *   - Links tab: share-links with redeem counts + turn-off buttons.
+ * One stacked surface (no tabs): invite by email, current people, and the
+ * share link — in reading order, with a single line explaining what a
+ * viewer can do.
  *
  * Backend endpoints:
  *   GET    /api/projects/{project_id}/share-links
@@ -132,10 +129,13 @@ export function ShareProjectDialog({
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto">
+			{/* `sm:` prefix is load-bearing: the primitive's base classes include
+			    `sm:max-w-lg`, so an unprefixed `max-w-2xl` loses at sm+ and the
+			    content gets clipped at 512px wide. */}
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>
-						{isShareableProject ? `Share ${projectName}` : "Only Projects You Create Can Be Shared"}
+						{isShareableProject ? `Share ${projectName}` : "Only Projects you create can be shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
@@ -144,35 +144,36 @@ export function ShareProjectDialog({
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
-					<>
-						<PermissionSummary />
-						<ShareMethodGuide />
-						<Tabs defaultValue="members" className="w-full">
-							<TabsList className="grid w-full grid-cols-3">
-								<TabsTrigger value="members" className="min-w-0 px-2">
-									<Users className="mr-2 size-3.5" />
-									<span className="truncate">People</span>
-								</TabsTrigger>
-								<TabsTrigger value="invitations" className="min-w-0 px-2">
-									<MailPlus className="mr-2 size-3.5" />
-									<span className="truncate">Invites</span>
-								</TabsTrigger>
-								<TabsTrigger value="links" className="min-w-0 px-2">
-									<Link2 className="mr-2 size-3.5" />
-									<span className="truncate">Links</span>
-								</TabsTrigger>
-							</TabsList>
-							<TabsContent value="members" className="mt-4">
-								<MembersPanel projectId={projectId} />
-							</TabsContent>
-							<TabsContent value="invitations" className="mt-4">
-								<InvitationsPanel projectId={projectId} />
-							</TabsContent>
-							<TabsContent value="links" className="mt-4">
-								<ShareLinksPanel projectId={projectId} />
-							</TabsContent>
-						</Tabs>
-					</>
+					<div className="space-y-5">
+						{/* One surface, no tabs (journey J4): invite people, see who's
+						    in, manage the link — top to bottom. */}
+						<section className="space-y-3">
+							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
+								<MailPlus className="size-3.5 text-muted-foreground" />
+								Invite by email
+							</h3>
+							<InvitationsPanel projectId={projectId} />
+						</section>
+						<section className="space-y-3 border-t pt-4">
+							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
+								<Users className="size-3.5 text-muted-foreground" />
+								People
+							</h3>
+							<MembersPanel projectId={projectId} />
+						</section>
+						<section className="space-y-3 border-t pt-4">
+							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
+								<Link2 className="size-3.5 text-muted-foreground" />
+								Share link
+							</h3>
+							<ShareLinksPanel projectId={projectId} />
+						</section>
+						<p className="border-t pt-3 text-xs text-muted-foreground">
+							Everyone joins as a viewer: they read skills and key names here, and their agents can
+							use key values through the CLI. The dashboard never reveals values, and only you can
+							edit anything.
+						</p>
+					</div>
 				) : (
 					<Alert>
 						<AlertCircle />
@@ -184,55 +185,6 @@ export function ShareProjectDialog({
 				)}
 			</DialogContent>
 		</Dialog>
-	);
-}
-
-function PermissionSummary() {
-	return (
-		<div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-3">
-			<div>
-				<div className="font-medium text-foreground">Viewer Access</div>
-				<p className="mt-1 text-muted-foreground">
-					Invites and links add people as Viewers. They can read skills, Vault names, key names, and
-					Vault values through CLI runtime reads.
-				</p>
-			</div>
-			<div>
-				<div className="font-medium text-foreground">Secret Values</div>
-				<p className="mt-1 text-muted-foreground">
-					The dashboard never reveals key values. CLI/API-key runtime reads can resolve values for
-					Projects a Viewer can read.
-				</p>
-			</div>
-			<div>
-				<div className="font-medium text-foreground">Roles</div>
-				<p className="mt-1 text-muted-foreground">
-					Viewer reads only. Owner edits resources and sharing. Editor is not available for Project
-					sharing yet.
-				</p>
-			</div>
-		</div>
-	);
-}
-
-function ShareMethodGuide() {
-	return (
-		<div className="grid gap-2 rounded-md border bg-background/60 p-3 text-xs sm:grid-cols-2">
-			<div>
-				<div className="font-medium text-foreground">Email Invite</div>
-				<p className="mt-1 text-muted-foreground">
-					Best when you know the email they use to sign in. They accept from the Notification Center
-					bell in the top-right.
-				</p>
-			</div>
-			<div>
-				<div className="font-medium text-foreground">Share Link</div>
-				<p className="mt-1 text-muted-foreground">
-					Best when you want to paste a link in chat or the person may need to create an account
-					first.
-				</p>
-			</div>
-		</div>
 	);
 }
 
@@ -273,7 +225,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			if (typeof navigator !== "undefined" && navigator.clipboard) {
 				navigator.clipboard.writeText(body.url).catch(() => {});
 			}
-			toast.success("Share Link Created", {
+			toast.success("Share link created", {
 				description: "Copy it before closing this dialog. You can turn it off later.",
 			});
 		},
@@ -283,7 +235,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					? "Set a display name on your profile before sharing."
 					: e instanceof Error
 						? e.message
-						: "Failed to Create Link",
+						: "Couldn't create link",
 			);
 		},
 	});
@@ -299,7 +251,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			toast.success("Share Link Turned Off");
 		},
 		onError: (e) => {
-			toast.error("Failed to Turn Off Link", {
+			toast.error("Couldn't turn off link", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -310,7 +262,6 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 	return (
 		<div className="space-y-3">
 			<div className="space-y-1">
-				<h3 className="text-sm font-semibold">Share Links</h3>
 				<p className="text-xs text-muted-foreground">
 					Create a link when you want to send access yourself, or when the person may not have a
 					Clawdi account yet.
@@ -337,7 +288,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 					/>
 					<Button type="submit" size="sm" disabled={create.isPending}>
 						<Plus className="mr-1.5 size-3.5" />
-						{create.isPending ? "Creating…" : "Create Link"}
+						{create.isPending ? "Creating…" : "Create link"}
 					</Button>
 				</div>
 				<p className="text-xs text-muted-foreground">
@@ -406,7 +357,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	return (
 		<Alert>
 			<CheckCircle2 />
-			<AlertTitle>Copy This Link Now</AlertTitle>
+			<AlertTitle>Copy this link now</AlertTitle>
 			<AlertDescription>
 				<p className="text-xs text-muted-foreground">
 					Send this URL to the person you want to invite. They sign in or create an account, accept
@@ -595,7 +546,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			});
 		},
 		onError: (e) => {
-			toast.error("Failed to Send Invitation", {
+			toast.error("Couldn't send invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -612,7 +563,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			toast.success("Invitation Cancelled");
 		},
 		onError: (e) => {
-			toast.error("Failed to Cancel Invitation", {
+			toast.error("Couldn't cancel invitation", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -623,7 +574,6 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 	return (
 		<div className="space-y-3">
 			<div className="space-y-1">
-				<h3 className="text-sm font-semibold">Invite people</h3>
 				<p className="text-xs text-muted-foreground">
 					Use email when the person already signs in with this address. If they may be new to
 					Clawdi, create a share link instead.
@@ -767,7 +717,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			toast.success("Member Removed");
 		},
 		onError: (e) =>
-			toast.error("Failed to Remove Member", {
+			toast.error("Couldn't remove member", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});
@@ -788,7 +738,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			});
 		},
 		onError: (e) =>
-			toast.error("Failed to Stop Sharing", {
+			toast.error("Couldn't stop sharing", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			}),
 	});
@@ -799,7 +749,6 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		<div className="space-y-3">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<div className="space-y-1">
-					<h3 className="text-sm font-semibold">People with access</h3>
 					<p className="text-xs text-muted-foreground sm:max-w-sm">
 						People who accepted access. Viewers can read this Project until you remove them.
 					</p>
@@ -810,9 +759,9 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							variant="destructive"
 							size="sm"
 							disabled={unshare.isPending}
-							aria-label="Stop All Sharing for this Project"
+							aria-label="Stop all sharing for this Project"
 						>
-							{unshare.isPending ? "Stopping…" : "Stop All Sharing"}
+							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
 						</Button>
 					</AlertDialogTrigger>
 					<AlertDialogContent>
@@ -829,7 +778,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 								onClick={() => unshare.mutate()}
 								className="bg-destructive text-white hover:bg-destructive/90"
 							>
-								Stop All Sharing
+								Stop all sharing
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>

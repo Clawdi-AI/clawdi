@@ -947,6 +947,14 @@ async def list_sessions(
         default=None,
         description="Filter to sessions that referenced a GitHub PR",
     ),
+    automated: bool | None = Query(
+        default=None,
+        description=(
+            "Filter cron/heartbeat sessions. Automated = summary starts with "
+            "'Cron:' or '[' — the same heuristic the dashboard feed uses to "
+            "mute them visually."
+        ),
+    ),
     sort: str = Query(
         default="last_activity_at",
         pattern=r"^(last_activity_at|updated_at|started_at|message_count|tokens|relevance)$",
@@ -1056,6 +1064,15 @@ async def list_sessions(
                 == 0,
             )
         )
+
+    if automated is not None:
+        # Heuristic, mirrored from the dashboard feed's muting regex
+        # (^(Cron:|\[)). Most fleets are dominated by cron/heartbeat
+        # sessions; "Manual only" is how users find their own work.
+        # COALESCE so NULL summaries count as manual, not as neither.
+        summary_text = func.coalesce(Session.summary, "")
+        is_automated = or_(summary_text.like("Cron:%"), summary_text.like("[%"))
+        base = base.where(is_automated if automated else ~is_automated)
 
     if q:
         # pg_trgm `similarity()` for typo / partial-word tolerance.

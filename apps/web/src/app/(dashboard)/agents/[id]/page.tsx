@@ -19,11 +19,6 @@ import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
-import {
-	DashboardSection,
-	DashboardSectionHeader,
-	DashboardSectionToolbar,
-} from "@/components/dashboard/section";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import {
 	isCustomProject,
@@ -31,20 +26,18 @@ import {
 	ProjectIdentity,
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
-import { MobileSessionList } from "@/components/sessions/mobile-session-list";
-import { sessionColumns } from "@/components/sessions/session-columns";
-import { makeSkillColumns } from "@/components/skills/skill-columns";
+import { SessionFeed } from "@/components/sessions/session-feed";
+import { SkillCardGrid } from "@/components/skills/skill-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
+import { projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -195,23 +188,13 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: (_data, vars) => {
-			toast.success("Skill Uninstalled", {
+			toast.success("Skill uninstalled", {
 				description: `${vars.skillKey} was removed from this agent. Other agents keep their copies.`,
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Failed to Uninstall Skill", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
-
-	const skillColumns = useMemo(
-		() =>
-			makeSkillColumns(
-				(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId }),
-				uninstallSkill.isPending,
-				{ currentProjectId: agentProjectId, writableProjectIds },
-			),
-		[uninstallSkill.mutate, uninstallSkill.isPending, agentProjectId, writableProjectIds],
-	);
 
 	const sessionTotal = sessionsPage?.total ?? 0;
 
@@ -224,20 +207,20 @@ export default function AgentDetailPage() {
 		activeTab === "skills"
 			? {
 					icon: Sparkles,
-					title: "Installed Skills",
+					title: "Installed skills",
 					description:
 						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
 				}
 			: activeTab === "projects"
 				? {
 						icon: Layers,
-						title: "Project Access",
+						title: "Project access",
 						description:
 							"The Agent Project is fixed. Added Custom or shared Projects add read-only context.",
 					}
 				: {
 						icon: MessageSquare,
-						title: "Session History",
+						title: "Session history",
 						description: "Review sessions synced by this agent.",
 					};
 
@@ -269,7 +252,7 @@ export default function AgentDetailPage() {
 				}),
 			),
 		onSuccess: () => {
-			toast.success("Agent Disconnected", {
+			toast.success("Agent disconnected", {
 				description:
 					sessionTotal > 0
 						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (agent label dropped).`
@@ -287,7 +270,7 @@ export default function AgentDetailPage() {
 			});
 			router.push("/");
 		},
-		onError: (e) => toast.error("Failed to Disconnect Agent", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
 	});
 
 	const onDisconnect = () => {
@@ -338,7 +321,7 @@ export default function AgentDetailPage() {
 									</p>
 								</>
 							}
-							confirmLabel="Disconnect Agent"
+							confirmLabel="Disconnect agent"
 							onConfirm={onDisconnect}
 						>
 							<Button
@@ -347,105 +330,95 @@ export default function AgentDetailPage() {
 								disabled={disconnect.isPending}
 								className="shrink-0"
 							>
-								<Unplug className="text-amber-600 dark:text-amber-500" />
+								<Unplug className="text-warning" />
 								Disconnect
 							</Button>
 						</ConfirmAction>
 					</div>
 
 					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
-						<DashboardSection priority="primary">
-							<DashboardSectionToolbar>
-								<TabsList className="grid w-full grid-cols-3 sm:w-fit">
-									<TabsTrigger value="sessions" className="min-w-0 px-2">
-										Sessions
-										<span className="ml-1.5 text-xs text-muted-foreground">{sessionTotal}</span>
-									</TabsTrigger>
-									<TabsTrigger value="skills" className="min-w-0 px-2">
-										Skills
-										{skillsForThisEnv ? (
-											<span className="ml-1.5 text-xs text-muted-foreground">
-												{skillsForThisEnv.length}
-											</span>
-										) : null}
-									</TabsTrigger>
-									<TabsTrigger value="projects" className="min-w-0 px-2">
-										Projects
-										{projectBindings ? (
-											<span className="ml-1.5 text-xs text-muted-foreground">
-												{projectBindings.length}
-											</span>
-										) : null}
-									</TabsTrigger>
-								</TabsList>
-							</DashboardSectionToolbar>
-							<DashboardSectionHeader
-								icon={activeTabMeta.icon}
-								title={activeTabMeta.title}
-								description={activeTabMeta.description}
-								toolbar={
-									activeTab === "skills" ? (
-										<Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-											<Link
-												href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
-											>
-												<Plus />
-												Install Skills
-											</Link>
-										</Button>
-									) : null
-								}
-								priority="primary"
-							/>
+						{/* Flat tab chrome — no boxed section wrappers (taste audit #1). */}
+						<div className="flex flex-wrap items-end justify-between gap-2">
+							<TabsList className="grid w-full grid-cols-3 sm:w-fit">
+								<TabsTrigger value="sessions" className="min-w-0 px-2">
+									Sessions
+									<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
+										{sessionTotal}
+									</span>
+								</TabsTrigger>
+								<TabsTrigger value="skills" className="min-w-0 px-2">
+									Skills
+									{skillsForThisEnv ? (
+										<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
+											{skillsForThisEnv.length}
+										</span>
+									) : null}
+								</TabsTrigger>
+								<TabsTrigger value="projects" className="min-w-0 px-2">
+									Projects
+									{projectBindings ? (
+										<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
+											{projectBindings.length}
+										</span>
+									) : null}
+								</TabsTrigger>
+							</TabsList>
+							{activeTab === "skills" ? (
+								<Button asChild variant="outline" size="sm">
+									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
+										<Plus />
+										Install skills
+									</Link>
+								</Button>
+							) : null}
+						</div>
+						<p className="mt-2 text-xs text-muted-foreground">{activeTabMeta.description}</p>
 
-							<div className="p-4">
-								<TabsContent value="sessions" className="m-0">
-									<div className="overflow-hidden rounded-lg border bg-card md:hidden">
-										<MobileSessionList
-											sessions={sessionsPage?.items ?? []}
-											isLoading={sessionsLoading}
-											emptyMessage="No sessions synced from this agent yet."
-										/>
-									</div>
-									<div className="hidden md:block">
-										<DataTable
-											columns={sessionColumns}
-											data={sessionsPage?.items ?? []}
-											isLoading={sessionsLoading}
-											getRowHref={(s) => sessionDetailHref(s.id)}
-											rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
-											emptyMessage="No sessions synced from this agent yet."
-										/>
-									</div>
-								</TabsContent>
-
-								<TabsContent value="skills" className="m-0">
-									<DataTable
-										columns={skillColumns}
-										data={skillsForThisEnv ?? []}
-										isLoading={skillsLoading}
-										rowAriaLabel={(s) => `Open ${s.name}`}
-										emptyMessage="No skills installed on this agent yet."
+						<div className="mt-4">
+							<TabsContent value="sessions" className="m-0">
+								{/* This page IS the agent — the feed drops the redundant
+								    per-row agent column the old table repeated 25 times. */}
+								<div className="max-w-4xl">
+									<SessionFeed
+										sessions={sessionsPage?.items ?? []}
+										isLoading={sessionsLoading}
+										emptyMessage="No sessions synced from this agent yet."
+										showAgent={false}
 									/>
-								</TabsContent>
+								</div>
+							</TabsContent>
 
-								<TabsContent value="projects" className="m-0">
-									<AgentProjectsPanel
-										agentId={id}
-										bindings={projectBindings ?? []}
-										projects={projects ?? []}
-										isLoading={projectBindingsLoading}
-										authedFetch={authedFetch}
-										onChanged={() => {
-											queryClient.invalidateQueries({
-												queryKey: ["agent-project-bindings", id],
-											});
-											queryClient.invalidateQueries({ queryKey: ["projects"] });
-										}}
-									/>
-								</TabsContent>
-							</div>
-						</DashboardSection>
+							<TabsContent value="skills" className="m-0">
+								<SkillCardGrid
+									skills={skillsForThisEnv ?? []}
+									isLoading={skillsLoading}
+									emptyMessage="No skills installed on this agent yet."
+									readOnlySkillCheck={(s) =>
+										!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+									}
+									onUninstall={(skillKey, projectId) =>
+										uninstallSkill.mutate({ skillKey, projectId })
+									}
+									uninstallPending={uninstallSkill.isPending}
+								/>
+							</TabsContent>
+
+							<TabsContent value="projects" className="m-0">
+								<AgentProjectsPanel
+									agentId={id}
+									bindings={projectBindings ?? []}
+									projects={projects ?? []}
+									isLoading={projectBindingsLoading}
+									authedFetch={authedFetch}
+									onChanged={() => {
+										queryClient.invalidateQueries({
+											queryKey: ["agent-project-bindings", id],
+										});
+										queryClient.invalidateQueries({ queryKey: ["projects"] });
+									}}
+								/>
+							</TabsContent>
+						</div>
 					</Tabs>
 				</>
 			) : null}
@@ -500,7 +473,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Added");
 		},
-		onError: (e) => toast.error("Failed to Add Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't add project", { description: errorMessage(e) }),
 	});
 
 	const removeBinding = useMutation({
@@ -513,7 +486,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Removed");
 		},
-		onError: (e) => toast.error("Failed to Remove Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't remove project", { description: errorMessage(e) }),
 	});
 
 	const reorder = useMutation({
@@ -528,7 +501,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project Order Updated");
 		},
-		onError: (e) => toast.error("Failed to Reorder Projects", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't reorder projects", { description: errorMessage(e) }),
 	});
 
 	const moveContext = (bindingId: string, direction: -1 | 1) => {

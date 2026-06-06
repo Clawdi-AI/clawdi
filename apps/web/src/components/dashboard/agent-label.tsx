@@ -83,6 +83,18 @@ export function cleanMachineName(raw: string | null | undefined): string {
 	return raw.replace(/\.(local|lan)$/i, "");
 }
 
+/** Middle-truncate generated pod names for display. A fleet of
+ * `openclaw-164ec696-744994f657-mgc9m` tiles is unreadable, and
+ * END-truncation (`truncate`) cuts the final group — the only part
+ * that distinguishes two clones. Keep runtime prefix + last group:
+ * `openclaw…mgc9m`. Human-chosen names pass through untouched; the
+ * full name stays available via the title tooltip. */
+export function displayMachineName(name: string): string {
+	const m = name.match(/^([a-z][a-z0-9_]*)-(?:[0-9a-f]{6,}-)+([a-z0-9]{4,12})$/i);
+	if (!m) return name;
+	return `${m[1]}…${m[2]}`;
+}
+
 const NAME_CLASS: Record<AgentIconSize, string> = {
 	xs: "text-xs font-medium",
 	sm: "text-sm font-medium",
@@ -155,7 +167,7 @@ export function AgentLabel({
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
 					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
-						{titleText}
+						{displayMachineName(titleText)}
 					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>

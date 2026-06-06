@@ -78,7 +78,7 @@ services:
       POSTGRES_USER: clawdi
       POSTGRES_PASSWORD: ${PG_PASSWORD:-preview_local}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata-ui2:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clawdi"]
       interval: 5s
@@ -215,7 +215,10 @@ services:
 
 volumes:
   source:
-  pgdata:
+  # Renamed from `pgdata` (2026-06-03): the old volume carried a divergent
+  # bench-fixes migration line that crashed `alembic upgrade head` on boot.
+  # A fresh volume makes restore.sh re-load the prod snapshot cleanly.
+  pgdata-ui2:
   files:
   api-venv:
   uv-cache:

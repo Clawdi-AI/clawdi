@@ -4,7 +4,7 @@ import type { components, Deployment } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import { unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
+import { isDeployApiConfigured, unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
 import { env } from "@/lib/env";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -26,8 +26,13 @@ type Env = components["schemas"]["EnvironmentResponse"];
  */
 export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const api = useClawdiApi();
+	// Not configured (preview/self-hosted mirror pointing at the default
+	// localhost deploy API) → don't fetch, don't error-banner. See
+	// isDeployApiConfigured.
+	const configured = isDeployApiConfigured();
 	const query = useQuery({
 		queryKey: ["hosted-deployments"],
+		enabled: configured,
 		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
 		// Status changes (Provisioning → Ready) — refetch periodically
 		// while a deployment is still spinning up. 10s is the balance
@@ -83,11 +88,22 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 		return s;
 	}, [query.data]);
 
+	// CORS/network-level failures (fetch throws TypeError before any HTTP
+	// response is readable) mean this ORIGIN can't talk to the deploy API
+	// at all — api.clawdi.ai's CORS allowlist covers cloud.clawdi.ai, not
+	// preview/self-hosted mirrors. That's "hosted isn't available here",
+	// not an outage: stay silent. Readable HTTP errors (5xx/4xx from an
+	// allowed origin) keep the banner — those are real failures on hosts
+	// where the integration genuinely works.
+	const unreachableFromOrigin = query.error instanceof TypeError;
+
 	return {
 		tiles,
 		claimedEnvIds,
-		isLoading: query.isLoading,
-		error: query.error,
+		// Disabled queries report isLoading=true forever in v5 (status
+		// stays 'pending'); mask both flags when we never fetch.
+		isLoading: configured ? query.isLoading : false,
+		error: configured && !unreachableFromOrigin ? query.error : null,
 	};
 }
 

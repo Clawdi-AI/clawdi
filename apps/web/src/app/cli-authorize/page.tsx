@@ -110,7 +110,7 @@ function CliAuthorizeContent() {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Authorization Request Unavailable</AlertTitle>
+					<AlertTitle>Authorization request unavailable</AlertTitle>
 					<AlertDescription>{message}</AlertDescription>
 				</Alert>
 			</Shell>
@@ -224,7 +224,7 @@ function CliAuthorizeContent() {
 
 function Shell({ children }: { children: React.ReactNode }) {
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-background p-6">
+		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
 			<div className="w-full max-w-md space-y-4">
 				{children}
 				<div className="text-center text-xs text-muted-foreground">

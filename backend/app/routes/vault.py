@@ -37,6 +37,8 @@ from app.schemas.vault import (
     VaultCredentialProfileUpsert,
     VaultDeleteResponse,
     VaultItemDelete,
+    VaultItemsCopy,
+    VaultItemsCopyResponse,
     VaultItemsDeleteResponse,
     VaultItemsUpsertResponse,
     VaultItemUpsert,
@@ -110,6 +112,17 @@ async def list_vaults(
         [v.id for v in rows],
         visible_project_ids=visible_project_ids,
     )
+    # One grouped count for the page — key NAMES only, never values.
+    # Saves the dashboard an items request per vault card and powers
+    # busiest-first ranking.
+    item_counts: dict[UUID, int] = {}
+    if rows:
+        count_rows = await db.execute(
+            select(VaultItem.vault_id, func.count())
+            .where(VaultItem.vault_id.in_([v.id for v in rows]))
+            .group_by(VaultItem.vault_id)
+        )
+        item_counts = {vault_id: count for vault_id, count in count_rows.all()}
     default_project_id = (
         selected_project_id
         if selected_project_id is not None
@@ -132,6 +145,7 @@ async def list_vaults(
                 ),
                 project_ids=[str(pid) for pid in project_ids_by_vault.get(v.id, [])],
                 is_owner=v.user_id == auth.user_id,
+                item_count=item_counts.get(v.id, 0),
                 created_at=v.created_at,
             )
             for v in rows
@@ -261,6 +275,65 @@ async def upsert_vault_items(
 
     await db.commit()
     return VaultItemsUpsertResponse(status="ok", fields=len(body.fields))
+
+
+@router.post("/{slug}/items/copy")
+async def copy_vault_items(
+    slug: str,
+    body: VaultItemsCopy,
+    project_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> VaultItemsCopyResponse:
+    """Duplicate items into another vault the caller owns.
+
+    The dashboard's curation move ("batch-select keys in the default
+    vault, put them in a named one") needs values to travel between
+    vaults, but plaintext resolution stays CLI-only. So the copy happens
+    entirely server-side: decrypt + re-encrypt per item, nothing
+    returned but a count. Owner-only on both ends (`_get_vault_write`),
+    so shared-project viewers can't exfiltrate by copying into a vault
+    they control.
+    """
+    source = await _get_vault_write(auth, slug, db, project_id=project_id)
+    target = await _get_vault_write(auth, body.target_slug, db)
+    if target.id == source.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Source and target are the same vault")
+
+    source_by_name = await _load_items_by_name(db, source.id, body.section)
+    target_by_name = await _load_items_by_name(db, target.id, body.section)
+    copied = 0
+    for field_name in body.fields:
+        item = source_by_name.get(field_name)
+        if item is None:
+            continue
+        target_name = field_name
+        if body.strip_prefix and field_name.startswith(body.strip_prefix):
+            stripped = field_name[len(body.strip_prefix) :]
+            if stripped:
+                target_name = stripped
+        ciphertext, nonce = encrypt(decrypt(item.encrypted_value, item.nonce))
+        existing = target_by_name.get(target_name)
+        if existing:
+            existing.encrypted_value = ciphertext
+            existing.nonce = nonce
+        else:
+            created = VaultItem(
+                vault_id=target.id,
+                section=body.section,
+                item_name=target_name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+            db.add(created)
+            # Two source names can collapse onto one stripped target name —
+            # track the insert so the second becomes an update, not a
+            # duplicate row.
+            target_by_name[target_name] = created
+        copied += 1
+
+    await db.commit()
+    return VaultItemsCopyResponse(status="ok", copied=copied)
 
 
 @router.delete("/{slug}/items")

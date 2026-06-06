@@ -25,9 +25,11 @@ from app.models.api_key import ApiKey
 from app.models.vault import (
     Vault,
     VaultCredentialProfile,
+    VaultItem,
     VaultProjectAttachment,
     VaultProjectSlugAlias,
 )
+from app.services.vault_crypto import encrypt as vault_crypto_encrypt
 
 
 @pytest.mark.asyncio
@@ -103,6 +105,149 @@ async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.Asyn
 
     resolved = (await cli_client.post("/api/vault/resolve")).json()
     assert resolved.get("OPENAI_API_KEY") == "sk-live-xyz"
+
+
+@pytest.mark.asyncio
+async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClient):
+    """The dashboard curation move: batch-copy items vault→vault.
+
+    Values must survive the server-side decrypt/re-encrypt hop intact
+    while plaintext never appears in the copy response. Missing source
+    names are skipped (count reflects it); self-copy is rejected.
+    """
+    await cli_client.post("/api/vault", json={"slug": "grab-bag", "name": "Grab bag"})
+    await cli_client.post("/api/vault", json={"slug": "phala", "name": "Phala"})
+    await cli_client.put(
+        "/api/vault/grab-bag/items",
+        json={"section": "", "fields": {"OPENAI_API_KEY": "sk-live-xyz", "OTHER": "keep"}},
+    )
+
+    r = await cli_client.post(
+        "/api/vault/grab-bag/items/copy",
+        json={"target_slug": "phala", "fields": ["OPENAI_API_KEY", "NOT_THERE"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"status": "ok", "copied": 1}
+
+    # Target has the name; source is untouched (copy, not move).
+    assert (await cli_client.get("/api/vault/phala/items")).json() == {
+        "(default)": ["OPENAI_API_KEY"]
+    }
+    source_names = (await cli_client.get("/api/vault/grab-bag/items")).json()
+    assert sorted(source_names["(default)"]) == ["OPENAI_API_KEY", "OTHER"]
+
+    # The list endpoint carries per-vault key counts (names only) so the
+    # dashboard can rank vaults busiest-first without N+1 item fetches.
+    listing = (await cli_client.get("/api/vault")).json()
+    counts = {v["slug"]: v["item_count"] for v in listing["items"]}
+    assert counts["grab-bag"] == 2
+    assert counts["phala"] == 1
+
+    # The re-encrypted copy decrypts to the original plaintext. Delete
+    # the source item first so resolve can only be served by the copy.
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/grab-bag/items",
+        json={"section": "", "fields": ["OPENAI_API_KEY"]},
+    )
+    assert deleted.status_code == 200, deleted.text
+    resolved = (await cli_client.post("/api/vault/resolve")).json()
+    assert resolved.get("OPENAI_API_KEY") == "sk-live-xyz"
+
+    self_copy = await cli_client.post(
+        "/api/vault/grab-bag/items/copy",
+        json={"target_slug": "grab-bag", "fields": ["OPENAI_API_KEY"]},
+    )
+    assert self_copy.status_code == 400, self_copy.text
+
+
+@pytest.mark.asyncio
+async def test_vault_copy_strip_prefix_renames_at_destination(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    """Split-by-prefix: copying `app/KEY` with strip_prefix='app/' lands
+    as plain `KEY` in the destination vault, and the value survives."""
+    created = await cli_client.post("/api/vault", json={"slug": "bag", "name": "Bag"})
+    await cli_client.post("/api/vault", json={"slug": "app", "name": "App"})
+    for name, value in [("clawdi-backend/DATABASE_URL", "postgres://x"), ("KEEP_ME", "y")]:
+        ciphertext, nonce = vault_crypto_encrypt(value)
+        db_session.add(
+            VaultItem(
+                vault_id=uuid.UUID(created.json()["id"]),
+                section="",
+                item_name=name,
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+        )
+    await db_session.commit()
+
+    r = await cli_client.post(
+        "/api/vault/bag/items/copy",
+        json={
+            "target_slug": "app",
+            "fields": ["clawdi-backend/DATABASE_URL"],
+            "strip_prefix": "clawdi-backend/",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["copied"] == 1
+    assert (await cli_client.get("/api/vault/app/items")).json() == {"(default)": ["DATABASE_URL"]}
+
+    # Value round-trips under the NEW name.
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/bag/items",
+        json={"section": "", "fields": ["clawdi-backend/DATABASE_URL"]},
+    )
+    assert deleted.status_code == 200
+    resolved = (await cli_client.post("/api/vault/resolve")).json()
+    assert resolved.get("DATABASE_URL") == "postgres://x"
+
+
+@pytest.mark.asyncio
+async def test_vault_copy_and_delete_accept_legacy_field_names(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    """Legacy imports left names the upsert validator now rejects (e.g.
+    slash-namespaced `app/DATABASE_URL`). Copy and delete are exact
+    matches against existing rows, so both must accept those names —
+    otherwise they are permanently stuck in the source vault (the bug
+    Marvin hit moving keys out of his 700-key default vault)."""
+    created = await cli_client.post("/api/vault", json={"slug": "legacy", "name": "Legacy"})
+    assert created.status_code == 200, created.text
+    await cli_client.post("/api/vault", json={"slug": "tidy", "name": "Tidy"})
+
+    legacy_name = "clawdi-backend/DATABASE_URL"
+    ciphertext, nonce = vault_crypto_encrypt("postgres://legacy")
+    db_session.add(
+        VaultItem(
+            vault_id=uuid.UUID(created.json()["id"]),
+            section="",
+            item_name=legacy_name,
+            encrypted_value=ciphertext,
+            nonce=nonce,
+        )
+    )
+    await db_session.commit()
+
+    copied = await cli_client.post(
+        "/api/vault/legacy/items/copy",
+        json={"target_slug": "tidy", "fields": [legacy_name]},
+    )
+    assert copied.status_code == 200, copied.text
+    assert copied.json() == {"status": "ok", "copied": 1}
+    assert (await cli_client.get("/api/vault/tidy/items")).json() == {"(default)": [legacy_name]}
+
+    deleted = await cli_client.request(
+        "DELETE",
+        "/api/vault/legacy/items",
+        json={"section": "", "fields": [legacy_name]},
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert (await cli_client.get("/api/vault/legacy/items")).json() == {}
 
 
 @pytest.mark.asyncio

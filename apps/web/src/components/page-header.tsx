@@ -19,7 +19,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
 			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
 		>
 			<div className="min-w-0 max-w-full">
-				<h1 className="text-2xl font-bold tracking-tight text-pretty break-words">{title}</h1>
+				<h1 className="text-xl font-semibold tracking-tight text-pretty break-words">{title}</h1>
 				{description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
 			</div>
 			{actions ? (

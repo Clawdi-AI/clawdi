@@ -160,8 +160,17 @@ function MessageBlock({
 				    — typically inline `<code>` like `clawdi.memory_search({...})` —
 				    wrap inside the flex column instead of pushing the page wider
 				    than the viewport. Affects min-content sizing too, so the
-				    enclosing flex chain shrinks correctly on narrow screens. */}
-				<div className="text-sm wrap-anywhere">
+				    enclosing flex chain shrinks correctly on narrow screens.
+
+				    User turns get a quiet tinted bubble: in a long agent
+				    transcript the #1 scan job is "where did I say something" —
+				    name + avatar alone disappear between walls of markdown. */}
+				<div
+					className={cn(
+						"text-sm wrap-anywhere",
+						isUser && "w-fit max-w-full rounded-lg bg-accent/60 px-3 py-2",
+					)}
+				>
 					{isUser ? (
 						<UserMessageBody content={message.content} />
 					) : (

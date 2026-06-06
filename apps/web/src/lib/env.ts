@@ -69,6 +69,11 @@ export const env = createEnv({
 			.optional()
 			.transform((v) => v === "true" && process.env.NODE_ENV !== "production"),
 		NEXT_PUBLIC_DEV_AUTH_TOKEN: z.string().min(1).default("dev-bypass"),
+		// Cosmetic identity for the bypass user so a local preview can
+		// mirror the signed-in account it impersonates (DEV_AUTH_CLERK_ID
+		// backend-side). Display-only — never used for authorization.
+		NEXT_PUBLIC_DEV_AUTH_NAME: z.string().min(1).default("Dev User"),
+		NEXT_PUBLIC_DEV_AUTH_EMAIL: z.string().min(1).default("dev@clawdi.local"),
 
 		// Hosted-only analytics token. Optional so OSS and hosted-without-
 		// analytics both validate cleanly.
@@ -85,6 +90,8 @@ export const env = createEnv({
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
 		NEXT_PUBLIC_DEV_AUTH_BYPASS: process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS,
 		NEXT_PUBLIC_DEV_AUTH_TOKEN: process.env.NEXT_PUBLIC_DEV_AUTH_TOKEN,
+		NEXT_PUBLIC_DEV_AUTH_NAME: process.env.NEXT_PUBLIC_DEV_AUTH_NAME,
+		NEXT_PUBLIC_DEV_AUTH_EMAIL: process.env.NEXT_PUBLIC_DEV_AUTH_EMAIL,
 		NEXT_PUBLIC_POSTHOG_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_TOKEN,
 	},
 	// `bun test` preloads `test-setup.ts` to seed required vars, so
