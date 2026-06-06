@@ -157,6 +157,29 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
 
+    # Optional XTrace Memory API integration. When enabled and configured,
+    # uploaded cloud sessions and skill bundles are forwarded to XTrace for
+    # belief, episode, and artifact extraction, and returned memory refs are
+    # mirrored into Clawdi's builtin memory table.
+    xtrace_memory_enabled: bool = False
+    xtrace_api_key: str = ""
+    xtrace_org_id: str = ""
+    xtrace_memory_base_url: str = "https://api.production.xtrace.ai"
+    xtrace_memory_app_id: str = "clawdi-cloud"
+    xtrace_memory_timeout_seconds: float = 35.0
+    xtrace_memory_max_messages: int = 80
+    xtrace_memory_backfill_max_messages: int = 20
+    xtrace_memory_worker_enabled: bool = False
+    xtrace_memory_worker_batch_size: int = 1
+    xtrace_memory_worker_poll_seconds: float = 60.0
+    xtrace_memory_max_attempts: int = 3
+    xtrace_memory_retry_base_seconds: float = 60.0
+    xtrace_memory_daily_message_budget_per_user: int = 0
+    xtrace_memory_skip_automated_sessions: bool = True
+    xtrace_memory_skip_tiny_sessions: bool = False
+    xtrace_memory_low_quality_max_messages: int = 3
+    xtrace_memory_low_quality_max_duration_seconds: int = 120
+
     # JSON object keyed by provider/tool id. Each value can include:
     # authorization_url, token_url, client_id, client_secret, scope, audience,
     # and extra_authorize_params. Codex has an official built-in default; this

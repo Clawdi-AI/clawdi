@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ArrowUp,
+	Brain,
 	Home,
 	Layers,
 	MessageSquare,
@@ -20,6 +21,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import { MemoryRelationshipList } from "@/components/memories/memory-relationship-list";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -41,7 +43,7 @@ import { projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type AgentTab = "sessions" | "skills" | "projects";
+type AgentTab = "sessions" | "memories" | "skills" | "projects";
 
 interface ProjectRow {
 	id: string;
@@ -137,6 +139,22 @@ export default function AgentDetailPage() {
 		enabled: !!agent,
 	});
 
+	const { data: memoriesPage, isLoading: memoriesLoading } = useQuery({
+		queryKey: ["agent-memories", id],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/memories", {
+					params: {
+						query: {
+							environment_id: id,
+							page_size: 50,
+						},
+					},
+				}),
+			),
+		enabled: !!agent,
+	});
+
 	// Skills section: fetch ONLY this env's project. The earlier
 	// shape loaded the first 200 account-wide rows and filtered
 	// client-side, which on a multi-agent account with >200
@@ -218,11 +236,17 @@ export default function AgentDetailPage() {
 						description:
 							"The Agent Project is fixed. Added Custom or shared Projects add read-only context.",
 					}
-				: {
-						icon: MessageSquare,
-						title: "Session history",
-						description: "Review sessions synced by this agent.",
-					};
+				: activeTab === "memories"
+					? {
+							icon: Brain,
+							title: "Learned memories",
+							description: "Account-level memories generated from this agent's sessions.",
+						}
+					: {
+							icon: MessageSquare,
+							title: "Session history",
+							description: "Review sessions synced by this agent.",
+						};
 
 	useEffect(() => {
 		setActiveTab(requestedTab);
@@ -339,12 +363,20 @@ export default function AgentDetailPage() {
 					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
 						{/* Flat tab chrome — no boxed section wrappers (taste audit #1). */}
 						<div className="flex flex-wrap items-end justify-between gap-2">
-							<TabsList className="grid w-full grid-cols-3 sm:w-fit">
+							<TabsList className="grid w-full grid-cols-4 sm:w-fit">
 								<TabsTrigger value="sessions" className="min-w-0 px-2">
 									Sessions
 									<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
 										{sessionTotal}
 									</span>
+								</TabsTrigger>
+								<TabsTrigger value="memories" className="min-w-0 px-2">
+									Memories
+									{memoriesPage ? (
+										<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
+											{memoriesPage.total}
+										</span>
+									) : null}
 								</TabsTrigger>
 								<TabsTrigger value="skills" className="min-w-0 px-2">
 									Skills
@@ -388,6 +420,16 @@ export default function AgentDetailPage() {
 								</div>
 							</TabsContent>
 
+							<TabsContent value="memories" className="m-0">
+								<div className="max-w-4xl">
+									<MemoryRelationshipList
+										memories={memoriesPage?.items ?? []}
+										isLoading={memoriesLoading}
+										emptyMessage="No memories have been linked to this agent yet."
+									/>
+								</div>
+							</TabsContent>
+
 							<TabsContent value="skills" className="m-0">
 								<SkillCardGrid
 									skills={skillsForThisEnv ?? []}
@@ -427,7 +469,9 @@ export default function AgentDetailPage() {
 }
 
 function parseAgentTab(value: string | null): AgentTab | null {
-	if (value === "sessions" || value === "skills" || value === "projects") return value;
+	if (value === "sessions" || value === "memories" || value === "skills" || value === "projects") {
+		return value;
+	}
 	return null;
 }
 

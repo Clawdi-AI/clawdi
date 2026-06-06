@@ -469,6 +469,850 @@ async def test_session_upload_records_content_hash_and_uploaded_at(
 
 
 @pytest.mark.asyncio
+async def test_session_upload_enqueues_xtrace_ingest_when_configured(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_test",
+                    "status": "succeeded",
+                    "created_at": "2026-06-04T12:00:00Z",
+                    "result": {
+                        "object": "ingest_result",
+                        "memories_created": [
+                            {
+                                "id": "mem_test",
+                                "type": "fact",
+                                "status": "active",
+                                "created_at": "2026-06-04T12:01:00Z",
+                                "text": "User prefers Bun over npm.",
+                            }
+                        ],
+                        "memories_updated": [],
+                        "memories_superseded_by": {"mem_old": "mem_test"},
+                        "stage_timings": {},
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    local_id = "sess-xtrace-auto"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"I prefer Bun over npm."}]',
+    )
+
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+
+    assert calls == []
+
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    assert audit.source_type == "session"
+    assert audit.source_key == f"session:{session.id}:{session.content_hash}"
+    assert audit.status == "queued"
+    assert audit.created_ref_count == 0
+    assert audit.updated_ref_count == 0
+    assert audit.mirrored_count == 0
+
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"I prefer Bun over npm."}]',
+    )
+    audits = (
+        (
+            await db_session.execute(
+                select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 1
+
+
+@pytest.mark.asyncio
+async def test_session_upload_skips_automated_xtrace_ingest(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    class UnexpectedXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise AssertionError("automated sessions should not be sent to XTrace")
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", UnexpectedXTraceClient)
+
+    env_id = await _register_env(client)
+    local_id = f"sess-xtrace-cron-skip-{uuid.uuid4().hex[:8]}"
+    started = datetime.now(UTC).isoformat()
+    r = await client.post(
+        "/api/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": local_id,
+                    "started_at": started,
+                    "message_count": 12,
+                    "content_hash": "d" * 64,
+                    "summary": "Cron: portfolio-watch",
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    upload = await client.post(
+        f"/api/sessions/{local_id}/upload",
+        files={
+            "file": (
+                f"{local_id}.json",
+                b'[{"role":"user","content":"automated price scan"}]',
+                "application/json",
+            )
+        },
+    )
+    assert upload.status_code == 200, upload.text
+
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    assert audit.status == "skipped"
+    assert audit.attempt_count == 0
+    assert audit.response["skip_reason"] == "automated_session"
+    assert audit.response["policy"]["quality"] == "automated"
+    assert audit.response["policy"]["estimated_source_messages"] == 12
+
+
+@pytest.mark.asyncio
+async def test_session_upload_skips_xtrace_when_user_budget_exceeded(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_daily_message_budget_per_user", 1)
+
+    local_id = f"sess-xtrace-budget-skip-{uuid.uuid4().hex[:8]}"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"manual but over budget"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+
+    assert audit.status == "skipped"
+    assert audit.response["skip_reason"] == "budget_exceeded"
+    assert audit.response["budget"]["limit"] == 1
+    assert audit.response["policy"]["estimated_xtrace_messages"] == 3
+
+
+@pytest.mark.asyncio
+async def test_xtrace_session_ingest_sends_only_new_messages_on_append(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    calls: list[list[dict]] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append(kwargs["json"]["messages"])
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": f"job_delta_{len(calls)}",
+                    "status": "succeeded",
+                    "result": {"memories_created": [], "memories_updated": []},
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    local_id = f"sess-xtrace-delta-{uuid.uuid4().hex[:8]}"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"first"},{"role":"assistant","content":"second"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    first_job = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    await run_xtrace_ingest_job(first_job.id, db=db_session)
+
+    upload = await client.post(
+        f"/api/sessions/{local_id}/upload",
+        files={
+            "file": (
+                f"{local_id}.json",
+                (
+                    b'[{"role":"user","content":"first"},'
+                    b'{"role":"assistant","content":"second"},'
+                    b'{"role":"user","content":"third"}]'
+                ),
+                "application/json",
+            )
+        },
+    )
+    assert upload.status_code == 200, upload.text
+    jobs = (
+        (
+            await db_session.execute(
+                select(XTraceMemoryIngest)
+                .where(XTraceMemoryIngest.session_id == session.id)
+                .order_by(XTraceMemoryIngest.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(jobs) == 2
+    await run_xtrace_ingest_job(jobs[-1].id, db=db_session)
+
+    assert len(calls) == 2
+    assert [m["content"] for m in calls[0][1:]] == ["first", "second"]
+    assert [m["content"] for m in calls[1][1:]] == ["third"]
+    await db_session.refresh(jobs[-1])
+    assert jobs[-1].response["_clawdi"]["cost"]["payload_message_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_xtrace_session_ingest_worker_processes_queued_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_worker",
+                    "status": "succeeded",
+                    "result": {
+                        "memories_created": [
+                            {
+                                "id": "mem_worker",
+                                "type": "fact",
+                                "status": "active",
+                                "created_at": "2026-06-04T12:01:00Z",
+                                "text": "User prefers Bun over npm.",
+                            }
+                        ],
+                        "memories_updated": [],
+                        "memories_superseded_by": {},
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    local_id = "sess-xtrace-worker"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"I prefer Bun over npm."}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+
+    await run_xtrace_ingest_job(queued.id, db=db_session)
+
+    processed = await db_session.get(XTraceMemoryIngest, queued.id)
+    assert processed is not None
+    await db_session.refresh(processed)
+    assert processed.status == "succeeded"
+    assert processed.job_id == "job_worker"
+    assert processed.created_ref_count == 1
+    assert processed.mirrored_count == 1
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["url"] == "https://xtrace.test/v1/memories"
+    assert call["json"]["user_id"] == str(seed_user.id)
+    assert call["json"]["conv_id"] == str(session.id)
+    assert call["json"]["agent_id"] == str(session.environment_id)
+    assert call["json"]["messages"][1] == {"role": "user", "content": "I prefer Bun over npm."}
+
+    memories = (
+        (await db_session.execute(select(Memory).where(Memory.user_id == seed_user.id)))
+        .scalars()
+        .all()
+    )
+    assert len(memories) == 1
+    assert memories[0].content == "User prefers Bun over npm."
+    assert memories[0].source == "xtrace_session"
+    assert memories[0].metadata_["xtrace_memory_id"] == "mem_worker"
+
+
+@pytest.mark.asyncio
+async def test_xtrace_ingest_queue_drain_dispatches_queued_jobs(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_queued_xtrace_ingest_jobs
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+
+    await _seed_session_with_content(
+        client,
+        "sess-xtrace-drain",
+        content=b'[{"role":"user","content":"drain me"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == "sess-xtrace-drain",
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    dispatched: list[str] = []
+
+    async def fake_run(job_id, **_kwargs):
+        dispatched.append(str(job_id))
+
+    monkeypatch.setattr("app.services.xtrace_ingest_queue.run_xtrace_ingest_job", fake_run)
+
+    count = await run_queued_xtrace_ingest_jobs(limit=1000, db=db_session)
+
+    assert count >= 1
+    assert str(queued.id) in dispatched
+
+
+@pytest.mark.asyncio
+async def test_xtrace_ingest_queue_claims_due_jobs_once(
+    db_session: AsyncSession,
+    seed_user,
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import claim_queued_xtrace_ingest_jobs
+
+    old_enough_to_claim_first = datetime(2000, 1, 1, tzinfo=UTC)
+    due = XTraceMemoryIngest(
+        user_id=seed_user.id,
+        source_type="session",
+        source_key="session:claim-due",
+        status="queued",
+        created_at=old_enough_to_claim_first,
+    )
+    future = XTraceMemoryIngest(
+        user_id=seed_user.id,
+        source_type="session",
+        source_key="session:claim-future",
+        status="queued",
+        created_at=old_enough_to_claim_first,
+        next_attempt_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add_all([due, future])
+    await db_session.commit()
+
+    claimed = await claim_queued_xtrace_ingest_jobs(db_session, limit=10, worker_id="worker-a")
+
+    assert due.id in [job.id for job in claimed]
+    await db_session.refresh(due)
+    await db_session.refresh(future)
+    assert due.status == "running"
+    assert due.claimed_by == "worker-a"
+    assert due.claimed_at is not None
+    assert due.attempt_count == 1
+    assert future.status == "queued"
+    assert future.attempt_count == 0
+
+    claimed_again = await claim_queued_xtrace_ingest_jobs(
+        db_session, limit=10, worker_id="worker-b"
+    )
+    claimed_again_ids = [job.id for job in claimed_again]
+    assert due.id not in claimed_again_ids
+    assert future.id not in claimed_again_ids
+
+
+@pytest.mark.asyncio
+async def test_xtrace_ingest_worker_requeues_failed_jobs_with_backoff(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import (
+        claim_queued_xtrace_ingest_jobs,
+        run_xtrace_ingest_job,
+    )
+
+    class BrokenXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise httpx.ConnectError("xtrace unavailable")
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_max_attempts", 3)
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", BrokenXTraceClient)
+
+    await _seed_session_with_content(
+        client,
+        "sess-xtrace-retry-queue",
+        content=b'[{"role":"user","content":"retry later"}]',
+    )
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == "sess-xtrace-retry-queue",
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    queued.created_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+    claimed = await claim_queued_xtrace_ingest_jobs(db_session, limit=10, worker_id="worker-retry")
+    assert queued.id in [job.id for job in claimed]
+
+    await run_xtrace_ingest_job(queued.id, db=db_session)
+    await db_session.refresh(queued)
+
+    assert queued.status == "queued"
+    assert queued.attempt_count == 1
+    assert queued.next_attempt_at is not None
+    assert queued.claimed_by is None
+    assert queued.claimed_at is None
+    assert "xtrace unavailable" in (queued.error or "")
+
+
+@pytest.mark.asyncio
+async def test_session_upload_xtrace_error_does_not_fail_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+
+    class BrokenXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise httpx.ConnectError("xtrace unavailable")
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", BrokenXTraceClient)
+
+    local_id = "sess-xtrace-failure"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"I prefer Bun over npm."}]',
+    )
+
+    rows = (
+        (await db_session.execute(select(Memory).where(Memory.user_id == seed_user.id)))
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_session_upload_retries_xtrace_rate_limit(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    calls = 0
+
+    class RateLimitedXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            nonlocal calls
+            calls += 1
+            request = httpx.Request("POST", str(url))
+            if calls == 1:
+                return httpx.Response(
+                    429,
+                    request=request,
+                    headers={"Retry-After": "0.01"},
+                    json={"detail": "rate limited"},
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "job_retry",
+                    "status": "succeeded",
+                    "result": {
+                        "memories_created": [
+                            {
+                                "id": "mem_retry",
+                                "type": "fact",
+                                "text": "User retries XTrace rate limits.",
+                            }
+                        ],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", RateLimitedXTraceClient)
+
+    await _seed_session_with_content(
+        client,
+        "sess-xtrace-rate-limit",
+        content=b'[{"role":"user","content":"Retry XTrace rate limits."}]',
+    )
+
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == "sess-xtrace-rate-limit",
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    await run_xtrace_ingest_job(queued.id, db=db_session)
+
+    assert calls == 2
+    memory = (
+        await db_session.execute(
+            select(Memory).where(
+                Memory.user_id == seed_user.id,
+                Memory.content == "User retries XTrace rate limits.",
+            )
+        )
+    ).scalar_one()
+    assert memory.metadata_["xtrace_memory_id"] == "mem_retry"
+
+
+@pytest.mark.asyncio
+async def test_session_upload_records_xtrace_ingest_when_no_memories_returned(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.models.session import Session
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    class PendingXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_pending",
+                    "status": "pending",
+                    "result": {
+                        "object": "ingest_result",
+                        "memories_created": [],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", PendingXTraceClient)
+
+    local_id = "sess-xtrace-pending"
+    await _seed_session_with_content(
+        client,
+        local_id,
+        content=b'[{"role":"user","content":"Remember that preview smoke tests are required."}]',
+    )
+
+    session = (
+        await db_session.execute(
+            select(Session).where(
+                Session.user_id == seed_user.id,
+                Session.local_session_id == local_id,
+            )
+        )
+    ).scalar_one()
+    rows = (
+        (await db_session.execute(select(Memory).where(Memory.user_id == seed_user.id)))
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.session_id == session.id)
+        )
+    ).scalar_one()
+    await run_xtrace_ingest_job(audit.id, db=db_session)
+    await db_session.refresh(audit)
+
+    assert audit.job_id == "job_pending"
+    assert audit.source_type == "session"
+    assert audit.source_key.startswith(f"session:{session.id}:")
+    assert audit.status == "pending"
+    assert audit.created_ref_count == 0
+    assert audit.updated_ref_count == 0
+    assert audit.mirrored_count == 0
+    assert audit.response["id"] == "job_pending"
+
+
+@pytest.mark.asyncio
 async def test_session_messages_endpoint_paginates_long_conversations(
     client: httpx.AsyncClient,
 ):

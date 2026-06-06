@@ -163,8 +163,24 @@ async def list_memories(
     category: str | None = Query(default=None),
     q: str | None = Query(default=None),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
+    source_session_id: UUID | None = Query(default=None),
+    environment_id: UUID | None = Query(default=None),
 ) -> Paginated[MemoryResponse]:
     provider = await get_memory_provider(str(auth.user_id), db)
+    if (source_session_id is not None or environment_id is not None) and isinstance(
+        provider, BuiltinProvider
+    ):
+        return await _list_builtin_relationship_memories(
+            db,
+            auth,
+            page=page,
+            page_size=page_size,
+            category=category,
+            q=q,
+            order=order,
+            source_session_id=source_session_id,
+            environment_id=environment_id,
+        )
 
     if q:
         # Search is top-N ranked (FTS + trgm + vector hybrid). Paging through
@@ -278,6 +294,53 @@ async def list_memories(
             page=page,
             page_size=page_size,
         )
+    return Paginated[MemoryResponse](
+        items=[MemoryResponse.model_validate(m) for m in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+async def _list_builtin_relationship_memories(
+    db: AsyncSession,
+    auth: AuthContext,
+    *,
+    page: int,
+    page_size: int,
+    category: str | None,
+    q: str | None,
+    order: str,
+    source_session_id: UUID | None,
+    environment_id: UUID | None,
+) -> Paginated[MemoryResponse]:
+    from sqlalchemy import desc, func
+
+    base = (
+        select(Memory)
+        .join(Session, Memory.source_session_id == Session.id)
+        .where(Memory.user_id == auth.user_id, Session.user_id == auth.user_id)
+    )
+    if source_session_id is not None:
+        base = base.where(Session.id == source_session_id)
+    if environment_id is not None:
+        base = base.where(Session.environment_id == environment_id)
+    if _is_env_bound_api_key(auth):
+        if auth.api_key is None or auth.api_key.environment_id is None:
+            return Paginated[MemoryResponse](items=[], total=0, page=page, page_size=page_size)
+        base = base.where(Session.environment_id == auth.api_key.environment_id)
+    if category:
+        base = base.where(Memory.category == category)
+    if q:
+        base = base.where(Memory.content.ilike(f"%{q}%"))
+
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    order_col = desc(Memory.created_at) if order == "desc" else Memory.created_at
+    result = await db.execute(
+        base.order_by(order_col).limit(page_size).offset((page - 1) * page_size)
+    )
+    rows = [memory_to_dict(m) for m in result.scalars().all()]
+    await _attach_source_machines(db, auth, rows)
     return Paginated[MemoryResponse](
         items=[MemoryResponse.model_validate(m) for m in rows],
         total=total,

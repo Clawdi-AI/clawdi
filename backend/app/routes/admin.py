@@ -28,10 +28,10 @@ can land in this file under the same auth dep.
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
-from app.models.session import AgentEnvironment
+from app.models.session import AgentEnvironment, Session
 from app.models.user import User
 from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
@@ -57,6 +57,19 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
+
+
+def _is_automated_session(summary: str | None) -> bool:
+    summary_text = summary or ""
+    return summary_text.startswith("Cron:") or summary_text.startswith("[")
+
+
+def _percentile(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    sorted_values = sorted(values)
+    index = max(0, min(len(sorted_values) - 1, int((len(sorted_values) - 1) * percentile)))
+    return sorted_values[index]
 
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
@@ -94,6 +107,129 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     )
     logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, user.id)
     return user
+
+
+@router.get("/stats/sessions")
+async def admin_session_stats(
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+    since: datetime | None = Query(
+        default=None,
+        description="Window start; defaults to the current UTC day.",
+    ),
+    until: datetime | None = Query(
+        default=None,
+        description="Window end; defaults to the next UTC day after since.",
+    ),
+) -> dict:
+    """Fleet-wide session volume for capacity planning.
+
+    This route intentionally returns aggregate counters only. It is used for
+    quota/cost planning and cron-noise analysis; it does not expose session
+    summaries, project paths, or message content.
+    """
+
+    now = datetime.now(UTC)
+    window_start = since or datetime(now.year, now.month, now.day, tzinfo=UTC)
+    window_end = until or (window_start + timedelta(days=1))
+    if window_end <= window_start:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "until must be after since")
+
+    rows = (
+        await db.execute(
+            select(
+                Session.user_id,
+                AgentEnvironment.agent_type,
+                Session.summary,
+                Session.message_count,
+                Session.duration_seconds,
+                Session.input_tokens,
+                Session.output_tokens,
+                Session.cache_read_tokens,
+                Session.file_key,
+            )
+            .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+            .where(Session.last_activity_at >= window_start, Session.last_activity_at < window_end)
+        )
+    ).all()
+
+    by_user: dict[str, int] = {}
+    automated_users: set[str] = set()
+    manual_users: set[str] = set()
+    agent_counts: dict[str, int] = {}
+    totals = {
+        "sessions": 0,
+        "messages": 0,
+        "tokens": 0,
+        "sessions_with_content": 0,
+        "automated_sessions": 0,
+        "automated_messages": 0,
+        "manual_sessions": 0,
+        "manual_messages": 0,
+        "tiny_sessions": 0,
+    }
+
+    for row in rows:
+        user_id = str(row.user_id)
+        message_count = int(row.message_count or 0)
+        duration_seconds = int(row.duration_seconds or 0)
+        token_count = int(row.input_tokens or 0) + int(row.output_tokens or 0)
+        if row.cache_read_tokens:
+            token_count += int(row.cache_read_tokens)
+        automated = _is_automated_session(row.summary)
+        agent_type = row.agent_type or "unknown"
+
+        totals["sessions"] += 1
+        totals["messages"] += message_count
+        totals["tokens"] += token_count
+        if row.file_key:
+            totals["sessions_with_content"] += 1
+        if message_count <= 3 or duration_seconds <= 120:
+            totals["tiny_sessions"] += 1
+        by_user[user_id] = by_user.get(user_id, 0) + 1
+        agent_counts[agent_type] = agent_counts.get(agent_type, 0) + 1
+        if automated:
+            totals["automated_sessions"] += 1
+            totals["automated_messages"] += message_count
+            automated_users.add(user_id)
+        else:
+            totals["manual_sessions"] += 1
+            totals["manual_messages"] += message_count
+            manual_users.add(user_id)
+
+    session_counts = list(by_user.values())
+    user_count = len(by_user)
+    automated_session_share = (
+        totals["automated_sessions"] / totals["sessions"] if totals["sessions"] else 0
+    )
+
+    return {
+        "window": {
+            "since": window_start.isoformat(),
+            "until": window_end.isoformat(),
+        },
+        "totals": {
+            **totals,
+            "active_users": user_count,
+            "automated_users": len(automated_users),
+            "manual_users": len(manual_users),
+            "automated_session_share": automated_session_share,
+        },
+        "per_user": {
+            "p50_sessions": _percentile(session_counts, 0.50),
+            "p90_sessions": _percentile(session_counts, 0.90),
+            "p95_sessions": _percentile(session_counts, 0.95),
+            "max_sessions": max(session_counts) if session_counts else 0,
+        },
+        "agents": sorted(
+            [
+                {"agent_type": agent_type, "sessions": count}
+                for agent_type, count in agent_counts.items()
+            ],
+            key=lambda item: item["sessions"],
+            reverse=True,
+        ),
+    }
 
 
 @router.post("/auth/keys", response_model=ApiKeyCreated)
