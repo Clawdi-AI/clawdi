@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,11 @@ from app.schemas.memory import (
 )
 from app.services.embedding import resolve_embedder
 from app.services.memory_provider import BuiltinProvider, get_memory_provider, memory_to_dict
+from app.services.memory_recall import (
+    bump_recall_counts,
+    recall_counting_enabled,
+    recall_ids_from_hits,
+)
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
 
 
@@ -150,6 +155,7 @@ async def _project_filter_memories(
 
 @router.get("")
 async def list_memories(
+    background_tasks: BackgroundTasks,
     auth: AuthContext = Depends(require_scope("memories:read")),
     db: AsyncSession = Depends(get_session),
     page: int = Query(default=1, ge=1),
@@ -188,27 +194,11 @@ async def list_memories(
         # Re-cap to page_size so the response shape stays predictable
         # regardless of how much we overfetched.
         hits = hits[:page_size]
-        # A ranked search from an AGENT (api-key auth) is a recall — bump
-        # access_count on the returned memories so "does anything ever use
-        # this memory?" has a real answer (the dashboard shows it; keep-vs-
-        # delete decisions key on it). Dashboard/JWT browsing doesn't count.
-        # Mem0-backed hits without local rows no-op by construction.
-        if auth.is_cli and hits:
-            from sqlalchemy import update
-
-            hit_ids = []
-            for m in hits:
-                try:
-                    hit_ids.append(UUID(str(m["id"])))
-                except (KeyError, ValueError):
-                    continue
-            if hit_ids:
-                await db.execute(
-                    update(Memory)
-                    .where(Memory.user_id == auth.user_id, Memory.id.in_(hit_ids))
-                    .values(access_count=Memory.access_count + 1)
-                )
-                await db.commit()
+        # A ranked search from an AGENT (api-key auth) is a recall — count
+        # it (background task, own session, zero request latency; see
+        # app/services/memory_recall.py). Dashboard/JWT browsing doesn't count.
+        if auth.is_cli and hits and recall_counting_enabled():
+            background_tasks.add_task(bump_recall_counts, auth.user_id, recall_ids_from_hits(hits))
         items = [MemoryResponse.model_validate(m) for m in hits]
         return Paginated[MemoryResponse](
             items=items,

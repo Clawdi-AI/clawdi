@@ -50,3 +50,21 @@ async def test_dashboard_search_does_not_count_as_recall(client: httpx.AsyncClie
 
     detail = (await client.get(f"/api/memories/{memory_id}")).json()
     assert detail["access_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recall_counting_kill_switch(
+    cli_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """MEMORY_RECALL_COUNTING=false disables counting without a deploy."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "memory_recall_counting", False)
+    created = await cli_client.post(
+        "/api/memories",
+        json={"content": "Kill switch memory probe", "category": "fact"},
+    )
+    memory_id = created.json()["id"]
+    await cli_client.get("/api/memories?q=kill+switch+probe")
+    detail = (await cli_client.get(f"/api/memories/{memory_id}")).json()
+    assert detail["access_count"] == 0

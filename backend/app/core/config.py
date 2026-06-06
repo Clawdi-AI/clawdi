@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     app_name: str = "clawdi"
     environment: str = "development"  # development | staging | production
     debug: bool = False
+    # Kill switch for recall counting (Memory.access_count++ on agent
+    # ranked search, run as a background task). Flip to false via env
+    # if the extra write per search ever needs to go away without a
+    # deploy. See app/services/memory_recall.py.
+    memory_recall_counting: bool = True
     cors_origins: list[str] = ["http://localhost:3000"]
 
     # Externally reachable URL for THIS backend. Used when the backend embeds
