@@ -197,9 +197,29 @@ function VaultCard({
 	projectNameById: ReadonlyMap<string, string>;
 	shared?: boolean;
 }) {
+	const api = useApi();
 	// Key count ships on the list response (names only, never values) —
-	// no per-card items fetch.
-	const keyCount = vault.item_count ?? 0;
+	// no per-card items fetch. EXCEPT under deploy skew: a web build that
+	// knows item_count can face an API that doesn't send it yet (web and
+	// api don't deploy atomically), and treating missing as 0 told prod
+	// users every vault was empty. Fall back to the per-card fetch then.
+	const listCount: number | undefined = vault.item_count;
+	const keys = useQuery({
+		queryKey: ["vault-items", vault.slug, vault.project_ids?.[0]],
+		enabled: listCount === undefined,
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/vault/{slug}/items", {
+					params: {
+						path: { slug: vault.slug },
+						query: { project_id: vault.project_ids?.[0] ?? undefined },
+					},
+				}),
+			),
+	});
+	const keyCount =
+		listCount ??
+		(keys.data ? Object.values(keys.data).reduce((n, arr) => n + arr.length, 0) : null);
 	const usedBy = (vault.project_ids ?? [])
 		.map((id) => projectNameById.get(id))
 		.filter((n): n is string => !!n);
@@ -224,7 +244,7 @@ function VaultCard({
 				<p className="truncate font-mono text-xs text-muted-foreground">{vault.slug}</p>
 			</div>
 			<div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-				<span>{`${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
+				<span>{keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
 				{usedBy.length > 0 ? (
 					<span className="truncate" title={usedBy.join(", ")}>
 						used by {usedBy.slice(0, 2).join(", ")}
