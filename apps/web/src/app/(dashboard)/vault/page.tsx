@@ -197,6 +197,7 @@ function VaultCard({
 	projectNameById: ReadonlyMap<string, string>;
 	shared?: boolean;
 }) {
+	const api = useApi();
 	// Key count ships on the list response (names only, never values) —
 	// no per-card items fetch. EXCEPT under deploy skew: a web build that
 	// knows item_count can face an API that doesn't send it yet (web and
