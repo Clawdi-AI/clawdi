@@ -17,9 +17,10 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
-from app.core.database import async_session_factory
 from app.models.memory import Memory
 
 log = logging.getLogger(__name__)
@@ -30,11 +31,20 @@ def recall_counting_enabled() -> bool:
 
 
 async def bump_recall_counts(user_id: UUID, memory_ids: list[UUID]) -> None:
-    """Increment access_count for the given memories. Never raises."""
+    """Increment access_count for the given memories. Never raises.
+
+    Uses an EPHEMERAL NullPool engine instead of the app's global
+    session factory: background tasks can outlive the event loop that
+    warmed the global pool (pytest's per-test loops surfaced this as
+    asyncpg "attached to a different loop" corruption bleeding into
+    unrelated tests). One fresh connect per bump is cheap at this
+    call-rate and leaves zero shared state behind.
+    """
     if not memory_ids:
         return
+    engine = create_async_engine(settings.database_url, poolclass=NullPool)
     try:
-        async with async_session_factory() as db:
+        async with AsyncSession(engine) as db:
             await db.execute(
                 update(Memory)
                 .where(Memory.user_id == user_id, Memory.id.in_(memory_ids))
@@ -43,6 +53,8 @@ async def bump_recall_counts(user_id: UUID, memory_ids: list[UUID]) -> None:
             await db.commit()
     except Exception:  # noqa: BLE001 — counting must never break anything
         log.warning("memory_recall_count_failed user=%s n=%d", user_id, len(memory_ids))
+    finally:
+        await engine.dispose()
 
 
 def recall_ids_from_hits(hits: list[dict]) -> list[UUID]:
