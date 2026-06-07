@@ -246,9 +246,7 @@ class WhatsAppInboxPump:
         self,
         *,
         tenant_id: str,
-        wait_for_events: Callable[
-            [str, int, int], Awaitable[list[WhatsAppInboxPumpEvent]]
-        ],
+        wait_for_events: Callable[[str, int, int], Awaitable[list[WhatsAppInboxPumpEvent]]],
         ack: Callable[[str, int], Awaitable[None]],
         deliver: Callable[
             [WhatsAppPreparedInboundDelivery],
@@ -438,9 +436,7 @@ def prepare_whatsapp_inbound_delivery(
     if signal_jid.endswith("@lid"):
         if participant_jid is not None:
             participant_lid_jid = participant_lid_jid or signal_jid
-            participant_pn_jid = participant_pn_jid or _optional_payload_str(
-                payload.get("altJid")
-            )
+            participant_pn_jid = participant_pn_jid or _optional_payload_str(payload.get("altJid"))
         else:
             sender_lid_jid = sender_lid_jid or signal_jid
             sender_pn_jid = (
@@ -855,9 +851,7 @@ def _context_info_proto(message: dict[str, Any]) -> bytes:
     expiration = _optional_payload_int(message.get("expiration"))
     if expiration is not None:
         parts.append(_proto_varint_field(25, expiration))
-    ephemeral_setting_timestamp = _optional_payload_int(
-        message.get("ephemeralSettingTimestamp")
-    )
+    ephemeral_setting_timestamp = _optional_payload_int(message.get("ephemeralSettingTimestamp"))
     if ephemeral_setting_timestamp is not None:
         parts.append(_proto_varint_field(26, ephemeral_setting_timestamp))
     ephemeral_shared_secret = _optional_payload_bytes(message.get("ephemeralSharedSecret"))
@@ -964,9 +958,7 @@ def _message_context_info_proto(message: dict[str, Any]) -> bytes:
     padding_bytes = _optional_payload_bytes(message.get("paddingBytes"))
     if padding_bytes is not None:
         parts.append(_proto_bytes_field(4, padding_bytes))
-    message_addon_duration = _optional_payload_int(
-        message.get("messageAddOnDurationInSecs")
-    )
+    message_addon_duration = _optional_payload_int(message.get("messageAddOnDurationInSecs"))
     if message_addon_duration is not None:
         parts.append(_proto_varint_field(5, message_addon_duration))
     bot_message_secret = _optional_payload_bytes(message.get("botMessageSecret"))
@@ -1049,9 +1041,7 @@ def _whatsapp_inbox_message_debug(payload: dict[str, Any], text: str | None) -> 
     message_dict = message if isinstance(message, dict) else {}
     proto_bytes = len(whatsapp_message_proto_bytes(payload, text))
     debug: dict[str, Any] = {
-        "topLevelKinds": sorted(
-            key for key, value in message_dict.items() if value is not None
-        ),
+        "topLevelKinds": sorted(key for key, value in message_dict.items() if value is not None),
         "protoBytes": proto_bytes,
     }
     if text is not None:
@@ -1446,8 +1436,7 @@ async def save_whatsapp_signal_senders(
         return None
     config = dict(credential.config or {})
     config["signal_senders"] = {
-        key: serialize_signal_sender_snapshot(snapshot)
-        for key, snapshot in sorted(senders.items())
+        key: serialize_signal_sender_snapshot(snapshot) for key, snapshot in sorted(senders.items())
     }
     config["signal_senders_updated_at"] = datetime.now(UTC).isoformat()
     credential.config = config
@@ -1471,10 +1460,7 @@ async def save_whatsapp_group_sender_keys(
         return None
     config = dict(credential.config or {})
     config["group_sender_keys"] = encode_buffer_json(
-        {
-            key: dict(record)
-            for key, record in sorted(group_sender_keys.items())
-        }
+        {key: dict(record) for key, record in sorted(group_sender_keys.items())}
     )
     config["group_sender_keys_updated_at"] = datetime.now(UTC).isoformat()
     credential.config = config
@@ -1645,8 +1631,7 @@ class SignalSender:
         self.pre_key_pair = snapshot.pre_key_pair
         self.signed_pre_key_signature = snapshot.signed_pre_key_signature
         self.records = {
-            address: _copy_signal_session(record)
-            for address, record in snapshot.records.items()
+            address: _copy_signal_session(record) for address, record in snapshot.records.items()
         }
         self.pre_keys = dict(snapshot.pre_keys)
         self.signed_pre_keys = dict(snapshot.signed_pre_keys)
@@ -1660,8 +1645,7 @@ class SignalSender:
             pre_key_pair=self.pre_key_pair,
             signed_pre_key_signature=self.signed_pre_key_signature,
             records={
-                address: _copy_signal_session(record)
-                for address, record in self.records.items()
+                address: _copy_signal_session(record) for address, record in self.records.items()
             },
             pre_keys=dict(self.pre_keys),
             signed_pre_keys=dict(self.signed_pre_keys),
@@ -1708,9 +1692,7 @@ class SignalSender:
             local_identity=self.identity,
             plaintext=plaintext,
         )
-        envelope_type: Literal["pkmsg", "msg"] = (
-            "pkmsg" if record.get("pendingPreKey") else "msg"
-        )
+        envelope_type: Literal["pkmsg", "msg"] = "pkmsg" if record.get("pendingPreKey") else "msg"
         return EncryptedSignalEnvelope(type=envelope_type, ciphertext=ciphertext)
 
     def decrypt_from(
@@ -1786,15 +1768,11 @@ class GroupCipherBackend:
     ) -> None:
         self._store = store
         self._records: dict[str, SenderKeyRecordSnapshot] = {
-            key: dict(record)
-            for key, record in (snapshot or {}).items()
+            key: dict(record) for key, record in (snapshot or {}).items()
         }
 
     def snapshot(self) -> dict[str, SenderKeyRecordSnapshot]:
-        return {
-            key: dict(record)
-            for key, record in self._records.items()
-        }
+        return {key: dict(record) for key, record in self._records.items()}
 
     def load_snapshot(self, snapshot: Mapping[str, SenderKeyRecordSnapshot]) -> None:
         self._records = {key: dict(record) for key, record in snapshot.items()}
@@ -1806,10 +1784,13 @@ class GroupCipherBackend:
         author_user: str,
         author_device: int,
     ) -> bool:
-        return self._load_record(
-            _sender_key_name(group_jid, author_user, author_device),
-            create=False,
-        ) is not None
+        return (
+            self._load_record(
+                _sender_key_name(group_jid, author_user, author_device),
+                create=False,
+            )
+            is not None
+        )
 
     def clear(self) -> None:
         self._records.clear()
@@ -2308,9 +2289,7 @@ def _new_signal_session(
     remote_identity_key = _signal_prefixed_public_key(remote_identity)
     remote_signed_key = _signal_prefixed_public_key(signed_pre_key.public_key)
     remote_pre_key = (
-        _signal_prefixed_public_key(pre_key.public_key)
-        if pre_key is not None
-        else None
+        _signal_prefixed_public_key(pre_key.public_key) if pre_key is not None else None
     )
     session = _init_signal_session(
         is_initiator=True,

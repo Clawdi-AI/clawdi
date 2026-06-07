@@ -117,15 +117,13 @@ class MsgRouterMigrationImportResult:
     @property
     def channel_tokens(self) -> dict[str, str]:
         return {
-            provider: account.agent_token
-            for provider, account in self.channel_accounts.items()
+            provider: account.agent_token for provider, account in self.channel_accounts.items()
         }
 
     @property
     def webhook_secrets(self) -> dict[str, str]:
         return {
-            provider: account.webhook_secret
-            for provider, account in self.channel_accounts.items()
+            provider: account.webhook_secret for provider, account in self.channel_accounts.items()
         }
 
 

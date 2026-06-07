@@ -88,33 +88,27 @@ class WhatsAppSharedBotTransportStatus:
 
 
 class WhatsAppSharedBotTransport(Protocol):
-    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> None:
-        ...
+    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> None: ...
 
-    async def relay_raw_node(self, node: BinaryNode) -> None:
-        ...
+    async def relay_raw_node(self, node: BinaryNode) -> None: ...
 
     async def query_iq(
         self,
         node: BinaryNode,
         timeout_ms: int,
-    ) -> BinaryNode | None:
-        ...
+    ) -> BinaryNode | None: ...
 
 
 class WhatsAppSharedBotRuntime(Protocol):
-    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> None:
-        ...
+    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> None: ...
 
     async def relay_raw_node(
         self,
         node: BinaryNode,
         lookup_inbound_sender: Callable[[str], str | None],
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    async def forward_iq(self, node: BinaryNode, tenant_id: str | None) -> BinaryNode | None:
-        ...
+    async def forward_iq(self, node: BinaryNode, tenant_id: str | None) -> BinaryNode | None: ...
 
 
 _SHARED_BOT_TRANSPORTS: dict[UUID, WhatsAppSharedBotTransport] = {}

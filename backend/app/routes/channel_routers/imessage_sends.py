@@ -45,12 +45,15 @@ async def bluebubbles_send_text(
     params = await _request_params(request)
     chat_guid = _required_str_param(params, "chatGuid")
     text = _optional_str(params.get("message")) or _required_str_param(params, "text")
-    if await find_imessage_binding_for_send(
-        db,
-        account=account,
-        requested_chat_guid=chat_guid,
-        bot_agent_link_id=agent.link.id,
-    ) is None:
+    if (
+        await find_imessage_binding_for_send(
+            db,
+            account=account,
+            requested_chat_guid=chat_guid,
+            bot_agent_link_id=agent.link.id,
+        )
+        is None
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="chat is not paired")
     message = await send_channel_outbound_message(
         db,

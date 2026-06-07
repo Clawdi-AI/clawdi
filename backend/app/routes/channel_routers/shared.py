@@ -222,9 +222,7 @@ async def _list_imessage_bindings(
     if bot_agent_link_id is not None:
         filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
     result = await db.execute(
-        select(ChannelBinding)
-        .where(*filters)
-        .order_by(ChannelBinding.created_at.desc())
+        select(ChannelBinding).where(*filters).order_by(ChannelBinding.created_at.desc())
     )
     return list(result.scalars().all())
 

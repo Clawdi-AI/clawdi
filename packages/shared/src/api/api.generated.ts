@@ -195,6 +195,248 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/channels/debug/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Debug Events */
+        get: operations["list_debug_events_api_channels_debug_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/debug/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Debug Health */
+        get: operations["get_debug_health_api_channels_debug_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/migrations/msg-router/import-tenant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Msg Router Tenant */
+        post: operations["import_msg_router_tenant_api_channels_migrations_msg_router_import_tenant_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channels */
+        get: operations["list_channels_api_channels_get"];
+        put?: never;
+        /** Create Channel */
+        post: operations["create_channel_api_channels_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Channel */
+        get: operations["get_channel_api_channels__account_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Channel */
+        delete: operations["delete_channel_api_channels__account_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/pair-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Channel Pair Code */
+        post: operations["create_channel_pair_code_api_channels__account_id__pair_codes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/agent-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channel Agent Links */
+        get: operations["list_channel_agent_links_api_channels__account_id__agent_links_get"];
+        put?: never;
+        /** Create Channel Agent Link */
+        post: operations["create_channel_agent_link_api_channels__account_id__agent_links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/agent-links/{link_id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate Channel Agent Link Token */
+        post: operations["rotate_channel_agent_link_token_api_channels__account_id__agent_links__link_id__token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channel Bindings */
+        get: operations["list_channel_bindings_api_channels__account_id__bindings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/commands/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Channel Commands Route */
+        post: operations["sync_channel_commands_route_api_channels__account_id__commands_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send Channel Message */
+        post: operations["send_channel_message_api_channels__account_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/whatsapp/{account_id}/tenant-creds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Whatsapp Tenant Credentials */
+        get: operations["list_whatsapp_tenant_credentials_api_channels_whatsapp__account_id__tenant_creds_get"];
+        put?: never;
+        /** Create Whatsapp Tenant Credential */
+        post: operations["create_whatsapp_tenant_credential_api_channels_whatsapp__account_id__tenant_creds_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/whatsapp/{account_id}/tenant-creds/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Whatsapp Tenant Credential */
+        delete: operations["delete_whatsapp_tenant_credential_api_channels_whatsapp__account_id__tenant_creds__credential_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/whatsapp/{account_id}/auth-cert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Whatsapp Auth Cert */
+        get: operations["get_whatsapp_auth_cert_api_channels_whatsapp__account_id__auth_cert_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/auth/device": {
         parameters: {
             query?: never;
@@ -2356,6 +2598,242 @@ export interface components {
             /** Memory Providers */
             memory_providers: string[];
         };
+        /** ChannelAccountCreate */
+        ChannelAccountCreate: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "telegram" | "discord" | "whatsapp" | "imessage";
+            /** Name */
+            name: string;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Provider Token */
+            provider_token?: string | null;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Secrets */
+            secrets?: {
+                [key: string]: string;
+            } | null;
+        };
+        /** ChannelAccountCreatedResponse */
+        ChannelAccountCreatedResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Has Provider Token */
+            has_provider_token: boolean;
+            /** Webhook Url */
+            webhook_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Webhook Secret */
+            webhook_secret: string;
+            /** Agent Link Id */
+            agent_link_id?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Token */
+            agent_token?: string | null;
+        };
+        /** ChannelAccountResponse */
+        ChannelAccountResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Has Provider Token */
+            has_provider_token: boolean;
+            /** Webhook Url */
+            webhook_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChannelAgentLinkCreate */
+        ChannelAgentLinkCreate: {
+            /** Agent Id */
+            agent_id?: string | null;
+        };
+        /** ChannelAgentLinkResponse */
+        ChannelAgentLinkResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Agent Token */
+            agent_token?: string | null;
+        };
+        /** ChannelBindingResponse */
+        ChannelBindingResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Agent Link Id */
+            agent_link_id: string | null;
+            /** External Chat Id */
+            external_chat_id: string;
+            /** External Chat Type */
+            external_chat_type: string | null;
+            /** External Chat Name */
+            external_chat_name: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChannelCommandSpec */
+        ChannelCommandSpec: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Options */
+            options?: {
+                [key: string]: unknown;
+            }[] | null;
+        };
+        /** ChannelCommandSyncRequest */
+        ChannelCommandSyncRequest: {
+            /** Commands */
+            commands?: components["schemas"]["ChannelCommandSpec"][] | null;
+            /** Guild Id */
+            guild_id?: string | null;
+        };
+        /** ChannelCommandSyncResponse */
+        ChannelCommandSyncResponse: {
+            /** Provider */
+            provider: string;
+            /** Commands */
+            commands: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ChannelMessageResponse */
+        ChannelMessageResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Direction */
+            direction: string;
+            /** External Chat Id */
+            external_chat_id: string;
+            /** Provider Message Id */
+            provider_message_id: string | null;
+            /** Delivery Id */
+            delivery_id?: string | null;
+            /** Delivery Status */
+            delivery_status?: string | null;
+            /** Text */
+            text: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChannelPairCodeCreate */
+        ChannelPairCodeCreate: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Link Id */
+            agent_link_id?: string | null;
+            /**
+             * Ttl Seconds
+             * @default 900
+             */
+            ttl_seconds: number;
+        };
+        /** ChannelPairCodeResponse */
+        ChannelPairCodeResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Agent Link Id
+             * Format: uuid
+             */
+            agent_link_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Agent Token */
+            agent_token?: string | null;
+            /** Code */
+            code: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
+        /** ChannelSendMessageRequest */
+        ChannelSendMessageRequest: {
+            /** Binding Id */
+            binding_id?: string | null;
+            /** External Chat Id */
+            external_chat_id?: string | null;
+            /** Text */
+            text: string;
+        };
         /**
          * ConnectRequest
          * @description OAuth connect-link request body.
@@ -4040,6 +4518,98 @@ export interface components {
         VaultSectionsResponse: {
             [key: string]: string[];
         };
+        /** WhatsAppSelfIdentity */
+        WhatsAppSelfIdentity: {
+            /** Id */
+            id: string;
+            /** Lid */
+            lid?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** WhatsAppTenantCredentialCreate */
+        WhatsAppTenantCredentialCreate: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Link Id */
+            agent_link_id?: string | null;
+            /** Phone User */
+            phone_user?: string | null;
+            /**
+             * Device
+             * @default 1
+             */
+            device: number;
+            /** Name */
+            name?: string | null;
+            self_identity?: components["schemas"]["WhatsAppSelfIdentity"] | null;
+        };
+        /** WhatsAppTenantCredentialMetadata */
+        WhatsAppTenantCredentialMetadata: {
+            /**
+             * Credential Id
+             * Format: uuid
+             */
+            credential_id: string;
+            /**
+             * Agent Link Id
+             * Format: uuid
+             */
+            agent_link_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Jid */
+            jid: string;
+            /** Identity Pub Key Hex */
+            identity_pub_key_hex: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** WhatsAppTenantCredentialResponse */
+        WhatsAppTenantCredentialResponse: {
+            /**
+             * Channel
+             * @default whatsapp
+             */
+            channel: string;
+            /**
+             * Credential Id
+             * Format: uuid
+             */
+            credential_id: string;
+            /**
+             * Agent Link Id
+             * Format: uuid
+             */
+            agent_link_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Jid */
+            jid: string;
+            /** Identity Pub Key Hex */
+            identity_pub_key_hex: string;
+            /** Creds */
+            creds: {
+                [key: string]: unknown;
+            };
+            /** Auth Cert */
+            auth_cert: {
+                [key: string]: unknown;
+            };
+            /** Websocket Url */
+            websocket_url: string;
+            /** Media Proxy Base Url */
+            media_proxy_base_url: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -4498,6 +5068,565 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderAuthResolveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_debug_events_api_channels_debug_events_get: {
+        parameters: {
+            query?: {
+                account_id?: string | null;
+                provider?: string | null;
+                external_chat_id?: string | null;
+                direction?: string | null;
+                stage?: string | null;
+                outcome?: string | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_debug_health_api_channels_debug_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    import_msg_router_tenant_api_channels_migrations_msg_router_import_tenant_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    list_channels_api_channels_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAccountResponse"][];
+                };
+            };
+        };
+    };
+    create_channel_api_channels_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelAccountCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAccountCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_channel_api_channels__account_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAccountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_channel_api_channels__account_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_channel_pair_code_api_channels__account_id__pair_codes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelPairCodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelPairCodeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_channel_agent_links_api_channels__account_id__agent_links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAgentLinkResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_channel_agent_link_api_channels__account_id__agent_links_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelAgentLinkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAgentLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_channel_agent_link_token_api_channels__account_id__agent_links__link_id__token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAgentLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_channel_bindings_api_channels__account_id__bindings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelBindingResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_channel_commands_route_api_channels__account_id__commands_sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelCommandSyncRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelCommandSyncResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_channel_message_api_channels__account_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelSendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelMessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_whatsapp_tenant_credentials_api_channels_whatsapp__account_id__tenant_creds_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppTenantCredentialMetadata"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_whatsapp_tenant_credential_api_channels_whatsapp__account_id__tenant_creds_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatsAppTenantCredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppTenantCredentialResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_whatsapp_tenant_credential_api_channels_whatsapp__account_id__tenant_creds__credential_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_whatsapp_auth_cert_api_channels_whatsapp__account_id__auth_cert_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

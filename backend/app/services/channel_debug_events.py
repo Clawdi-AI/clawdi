@@ -108,15 +108,19 @@ async def channel_debug_health(
     user_id: UUID,
 ) -> list[dict[str, Any]]:
     accounts = (
-        await db.execute(
-            select(ChannelAccount)
-            .where(
-                ChannelAccount.user_id == user_id,
-                ChannelAccount.archived_at.is_(None),
+        (
+            await db.execute(
+                select(ChannelAccount)
+                .where(
+                    ChannelAccount.user_id == user_id,
+                    ChannelAccount.archived_at.is_(None),
+                )
+                .order_by(ChannelAccount.provider, ChannelAccount.name)
             )
-            .order_by(ChannelAccount.provider, ChannelAccount.name)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     health: list[dict[str, Any]] = []
     for account in accounts:
         item = {
@@ -136,9 +140,7 @@ async def channel_debug_health(
                 whatsapp_shared_bot_transport_status,
             )
 
-            item["nativeTransport"] = whatsapp_shared_bot_transport_status(
-                account.id
-            ).as_dict()
+            item["nativeTransport"] = whatsapp_shared_bot_transport_status(account.id).as_dict()
         health.append(item)
     return health
 

@@ -939,9 +939,7 @@ async def channel_agent_reference_exists(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelAgentReference.id).where(*filters)
-    )
+    result = await db.execute(select(ChannelAgentReference.id).where(*filters))
     return result.scalar_one_or_none() is not None
 
 
@@ -960,9 +958,7 @@ async def get_channel_agent_reference(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelAgentReference).where(*filters)
-    )
+    result = await db.execute(select(ChannelAgentReference).where(*filters))
     return result.scalar_one_or_none()
 
 

@@ -225,9 +225,7 @@ async def get_scheduled_message(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelScheduledMessage.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelScheduledMessage).where(*filters)
-    )
+    result = await db.execute(select(ChannelScheduledMessage).where(*filters))
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(

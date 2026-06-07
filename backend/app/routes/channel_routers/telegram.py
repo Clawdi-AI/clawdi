@@ -491,16 +491,17 @@ def _ensure_telegram_bot_command_entities(update: dict[str, Any]) -> None:
             continue
         entities = message.get("entities")
         if isinstance(entities, list) and any(
-            isinstance(entity, dict) and entity.get("type") == "bot_command"
-            for entity in entities
+            isinstance(entity, dict) and entity.get("type") == "bot_command" for entity in entities
         ):
             continue
         command_length = _telegram_command_length(text)
         if command_length == 0:
             continue
-        clean_entities = [entity for entity in entities if isinstance(entity, dict)] if isinstance(
-            entities, list
-        ) else []
+        clean_entities = (
+            [entity for entity in entities if isinstance(entity, dict)]
+            if isinstance(entities, list)
+            else []
+        )
         message["entities"] = [
             *clean_entities,
             {"type": "bot_command", "offset": 0, "length": command_length},

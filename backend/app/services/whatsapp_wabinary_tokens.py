@@ -239,7 +239,7 @@ SINGLE_BYTE_TOKENS: list[str] = [
     "attribute_padding",
     "1080",
     "03",
-    "screen_height"
+    "screen_height",
 ]
 
 DOUBLE_BYTE_TOKENS: list[list[str]] = [
@@ -499,7 +499,7 @@ DOUBLE_BYTE_TOKENS: list[list[str]] = [
         "played-self",
         "catalog_exists",
         "01f",
-        "mute_v2"
+        "mute_v2",
     ],
     [
         "reject",
@@ -757,7 +757,7 @@ DOUBLE_BYTE_TOKENS: list[list[str]] = [
         "03a",
         "web_md_migration_experience",
         "ptt_conversation_waveform",
-        "u_aud_limit_sil_restarts_test1"
+        "u_aud_limit_sil_restarts_test1",
     ],
     [
         "64",
@@ -1017,7 +1017,7 @@ DOUBLE_BYTE_TOKENS: list[list[str]] = [
         "1183",
         "1213",
         "1304",
-        "1537"
+        "1537",
     ],
     [
         "1724",
@@ -1275,8 +1275,8 @@ DOUBLE_BYTE_TOKENS: list[list[str]] = [
         "728",
         "1147",
         "1372",
-        "1961"
-    ]
+        "1961",
+    ],
 ]
 
 SINGLE_BYTE_TOKEN_MAP: dict[int, str] = {

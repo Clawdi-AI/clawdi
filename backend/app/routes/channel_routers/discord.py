@@ -566,9 +566,7 @@ async def _discord_bound_guilds(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelBinding).where(*filters)
-    )
+    result = await db.execute(select(ChannelBinding).where(*filters))
     guilds: set[str] = set()
     for binding in result.scalars().all():
         chat_type = (binding.external_chat_type or "").lower()

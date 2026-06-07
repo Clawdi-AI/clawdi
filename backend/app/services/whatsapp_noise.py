@@ -1097,10 +1097,7 @@ class WhatsAppNoiseEmulatorSession:
         )
 
     def signal_sender_snapshots(self) -> dict[str, SignalSenderSnapshot]:
-        return {
-            key: sender.snapshot()
-            for key, sender in sorted(self._signal_senders.items())
-        }
+        return {key: sender.snapshot() for key, sender in sorted(self._signal_senders.items())}
 
     def group_sender_key_snapshots(self) -> dict[str, SenderKeyRecordSnapshot]:
         return self._group_cipher.snapshot()
@@ -1514,9 +1511,7 @@ class _BinaryNodeDecoder:
             token = DOUBLE_BYTE_TOKEN_MAP.get((tag - 236, index))
             if token is not None:
                 return token
-            raise ValueError(
-                f"wabinary: unsupported dictionary token {tag - 236}/{index}"
-            )
+            raise ValueError(f"wabinary: unsupported dictionary token {tag - 236}/{index}")
         if 1 <= tag < 236:
             token = SINGLE_BYTE_TOKEN_MAP.get(tag)
             if token is not None:
