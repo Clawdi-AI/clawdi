@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.6
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.6
+
+Package: `clawdi@0.12.6`
+
+### Fixed
+
+- Fixed AI Provider apply for BYOK Codex Responses providers so OpenClaw uses
+  the same Codex Responses route as Clawdi-managed AI providers.
+- Fixed `clawdi ai-provider test --live` for managed providers running inside a
+  Clawdi agent. The command now uses the injected runtime environment key before
+  falling back to backend credential resolution.
+
 ## Clawdi CLI v0.12.1
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.1

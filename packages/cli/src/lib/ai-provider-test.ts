@@ -42,6 +42,13 @@ export async function inspectAiProviderAuth(provider: AiProvider): Promise<AiPro
 			: { status: "missing", detail: auth.ref };
 	}
 	if (auth.type === "api_key" && auth.source === "managed") {
+		if (provider.runtime_env_name && process.env[provider.runtime_env_name]) {
+			return {
+				status: "available",
+				detail: `managed api_key:env:${provider.runtime_env_name}`,
+				value: process.env[provider.runtime_env_name],
+			};
+		}
 		try {
 			const resolved = await new ApiClient().postJsonBody<{
 				value?: string | null;
@@ -58,9 +65,10 @@ export async function inspectAiProviderAuth(provider: AiProvider): Promise<AiPro
 			}
 			return { status: "missing", detail: "managed api_key returned no API key" };
 		} catch (error) {
+			const envDetail = provider.runtime_env_name ? `env:${provider.runtime_env_name} unset; ` : "";
 			return {
 				status: "missing",
-				detail: `managed api_key (${error instanceof Error ? error.message : String(error)})`,
+				detail: `managed api_key (${envDetail}${error instanceof Error ? error.message : String(error)})`,
 			};
 		}
 	}

@@ -733,6 +733,59 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain("sk-managed-secret");
 	});
 
+	it("uses managed provider runtime env before resolving through the backend", async () => {
+		const catalogPath = join(tmpHome, "providers.json");
+		writeFileSync(
+			catalogPath,
+			JSON.stringify({
+				schema_version: 1,
+				providers: [
+					{
+						id: "clawdi-managed",
+						type: "custom_openai_compatible",
+						base_url: "https://sub2api.example.test/v1",
+						default_model: "openai-codex/gpt-5.5",
+						api_mode: "codex_responses",
+						auth: {
+							type: "api_key",
+							source: "managed",
+						},
+						managed_by: "clawdi",
+						runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					},
+				],
+			}),
+		);
+		const oldRuntimeKey = process.env.CLAWDI_MANAGED_OPENAI_API_KEY;
+		process.env.CLAWDI_MANAGED_OPENAI_API_KEY = "sk-runtime-managed";
+		const { captured, restore: restoreFetch } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/models",
+				response: () => jsonResponse({ data: [] }),
+			},
+		]);
+		const { output, restore } = captureConsole();
+		try {
+			await aiProviderImportCommand(catalogPath, { json: true });
+			await aiProviderTestCommand("clawdi-managed", { live: true, json: true });
+		} finally {
+			restore();
+			restoreFetch();
+			if (oldRuntimeKey === undefined) delete process.env.CLAWDI_MANAGED_OPENAI_API_KEY;
+			else process.env.CLAWDI_MANAGED_OPENAI_API_KEY = oldRuntimeKey;
+		}
+
+		expect(
+			captured.some((request) => request.path === "/api/ai-providers/clawdi-managed/auth/resolve"),
+		).toBe(false);
+		const providerProbe = captured.find((request) => request.path === "/v1/models");
+		expect(providerProbe?.headers.authorization).toBe("Bearer sk-runtime-managed");
+		expect(output()).toContain('"status": "ok"');
+		expect(output()).toContain("managed api_key:env:CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(output()).not.toContain("sk-runtime-managed");
+	});
+
 	it("rejects invalid provider probe timeouts", async () => {
 		const { restore } = captureConsole();
 		try {
@@ -1699,6 +1752,47 @@ describe("ai-provider commands", () => {
 			source: "env",
 			provider: "default",
 			id: "CLAWDI_OPENAI_API_KEY",
+		});
+	});
+
+	it("projects user BYOK Codex Responses providers to the OpenClaw PI route", async () => {
+		const catalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "custom-openai",
+					type: "custom_openai_compatible",
+					label: "My AI key",
+					base_url: "https://sub2api.example.test/v1",
+					default_model: "openai-codex/gpt-5.5",
+					api_mode: "codex_responses",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "user",
+					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+				},
+			],
+			defaults: { chat_provider_id: "custom-openai" },
+		} as const;
+
+		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const patch = JSON.parse(projection.files[0]!.content);
+
+		expect(patch.agents.defaults.model.primary).toBe("openai-codex/gpt-5.5");
+		expect(Object.keys(patch.models.providers)).toEqual(["openai-codex"]);
+		expect(patch.models.providers["openai-codex"]).toMatchObject({
+			baseUrl: "https://sub2api.example.test/v1",
+			api: "openai-codex-responses",
+			agentRuntime: { id: "pi" },
+			apiKey: {
+				source: "env",
+				provider: "default",
+				id: "CLAWDI_OPENAI_API_KEY",
+			},
+		});
+		expect(patch.models.providers["openai-codex"].models[0]).toMatchObject({
+			id: "gpt-5.5",
+			name: "openai-codex/gpt-5.5",
+			api: "openai-codex-responses",
 		});
 	});
 

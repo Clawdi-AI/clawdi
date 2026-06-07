@@ -113,7 +113,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "api_mode": "codex_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_OPENAI_API_KEY",
+            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
         },
     )
     assert codex_mode.status_code == 200, codex_mode.text

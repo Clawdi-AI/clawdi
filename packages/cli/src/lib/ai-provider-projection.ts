@@ -222,7 +222,7 @@ function buildOpenClawProjection(
 				compactObject({
 					baseUrl: provider.base_url,
 					api: openClawApiLabelForProvider(provider, provider.api_mode),
-					agentRuntime: isClawdiManagedProvider(provider) ? { id: "pi" } : undefined,
+					agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
 					apiKey: provider.env_name
 						? { source: "env", provider: "default", id: provider.env_name }
 						: undefined,
@@ -280,7 +280,7 @@ function openClawApiLabelForProvider(
 	provider: ProjectionProvider,
 	apiMode: AiProviderApiMode,
 ): string | undefined {
-	if (apiMode === "openai_responses" && isClawdiManagedProvider(provider)) {
+	if (apiMode === "openai_responses" && usesOpenClawCodexResponsesRuntime(provider)) {
 		return "openai-codex-responses";
 	}
 	return openClawApiLabel(apiMode);
@@ -292,6 +292,13 @@ function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
 
 function isClawdiManagedProvider(provider: ProjectionProvider): boolean {
 	return provider.managed_by === "clawdi" || provider.id === "clawdi-managed";
+}
+
+function usesOpenClawCodexResponsesRuntime(provider: ProjectionProvider): boolean {
+	return (
+		provider.api_mode === "codex_responses" ||
+		(provider.api_mode === "openai_responses" && isClawdiManagedProvider(provider))
+	);
 }
 
 function openClawProjectionSkipReason(provider: ProjectionProvider): string | undefined {
@@ -313,11 +320,13 @@ function openClawDefaultModelRef(provider: ProjectionProvider): string {
 }
 
 function openClawProjectedProviderId(provider: ProjectionProvider): string {
-	return isClawdiManagedProvider(provider) ? OPENCLAW_MANAGED_CODEX_PROVIDER_ID : provider.id;
+	return usesOpenClawCodexResponsesRuntime(provider)
+		? OPENCLAW_MANAGED_CODEX_PROVIDER_ID
+		: provider.id;
 }
 
 function openClawModelId(provider: ProjectionProvider, modelId: string): string {
-	return isClawdiManagedProvider(provider) ? codexNativeModelId(modelId) : modelId;
+	return usesOpenClawCodexResponsesRuntime(provider) ? codexNativeModelId(modelId) : modelId;
 }
 
 function positiveNumber(input: number | undefined): number | undefined {
