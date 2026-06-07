@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_environment: str = ""  # falls back to `environment` if empty
     sentry_traces_sample_rate: float = 0.0
+    metrics_bearer_token: str = ""
+    metrics_basic_auth_user: str = "prometheus"
+    metrics_basic_auth_password: str = ""
 
     clerk_pem_public_key: str = ""
     # Optional: Clerk Backend API secret. Used by the snapshot-email-rebind
@@ -145,6 +148,12 @@ class Settings(BaseSettings):
     memory_embedding_base_url: str = ""
     memory_embedding_model: str = "text-embedding-3-small"
 
+    # Channel emulation waits. Production defaults preserve the native APIs'
+    # long-poll behaviour; tests can lower these without changing route code.
+    channel_long_poll_max_seconds: float = 30.0
+    channel_long_poll_interval_seconds: float = 0.1
+    discord_gateway_poll_interval_seconds: float = 1.0
+
     # Shared LLM credentials for any feature that needs chat completions
     # (memory extraction today; session summarization, auto-tagging, etc.
     # tomorrow). OpenAI-compatible endpoint — works with OpenAI itself,
@@ -163,6 +172,14 @@ class Settings(BaseSettings):
     # setting can override it or add future verified adapters without routing
     # AI Provider auth through local agent CLIs.
     ai_provider_oauth_config_json: str = ""
+
+    # Channels provider endpoints. The backend owns channel state directly;
+    # these base URLs are only for outbound provider calls.
+    channel_telegram_api_base_url: str = "https://api.telegram.org"
+    channel_discord_api_base_url: str = "https://discord.com/api/v10"
+    channel_discord_gateway_url: str = "wss://gateway.discord.gg"
+    channel_whatsapp_graph_api_base_url: str = "https://graph.facebook.com/v20.0"
+    channel_whatsapp_baileys_sidecars_json: str = ""
 
 
 settings = Settings()

@@ -1,0 +1,1 @@
+"""Standalone backend worker entrypoints."""

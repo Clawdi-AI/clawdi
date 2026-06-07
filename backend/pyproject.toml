@@ -19,9 +19,11 @@ dependencies = [
     "openai>=1.40",
     "fastembed>=0.3",
     "sentry-sdk[fastapi]>=2.23",
+    "websockets>=16.0",
     "pyyaml>=6.0",
     "composio>=0.11",
     "composio-client>=1.39.0",
+    "prometheus-client>=0.25.0",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +82,8 @@ mem0ai = "mem0"
 [tool.pdm.scripts]
 dev = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 start = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+channels-worker = "python -m app.workers.channels"
+discord-gateway-worker = "python -m app.workers.discord_gateway"
 migrate = "alembic upgrade head"
 lint = "ruff check ."
 format = "ruff format ."
@@ -94,7 +98,8 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 filterwarnings = [
     # asyncpg emits these on some platforms — harmless.

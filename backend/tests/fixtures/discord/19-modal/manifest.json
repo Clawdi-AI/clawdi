@@ -1,0 +1,16 @@
+{
+  "scenario": "19-modal",
+  "description": "Slash command /openmodal responds with type=9 MODAL; user submits; bot observes INTERACTION_CREATE MODAL_SUBMIT and ACKs with type=4.",
+  "captured_at": "2026-04-17T22:59:28.003Z",
+  "env": {
+    "application_id": "1469647169291026595",
+    "guild_id": "1469655705752441026",
+    "channel_id": "1494815997981491361",
+    "intents": 46593
+  },
+  "duration_ms": 64930,
+  "frame_count": {
+    "rest_pairs": 3,
+    "ws_frames": 11
+  }
+}

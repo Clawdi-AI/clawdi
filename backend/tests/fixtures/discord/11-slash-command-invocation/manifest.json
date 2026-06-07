@@ -1,0 +1,16 @@
+{
+  "scenario": "11-slash-command-invocation",
+  "description": "User runs /ping in #test-only; bot receives INTERACTION_CREATE and replies via POST /interactions/:id/:token/callback with type=4.",
+  "captured_at": "2026-04-17T22:51:41.223Z",
+  "env": {
+    "application_id": "1469647169291026595",
+    "guild_id": "1469655705752441026",
+    "channel_id": "1494815997981491361",
+    "intents": 46593
+  },
+  "duration_ms": 31170,
+  "frame_count": {
+    "rest_pairs": 1,
+    "ws_frames": 8
+  }
+}
