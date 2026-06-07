@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import chalk from "chalk";
+import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
+import { inspectAiProviderAuth } from "../lib/ai-provider-test";
 import { ApiClient, ApiError } from "../lib/api-client";
 import type { VaultResolved } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
@@ -116,11 +118,13 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		console.log(chalk.red(`Could not resolve clawdi references: ${errMessage(e)}`));
 		process.exit(1);
 	}
+	const spawnEnv = { ...envWithReferences, ...vaultEnv, ...referenceEnv };
+	const managedAiProviderEnv = await resolveManagedAiProviderEnv(spawnEnv);
 
 	// Spawn child process with injected env
 	const [cmd, ...cmdArgs] = args;
 	const child = spawnImpl(cmd, cmdArgs, {
-		env: { ...envWithReferences, ...vaultEnv, ...referenceEnv },
+		env: { ...spawnEnv, ...managedAiProviderEnv },
 		stdio: "inherit",
 	});
 
@@ -132,6 +136,42 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 	child.on("exit", (code) => {
 		process.exit(code ?? 0);
 	});
+}
+
+async function resolveManagedAiProviderEnv(
+	baseEnv: Record<string, string | undefined>,
+): Promise<Record<string, string>> {
+	let catalog: ReturnType<typeof readAiProviderCatalog>;
+	try {
+		catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	} catch (error) {
+		console.log(chalk.yellow(`⚠ Could not read AI provider catalog: ${errMessage(error)}`));
+		return {};
+	}
+
+	const injected: Record<string, string> = {};
+	const env = { ...baseEnv };
+	for (const provider of catalog.providers) {
+		if (provider.auth.type !== "api_key" || provider.auth.source !== "managed") continue;
+		const envName = provider.runtime_env_name;
+		if (!envName || env[envName]) continue;
+		const auth = await inspectAiProviderAuth(provider);
+		if (auth.status !== "available" || !auth.value) {
+			console.log(
+				chalk.yellow(
+					`⚠ Could not resolve AI provider key for ${provider.id}: ${auth.detail ?? auth.status}`,
+				),
+			);
+			continue;
+		}
+		injected[envName] = auth.value;
+		env[envName] = auth.value;
+	}
+	const count = Object.keys(injected).length;
+	if (count > 0) {
+		console.log(chalk.green(`✓ Resolved ${count} AI provider key${count === 1 ? "" : "s"}`));
+	}
+	return injected;
 }
 
 async function previewRun(

@@ -281,6 +281,59 @@ describe("run command project folder selection", () => {
 		expect(lines.join("\n")).not.toContain("sk-test");
 	});
 
+	it("injects cloud-managed AI provider keys into the child process without printing them", async () => {
+		const catalogDir = join(fakeClawdiHome, "ai-providers");
+		mkdirSync(catalogDir, { recursive: true });
+		writeFileSync(
+			join(catalogDir, "catalog.json"),
+			JSON.stringify({
+				schema_version: 1,
+				providers: [
+					{
+						id: "custom-openai",
+						type: "custom_openai_compatible",
+						label: "Custom OpenAI",
+						base_url: "https://provider.test/v1",
+						default_model: "openai-codex/gpt-5.5",
+						api_mode: "codex_responses",
+						auth: { type: "api_key", source: "managed" },
+						managed_by: "user",
+						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+					},
+				],
+				defaults: { chat_provider_id: "custom-openai" },
+			}),
+		);
+		const { calls, spawnImpl } = recordSpawn();
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/ai-providers/custom-openai/auth/resolve",
+				response: () => jsonResponse({ value: "sk-managed-provider" }),
+			},
+		]);
+		const origLog = console.log;
+		const lines: string[] = [];
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+
+		try {
+			await run(["codex", "exec"], { projectFolder: false }, spawnImpl);
+		} finally {
+			console.log = origLog;
+			restore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].path).toBe("/api/ai-providers/custom-openai/auth/resolve");
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBe("sk-managed-provider");
+		const out = lines.join("\n");
+		expect(out).toContain("Resolved 1 AI provider key");
+		expect(out).not.toContain("sk-managed-provider");
+	});
+
 	it("dry-runs env-file references without launching or fetching plaintext", async () => {
 		const envFile = join(tmpRoot, ".env");
 		writeFileSync(envFile, "OPENAI_API_KEY=clawdi://prod/openai/api_key\n");

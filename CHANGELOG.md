@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.7
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.7
+
+Package: `clawdi@0.12.7`
+
+### Fixed
+
+- Fixed `clawdi run` for Cloud-saved BYOK AI providers inside Clawdi agents.
+  Commands launched through `clawdi run` now receive the saved provider key at
+  runtime without writing plaintext keys to shell files or local config.
+
 ## Clawdi CLI v0.12.6
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.6
