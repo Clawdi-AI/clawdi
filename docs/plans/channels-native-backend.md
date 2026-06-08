@@ -29,7 +29,7 @@ does not run or proxy the old TypeScript `msg-router` service.
 - `channel_messages.inbox_sequence` is the channel-native inbox cursor used by
   Telegram polling and Discord gateway replay.
 - `channel_deliveries` is the durable outbound outbox processed by `pdm run channels-worker`.
-- `pdm run discord-gateway-worker` maintains Discord Gateway connections for active Discord accounts and records dispatch events through the backend service.
+- `pdm run channels-worker` maintains Discord Gateway connections for active Discord accounts and records dispatch events through the backend service.
 - `/api/channels` creates and lists native channel accounts.
 - `/api/channels/{id}/agent-links` lists or creates agent-scoped bot links;
   `/api/channels/{id}/agent-links/{link_id}/token` rotates a hashed agent token.
@@ -176,7 +176,7 @@ owned by the current link.
 | Provider | Clawdi-native status | Notes |
 | --- | --- | --- |
 | Telegram | Python-native Bot API slice | Account creation, webhook secret validation, pair/unpair binding, command sync through `setMyCommands`, inbound persistence, `/api/channels/telegram/bot/{agent_token}/getUpdates`, webhook-mode storage, and outbound `sendMessage` through both the delivery worker and the agent-facing Bot API. |
-| Discord | Python-native REST/Gateway slice | Account creation, webhook secret or Ed25519 interaction verification, pair/unpair binding, provider command sync, tenant-shadowed application commands, inbound persistence, outbound channel `messages` REST send, route/global rate-limit bucket tracking, Discord Gateway dispatch recording through `pdm run discord-gateway-worker`, and agent-facing Gateway replay at `/api/channels/discord/gateway`. |
+| Discord | Python-native REST/Gateway slice | Account creation, webhook secret or Ed25519 interaction verification, pair/unpair binding, provider command sync, tenant-shadowed application commands, inbound persistence, outbound channel `messages` REST send, route/global rate-limit bucket tracking, Discord Gateway dispatch recording through `pdm run channels-worker`, and agent-facing Gateway replay at `/api/channels/discord/gateway`. |
 | WhatsApp | Python-native Cloud/API plus Baileys boundary layer | Account creation, webhook verification, HMAC signature support via encrypted `app_secret`, pair/unpair binding, LID/PN alias routing, inbound persistence, outbound Cloud API text/media send through the delivery worker, Graph-shaped `/api/channels/whatsapp/graph/v{graph_version}/{phone_number_id}/messages` for Cloud API clients, Baileys-shaped tenant credential minting, stable auth cert persistence, Noise handshake/frame primitives, agent prekey bundle parsing, IQ responder policy, relay authorization policy, media proxy URL/HTTP handling, and encrypted image/audio media reupload through Graph media IDs. |
 | iMessage / BlueBubbles | Python-native HTTP/API/Socket.IO slice | Account creation, BlueBubbles/Photon webhook ingest, pair/unpair binding, inbound persistence, outbound `/api/channels/imessage/bluebubbles/v1/message/text`, `/api/channels/imessage/bluebubbles/v1/server/info`, webhook self-registration, scoped query routes, inbound webhook fan-out, and Socket.IO event fan-out. |
 
@@ -188,11 +188,9 @@ Clawdi-owned Baileys sidecar is allowed only as the WhatsApp Web protocol
 adapter: it must not own routing, database state, product APIs, retry policy, or
 tenant authorization.
 
-`pdm run channels-worker` is the Clawdi backend worker process for delivery
-outbox retries, agent webhook redelivery, and Discord Gateway capture. It is not
-the old Node msg-router worker. `pdm run discord-gateway-worker` is an optional
-single-purpose deployment/debug entrypoint for the Discord Gateway component
-when operators want to scale or inspect it separately.
+`pdm run channels-worker` is the single Clawdi backend worker process for
+delivery outbox retries, agent webhook redelivery, and Discord Gateway capture.
+It is not the old Node msg-router worker.
 
 See `docs/designs/whatsapp-baileys-sidecar-runtime.md` for the W5 sidecar
 contract and ownership split.
