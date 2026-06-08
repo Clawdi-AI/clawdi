@@ -16,6 +16,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -566,17 +567,18 @@ async def claim_pair_code(
         return PairCodeClaimResult(reason="expired")
 
     try:
-        binding = await get_or_create_binding(
-            db,
-            account=account,
-            bot_agent_link_id=pair_code.bot_agent_link_id,
-            user_id=pair_code.user_id,
-            external_chat_id=external_chat_id,
-            external_chat_type=external_chat_type,
-            external_chat_name=external_chat_name,
-            external_user_id=external_user_id,
-        )
-    except BindingActorMismatchError:
+        async with db.begin_nested():
+            binding = await get_or_create_binding(
+                db,
+                account=account,
+                bot_agent_link_id=pair_code.bot_agent_link_id,
+                user_id=pair_code.user_id,
+                external_chat_id=external_chat_id,
+                external_chat_type=external_chat_type,
+                external_chat_name=external_chat_name,
+                external_user_id=external_user_id,
+            )
+    except (BindingActorMismatchError, IntegrityError):
         return PairCodeClaimResult(reason="forbidden")
     pair_code.status = PAIR_CODE_STATUS_CLAIMED
     pair_code.claimed_at = datetime.now(UTC)

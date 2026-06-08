@@ -18,6 +18,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
@@ -43,6 +44,7 @@ from app.routes.channel_routers.discord import (
     _discord_bound_guilds,
     _discord_guild_create_payload,
 )
+from app.services import channels as channel_service
 from app.services.bluebubbles_socket import BlueBubblesSocketManager
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
@@ -869,6 +871,57 @@ async def test_group_pairing_requires_external_actor(
     assert pair_code.status == "pending"
     assert pair_code.claimed_external_chat_id is None
     assert pair_code.claimed_external_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_pair_code_binding_race_returns_controlled_failure(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "telegram", "name": f"telegram-race-{uuid4().hex}"},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    async def _raise_integrity_error(*_args, **_kwargs):
+        raise IntegrityError("insert channel binding", {}, Exception("unique active binding"))
+
+    monkeypatch.setattr(channel_service, "get_or_create_binding", _raise_integrity_error)
+
+    paired = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "message": {
+                "message_id": 1,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": 123456, "type": "private"},
+            }
+        },
+    )
+
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is False
+    assert paired.json()["binding_id"] is None
+    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    assert bindings.status_code == 200
+    assert bindings.json() == []
+    pair_code = (
+        await db_session.execute(
+            select(ChannelPairCode).where(ChannelPairCode.id == UUID(pair["id"]))
+        )
+    ).scalar_one()
+    assert pair_code.status == "pending"
+    assert pair_code.claimed_external_chat_id is None
 
 
 @pytest.mark.asyncio

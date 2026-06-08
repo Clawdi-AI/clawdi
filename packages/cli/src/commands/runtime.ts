@@ -65,7 +65,7 @@ const linkSchema = z
 			.object({
 				token_env: envNameSchema,
 				projection: runtimeProjectionSchema.default("dotenv"),
-				env: z.record(runtimeEnvKeySchema, envNameSchema).optional(),
+				env: z.partialRecord(runtimeEnvKeySchema, envNameSchema).optional(),
 			})
 			.strict(),
 		pair_code: z
@@ -164,19 +164,6 @@ const manifestSchema = z
 						"pair_code",
 						"command_env",
 					]);
-				}
-				if (link.runtime.env) {
-					for (const [key, envName] of Object.entries(link.runtime.env)) {
-						claimEnv(envName, [
-							"channels",
-							channelIndex,
-							"links",
-							linkIndex,
-							"runtime",
-							"env",
-							key,
-						]);
-					}
 				}
 				if (channel.provider !== "whatsapp" && link.whatsapp) {
 					ctx.addIssue({
@@ -285,6 +272,7 @@ export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promi
 		return;
 	}
 	const { manifest, manifestDir } = readManifest(opts.file);
+	preflightRuntimeOutputs(manifest, manifestDir);
 	const ctx: ApplyContext = {
 		api: new ApiClient(),
 		manifest,
@@ -750,6 +738,96 @@ function readManifest(file = "clawdi.runtime.yaml"): {
 		throw new Error(`Invalid runtime manifest ${path}: ${z.prettifyError(result.error)}`);
 	}
 	return { manifest: result.data, manifestDir: dirname(path) };
+}
+
+function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string): void {
+	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
+	const outputs = new Map<string, { value: string; ref: string }>();
+	const claim = (name: string, value: string, ref: string) => {
+		const existing = outputs.get(name);
+		if (existing && existing.value !== value) {
+			throw new Error(
+				`Runtime output ${name} has conflicting values before apply (${existing.ref}, ${ref}). Use runtime.env to give each channel-specific value a distinct env name.`,
+			);
+		}
+		outputs.set(name, { value, ref });
+	};
+
+	for (const channel of manifest.channels) {
+		const accountKey = runtimeAccountKey(channel);
+		for (const link of channel.links) {
+			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
+			if (link.pair_code?.command_env) {
+				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);
+			}
+			if (channel.provider === "telegram") {
+				claim(
+					runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
+					`${baseUrl}/api/channels/telegram`,
+					link.ref,
+				);
+			}
+			if (channel.provider === "discord") {
+				claim(
+					runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
+					`${baseUrl}/api/channels/discord`,
+					link.ref,
+				);
+				claim(
+					runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
+					`${toWebSocketUrl(baseUrl)}/api/channels/discord/gateway`,
+					link.ref,
+				);
+			}
+			if (channel.provider === "whatsapp") {
+				claim(
+					runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
+					`${baseUrl}/api/channels/whatsapp/graph`,
+					link.ref,
+				);
+				claim(
+					runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
+					`whatsapp-websocket:${accountKey}`,
+					link.ref,
+				);
+				if (link.whatsapp?.baileys_credentials_dir) {
+					claim(
+						runtimeEnvName(link, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
+						`${baseUrl}/api/channels/whatsapp/media`,
+						link.ref,
+					);
+					claim(
+						runtimeEnvName(link, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"),
+						resolvePath(manifestDir, link.whatsapp.baileys_credentials_dir),
+						link.ref,
+					);
+				}
+			}
+			if (channel.provider === "imessage") {
+				claim(
+					runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"),
+					`imessage-password:${link.ref}`,
+					link.ref,
+				);
+				claim(
+					runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
+					`${baseUrl}/api/channels/imessage/bluebubbles/v1`,
+					link.ref,
+				);
+				claim(
+					runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
+					`${baseUrl}/api/channels/imessage/bluebubbles`,
+					link.ref,
+				);
+			}
+		}
+	}
+}
+
+function runtimeAccountKey(channel: RuntimeChannel): string {
+	if (isExistingAccountSpec(channel.account)) return `account:${channel.account.id}`;
+	const account = createPrivateAccountSpec(channel.account);
+	return `private:${channel.provider}:${account.name}`;
 }
 
 function findManifestAccount(
