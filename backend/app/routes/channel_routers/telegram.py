@@ -59,6 +59,7 @@ from app.services.channels import (
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     telegram_chat_from_update,
+    telegram_external_user_id_from_update,
     telegram_message_id_from_update,
     telegram_text_from_update,
     verify_hashed_token,
@@ -375,6 +376,7 @@ async def telegram_webhook(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        external_user_id=telegram_external_user_id_from_update(payload),
         text=text,
     )
 
@@ -388,9 +390,10 @@ async def telegram_webhook(
         payload=payload,
     )
     message = messages[0][0]
-    if binding_result.paired or binding_result.unpaired:
+    if binding_result.command_handled:
+        delivered_at = datetime.now(UTC)
         for routed_message, _binding in messages:
-            routed_message.delivered_at = datetime.now(UTC)
+            routed_message.delivered_at = delivered_at
     for routed_message, binding in messages:
         await record_telegram_update_references(
             db,
@@ -400,12 +403,7 @@ async def telegram_webhook(
             payload=payload,
         )
     await db.commit()
-    if (
-        messages
-        and message.binding_id
-        and not binding_result.paired
-        and not binding_result.unpaired
-    ):
+    if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
         delivered_any = False
         for routed_message, binding in messages:

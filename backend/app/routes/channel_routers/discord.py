@@ -4,6 +4,7 @@ import asyncio
 import json
 import secrets
 import zlib
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -55,6 +56,7 @@ from app.services.channels import (
     dequeue_discord_gateway_events,
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
+    discord_external_user_id_from_payload,
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
     discord_text_from_payload,
@@ -420,6 +422,7 @@ async def discord_webhook(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        external_user_id=discord_external_user_id_from_payload(payload),
         text=discord_text_from_payload(payload),
         command=command,
     )
@@ -454,6 +457,10 @@ async def discord_webhook(
             message=message,
             payload=payload,
         )
+    if binding_result.command_handled:
+        delivered_at = datetime.now(UTC)
+        for routed_message, _binding in messages:
+            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
     if payload.get("type") == 2:

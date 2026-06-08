@@ -35,6 +35,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
     ChannelDelivery,
     ChannelMessage,
+    ChannelPairCode,
 )
 from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
@@ -371,6 +372,7 @@ async def _pair_telegram_chat(
             "update_id": update_id,
             "message": {
                 "message_id": update_id,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
                 "text": f"/bot_pair {pair['code']}",
                 "chat": {
                     "id": int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id,
@@ -417,6 +419,7 @@ async def _create_paired_discord_channel(
             "application_id": application_id,
             "channel_id": channel_id,
             "guild_id": guild_id,
+            "member": {"user": {"id": "discord-pair-user"}},
             "data": {
                 "name": "bot_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
@@ -641,6 +644,193 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     assert send_unowned.status_code == 403
     assert own_link.status_code == 201
     assert own_link.json()["agent_id"] == str(agent_b.id)
+
+
+@pytest.mark.asyncio
+async def test_group_pairing_can_only_be_changed_by_pairing_actor(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    admin_key = f"admin-{uuid4().hex}"
+    original_admin_key = settings.admin_api_key
+    settings.admin_api_key = admin_key
+    try:
+        created = await client.post(
+            "/api/admin/channels",
+            headers={"X-Admin-Key": admin_key},
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "provider": "telegram",
+                "name": f"public-group-telegram-{uuid4().hex}",
+                "visibility": "public",
+            },
+        )
+    finally:
+        settings.admin_api_key = original_admin_key
+    assert created.status_code == 201, created.text
+    channel = created.json()
+    account_id = UUID(channel["id"])
+    webhook_secret = channel["webhook_secret"]
+
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="pair-owner-a")
+    user_b, agent_b = await _create_user_with_channel_agent(db_session, label="pair-owner-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        pair_a = await client_a.post(
+            f"/api/channels/{account_id}/pair-codes",
+            json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
+        )
+    assert pair_a.status_code == 201
+
+    async with _client_for_user(db_session, user_b) as client_b:
+        pair_b = await client_b.post(
+            f"/api/channels/{account_id}/pair-codes",
+            json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
+        )
+    assert pair_b.status_code == 201
+
+    def group_command(message_id: int, text: str, actor_id: int) -> dict[str, Any]:
+        return {
+            "update_id": message_id,
+            "message": {
+                "message_id": message_id,
+                "from": {"id": actor_id, "is_bot": False, "first_name": f"U{actor_id}"},
+                "text": text,
+                "chat": {"id": -99002, "type": "supergroup", "title": "Ops"},
+            },
+        }
+
+    paired_a = await client.post(
+        f"/api/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_secret},
+        json=group_command(8101, f"/bot_pair {pair_a.json()['code']}", 1111),
+    )
+    assert paired_a.status_code == 200
+    assert paired_a.json()["paired"] is True
+
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account_id,
+                ChannelBinding.external_chat_id == "-99002",
+                ChannelBinding.status == "active",
+            )
+        )
+    ).scalar_one()
+    assert binding.user_id == user_a.id
+    assert binding.paired_external_user_id == "1111"
+
+    bob_unpair = await client.post(
+        f"/api/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_secret},
+        json=group_command(8102, "/bot_unpair", 2222),
+    )
+    assert bob_unpair.status_code == 200
+    assert bob_unpair.json()["unpaired"] is False
+    await db_session.refresh(binding)
+    assert binding.status == "active"
+    assert binding.user_id == user_a.id
+
+    bob_takeover = await client.post(
+        f"/api/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_secret},
+        json=group_command(8103, f"/bot_pair {pair_b.json()['code']}", 2222),
+    )
+    assert bob_takeover.status_code == 200
+    assert bob_takeover.json()["paired"] is False
+    await db_session.refresh(binding)
+    assert binding.status == "active"
+    assert binding.user_id == user_a.id
+
+    pair_code_b = (
+        await db_session.execute(
+            select(ChannelPairCode).where(ChannelPairCode.id == UUID(pair_b.json()["id"]))
+        )
+    ).scalar_one()
+    assert pair_code_b.status == "pending"
+    assert pair_code_b.claimed_external_chat_id is None
+    assert pair_code_b.claimed_external_user_id is None
+
+    alice_unpair = await client.post(
+        f"/api/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_secret},
+        json=group_command(8104, "/bot_unpair", 1111),
+    )
+    assert alice_unpair.status_code == 200
+    assert alice_unpair.json()["unpaired"] is True
+    await db_session.refresh(binding)
+    assert binding.status == "archived"
+
+    paired_b = await client.post(
+        f"/api/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_secret},
+        json=group_command(8105, f"/bot_pair {pair_b.json()['code']}", 2222),
+    )
+    assert paired_b.status_code == 200
+    assert paired_b.json()["paired"] is True
+
+    active_binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account_id,
+                ChannelBinding.external_chat_id == "-99002",
+                ChannelBinding.status == "active",
+            )
+        )
+    ).scalar_one()
+    assert active_binding.user_id == user_b.id
+    assert active_binding.paired_external_user_id == "2222"
+    await db_session.refresh(pair_code_b)
+    assert pair_code_b.status == "claimed"
+    assert pair_code_b.claimed_external_chat_id == "-99002"
+    assert pair_code_b.claimed_external_user_id == "2222"
+
+
+@pytest.mark.asyncio
+async def test_group_pairing_requires_external_actor(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "telegram", "name": "telegram-group-missing-actor"},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    paired = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 8201,
+            "message": {
+                "message_id": 8201,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": -99003, "type": "supergroup", "title": "Ops"},
+            },
+        },
+    )
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is False
+
+    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    assert bindings.status_code == 200
+    assert bindings.json() == []
+    pair_code = (
+        await db_session.execute(
+            select(ChannelPairCode).where(ChannelPairCode.id == UUID(pair["id"]))
+        )
+    ).scalar_one()
+    assert pair_code.status == "pending"
+    assert pair_code.claimed_external_chat_id is None
+    assert pair_code.claimed_external_user_id is None
 
 
 @pytest.mark.asyncio
@@ -4386,6 +4576,7 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
                 "channel_id": "chan-1",
                 "guild_id": "guild-1",
                 "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "discord-msg-pair-user"},
                 "channel": {"id": "chan-1", "name": "ops"},
             },
         },
@@ -4424,6 +4615,7 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
             "channel_id": "chan-discord-unpair",
             "guild_id": "guild-discord-unpair",
             "channel": {"id": "chan-discord-unpair", "name": "ops", "type": 0},
+            "member": {"user": {"id": "discord-user-unpair"}},
             "data": {
                 "name": "bot_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
@@ -4441,6 +4633,7 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
             "channel_id": "chan-discord-unpair",
             "guild_id": "guild-discord-unpair",
             "channel": {"id": "chan-discord-unpair", "name": "ops", "type": 0},
+            "member": {"user": {"id": "discord-user-unpair"}},
             "data": {"name": "bot_unpair"},
         },
     )
@@ -4502,6 +4695,7 @@ async def test_discord_dispatch_records_bound_message(
                 "channel_id": "chan-dispatch",
                 "guild_id": "guild-dispatch",
                 "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "discord-dispatch-pair-user"},
             },
         },
     )
@@ -4578,6 +4772,7 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
                 "channel_id": "chan-gateway-pair",
                 "guild_id": "guild-gateway",
                 "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "discord-gateway-pair-user"},
             },
         },
     )
@@ -4800,6 +4995,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
             "data": {
                 "guid": "imessage-shared-msg",
                 "text": f"/bot_pair {pair_codes['imessage']}",
+                "handle": {"address": "shared-imessage-sender"},
                 "chats": [{"guid": shared_chat_id, "displayName": "Shared Chat"}],
             }
         },

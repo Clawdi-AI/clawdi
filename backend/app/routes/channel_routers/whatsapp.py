@@ -66,6 +66,7 @@ from app.services.channels import (
     verify_hub_signature,
     verify_webhook_secret,
     whatsapp_chat_from_payload,
+    whatsapp_external_user_id_from_payload,
     whatsapp_from_me_from_payload,
     whatsapp_jids_from_payload,
     whatsapp_message_id_from_payload,
@@ -784,6 +785,7 @@ async def whatsapp_webhook(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        external_user_id=whatsapp_external_user_id_from_payload(payload),
         text=text,
     )
 
@@ -805,6 +807,10 @@ async def whatsapp_webhook(
                     remote_jid=remote_jid,
                     alt_jid=alt_jid,
                 )
+    if binding_result.command_handled:
+        delivered_at = datetime.now(UTC)
+        for routed_message, _binding in messages:
+            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
     return TelegramWebhookResponse(

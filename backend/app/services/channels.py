@@ -116,6 +116,7 @@ class InboundBindingResult:
     bindings: tuple[ChannelBinding, ...] = ()
     paired: bool = False
     unpaired: bool = False
+    command_handled: bool = False
     pair_failed_reason: str | None = None
 
 
@@ -143,6 +144,11 @@ PAIRING_REPLY_PAIRED = "Paired! This chat is now connected to your agent."
 PAIRING_REPLY_UNPAIRED = "Unpaired. This chat is no longer connected to an agent."
 PAIRING_REPLY_NOT_PAIRED = "This chat is not paired."
 PAIRING_REPLY_USAGE_BOT_PAIR = "Usage: /bot_pair <code>"
+PAIRING_REPLY_FORBIDDEN = "Only the user who paired this chat can change its pairing."
+
+
+class BindingActorMismatchError(Exception):
+    pass
 
 
 def hash_token(value: str) -> str:
@@ -515,6 +521,7 @@ async def claim_pair_code(
     external_chat_id: str,
     external_chat_type: str | None,
     external_chat_name: str | None,
+    external_user_id: str | None,
 ) -> PairCodeClaimResult:
     result = await db.execute(
         select(ChannelPairCode).where(
@@ -530,18 +537,23 @@ async def claim_pair_code(
     if pair_code.expires_at <= datetime.now(UTC):
         return PairCodeClaimResult(reason="expired")
 
-    binding = await get_or_create_binding(
-        db,
-        account=account,
-        bot_agent_link_id=pair_code.bot_agent_link_id,
-        user_id=pair_code.user_id,
-        external_chat_id=external_chat_id,
-        external_chat_type=external_chat_type,
-        external_chat_name=external_chat_name,
-    )
+    try:
+        binding = await get_or_create_binding(
+            db,
+            account=account,
+            bot_agent_link_id=pair_code.bot_agent_link_id,
+            user_id=pair_code.user_id,
+            external_chat_id=external_chat_id,
+            external_chat_type=external_chat_type,
+            external_chat_name=external_chat_name,
+            external_user_id=external_user_id,
+        )
+    except BindingActorMismatchError:
+        return PairCodeClaimResult(reason="forbidden")
     pair_code.status = PAIR_CODE_STATUS_CLAIMED
     pair_code.claimed_at = datetime.now(UTC)
     pair_code.claimed_external_chat_id = external_chat_id
+    pair_code.claimed_external_user_id = external_user_id
     return PairCodeClaimResult(binding=binding)
 
 
@@ -554,6 +566,7 @@ async def get_or_create_binding(
     external_chat_id: str,
     external_chat_type: str | None,
     external_chat_name: str | None,
+    external_user_id: str | None,
 ) -> ChannelBinding:
     result = await db.execute(
         select(ChannelBinding)
@@ -569,10 +582,16 @@ async def get_or_create_binding(
     )
     binding = result.scalars().first()
     if binding is not None:
+        if binding.status == BINDING_STATUS_ACTIVE and not binding_is_controlled_by_actor(
+            binding,
+            external_user_id=external_user_id,
+        ):
+            raise BindingActorMismatchError
         binding.bot_agent_link_id = bot_agent_link_id
         binding.user_id = user_id
         binding.external_chat_type = external_chat_type
         binding.external_chat_name = external_chat_name
+        binding.paired_external_user_id = external_user_id
         binding.status = BINDING_STATUS_ACTIVE
         return binding
 
@@ -583,10 +602,21 @@ async def get_or_create_binding(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        paired_external_user_id=external_user_id,
     )
     db.add(binding)
     await db.flush()
     return binding
+
+
+def binding_is_controlled_by_actor(
+    binding: ChannelBinding,
+    *,
+    external_user_id: str | None,
+) -> bool:
+    if binding.paired_external_user_id is None:
+        return external_user_id is None
+    return binding.paired_external_user_id == external_user_id
 
 
 async def find_binding(
@@ -726,6 +756,7 @@ async def resolve_inbound_binding(
     external_chat_id: str,
     external_chat_type: str | None,
     external_chat_name: str | None,
+    external_user_id: str | None,
     text: str | None,
     command: ChannelPairCommand | None = None,
 ) -> InboundBindingResult:
@@ -734,9 +765,21 @@ async def resolve_inbound_binding(
     parsed = command if command is not None else parse_pair_command(text)
     if parsed is None:
         return InboundBindingResult(binding=binding, bindings=tuple(bindings))
+    if external_user_id is None and pairing_command_requires_actor(external_chat_type):
+        return InboundBindingResult(
+            binding=binding,
+            bindings=tuple(bindings),
+            command_handled=True,
+            pair_failed_reason="forbidden",
+        )
     if parsed.kind == "pair":
         if not parsed.code:
-            return InboundBindingResult(binding=binding, pair_failed_reason="usage")
+            return InboundBindingResult(
+                binding=binding,
+                bindings=tuple(bindings),
+                command_handled=True,
+                pair_failed_reason="usage",
+            )
         claim = await claim_pair_code(
             db,
             account=account,
@@ -744,20 +787,48 @@ async def resolve_inbound_binding(
             external_chat_id=external_chat_id,
             external_chat_type=external_chat_type,
             external_chat_name=external_chat_name,
+            external_user_id=external_user_id,
         )
         return InboundBindingResult(
             binding=claim.binding or binding,
             bindings=(claim.binding,) if claim.binding is not None else tuple(bindings),
             paired=claim.binding is not None and claim.reason is None,
+            command_handled=True,
             pair_failed_reason=claim.reason,
         )
     if parsed.kind == "unpair":
         if not bindings:
-            return InboundBindingResult(binding=None)
-        for active_binding in bindings:
+            return InboundBindingResult(binding=None, command_handled=True)
+        authorized_bindings = [
+            active_binding
+            for active_binding in bindings
+            if binding_is_controlled_by_actor(
+                active_binding,
+                external_user_id=external_user_id,
+            )
+        ]
+        if not authorized_bindings:
+            return InboundBindingResult(
+                binding=binding,
+                bindings=tuple(bindings),
+                command_handled=True,
+                pair_failed_reason="forbidden",
+            )
+        for active_binding in authorized_bindings:
             active_binding.status = BINDING_STATUS_ARCHIVED
-        return InboundBindingResult(binding=binding, bindings=tuple(bindings), unpaired=True)
-    return InboundBindingResult(binding=binding, bindings=tuple(bindings))
+        return InboundBindingResult(
+            binding=binding,
+            bindings=tuple(authorized_bindings),
+            unpaired=True,
+            command_handled=True,
+        )
+    return InboundBindingResult(binding=binding, bindings=tuple(bindings), command_handled=True)
+
+
+def pairing_command_requires_actor(external_chat_type: str | None) -> bool:
+    if external_chat_type is None:
+        return False
+    return external_chat_type.lower() not in {"private", "dm"}
 
 
 def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
@@ -798,9 +869,13 @@ def pairing_reply_for_command(
     if command.kind == "pair":
         if result.pair_failed_reason == "usage":
             return PAIRING_REPLY_USAGE_BOT_PAIR
+        if result.pair_failed_reason == "forbidden":
+            return PAIRING_REPLY_FORBIDDEN
         reason = result.pair_failed_reason or "invalid"
         return f"Pairing failed: {reason}."
     if command.kind == "unpair":
+        if result.pair_failed_reason == "forbidden":
+            return PAIRING_REPLY_FORBIDDEN
         return PAIRING_REPLY_NOT_PAIRED
     if command.kind == "unknown" and command.command:
         return f"Unknown command: {command.command}. Use /bot_pair <code> or /bot_unpair."
@@ -853,6 +928,47 @@ def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
         return None
     message_id = message.get("message_id")
     return str(message_id) if message_id is not None else None
+
+
+def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None:
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict):
+        actor_id = _dict_identifier(callback_query.get("from"), "id")
+        if actor_id is not None:
+            return actor_id
+
+    message = _telegram_message_from_update(payload)
+    if isinstance(message, dict):
+        actor_id = _dict_identifier(message.get("from"), "id") or _dict_identifier(
+            message.get("sender_chat"),
+            "id",
+        )
+        if actor_id is not None:
+            return actor_id
+
+    for update_key in (
+        "my_chat_member",
+        "chat_member",
+        "chat_join_request",
+        "message_reaction",
+        "business_message",
+        "edited_business_message",
+    ):
+        update_value = payload.get(update_key)
+        if not isinstance(update_value, dict):
+            continue
+        actor_id = (
+            _dict_identifier(update_value.get("from"), "id")
+            or _dict_identifier(update_value.get("user"), "id")
+            or _dict_identifier(update_value.get("sender_chat"), "id")
+        )
+        if actor_id is not None:
+            return actor_id
+
+    chat = telegram_chat_from_update(payload)
+    if chat is not None and chat[1] == "private":
+        return chat[0]
+    return None
 
 
 def _telegram_message_from_update(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -2303,6 +2419,19 @@ def discord_message_id_from_payload(payload: dict[str, Any]) -> str | None:
     return _read_optional_str(_discord_event_data(payload).get("id"))
 
 
+def discord_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
+    data = _discord_event_data(payload)
+    return (
+        _dict_identifier(data.get("author"), "id")
+        or _dict_identifier(data.get("user"), "id")
+        or _nested_identifier(data, "member", "user", "id")
+        or _dict_identifier(data.get("member"), "user_id")
+        or _dict_identifier(payload.get("author"), "id")
+        or _dict_identifier(payload.get("user"), "id")
+        or _nested_identifier(payload, "member", "user", "id")
+    )
+
+
 def discord_channel_scope_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
     data = _discord_event_data(payload)
     channel_id = _read_optional_str(data.get("channel_id"))
@@ -2372,6 +2501,7 @@ async def record_discord_dispatch(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        external_user_id=discord_external_user_id_from_payload(frame),
         text=discord_text_from_payload(frame),
         command=discord_pair_command_from_payload(frame),
     )
@@ -2409,6 +2539,10 @@ async def record_discord_dispatch(
             message=message,
             payload=payload,
         )
+    if binding_result.command_handled:
+        delivered_at = datetime.now(UTC)
+        for message, _binding in messages:
+            message.delivered_at = delivered_at
     return True
 
 
@@ -2445,6 +2579,38 @@ def imessage_text_from_payload(payload: dict[str, Any]) -> str | None:
 def imessage_message_id_from_payload(payload: dict[str, Any]) -> str | None:
     data = _imessage_event_data(payload)
     return _read_optional_str(data.get("guid")) or _read_optional_str(data.get("messageGuid"))
+
+
+def imessage_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
+    data = _imessage_event_data(payload)
+    for key in (
+        "sender",
+        "from",
+        "fromAddress",
+        "handleAddress",
+        "handleId",
+        "handleGuid",
+        "address",
+    ):
+        actor_id = _read_optional_identifier(data.get(key))
+        if actor_id is not None:
+            return actor_id
+
+    for key in ("handle", "sender", "from"):
+        actor = data.get(key)
+        actor_id = (
+            _dict_identifier(actor, "address")
+            or _dict_identifier(actor, "id")
+            or _dict_identifier(actor, "guid")
+            or _dict_identifier(actor, "uncanonicalizedId")
+        )
+        if actor_id is not None:
+            return actor_id
+
+    chat = imessage_chat_from_payload(payload)
+    if chat is not None and chat[1] == "dm":
+        return chat[0]
+    return None
 
 
 def whatsapp_chat_from_payload(
@@ -2505,6 +2671,45 @@ def whatsapp_message_id_from_payload(payload: dict[str, Any]) -> str | None:
     if isinstance(key, dict):
         return _read_optional_str(key.get("id"))
     return _read_optional_str(message.get("id"))
+
+
+def whatsapp_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
+    message, _value = _whatsapp_message_and_value(payload)
+    if message is None:
+        return None
+
+    for key_name in (
+        "participant",
+        "author",
+        "sender",
+        "senderJid",
+        "senderPnJid",
+        "senderLidJid",
+    ):
+        actor_id = _read_optional_identifier(message.get(key_name))
+        if actor_id is not None:
+            return actor_id
+
+    key = message.get("key")
+    if isinstance(key, dict):
+        for key_name in (
+            "participant",
+            "participantAlt",
+            "senderPnJid",
+            "senderLidJid",
+            "participantPnJid",
+            "participantLidJid",
+        ):
+            actor_id = _read_optional_identifier(key.get(key_name))
+            if actor_id is not None:
+                return actor_id
+
+    from_id = _read_optional_identifier(message.get("from"))
+    remote_jid = _read_optional_identifier(key.get("remoteJid")) if isinstance(key, dict) else None
+    for fallback in (from_id, remote_jid):
+        if fallback is not None and not fallback.endswith("@g.us"):
+            return fallback
+    return None
 
 
 def whatsapp_from_me_from_payload(payload: dict[str, Any]) -> bool:
@@ -2720,3 +2925,21 @@ def _require_account_config_str(account: ChannelAccount, key: str) -> str:
 
 def _read_optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _read_optional_identifier(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, int):
+        return str(value)
+    return None
+
+
+def _dict_identifier(value: Any, key: str) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    return _read_optional_identifier(value.get(key))
+
+
+def _nested_identifier(data: dict[str, Any], *path: str) -> str | None:
+    return _read_optional_identifier(_nested_dict_value(data, *path))

@@ -18,11 +18,13 @@ does not run or proxy the old TypeScript `msg-router` service.
   enforce one active route per `(external bot, external chat)` session. The
   same external bot can link to multiple agents, and one agent can be reachable
   through multiple bots, but one chat session talks to only one agent at a time.
+  Bindings also record the external actor that claimed the route.
 - `channel_pair_codes` authorize a user to bind a chat by sending `/bot_pair`
   and are scoped to a bot-agent link.
 - `/bot_unpair` archives a single active binding across Telegram, Discord,
   WhatsApp, and iMessage ingress. Pairing the same chat with a different
-  bot-agent link moves the active route to that link.
+  bot-agent link moves the active route to that link only when the command is
+  sent by the external actor that claimed the current binding.
 - `channel_messages` records inbound and outbound channel traffic.
 - `channel_messages.inbox_sequence` is the channel-native inbox cursor used by
   Telegram polling and Discord gateway replay.
@@ -147,6 +149,17 @@ and require the link id for agent-facing inbox, ack, webhook replay, websocket
 replay, and SDK-compatible sends. Account-level sends by `external_chat_id`
 resolve through the single active route; agent-authenticated routes must still
 match the route's current `bot_agent_link_id`.
+
+Pairing control is actor-scoped, not just chat-scoped. Provider ingress must
+extract both the external chat id and the external user/sender id. The first
+successful `/bot_pair <code>` stores that sender on `channel_bindings`; later
+`/bot_pair` and `/bot_unpair` commands for the same active chat must come from
+the same external actor. This prevents another participant in a group from
+unpairing someone else's route or replacing it with their own agent. Non-DM
+pair/unpair commands without an extracted actor are rejected instead of creating
+a legacy unowned group route. Pair and unpair commands are system commands and
+are marked handled, including failures, so pair codes are not forwarded to the
+current agent as ordinary messages.
 
 Provider-wide state, such as real upstream bot credentials, remains on
 `channel_accounts`. Agent-facing SDK state that can differ per agent token must

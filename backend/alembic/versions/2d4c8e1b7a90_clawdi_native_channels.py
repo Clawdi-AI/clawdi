@@ -128,6 +128,7 @@ def upgrade() -> None:
         sa.Column("external_chat_id", sa.String(length=300), nullable=False),
         sa.Column("external_chat_type", sa.String(length=40), nullable=True),
         sa.Column("external_chat_name", sa.String(length=300), nullable=True),
+        sa.Column("paired_external_user_id", sa.String(length=300), nullable=True),
         sa.Column("status", sa.String(length=32), server_default="active", nullable=False),
         *_timestamp_columns(),
         sa.ForeignKeyConstraint(["account_id"], ["channel_accounts.id"], ondelete="CASCADE"),
@@ -211,6 +212,7 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claimed_external_chat_id", sa.String(length=300), nullable=True),
+        sa.Column("claimed_external_user_id", sa.String(length=300), nullable=True),
         *_timestamp_columns(),
         sa.ForeignKeyConstraint(["account_id"], ["channel_accounts.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(

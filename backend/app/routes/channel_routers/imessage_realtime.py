@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import (
@@ -35,6 +36,7 @@ from app.services.bluebubbles_socket import bluebubbles_socket_manager
 from app.services.channels import (
     get_public_channel_account,
     imessage_chat_from_payload,
+    imessage_external_user_id_from_payload,
     imessage_message_id_from_payload,
     imessage_text_from_payload,
     record_inbound_messages_for_bindings,
@@ -138,6 +140,7 @@ async def imessage_webhook(
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
+        external_user_id=imessage_external_user_id_from_payload(payload),
         text=text,
     )
 
@@ -150,9 +153,13 @@ async def imessage_webhook(
         text=text,
         payload=payload,
     )
+    if binding_result.command_handled:
+        delivered_at = datetime.now(UTC)
+        for routed_message, _binding in messages:
+            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
-    if not binding_result.paired and not binding_result.unpaired:
+    if not binding_result.command_handled:
         for routed_message, _binding in messages:
             if routed_message.binding_id:
                 bluebubbles_payload = _bluebubbles_message(routed_message)

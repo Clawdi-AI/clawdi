@@ -197,6 +197,7 @@ class ChannelBinding(Base, TimestampMixin):
     external_chat_id: Mapped[str] = mapped_column(String(300), nullable=False)
     external_chat_type: Mapped[str | None] = mapped_column(String(40))
     external_chat_name: Mapped[str | None] = mapped_column(String(300))
+    paired_external_user_id: Mapped[str | None] = mapped_column(String(300))
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -292,6 +293,7 @@ class ChannelPairCode(Base, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_external_chat_id: Mapped[str | None] = mapped_column(String(300))
+    claimed_external_user_id: Mapped[str | None] = mapped_column(String(300))
 
 
 class ChannelMessage(Base, TimestampMixin):

@@ -413,6 +413,7 @@ async def import_msg_router_migration_dump(
                 external_chat_id=binding.chat_id,
                 external_chat_type=binding.chat_type,
                 external_chat_name=binding.scope_id,
+                external_user_id=None,
             )
             imported[binding.source_channel] = imported.get(binding.source_channel, 0) + 1
     await db.flush()
