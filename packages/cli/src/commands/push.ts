@@ -22,6 +22,7 @@ import {
 	type SessionsLock,
 	writeSessionsLock,
 } from "../lib/sessions-lock";
+import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
 	readSkillsLock,
@@ -356,11 +357,21 @@ async function scanOneAgent(
 		// Hash each skill's file tree and diff against the skills-lock here,
 		// in the scan — the same per-entity cache check sessions get below —
 		// so the summary's skill count reflects what will actually upload.
+		let invalidSkillCount = 0;
 		for (const skill of await adapter.collectSkills()) {
+			if (!isValidSkillKey(skill.skillKey)) {
+				invalidSkillCount++;
+				continue;
+			}
 			skill.contentHash = await computeSkillFolderHash(skill.directoryPath);
 			const cached = skillsLock.skills[skillCacheKey(agentType, skill.skillKey)]?.hash;
 			if (cached === skill.contentHash) skillsCacheSkipped++;
 			else skills.push(skill);
+		}
+		if (invalidSkillCount > 0) {
+			notes.push(
+				`Skipped ${invalidSkillCount} skill ${invalidSkillCount === 1 ? "directory" : "directories"} with invalid names. Rename local skill directories to letters, numbers, dot, underscore, hyphen, or up to 4 slash-separated components.`,
+			);
 		}
 	}
 

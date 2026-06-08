@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
@@ -146,6 +146,34 @@ describe("push — Hermes fixture", () => {
 		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
 		expect(uploads.length).toBeGreaterThan(0);
 		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
+	});
+
+	it("skips local skills with invalid skill_keys before upload", async () => {
+		setup("hermes");
+		const invalidDir = join(tmpHome, ".hermes", "skills", "core", "bad skill");
+		mkdirSync(invalidDir, { recursive: true });
+		writeFileSync(
+			join(invalidDir, "SKILL.md"),
+			"---\nname: Bad Skill\ndescription: invalid local directory name\n---\n# Bad\n",
+		);
+
+		const projectId = "00000000-0000-0000-0000-000000000099";
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: `/api/projects/${projectId}/skills/upload`,
+				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
+			},
+		]);
+		try {
+			await push({ agent: "hermes", modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+
+		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		expect(uploads).toHaveLength(1);
 	});
 
 	it("a skill already in the skills-lock is skipped on the next push", async () => {
