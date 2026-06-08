@@ -22,10 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.channel import (
-    CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
@@ -48,7 +48,6 @@ from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryW
 from app.services.channels import (
     ChannelAgentContext,
     extract_discord_routing_key,
-    hash_token,
     parse_pair_command,
     record_discord_dispatch,
     wait_for_telegram_updates,
@@ -523,17 +522,26 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     db_session: AsyncSession,
     seed_user,
 ):
-    public_secret = "public-secret"
-    account = ChannelAccount(
-        user_id=seed_user.id,
-        provider="telegram",
-        name=f"public-telegram-{uuid4().hex}",
-        visibility=CHANNEL_VISIBILITY_PUBLIC,
-        webhook_secret_hash=hash_token(public_secret),
-    )
-    db_session.add(account)
-    await db_session.commit()
-    await db_session.refresh(account)
+    admin_key = f"admin-{uuid4().hex}"
+    original_admin_key = settings.admin_api_key
+    settings.admin_api_key = admin_key
+    try:
+        created = await client.post(
+            "/api/admin/channels",
+            headers={"X-Admin-Key": admin_key},
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "provider": "telegram",
+                "name": f"public-telegram-{uuid4().hex}",
+                "visibility": "public",
+            },
+        )
+    finally:
+        settings.admin_api_key = original_admin_key
+    assert created.status_code == 201, created.text
+    admin_body = created.json()
+    account_id = UUID(admin_body["id"])
+    public_secret = admin_body["webhook_secret"]
 
     user_a, agent_a = await _create_user_with_channel_agent(db_session, label="public-a")
     user_b, agent_b = await _create_user_with_channel_agent(db_session, label="public-b")
@@ -541,18 +549,18 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     async with _client_for_user(db_session, user_a) as client_a:
         listed = await client_a.get("/api/channels")
         assert listed.status_code == 200
-        public_item = next(item for item in listed.json() if item["id"] == str(account.id))
+        public_item = next(item for item in listed.json() if item["id"] == str(account_id))
         assert public_item["visibility"] == "public"
 
         pair = await client_a.post(
-            f"/api/channels/{account.id}/pair-codes",
+            f"/api/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
         )
         assert pair.status_code == 201
         pair_body = pair.json()
 
     pair_webhook = await client.post(
-        f"/api/channels/telegram/{account.id}/webhook",
+        f"/api/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": public_secret},
         json={
             "update_id": 7001,
@@ -564,7 +572,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
         },
     )
     inbound = await client.post(
-        f"/api/channels/telegram/{account.id}/webhook",
+        f"/api/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": public_secret},
         json={
             "update_id": 7002,
@@ -589,7 +597,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     binding = (
         await db_session.execute(
             select(ChannelBinding).where(
-                ChannelBinding.account_id == account.id,
+                ChannelBinding.account_id == account_id,
                 ChannelBinding.external_chat_id == "99001",
             )
         )
@@ -597,7 +605,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     message = (
         await db_session.execute(
             select(ChannelMessage).where(
-                ChannelMessage.account_id == account.id,
+                ChannelMessage.account_id == account_id,
                 ChannelMessage.provider_message_id == "7002",
             )
         )
@@ -607,21 +615,21 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     assert message.user_id == user_a.id
 
     async with _client_for_user(db_session, user_b) as client_b:
-        fetched = await client_b.get(f"/api/channels/{account.id}")
+        fetched = await client_b.get(f"/api/channels/{account_id}")
         assert fetched.status_code == 200
         assert fetched.json()["visibility"] == "public"
 
-        links = await client_b.get(f"/api/channels/{account.id}/agent-links")
-        bindings = await client_b.get(f"/api/channels/{account.id}/bindings")
+        links = await client_b.get(f"/api/channels/{account_id}/agent-links")
+        bindings = await client_b.get(f"/api/channels/{account_id}/bindings")
         rotate = await client_b.post(
-            f"/api/channels/{account.id}/agent-links/{link.id}/token",
+            f"/api/channels/{account_id}/agent-links/{link.id}/token",
         )
         send_unowned = await client_b.post(
-            f"/api/channels/{account.id}/messages",
+            f"/api/channels/{account_id}/messages",
             json={"external_chat_id": "99001", "text": "wrong user"},
         )
         own_link = await client_b.post(
-            f"/api/channels/{account.id}/agent-links",
+            f"/api/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_b.id)},
         )
 

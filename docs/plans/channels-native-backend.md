@@ -35,6 +35,10 @@ does not run or proxy the old TypeScript `msg-router` service.
 - `/api/channels/{id}/bindings` lists bound chats.
 - `/api/channels/{id}/commands/sync` registers Clawdi pair/unpair commands through provider APIs.
 - `/api/channels/{id}/messages` enqueues outbound delivery through the backend outbox.
+- `/api/admin/channels` is the server-to-server management surface for
+  preconfigured public bots: create/list/read/patch/archive provider accounts,
+  rotate webhook secrets, update encrypted provider tokens/secrets, and run
+  provider-wide command sync. It is hidden from public OpenAPI generation.
 - `/api/channels/telegram/{id}/webhook` receives Telegram updates natively.
 - `/api/channels/telegram/bot/{agent_token}/getMe|getUpdates|setWebhook|deleteWebhook|getWebhookInfo|sendMessage`
   exposes a Telegram Bot API-compatible agent face.
@@ -124,9 +128,9 @@ their own agents, but provider-token management, deletion, and provider-wide
 command sync remain owner/admin operations. Public bot links, pair codes,
 bindings, messages, deliveries, attachments, scheduled messages, and
 WhatsApp tenant credentials are owned by the requesting/link user, not by the
-bot account owner. Operationally, configure a public bot by seeding or
-admin-updating the `channel_accounts` row with `visibility = 'public'`; do not
-expose that field on the ordinary user create-channel API.
+bot account owner. Operationally, create and manage public bots through the
+server-to-server `/api/admin/channels` endpoints; do not expose visibility or
+provider credential management on the ordinary user create-channel API.
 
 Agent-facing SDK credentials are link-scoped, not agent-scoped. If two external
 bots are both linked to the same Clawdi agent, each `(bot, agent)` link still

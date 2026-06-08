@@ -39,13 +39,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
+from app.models.channel import (
+    CHANNEL_PROVIDERS,
+    ChannelAccount,
+)
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.schemas.admin import AdminApiKeyCreate, AdminEnvironmentCreate
+from app.schemas.admin import (
+    AdminApiKeyCreate,
+    AdminChannelCreate,
+    AdminChannelCreatedResponse,
+    AdminChannelResponse,
+    AdminChannelUpdate,
+    AdminChannelVisibility,
+    AdminChannelWebhookSecretResponse,
+    AdminEnvironmentCreate,
+)
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
+from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
+from app.services.channels import (
+    archive_channel_account,
+    channel_webhook_url,
+    encrypt_optional_token,
+    generate_webhook_secret,
+    hash_token,
+    store_channel_secrets,
+    sync_channel_commands,
+    upsert_channel_secrets,
+)
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 logger = logging.getLogger(__name__)
@@ -200,6 +224,176 @@ async def admin_revoke_api_key(
     return ApiKeyRevokeResponse(status="revoked")
 
 
+@router.get("/channels", response_model=list[AdminChannelResponse])
+async def admin_list_channels(
+    provider: str | None = None,
+    visibility: AdminChannelVisibility | None = None,
+    include_archived: bool = False,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> list[AdminChannelResponse]:
+    if provider is not None and provider not in CHANNEL_PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "unsupported provider")
+    filters = []
+    if provider is not None:
+        filters.append(ChannelAccount.provider == provider)
+    if visibility is not None:
+        filters.append(ChannelAccount.visibility == visibility)
+    if not include_archived:
+        filters.append(ChannelAccount.archived_at.is_(None))
+
+    result = await db.execute(
+        select(ChannelAccount, User)
+        .join(User, User.id == ChannelAccount.user_id)
+        .where(*filters)
+        .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
+    )
+    return [_admin_channel_response(account, owner) for account, owner in result.all()]
+
+
+@router.post(
+    "/channels",
+    response_model=AdminChannelCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def admin_create_channel(
+    body: AdminChannelCreate,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminChannelCreatedResponse:
+    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    ciphertext, nonce = encrypt_optional_token(body.provider_token)
+    webhook_secret = generate_webhook_secret()
+    account = ChannelAccount(
+        user_id=target.id,
+        provider=body.provider,
+        name=body.name,
+        visibility=body.visibility,
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
+        webhook_secret_hash=hash_token(webhook_secret),
+        config=body.config,
+    )
+    db.add(account)
+    try:
+        await db.flush()
+        await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "channel name already exists for this provider and owner",
+        ) from exc
+    await db.refresh(account)
+    logger.info(
+        "admin_channel_created target_clerk_id=%s channel_id=%s provider=%s visibility=%s",
+        body.target_clerk_id,
+        account.id,
+        account.provider,
+        account.visibility,
+    )
+    return AdminChannelCreatedResponse(
+        **_admin_channel_response(account, target).model_dump(),
+        webhook_secret=webhook_secret,
+    )
+
+
+@router.get("/channels/{account_id}", response_model=AdminChannelResponse)
+async def admin_get_channel(
+    account_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminChannelResponse:
+    account, owner = await _admin_get_channel_row(db, account_id=account_id, include_archived=True)
+    return _admin_channel_response(account, owner)
+
+
+@router.patch("/channels/{account_id}", response_model=AdminChannelResponse)
+async def admin_update_channel(
+    account_id: UUID,
+    body: AdminChannelUpdate,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminChannelResponse:
+    account, owner = await _admin_get_channel_row(db, account_id=account_id)
+    updates = body.model_fields_set
+    if "name" in updates:
+        account.name = body.name or account.name
+    if "status" in updates and body.status is not None:
+        account.status = body.status
+    if "visibility" in updates and body.visibility is not None:
+        account.visibility = body.visibility
+    if "provider_token" in updates:
+        ciphertext, nonce = encrypt_optional_token(body.provider_token)
+        account.encrypted_provider_token = ciphertext
+        account.provider_token_nonce = nonce
+    if "config" in updates:
+        account.config = body.config
+    try:
+        if "secrets" in updates:
+            await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "channel name already exists for this provider and owner",
+        ) from exc
+    await db.refresh(account)
+    return _admin_channel_response(account, owner)
+
+
+@router.post(
+    "/channels/{account_id}/webhook-secret/rotate",
+    response_model=AdminChannelWebhookSecretResponse,
+)
+async def admin_rotate_channel_webhook_secret(
+    account_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminChannelWebhookSecretResponse:
+    account, _owner = await _admin_get_channel_row(db, account_id=account_id)
+    webhook_secret = generate_webhook_secret()
+    account.webhook_secret_hash = hash_token(webhook_secret)
+    await db.commit()
+    logger.info("admin_channel_webhook_secret_rotated channel_id=%s", account.id)
+    return AdminChannelWebhookSecretResponse(id=account.id, webhook_secret=webhook_secret)
+
+
+@router.post("/channels/{account_id}/commands/sync", response_model=ChannelCommandSyncResponse)
+async def admin_sync_channel_commands(
+    account_id: UUID,
+    body: ChannelCommandSyncRequest,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelCommandSyncResponse:
+    account, _owner = await _admin_get_channel_row(db, account_id=account_id)
+    commands = (
+        [command.model_dump(exclude_none=True) for command in body.commands]
+        if body.commands is not None
+        else None
+    )
+    synced = await sync_channel_commands(
+        account=account,
+        commands=commands,
+        guild_id=body.guild_id,
+    )
+    return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
+
+
+@router.delete("/channels/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_channel(
+    account_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    account, _owner = await _admin_get_channel_row(db, account_id=account_id)
+    await archive_channel_account(db, account=account)
+    await db.commit()
+    logger.info("admin_channel_archived channel_id=%s", account.id)
+
+
 @router.post("/environments", response_model=EnvironmentCreatedResponse)
 async def admin_register_environment(
     body: AdminEnvironmentCreate,
@@ -310,3 +504,40 @@ async def admin_register_environment(
         body.machine_id,
     )
     return EnvironmentCreatedResponse(id=str(env.id))
+
+
+async def _admin_get_channel_row(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    include_archived: bool = False,
+) -> tuple[ChannelAccount, User]:
+    filters = [ChannelAccount.id == account_id]
+    if not include_archived:
+        filters.append(ChannelAccount.archived_at.is_(None))
+    result = await db.execute(
+        select(ChannelAccount, User).join(User, User.id == ChannelAccount.user_id).where(*filters)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "channel not found")
+    account, owner = row
+    return account, owner
+
+
+def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChannelResponse:
+    return AdminChannelResponse(
+        id=account.id,
+        owner_user_id=account.user_id,
+        owner_clerk_id=owner.clerk_id,
+        provider=account.provider,
+        name=account.name,
+        status=account.status,
+        visibility=account.visibility,
+        has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
+        webhook_url=channel_webhook_url(account.id, account.provider),
+        config=account.config,
+        archived_at=account.archived_at,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )

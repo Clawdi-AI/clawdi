@@ -450,6 +450,108 @@ async def test_admin_revoke_unknown_key(admin_client):
 
 
 @pytest.mark.asyncio
+async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_session, seed_user):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.channel import ChannelAccount
+    from app.services.channels import (
+        decrypt_provider_token,
+        get_channel_secret,
+        verify_hashed_token,
+    )
+
+    created = await admin_client.post(
+        "/api/admin/channels",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "provider": "telegram",
+            "name": f"admin-public-{uuid.uuid4().hex}",
+            "visibility": "public",
+            "provider_token": "123456:admin-token",
+            "config": {"commands": "managed"},
+            "secrets": {"app_secret": "secret-v1"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["owner_clerk_id"] == seed_user.clerk_id
+    assert body["visibility"] == "public"
+    assert body["has_provider_token"] is True
+    assert body["webhook_secret"]
+    assert "admin-token" not in created.text
+    assert "secret-v1" not in created.text
+
+    account = (
+        await db_session.execute(select(ChannelAccount).where(ChannelAccount.id == body["id"]))
+    ).scalar_one()
+    assert account.user_id == seed_user.id
+    assert account.visibility == "public"
+    assert decrypt_provider_token(account) == "123456:admin-token"
+    assert await get_channel_secret(db_session, account=account, name="app_secret") == "secret-v1"
+
+    listed = await admin_client.get(
+        "/api/admin/channels",
+        headers=_AUTH,
+        params={"visibility": "public", "provider": "telegram"},
+    )
+    assert listed.status_code == 200
+    assert body["id"] in {item["id"] for item in listed.json()}
+
+    patched = await admin_client.patch(
+        f"/api/admin/channels/{body['id']}",
+        headers=_AUTH,
+        json={
+            "name": "admin-public-renamed",
+            "provider_token": None,
+            "config": {"commands": "rotated"},
+            "secrets": {"app_secret": "secret-v2"},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "admin-public-renamed"
+    assert patched.json()["has_provider_token"] is False
+    assert patched.json()["config"] == {"commands": "rotated"}
+
+    await db_session.refresh(account)
+    assert account.encrypted_provider_token is None
+    assert account.provider_token_nonce is None
+    assert await get_channel_secret(db_session, account=account, name="app_secret") == "secret-v2"
+
+    rotated = await admin_client.post(
+        f"/api/admin/channels/{body['id']}/webhook-secret/rotate",
+        headers=_AUTH,
+    )
+    assert rotated.status_code == 200
+    await db_session.refresh(account)
+    assert verify_hashed_token(rotated.json()["webhook_secret"], account.webhook_secret_hash)
+
+    deleted = await admin_client.delete(f"/api/admin/channels/{body['id']}", headers=_AUTH)
+    assert deleted.status_code == 204
+    await db_session.refresh(account)
+    assert account.archived_at is not None
+
+    archived = await admin_client.get(f"/api/admin/channels/{body['id']}", headers=_AUTH)
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
+    r = await admin_client.post(
+        "/api/admin/channels",
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "provider": "telegram",
+            "name": "admin-channel-no-key",
+        },
+    )
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_admin_register_env_creates_with_project(admin_client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
     default project, matching the user-facing register_environment

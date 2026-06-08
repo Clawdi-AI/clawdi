@@ -215,6 +215,40 @@ async def store_channel_secrets(
         )
 
 
+async def upsert_channel_secrets(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    secrets_by_name: dict[str, str] | None,
+) -> None:
+    if not secrets_by_name:
+        return
+    for name, value in secrets_by_name.items():
+        ciphertext, nonce = encrypt(value)
+        existing = (
+            await db.execute(
+                select(ChannelSecret).where(
+                    ChannelSecret.account_id == account.id,
+                    ChannelSecret.name == name,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.user_id = account.user_id
+            existing.encrypted_value = ciphertext
+            existing.value_nonce = nonce
+            continue
+        db.add(
+            ChannelSecret(
+                account_id=account.id,
+                user_id=account.user_id,
+                name=name,
+                encrypted_value=ciphertext,
+                value_nonce=nonce,
+            )
+        )
+
+
 async def get_channel_secret(
     db: AsyncSession,
     *,
