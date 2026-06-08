@@ -1,9 +1,11 @@
+import type { components, paths } from "@clawdi/shared/api";
 import { auth } from "@clerk/nextjs/server";
 import { Clock, Hash, MessageSquare, Zap } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import createClient from "openapi-fetch";
 import { cache } from "react";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
@@ -15,7 +17,6 @@ import { ShareHeaderUser } from "@/components/share/header-user";
 import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
-import type { SessionMessage } from "@/lib/api-schemas";
 import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
 import {
@@ -57,41 +58,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 type Params = { id: string };
 
-type PublicShare = {
-	id: string;
-	summary: string | null;
-	project_path: string | null;
-	agent_type: string | null;
-	model: string | null;
-	models_used: string[] | null;
-	started_at: string;
-	ended_at: string | null;
-	last_activity_at: string;
-	duration_seconds: number | null;
-	message_count: number;
-	input_tokens: number;
-	output_tokens: number;
-	cache_read_tokens: number;
-	tags: string[] | null;
-	status: string;
-	related_refs: {
-		prs?: string[] | null;
-		repos?: string[] | null;
-		branches?: string[] | null;
-	} | null;
-	// Public identity of the session owner. Optional — pre-Clerk-login
-	// users may have no `name`, and avatar is only populated after the
-	// owner has signed in at least once post the avatar_url migration.
-	owner_name: string | null;
-	owner_avatar_url: string | null;
-};
-
-type PublicMessagesPage = {
-	items: SessionMessage[];
-	total: number;
-	offset: number;
-	limit: number;
-};
+type PublicShare = components["schemas"]["PublicSessionResponse"];
+type PublicMessagesPage = components["schemas"]["SessionMessagesPage"];
 
 type FetchResult =
 	| { kind: "ok"; share: PublicShare }
@@ -106,20 +74,24 @@ type FetchResult =
  * this boundary.
  */
 const fetchShare = cache(async (sessionId: string, token: string | null): Promise<FetchResult> => {
-	const headers: Record<string, string> = {};
-	if (token) headers.Authorization = `Bearer ${token}`;
-
-	const res = await fetch(`${env.NEXT_PUBLIC_API_URL}/api/public/sessions/${sessionId}`, {
+	const api = createPublicApi(token);
+	const result = await api.GET("/api/public/sessions/{session_id}", {
+		params: { path: { session_id: sessionId } },
 		cache: "no-store",
-		headers,
 	});
-	if (res.status === 404) return { kind: "not-found" };
-	if (res.status === 401) return { kind: "unauthorized" };
-	if (res.status === 403) return { kind: "forbidden" };
-	if (!res.ok) throw new Error(`backend returned ${res.status}`);
-	const share = (await res.json()) as PublicShare;
-	return { kind: "ok", share };
+	if (result.response.status === 404) return { kind: "not-found" };
+	if (result.response.status === 401) return { kind: "unauthorized" };
+	if (result.response.status === 403) return { kind: "forbidden" };
+	if (result.error !== undefined) throw new Error(`backend returned ${result.response.status}`);
+	return { kind: "ok", share: result.data };
 });
+
+function createPublicApi(token: string | null) {
+	return createClient<paths>({
+		baseUrl: env.NEXT_PUBLIC_API_URL,
+		headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+	});
+}
 
 async function getOptionalToken(): Promise<string | null> {
 	if (env.NEXT_PUBLIC_DEV_AUTH_BYPASS) return env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
@@ -131,18 +103,16 @@ async function fetchFirstMessages(
 	sessionId: string,
 	token: string | null,
 ): Promise<PublicMessagesPage> {
-	const headers: Record<string, string> = {};
-	if (token) headers.Authorization = `Bearer ${token}`;
-
-	const res = await fetch(
-		`${env.NEXT_PUBLIC_API_URL}/api/public/sessions/${sessionId}/messages?offset=0&limit=${PAGE_SIZE}`,
-		{ cache: "no-store", headers },
-	);
-	if (!res.ok) {
+	const api = createPublicApi(token);
+	const result = await api.GET("/api/public/sessions/{session_id}/messages", {
+		params: { path: { session_id: sessionId }, query: { offset: 0, limit: PAGE_SIZE } },
+		cache: "no-store",
+	});
+	if (result.error !== undefined) {
 		// Soft-failure: render the header even if messages errored.
 		return { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 	}
-	return res.json() as Promise<PublicMessagesPage>;
+	return result.data;
 }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
@@ -197,6 +167,10 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 	const mdUrl = `/s/${share.id}.md`;
 	const jsonUrl = `/s/${share.id}.json`;
 	const truncated = messagesPage.total > messagesPage.items.length;
+	const showLastActivity =
+		share.last_activity_at !== null &&
+		Math.abs(new Date(share.last_activity_at).getTime() - new Date(share.started_at).getTime()) >
+			5 * 60_000;
 
 	return (
 		<>
@@ -241,10 +215,7 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 							<span title={formatAbsoluteTooltip(share.started_at)}>
 								Started {relativeTime(share.started_at)}
 							</span>
-							{Math.abs(
-								new Date(share.last_activity_at).getTime() - new Date(share.started_at).getTime(),
-							) >
-							5 * 60_000 ? (
+							{showLastActivity ? (
 								<>
 									<span>·</span>
 									<span title={formatAbsoluteTooltip(share.last_activity_at)}>

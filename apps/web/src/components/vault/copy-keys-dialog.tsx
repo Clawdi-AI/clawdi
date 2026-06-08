@@ -23,6 +23,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -61,23 +62,53 @@ export function CopyKeysDialog({
 	const attachedCount = vault.project_ids?.length ?? 0;
 	const verb = mode === "move" ? "Move" : "Copy";
 
-	const { data: vaults } = useQuery({
+	const vaultsQuery = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
 			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
 		enabled: open,
 	});
-	const { data: projects } = useQuery({
+	const projectsQuery = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/api/projects")),
 		enabled: open,
 	});
+	const ownVaults = useMemo(
+		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
+		[vaultsQuery.data],
+	);
 	const targetVaults = useMemo(
-		() => (vaults?.items ?? []).filter((v) => v.is_owner !== false && v.slug !== vault.slug),
-		[vaults, vault.slug],
+		() => ownVaults.filter((v) => v.slug !== vault.slug),
+		[ownVaults, vault.slug],
 	);
 	const effectiveChoice =
 		targetChoice || (targetVaults.length > 0 ? targetVaults[0].slug : NEW_VAULT);
+	const creatingNewVault = effectiveChoice === NEW_VAULT;
+	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
+	const newVaultSlugTaken =
+		creatingNewVault && newVaultSlug.length > 0 && ownVaults.some((v) => v.slug === newVaultSlug);
+	const writableProject = useMemo(
+		() =>
+			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
+			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
+		[projectsQuery.data],
+	);
+	const newVaultPending = creatingNewVault && (vaultsQuery.isLoading || projectsQuery.isLoading);
+	const newVaultUnavailable =
+		creatingNewVault &&
+		!projectsQuery.isLoading &&
+		!vaultsQuery.isLoading &&
+		writableProject === undefined;
+	const canRun =
+		keys.length > 0 &&
+		!runIsBlockedForNewVault(
+			creatingNewVault,
+			newVaultName,
+			newVaultSlug,
+			newVaultSlugTaken,
+			newVaultPending,
+			newVaultUnavailable,
+		);
 
 	const run = useMutation({
 		mutationFn: async () => {
@@ -85,18 +116,15 @@ export function CopyKeysDialog({
 			if (targetSlug === NEW_VAULT) {
 				const name = newVaultName.trim();
 				if (!name) throw new Error("Name the new vault first");
-				targetSlug = name
-					.toLowerCase()
-					.replace(/[^a-z0-9-]+/g, "-")
-					.replace(/-{2,}/g, "-")
-					.replace(/^-+|-+$/g, "");
-				const personal =
-					(projects ?? []).find((p) => p.kind === "personal") ??
-					(projects ?? []).find((p) => p.is_owner !== false);
-				if (!personal) throw new Error("No writable Project available yet");
+				targetSlug = newVaultSlug;
+				if (!targetSlug) throw new Error("Use letters or numbers in the vault name");
+				if (ownVaults.some((v) => v.slug === targetSlug)) {
+					throw new Error("A vault with that name already exists");
+				}
+				if (!writableProject) throw new Error("No writable Project available yet");
 				await unwrap(
 					await api.POST("/api/vault", {
-						params: { query: { project_id: personal.id } },
+						params: { query: { project_id: writableProject.id, create_only: true } },
 						body: { slug: targetSlug, name },
 					}),
 				);
@@ -109,40 +137,68 @@ export function CopyKeysDialog({
 				if (bucket) bucket.push(k.name);
 				else bySection.set(section, [k.name]);
 			}
+			let copied = 0;
+			const failed: string[] = [];
+			const sourceRemoveFailed: string[] = [];
 			for (const [section, names] of bySection) {
 				for (let i = 0; i < names.length; i += CHUNK) {
 					const fields = names.slice(i, i + CHUNK);
-					await unwrap(
-						await api.POST("/api/vault/{slug}/items/copy", {
-							params: {
-								path: { slug: vault.slug },
-								query: { project_id: anyProjectId ?? undefined },
-							},
-							body: { target_slug: targetSlug, section, fields },
-						}),
-					);
-					if (mode === "move") {
-						await unwrap(
-							await api.DELETE("/api/vault/{slug}/items", {
+					let copiedInChunk = 0;
+					try {
+						const result = unwrap(
+							await api.POST("/api/vault/{slug}/items/copy", {
 								params: {
 									path: { slug: vault.slug },
-									query: { project_id: anyProjectId ?? undefined, global_delete: true },
+									query: { project_id: anyProjectId ?? undefined },
 								},
-								body: { section, fields },
+								body: { target_slug: targetSlug, section, fields },
 							}),
 						);
+						copiedInChunk = result.copied;
+						copied += result.copied;
+					} catch {
+						failed.push(...fields);
+						continue;
+					}
+					if (mode === "move") {
+						try {
+							if (copiedInChunk > 0) {
+								await unwrap(
+									await api.DELETE("/api/vault/{slug}/items", {
+										params: {
+											path: { slug: vault.slug },
+											query: { project_id: anyProjectId ?? undefined, global_delete: true },
+										},
+										body: { section, fields },
+									}),
+								);
+							}
+						} catch {
+							sourceRemoveFailed.push(...fields);
+						}
 					}
 				}
 			}
-			return targetSlug;
+			if (copied === 0) {
+				throw new Error(
+					failed.length > 0 ? `Couldn't copy ${failed.join(", ")}` : "No keys copied",
+				);
+			}
+			return { targetSlug, copied, failed, sourceRemoveFailed };
 		},
-		onSuccess: (targetSlug) => {
+		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
+			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
-				`${keys.length} ${keys.length === 1 ? "key" : "keys"} ${mode === "move" ? "moved" : "copied"}`,
+				`${copied} ${copied === 1 ? "key" : "keys"} ${
+					mode === "move" && !sourceCleanupFailed ? "moved" : "copied"
+				}`,
 				{
-					description: `Now in vault://${targetSlug}.`,
+					description:
+						`Now in vault://${targetSlug}.` +
+						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
+						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 				},
 			);
 			setOpen(false);
@@ -207,13 +263,25 @@ export function CopyKeysDialog({
 							</Select>
 						</div>
 						{effectiveChoice === NEW_VAULT ? (
-							<Input
-								value={newVaultName}
-								onChange={(e) => setNewVaultName(e.target.value)}
-								placeholder="Vault name…"
-								aria-label="New vault name"
-								className="sm:w-44"
-							/>
+							<div className="space-y-1">
+								<Input
+									value={newVaultName}
+									onChange={(e) => setNewVaultName(e.target.value)}
+									placeholder="Vault name…"
+									aria-label="New vault name"
+									className="sm:w-44"
+								/>
+								{newVaultSlugTaken ? (
+									<p className="max-w-44 text-xs text-destructive">
+										That vault already exists. Choose it from the list or use a different name.
+									</p>
+								) : null}
+								{newVaultUnavailable ? (
+									<p className="max-w-44 text-xs text-destructive">
+										No writable Project is available yet.
+									</p>
+								) : null}
+							</div>
 						) : null}
 					</div>
 					{mode === "move" && attachedCount > 1 ? (
@@ -231,7 +299,7 @@ export function CopyKeysDialog({
 					) : null}
 					<Button
 						className="w-full"
-						disabled={run.isPending || (effectiveChoice === NEW_VAULT && !newVaultName.trim())}
+						disabled={run.isPending || !canRun}
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
@@ -240,5 +308,23 @@ export function CopyKeysDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function runIsBlockedForNewVault(
+	creatingNewVault: boolean,
+	newVaultName: string,
+	newVaultSlug: string,
+	newVaultSlugTaken: boolean,
+	newVaultPending: boolean,
+	newVaultUnavailable: boolean,
+): boolean {
+	return (
+		creatingNewVault &&
+		(!newVaultName.trim() ||
+			!newVaultSlug ||
+			newVaultSlugTaken ||
+			newVaultPending ||
+			newVaultUnavailable)
 	);
 }

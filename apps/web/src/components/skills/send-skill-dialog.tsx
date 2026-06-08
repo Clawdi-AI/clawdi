@@ -27,7 +27,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { ensureBlob, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -52,7 +52,6 @@ export function SendSkillDialog({
 	onDone?: () => void;
 }) {
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
@@ -113,55 +112,75 @@ export function SendSkillDialog({
 			if (!target) throw new Error("Choose a destination first");
 			// Per-skill try/catch: in a batch, one unreadable skill must
 			// not abort the rest — report partial success instead.
-			let sent = 0;
+			let copied = 0;
 			const failed: string[] = [];
+			const sourceRemoveFailed: string[] = [];
 			for (const skill of skills) {
 				if (!skill.project_id || skill.project_id === target) continue;
+				const label = skill.name || skill.skill_key;
 				try {
-					const dl = await authedFetch(
-						`/api/projects/${skill.project_id}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+					const blob = ensureBlob(
+						unwrap(
+							await api.GET("/api/projects/{project_id}/skills/{skill_key}/download", {
+								params: {
+									path: { project_id: skill.project_id, skill_key: skill.skill_key },
+								},
+								parseAs: "blob",
+							}),
+						),
 					);
-					const blob = await dl.blob();
+					const fileName = `${skill.skill_key.replace(/\//g, "-")}.tar.gz`;
 					const form = new FormData();
 					form.append("skill_key", skill.skill_key);
-					form.append("file", blob, `${skill.skill_key.replace(/\//g, "-")}.tar.gz`);
-					await authedFetch(`/api/projects/${target}/skills/upload`, {
-						method: "POST",
-						body: form,
-					});
+					form.append("file", blob, fileName);
+					await unwrap(
+						await api.POST("/api/projects/{project_id}/skills/upload", {
+							params: { path: { project_id: target } },
+							body: { skill_key: skill.skill_key, file: fileName },
+							bodySerializer: () => form,
+						}),
+					);
+					copied += 1;
 					if (removeFromSource) {
-						await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
-							params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
-						});
+						try {
+							unwrap(
+								await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+									params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
+								}),
+							);
+						} catch {
+							sourceRemoveFailed.push(label);
+						}
 					}
-					sent += 1;
 				} catch {
-					failed.push(skill.name || skill.skill_key);
+					failed.push(label);
 				}
 			}
-			if (sent === 0) {
+			if (copied === 0) {
 				throw new Error(
 					failed.length > 0
-						? `Couldn't read ${failed.join(", ")} from the source`
+						? `Couldn't send ${failed.join(", ")}`
 						: "Everything selected is already in that destination",
 				);
 			}
-			return { sent, failed };
+			return { copied, failed, sourceRemoveFailed };
 		},
-		onSuccess: ({ sent, failed }) => {
+		onSuccess: ({ copied, failed, sourceRemoveFailed }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			const targetLabel =
 				[...agentTargets, ...projectTargets].find((t) => t.value === target)?.label ??
 				"the destination";
-			const what = sent === 1 && single ? single.name : `${sent} skills`;
+			const what = copied === 1 ? (single?.name ?? "1 skill") : `${copied} skills`;
+			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
-				removeFromSource
-					? `${sent === 1 ? "Skill" : "Skills"} moved`
-					: `${sent === 1 ? "Skill" : "Skills"} copied`,
+				removeFromSource && !sourceCleanupFailed
+					? `${copied === 1 ? "Skill" : "Skills"} moved`
+					: `${copied === 1 ? "Skill" : "Skills"} copied`,
 				{
 					description:
 						`${what} now available in ${targetLabel}.` +
-						(failed.length > 0 ? ` Skipped (couldn't read): ${failed.join(", ")}.` : ""),
+						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
+						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 				},
 			);
 			setOpen(false);

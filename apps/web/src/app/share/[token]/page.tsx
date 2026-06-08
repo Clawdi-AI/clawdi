@@ -20,8 +20,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { unwrap, useApi } from "@/lib/api";
+import type { components } from "@/lib/api-schemas";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
-import { env } from "@/lib/env";
 import { projectDetailHref } from "@/lib/project-resource-model";
 
 /**
@@ -34,58 +35,11 @@ import { projectDetailHref } from "@/lib/project-resource-model";
  *   3. Agent use is explicit and handled separately after accept.
  */
 
-interface SharePreview {
-	project_id: string;
-	project_name: string;
-	owner_display: string;
-	owner_handle: string;
-	skill_count: number;
-	vault_count: number;
-	vault_locked: boolean;
-}
-
-interface ShareUpgradeResponse {
-	membership_id: string;
-	project_id: string;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-	resolved_owner_handle: string;
-	bound_agent_ids?: string[];
-}
-
-const API_URL = env.NEXT_PUBLIC_API_URL;
+type SharePreview = components["schemas"]["ShareRedeemResponse"];
 
 function buildLandingUrl(token: string): string {
 	if (typeof window === "undefined") return `/share/${token}`;
 	return `${window.location.origin}/share/${token}`;
-}
-
-async function fetchPreview(token: string): Promise<SharePreview> {
-	const r = await fetch(`${API_URL}/api/share/${token}/preview`, {
-		method: "GET",
-	});
-	if (r.status === 404) throw new ShareError("not_found");
-	if (r.status === 410) throw new ShareError("revoked");
-	if (!r.ok) throw new ShareError("unknown", r.status);
-	return r.json();
-}
-
-async function upgradeShare(token: string, bearer: string): Promise<ShareUpgradeResponse> {
-	const r = await fetch(`${API_URL}/api/share/${token}/upgrade`, {
-		method: "POST",
-		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
-		body: JSON.stringify({}),
-	});
-	if (r.status === 404) throw new ShareError("not_found");
-	if (r.status === 410) throw new ShareError("revoked");
-	if (r.status === 409) {
-		const body = (await r.json().catch(() => ({}))) as { detail?: { error?: string } };
-		if (body?.detail?.error === "already_owner") throw new ShareError("already_owner");
-		throw new ShareError("already_member");
-	}
-	if (!r.ok) throw new ShareError("unknown", r.status);
-	return r.json();
 }
 
 type ShareErrorCode = "not_found" | "revoked" | "already_member" | "already_owner" | "unknown";
@@ -99,16 +53,42 @@ class ShareError extends Error {
 	}
 }
 
+function shareErrorFromApi(status: number, error: unknown): ShareError {
+	if (status === 404) return new ShareError("not_found");
+	if (status === 410) return new ShareError("revoked");
+	if (status === 409) {
+		return hasStructuredDetailError(error, "already_owner")
+			? new ShareError("already_owner")
+			: new ShareError("already_member");
+	}
+	return new ShareError("unknown", status);
+}
+
+function hasStructuredDetailError(error: unknown, code: string): boolean {
+	if (typeof error !== "object" || error === null || !("detail" in error)) return false;
+	const detail = error.detail;
+	return (
+		typeof detail === "object" && detail !== null && "error" in detail && detail.error === code
+	);
+}
+
 export default function SharePage() {
 	const params = useParams<{ token: string }>();
 	const token = params.token;
+	const api = useApi();
 	const router = useRouter();
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
 
 	const preview = useQuery({
 		queryKey: ["share-preview", token],
-		queryFn: () => fetchPreview(token),
+		queryFn: async (): Promise<SharePreview> => {
+			const result = await api.GET("/api/share/{token}/preview", {
+				params: { path: { token } },
+			});
+			if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
+			return unwrap(result);
+		},
 		retry: false,
 	});
 
@@ -116,7 +96,12 @@ export default function SharePage() {
 		mutationFn: async () => {
 			const bearer = await getToken();
 			if (!bearer) throw new ShareError("unknown");
-			return upgradeShare(token, bearer);
+			const result = await api.POST("/api/share/{token}/upgrade", {
+				params: { path: { token } },
+				body: { use_as: "attached" },
+			});
+			if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
+			return unwrap(result);
 		},
 		onSuccess: (result) => {
 			router.push(`${projectDetailHref(result.project_id)}?joined=share`);

@@ -2293,6 +2293,14 @@ export interface components {
             /** Priority */
             priority?: number | null;
         };
+        /** BindingDeleteResponse */
+        BindingDeleteResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "deleted";
+        };
         /** BindingReorderBody */
         BindingReorderBody: {
             /** Items */
@@ -2304,6 +2312,14 @@ export interface components {
             binding_id: string;
             /** Priority */
             priority: number;
+        };
+        /** BindingReorderResponse */
+        BindingReorderResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "reordered";
         };
         /** Body_upload_session_content_api_sessions__local_session_id__upload_post */
         Body_upload_session_content_api_sessions__local_session_id__upload_post: {
@@ -2702,6 +2718,14 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthResponse */
+        HealthResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "ok";
+        };
         /**
          * InvitationAcceptResponse
          * @description Returned after a directed project invitation is accepted.
@@ -2726,12 +2750,34 @@ export interface components {
             bound_agent_ids: string[];
         };
         /**
+         * InvitationCancelResponse
+         * @description Returned after an owner cancels a pending project invitation.
+         */
+        InvitationCancelResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "cancelled";
+        };
+        /**
          * InvitationCreate
          * @description Body for POST /api/projects/{project_id}/invitations.
          */
         InvitationCreate: {
             /** Email */
             email: string;
+        };
+        /**
+         * InvitationDeclineResponse
+         * @description Returned after a recipient declines a project invitation.
+         */
+        InvitationDeclineResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "declined";
         };
         /**
          * InvitationResponse
@@ -2902,6 +2948,32 @@ export interface components {
             /** Slug */
             slug?: string | null;
         };
+        /**
+         * ProjectLeaveResponse
+         * @description Returned after a member leaves a shared project.
+         */
+        ProjectLeaveResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "left";
+            /** Agent Bindings Removed */
+            agent_bindings_removed: number;
+        };
+        /**
+         * ProjectMemberRemoveResponse
+         * @description Returned after an owner removes a project member.
+         */
+        ProjectMemberRemoveResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "removed";
+            /** Agent Bindings Removed */
+            agent_bindings_removed: number;
+        };
         /** ProjectResponse */
         ProjectResponse: {
             /** Id */
@@ -2930,6 +3002,108 @@ export interface components {
             owner_display?: string | null;
             /** Owner Handle */
             owner_handle?: string | null;
+        };
+        /**
+         * PublicSessionExportResponse
+         * @description Public-safe structured session export payload.
+         */
+        PublicSessionExportResponse: {
+            /** Id */
+            id: string;
+            /** Summary */
+            summary: string | null;
+            /** Project Path */
+            project_path: string | null;
+            /** Agent Type */
+            agent_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Models Used */
+            models_used: string[] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Last Activity At */
+            last_activity_at: string | null;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Message Count */
+            message_count: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Tags */
+            tags: string[] | null;
+            /** Status */
+            status: string;
+            /** Related Refs */
+            related_refs?: {
+                [key: string]: string[] | null;
+            } | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Owner Avatar Url */
+            owner_avatar_url: string | null;
+            /** Messages */
+            messages: components["schemas"]["SessionMessageResponse"][];
+            /** Share Url */
+            share_url: string;
+        };
+        /**
+         * PublicSessionResponse
+         * @description Public-safe session detail payload for `/api/public/sessions/{id}`.
+         */
+        PublicSessionResponse: {
+            /** Id */
+            id: string;
+            /** Summary */
+            summary: string | null;
+            /** Project Path */
+            project_path: string | null;
+            /** Agent Type */
+            agent_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Models Used */
+            models_used: string[] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Last Activity At */
+            last_activity_at: string | null;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Message Count */
+            message_count: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Tags */
+            tags: string[] | null;
+            /** Status */
+            status: string;
+            /** Related Refs */
+            related_refs?: {
+                [key: string]: string[] | null;
+            } | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Owner Avatar Url */
+            owner_avatar_url: string | null;
         };
         /** SearchHit */
         SearchHit: {
@@ -3368,6 +3542,17 @@ export interface components {
             redeem_count: number;
             /** Last Redeemed At */
             last_redeemed_at: string | null;
+        };
+        /**
+         * ShareLinkRevokeResponse
+         * @description Returned after an owner revokes a project share link.
+         */
+        ShareLinkRevokeResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "revoked";
         };
         /**
          * ShareRedeemResponse
@@ -5033,9 +5218,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PublicSessionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5131,9 +5314,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PublicSessionExportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6009,6 +6190,8 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Return 409 if this slug already exists instead of attaching it. */
+                create_only?: boolean;
             };
             header?: never;
             path?: never;
@@ -6847,9 +7030,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ShareLinkRevokeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6947,9 +7128,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["InvitationCancelResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7012,9 +7191,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string | number;
-                    };
+                    "application/json": components["schemas"]["ProjectMemberRemoveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7045,9 +7222,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string | number;
-                    };
+                    "application/json": components["schemas"]["ProjectLeaveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7164,9 +7339,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["InvitationDeclineResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7267,9 +7440,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["BindingReorderResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7301,9 +7472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["BindingDeleteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7332,9 +7501,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

@@ -1,10 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Plus } from "lucide-react";
+import { AlertCircle, Check, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -24,6 +27,8 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
+import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -33,32 +38,6 @@ import { errorMessage } from "@/lib/utils";
  * inline create), from anywhere. No navigation required. */
 
 const NEW_VAULT = "__new__";
-
-/** dotenv-style parser: `export` prefixes, quotes, comments handled. */
-export function parseKeyLines(text: string): Record<string, string> {
-	const out: Record<string, string> = {};
-	for (const rawLine of text.split("\n")) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith("#")) continue;
-		const eq = line.indexOf("=");
-		if (eq <= 0) continue;
-		const key = line
-			.slice(0, eq)
-			.trim()
-			.replace(/^export\s+/, "")
-			.toUpperCase()
-			.replace(/[^A-Z0-9_]/g, "_");
-		let value = line.slice(eq + 1).trim();
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
-		if (key && value) out[key] = value;
-	}
-	return out;
-}
 
 export function AddKeysDialog({
 	/** Pin the destination vault (vault detail page); omit for the picker. */
@@ -74,28 +53,85 @@ export function AddKeysDialog({
 	const [text, setText] = useState("");
 	const [vaultChoice, setVaultChoice] = useState<string>(vaultSlug ?? "");
 	const [newVaultName, setNewVaultName] = useState("");
+	const [updateExisting, setUpdateExisting] = useState(false);
 
-	const { data: vaults } = useQuery({
+	const vaultsQuery = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
 			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
 		enabled: open,
 	});
-	const { data: projects } = useQuery({
+	const projectsQuery = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/api/projects")),
 		enabled: open,
 	});
 
 	const ownVaults = useMemo(
-		() => (vaults?.items ?? []).filter((v) => v.is_owner !== false),
-		[vaults],
+		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
+		[vaultsQuery.data],
 	);
-	const fields = useMemo(() => parseKeyLines(text), [text]);
-	const count = Object.keys(fields).length;
-
 	// Default destination: pinned slug, else the first vault, else create-new.
 	const effectiveChoice = vaultChoice || (ownVaults.length > 0 ? ownVaults[0].slug : NEW_VAULT);
+	const selectedVault = ownVaults.find((v) => v.slug === effectiveChoice);
+	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? undefined;
+	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
+	const newVaultSlugTaken =
+		effectiveChoice === NEW_VAULT &&
+		newVaultSlug.length > 0 &&
+		ownVaults.some((v) => v.slug === newVaultSlug);
+	const writableProject = useMemo(
+		() =>
+			(projectsQuery.data ?? []).find((p) => p.kind === "personal") ??
+			(projectsQuery.data ?? []).find((p) => p.is_owner !== false),
+		[projectsQuery.data],
+	);
+	const newVaultPending =
+		effectiveChoice === NEW_VAULT &&
+		!vaultSlug &&
+		(vaultsQuery.isLoading || projectsQuery.isLoading);
+	const newVaultUnavailable =
+		effectiveChoice === NEW_VAULT &&
+		!vaultSlug &&
+		!vaultsQuery.isLoading &&
+		!projectsQuery.isLoading &&
+		writableProject === undefined;
+	const existingItems = useQuery({
+		queryKey: ["vault-items", effectiveChoice, selectedVaultProjectId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/vault/{slug}/items", {
+					params: {
+						path: { slug: effectiveChoice },
+						query: { project_id: selectedVaultProjectId },
+					},
+				}),
+			),
+		enabled: open && effectiveChoice !== NEW_VAULT && selectedVault !== undefined,
+	});
+	const existingDefaultKeys = useMemo(
+		() => new Set(existingItems.data?.["(default)"] ?? []),
+		[existingItems.data],
+	);
+	const importPlan = useMemo(
+		() => buildKeyImportPreview(text, existingDefaultKeys, updateExisting),
+		[text, existingDefaultKeys, updateExisting],
+	);
+	const count = importPlan.parsed.entries.length;
+	const importableCount = importPlan.importableRows.length;
+	const destinationPending =
+		open &&
+		effectiveChoice !== NEW_VAULT &&
+		(vaultsQuery.isLoading || selectedVault === undefined || existingItems.isLoading);
+	const canSave =
+		importPlan.parsed.errors.length === 0 &&
+		importableCount > 0 &&
+		!saveDisabledForNewVault(effectiveChoice, vaultSlug, newVaultName, newVaultSlug) &&
+		!newVaultSlugTaken &&
+		!newVaultPending &&
+		!newVaultUnavailable &&
+		!destinationPending &&
+		!existingItems.error;
 
 	const save = useMutation({
 		mutationFn: async () => {
@@ -104,27 +140,25 @@ export function AddKeysDialog({
 			if (slug === NEW_VAULT) {
 				const name = newVaultName.trim();
 				if (!name) throw new Error("Name the new vault first");
-				slug = name
-					.toLowerCase()
-					.replace(/[^a-z0-9-]+/g, "-")
-					.replace(/-{2,}/g, "-")
-					.replace(/^-+|-+$/g, "");
-				const personal =
-					(projects ?? []).find((p) => p.kind === "personal") ??
-					(projects ?? []).find((p) => p.is_owner !== false);
-				if (!personal) throw new Error("No writable Project available yet");
-				projectId = personal.id;
+				slug = newVaultSlug;
+				if (!slug) throw new Error("Use letters or numbers in the vault name");
+				if (ownVaults.some((v) => v.slug === slug)) {
+					throw new Error("A vault with that name already exists");
+				}
+				if (!writableProject) throw new Error("No writable Project available yet");
+				projectId = writableProject.id;
 				await unwrap(
 					await api.POST("/api/vault", {
-						params: { query: { project_id: projectId } },
+						params: { query: { project_id: projectId, create_only: true } },
 						body: { slug, name },
 					}),
 				);
 			} else {
-				projectId = ownVaults.find((v) => v.slug === slug)?.project_ids?.[0] ?? undefined;
+				projectId = selectedVaultProjectId;
 			}
 			// API caps 200 fields per write; chunk for big pastes.
-			const entries = Object.entries(fields);
+			const entries = Object.entries(importPlan.fields);
+			if (entries.length === 0) throw new Error("No keys to save");
 			for (let i = 0; i < entries.length; i += 150) {
 				await unwrap(
 					await api.PUT("/api/vault/{slug}/items", {
@@ -133,17 +167,22 @@ export function AddKeysDialog({
 					}),
 				);
 			}
-			return slug;
+			return { slug, summary: importPlan.summary };
 		},
-		onSuccess: (slug) => {
+		onSuccess: ({ slug, summary }) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.invalidateQueries({ queryKey: ["vault-items", slug] });
-			toast.success(`${count} ${count === 1 ? "key" : "keys"} saved`, {
-				description: `In vault://${slug}. Agents read them through the CLI at runtime.`,
+			const changed = summary.created + summary.updated;
+			toast.success(`${changed} ${changed === 1 ? "key" : "keys"} saved`, {
+				description:
+					summary.updated > 0 || summary.skipped > 0
+						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}.`
+						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
 			});
 			setOpen(false);
 			setText("");
 			setNewVaultName("");
+			setUpdateExisting(false);
 		},
 		onError: (e) => toast.error("Couldn't save keys", { description: errorMessage(e) }),
 	});
@@ -157,6 +196,7 @@ export function AddKeysDialog({
 					setText("");
 					setNewVaultName("");
 					setVaultChoice(vaultSlug ?? "");
+					setUpdateExisting(false);
 				}
 			}}
 		>
@@ -172,7 +212,7 @@ export function AddKeysDialog({
 				<DialogHeader>
 					<DialogTitle>Add keys</DialogTitle>
 					<DialogDescription>
-						Paste <span className="font-mono">KEY=value</span> lines — one key or a whole .env file.
+						Paste <span className="font-mono">KEY=value</span> lines or a flat JSON object.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-3">
@@ -210,34 +250,133 @@ export function AddKeysDialog({
 								</Select>
 							</div>
 							{effectiveChoice === NEW_VAULT ? (
-								<Input
-									value={newVaultName}
-									onChange={(e) => setNewVaultName(e.target.value)}
-									placeholder="Vault name…"
-									aria-label="New vault name"
-									className="sm:w-44"
-								/>
+								<div className="space-y-1">
+									<Input
+										value={newVaultName}
+										onChange={(e) => setNewVaultName(e.target.value)}
+										placeholder="Vault name…"
+										aria-label="New vault name"
+										className="sm:w-44"
+									/>
+									{newVaultSlugTaken ? (
+										<p className="max-w-44 text-xs text-destructive">
+											That vault already exists. Choose it from the list or use a different name.
+										</p>
+									) : null}
+									{newVaultUnavailable ? (
+										<p className="max-w-44 text-xs text-destructive">
+											No writable Project is available yet.
+										</p>
+									) : null}
+								</div>
 							) : null}
+						</div>
+					) : null}
+					{importPlan.parsed.errors.length > 0 ? (
+						<Alert variant="destructive">
+							<AlertCircle className="size-4" />
+							<AlertTitle>Fix import text</AlertTitle>
+							<AlertDescription>
+								<ul className="max-h-32 list-disc space-y-1 overflow-auto pl-4">
+									{importPlan.parsed.errors.map((error, index) => (
+										<li key={`${index}-${error}`}>{error}</li>
+									))}
+								</ul>
+							</AlertDescription>
+						</Alert>
+					) : null}
+					{existingItems.error ? (
+						<Alert variant="destructive">
+							<AlertCircle className="size-4" />
+							<AlertTitle>Couldn't check existing keys</AlertTitle>
+							<AlertDescription>{errorMessage(existingItems.error)}</AlertDescription>
+						</Alert>
+					) : null}
+					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (
+						<div className="flex items-start gap-3 rounded-md border bg-muted/20 p-3">
+							<Checkbox
+								id="add-keys-update-existing"
+								checked={updateExisting}
+								onCheckedChange={(checked) => setUpdateExisting(checked === true)}
+								className="mt-0.5"
+							/>
+							<div className="space-y-1">
+								<Label htmlFor="add-keys-update-existing" className="text-sm font-medium">
+									Overwrite existing keys
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									{importPlan.conflicts.length} key
+									{importPlan.conflicts.length === 1 ? "" : "s"} already exist. By default, they are
+									skipped.
+								</p>
+							</div>
+						</div>
+					) : null}
+					{importPlan.preview.length > 0 && importPlan.parsed.errors.length === 0 ? (
+						<div className="rounded-md border">
+							<div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+								<p className="text-xs font-medium">Preview</p>
+								<div className="flex flex-wrap gap-1.5">
+									<Badge variant="secondary">{importPlan.summary.created} new</Badge>
+									{importPlan.conflicts.length > 0 ? (
+										<Badge variant="outline">
+											{updateExisting
+												? `${importPlan.summary.updated} update`
+												: `${importPlan.summary.skipped} skip`}
+										</Badge>
+									) : null}
+								</div>
+							</div>
+							<div className="max-h-44 divide-y overflow-auto">
+								{importPlan.preview.slice(0, 10).map((entry) => (
+									<div
+										key={`${entry.line ?? "json"}-${entry.key}`}
+										className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm"
+									>
+										<span className="truncate font-mono text-xs" translate="no">
+											{entry.key}
+										</span>
+										<KeyImportActionBadge action={entry.action} />
+									</div>
+								))}
+								{importPlan.preview.length > 10 ? (
+									<p className="px-3 py-2 text-xs text-muted-foreground">
+										{importPlan.preview.length - 10} more key
+										{importPlan.preview.length - 10 === 1 ? "" : "s"} ready.
+									</p>
+								) : null}
+							</div>
 						</div>
 					) : null}
 					<div className="flex items-center justify-between gap-2">
 						<span className="text-xs text-muted-foreground tabular-nums">
 							{count} {count === 1 ? "key" : "keys"} detected
+							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
 						</span>
-						<Button
-							onClick={() => save.mutate()}
-							disabled={
-								count === 0 ||
-								save.isPending ||
-								(effectiveChoice === NEW_VAULT && !newVaultName.trim() && !vaultSlug)
-							}
-						>
+						<Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
 							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-							Save {count > 0 ? count : ""}
+							Save {importableCount > 0 ? importableCount : ""}
 						</Button>
 					</div>
 				</div>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function saveDisabledForNewVault(
+	effectiveChoice: string,
+	vaultSlug: string | undefined,
+	newVaultName: string,
+	newVaultSlug: string,
+): boolean {
+	return effectiveChoice === NEW_VAULT && !vaultSlug && (!newVaultName.trim() || !newVaultSlug);
+}
+
+function KeyImportActionBadge({ action }: { action: "create" | "update" | "skip" }) {
+	return (
+		<Badge variant={action === "create" ? "secondary" : "outline"}>
+			{action === "create" ? "New" : action === "update" ? "Update" : "Skip"}
+		</Badge>
 	);
 }

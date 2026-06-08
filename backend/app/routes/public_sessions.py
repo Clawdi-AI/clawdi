@@ -17,7 +17,6 @@ Access policy:
 from __future__ import annotations
 
 import logging
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
@@ -33,7 +32,12 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.models.user import User
-from app.schemas.session import SessionMessageResponse, SessionMessagesPage
+from app.schemas.session import (
+    PublicSessionExportResponse,
+    PublicSessionResponse,
+    SessionMessageResponse,
+    SessionMessagesPage,
+)
 from app.services.file_store import get_file_store
 from app.services.session_content import (
     SessionContentInvalid,
@@ -112,12 +116,12 @@ async def _resolve_session_for_view(
     raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have access to this session")
 
 
-@router.get("/api/public/sessions/{session_id}")
+@router.get("/api/public/sessions/{session_id}", response_model=PublicSessionResponse)
 async def get_shared_session_detail(
     session_id: UUID = Path(...),
     db: AsyncSession = Depends(get_session),
     visitor: AuthContext | None = Depends(optional_web_auth),
-) -> dict[str, Any]:
+) -> PublicSessionResponse:
     """Detail payload for the public HTML share page.
 
     Server-side rendered by `/s/[id]/page.tsx` so the page works
@@ -127,7 +131,9 @@ async def get_shared_session_detail(
     updating that helper can't silently leak.
     """
     session, agent_type, owner = await _resolve_session_for_view(db, session_id, visitor)
-    return public_session_base_fields(session, agent_type, owner)
+    return PublicSessionResponse.model_validate(
+        public_session_base_fields(session, agent_type, owner)
+    )
 
 
 @router.get("/api/public/sessions/{session_id}/messages")
@@ -211,12 +217,16 @@ async def export_shared_session_markdown(
     )
 
 
-@router.get("/api/public/sessions/{session_id}/export.json")
+@router.get(
+    "/api/public/sessions/{session_id}/export.json",
+    response_model=PublicSessionExportResponse,
+    response_model_exclude_none=True,
+)
 async def export_shared_session_json(
     session_id: UUID = Path(...),
     db: AsyncSession = Depends(get_session),
     visitor: AuthContext | None = Depends(optional_web_auth),
-) -> dict[str, Any]:
+) -> PublicSessionExportResponse:
     """Structured JSON export — public-stripped variant.
 
     `include_owner_metadata=False`: drops local_session_id,
@@ -237,10 +247,12 @@ async def export_shared_session_json(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
 
-    return session_to_json(
-        session,
-        messages,
-        agent_type=agent_type,
-        public=True,
-        include_owner_metadata=False,
+    return PublicSessionExportResponse.model_validate(
+        session_to_json(
+            session,
+            messages,
+            agent_type=agent_type,
+            public=True,
+            include_owner_metadata=False,
+        )
     )

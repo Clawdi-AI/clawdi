@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { ensureBlob, unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -77,7 +77,6 @@ export default function SkillsPage() {
 
 function SkillsPageInner() {
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const queryClient = useQueryClient();
 	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
 	// remains supported for older deep links from agent detail pages.
@@ -346,21 +345,38 @@ function SkillsPageInner() {
 					c.content_hash !== newest.content_hash,
 			);
 			if (stale.length === 0) return { name: newest.name, updated: 0, failed: [] as string[] };
-			const dl = await authedFetch(
-				`/api/projects/${newest.project_id}/skills/${encodeURIComponent(newest.skill_key)}/download`,
+			if (!newest.project_id) {
+				return { name: newest.name, updated: 0, failed: ["source project"] };
+			}
+			const blob = ensureBlob(
+				unwrap(
+					await api.GET("/api/projects/{project_id}/skills/{skill_key}/download", {
+						params: {
+							path: { project_id: newest.project_id, skill_key: newest.skill_key },
+						},
+						parseAs: "blob",
+					}),
+				),
 			);
-			const blob = await dl.blob();
 			let updated = 0;
 			const failed: string[] = [];
 			for (const copy of stale) {
+				if (!copy.project_id) {
+					failed.push(copy.project_name ?? "unknown project");
+					continue;
+				}
 				try {
+					const fileName = `${newest.skill_key.replace(/\//g, "-")}.tar.gz`;
 					const form = new FormData();
 					form.append("skill_key", newest.skill_key);
-					form.append("file", blob, `${newest.skill_key.replace(/\//g, "-")}.tar.gz`);
-					await authedFetch(`/api/projects/${copy.project_id}/skills/upload`, {
-						method: "POST",
-						body: form,
-					});
+					form.append("file", blob, fileName);
+					await unwrap(
+						await api.POST("/api/projects/{project_id}/skills/upload", {
+							params: { path: { project_id: copy.project_id } },
+							body: { skill_key: newest.skill_key, file: fileName },
+							bodySerializer: () => form,
+						}),
+					);
 					updated += 1;
 				} catch {
 					failed.push(copy.project_name ?? "unknown project");
@@ -372,6 +388,12 @@ function SkillsPageInner() {
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 			if (updated === 0 && failed.length === 0) {
 				toast.success(`${name} copies already match`);
+				return;
+			}
+			if (updated === 0) {
+				toast.error(`Couldn't sync ${name}`, {
+					description: `Failed: ${failed.join(", ")}.`,
+				});
 				return;
 			}
 			toast.success(`${name} synced`, {

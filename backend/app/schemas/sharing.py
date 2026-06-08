@@ -41,6 +41,12 @@ class ShareLinkResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ShareLinkRevokeResponse(BaseModel):
+    """Returned after an owner revokes a project share link."""
+
+    status: Literal["revoked"]
+
+
 class InvitationCreate(BaseModel):
     """Body for POST /api/projects/{project_id}/invitations."""
 
@@ -75,6 +81,18 @@ class InvitationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class InvitationCancelResponse(BaseModel):
+    """Returned after an owner cancels a pending project invitation."""
+
+    status: Literal["cancelled"]
+
+
+class InvitationDeclineResponse(BaseModel):
+    """Returned after a recipient declines a project invitation."""
+
+    status: Literal["declined"]
+
+
 class MemberResponse(BaseModel):
     """Returned by GET /api/projects/{project_id}/members."""
 
@@ -88,6 +106,20 @@ class MemberResponse(BaseModel):
     resolved_owner_handle: str
 
     model_config = {"from_attributes": True}
+
+
+class ProjectMemberRemoveResponse(BaseModel):
+    """Returned after an owner removes a project member."""
+
+    status: Literal["removed"]
+    agent_bindings_removed: int
+
+
+class ProjectLeaveResponse(BaseModel):
+    """Returned after a member leaves a shared project."""
+
+    status: Literal["left"]
+    agent_bindings_removed: int
 
 
 class UnshareResponse(BaseModel):
@@ -173,6 +205,14 @@ class BindingReorderItem(BaseModel):
 
 class BindingReorderBody(BaseModel):
     items: list[BindingReorderItem]
+
+
+class BindingReorderResponse(BaseModel):
+    status: Literal["reordered"]
+
+
+class BindingDeleteResponse(BaseModel):
+    status: Literal["deleted"]
 
 
 class AgentProjectBindingResponse(BaseModel):

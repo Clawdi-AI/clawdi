@@ -2,9 +2,11 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +46,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 init_sentry()
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok"]
 
 
 @asynccontextmanager
@@ -189,8 +195,8 @@ app.include_router(me_router)
 app.include_router(agent_project_bindings_router)
 
 
-@app.get("/health")
-async def health(db: AsyncSession = Depends(get_session)) -> dict[str, str]:
+@app.get("/health", response_model=HealthResponse)
+async def health(db: AsyncSession = Depends(get_session)) -> HealthResponse:
     """Liveness + DB connectivity probe.
 
     Returns 200 + ``{"status": "ok"}`` on success. If the DB is unreachable
@@ -198,4 +204,4 @@ async def health(db: AsyncSession = Depends(get_session)) -> dict[str, str]:
     load balancer to yank this pod out of rotation.
     """
     await db.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    return HealthResponse(status="ok")

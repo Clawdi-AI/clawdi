@@ -21,12 +21,16 @@ from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
 from app.models.user import User
 from app.schemas.sharing import (
+    InvitationCancelResponse,
     InvitationCreate,
     InvitationResponse,
     MemberResponse,
+    ProjectLeaveResponse,
+    ProjectMemberRemoveResponse,
     ShareLinkCreate,
     ShareLinkCreated,
     ShareLinkResponse,
+    ShareLinkRevokeResponse,
     UnshareResponse,
 )
 from app.services.agent_bindings import delete_project_bindings_for_users
@@ -172,13 +176,16 @@ async def list_share_links(
     ]
 
 
-@router.delete("/{project_id}/share-links/{link_id}")
+@router.delete(
+    "/{project_id}/share-links/{link_id}",
+    response_model=ShareLinkRevokeResponse,
+)
 async def revoke_share_link(
     project_id: UUID,
     link_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> ShareLinkRevokeResponse:
     await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
     result = await db.execute(
         select(ProjectShareLink).where(
@@ -193,7 +200,7 @@ async def revoke_share_link(
         link.revoked_at = datetime.now(UTC)
         await db.commit()
         logger.info("project_share_link_revoked link_id=%s by=%s", link_id, auth.user_id)
-    return {"status": "revoked"}
+    return ShareLinkRevokeResponse(status="revoked")
 
 
 def _owner_view(auth: AuthContext) -> tuple[str, str]:
@@ -335,13 +342,16 @@ async def list_invitations(
     ]
 
 
-@router.delete("/{project_id}/invitations/{invitation_id}")
+@router.delete(
+    "/{project_id}/invitations/{invitation_id}",
+    response_model=InvitationCancelResponse,
+)
 async def cancel_invitation(
     project_id: UUID,
     invitation_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> InvitationCancelResponse:
     await _assert_shareable_project_owner(db, auth, project_id, for_update=True)
     row = (
         await db.execute(
@@ -355,7 +365,7 @@ async def cancel_invitation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "invitation not found")
     await db.delete(row)
     await db.commit()
-    return {"status": "cancelled"}
+    return InvitationCancelResponse(status="cancelled")
 
 
 @router.get("/{project_id}/members", response_model=list[MemberResponse])
@@ -388,13 +398,16 @@ async def list_members(
     ]
 
 
-@router.delete("/{project_id}/members/{member_user_id}")
+@router.delete(
+    "/{project_id}/members/{member_user_id}",
+    response_model=ProjectMemberRemoveResponse,
+)
 async def remove_member(
     project_id: UUID,
     member_user_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str | int]:
+) -> ProjectMemberRemoveResponse:
     project = await _assert_shareable_project_owner(db, auth, project_id)
     if member_user_id == project.user_id:
         raise HTTPException(
@@ -419,15 +432,18 @@ async def remove_member(
         user_ids=[member_user_id],
     )
     await db.commit()
-    return {"status": "removed", "agent_bindings_removed": bindings_removed}
+    return ProjectMemberRemoveResponse(
+        status="removed",
+        agent_bindings_removed=bindings_removed,
+    )
 
 
-@router.post("/{project_id}/leave")
+@router.post("/{project_id}/leave", response_model=ProjectLeaveResponse)
 async def leave_project(
     project_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str | int]:
+) -> ProjectLeaveResponse:
     project = (
         await db.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
@@ -456,7 +472,10 @@ async def leave_project(
         user_ids=[auth.user_id],
     )
     await db.commit()
-    return {"status": "left", "agent_bindings_removed": bindings_removed}
+    return ProjectLeaveResponse(
+        status="left",
+        agent_bindings_removed=bindings_removed,
+    )
 
 
 @router.post("/{project_id}/unshare", response_model=UnshareResponse)

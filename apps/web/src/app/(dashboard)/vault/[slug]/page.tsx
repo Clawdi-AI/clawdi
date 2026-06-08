@@ -225,6 +225,24 @@ export default function VaultDetailPage() {
 			toast.error("Couldn't remove vault from Project", { description: errorMessage(e) }),
 	});
 
+	const deleteVault = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.DELETE("/api/vault/{slug}", {
+					params: { path: { slug }, query: {} },
+				}),
+			),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.removeQueries({ queryKey: ["vault-items", slug] });
+			toast.success("Vault deleted", {
+				description: `${vault?.name ?? slug} and its keys were removed.`,
+			});
+			router.push("/vault");
+		},
+		onError: (e) => toast.error("Couldn't delete vault", { description: errorMessage(e) }),
+	});
+
 	useSetBreadcrumbTitle(vault?.name ?? null);
 
 	if (vaults.isLoading) {
@@ -305,14 +323,14 @@ export default function VaultDetailPage() {
 							}
 							confirmLabel="Delete vault"
 							destructive
-							onConfirm={async () => {
-								for (const pid of vault.project_ids ?? []) {
-									await detachProject.mutateAsync(pid);
-								}
-								router.push("/vault");
-							}}
+							onConfirm={() => deleteVault.mutateAsync()}
 						>
-							<Button variant="outline" size="sm" className="text-destructive">
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={deleteVault.isPending}
+								className="text-destructive"
+							>
 								<Trash2 className="mr-1.5 size-3.5" />
 								Delete
 							</Button>

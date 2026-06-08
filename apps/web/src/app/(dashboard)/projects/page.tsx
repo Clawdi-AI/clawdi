@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -41,31 +41,12 @@ import { cn, errorMessage } from "@/lib/utils";
 type Env = components["schemas"]["EnvironmentResponse"];
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-interface ProjectRow {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	origin_environment_id: string | null;
-	archived_at: string | null;
-	created_at: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
-
-interface VaultRow {
-	id: string;
-	slug: string;
-	name: string;
-	project_ids?: string[] | null;
-}
+type ProjectRow = components["schemas"]["ProjectResponse"];
 
 const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export default function ProjectsPage() {
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [newProjectName, setNewProjectName] = useState("");
@@ -76,10 +57,7 @@ export default function ProjectsPage() {
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => {
-			const r = await authedFetch("/api/projects");
-			return r.json();
-		},
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
 	});
 
 	const rows = projects.data ?? [];
@@ -108,10 +86,8 @@ export default function ProjectsPage() {
 	});
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
-		queryFn: async (): Promise<{ items: VaultRow[] }> => {
-			const r = await authedFetch("/api/vault?page_size=200");
-			return r.json();
-		},
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
 	});
 	const skillCounts = useMemo(() => {
 		const m = new Map<string, number>();
@@ -169,12 +145,7 @@ export default function ProjectsPage() {
 			const payload: { name: string; slug?: string } = { name: newProjectName.trim() };
 			const slug = normalizeSlugInput(newProjectSlug);
 			if (slug) payload.slug = slug;
-			const r = await authedFetch("/api/projects", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload),
-			});
-			return r.json();
+			return unwrap(await api.POST("/api/projects", { body: payload }));
 		},
 		onSuccess: (project) => {
 			setNewProjectName("");

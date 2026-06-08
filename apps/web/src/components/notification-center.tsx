@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, useAuthedFetch } from "@/lib/api";
+import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
@@ -38,7 +38,7 @@ import {
 export function NotificationCenter() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
-	const authedFetch = useAuthedFetch();
+	const api = useApi();
 	const [open, setOpen] = useState(false);
 
 	function refetchMembershipDerived() {
@@ -49,10 +49,8 @@ export function NotificationCenter() {
 
 	const invitations = useQuery({
 		queryKey: NOTIFICATION_CENTER_QUERY_KEY,
-		queryFn: async (): Promise<ProjectInvitationNotification[]> => {
-			const response = await authedFetch("/api/me/invitations");
-			return response.json();
-		},
+		queryFn: async (): Promise<ProjectInvitationNotification[]> =>
+			unwrap(await api.GET("/api/me/invitations")),
 		refetchOnWindowFocus: true,
 	});
 
@@ -62,14 +60,13 @@ export function NotificationCenter() {
 		}: {
 			id: string;
 			projectName: string;
-		}): Promise<AcceptInvitationResponse> => {
-			const response = await authedFetch(`/api/me/invitations/${id}/accept`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({}),
-			});
-			return response.json();
-		},
+		}): Promise<AcceptInvitationResponse> =>
+			unwrap(
+				await api.POST("/api/me/invitations/{invitation_id}/accept", {
+					params: { path: { invitation_id: id } },
+					body: { use_as: "attached" },
+				}),
+			),
 		onSuccess: (result, variables) => {
 			refetchMembershipDerived();
 			const copy = getAcceptedProjectInvitationToastCopy(variables.projectName);
@@ -94,7 +91,11 @@ export function NotificationCenter() {
 
 	const decline = useMutation({
 		mutationFn: async (id: string) => {
-			await authedFetch(`/api/me/invitations/${id}/decline`, { method: "POST" });
+			await unwrap(
+				await api.POST("/api/me/invitations/{invitation_id}/decline", {
+					params: { path: { invitation_id: id } },
+				}),
+			);
 		},
 		onSuccess: () => {
 			refetchMembershipDerived();
