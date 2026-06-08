@@ -22,7 +22,6 @@ describe("project resource model", () => {
 		expect(projectResourceHref("vaults", "proj 1")).toBe("/vault?project=proj%201");
 		expect(projectResourceHref("memories", "proj_1")).toBe("/memories");
 		expect(projectResourceHref("sessions", "proj_1")).toBe("/sessions");
-		expect(projectResourceHref("channels", "proj_1")).toBe("/channels");
 	});
 
 	it("builds stable detail links for resource rows", () => {
@@ -45,7 +44,6 @@ describe("project resource model", () => {
 		expect(getProjectResourceDefinition("vaults").projectScope).toBe("project-managed");
 		expect(getProjectResourceDefinition("sessions").projectScope).toBe("activity");
 		expect(getProjectResourceDefinition("memories").projectScope).toBe("account-wide");
-		expect(getProjectResourceDefinition("channels").projectScope).toBe("account-wide");
 	});
 
 	it("keeps navigation order grouped by resource ownership", () => {
@@ -55,7 +53,6 @@ describe("project resource model", () => {
 			"vaults",
 			"sessions",
 			"memories",
-			"channels",
 			"connectors",
 		]);
 		expect(projectResourceDefinitionsForGroup("project-resources").map((r) => r.id)).toEqual([
@@ -88,9 +85,6 @@ describe("project resource model", () => {
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("memories"))).toBe(
 			"Account resources / Memory",
-		);
-		expect(projectResourcePathLabel(getProjectResourceDefinition("channels"))).toBe(
-			"Account resources / Channels",
 		);
 		expect(projectResourcePathLabel(getProjectResourceDefinition("connectors"))).toBe(
 			"Account resources / Connectors",

@@ -60,14 +60,6 @@ export type ConnectorTool = Schemas["ConnectorToolResponse"];
 export type ConnectorConnectResult = Schemas["ConnectorConnectResponse"];
 export type ConnectorDisconnectResult = Schemas["ConnectorDisconnectResponse"];
 
-// ── Channels ─────────────────────────────────────────────────────────────
-export type ChannelAccount = Schemas["ChannelAccountResponse"];
-export type ChannelAccountCreate = Schemas["ChannelAccountCreate"];
-export type ChannelAccountCreated = Schemas["ChannelAccountCreatedResponse"];
-export type ChannelAgentLink = Schemas["ChannelAgentLinkResponse"];
-export type ChannelBinding = Schemas["ChannelBindingResponse"];
-export type ChannelPairCode = Schemas["ChannelPairCodeResponse"];
-
 // ── Settings ─────────────────────────────────────────────────────────────
 export type UserSettings = Schemas["SettingsResponse"];
 export type UserSettingsUpdated = Schemas["SettingsUpdateResponse"];

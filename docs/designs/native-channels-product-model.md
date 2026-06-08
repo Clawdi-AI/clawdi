@@ -277,20 +277,6 @@ User-facing control plane:
 | `GET /api/channels/{id}/bindings` | Lists only the caller's active bindings. |
 | `POST /api/channels/{id}/messages` | Sends only through the caller's active binding. |
 
-Dashboard control plane:
-
-| Surface | Scope |
-| --- | --- |
-| `Channels` page | Lists owned private bots and accessible public bots as an account-level resource. |
-| Create private bot | Creates a user-owned bot with optional provider token, config JSON, extra secrets, and initial agent link. |
-| Link agent | Creates a caller-owned bot-agent link for any accessible bot. |
-| Pair code | Creates `/bot_pair <code>` for a selected caller-owned link. |
-| Paired chats | Lists only the caller's active chat bindings for the selected bot. |
-
-The dashboard is intentionally user-scoped. It does not expose public bot
-publishing, provider credential rotation for public bots, debug event streams,
-or msg-router import tooling; those remain admin/API/ops surfaces.
-
 CLI control plane:
 
 | CLI | Scope |
