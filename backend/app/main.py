@@ -4,8 +4,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +49,20 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 init_sentry()
+
+
+def _validation_errors_for_log(exc: RequestValidationError) -> list[dict[str, object]]:
+    errors: list[dict[str, object]] = []
+    for err in exc.errors():
+        item: dict[str, object] = {
+            "type": err.get("type"),
+            "loc": err.get("loc"),
+            "msg": err.get("msg"),
+        }
+        if "ctx" in err:
+            item["ctx"] = err["ctx"]
+        errors.append(item)
+    return errors
 
 
 class HealthResponse(BaseModel):
@@ -166,6 +183,32 @@ app.add_middleware(
 )
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    path = request.url.path
+    if path.endswith("/skills/upload") or path == "/api/sessions/batch":
+        log.warning(
+            (
+                "request_validation_failed method=%s path=%s user_agent=%r "
+                "content_type=%r content_length=%r errors=%s"
+            ),
+            request.method,
+            path,
+            request.headers.get("user-agent", ""),
+            request.headers.get("content-type", ""),
+            request.headers.get("content-length", ""),
+            _validation_errors_for_log(exc),
+        )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
+
 
 app.include_router(auth_router)
 app.include_router(admin_router)

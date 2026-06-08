@@ -8,6 +8,7 @@ archive is later extracted on the server or CLI.
 from __future__ import annotations
 
 import io
+import logging
 import tarfile
 
 import httpx
@@ -513,6 +514,32 @@ async def test_nested_skill_round_trips_through_project_routes(
     assert r_delete.status_code == 200, r_delete.text
     r_get_after = await client.get(f"/api/projects/{project_id}/skills/{nested_key}")
     assert r_get_after.status_code == 404, r_get_after.text
+
+
+@pytest.mark.asyncio
+async def test_malformed_skill_upload_logs_validation_reason(
+    client: httpx.AsyncClient,
+    project_id: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.WARNING, logger="app.main")
+
+    response = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "missing-file"},
+        headers={"User-Agent": "clawdi-cli/test"},
+    )
+
+    assert response.status_code == 422
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "request_validation_failed" in message
+        and "/skills/upload" in message
+        and "clawdi-cli/test" in message
+        and "content_type=" in message
+        and "file" in message
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio

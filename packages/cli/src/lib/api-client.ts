@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
 import { getAuth, getConfig } from "./config";
+import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
 type SessionUploadResponse = components["schemas"]["SessionUploadResponse"];
@@ -9,6 +10,7 @@ type SessionUploadResponse = components["schemas"]["SessionUploadResponse"];
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
+const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
 
 /** Error thrown by ApiClient. Carries HTTP status and a human-facing hint. */
 export class ApiError extends Error {
@@ -200,6 +202,7 @@ export class ApiClient {
 				if (this.apiKey) {
 					request.headers.set("Authorization", `Bearer ${this.apiKey}`);
 				}
+				request.headers.set("User-Agent", USER_AGENT);
 				// Generate a per-request correlation ID. Backend's
 				// RequestIDMiddleware accepts the header and echoes
 				// it on the response + every log line, so an oncall
@@ -306,6 +309,7 @@ export class ApiClient {
 		try {
 			const headers: Record<string, string> = {
 				Authorization: `Bearer ${this.apiKey}`,
+				"User-Agent": USER_AGENT,
 				...(extraHeaders ?? {}),
 			};
 			const res = await fetch(`${this.baseUrl}${path}`, {
