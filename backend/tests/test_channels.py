@@ -49,6 +49,7 @@ from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryW
 from app.services.channels import (
     ChannelAgentContext,
     extract_discord_routing_key,
+    hash_token,
     parse_pair_command,
     record_discord_dispatch,
     wait_for_telegram_updates,
@@ -480,6 +481,43 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert "webhook_secret" not in listed.text
     assert "telegram-secret" not in listed.text
     assert "agent_token" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_rotate_channel_agent_link_token_replaces_one_time_token(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"rotate-token-{uuid4().hex}",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    old_token = created["agent_token"]
+
+    rotated = await client.post(
+        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+    )
+
+    assert rotated.status_code == 200, rotated.text
+    body = rotated.json()
+    assert body["id"] == created["agent_link_id"]
+    assert body["agent_token"]
+    assert body["agent_token"] != old_token
+    link = (
+        await db_session.execute(
+            select(ChannelBotAgentLink).where(
+                ChannelBotAgentLink.id == UUID(created["agent_link_id"])
+            )
+        )
+    ).scalar_one()
+    assert link.agent_token_hash == hash_token(body["agent_token"])
+    assert link.agent_token_hash != hash_token(old_token)
 
 
 @pytest.mark.asyncio
