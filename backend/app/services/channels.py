@@ -344,6 +344,7 @@ async def get_owned_bot_agent_link(
             ChannelBotAgentLink.id == link_id,
             ChannelBotAgentLink.account_id == account.id,
             ChannelBotAgentLink.user_id == user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
         )
     )
@@ -351,6 +352,25 @@ async def get_owned_bot_agent_link(
     if link is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent link not found")
     return link
+
+
+async def list_owned_active_bot_agent_links(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    user_id: UUID,
+) -> list[ChannelBotAgentLink]:
+    result = await db.execute(
+        select(ChannelBotAgentLink)
+        .where(
+            ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .order_by(ChannelBotAgentLink.created_at)
+    )
+    return list(result.scalars().all())
 
 
 async def rotate_bot_agent_link_token(

@@ -29,7 +29,6 @@ from app.core.auth import (
 from app.core.config import settings
 from app.core.database import async_session_factory, get_session
 from app.models.channel import (
-    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_WHATSAPP,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAgentCredential,
@@ -57,8 +56,10 @@ from app.services.channels import (
     get_accessible_channel_account,
     get_channel_secret,
     get_or_create_bot_agent_link,
+    get_owned_bot_agent_link,
     get_owned_channel_account,
     get_public_channel_account,
+    list_owned_active_bot_agent_links,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
@@ -197,22 +198,12 @@ async def _resolve_whatsapp_tenant_link(
     body: WhatsAppTenantCredentialCreate,
 ) -> ChannelBotAgentLink:
     if body.agent_link_id is not None:
-        result = await db.execute(
-            select(ChannelBotAgentLink).where(
-                ChannelBotAgentLink.id == body.agent_link_id,
-                ChannelBotAgentLink.account_id == account.id,
-                ChannelBotAgentLink.user_id == auth.user_id,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                ChannelBotAgentLink.archived_at.is_(None),
-            )
+        return await get_owned_bot_agent_link(
+            db,
+            account=account,
+            link_id=body.agent_link_id,
+            user_id=auth.user_id,
         )
-        link = result.scalar_one_or_none()
-        if link is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="agent link not found",
-            )
-        return link
     if body.agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
         link, _agent_token = await get_or_create_bot_agent_link(
@@ -222,15 +213,7 @@ async def _resolve_whatsapp_tenant_link(
             user_id=auth.user_id,
         )
         return link
-    result = await db.execute(
-        select(ChannelBotAgentLink).where(
-            ChannelBotAgentLink.account_id == account.id,
-            ChannelBotAgentLink.user_id == auth.user_id,
-            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-            ChannelBotAgentLink.archived_at.is_(None),
-        )
-    )
-    links = list(result.scalars().all())
+    links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
     if len(links) == 1:
         return links[0]
     detail = "agent_id or agent_link_id is required"

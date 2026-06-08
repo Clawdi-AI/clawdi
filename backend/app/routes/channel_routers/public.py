@@ -19,7 +19,6 @@ from app.core.auth import (
 from app.core.database import get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
-    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDERS,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PUBLIC,
@@ -60,6 +59,7 @@ from app.services.channels import (
     get_owned_bot_agent_link,
     get_owned_channel_account,
     hash_token,
+    list_owned_active_bot_agent_links,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -441,15 +441,7 @@ async def _resolve_pair_code_link(
             user_id=auth.user_id,
         )
         return link, agent_token
-    result = await db.execute(
-        select(ChannelBotAgentLink).where(
-            ChannelBotAgentLink.account_id == account.id,
-            ChannelBotAgentLink.user_id == auth.user_id,
-            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-            ChannelBotAgentLink.archived_at.is_(None),
-        )
-    )
-    links = list(result.scalars().all())
+    links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
     if len(links) == 1:
         return links[0], None
     detail = "agent_id or agent_link_id is required"
