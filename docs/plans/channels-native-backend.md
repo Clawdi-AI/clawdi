@@ -105,15 +105,19 @@ the PR.
 
 ## Channel Domain Model
 
+The full product model is documented in
+[`docs/designs/native-channels-product-model.md`](../designs/native-channels-product-model.md).
+This section keeps the migration-specific summary.
+
 The native channel model is intentionally split by responsibility:
 
 | Concept | Table | Meaning |
 | --- | --- | --- |
 | External bot | `channel_accounts` | Provider identity, visibility, and transport credentials, such as a Telegram bot, Discord application/bot token, WhatsApp phone, or BlueBubbles server. |
 | Bot-agent link | `channel_bot_agent_links` | Authorization edge from one external bot to one Clawdi AgentEnvironment. This owns the hashed agent SDK token and link-local agent SDK state such as Telegram webhook and command shadows. |
-| Conversation route | `channel_bindings` and `channel_binding_aliases` | External chat ids and provider aliases routed to exactly one active bot-agent link per account. |
+| Conversation route | `channel_bindings` and `channel_binding_aliases` | External chat ids and provider aliases routed to exactly one active bot-agent link per account. Active routes also record the external actor allowed to change pairing. |
 | Inbox/outbox message | `channel_messages` and `channel_deliveries` | Routed traffic carrying `bot_agent_link_id` so agent-facing polling, Gateway replay, BlueBubbles queries, and outbound sends are link-scoped. |
-| Ephemeral pairing | `channel_pair_codes` | One-time claim code scoped to the target bot-agent link. |
+| Ephemeral pairing | `channel_pair_codes` | One-time claim code scoped to the target bot-agent link. Claimed codes record both the external chat and external actor. |
 
 This supports multiple bots per provider, multiple agent links per bot, and
 many-to-many routing between bots and agents without overloading the provider
