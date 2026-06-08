@@ -1,7 +1,6 @@
 import hashlib
 import io
 import logging
-import re
 import tarfile
 from uuid import UUID
 
@@ -30,6 +29,14 @@ from app.core.project import (
     validate_project_read_for_caller,
 )
 from app.core.query_utils import like_needle
+from app.core.skill_key import (
+    MAX_SKILL_KEY_LEN,
+    RESERVED_SKILL_KEY_SUFFIXES,
+    SKILL_KEY_PATTERN,
+    SkillKeyValidationError,
+    has_reserved_skill_key_suffix,
+    validate_derived_skill_key,
+)
 from app.models.skill import Skill
 from app.schemas.common import Paginated
 from app.schemas.skill import (
@@ -64,78 +71,6 @@ project_router = APIRouter(prefix="/api/projects/{project_id}/skills", tags=["sk
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
-
-
-# `skill_key` is concatenated into a file-store path, so any '..'
-# segment or empty / hidden component would let a caller escape the
-# user's prefix. The pattern allows up to 4 nested path components
-# joined by '/' (Hermes layouts like `category/foo/SKILL.md` need
-# this — pre-fix the flat-key validator rejected nested keys with
-# 422 and silently dropped them from sync). Each component:
-#   - starts with [A-Za-z0-9] (rejects '.' / '..' as a component,
-#     and leading-dot hidden segments)
-#   - then [A-Za-z0-9._-]{0,199} (so per-component max is 200
-#     chars, preserving the pre-Hermes flat-key length cap so an
-#     existing skill_key longer than 100 chars doesn't suddenly
-#     422)
-# The leading-alphanum requirement on every component is the
-# path-traversal guard — '..' as a component, or `.foo` hidden
-# segments, are both rejected at the first character.
-#
-# TOTAL LENGTH is capped separately at `MAX_SKILL_KEY_LEN` (200,
-# matching the `Skill.skill_key` column's `String(200)` width).
-# Without that cap, a 4-component key could reach ~803 chars and
-# pass FastAPI's `pattern` check, then fail at INSERT with a
-# truncation error — accepted at validation, dead at persistence.
-# Every Path/Form/Query param that captures a skill_key combines
-# both `pattern=SKILL_KEY_PATTERN` AND `max_length=MAX_SKILL_KEY_LEN`
-# so the 422 fires at request time, not at the DB.
-SKILL_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}(/[A-Za-z0-9][A-Za-z0-9._\-]{0,199}){0,3}$"
-_SKILL_KEY_RE = re.compile(SKILL_KEY_PATTERN)
-MAX_SKILL_KEY_LEN = 200
-
-# Terminal path components that conflict with route suffixes on
-# `/api/skills/{skill_key:path}/*` and
-# `/api/projects/{project_id}/skills/{skill_key:path}/*`. Starlette
-# matches routes in declaration order, so `/skills/team/download`
-# (a key literally named `team/download`) would resolve to the
-# `/{skill_key:path}/download` GET with `skill_key="team"` — the
-# bare-detail route never gets a chance to see the real key.
-# Reserving these suffixes keeps the routing tree unambiguous.
-# Reupping is a no-op for legitimate users; a skill named
-# `notes/download` is unusual and the 400 explains how to rename.
-_RESERVED_SKILL_KEY_SUFFIXES = frozenset({"download", "content", "install"})
-
-
-def _has_reserved_suffix(skill_key: str) -> bool:
-    """True iff the skill_key's last `/`-separated component is a
-    URL suffix the routing tree owns. Always false for flat keys
-    that happen to BE a reserved word (e.g. `download`) — the
-    one-segment route shape can't collide with a deeper suffix.
-    """
-    parts = skill_key.split("/")
-    return len(parts) > 1 and parts[-1] in _RESERVED_SKILL_KEY_SUFFIXES
-
-
-def _validate_derived_skill_key(skill_key: str) -> str:
-    """Validate a skill_key that was derived server-side (e.g. from
-    a marketplace SKILL.md frontmatter). Path-component constraints
-    apply to derived keys too — a malicious SKILL.md `name: "../x"`
-    would otherwise reach `_file_key` and traverse the file store.
-    Total-length cap mirrors `Skill.skill_key` column width
-    (`String(200)`); without it a derived key could pass the regex
-    check but blow up at INSERT.
-    """
-    if (
-        len(skill_key) > MAX_SKILL_KEY_LEN
-        or not _SKILL_KEY_RE.match(skill_key)
-        or _has_reserved_suffix(skill_key)
-    ):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"derived skill_key {skill_key!r} is not safe for storage",
-        )
-    return skill_key
 
 
 def _file_key(user_id, project_id, skill_key: str) -> str:
@@ -824,11 +759,11 @@ async def _do_upload_skill(
     # with `skill_key="team"` and the bare detail handler
     # never saw the real key. Path/Form validators don't
     # express this constraint cleanly so we re-check here.
-    if _has_reserved_suffix(skill_key):
+    if has_reserved_skill_key_suffix(skill_key):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"skill_key cannot end with reserved suffix "
-            f"({', '.join(sorted(_RESERVED_SKILL_KEY_SUFFIXES))})",
+            f"({', '.join(sorted(RESERVED_SKILL_KEY_SUFFIXES))})",
         )
     try:
         file_count = validate_tar(data)
@@ -1289,7 +1224,10 @@ async def _do_install_skill(
     # which the user controls. A malicious `name: "../etc/passwd"`
     # would otherwise traverse the file store. Validate the derived
     # key against the same pattern the upload route enforces.
-    skill_key = _validate_derived_skill_key(fetched.name.lower().replace(" ", "-"))
+    try:
+        skill_key = validate_derived_skill_key(fetched.name.lower().replace(" ", "-"))
+    except SkillKeyValidationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
     fk = _file_key(auth.user_id, project_id, skill_key)
 
     # Same advisory lock pattern as upload_skill. Lock identity

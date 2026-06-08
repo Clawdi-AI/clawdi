@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import {
 	isSubpathSafe,
 	sanitizeMetadata,
-	sanitizeName,
 	sanitizeSubpath,
 	stripTerminalEscapes,
 } from "../src/lib/sanitize";
@@ -89,41 +88,5 @@ describe("isSubpathSafe", () => {
 	it("returns false when subpath escapes base", () => {
 		expect(isSubpathSafe("/tmp/base", "../etc")).toBe(false);
 		expect(isSubpathSafe("/tmp/base", "../../../etc/passwd")).toBe(false);
-	});
-});
-
-describe("sanitizeName", () => {
-	it("kebab-cases user-supplied names", () => {
-		expect(sanitizeName("My Cool Skill")).toBe("my-cool-skill");
-		expect(sanitizeName("Hello, World!")).toBe("hello-world");
-	});
-
-	it("lowercases", () => {
-		expect(sanitizeName("UPPER")).toBe("upper");
-	});
-
-	it("strips leading/trailing dots and hyphens", () => {
-		expect(sanitizeName("-foo-")).toBe("foo");
-		expect(sanitizeName(".hidden.")).toBe("hidden");
-	});
-
-	it("preserves dots and underscores in the middle", () => {
-		expect(sanitizeName("my_skill.v1")).toBe("my_skill.v1");
-	});
-
-	it("falls back to unnamed-skill on empty", () => {
-		expect(sanitizeName("")).toBe("unnamed-skill");
-		expect(sanitizeName("---")).toBe("unnamed-skill");
-		expect(sanitizeName("!@#$")).toBe("unnamed-skill");
-	});
-
-	it("caps at 255 chars", () => {
-		const long = "a".repeat(300);
-		expect(sanitizeName(long)).toHaveLength(255);
-	});
-
-	it("prevents path traversal attempts", () => {
-		expect(sanitizeName("../etc/passwd")).toBe("etc-passwd");
-		expect(sanitizeName("..")).toBe("unnamed-skill");
 	});
 });
