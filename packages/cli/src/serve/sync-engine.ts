@@ -56,6 +56,7 @@ import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
+import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
 	readSkillsLock,
@@ -844,6 +845,11 @@ async function enqueueIfChanged(
 	skillKey: string,
 	getProjectId: () => string,
 ): Promise<void> {
+	if (!isValidSkillKey(skillKey)) {
+		lastPushedHash.delete(skillKey);
+		log.warn("engine.invalid_skill_key_skipped", { skill_key: skillKey });
+		return;
+	}
 	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
 	let hash: string;
 	try {

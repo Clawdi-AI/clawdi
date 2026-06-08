@@ -152,6 +152,10 @@ async function watchEvents(opts: Opts): Promise<void> {
 	});
 
 	const on = (skillKey: string) => {
+		if (!isValidSkillKey(skillKey)) {
+			log.warn("watcher.invalid_skill_key_skipped", { skill_key: skillKey });
+			return;
+		}
 		changeEmitter.emit(skillKey);
 	};
 
@@ -351,6 +355,10 @@ async function snapshot(
 	const out = new Map<string, string>();
 	const skills = listSkillKeys ? await listSkillKeys() : await listSkillDirs(rootDir);
 	for (const key of skills) {
+		if (!isValidSkillKey(key)) {
+			log.warn("watcher.invalid_skill_key_skipped", { skill_key: key });
+			continue;
+		}
 		const sig = await dirSignature(join(rootDir, key));
 		out.set(key, sig);
 	}
