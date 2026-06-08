@@ -316,10 +316,11 @@ with private permissions and emit:
 
 ```dotenv
 WA_WEBSOCKET_URL=wss://cloud-api.clawdi.ai/api/channels/whatsapp/<account-id>/baileys
-MUX_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
+CLAWDI_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
 ```
 
-This projection is required for full old `msg-router` WhatsApp parity.
+This projection is the Clawdi-native WhatsApp runtime contract. It must not
+emit old router env names.
 
 ## CLI Commands
 

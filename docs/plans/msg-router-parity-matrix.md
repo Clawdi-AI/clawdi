@@ -16,7 +16,7 @@ the Clawdi-native Python/FastAPI migration. Status meanings:
 The migration has product-level parity with the old `msg-router` channel
 surface. It is not a line-for-line recreation of the old Node process: legacy
 adapter/router/admin process structure, old root compatibility routes, real
-grammY/discord.js process tests, and mux-super utility behavior are
+grammY/discord.js process tests, and legacy tenant utility behavior are
 intentionally superseded by provider-prefixed FastAPI routes, Clawdi auth,
 agent-scoped channel links, SQLAlchemy state, and Clawdi-owned workers. The backend now has
 the
@@ -25,7 +25,7 @@ iMessage/BlueBubbles, WhatsApp, private-IP guard, metrics/auth, Telegram
 webhook redelivery, shared rate-limiter, pairing-flow, and BlueBubbles
 payload/error-envelope/Socket.IO/webhook-auth/chat-new parity slices, Discord fixture replay,
 Discord command scope/fan-out, Telegram `/start <pair-code>` deep-link pairing,
-core inbox/migration/debug endpoints, credential lifecycle endpoints, and shared worker lifecycle coverage,
+core inbox/debug endpoints, credential lifecycle endpoints, and shared worker lifecycle coverage,
 WhatsApp Signal/group state helpers, WhatsApp Noise runtime debug events,
 credential-backed WhatsApp prekey bundle reuse on reconnect, and a Python-native
 WhatsApp inbox pump contract plus route-level durable inbox delivery into the
@@ -148,9 +148,9 @@ runtime comparison baseline:
 No-secret checks against the test deployment passed:
 
 - `phala ps da2d1abd4ab7f5f6b514af5fecbc4d44eb45de39` reports
-  `msg-router`, `mux-server`, and `mux-proxy` running and healthy.
+  the old test router stack running and healthy.
 - `GET /health` on port `18890` returns the expected msg-router SHA.
-- `GET /health` on port `18891` returns mux-server healthy.
+- `GET /health` on port `18891` returns the legacy helper service healthy.
 - `GET /api/v10/gateway/bot` without an agent token returns `401`, confirming
   the Discord-compatible agent route is present and authenticated.
 - `docker compose --env-file /dev/null -f infra/msg-router/docker-compose.yml
@@ -184,7 +184,7 @@ Field-level configuration mapping:
 | `DISCORD_GATEWAY_URL` | `channel_discord_gateway_url`. |
 | `DISCORD_AGENT_GATEWAY_URL` | `/api/channels/discord/gateway` advertised through provider-prefixed REST. |
 | `MSG_ROUTER_TELEGRAM_PROVIDER_TOKEN` / `MSG_ROUTER_DISCORD_PROVIDER_TOKEN` | Encrypted channel account provider token storage. |
-| mux-super tenant/token env (`MSG_ROUTER_MUX_*`) | Superseded by Clawdi users, channel accounts, agent links, bindings, and the import route. |
+| Legacy tenant/token env | Superseded by Clawdi users, channel accounts, agent links, and bindings. No legacy tenant import API is carried forward. |
 | `WA_SHARED_BOT_AUTH_DIR` / `WA_SHARED_BOT_PHONE_NUMBER` | `ChannelAgentCredential`, auth cert storage, and configured Baileys sidecars. |
 | `WA_WEBSOCKET_URL=ws://msg-router:18890/whatsapp` | `/api/channels/whatsapp/{account_id}/baileys`. |
 | `IMESSAGE_DEFAULT_SERVER_URL` / `IMESSAGE_DEFAULT_API_KEY` | Encrypted BlueBubbles account config and provider-scoped auth. |
@@ -204,7 +204,7 @@ Field-level configuration mapping:
 | `src/channels/discord/channel-guild-map.ts` | Implemented | `ChannelBindingAlias` persists Discord `channel_id -> guild binding` mappings from webhook/gateway ingress, agent REST channel sends authorize through the alias, and Gateway GUILD_CREATE payloads synthesize known bound channels from aliases. |
 | `src/channels/discord/commands.ts` | Implemented | Discord app-command shadow storage, application-id validation, global/guild lifecycle, reserved `/bot_*` rejection, duplicate-name upsert/conflict checks, bound-guild scope validation, and provider fan-out to uncontested bound guilds are covered through FastAPI tests. |
 | `src/channels/discord/creds-store.ts` | Implemented | `channel_bot_agent_links.agent_token_hash`; raw token one-time issuance and rotation are covered by tests. |
-| `src/channels/discord/egress-rest.ts` | Implemented | `channel_routers/discord.py`; Gateway discovery, bot/app profile shadows, app-command lifecycle, interactions/followups, message edit/delete, bound channel/guild REST proxy, DM-create rejection, unknown-path 403, and no old mux-super REST are covered. |
+| `src/channels/discord/egress-rest.ts` | Implemented | `channel_routers/discord.py`; Gateway discovery, bot/app profile shadows, app-command lifecycle, interactions/followups, message edit/delete, bound channel/guild REST proxy, DM-create rejection, unknown-path 403, and no old tenant-helper REST are covered. |
 | `src/channels/discord/egress-ws.ts` | Implemented | `channel_routers/discord.py`; Gateway HELLO/heartbeat/READY/GUILD_CREATE, unsupported query rejection, zlib-stream outbound compression, Resume session validation, buffered dispatch replay, and old-sequence Invalid Session behavior are covered. |
 | `src/channels/discord/ingress.ts` | Implemented | `discord_gateway_worker.py`, `record_discord_gateway_dispatch`; gateway dispatch routing, pairing, alias persistence, interaction token references, and fixture replay contracts are covered. |
 | `src/channels/discord/interactions.ts` | Implemented | `channel_agent_references` persists interaction id/token and token/application ownership for callbacks and followups. |
@@ -242,7 +242,7 @@ Field-level configuration mapping:
 | `src/channels/whatsapp/tenant-creds.ts` | Implemented | Tenant creds minting is covered. |
 | `src/channels/whatsapp/tenant-registry.ts` | Implemented | Minted credential lookup by Noise static identity gates websocket sessions, carries credential id through tenant resolution, persists uploaded prekey bundles, DM Signal sender snapshots, and group sender-key snapshots into `ChannelAgentCredential.config`, restores the stored bundle, preKey count, sender snapshots, and group sender keys on reconnect, and supports real Baileys open/inbox lifecycle. |
 | `src/channels/whatsapp/ws-server.ts` | Implemented | The old file only re-exported `egress-ws.ts`; Python uses the provider-prefixed FastAPI websocket route instead of a standalone Node server. Real Baileys reaches `connection: open` and receives DB inbox messages, malformed Noise/client frames close with 1011 and sanitized debug events, disconnects cancel the inbox pump, route delivery now uses the shared `WhatsAppInboxPump` retry/ack/backoff module, and focused tests cover continuous idle polling plus IQ inflight backpressure. |
-| `src/core/admin.ts` | Superseded | Clawdi admin/user/project model supersedes tenant admin CRUD; product-relevant msg-router import and debug event surfaces are migrated under `/api/channels/*`; old manual shared-bot/admin utilities are not recreated. |
+| `src/core/admin.ts` | Superseded | Clawdi admin/user model supersedes tenant admin CRUD; debug event surfaces are Clawdi-native under `/api/channels/*`; old manual shared-bot/admin utilities are not recreated. |
 | `src/core/api.ts` | Superseded | Tenant `/v1` control plane is replaced by `/api/channels` with Clawdi auth, channel accounts, and agent links. |
 | `src/core/auth.ts` | Superseded | API-key tenant auth is replaced by Clawdi auth and hashed channel agent tokens. |
 | `src/core/bindings.ts` | Implemented | `channel_bindings` and aliases exist with tests. |
@@ -250,7 +250,7 @@ Field-level configuration mapping:
 | `src/core/db.ts` | Superseded | SQLite schema is replaced by Postgres + Alembic. |
 | `src/core/debug-events.ts` | Implemented | `channel_debug_events` stores sanitized account-scoped debug rows; `/api/channels/debug/events` filters them and `/api/channels/debug/health` reports pending inbox, last event, and last error. |
 | `src/core/inbox.ts` | Implemented | `channel_messages.inbox_sequence` plus `dequeue/ack/drain/wait` service helpers cover monotonic cursors, account isolation, limits, Telegram update_id offset ack/drain, and DB-backed long-poll waits. |
-| `src/core/migration.ts` | Implemented | `msg_router_migration.py` ports mux route-key translation, dump validation, Discord DM lookup, and Clawdi-native import to provider `ChannelAccount`/`ChannelBinding` rows via `/api/channels/migrations/msg-router/import-tenant`. |
+| `src/core/migration.ts` | Superseded | One-off legacy tenant import is not part of the new product API. Channel accounts, links, pair codes, and bindings are managed through Clawdi-native control-plane routes. |
 | `src/core/pair-command.ts` | Implemented | `parse_pair_command` parity tests exist. |
 | `src/core/pairing-flow.ts` | Implemented | Pair/unpair state machine is Clawdi-native in `resolve_inbound_binding`; one active binding is allowed per `(channel account, external chat)`, pairing can move that chat to a different bot-agent link only when sent by the external actor that owns the current binding, control commands are acked and not routed to agents, and Discord interaction replies use old canonical msg-router text. |
 | `src/core/pairing.ts` | Implemented | `channel_pair_codes` lifecycle exists with tests. |
@@ -277,7 +277,7 @@ Field-level configuration mapping:
 | `tests/channels/bluebubbles/socket-io.test.ts` | Implemented | Socket.IO auth packet, invalid/missing token rejection, and account-scoped fan-out are covered. |
 | `tests/channels/bluebubbles/webhook-emitter.test.ts` | Implemented | No-config no-op, 5xx retry, 4xx no-retry, private URL guard, encrypted password storage, and password query/header delivery are covered through inbound route/service tests. |
 | `tests/channels/discord/commands.test.ts` | Implemented | Command shadow, global/guild create/edit/delete, reserved names, app-id validation, bound-guild scope validation, duplicate upsert/conflict behavior, and provider fan-out to uncontested guilds are covered. |
-| `tests/channels/discord/egress-rest.test.ts` | Implemented | Gateway discovery, users, app command lifecycle, send basics, interaction callbacks/followups, message edit/delete proxy, bound-guild REST, DM-create rejection, and unknown-path 403 covered; old mux super-tenant REST is intentionally not recreated. |
+| `tests/channels/discord/egress-rest.test.ts` | Implemented | Gateway discovery, users, app command lifecycle, send basics, interaction callbacks/followups, message edit/delete proxy, bound-guild REST, DM-create rejection, and unknown-path 403 covered; old tenant-helper REST is intentionally not recreated. |
 | `tests/channels/discord/egress-ws.test.ts` | Implemented | Helper payloads, gateway replay, bound-guild discovery, alias-backed GUILD_CREATE channel synthesis, unsupported query rejection, zlib-stream compression, Resume valid/invalid session handling, replay buffer overflow, and fixture replay contracts are covered. |
 | `tests/channels/discord/fixture-replay.ts` | Implemented | The old fixture helper itself is ported inline in `test_discord_fixture_replay.py`: fixture loading, WS frame filtering, REST pair reconstruction, multipart fixture detection, and multipart body rebuilding are covered. |
 | `tests/channels/discord/fixture-replay.test.ts` | Implemented | `backend/tests/fixtures/discord` assets are migrated and `test_discord_fixture_replay.py` ports manifest loading, WS frame filtering, REST pairing, and multipart body reconstruction checks. |
@@ -296,7 +296,7 @@ Field-level configuration mapping:
 | `tests/channels/telegram/pairing-handler.test.ts` | Implemented | Pair command parser, `/start <pair-code>` deep-link pairing, unknown `/start` pass-through, and webhook flows are covered. |
 | `tests/channels/telegram/routing.test.ts` | Implemented | `test_telegram_routing.py` directly ports the old routing cases for messages, channel posts, callbacks, business updates, membership, boost, reaction, and unsupported updates. |
 | `tests/channels/whatsapp/agent-bundle.test.ts` | Implemented | `parse_agent_bundle` test exists. |
-| `tests/channels/whatsapp/authorization.test.ts` | Implemented | Relay allowlist, spoof scrub, group receipt batches, strict malformed receipt drops, DoS caps, recipient validation, JID log shape, and LID/PN conflict coverage exist; old mux-super bypass is intentionally absent. |
+| `tests/channels/whatsapp/authorization.test.ts` | Implemented | Relay allowlist, spoof scrub, group receipt batches, strict malformed receipt drops, DoS caps, recipient validation, JID log shape, and LID/PN conflict coverage exist; old tenant-helper bypass is intentionally absent. |
 | `tests/channels/whatsapp/bootstrap.test.ts` | Implemented | Python Noise emulator session bootstrap tests cover `<success>`, `<offline>`, IQ responses, unknown identity rejection, uploaded bundle capture, credential persistence, reconnect preKey count restore, and opt-in real Baileys bootstrap/open conformance. |
 | `tests/channels/whatsapp/creds-store.test.ts` | Implemented | Credential route, encrypted persistence, metadata listing, identity lookup, shared self identity, revoke, channel-delete revoke, remint, and Signal/group sender-key store edges are covered. |
 | `tests/channels/whatsapp/e2e-bundle.test.ts` | Superseded | Old Baileys client e2e is replaced by Python Noise bundle-capture tests plus `parse_agent_bundle` coverage. |
@@ -326,7 +326,7 @@ Field-level configuration mapping:
 | `tests/core/env.test.ts` | Superseded | Pydantic settings replace old env parser. |
 | `tests/core/http-routing.test.ts` | Implemented | Old root channel routes are absent; prefix route audit was run. |
 | `tests/core/inbox.test.ts` | Implemented | `test_channel_inbox.py` covers monotonic seq, account-scoped dequeue, cursor limits, ack-through-sequence, drain, Telegram update_id offset/filter draining, and DB-backed wait polling. |
-| `tests/core/migration.test.ts` | Implemented | `test_msg_router_migration.py` ports route-key translation, dump validation, Discord DM lookup, Clawdi import route idempotency, and DM binding import. |
+| `tests/core/migration.test.ts` | Superseded | Legacy tenant import tests were removed with the old import API. Clawdi-native channel control-plane and binding behavior are covered by channel service/API tests. |
 | `tests/core/pair-command.test.ts` | Implemented | Parser parity covered. |
 | `tests/core/pairing-flow.test.ts` | Implemented | `test_channels.py` covers usage through provider webhooks/interactions, idempotent same-agent pairing, re-pairing a chat to another agent link, unpair/re-pair, channel isolation, and canonical replies. |
 | `tests/core/pairing.test.ts` | Implemented | Pair code lifecycle covered. |

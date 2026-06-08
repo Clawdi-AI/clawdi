@@ -59,8 +59,8 @@ from app.services.channels import (
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
     discord_text_from_payload,
+    get_active_channel_account,
     get_channel_agent_reference,
-    get_public_channel_account,
     pairing_reply_for_command,
     record_discord_interaction_references,
     record_inbound_messages_for_bindings,
@@ -389,7 +389,7 @@ async def discord_webhook(
     x_signature_timestamp: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    account = await get_public_channel_account(db, account_id=account_id)
+    account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_DISCORD:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     body = await request.body()

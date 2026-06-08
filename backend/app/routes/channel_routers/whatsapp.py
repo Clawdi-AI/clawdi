@@ -54,11 +54,11 @@ from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
     get_accessible_channel_account,
+    get_active_channel_account,
     get_channel_secret,
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
     get_owned_channel_account,
-    get_public_channel_account,
     list_owned_active_bot_agent_links,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_token,
@@ -267,7 +267,7 @@ async def whatsapp_baileys_agent_websocket(
 ) -> None:
     async with async_session_factory() as db:
         try:
-            account = await get_public_channel_account(db, account_id=account_id)
+            account = await get_active_channel_account(db, account_id=account_id)
         except HTTPException:
             await websocket.close(code=1008)
             return
@@ -515,7 +515,7 @@ class _WhatsAppWebsocketInboxDebugEvents:
 
     async def record(self, payload: dict[str, Any]) -> None:
         async with async_session_factory() as db:
-            account = await get_public_channel_account(db, account_id=self._account_id)
+            account = await get_active_channel_account(db, account_id=self._account_id)
             await record_channel_debug_event(
                 db,
                 account=account,
@@ -699,7 +699,7 @@ async def whatsapp_webhook_verify(
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
-    account = await get_public_channel_account(db, account_id=account_id)
+    account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     if (
@@ -722,7 +722,7 @@ async def whatsapp_webhook(
     x_hub_signature_256: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> TelegramWebhookResponse:
-    account = await get_public_channel_account(db, account_id=account_id)
+    account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     body = await request.body()

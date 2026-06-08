@@ -3971,6 +3971,7 @@ async def test_legacy_msg_router_root_routes_are_absent(client: httpx.AsyncClien
         ("GET", "/channels/telegram"),
         ("GET", "/socket.io/"),
         ("GET", "/media/file.jpg"),
+        ("POST", "/api/channels/migrations/msg-router/import-tenant"),
     ]
 
     for method, path in checks:
@@ -4050,14 +4051,14 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
             },
         },
     )
-    old_mux_start = await client.post(
+    legacy_start = await client.post(
         f"/api/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
             "message": {
                 "message_id": 43,
-                "text": "/start OLD_MUX_CODE",
+                "text": "/start OLD_PAIR_CODE",
                 "chat": {"id": 987654323, "type": "private"},
             },
         },
@@ -4065,8 +4066,8 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    assert old_mux_start.status_code == 200
-    assert old_mux_start.json()["paired"] is False
+    assert legacy_start.status_code == 200
+    assert legacy_start.json()["paired"] is False
     bindings = await client.get(f"/api/channels/{created['id']}/bindings")
     assert [binding["external_chat_id"] for binding in bindings.json()] == ["987654322"]
 
@@ -4103,7 +4104,7 @@ def test_parse_pair_command_matches_msg_router_shapes():
     assert parse_pair_command("/bot_pair").code == ""
     assert parse_pair_command("/start PAIRABCDEF1234").code == "PAIRABCDEF1234"
     assert parse_pair_command("/start@shared_bot PAIRABCDEF1234").code == "PAIRABCDEF1234"
-    assert parse_pair_command("/start OLD_MUX_CODE") is None
+    assert parse_pair_command("/start OLD_PAIR_CODE") is None
     assert parse_pair_command("/start") is None
     assert parse_pair_command("/bot_unpair").kind == "unpair"
     assert parse_pair_command("/bot_unpair@shared_bot").kind == "unpair"

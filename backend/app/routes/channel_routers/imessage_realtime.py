@@ -33,7 +33,7 @@ from app.routes.channel_routers.shared import (
 from app.schemas.channel import TelegramWebhookResponse
 from app.services.bluebubbles_socket import bluebubbles_socket_manager
 from app.services.channels import (
-    get_public_channel_account,
+    get_active_channel_account,
     imessage_chat_from_payload,
     imessage_external_user_id_from_payload,
     imessage_message_id_from_payload,
@@ -115,7 +115,7 @@ async def imessage_webhook(
     x_clawdi_channel_secret: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> TelegramWebhookResponse:
-    account = await get_public_channel_account(db, account_id=account_id)
+    account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_IMESSAGE:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     if not verify_webhook_secret(

@@ -16,6 +16,9 @@ type ChannelCommandSpec = components["schemas"]["ChannelCommandSpec"];
 type ChannelPairCode = components["schemas"]["ChannelPairCodeResponse"];
 type ChannelProvider = ChannelAccountCreate["provider"];
 
+const DOTENV_BLOCK_START = "# >>> clawdi channel runtime >>>";
+const DOTENV_BLOCK_END = "# <<< clawdi channel runtime <<<";
+
 const providerSchema = z.enum(["telegram", "discord", "whatsapp", "imessage"]);
 const envNameSchema = z
 	.string()
@@ -45,6 +48,14 @@ const accountSchema = z.union([
 ]);
 
 const runtimeProjectionSchema = z.enum(["dotenv"]);
+const runtimeEnvKeySchema = z.enum([
+	"api_base_url",
+	"gateway_url",
+	"websocket_url",
+	"media_proxy_base_url",
+	"auth_dir",
+	"password",
+]);
 
 const linkSchema = z
 	.object({
@@ -54,6 +65,7 @@ const linkSchema = z
 			.object({
 				token_env: envNameSchema,
 				projection: runtimeProjectionSchema.default("dotenv"),
+				env: z.record(runtimeEnvKeySchema, envNameSchema).optional(),
 			})
 			.strict(),
 		pair_code: z
@@ -152,6 +164,19 @@ const manifestSchema = z
 						"pair_code",
 						"command_env",
 					]);
+				}
+				if (link.runtime.env) {
+					for (const [key, envName] of Object.entries(link.runtime.env)) {
+						claimEnv(envName, [
+							"channels",
+							channelIndex,
+							"links",
+							linkIndex,
+							"runtime",
+							"env",
+							key,
+						]);
+					}
 				}
 				if (channel.provider !== "whatsapp" && link.whatsapp) {
 					ctx.addIssue({
@@ -301,13 +326,24 @@ async function buildPlan(api: ApiClient, manifest: RuntimeManifest, manifestDir:
 	const warnings: string[] = [];
 	for (const channel of manifest.channels) {
 		const existingAccount = findManifestAccount(channels, channel);
+		const existingAccountId = isExistingAccountSpec(channel.account) ? channel.account.id : null;
+		const missingExistingAccount = !existingAccount && existingAccountId !== null;
 		accountPlans.push({
 			ref: channel.ref,
 			provider: channel.provider,
 			account_id: existingAccount?.id ?? null,
-			action: existingAccount ? "reuse_account" : "create_private_account",
+			action: existingAccount
+				? "reuse_account"
+				: missingExistingAccount
+					? "resolve_account"
+					: "create_private_account",
 		});
 		if (!existingAccount) {
+			if (missingExistingAccount) {
+				warnings.push(
+					`${channel.ref}: account ${existingAccountId} is not visible from GET /api/channels; apply will validate it with GET /api/channels/${existingAccountId}.`,
+				);
+			}
 			for (const link of channel.links) {
 				linkPlans.push({
 					ref: link.ref,
@@ -477,6 +513,7 @@ async function applyLink(
 	link = requireLink(link, linkManifest.ref);
 
 	let token = link.agent_token ?? null;
+	let tokenWritten = false;
 	if (
 		ctx.rotateAllTokens ||
 		(ctx.rotateMissingTokens &&
@@ -505,11 +542,22 @@ async function applyLink(
 	}
 
 	if (token) {
-		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest.runtime.token_env, token);
+		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, token);
+		tokenWritten = true;
 	} else {
-		ctx.warnings.push(
-			`${linkManifest.ref}: agent SDK token is not available from an existing link; use --rotate-missing-tokens if ${linkManifest.runtime.token_env} must be written.`,
+		const existingToken = readDotenvValue(
+			ctx.manifestDir,
+			ctx.manifest.outputs.dotenv,
+			linkManifest.runtime.token_env,
 		);
+		if (existingToken) {
+			addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, existingToken);
+			tokenWritten = true;
+		} else {
+			ctx.warnings.push(
+				`${linkManifest.ref}: agent SDK token is not available from an existing link; use --rotate-missing-tokens if ${linkManifest.runtime.token_env} must be written.`,
+			);
+		}
 	}
 
 	if (linkManifest.pair_code) {
@@ -550,7 +598,7 @@ async function applyLink(
 		link,
 		created,
 		token_env: linkManifest.runtime.token_env,
-		token_written: Boolean(token),
+		token_written: tokenWritten,
 	});
 }
 
@@ -586,9 +634,17 @@ async function writeWhatsAppCredentials(
 		join(dir, "clawdi-whatsapp.json"),
 		`${JSON.stringify(credential, null, 2)}\n`,
 	);
-	ctx.env.set("WA_WEBSOCKET_URL", credential.websocket_url);
-	ctx.env.set("WHATSAPP_MEDIA_PROXY_BASE_URL", credential.media_proxy_base_url);
-	ctx.env.set("MUX_WHATSAPP_AUTH_DIR", dir);
+	setRuntimeEnv(
+		ctx,
+		runtimeEnvName(linkManifest, "websocket_url", "WA_WEBSOCKET_URL"),
+		credential.websocket_url,
+	);
+	setRuntimeEnv(
+		ctx,
+		runtimeEnvName(linkManifest, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
+		credential.media_proxy_base_url,
+	);
+	setRuntimeEnv(ctx, runtimeEnvName(linkManifest, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"), dir);
 	ctx.writes.push(dir);
 	ctx.actions.push({
 		action: "write_whatsapp_baileys_credentials",
@@ -602,39 +658,83 @@ function addRuntimeEnv(
 	ctx: ApplyContext,
 	provider: ChannelProvider,
 	accountId: string,
-	tokenEnv: string,
+	link: RuntimeLink,
 	token: string,
 ): void {
 	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
-	ctx.env.set(tokenEnv, token);
+	setRuntimeEnv(ctx, link.runtime.token_env, token);
 	if (provider === "telegram") {
-		ctx.env.set("TELEGRAM_BOT_API_BASE_URL", `${baseUrl}/api/channels/telegram`);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
+			`${baseUrl}/api/channels/telegram`,
+		);
 	}
 	if (provider === "discord") {
-		ctx.env.set("DISCORD_BOT_API_BASE_URL", `${baseUrl}/api/channels/discord`);
-		ctx.env.set("DISCORD_GATEWAY_URL", `${toWebSocketUrl(baseUrl)}/api/channels/discord/gateway`);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
+			`${baseUrl}/api/channels/discord`,
+		);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
+			`${toWebSocketUrl(baseUrl)}/api/channels/discord/gateway`,
+		);
 	}
 	if (provider === "whatsapp") {
-		ctx.env.set("WHATSAPP_GRAPH_API_BASE_URL", `${baseUrl}/api/channels/whatsapp/graph`);
-		ctx.env.set(
-			"WA_WEBSOCKET_URL",
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
+			`${baseUrl}/api/channels/whatsapp/graph`,
+		);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
 			`${toWebSocketUrl(baseUrl)}/api/channels/whatsapp/${accountId}/baileys`,
 		);
 	}
 	if (provider === "imessage") {
-		ctx.env.set("BLUEBUBBLES_PASSWORD", token);
-		ctx.env.set("BLUEBUBBLES_SERVER_URL", `${baseUrl}/api/channels/imessage/bluebubbles`);
-		ctx.env.set("BLUEBUBBLES_API_BASE_URL", `${baseUrl}/api/channels/imessage/bluebubbles/v1`);
+		setRuntimeEnv(ctx, runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"), token);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
+			`${baseUrl}/api/channels/imessage/bluebubbles/v1`,
+		);
+		setRuntimeEnv(
+			ctx,
+			runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
+			`${baseUrl}/api/channels/imessage/bluebubbles`,
+		);
 	}
+}
+
+function runtimeEnvName(
+	link: RuntimeLink,
+	key: z.infer<typeof runtimeEnvKeySchema>,
+	fallback: string,
+): string {
+	return link.runtime.env?.[key] ?? fallback;
+}
+
+function setRuntimeEnv(ctx: ApplyContext, name: string, value: string): void {
+	const existing = ctx.env.get(name);
+	if (existing !== undefined && existing !== value) {
+		throw new Error(
+			`Runtime output ${name} has conflicting values. Use runtime.env to give each channel-specific value a distinct env name.`,
+		);
+	}
+	ctx.env.set(name, value);
 }
 
 function writeDotenvOutput(ctx: ApplyContext): void {
 	if (ctx.env.size === 0) return;
 	const path = resolvePath(ctx.manifestDir, ctx.manifest.outputs.dotenv);
-	const lines = [...ctx.env.entries()]
+	const generatedLines = [...ctx.env.entries()]
 		.sort(([left], [right]) => left.localeCompare(right))
 		.map(([key, value]) => `${key}=${quoteDotenv(value)}`);
-	writePrivateFileAtomic(path, `${lines.join("\n")}\n`);
+	const block = [DOTENV_BLOCK_START, ...generatedLines, DOTENV_BLOCK_END].join("\n");
+	writePrivateFileAtomic(path, mergeDotenvManagedBlock(path, block));
 	ctx.writes.push(path);
 }
 
@@ -689,10 +789,32 @@ function readRequiredEnv(envName: string, label: string): string {
 }
 
 function hasDotenvValue(manifestDir: string, output: string, envName: string): boolean {
+	return readDotenvValue(manifestDir, output, envName) !== null;
+}
+
+function readDotenvValue(manifestDir: string, output: string, envName: string): string | null {
 	const path = resolvePath(manifestDir, output);
-	if (!existsSync(path)) return false;
-	const pattern = new RegExp(`^${escapeRegExp(envName)}=`, "m");
-	return pattern.test(readFileSync(path, "utf-8"));
+	if (!existsSync(path)) return null;
+	const pattern = new RegExp(`^${escapeRegExp(envName)}=(.*)$`, "m");
+	const match = pattern.exec(readFileSync(path, "utf-8"));
+	if (!match) return null;
+	return unquoteDotenv(match[1] ?? "");
+}
+
+function mergeDotenvManagedBlock(path: string, block: string): string {
+	const nextBlock = `${block}\n`;
+	if (!existsSync(path)) return nextBlock;
+	const current = readFileSync(path, "utf-8");
+	const start = current.indexOf(DOTENV_BLOCK_START);
+	const end = current.indexOf(DOTENV_BLOCK_END);
+	if (start >= 0 && end >= start) {
+		const afterEnd = end + DOTENV_BLOCK_END.length;
+		const prefix = current.slice(0, start).replace(/\n*$/, "");
+		const suffix = current.slice(afterEnd).replace(/^\n*/, "");
+		return `${[prefix, nextBlock.trimEnd(), suffix].filter(Boolean).join("\n\n")}\n`;
+	}
+	const prefix = current.replace(/\n*$/, "");
+	return prefix ? `${prefix}\n\n${nextBlock}` : nextBlock;
 }
 
 function outputPaths(manifest: RuntimeManifest, manifestDir: string): Record<string, string> {
@@ -706,6 +828,17 @@ function resolvePath(baseDir: string, path: string): string {
 function quoteDotenv(value: string): string {
 	if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
 	return JSON.stringify(value);
+}
+
+function unquoteDotenv(raw: string): string {
+	const value = raw.trim();
+	if (!value.startsWith('"')) return value;
+	try {
+		const parsed = JSON.parse(value);
+		return typeof parsed === "string" ? parsed : value;
+	} catch {
+		return value;
+	}
 }
 
 function toWebSocketUrl(baseUrl: string): string {

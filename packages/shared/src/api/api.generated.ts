@@ -229,23 +229,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/channels/migrations/msg-router/import-tenant": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Import Msg Router Tenant */
-        post: operations["import_msg_router_tenant_api_channels_migrations_msg_router_import_tenant_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/channels": {
         parameters: {
             query?: never;
@@ -5133,28 +5116,6 @@ export interface operations {
         };
     };
     get_debug_health_api_channels_debug_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    import_msg_router_tenant_api_channels_migrations_msg_router_import_tenant_post: {
         parameters: {
             query?: never;
             header?: never;

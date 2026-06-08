@@ -28,31 +28,6 @@ export interface components {
         /** DeploymentDetailsInfo */
         DeploymentDetailsInfo: {
             /**
-             * Mux Enabled
-             * @default false
-             */
-            mux_enabled: boolean;
-            /**
-             * Telegram Mux Enabled
-             * @default false
-             */
-            telegram_mux_enabled: boolean;
-            /**
-             * Discord Mux Enabled
-             * @default false
-             */
-            discord_mux_enabled: boolean;
-            /**
-             * Whatsapp Mux Enabled
-             * @default false
-             */
-            whatsapp_mux_enabled: boolean;
-            /**
-             * Imessage Mux Enabled
-             * @default false
-             */
-            imessage_mux_enabled: boolean;
-            /**
              * Kobb Available
              * @default false
              */

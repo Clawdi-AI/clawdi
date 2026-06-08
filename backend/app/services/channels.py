@@ -433,7 +433,13 @@ async def get_accessible_channel_account(
     return account
 
 
-async def get_public_channel_account(db: AsyncSession, *, account_id: UUID) -> ChannelAccount:
+async def get_active_channel_account(db: AsyncSession, *, account_id: UUID) -> ChannelAccount:
+    """Resolve an account for provider ingress or agent-facing SDK routes.
+
+    This is intentionally visibility-neutral: private user bots and public
+    Clawdi-managed bots both receive provider webhooks under account-scoped URLs.
+    User-facing access checks belong in get_accessible_channel_account.
+    """
     result = await db.execute(
         select(ChannelAccount).where(
             ChannelAccount.id == account_id,

@@ -164,6 +164,8 @@ outputs:
 		expect(dotenv).toContain("TELEGRAM_AGENT_TOKEN=agent-token");
 		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/api/channels/telegram");
 		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/bot_pair PAIR123"');
+		expect(dotenv).toContain("# >>> clawdi channel runtime >>>");
+		expect(dotenv).toContain("# <<< clawdi channel runtime <<<");
 		expect(
 			JSON.parse(out).applied.actions.map((action: { action: string }) => action.action),
 		).toEqual(["create_private_account", "create_link", "create_pair_code", "sync_commands"]);
@@ -322,6 +324,131 @@ outputs:
 		);
 	});
 
+	it("reuses an existing dotenv token for an existing link and refreshes provider endpoints", async () => {
+		const manifestPath = writeManifest(`
+version: 1
+channels:
+  - ref: public-discord
+    provider: discord
+    account:
+      id: channel-public
+    links:
+      - ref: discord-main
+        agent_id: agent-1
+        runtime:
+          token_env: DISCORD_AGENT_TOKEN
+outputs:
+  dotenv: .env.channels
+`);
+		writeFileSync(join(tmpHome, ".env.channels"), "DISCORD_AGENT_TOKEN=existing-token\n");
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-public$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-public",
+						provider: "discord",
+						name: "clawdi-discord",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				response: () =>
+					jsonResponse([
+						{
+							id: "link-1",
+							account_id: "channel-public",
+							agent_id: "agent-1",
+							status: "active",
+							created_at: "2026-06-08T00:00:01Z",
+						},
+					]),
+			},
+		]);
+
+		const out = await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
+		restore();
+
+		expect(captured.some((request) => request.path.endsWith("/agent-links/link-1/token"))).toBe(
+			false,
+		);
+		expect(JSON.parse(out).applied.warnings).toEqual([]);
+		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
+		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=existing-token");
+		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/api/channels/discord/gateway");
+	});
+
+	it("updates only the managed dotenv block and preserves user env lines", async () => {
+		const manifestPath = writeManifest(`
+version: 1
+channels:
+  - ref: public-discord
+    provider: discord
+    account:
+      id: channel-public
+    links:
+      - ref: discord-main
+        agent_id: agent-1
+        runtime:
+          token_env: DISCORD_AGENT_TOKEN
+outputs:
+  dotenv: .env.channels
+`);
+		writeFileSync(join(tmpHome, ".env.channels"), "APP_ENV=dev\n");
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-public$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-public",
+						provider: "discord",
+						name: "clawdi-discord",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				response: () => jsonResponse([]),
+			},
+			{
+				method: "POST",
+				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				response: () =>
+					jsonResponse(
+						{
+							id: "link-1",
+							account_id: "channel-public",
+							agent_id: "agent-1",
+							status: "active",
+							created_at: "2026-06-08T00:00:01Z",
+							agent_token: "discord-token",
+						},
+						201,
+					),
+			},
+		]);
+
+		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
+		restore();
+
+		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
+		expect(dotenv).toStartWith("APP_ENV=dev\n\n# >>> clawdi channel runtime >>>");
+		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=discord-token");
+	});
+
 	it("plans and reports status without mutating resources", async () => {
 		const manifestPath = writeManifest(`
 version: 1
@@ -373,6 +500,38 @@ outputs:
 		expect(captured.every((request) => request.method === "GET")).toBe(true);
 		expect(JSON.parse(plan).plan.links[0].action).toBe("create_link");
 		expect(JSON.parse(status).status.accounts[0].action).toBe("reuse_account");
+	});
+
+	it("plans existing account ids as account resolution when list does not include them", async () => {
+		const manifestPath = writeManifest(`
+version: 1
+channels:
+  - ref: public-discord
+    provider: discord
+    account:
+      id: channel-public
+    links:
+      - ref: discord-main
+        agent_id: agent-1
+        runtime:
+          token_env: DISCORD_AGENT_TOKEN
+outputs:
+  dotenv: .env.channels
+`);
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: /^\/api\/channels$/,
+				response: () => jsonResponse([]),
+			},
+		]);
+
+		const plan = await captureStdout(() => runtimePlanCommand({ file: manifestPath, json: true }));
+		restore();
+
+		expect(captured).toHaveLength(1);
+		expect(JSON.parse(plan).plan.accounts[0].action).toBe("resolve_account");
+		expect(JSON.parse(plan).plan.warnings[0]).toContain("not visible");
 	});
 
 	it("rejects malformed manifests before API calls", async () => {
@@ -475,7 +634,7 @@ outputs:
 			"WHATSAPP_AGENT_TOKEN=wa-token",
 		);
 		expect(readFileSync(join(tmpHome, ".env.channels"), "utf-8")).toContain(
-			`MUX_WHATSAPP_AUTH_DIR=${join(tmpHome, ".wa-creds")}`,
+			`CLAWDI_WHATSAPP_AUTH_DIR=${join(tmpHome, ".wa-creds")}`,
 		);
 	});
 
