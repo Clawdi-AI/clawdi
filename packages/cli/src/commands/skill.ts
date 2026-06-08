@@ -20,12 +20,13 @@ import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
-import { sanitizeMetadata, sanitizeName } from "../lib/sanitize";
+import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	fetchDefaultProjectId,
 	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 } from "../lib/select-adapter";
+import { sanitizeSkillKey } from "../lib/skill-key";
 import { computeSkillFolderHash } from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { tarSingleFile, tarSkillDir } from "../lib/tar";
@@ -147,7 +148,7 @@ export async function skillAdd(
 			process.exit(1);
 		}
 		skillMdSource = readFileSync(skillMdPath, "utf-8");
-		skillKey = sanitizeName(basename(resolved));
+		skillKey = sanitizeSkillKey(basename(resolved));
 		fileCount = countFiles(resolved);
 		// Tar the skill under the SANITIZED key so the archive's
 		// directory entries match what the upload route expects.
@@ -193,7 +194,7 @@ export async function skillAdd(
 		}
 	} else {
 		skillMdSource = readFileSync(resolved, "utf-8");
-		skillKey = sanitizeName(basename(resolved, ".md"));
+		skillKey = sanitizeSkillKey(basename(resolved, ".md"));
 		fileCount = 1;
 		tarBytes = await tarSingleFile(skillKey, skillMdSource);
 	}
@@ -584,7 +585,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 export function skillInit(nameArg?: string) {
 	const cwd = process.cwd();
 	const hasName = Boolean(nameArg);
-	const name = sanitizeName(nameArg ?? basename(cwd));
+	const name = sanitizeSkillKey(nameArg ?? basename(cwd));
 	const targetDir = hasName ? join(cwd, name) : cwd;
 	const skillMd = join(targetDir, "SKILL.md");
 	const displayPath = hasName ? `${name}/SKILL.md` : "SKILL.md";

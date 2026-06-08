@@ -85,17 +85,3 @@ export function isSubpathSafe(basePath: string, subpath: string): boolean {
 	const normalizedTarget = normalize(resolve(basePath, subpath));
 	return normalizedTarget === normalizedBase || normalizedTarget.startsWith(normalizedBase + sep);
 }
-
-/**
- * Turn an arbitrary user-supplied name into a kebab-case identifier safe for use
- * as a directory name / skill_key. Lowercase, non-alphanumeric collapses to `-`,
- * leading/trailing `.`/`-` stripped, capped at 255 chars.
- * Ported from vercel/skills `installer.ts:sanitizeName`.
- */
-export function sanitizeName(name: string): string {
-	const sanitized = name
-		.toLowerCase()
-		.replace(/[^a-z0-9._]+/g, "-")
-		.replace(/^[.-]+|[.-]+$/g, "");
-	return sanitized.substring(0, 255) || "unnamed-skill";
-}

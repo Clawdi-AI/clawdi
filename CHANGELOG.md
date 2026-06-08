@@ -10,6 +10,19 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.8
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.8
+
+Package: `clawdi@0.12.8`
+
+### Fixed
+
+- Fixed skill uploads from local directories with names that need cleanup, such
+  as long names or names containing punctuation. `clawdi skill add`,
+  `clawdi skill init`, and daemon sync now use the same skill key rules as
+  Clawdi Cloud, so generated skill keys are accepted without manual renaming.
+
 ## Clawdi CLI v0.12.7
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.7

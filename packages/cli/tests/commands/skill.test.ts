@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { skillInit } from "../../src/commands/skill";
+import { skillAdd, skillInit } from "../../src/commands/skill";
+import { jsonResponse, mockFetch, okEnvironmentProbe, seedAuthAndEnv } from "./helpers";
 
 let tmpHome: string;
 let origCwd: string;
@@ -53,5 +54,48 @@ describe("skillInit", () => {
 	it("sanitizes the name to kebab-case", () => {
 		skillInit("My Cool Skill!");
 		expect(existsSync(join(tmpHome, "my-cool-skill", "SKILL.md"))).toBe(true);
+	});
+
+	it("caps generated skill directory names at the backend skill_key limit", () => {
+		skillInit("a".repeat(300));
+		const generated = "a".repeat(200);
+		expect(existsSync(join(tmpHome, generated, "SKILL.md"))).toBe(true);
+	});
+});
+
+describe("skillAdd", () => {
+	it("uploads a backend-valid skill_key generated from a long local directory name", async () => {
+		seedAuthAndEnv(tmpHome, "claude_code");
+		const longName = "a".repeat(240);
+		const skillDir = join(tmpHome, longName);
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(
+			join(skillDir, "SKILL.md"),
+			"---\nname: Long Skill\ndescription: long directory name\n---\n# Long\n",
+		);
+
+		const projectId = "00000000-0000-0000-0000-000000000099";
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: `/api/projects/${projectId}/skills/upload`,
+				response: (request) =>
+					jsonResponse({
+						skill_key: request.multipartFields?.skill_key,
+						version: 1,
+						file_count: 1,
+					}),
+			},
+		]);
+		try {
+			await skillAdd(skillDir, { agent: "claude_code", yes: true });
+		} finally {
+			restore();
+		}
+
+		const upload = captured.find((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		expect(upload?.multipartFields?.skill_key).toHaveLength(200);
+		expect(upload?.multipartFields?.skill_key).toBe("a".repeat(200));
 	});
 });

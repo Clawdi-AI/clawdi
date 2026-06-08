@@ -41,6 +41,7 @@ export interface CapturedRequest {
 	method: string;
 	headers: Record<string, string>;
 	isMultipart: boolean;
+	multipartFields?: Record<string, string>;
 	body?: unknown;
 }
 
@@ -55,7 +56,7 @@ export function mockFetch(
 	handlers: Array<{
 		method?: string;
 		path: string | RegExp;
-		response: () => Response | Promise<Response>;
+		response: (request: CapturedRequest) => Response | Promise<Response>;
 	}>,
 ): { captured: CapturedRequest[]; restore: () => void } {
 	const orig = globalThis.fetch;
@@ -77,6 +78,13 @@ export function mockFetch(
 		const isMultipart = rawBody instanceof FormData;
 
 		let body: unknown;
+		let multipartFields: Record<string, string> | undefined;
+		if (isMultipart) {
+			multipartFields = {};
+			for (const [key, value] of rawBody.entries()) {
+				if (typeof value === "string") multipartFields[key] = value;
+			}
+		}
 		if (!isMultipart && contentType.includes("json")) {
 			try {
 				const text = isRequest ? await input.clone().text() : String(rawBody ?? "");
@@ -86,12 +94,21 @@ export function mockFetch(
 			}
 		}
 
-		captured.push({ url, path, method, headers: capturedHeaders, isMultipart, body });
+		const request = {
+			url,
+			path,
+			method,
+			headers: capturedHeaders,
+			isMultipart,
+			multipartFields,
+			body,
+		};
+		captured.push(request);
 
 		for (const h of handlers) {
 			if (h.method && h.method.toUpperCase() !== method) continue;
 			const m = typeof h.path === "string" ? path.startsWith(h.path) : h.path.test(path);
-			if (m) return await h.response();
+			if (m) return await h.response(request);
 		}
 		return new Response(`unhandled ${method} ${path}`, { status: 404 });
 	}) as typeof fetch;
