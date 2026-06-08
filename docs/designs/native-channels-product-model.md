@@ -293,6 +293,12 @@ CLI control plane:
 provider credential rotation remain admin API operations, not user CLI
 operations.
 
+Declarative runtime setup belongs in `clawdi runtime apply` using
+`clawdi.runtime.yaml`, described in
+`docs/designs/channel-runtime-manifest.md`. That manifest composes the same
+user-facing `/api/channels` APIs, materializes agent SDK tokens and target
+runtime config, and still does not expose admin channel management in the CLI.
+
 Admin control plane:
 
 | API | Scope |

@@ -640,6 +640,59 @@ channelCmd
 	});
 
 // ─────────────────────────────────────────────────────────────
+// runtime manifest
+// ─────────────────────────────────────────────────────────────
+const runtimeCmd = program
+	.command("runtime")
+	.description("Apply channel runtime manifest projections for agents");
+
+runtimeCmd
+	.command("plan")
+	.description("Preview channel account, link, and runtime projection changes")
+	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { file?: string; json?: boolean }) => {
+		const { runtimePlanCommand } = await import("./commands/runtime.js");
+		await runtimePlanCommand(opts);
+	});
+
+runtimeCmd
+	.command("apply")
+	.description("Create or reuse channel runtime resources from a manifest")
+	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
+	.option("--dry-run", "Preview changes without mutating backend or local files")
+	.option(
+		"--rotate-missing-tokens",
+		"Rotate existing link tokens only when local output lacks them",
+	)
+	.option("--rotate-all-tokens", "Rotate every declared link token")
+	.option("--yes", "Reserved for future destructive confirmations")
+	.option("--json", "Emit machine-readable JSON")
+	.action(
+		async (opts: {
+			file?: string;
+			dryRun?: boolean;
+			rotateMissingTokens?: boolean;
+			rotateAllTokens?: boolean;
+			yes?: boolean;
+			json?: boolean;
+		}) => {
+			const { runtimeApplyCommand } = await import("./commands/runtime.js");
+			await runtimeApplyCommand(opts);
+		},
+	);
+
+runtimeCmd
+	.command("status")
+	.description("Show current backend status for a runtime manifest")
+	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { file?: string; json?: boolean }) => {
+		const { runtimeStatusCommand } = await import("./commands/runtime.js");
+		await runtimeStatusCommand(opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
 const vaultCmd = program
