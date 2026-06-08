@@ -24,6 +24,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
+import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -294,6 +295,12 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
 		enabled: open,
 	});
+	const vaultsQuery = useQuery({
+		queryKey: ["vaults", "all"],
+		queryFn: async () =>
+			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+		enabled: open,
+	});
 	// A vault is created through a project the user can write to; the
 	// personal (Global) project always exists and is the least surprising
 	// default — attachments can be changed afterwards on the vault page.
@@ -302,18 +309,28 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 		return rows.find((p) => p.kind === "personal") ?? rows.find((p) => p.is_owner !== false);
 	}, [projects.data]);
 
-	const slug = name
-		.toLowerCase()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/-{2,}/g, "-")
-		.replace(/^-+|-+$/g, "");
+	const slug = slugFromVaultName(name);
+	const slugTaken =
+		slug.length > 0 &&
+		(vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug);
+	const canCreate =
+		name.trim().length > 0 &&
+		slug.length > 0 &&
+		!slugTaken &&
+		!projects.isLoading &&
+		!vaultsQuery.isLoading &&
+		defaultProject !== undefined;
 
 	const create = useMutation({
 		mutationFn: async () => {
 			if (!defaultProject) throw new Error("No writable Project available yet");
+			if (!slug) throw new Error("Use letters or numbers in the vault name");
+			if ((vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug)) {
+				throw new Error("A vault with that name already exists");
+			}
 			return unwrap(
 				await api.POST("/api/vault", {
-					params: { query: { project_id: defaultProject.id } },
+					params: { query: { project_id: defaultProject.id, create_only: true } },
 					body: { slug, name: name.trim() },
 				}),
 			);
@@ -355,7 +372,7 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 					className="space-y-4"
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (name.trim() && slug && !create.isPending) create.mutate();
+						if (canCreate && !create.isPending) create.mutate();
 					}}
 				>
 					<div className="space-y-1.5">
@@ -372,9 +389,14 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 						{slug ? (
 							<p className="font-mono text-xs text-muted-foreground">vault://{slug}</p>
 						) : null}
+						{slugTaken ? (
+							<p className="text-xs text-destructive">
+								That vault already exists. Open it from the vault list or use a different name.
+							</p>
+						) : null}
 					</div>
 					<div className="flex justify-end">
-						<Button type="submit" disabled={!name.trim() || !slug || create.isPending}>
+						<Button type="submit" disabled={!canCreate || create.isPending}>
 							{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
 							Create vault
 						</Button>

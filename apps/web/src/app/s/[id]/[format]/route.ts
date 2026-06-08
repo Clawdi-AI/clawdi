@@ -1,3 +1,5 @@
+import type { paths } from "@clawdi/shared/api";
+import createClient from "openapi-fetch";
 import { env } from "@/lib/env";
 
 /**
@@ -44,21 +46,29 @@ export async function GET(
 		return new Response("Not found", { status: 404 });
 	}
 
-	const upstreamPath = format === "md" ? "export.md" : "export.json";
-	const upstream = `${env.NEXT_PUBLIC_API_URL}/api/public/sessions/${id}/${upstreamPath}`;
+	const api = createClient<paths>({ baseUrl: env.NEXT_PUBLIC_API_URL });
+	const result =
+		format === "md"
+			? await api.GET("/api/public/sessions/{session_id}/export.md", {
+					params: { path: { session_id: id } },
+					parseAs: "text",
+					cache: "no-store",
+				})
+			: await api.GET("/api/public/sessions/{session_id}/export.json", {
+					params: { path: { session_id: id } },
+					parseAs: "text",
+					cache: "no-store",
+				});
 
-	const res = await fetch(upstream, { cache: "no-store" });
-
-	if (!res.ok) {
-		return new Response(await res.text(), {
-			status: res.status,
+	if (result.error !== undefined) {
+		return new Response(String(result.error), {
+			status: result.response.status,
 			headers: { "content-type": "text/plain; charset=utf-8" },
 		});
 	}
 
-	// NO cache-control — revocation / permission-toggle must take effect
-	// immediately. Stream the upstream body unchanged.
-	return new Response(res.body, {
+	// NO cache-control — revocation / permission-toggle must take effect immediately.
+	return new Response(result.data, {
 		status: 200,
 		headers: {
 			"content-type": FORMAT_MEDIA_TYPE[format],

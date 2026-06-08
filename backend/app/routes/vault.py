@@ -160,6 +160,10 @@ async def list_vaults(
 async def create_vault(
     body: VaultCreate,
     project_id: UUID | None = Query(default=None),
+    create_only: bool = Query(
+        default=False,
+        description="Return 409 if this slug already exists instead of attaching it.",
+    ),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCreatedResponse:
@@ -180,6 +184,8 @@ async def create_vault(
         )
     )
     vault = existing_result.scalar_one_or_none()
+    if vault is not None and create_only:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Vault slug already exists")
     if vault is None:
         vault = Vault(user_id=auth.user_id, slug=body.slug, name=body.name)
         db.add(vault)

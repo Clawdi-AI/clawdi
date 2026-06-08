@@ -16,7 +16,9 @@ from app.models.project import PROJECT_KIND_WORKSPACE
 from app.schemas.sharing import (
     AgentProjectBindingResponse,
     BindingCreate,
+    BindingDeleteResponse,
     BindingReorderBody,
+    BindingReorderResponse,
 )
 from app.services.agent_bindings import (
     assert_project_visible_to_user,
@@ -159,13 +161,16 @@ async def add_context_project_binding(
     return _to_response(binding)
 
 
-@router.patch("/{agent_id}/project-bindings/context/reorder")
+@router.patch(
+    "/{agent_id}/project-bindings/context/reorder",
+    response_model=BindingReorderResponse,
+)
 async def reorder_context_project_bindings(
     agent_id: UUID,
     body: BindingReorderBody,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> BindingReorderResponse:
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
     await ensure_agent_primary_binding(
         db,
@@ -224,16 +229,19 @@ async def reorder_context_project_bindings(
             binding.priority = priority
 
     await db.commit()
-    return {"status": "reordered"}
+    return BindingReorderResponse(status="reordered")
 
 
-@router.delete("/{agent_id}/project-bindings/{binding_id}")
+@router.delete(
+    "/{agent_id}/project-bindings/{binding_id}",
+    response_model=BindingDeleteResponse,
+)
 async def delete_project_binding(
     agent_id: UUID,
     binding_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> BindingDeleteResponse:
     agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
     await ensure_agent_primary_binding(
         db,
@@ -258,4 +266,4 @@ async def delete_project_binding(
 
     await db.delete(binding)
     await db.commit()
-    return {"status": "deleted"}
+    return BindingDeleteResponse(status="deleted")

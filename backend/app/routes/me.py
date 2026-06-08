@@ -16,7 +16,12 @@ from app.core.database import get_session
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.user import User
-from app.schemas.sharing import InvitationAcceptResponse, InvitationResponse, UpgradeBody
+from app.schemas.sharing import (
+    InvitationAcceptResponse,
+    InvitationDeclineResponse,
+    InvitationResponse,
+    UpgradeBody,
+)
 from app.services.agent_bindings import attach_project_to_owned_agents
 from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
@@ -73,7 +78,7 @@ async def accept_invitation(
     body: UpgradeBody | None = None,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict:
+) -> InvitationAcceptResponse:
     return await accept_invitation_for_user(
         invitation_id=invitation_id,
         body=body,
@@ -88,7 +93,7 @@ async def accept_invitation_for_user(
     body: UpgradeBody | None,
     auth: AuthContext,
     db: AsyncSession,
-) -> dict:
+) -> InvitationAcceptResponse:
     body = body or UpgradeBody()
     inv_pre = (
         await db.execute(select(ProjectInvitation).where(ProjectInvitation.id == invitation_id))
@@ -144,23 +149,26 @@ async def accept_invitation_for_user(
         inv.project_id,
         bound_agent_ids,
     )
-    return {
-        "id": str(membership.id),
-        "project_id": str(membership.project_id),
-        "role": membership.role,
-        "joined_via": membership.joined_via,
-        "joined_at": membership.joined_at.isoformat(),
-        "resolved_owner_handle": membership.resolved_owner_handle,
-        "bound_agent_ids": bound_agent_ids,
-    }
+    return InvitationAcceptResponse(
+        id=str(membership.id),
+        project_id=str(membership.project_id),
+        role=membership.role,
+        joined_via=membership.joined_via,
+        joined_at=membership.joined_at,
+        resolved_owner_handle=membership.resolved_owner_handle,
+        bound_agent_ids=bound_agent_ids,
+    )
 
 
-@router.post("/invitations/{invitation_id}/decline")
+@router.post(
+    "/invitations/{invitation_id}/decline",
+    response_model=InvitationDeclineResponse,
+)
 async def decline_invitation(
     invitation_id: UUID,
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> InvitationDeclineResponse:
     inv = (
         await db.execute(select(ProjectInvitation).where(ProjectInvitation.id == invitation_id))
     ).scalar_one_or_none()
@@ -168,4 +176,4 @@ async def decline_invitation(
         raise HTTPException(status.HTTP_410_GONE, "invitation not available")
     await db.delete(inv)
     await db.commit()
-    return {"status": "declined"}
+    return InvitationDeclineResponse(status="declined")

@@ -64,7 +64,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -77,24 +77,13 @@ type VaultSummary = components["schemas"]["VaultResponse"];
 type Env = components["schemas"]["EnvironmentResponse"];
 type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
 
-interface ProjectRow {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	origin_environment_id: string | null;
-	archived_at: string | null;
-	created_at: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
+type ProjectRow = components["schemas"]["ProjectResponse"];
+type Member = components["schemas"]["MemberResponse"];
 
 export default function ProjectDetailPage() {
 	const params = useParams<{ id: string }>();
 	const projectId = params.id;
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -109,10 +98,7 @@ export default function ProjectDetailPage() {
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => {
-			const r = await authedFetch("/api/projects");
-			return r.json();
-		},
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
 	});
 
 	const rows = projects.data ?? [];
@@ -178,12 +164,12 @@ export default function ProjectDetailPage() {
 	// simply don't get the section.
 	const members = useQuery({
 		queryKey: ["project-members", projectId],
-		queryFn: async (): Promise<
-			Array<{ member_user_id: string; email?: string | null; role: string }>
-		> => {
-			const r = await authedFetch(`/api/projects/${projectId}/members`);
-			return r.json();
-		},
+		queryFn: async (): Promise<Member[]> =>
+			unwrap(
+				await api.GET("/api/projects/{project_id}/members", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 		enabled: !!project && isOwner && isShareableProject,
 	});
 
@@ -223,10 +209,12 @@ export default function ProjectDetailPage() {
 	};
 
 	const leaveSharedProject = useMutation({
-		mutationFn: async (): Promise<{ status: string }> => {
-			const r = await authedFetch(`/api/projects/${projectId}/leave`, { method: "POST" });
-			return r.json();
-		},
+		mutationFn: async () =>
+			unwrap(
+				await api.POST("/api/projects/{project_id}/leave", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 		onSuccess: () => {
 			refresh();
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings"] });
@@ -492,10 +480,12 @@ export default function ProjectDetailPage() {
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{(members.data ?? []).map((member) => (
 								<div
-									key={member.member_user_id}
+									key={member.user_id}
 									className="flex items-center justify-between gap-3 px-4 py-3"
 								>
-									<span className="truncate text-sm">{member.email ?? member.member_user_id}</span>
+									<span className="truncate text-sm">
+										{member.user_email ?? member.user_display ?? member.user_id}
+									</span>
 									<Badge variant="secondary">{member.role}</Badge>
 								</div>
 							))}
@@ -1060,7 +1050,7 @@ function CreateVaultInProjectForm({
 		mutationFn: async (nextSlug: string) =>
 			unwrap(
 				await api.POST("/api/vault", {
-					params: { query: { project_id: projectId } },
+					params: { query: { project_id: projectId, create_only: true } },
 					body: { slug: nextSlug, name: nextSlug },
 				}),
 			),

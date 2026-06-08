@@ -93,18 +93,20 @@ export function SplitVaultDialog({
 				(projects ?? []).find((p) => p.is_owner !== false);
 			if (!personal) throw new Error("No writable Project available yet");
 			let done = 0;
+			let affectedKeys = 0;
 			const failed: string[] = [];
 			for (const group of selected) {
 				setProgress(`${group.slug} (${done + 1}/${selected.length})…`);
 				try {
 					await unwrap(
 						await api.POST("/api/vault", {
-							params: { query: { project_id: personal.id } },
+							params: { query: { project_id: personal.id, create_only: true } },
 							body: { slug: group.slug, name: group.prefix.slice(0, -1) },
 						}),
 					);
 					// Group by section, then chunked copy with rename + delete.
 					const bySection = new Map<string, string[]>();
+					let copiedInGroup = 0;
 					for (const k of group.keys) {
 						const section = k.section === "(default)" ? "" : k.section;
 						const bucket = bySection.get(section);
@@ -114,7 +116,7 @@ export function SplitVaultDialog({
 					for (const [section, names] of bySection) {
 						for (let i = 0; i < names.length; i += CHUNK) {
 							const fields = names.slice(i, i + CHUNK);
-							await unwrap(
+							const result = unwrap(
 								await api.POST("/api/vault/{slug}/items/copy", {
 									params: {
 										path: { slug: vault.slug },
@@ -128,33 +130,43 @@ export function SplitVaultDialog({
 									},
 								}),
 							);
+							copiedInGroup += result.copied;
 							if (removeOriginals) {
-								await unwrap(
-									await api.DELETE("/api/vault/{slug}/items", {
-										params: {
-											path: { slug: vault.slug },
-											query: { project_id: anyProjectId ?? undefined, global_delete: true },
-										},
-										body: { section, fields },
-									}),
-								);
+								if (result.copied > 0) {
+									await unwrap(
+										await api.DELETE("/api/vault/{slug}/items", {
+											params: {
+												path: { slug: vault.slug },
+												query: { project_id: anyProjectId ?? undefined, global_delete: true },
+											},
+											body: { section, fields },
+										}),
+									);
+								}
 							}
 						}
 					}
+					if (copiedInGroup === 0) throw new Error("No keys copied");
 					done += 1;
+					affectedKeys += copiedInGroup;
 				} catch {
 					failed.push(group.slug);
 				}
 			}
-			return { done, failed };
+			if (done === 0) {
+				throw new Error(
+					failed.length > 0 ? `Couldn't split ${failed.join(", ")}` : "No vaults selected",
+				);
+			}
+			return { done, failed, affectedKeys };
 		},
-		onSuccess: ({ done, failed }) => {
+		onSuccess: ({ done, failed, affectedKeys }) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			setProgress(null);
 			toast.success(`Split into ${done} ${done === 1 ? "vault" : "vaults"}`, {
 				description:
-					`${selectedKeyCount} keys ${removeOriginals ? "moved" : "copied"} with clean names.` +
+					`${affectedKeys} keys ${removeOriginals ? "moved" : "copied"} with clean names.` +
 					(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 			});
 			setOpen(false);

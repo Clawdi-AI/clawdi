@@ -258,6 +258,30 @@ class SessionListItemResponse(BaseModel):
     related_refs: dict[str, list[str]] | None = None
 
 
+class PublicSessionResponse(BaseModel):
+    """Public-safe session detail payload for `/api/public/sessions/{id}`."""
+
+    id: str
+    summary: str | None
+    project_path: str | None
+    agent_type: str | None
+    model: str | None
+    models_used: list[str] | None
+    started_at: datetime
+    ended_at: datetime | None
+    last_activity_at: datetime | None
+    duration_seconds: int | None
+    message_count: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    tags: list[str] | None
+    status: str
+    related_refs: dict[str, list[str] | None] | None = None
+    owner_name: str | None
+    owner_avatar_url: str | None
+
+
 class SessionDetailResponse(SessionListItemResponse):
     has_content: bool
 
@@ -336,6 +360,13 @@ class SessionMessageResponse(BaseModel):
     content: str
     model: str | None = None
     timestamp: datetime | None = None
+
+
+class PublicSessionExportResponse(PublicSessionResponse):
+    """Public-safe structured session export payload."""
+
+    messages: list[SessionMessageResponse]
+    share_url: str
 
 
 class SessionMessagesPage(BaseModel):

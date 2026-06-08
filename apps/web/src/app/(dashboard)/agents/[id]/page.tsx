@@ -34,7 +34,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { unwrap, useApi, useAuthedFetch } from "@/lib/api";
+import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
@@ -43,31 +43,13 @@ import { errorMessage, relativeTime } from "@/lib/utils";
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type AgentTab = "sessions" | "skills" | "projects";
 
-interface ProjectRow {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
-
-interface ProjectBindingRow {
-	id: string;
-	agent_id: string;
-	project_id: string;
-	binding_type: "primary" | "context";
-	priority: number;
-	default_write_enabled: boolean;
-	created_at: string;
-}
+type ProjectRow = components["schemas"]["ProjectResponse"];
+type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
 
 export default function AgentDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const router = useRouter();
 	const api = useApi();
-	const authedFetch = useAuthedFetch();
 	const queryClient = useQueryClient();
 	// Hosted tiles navigate here with `?source=on-clawdi` so the sync
 	// badge can render hosted-aware remediation copy (no CLI snippets,
@@ -101,10 +83,7 @@ export default function AgentDetailPage() {
 
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => {
-			const r = await authedFetch("/api/projects");
-			return r.json();
-		},
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
 		enabled: !!agent,
 	});
 	const writableProjectIds = useMemo(
@@ -119,10 +98,12 @@ export default function AgentDetailPage() {
 
 	const { data: projectBindings, isLoading: projectBindingsLoading } = useQuery({
 		queryKey: ["agent-project-bindings", id],
-		queryFn: async (): Promise<ProjectBindingRow[]> => {
-			const r = await authedFetch(`/api/agents/${id}/project-bindings`);
-			return r.json();
-		},
+		queryFn: async (): Promise<ProjectBindingRow[]> =>
+			unwrap(
+				await api.GET("/api/agents/{agent_id}/project-bindings", {
+					params: { path: { agent_id: id } },
+				}),
+			),
 		enabled: !!agent,
 	});
 
@@ -409,7 +390,6 @@ export default function AgentDetailPage() {
 									bindings={projectBindings ?? []}
 									projects={projects ?? []}
 									isLoading={projectBindingsLoading}
-									authedFetch={authedFetch}
 									onChanged={() => {
 										queryClient.invalidateQueries({
 											queryKey: ["agent-project-bindings", id],
@@ -436,16 +416,15 @@ function AgentProjectsPanel({
 	bindings,
 	projects,
 	isLoading,
-	authedFetch,
 	onChanged,
 }: {
 	agentId: string;
 	bindings: ProjectBindingRow[];
 	projects: ProjectRow[];
 	isLoading: boolean;
-	authedFetch: (path: string, init?: RequestInit) => Promise<Response>;
 	onChanged: () => void;
 }) {
+	const api = useApi();
 	const [contextProjectId, setContextProjectId] = useState("");
 	const primary = bindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = bindings
@@ -462,11 +441,12 @@ function AgentProjectsPanel({
 
 	const addContext = useMutation({
 		mutationFn: async () => {
-			await authedFetch(`/api/agents/${agentId}/project-bindings/context`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ project_id: contextProjectId }),
-			});
+			await unwrap(
+				await api.POST("/api/agents/{agent_id}/project-bindings/context", {
+					params: { path: { agent_id: agentId } },
+					body: { project_id: contextProjectId },
+				}),
+			);
 		},
 		onSuccess: () => {
 			setContextProjectId("");
@@ -478,9 +458,11 @@ function AgentProjectsPanel({
 
 	const removeBinding = useMutation({
 		mutationFn: async (bindingId: string) => {
-			await authedFetch(`/api/agents/${agentId}/project-bindings/${bindingId}`, {
-				method: "DELETE",
-			});
+			await unwrap(
+				await api.DELETE("/api/agents/{agent_id}/project-bindings/{binding_id}", {
+					params: { path: { agent_id: agentId, binding_id: bindingId } },
+				}),
+			);
 		},
 		onSuccess: () => {
 			onChanged();
@@ -491,11 +473,12 @@ function AgentProjectsPanel({
 
 	const reorder = useMutation({
 		mutationFn: async (items: Array<{ binding_id: string; priority: number }>) => {
-			await authedFetch(`/api/agents/${agentId}/project-bindings/context/reorder`, {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ items }),
-			});
+			await unwrap(
+				await api.PATCH("/api/agents/{agent_id}/project-bindings/context/reorder", {
+					params: { path: { agent_id: agentId } },
+					body: { items },
+				}),
+			);
 		},
 		onSuccess: () => {
 			onChanged();

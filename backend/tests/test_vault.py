@@ -834,6 +834,49 @@ async def test_vault_attaches_one_vault_to_multiple_projects(client, db_session,
 
 
 @pytest.mark.asyncio
+async def test_vault_create_only_rejects_existing_slug(client, db_session, seed_user):
+    """Dashboard "New vault" flows must not hit the create-or-attach path.
+
+    Plain POST stays idempotent attach for CLI/back-compat, while
+    `create_only=true` gives UI callers a real create semantics.
+    """
+    from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
+
+    project_a = Project(
+        user_id=seed_user.id, name="A", slug="create-only-a", kind=PROJECT_KIND_ENVIRONMENT
+    )
+    project_b = Project(
+        user_id=seed_user.id, name="B", slug="create-only-b", kind=PROJECT_KIND_ENVIRONMENT
+    )
+    db_session.add_all([project_a, project_b])
+    await db_session.commit()
+
+    first = await client.post(
+        f"/api/vault?project_id={project_a.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert first.status_code == 200, first.text
+
+    duplicate = await client.post(
+        f"/api/vault?project_id={project_b.id}&create_only=true",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+
+    listing_b = (await client.get(f"/api/vault?project_id={project_b.id}")).json()
+    assert [v["slug"] for v in listing_b["items"]] == []
+
+    attach = await client.post(
+        f"/api/vault?project_id={project_b.id}",
+        json={"slug": "github", "name": "GitHub"},
+    )
+    assert attach.status_code == 200, attach.text
+    assert attach.json()["id"] == first.json()["id"]
+    b_resp = await client.get(f"/api/vault/github/items?project_id={project_b.id}")
+    assert b_resp.status_code == 200, b_resp.text
+
+
+@pytest.mark.asyncio
 async def test_vault_item_delete_requires_global_confirmation_for_shared_vault(
     client, seed_project, workspace_project
 ):

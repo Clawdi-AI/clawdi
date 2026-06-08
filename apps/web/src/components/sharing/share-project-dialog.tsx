@@ -42,8 +42,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, useAuthedFetch } from "@/lib/api";
+import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
+import type { components } from "@/lib/api-schemas";
 import { errorMessage } from "@/lib/utils";
 
 /**
@@ -61,48 +62,12 @@ import { errorMessage } from "@/lib/utils";
  *   POST   /api/projects/{project_id}/invitations
  *   DELETE /api/projects/{project_id}/invitations/{invitation_id}
  *
- * Schemas swap to typed openapi-fetch once codex regenerates them.
  */
 
-// List shape: prefix-only, raw_token is unrecoverable once create returned.
-interface ShareLinkRow {
-	id: string;
-	prefix: string;
-	label: string | null;
-	created_at: string;
-	expires_at: string | null;
-	revoked_at: string | null;
-	redeem_count: number;
-	last_redeemed_at: string | null;
-}
-
-// Create-time shape: raw_token + url shown ONCE.
-interface ShareLinkCreated {
-	id: string;
-	raw_token: string;
-	url: string;
-	prefix: string;
-	owner_handle: string;
-	label: string | null;
-	created_at: string;
-	expires_at: string | null;
-}
-
-interface Invitation {
-	id: string;
-	invitee_email: string;
-	created_at: string;
-}
-
-interface Member {
-	id: string;
-	user_id: string;
-	user_email: string | null;
-	user_display: string | null;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-}
+type ShareLinkRow = components["schemas"]["ShareLinkResponse"];
+type ShareLinkCreated = components["schemas"]["ShareLinkCreated"];
+type Invitation = components["schemas"]["InvitationResponse"];
+type Member = components["schemas"]["MemberResponse"];
 
 interface ShareProjectDialogProps {
 	projectId: string;
@@ -189,31 +154,32 @@ export function ShareProjectDialog({
 }
 
 function ShareLinksPanel({ projectId }: { projectId: string }) {
+	const api = useApi();
 	const qc = useQueryClient();
 	const [label, setLabel] = useState("");
 	// The just-created link's full URL is shown once because the server
 	// stores only the prefix going forward.
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
 
-	const authedFetch = useAuthedFetch();
-
 	const links = useQuery({
 		queryKey: ["share-links", projectId],
-		queryFn: async (): Promise<ShareLinkRow[]> => {
-			const r = await authedFetch(`/api/projects/${projectId}/share-links`);
-			return r.json();
-		},
+		queryFn: async (): Promise<ShareLinkRow[]> =>
+			unwrap(
+				await api.GET("/api/projects/{project_id}/share-links", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 	});
 
 	const create = useMutation({
 		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
 			const trimmedLabel = nextLabel.trim();
-			const r = await authedFetch(`/api/projects/${projectId}/share-links`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ label: trimmedLabel.length > 0 ? trimmedLabel : null }),
-			});
-			return r.json();
+			return unwrap(
+				await api.POST("/api/projects/{project_id}/share-links", {
+					params: { path: { project_id: projectId } },
+					body: { label: trimmedLabel.length > 0 ? trimmedLabel : null },
+				}),
+			);
 		},
 		onSuccess: (body) => {
 			setLabel("");
@@ -242,9 +208,11 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 
 	const revoke = useMutation({
 		mutationFn: async (linkId: string) => {
-			await authedFetch(`/api/projects/${projectId}/share-links/${linkId}`, {
-				method: "DELETE",
-			});
+			await unwrap(
+				await api.DELETE("/api/projects/{project_id}/share-links/{link_id}", {
+					params: { path: { project_id: projectId, link_id: linkId } },
+				}),
+			);
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
@@ -514,29 +482,28 @@ function LinkRow({
 }
 
 function InvitationsPanel({ projectId }: { projectId: string }) {
+	const api = useApi();
 	const qc = useQueryClient();
 	const [email, setEmail] = useState("");
 
-	const authedFetch = useAuthedFetch();
-
 	const invites = useQuery({
 		queryKey: ["invitations", projectId],
-		queryFn: async (): Promise<Invitation[]> => {
-			const r = await authedFetch(`/api/projects/${projectId}/invitations`);
-			const body = (await r.json()) as { items?: Invitation[] } | Invitation[];
-			return Array.isArray(body) ? body : (body.items ?? []);
-		},
+		queryFn: async (): Promise<Invitation[]> =>
+			unwrap(
+				await api.GET("/api/projects/{project_id}/invitations", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 	});
 
 	const invite = useMutation({
-		mutationFn: async (inviteEmail: string) => {
-			const r = await authedFetch(`/api/projects/${projectId}/invitations`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ email: inviteEmail }),
-			});
-			return r.json();
-		},
+		mutationFn: async (inviteEmail: string) =>
+			unwrap(
+				await api.POST("/api/projects/{project_id}/invitations", {
+					params: { path: { project_id: projectId } },
+					body: { email: inviteEmail },
+				}),
+			),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
@@ -554,9 +521,11 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 
 	const cancel = useMutation({
 		mutationFn: async (invitationId: string) => {
-			await authedFetch(`/api/projects/${projectId}/invitations/${invitationId}`, {
-				method: "DELETE",
-			});
+			await unwrap(
+				await api.DELETE("/api/projects/{project_id}/invitations/{invitation_id}", {
+					params: { path: { project_id: projectId, invitation_id: invitationId } },
+				}),
+			);
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
@@ -686,15 +655,17 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 }
 
 function MembersPanel({ projectId }: { projectId: string }) {
+	const api = useApi();
 	const qc = useQueryClient();
-	const authedFetch = useAuthedFetch();
 
 	const members = useQuery({
 		queryKey: ["project-members", projectId],
-		queryFn: async (): Promise<Member[]> => {
-			const r = await authedFetch(`/api/projects/${projectId}/members`);
-			return r.json();
-		},
+		queryFn: async (): Promise<Member[]> =>
+			unwrap(
+				await api.GET("/api/projects/{project_id}/members", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 	});
 
 	const refreshSharingState = () => {
@@ -707,10 +678,11 @@ function MembersPanel({ projectId }: { projectId: string }) {
 
 	const remove = useMutation({
 		mutationFn: async (userId: string) => {
-			const r = await authedFetch(`/api/projects/${projectId}/members/${userId}`, {
-				method: "DELETE",
-			});
-			return r.json() as Promise<{ status: string }>;
+			return unwrap(
+				await api.DELETE("/api/projects/{project_id}/members/{member_user_id}", {
+					params: { path: { project_id: projectId, member_user_id: userId } },
+				}),
+			);
 		},
 		onSuccess: () => {
 			refreshSharingState();
@@ -723,14 +695,12 @@ function MembersPanel({ projectId }: { projectId: string }) {
 	});
 
 	const unshare = useMutation({
-		mutationFn: async () => {
-			const r = await authedFetch(`/api/projects/${projectId}/unshare`, { method: "POST" });
-			return r.json() as Promise<{
-				links_revoked: number;
-				members_removed: number;
-				invitations_cancelled: number;
-			}>;
-		},
+		mutationFn: async () =>
+			unwrap(
+				await api.POST("/api/projects/{project_id}/unshare", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
 		onSuccess: (body) => {
 			refreshSharingState();
 			toast.success("Sharing Stopped", {
