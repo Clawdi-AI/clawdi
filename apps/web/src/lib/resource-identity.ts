@@ -15,5 +15,6 @@ export const RESOURCE_TINT_CLASSES: Record<ProjectResourceId | "overview", strin
 	vaults: "bg-identity-4-bg text-identity-4-fg",
 	sessions: "bg-identity-3-bg text-identity-3-fg",
 	memories: "bg-identity-6-bg text-identity-6-fg",
+	channels: "bg-identity-5-bg text-identity-5-fg",
 	connectors: "bg-identity-7-bg text-identity-7-fg",
 };

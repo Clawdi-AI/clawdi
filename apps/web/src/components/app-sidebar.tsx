@@ -2,6 +2,7 @@
 
 import {
 	BookOpen,
+	Bot,
 	Brain,
 	ChevronsUpDown,
 	CircleHelp,
@@ -74,6 +75,7 @@ const RESOURCE_ICONS = {
 	vaults: Key,
 	sessions: MessageSquare,
 	memories: Brain,
+	channels: Bot,
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 

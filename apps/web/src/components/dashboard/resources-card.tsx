@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
+	Bot,
 	Brain,
 	CheckCircle2,
 	FolderKanban,
@@ -48,6 +49,7 @@ const RESOURCE_ICONS = {
 	vaults: Key,
 	sessions: MessageSquare,
 	memories: Brain,
+	channels: Bot,
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
@@ -94,7 +96,7 @@ export function ResourcesCard({
 				<CardTitle>Resources</CardTitle>
 				<CardDescription>
 					{PROJECT_CANONICAL_DEFINITION} Agents run on your machines. Account resources (Sessions,
-					Memories, Connectors) apply across all Projects.
+					Memories, Channels, Connectors) apply across all Projects.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">

@@ -6,6 +6,7 @@ export type ProjectResourceId =
 	| "vaults"
 	| "sessions"
 	| "memories"
+	| "channels"
 	| "connectors";
 
 export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
@@ -118,6 +119,21 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		countLabel: "memories",
 	},
 	{
+		id: "channels",
+		label: "Channels",
+		singularLabel: "Channel",
+		navLabel: "Channels",
+		description: "Messaging bots that route external chats to connected agents.",
+		managementDescription:
+			"Connect public or private messaging bots to agents, then pair each external chat session.",
+		href: "/channels",
+		emptyCta: "Create Channel",
+		routeGroup: "user-resources",
+		projectScope: "account-wide",
+		pathSegments: ["Account resources", "Channels"],
+		countLabel: "channels",
+	},
+	{
 		id: "connectors",
 		label: "Connectors",
 		singularLabel: "Connector",
@@ -149,7 +165,7 @@ export const PROJECT_RESOURCE_GROUPS = [
 	{
 		id: "user-resources",
 		label: "Account resources",
-		resourceIds: ["sessions", "memories", "connectors"],
+		resourceIds: ["sessions", "memories", "channels", "connectors"],
 	},
 ] as const satisfies readonly {
 	id: ProjectResourceGroup;

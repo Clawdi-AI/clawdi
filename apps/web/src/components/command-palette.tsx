@@ -2,6 +2,7 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+	Bot,
 	Brain,
 	FolderKanban,
 	Key,
@@ -40,6 +41,7 @@ const RESOURCE_ICONS = {
 	vaults: Key,
 	sessions: MessageSquare,
 	memories: Brain,
+	channels: Bot,
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
