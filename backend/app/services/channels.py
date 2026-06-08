@@ -524,10 +524,12 @@ async def claim_pair_code(
     external_user_id: str | None,
 ) -> PairCodeClaimResult:
     result = await db.execute(
-        select(ChannelPairCode).where(
+        select(ChannelPairCode)
+        .where(
             ChannelPairCode.account_id == account.id,
             ChannelPairCode.code_hash == hash_token(raw_code),
         )
+        .with_for_update()
     )
     pair_code = result.scalar_one_or_none()
     if pair_code is None:
