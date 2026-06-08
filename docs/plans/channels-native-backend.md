@@ -8,8 +8,8 @@ does not run or proxy the old TypeScript `msg-router` service.
 ## Implemented Slice
 
 - `channel_accounts` store provider identity metadata, provider credentials, webhook secrets,
-  and bot-level config. One provider can have many accounts, so the same channel
-  type can run multiple external bots.
+  bot-level config, and bot visibility. One provider can have many accounts, so
+  the same channel type can run multiple external bots.
 - `channel_bot_agent_links` store the bot-to-Clawdi-agent relationship,
   including the one-time-issued agent SDK token hash. Raw agent tokens are
   returned only when a link is created or rotated.
@@ -103,7 +103,7 @@ The native channel model is intentionally split by responsibility:
 
 | Concept | Table | Meaning |
 | --- | --- | --- |
-| External bot | `channel_accounts` | Provider identity and transport credentials, such as a Telegram bot, Discord application/bot token, WhatsApp phone, or BlueBubbles server. |
+| External bot | `channel_accounts` | Provider identity, visibility, and transport credentials, such as a Telegram bot, Discord application/bot token, WhatsApp phone, or BlueBubbles server. |
 | Bot-agent link | `channel_bot_agent_links` | Authorization edge from one external bot to one Clawdi AgentEnvironment. This owns the hashed agent SDK token and link-local agent SDK state such as Telegram webhook and command shadows. |
 | Conversation route | `channel_bindings` and `channel_binding_aliases` | External chat ids and provider aliases routed to exactly one active bot-agent link per account. |
 | Inbox/outbox message | `channel_messages` and `channel_deliveries` | Routed traffic carrying `bot_agent_link_id` so agent-facing polling, Gateway replay, BlueBubbles queries, and outbound sends are link-scoped. |
@@ -114,6 +114,19 @@ many-to-many routing between bots and agents without overloading the provider
 account row. The route itself is not many-to-many: a given `(channel account,
 external chat id)` has at most one active binding, so a conversation session
 cannot be handled by multiple agents at the same time.
+
+Channel accounts have `visibility = private | public`. User-created channel
+accounts are always `private`: only the account owner can see them, link them,
+delete them, or pair them, and they can only be linked to that user's agents.
+Clawdi-preconfigured shared bots are stored as `public`: any authenticated user
+can list the account and create their own bot-agent links and pair codes for
+their own agents, but provider-token management, deletion, and provider-wide
+command sync remain owner/admin operations. Public bot links, pair codes,
+bindings, messages, deliveries, attachments, scheduled messages, and
+WhatsApp tenant credentials are owned by the requesting/link user, not by the
+bot account owner. Operationally, configure a public bot by seeding or
+admin-updating the `channel_accounts` row with `visibility = 'public'`; do not
+expose that field on the ordinary user create-channel API.
 
 Agent-facing SDK credentials are link-scoped, not agent-scoped. If two external
 bots are both linked to the same Clawdi agent, each `(bot, agent)` link still

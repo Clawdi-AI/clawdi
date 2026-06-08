@@ -2170,6 +2170,7 @@ async def mint_whatsapp_agent_credential(
     *,
     account: ChannelAccount,
     bot_agent_link_id: UUID,
+    user_id: UUID | None = None,
     phone_user: str | None = None,
     device: int = 1,
     name: str | None = None,
@@ -2187,7 +2188,7 @@ async def mint_whatsapp_agent_credential(
     credential = ChannelAgentCredential(
         account_id=account.id,
         bot_agent_link_id=bot_agent_link_id,
-        user_id=account.user_id,
+        user_id=user_id or account.user_id,
         provider=CHANNEL_PROVIDER_WHATSAPP,
         identity_pub_key_hash=hashlib.sha256(minted.identity_pub_key).hexdigest(),
         identity_public_key=minted.identity_pub_key,
@@ -2222,11 +2223,13 @@ async def revoke_whatsapp_agent_credential(
     *,
     account: ChannelAccount,
     credential_id: UUID,
+    user_id: UUID | None = None,
 ) -> bool:
     credential = await db.get(ChannelAgentCredential, credential_id)
     if (
         credential is None
         or credential.account_id != account.id
+        or (user_id is not None and credential.user_id != user_id)
         or credential.revoked_at is not None
     ):
         return False

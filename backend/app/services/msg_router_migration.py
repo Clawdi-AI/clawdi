@@ -409,6 +409,7 @@ async def import_msg_router_migration_dump(
                 db,
                 account=account,
                 bot_agent_link_id=link.id,
+                user_id=link.user_id,
                 external_chat_id=binding.chat_id,
                 external_chat_type=binding.chat_type,
                 external_chat_name=binding.scope_id,

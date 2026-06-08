@@ -70,6 +70,7 @@ def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
         provider=account.provider,
         name=account.name,
         status=account.status,
+        visibility=account.visibility,
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,

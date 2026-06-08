@@ -126,7 +126,7 @@ async def create_imessage_agent_message(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id,
         binding_id=binding.id,
-        user_id=account.user_id,
+        user_id=binding.user_id,
         direction=MESSAGE_DIRECTION_OUTBOUND,
         external_chat_id=binding.external_chat_id,
         provider_message_id=f"clawdi-imsg-{uuid4().hex}",
@@ -195,7 +195,7 @@ async def create_scheduled_message(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id,
         binding_id=binding.id,
-        user_id=account.user_id,
+        user_id=binding.user_id,
         external_chat_id=binding.external_chat_id,
         scheduled_for=_parse_scheduled_for(payload),
         payload=payload,
@@ -401,6 +401,7 @@ async def stage_attachment_upload(
     data: bytes,
     file_name: str | None,
     content_type: str | None,
+    user_id: UUID | None = None,
 ) -> ChannelAttachmentUpload:
     if len(data) > BLUEBUBBLES_ATTACHMENT_MAX_BYTES:
         raise HTTPException(
@@ -416,7 +417,7 @@ async def stage_attachment_upload(
     await file_store.put(file_key, data)
     upload = ChannelAttachmentUpload(
         account_id=account.id,
-        user_id=account.user_id,
+        user_id=user_id or account.user_id,
         upload_path=upload_path,
         file_key=file_key,
         file_name=safe_name,

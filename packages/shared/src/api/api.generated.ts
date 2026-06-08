@@ -2633,6 +2633,12 @@ export interface components {
             name: string;
             /** Status */
             status: string;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "private" | "public";
             /** Has Provider Token */
             has_provider_token: boolean;
             /** Webhook Url */
@@ -2664,6 +2670,12 @@ export interface components {
             name: string;
             /** Status */
             status: string;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "private" | "public";
             /** Has Provider Token */
             has_provider_token: boolean;
             /** Webhook Url */

@@ -125,7 +125,7 @@ async def bluebubbles_create_chat(
         binding = ChannelBinding(
             account_id=account.id,
             bot_agent_link_id=agent.link.id,
-            user_id=account.user_id,
+            user_id=agent.link.user_id,
             external_chat_id=chat_guid,
             external_chat_type=chat_type,
             external_chat_name=_optional_str(params.get("groupChatName"))

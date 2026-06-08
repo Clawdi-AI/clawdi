@@ -44,17 +44,18 @@ file_store = get_file_store()
 @router.post("/attachment/upload", include_in_schema=False)
 async def bluebubbles_upload_attachment(
     attachment: UploadFile = File(...),
-    account: BlueBubblesAccount = Depends(bluebubbles_account),
+    agent: BlueBubblesAgent = Depends(bluebubbles_agent),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     data = await _read_upload_bytes(attachment, max_bytes=BLUEBUBBLES_ATTACHMENT_MAX_BYTES)
     upload = await stage_attachment_upload(
         db,
-        account=account,
+        account=agent.account,
         file_store=file_store,
         data=data,
         file_name=attachment.filename,
         content_type=attachment.content_type,
+        user_id=agent.link.user_id,
     )
     await db.commit()
     return _bluebubbles_ok({"path": upload.upload_path, "guid": str(upload.id)})
@@ -88,6 +89,7 @@ async def bluebubbles_send_attachment(
         data=data,
         file_name=name or attachment.filename,
         content_type=attachment.content_type,
+        user_id=agent.link.user_id,
     )
     caption_text = _optional_str(message) or _optional_str(text) or _optional_str(caption)
     outbound = await create_imessage_agent_message(

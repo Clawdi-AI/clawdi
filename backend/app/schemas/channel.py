@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
+ChannelVisibility = Literal["private", "public"]
 
 
 class ChannelAccountCreate(BaseModel):
@@ -46,6 +47,7 @@ class ChannelAccountResponse(BaseModel):
     provider: str
     name: str
     status: str
+    visibility: ChannelVisibility = "private"
     has_provider_token: bool
     webhook_url: str
     created_at: datetime

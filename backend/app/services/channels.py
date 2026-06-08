@@ -15,7 +15,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -30,6 +30,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_STATUS_DISABLED,
+    CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
@@ -237,12 +238,15 @@ async def get_or_create_bot_agent_link(
     *,
     account: ChannelAccount,
     agent_id: UUID,
+    user_id: UUID | None = None,
     agent_token: str | None = None,
 ) -> tuple[ChannelBotAgentLink, str | None]:
+    link_user_id = user_id or account.user_id
     result = await db.execute(
         select(ChannelBotAgentLink).where(
             ChannelBotAgentLink.account_id == account.id,
             ChannelBotAgentLink.agent_id == agent_id,
+            ChannelBotAgentLink.user_id == link_user_id,
             ChannelBotAgentLink.archived_at.is_(None),
         )
     )
@@ -253,7 +257,7 @@ async def get_or_create_bot_agent_link(
     raw_token = agent_token or generate_agent_token(account.provider)
     link = ChannelBotAgentLink(
         account_id=account.id,
-        user_id=account.user_id,
+        user_id=link_user_id,
         agent_id=agent_id,
         agent_token_hash=hash_token(raw_token),
     )
@@ -274,7 +278,7 @@ async def create_pair_code(
     pair_code = ChannelPairCode(
         account_id=account.id,
         bot_agent_link_id=link.id,
-        user_id=account.user_id,
+        user_id=link.user_id,
         code_hash=hash_token(raw_code),
         expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
     )
@@ -293,12 +297,13 @@ async def get_owned_bot_agent_link(
     *,
     account: ChannelAccount,
     link_id: UUID,
+    user_id: UUID,
 ) -> ChannelBotAgentLink:
     result = await db.execute(
         select(ChannelBotAgentLink).where(
             ChannelBotAgentLink.id == link_id,
             ChannelBotAgentLink.account_id == account.id,
-            ChannelBotAgentLink.user_id == account.user_id,
+            ChannelBotAgentLink.user_id == user_id,
             ChannelBotAgentLink.archived_at.is_(None),
         )
     )
@@ -331,6 +336,35 @@ async def get_owned_channel_account(
             ChannelAccount.id == account_id,
             ChannelAccount.user_id == user_id,
             ChannelAccount.archived_at.is_(None),
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
+    return account
+
+
+def is_public_channel_account(account: ChannelAccount) -> bool:
+    return account.visibility == CHANNEL_VISIBILITY_PUBLIC
+
+
+async def get_accessible_channel_account(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    user_id: UUID,
+) -> ChannelAccount:
+    result = await db.execute(
+        select(ChannelAccount).where(
+            ChannelAccount.id == account_id,
+            ChannelAccount.archived_at.is_(None),
+            or_(
+                ChannelAccount.user_id == user_id,
+                and_(
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ),
+            ),
         )
     )
     account = result.scalar_one_or_none()
@@ -466,6 +500,7 @@ async def claim_pair_code(
         db,
         account=account,
         bot_agent_link_id=pair_code.bot_agent_link_id,
+        user_id=pair_code.user_id,
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
@@ -481,6 +516,7 @@ async def get_or_create_binding(
     *,
     account: ChannelAccount,
     bot_agent_link_id: UUID,
+    user_id: UUID,
     external_chat_id: str,
     external_chat_type: str | None,
     external_chat_name: str | None,
@@ -500,6 +536,7 @@ async def get_or_create_binding(
     binding = result.scalars().first()
     if binding is not None:
         binding.bot_agent_link_id = bot_agent_link_id
+        binding.user_id = user_id
         binding.external_chat_type = external_chat_type
         binding.external_chat_name = external_chat_name
         binding.status = BINDING_STATUS_ACTIVE
@@ -508,7 +545,7 @@ async def get_or_create_binding(
     binding = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=bot_agent_link_id,
-        user_id=account.user_id,
+        user_id=user_id,
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
@@ -830,11 +867,12 @@ async def record_inbound_message(
     text: str | None,
     payload: dict[str, Any],
 ) -> ChannelMessage:
+    owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
         binding_id=binding.id if binding else None,
-        user_id=account.user_id,
+        user_id=owner_user_id,
         direction=MESSAGE_DIRECTION_INBOUND,
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
@@ -892,6 +930,9 @@ async def record_channel_agent_reference(
     metadata: dict[str, Any] | None = None,
 ) -> ChannelAgentReference:
     scoped_link_id = binding.bot_agent_link_id if binding else bot_agent_link_id
+    owner_user_id = binding.user_id if binding is not None else account.user_id
+    if message is not None:
+        owner_user_id = message.user_id
     result = await db.execute(
         select(ChannelAgentReference).where(
             ChannelAgentReference.account_id == account.id,
@@ -913,7 +954,7 @@ async def record_channel_agent_reference(
         bot_agent_link_id=scoped_link_id,
         binding_id=binding.id if binding else None,
         message_id=message.id if message else None,
-        user_id=account.user_id,
+        user_id=owner_user_id,
         provider=account.provider,
         ref_kind=ref_kind,
         ref_value=ref_value,
@@ -1313,11 +1354,12 @@ async def enqueue_channel_outbound_message(
         external_chat_id=external_chat_id,
         bot_agent_link_id=bot_agent_link_id,
     )
+    owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
         binding_id=binding.id if binding else None,
-        user_id=account.user_id,
+        user_id=owner_user_id,
         direction=MESSAGE_DIRECTION_OUTBOUND,
         external_chat_id=external_chat_id,
         provider_message_id=None,
@@ -1330,7 +1372,7 @@ async def enqueue_channel_outbound_message(
         account_id=account.id,
         bot_agent_link_id=message.bot_agent_link_id,
         message_id=message.id,
-        user_id=account.user_id,
+        user_id=owner_user_id,
         status=DELIVERY_STATUS_PENDING,
         next_attempt_at=datetime.now(UTC),
     )
@@ -2024,11 +2066,12 @@ async def _record_outbound_channel_message(
     text: str,
     payload: dict[str, Any] | None,
 ) -> ChannelMessage:
+    owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
         binding_id=binding.id if binding else None,
-        user_id=account.user_id,
+        user_id=owner_user_id,
         direction=MESSAGE_DIRECTION_OUTBOUND,
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,

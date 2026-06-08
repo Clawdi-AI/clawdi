@@ -34,6 +34,9 @@ CHANNEL_PROVIDERS = (
 CHANNEL_STATUS_ACTIVE = "active"
 CHANNEL_STATUS_DISABLED = "disabled"
 
+CHANNEL_VISIBILITY_PRIVATE = "private"
+CHANNEL_VISIBILITY_PUBLIC = "public"
+
 BINDING_STATUS_ACTIVE = "active"
 BINDING_STATUS_ARCHIVED = "archived"
 
@@ -70,6 +73,13 @@ class ChannelAccount(Base, TimestampMixin):
         nullable=False,
         default=CHANNEL_STATUS_ACTIVE,
         server_default=CHANNEL_STATUS_ACTIVE,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=CHANNEL_VISIBILITY_PRIVATE,
+        server_default=CHANNEL_VISIBILITY_PRIVATE,
+        index=True,
     )
 
     encrypted_provider_token: Mapped[bytes | None] = mapped_column(LargeBinary)

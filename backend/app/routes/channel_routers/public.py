@@ -8,7 +8,7 @@ from fastapi import (
     HTTPException,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,8 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDERS,
+    CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
     ChannelBinding,
     ChannelBotAgentLink,
@@ -53,6 +55,7 @@ from app.services.channels import (
     enqueue_channel_outbound_message,
     generate_agent_token,
     generate_webhook_secret,
+    get_accessible_channel_account,
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
     get_owned_channel_account,
@@ -88,10 +91,16 @@ async def list_channels(
     result = await db.execute(
         select(ChannelAccount)
         .where(
-            ChannelAccount.user_id == auth.user_id,
             ChannelAccount.archived_at.is_(None),
+            or_(
+                ChannelAccount.user_id == auth.user_id,
+                and_(
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ),
+            ),
         )
-        .order_by(ChannelAccount.provider, ChannelAccount.name)
+        .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
     )
     return [_account_response(account) for account in result.scalars().all()]
 
@@ -132,6 +141,7 @@ async def create_channel(
                 db,
                 account=account,
                 agent_id=initial_agent_id,
+                user_id=auth.user_id,
                 agent_token=link_agent_token,
             )
             link_agent_token = created_token or link_agent_token
@@ -159,7 +169,7 @@ async def get_channel(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAccountResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     return _account_response(account)
 
 
@@ -181,7 +191,7 @@ async def create_channel_pair_code(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelPairCodeResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     link, agent_token = await _resolve_pair_code_link(db, auth=auth, account=account, body=body)
     created = await create_pair_code(
         db,
@@ -208,11 +218,12 @@ async def list_channel_agent_links(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[ChannelAgentLinkResponse]:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     result = await db.execute(
         select(ChannelBotAgentLink)
         .where(
             ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == auth.user_id,
             ChannelBotAgentLink.archived_at.is_(None),
         )
         .order_by(ChannelBotAgentLink.created_at)
@@ -227,12 +238,13 @@ async def create_channel_agent_link(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAgentLinkResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     agent_id = await _resolve_agent_id_for_link(db, auth=auth, requested_agent_id=body.agent_id)
     link, agent_token = await get_or_create_bot_agent_link(
         db,
         account=account,
         agent_id=agent_id,
+        user_id=auth.user_id,
     )
     await db.commit()
     await db.refresh(link)
@@ -246,8 +258,10 @@ async def rotate_channel_agent_link_token(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAgentLinkResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    link = await get_owned_bot_agent_link(db, account=account, link_id=link_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    link = await get_owned_bot_agent_link(
+        db, account=account, link_id=link_id, user_id=auth.user_id
+    )
     agent_token = await rotate_bot_agent_link_token(db, account=account, link=link)
     await db.commit()
     await db.refresh(link)
@@ -260,11 +274,12 @@ async def list_channel_bindings(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[ChannelBindingResponse]:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     result = await db.execute(
         select(ChannelBinding)
         .where(
             ChannelBinding.account_id == account.id,
+            ChannelBinding.user_id == auth.user_id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
         )
         .order_by(ChannelBinding.created_at.desc())
@@ -300,7 +315,7 @@ async def send_channel_message(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelMessageResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     external_chat_id = body.external_chat_id
     bot_agent_link_id: UUID | None = None
     if body.binding_id is not None:
@@ -316,6 +331,25 @@ async def send_channel_message(
         if binding is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="binding not found")
         external_chat_id = binding.external_chat_id
+        bot_agent_link_id = binding.bot_agent_link_id
+    elif account.visibility == CHANNEL_VISIBILITY_PUBLIC and external_chat_id is not None:
+        result = await db.execute(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.user_id == auth.user_id,
+                ChannelBinding.external_chat_id == external_chat_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+            .order_by(ChannelBinding.created_at.desc())
+            .limit(1)
+        )
+        binding = result.scalar_one_or_none()
+        if binding is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="chat is not paired with this user",
+            )
         bot_agent_link_id = binding.bot_agent_link_id
     if external_chat_id is None:
         raise HTTPException(
@@ -389,18 +423,28 @@ async def _resolve_pair_code_link(
     body: ChannelPairCodeCreate,
 ) -> tuple[ChannelBotAgentLink, str | None]:
     if body.agent_link_id is not None:
-        return await get_owned_bot_agent_link(db, account=account, link_id=body.agent_link_id), None
+        return (
+            await get_owned_bot_agent_link(
+                db,
+                account=account,
+                link_id=body.agent_link_id,
+                user_id=auth.user_id,
+            ),
+            None,
+        )
     if body.agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
         link, agent_token = await get_or_create_bot_agent_link(
             db,
             account=account,
             agent_id=body.agent_id,
+            user_id=auth.user_id,
         )
         return link, agent_token
     result = await db.execute(
         select(ChannelBotAgentLink).where(
             ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == auth.user_id,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
         )

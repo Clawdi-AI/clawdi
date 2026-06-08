@@ -36,6 +36,7 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(length=32), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("status", sa.String(length=32), server_default="active", nullable=False),
+        sa.Column("visibility", sa.String(length=32), server_default="private", nullable=False),
         sa.Column("encrypted_provider_token", sa.LargeBinary(), nullable=True),
         sa.Column("provider_token_nonce", sa.LargeBinary(), nullable=True),
         sa.Column("webhook_secret_hash", sa.String(length=64), nullable=False),
@@ -47,6 +48,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_channel_accounts_provider"), "channel_accounts", ["provider"])
     op.create_index(op.f("ix_channel_accounts_user_id"), "channel_accounts", ["user_id"])
+    op.create_index(op.f("ix_channel_accounts_visibility"), "channel_accounts", ["visibility"])
     op.create_index(
         "uq_channel_accounts_user_provider_name_active",
         "channel_accounts",

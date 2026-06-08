@@ -54,6 +54,7 @@ from app.schemas.channel import (
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
+    get_accessible_channel_account,
     get_channel_secret,
     get_or_create_bot_agent_link,
     get_owned_channel_account,
@@ -118,7 +119,7 @@ async def create_whatsapp_tenant_credential(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> WhatsAppTenantCredentialResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     self_identity = (
@@ -130,6 +131,7 @@ async def create_whatsapp_tenant_credential(
         db,
         account=account,
         bot_agent_link_id=link.id,
+        user_id=link.user_id,
         phone_user=body.phone_user,
         device=body.device,
         name=body.name,
@@ -156,7 +158,7 @@ async def list_whatsapp_tenant_credentials(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[WhatsAppTenantCredentialMetadata]:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     result = await db.execute(
@@ -167,6 +169,8 @@ async def list_whatsapp_tenant_credentials(
         )
         .where(
             ChannelAgentCredential.account_id == account.id,
+            ChannelAgentCredential.user_id == auth.user_id,
+            ChannelBotAgentLink.user_id == auth.user_id,
             ChannelAgentCredential.revoked_at.is_(None),
         )
         .order_by(ChannelAgentCredential.created_at.desc())
@@ -214,11 +218,13 @@ async def _resolve_whatsapp_tenant_link(
             db,
             account=account,
             agent_id=body.agent_id,
+            user_id=auth.user_id,
         )
         return link
     result = await db.execute(
         select(ChannelBotAgentLink).where(
             ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == auth.user_id,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
         )
@@ -242,13 +248,14 @@ async def delete_whatsapp_tenant_credential(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     revoked = await revoke_whatsapp_agent_credential(
         db,
         account=account,
         credential_id=credential_id,
+        user_id=auth.user_id,
     )
     if not revoked:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="credential not found")
