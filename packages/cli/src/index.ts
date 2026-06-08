@@ -493,6 +493,85 @@ aiProviderCmd
 	});
 
 // ─────────────────────────────────────────────────────────────
+// channels
+// ─────────────────────────────────────────────────────────────
+const channelCmd = program
+	.command("channel")
+	.alias("bot")
+	.description("Manage channel bots and pair external chats to agents");
+
+channelCmd
+	.command("list")
+	.description("List private bots and accessible public bots")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { channelListCommand } = await import("./commands/channel.js");
+		await channelListCommand(opts);
+	});
+
+channelCmd
+	.command("create <provider> <name>")
+	.description("Create a private channel bot")
+	.option("--agent <agent-id>", "Create an initial bot-agent link")
+	.option("--provider-token <token>", "Provider token or upstream credential")
+	.option("--config <json>", "Provider config JSON object")
+	.option("--secret <name=value>", "Encrypted provider secret; repeatable", collectValues)
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi channel create telegram ops-bot --agent <agent-id> --provider-token <token>",
+	)
+	.action(async (provider: string, name: string, opts) => {
+		const { channelCreateCommand } = await import("./commands/channel.js");
+		await channelCreateCommand(provider, name, opts);
+	});
+
+channelCmd
+	.command("links <channel-id>")
+	.description("List your bot-agent links for a channel")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (channelId: string, opts: { json?: boolean }) => {
+		const { channelLinksCommand } = await import("./commands/channel.js");
+		await channelLinksCommand(channelId, opts);
+	});
+
+channelCmd
+	.command("link <channel-id>")
+	.description("Link an accessible bot to one of your agents")
+	.requiredOption("--agent <agent-id>", "Target agent id")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi channel link <channel-id> --agent <agent-id>")
+	.action(async (channelId: string, opts) => {
+		const { channelLinkCommand } = await import("./commands/channel.js");
+		await channelLinkCommand(channelId, opts);
+	});
+
+channelCmd
+	.command("pair-code <channel-id>")
+	.description("Create a one-time code to pair an external chat to an agent link")
+	.option("--agent <agent-id>", "Create or reuse a link for this agent")
+	.option("--link <link-id>", "Use an existing bot-agent link")
+	.option("--ttl <seconds>", "Pair code TTL in seconds", "900")
+	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi channel pair-code <channel-id> --agent <agent-id>\n  $ clawdi channel pair-code <channel-id> --link <link-id>",
+	)
+	.action(async (channelId: string, opts) => {
+		const { channelPairCodeCommand } = await import("./commands/channel.js");
+		await channelPairCodeCommand(channelId, opts);
+	});
+
+channelCmd
+	.command("bindings <channel-id>")
+	.description("List your paired external chats for a channel")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (channelId: string, opts: { json?: boolean }) => {
+		const { channelBindingsCommand } = await import("./commands/channel.js");
+		await channelBindingsCommand(channelId, opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // vault
 // ─────────────────────────────────────────────────────────────
 const vaultCmd = program

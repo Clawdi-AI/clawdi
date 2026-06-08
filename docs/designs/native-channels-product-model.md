@@ -277,6 +277,22 @@ User-facing control plane:
 | `GET /api/channels/{id}/bindings` | Lists only the caller's active bindings. |
 | `POST /api/channels/{id}/messages` | Sends only through the caller's active binding. |
 
+CLI control plane:
+
+| CLI | Scope |
+| --- | --- |
+| `clawdi channel list` | Lists owned private bots and accessible public bots. |
+| `clawdi channel create <provider> <name>` | Creates a private bot, optionally with an initial `--agent` link. |
+| `clawdi channel links <channel-id>` | Lists only the caller's bot-agent links for that bot. |
+| `clawdi channel link <channel-id> --agent <agent-id>` | Creates a caller-owned link from an accessible bot to one of the caller's agents. |
+| `clawdi channel pair-code <channel-id> --agent <agent-id>` | Creates or reuses the caller's link and returns `/bot_pair <code>`. |
+| `clawdi channel pair-code <channel-id> --link <link-id>` | Creates a pair code for an existing caller-owned link. |
+| `clawdi channel bindings <channel-id>` | Lists only the caller's active chat bindings. |
+
+`clawdi bot` is an alias for `clawdi channel`. Public bot publishing and
+provider credential rotation remain admin API operations, not user CLI
+operations.
+
 Admin control plane:
 
 | API | Scope |
