@@ -390,10 +390,6 @@ async def telegram_webhook(
         payload=payload,
     )
     message = messages[0][0]
-    if binding_result.command_handled:
-        delivered_at = datetime.now(UTC)
-        for routed_message, _binding in messages:
-            routed_message.delivered_at = delivered_at
     for routed_message, binding in messages:
         await record_telegram_update_references(
             db,

@@ -1067,7 +1067,20 @@ async def record_inbound_messages_for_bindings(
             payload=payload,
         )
         messages.append((message, binding))
+    if binding_result.command_handled:
+        _mark_inbound_messages_delivered(messages)
     return messages
+
+
+def _mark_inbound_messages_delivered(
+    messages: list[tuple[ChannelMessage, ChannelBinding | None]],
+    *,
+    delivered_at: datetime | None = None,
+) -> datetime:
+    delivered_at = delivered_at or datetime.now(UTC)
+    for message, _binding in messages:
+        message.delivered_at = delivered_at
+    return delivered_at
 
 
 async def record_channel_agent_reference(
@@ -2541,10 +2554,6 @@ async def record_discord_dispatch(
             message=message,
             payload=payload,
         )
-    if binding_result.command_handled:
-        delivered_at = datetime.now(UTC)
-        for message, _binding in messages:
-            message.delivered_at = delivered_at
     return True
 
 

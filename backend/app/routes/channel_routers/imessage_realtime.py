@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
-from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import (
@@ -153,10 +152,6 @@ async def imessage_webhook(
         text=text,
         payload=payload,
     )
-    if binding_result.command_handled:
-        delivered_at = datetime.now(UTC)
-        for routed_message, _binding in messages:
-            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
     if not binding_result.command_handled:

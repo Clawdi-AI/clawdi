@@ -4,7 +4,6 @@ import asyncio
 import json
 import secrets
 import zlib
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -457,10 +456,6 @@ async def discord_webhook(
             message=message,
             payload=payload,
         )
-    if binding_result.command_handled:
-        delivered_at = datetime.now(UTC)
-        for routed_message, _binding in messages:
-            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
     if payload.get("type") == 2:

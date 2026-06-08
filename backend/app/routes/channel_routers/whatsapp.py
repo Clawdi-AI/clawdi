@@ -807,10 +807,6 @@ async def whatsapp_webhook(
                     remote_jid=remote_jid,
                     alt_jid=alt_jid,
                 )
-    if binding_result.command_handled:
-        delivered_at = datetime.now(UTC)
-        for routed_message, _binding in messages:
-            routed_message.delivered_at = delivered_at
     await db.commit()
     message = messages[0][0]
     return TelegramWebhookResponse(
