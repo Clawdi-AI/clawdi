@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -6,7 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
-import { writePrivateFileAtomic } from "../lib/private-file";
+import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -612,15 +612,22 @@ async function writeWhatsAppCredentials(
 		}),
 	);
 	const dir = resolvePath(ctx.manifestDir, options.baileys_credentials_dir);
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	writePrivateFileAtomic(join(dir, "creds.json"), `${JSON.stringify(credential.creds, null, 2)}\n`);
+	writePrivateFileAtomic(
+		join(dir, "creds.json"),
+		`${JSON.stringify(credential.creds, null, 2)}\n`,
+		{
+			dirMode: PRIVATE_DIR_MODE,
+		},
+	);
 	writePrivateFileAtomic(
 		join(dir, "auth-cert.json"),
 		`${JSON.stringify(credential.auth_cert, null, 2)}\n`,
+		{ dirMode: PRIVATE_DIR_MODE },
 	);
 	writePrivateFileAtomic(
 		join(dir, "clawdi-whatsapp.json"),
 		`${JSON.stringify(credential, null, 2)}\n`,
+		{ dirMode: PRIVATE_DIR_MODE },
 	);
 	setRuntimeEnv(
 		ctx,

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -570,7 +578,10 @@ channels:
           baileys_credentials_dir: .wa-creds
 outputs:
   dotenv: .env.channels
-`);
+	`);
+		const credsDir = join(tmpHome, ".wa-creds");
+		mkdirSync(credsDir, { recursive: true, mode: 0o755 });
+		if (process.platform !== "win32") chmodSync(credsDir, 0o755);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -636,6 +647,9 @@ outputs:
 		expect(readFileSync(join(tmpHome, ".env.channels"), "utf-8")).toContain(
 			`CLAWDI_WHATSAPP_AUTH_DIR=${join(tmpHome, ".wa-creds")}`,
 		);
+		if (process.platform !== "win32") {
+			expect(statSync(credsDir).mode & 0o777).toBe(0o700);
+		}
 	});
 
 	it("requires explicit confirmation before rotating every declared token", async () => {

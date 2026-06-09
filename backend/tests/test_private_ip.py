@@ -81,3 +81,39 @@ async def test_has_private_resolved_ip_blocks_private_dns(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
     assert await has_private_resolved_ip("public-name.example") is True
+
+
+@pytest.mark.asyncio
+async def test_has_private_resolved_ip_blocks_unresolved_dns(monkeypatch):
+    def fake_getaddrinfo(host, port):
+        assert host == "unresolved.example"
+        assert port is None
+        raise socket.gaierror
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert await has_private_resolved_ip("unresolved.example") is True
+
+
+@pytest.mark.asyncio
+async def test_has_private_resolved_ip_blocks_dns_os_errors(monkeypatch):
+    def fake_getaddrinfo(host, port):
+        assert host == "timeout.example"
+        assert port is None
+        raise TimeoutError
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert await has_private_resolved_ip("timeout.example") is True
+
+
+@pytest.mark.asyncio
+async def test_has_private_resolved_ip_blocks_empty_dns_results(monkeypatch):
+    def fake_getaddrinfo(host, port):
+        assert host == "empty.example"
+        assert port is None
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert await has_private_resolved_ip("empty.example") is True

@@ -25,6 +25,7 @@ from app.services.channels import (
     enqueue_channel_outbound_message,
     find_binding,
 )
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 from app.services.whatsapp_baileys import (
     BinaryNode,
     WhatsAppCloudOutboundPayload,
@@ -826,9 +827,16 @@ async def _send_whatsapp_cloud_raw_relay(
         )
     base_url = (
         _account_config_str(account, "graph_api_base_url")
-        or settings.channel_whatsapp_graph_api_base_url
+        or settings.channel_whatsapp_graph_api_base_url.strip()
     )
     url = f"{base_url.rstrip('/')}/{phone_number_id}/messages"
+    try:
+        await validate_channel_http_url(url, label="whatsapp graph relay url")
+    except UnsafeOutboundUrlError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             for payload in relay.payloads:

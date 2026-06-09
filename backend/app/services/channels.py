@@ -64,6 +64,7 @@ from app.services.metrics import (
     rate_limit_rejects,
     track_proxy_latency,
 )
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 from app.services.vault_crypto import decrypt, encrypt
 
 PAIR_COMMAND = "/bot_pair"
@@ -1828,7 +1829,8 @@ async def _send_telegram_provider_payload(
     text: str,
 ) -> tuple[str | None, dict[str, Any]]:
     token = decrypt_provider_token(account)
-    url = f"{settings.channel_telegram_api_base_url.rstrip('/')}/bot{token}/sendMessage"
+    base_url = settings.channel_telegram_api_base_url.strip()
+    url = f"{base_url.rstrip('/')}/bot{token}/sendMessage"
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="sendMessage",
@@ -1852,7 +1854,14 @@ async def sync_telegram_commands(
             detail="not a telegram channel",
         )
     token = decrypt_provider_token(account)
-    url = f"{settings.channel_telegram_api_base_url.rstrip('/')}/bot{token}/setMyCommands"
+    base_url = settings.channel_telegram_api_base_url.strip()
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_TELEGRAM,
+        method="setMyCommands",
+        label="telegram api base url",
+    )
+    url = f"{base_url.rstrip('/')}/bot{token}/setMyCommands"
     request_payload = {
         "commands": [
             {
@@ -1917,7 +1926,16 @@ async def _send_discord_provider_payload(
     text: str,
 ) -> tuple[str | None, dict[str, Any]]:
     token = decrypt_provider_token(account)
-    base_url = _account_config_str(account, "api_base_url") or settings.channel_discord_api_base_url
+    base_url = (
+        _account_config_str(account, "api_base_url")
+        or settings.channel_discord_api_base_url.strip()
+    )
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_DISCORD,
+        method="POST",
+        label="discord api base url",
+    )
     path = f"/channels/{external_chat_id}/messages"
     url = f"{base_url.rstrip('/')}{path}"
     payload = {
@@ -1985,7 +2003,16 @@ async def sync_discord_commands(
             detail="discord application_id is required in channel config",
         )
     scoped_guild_id = guild_id or _account_config_str(account, "guild_id")
-    base_url = _account_config_str(account, "api_base_url") or settings.channel_discord_api_base_url
+    base_url = (
+        _account_config_str(account, "api_base_url")
+        or settings.channel_discord_api_base_url.strip()
+    )
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_DISCORD,
+        method="commands",
+        label="discord api base url",
+    )
     path = f"/applications/{application_id}"
     if scoped_guild_id:
         path = f"{path}/guilds/{scoped_guild_id}"
@@ -2058,7 +2085,13 @@ async def _send_whatsapp_provider_payload(
     phone_number_id = _require_account_config_str(account, "phone_number_id")
     base_url = (
         _account_config_str(account, "graph_api_base_url")
-        or settings.channel_whatsapp_graph_api_base_url
+        or settings.channel_whatsapp_graph_api_base_url.strip()
+    )
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_WHATSAPP,
+        method="messages",
+        label="whatsapp graph api base url",
     )
     url = f"{base_url.rstrip('/')}/{phone_number_id}/messages"
     request_payload = _whatsapp_cloud_request_payload(
@@ -2283,6 +2316,12 @@ async def _send_imessage_provider_payload(
     text: str,
 ) -> tuple[str | None, dict[str, Any]]:
     server_url = _require_account_config_str(account, "server_url")
+    await _validate_provider_endpoint_url(
+        server_url,
+        channel=CHANNEL_PROVIDER_IMESSAGE,
+        method="message/text",
+        label="imessage server url",
+    )
     token = decrypt_provider_token(account)
     auth_mode = _account_config_str(account, "auth_mode") or "password_query"
     headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -2331,6 +2370,12 @@ async def _post_provider_json(
     headers: dict[str, str] | None = None,
     params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    await _validate_provider_endpoint_url(
+        url,
+        channel=channel,
+        method=method,
+        label=f"{channel} provider url",
+    )
     try:
         with track_proxy_latency(channel, method):
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -2354,6 +2399,23 @@ async def _post_provider_json(
             detail=rejected_detail,
         )
     return _response_json_or_text(response)
+
+
+async def _validate_provider_endpoint_url(
+    url: str,
+    *,
+    channel: str,
+    method: str,
+    label: str,
+) -> None:
+    try:
+        await validate_channel_http_url(url, label=label)
+    except UnsafeOutboundUrlError as exc:
+        outbound_errors.labels(channel=channel, method=method).inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 def _telegram_sent_message_id(payload: dict[str, Any]) -> str | None:

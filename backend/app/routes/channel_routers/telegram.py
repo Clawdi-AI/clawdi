@@ -72,6 +72,7 @@ from app.services.metrics import (
     track_proxy_latency,
 )
 from app.services.telegram_rate_limiter import telegram_rate_limiter
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
 router = APIRouter(prefix="/api/channels/telegram", tags=["channels"])
 
@@ -322,9 +323,9 @@ async def telegram_file_api(
         )
 
     provider_token = decrypt_provider_token(account)
-    url = (
-        f"{settings.channel_telegram_api_base_url.rstrip('/')}/file/bot{provider_token}/{file_path}"
-    )
+    base_url = settings.channel_telegram_api_base_url.strip()
+    await _validate_telegram_provider_base_url(base_url)
+    url = f"{base_url.rstrip('/')}/file/bot{provider_token}/{file_path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
@@ -694,7 +695,9 @@ async def _post_telegram_command_payload(
     payload: dict[str, Any],
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
-    url = f"{settings.channel_telegram_api_base_url.rstrip('/')}/bot{provider_token}/{method}"
+    base_url = settings.channel_telegram_api_base_url.strip()
+    await _validate_telegram_provider_base_url(base_url)
+    url = f"{base_url.rstrip('/')}/bot{provider_token}/{method}"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             return await client.post(url, json=payload)
@@ -1022,7 +1025,9 @@ async def _telegram_provider_response(
     raw_body: bytes,
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
-    url = f"{settings.channel_telegram_api_base_url.rstrip('/')}/bot{provider_token}/{method}"
+    base_url = settings.channel_telegram_api_base_url.strip()
+    await _validate_telegram_provider_base_url(base_url)
+    url = f"{base_url.rstrip('/')}/bot{provider_token}/{method}"
     headers = {}
     content_type = request.headers.get("content-type")
     if content_type:
@@ -1138,6 +1143,17 @@ def _multipart_part_filename(headers: str) -> str | None:
 def _multipart_part_content_type(headers: str) -> str:
     match = re.search(r"content-type:([^\r\n]+)", headers, flags=re.IGNORECASE)
     return match.group(1).strip() if match else "application/octet-stream"
+
+
+async def _validate_telegram_provider_base_url(base_url: str) -> None:
+    try:
+        await validate_channel_http_url(base_url, label="telegram api base url")
+    except UnsafeOutboundUrlError as exc:
+        outbound_errors.labels(channel="telegram", method="provider_url").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 def _telegram_passthrough_headers(response: Any) -> dict[str, str]:

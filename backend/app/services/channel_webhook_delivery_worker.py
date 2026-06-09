@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
@@ -18,7 +18,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
     ChannelMessage,
 )
-from app.services.channel_webhooks import deliver_telegram_agent_webhook, telegram_link_webhook_url
+from app.services.channel_webhooks import deliver_telegram_agent_webhook
 from app.services.channels import telegram_update_payload
 from app.services.metrics import webhook_ttl_drops
 
@@ -100,15 +100,29 @@ class ChannelWebhookDeliveryWorker:
                 ChannelAccount.archived_at.is_(None),
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
+                func.nullif(
+                    func.btrim(
+                        func.coalesce(
+                            func.jsonb_extract_path_text(
+                                ChannelBotAgentLink.config,
+                                "telegram_webhook",
+                                "url",
+                            ),
+                            "",
+                        )
+                    ),
+                    "",
+                ).is_not(None),
             )
             .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
-            .limit(100)
+            .limit(1)
             .with_for_update(skip_locked=True)
         )
-        for message, account, link in result.all():
-            if telegram_link_webhook_url(link):
-                return message, account, link
-        return None
+        row = result.first()
+        if row is None:
+            return None
+        message, account, link = row
+        return message, account, link
 
     async def _deliver_message(
         self,

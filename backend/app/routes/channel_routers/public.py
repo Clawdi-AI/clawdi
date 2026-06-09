@@ -47,6 +47,7 @@ from app.schemas.channel import (
     ChannelSendMessageRequest,
 )
 from app.services.agent_bindings import get_owned_agent_or_404
+from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
     archive_channel_account,
     create_pair_code,
@@ -113,6 +114,7 @@ async def create_channel(
 ) -> ChannelAccountCreatedResponse:
     if body.provider not in CHANNEL_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported provider")
+    await validate_channel_account_config_urls(provider=body.provider, config=body.config)
     initial_agent_id = await _resolve_initial_agent_id(
         db,
         auth=auth,

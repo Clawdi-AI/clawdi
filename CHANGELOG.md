@@ -10,6 +10,34 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.9
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.9
+
+Package: `clawdi@0.12.9`
+
+### Fixed
+
+- Fixed `clawdi runtime apply` so WhatsApp Baileys credential directories are
+  made private even when the directory already existed with wider permissions.
+
+## Clawdi 2026-06-09
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-2026-06-09
+
+### Security
+
+- Tightened native channel provider endpoint and agent webhook URL validation.
+  Clawdi now rejects private, loopback, unresolved, HTTP, and WS targets, and
+  revalidates webhook targets before delivery to reduce DNS-rebinding risk.
+
+### Fixed
+
+- Fixed Telegram and BlueBubbles agent webhook delivery so `4xx` responses no
+  longer acknowledge pending inbound messages as successful deliveries.
+- Fixed Telegram agent webhook redelivery so non-webhook pending messages do
+  not block later webhook-mode inbox rows.
+
 ## Clawdi CLI v0.12.8
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.8

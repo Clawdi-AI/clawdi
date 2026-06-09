@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from app.core.config import settings
 from app.models.channel import ChannelAccount
 from app.services.channels import decrypt_provider_token
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 from app.services.whatsapp_baileys import (
     WhatsAppCloudOutboundPayload,
     WhatsAppMediaReuploadCandidate,
@@ -137,11 +138,15 @@ async def upload_whatsapp_media(
         raise WhatsAppMediaReuploadError("media-upload-phone-number-id-missing")
     base_url = (
         _account_config_str(account, "graph_api_base_url")
-        or settings.channel_whatsapp_graph_api_base_url
+        or settings.channel_whatsapp_graph_api_base_url.strip()
     )
     upload_mimetype = _upload_mimetype(mimetype)
     filename = _upload_filename(media_kind=media_kind, mimetype=upload_mimetype)
     url = f"{base_url.rstrip('/')}/{phone_number_id}/media"
+    try:
+        await validate_channel_http_url(url, label="whatsapp graph media url")
+    except UnsafeOutboundUrlError as exc:
+        raise WhatsAppMediaReuploadError("media-upload-url-unsafe") from exc
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(

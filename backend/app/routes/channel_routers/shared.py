@@ -62,6 +62,7 @@ from app.services.metrics import (
     rate_limit_rejects,
     track_proxy_latency,
 )
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
 
 def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
@@ -865,7 +866,9 @@ async def _fan_out_discord_global_commands(
     guild_ids = await _discord_uncontested_guilds_for_account(db, account=account)
     if not guild_ids:
         return
-    base_url = settings.channel_discord_api_base_url.rstrip("/")
+    base_url = settings.channel_discord_api_base_url.strip()
+    await _validate_discord_provider_base_url(base_url)
+    base_url = base_url.rstrip("/")
     headers = {
         "Authorization": f"Bot {token}",
         "Content-Type": "application/json",
@@ -911,7 +914,9 @@ async def _proxy_discord_request(
 ) -> Response:
     token = decrypt_provider_token(account)
     normalized_path = f"/{path.lstrip('/')}"
-    url = f"{settings.channel_discord_api_base_url.rstrip('/')}{normalized_path}"
+    base_url = settings.channel_discord_api_base_url.strip()
+    await _validate_discord_provider_base_url(base_url)
+    url = f"{base_url.rstrip('/')}{normalized_path}"
     body = await request.body()
     headers = {
         "Authorization": f"Bot {token}",
@@ -966,6 +971,17 @@ async def _proxy_discord_request(
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/json"),
     )
+
+
+async def _validate_discord_provider_base_url(base_url: str) -> None:
+    try:
+        await validate_channel_http_url(base_url, label="discord api base url")
+    except UnsafeOutboundUrlError as exc:
+        outbound_errors.labels(channel="discord", method="provider_url").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 def _public_ws_url(path: str) -> str:

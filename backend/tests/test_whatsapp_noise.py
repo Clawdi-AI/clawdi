@@ -259,9 +259,7 @@ def test_whatsapp_wabinary_decoder_reads_baileys_packed_tokens():
 
 def test_whatsapp_wabinary_decoder_reads_baileys_dictionary_and_device_jids():
     passive = bytes.fromhex("00f8081908fc09706173736976652d3116ec18045af801f801ec01")
-    message = bytes.fromhex(
-        "00f8061308fc036d2d3111f70007ff8615551234567ff801f8041d0453fc03010203"
-    )
+    message = bytes.fromhex("00f8061308fc036d2d3111f70007ff8615551234567ff801f8041d0453fc03010203")
 
     assert decode_binary_node_minimal(passive) == {
         "tag": "iq",
@@ -485,9 +483,7 @@ def test_whatsapp_noise_emulator_acks_non_bundle_encrypt_set_iq():
     assert response["tag"] == "iq"
     assert response["attrs"]["id"] == "rotate-1"
     assert response["attrs"]["type"] == "result"
-    assert ("agent_bundle", "ignored") in [
-        (event.stage, event.outcome) for event in events
-    ]
+    assert ("agent_bundle", "ignored") in [(event.stage, event.outcome) for event in events]
 
 
 def test_whatsapp_noise_emulator_session_accepts_resolved_tenant_identity():
@@ -982,8 +978,7 @@ def test_whatsapp_noise_emulator_session_restores_signal_sender_snapshots():
     )
 
     assert any(
-        event.stage == "signal_state" and event.outcome == "restored"
-        for event in restored_events
+        event.stage == "signal_state" and event.outcome == "restored" for event in restored_events
     )
     assert len(ack_frames) == 1
     assert restored_outbound == [
@@ -1493,9 +1488,7 @@ async def test_whatsapp_noise_session_surfaces_raw_transport_nodes_for_shared_ru
 
     assert frames == []
     assert relayed == [{"node": presence, "unknownSender": None}]
-    assert ("outbound_relay", "received") in [
-        (event.stage, event.outcome) for event in events
-    ]
+    assert ("outbound_relay", "received") in [(event.stage, event.outcome) for event in events]
 
 
 @pytest.mark.asyncio
@@ -2022,19 +2015,16 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     assert bootstrap.details["jidDescription"] == "server=s.whatsapp.net device=true"
     assert minted["identity_pub_key_hex"] not in repr([event.details for event in events])
     tenant_event = next(event for event in events if event.stage == "tenant_resolution")
-    assert tenant_event.details["clientStaticSha256"] == hashlib.sha256(
-        bytes.fromhex(minted["identity_pub_key_hex"])
-    ).hexdigest()
+    assert (
+        tenant_event.details["clientStaticSha256"]
+        == hashlib.sha256(bytes.fromhex(minted["identity_pub_key_hex"])).hexdigest()
+    )
     restored_event = next(
-        event
-        for event in events
-        if event.stage == "agent_bundle" and event.outcome == "restored"
+        event for event in events if event.stage == "agent_bundle" and event.outcome == "restored"
     )
     assert restored_event.details["preCount"] == 1
     signal_state_event = next(
-        event
-        for event in events
-        if event.stage == "signal_state" and event.outcome == "restored"
+        event for event in events if event.stage == "signal_state" and event.outcome == "restored"
     )
     assert signal_state_event.details["senderCount"] == 1
 

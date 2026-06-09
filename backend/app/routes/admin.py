@@ -60,6 +60,7 @@ from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
+from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
     archive_channel_account,
     channel_webhook_url,
@@ -261,6 +262,7 @@ async def admin_create_channel(
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
+    await validate_channel_account_config_urls(provider=body.provider, config=body.config)
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
@@ -329,6 +331,7 @@ async def admin_update_channel(
         account.encrypted_provider_token = ciphertext
         account.provider_token_nonce = nonce
     if "config" in updates:
+        await validate_channel_account_config_urls(provider=account.provider, config=body.config)
         account.config = body.config
     try:
         if "secrets" in updates:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 import uuid
 from collections.abc import AsyncIterator
 
@@ -31,6 +32,13 @@ from app.main import app
 from app.models.user import User
 
 TEST_DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
+_TEST_PUBLIC_DNS_HOSTS = {
+    "api.telegram.org",
+    "discord.com",
+    "gateway.discord.gg",
+    "graph.facebook.com",
+}
+_TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +75,20 @@ def _test_runtime_settings():
         settings.channel_long_poll_max_seconds = prev_channel_long_poll_max
         settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
         settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
+
+
+@pytest.fixture(autouse=True)
+def _test_reserved_domain_dns(monkeypatch):
+    real_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        hostname = host.decode() if isinstance(host, bytes) else str(host)
+        normalized = hostname.strip().lower().rstrip(".")
+        if normalized in _TEST_PUBLIC_DNS_HOSTS or normalized.endswith(_TEST_PUBLIC_DNS_SUFFIXES):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 0))]
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
 @pytest_asyncio.fixture(scope="session")

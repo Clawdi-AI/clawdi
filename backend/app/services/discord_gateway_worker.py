@@ -26,6 +26,7 @@ from app.models.channel import (
     ChannelAccount,
 )
 from app.services.channels import decrypt_provider_token, record_discord_dispatch
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_websocket_url
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +157,12 @@ class DiscordGatewayWorker:
             detail = exc.detail if isinstance(exc.detail, str) else "provider token unavailable"
             raise RuntimeError(detail) from exc
 
-        uri = discord_gateway_uri(_account_gateway_url(account))
+        gateway_url = _account_gateway_url(account)
+        try:
+            await validate_channel_websocket_url(gateway_url, label="discord gateway url")
+        except UnsafeOutboundUrlError as exc:
+            raise RuntimeError(str(exc)) from exc
+        uri = discord_gateway_uri(gateway_url)
         state = _GatewayState()
         async with self._connect_factory(
             uri,
@@ -294,7 +300,7 @@ async def _load_active_discord_account(
 
 
 def discord_gateway_uri(base_url: str) -> str:
-    parts = urlsplit(base_url)
+    parts = urlsplit(base_url.strip())
     params = dict(parse_qsl(parts.query, keep_blank_values=True))
     params["v"] = DISCORD_GATEWAY_VERSION
     params["encoding"] = DISCORD_GATEWAY_ENCODING
@@ -427,7 +433,9 @@ def _gateway_json(payload: dict[str, Any]) -> str:
 
 def _account_gateway_url(account: ChannelAccount) -> str:
     value = _account_config_value(account, "gateway_url")
-    return value if isinstance(value, str) and value else settings.channel_discord_gateway_url
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return settings.channel_discord_gateway_url.strip()
 
 
 def _account_config_value(account: ChannelAccount, key: str) -> Any:

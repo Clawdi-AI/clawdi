@@ -375,6 +375,20 @@ No admin endpoint is needed for user runtime setup.
 | `WA_WEBSOCKET_URL` | WhatsApp Baileys projection output. |
 | `BLUEBUBBLES_SERVER_URL` / `BLUEBUBBLES_PASSWORD` | iMessage projection output. |
 
+## Endpoint Security Boundary
+
+The runtime manifest describes agent-facing configuration: SDK tokens,
+pair-code setup, dotenv projection, and WhatsApp Baileys credential files. It
+must not expose backend provider egress knobs such as Discord REST/Gateway
+base URLs, WhatsApp Graph API base URLs, or iMessage server URLs as ordinary
+runtime fields.
+
+Provider endpoint overrides live on channel account config and are validated by
+the backend when accounts are created or updated, then again before each
+outbound provider call. The backend rejects private, loopback, unresolved,
+HTTP, and WS targets. A runtime manifest cannot weaken that outbound network
+boundary.
+
 ## Open Questions
 
 - Whether `clawdi run` should automatically load `outputs.dotenv`, or whether

@@ -100,6 +100,9 @@ These rules define the product, not just the current implementation:
   user-owned.
 - Agent SDK tokens are scoped to bot-agent links. They are not global per agent.
 - Provider credentials and provider-wide configuration are account-scoped.
+- Provider endpoint URLs and agent webhook URLs are treated as outbound
+  network boundaries. Clawdi rejects private, loopback, unresolved, and
+  insecure endpoint targets.
 - Pair and unpair control is external-actor-scoped in non-DM chats.
 - Pair/unpair commands are system commands and must not be delivered to agents.
 - The old `msg-router` process does not own routing, queueing, or product
@@ -231,6 +234,33 @@ Provider-wide state stays account-scoped:
 - Provider app/phone/server config.
 - Admin-managed command sync.
 - Provider-side credentials and extra encrypted secrets.
+
+## Outbound URL Security
+
+Channel accounts can carry public provider endpoint overrides, such as
+Discord REST/Gateway URLs, WhatsApp Graph API base URLs, or an
+iMessage/BlueBubbles server URL. Agent SDK emulation can also persist Telegram
+and BlueBubbles webhook URLs supplied by an agent.
+
+These values are user- or admin-supplied configuration that can drive backend
+egress. The backend must therefore validate them at both boundaries:
+
+- On create/update or webhook registration, reject unsafe values before they
+  are persisted.
+- Immediately before outbound HTTP or WebSocket calls, revalidate the target
+  so stale rows, manual database edits, or DNS rebinding do not bypass the
+  guard.
+
+Required behavior:
+
+- HTTP provider endpoints and agent webhooks must use `https`.
+- Discord Gateway endpoints must use `wss`.
+- Literal loopback/private/link-local/CGNAT hosts, local hostname aliases,
+  `.local`/`.localhost` names, private DNS results, and unresolved DNS names
+  are rejected.
+- Telegram and BlueBubbles webhook delivery only acknowledges messages after a
+  successful `2xx` or `3xx` response. `4xx`, `5xx`, DNS failures, and network
+  failures keep the message pending for retry or TTL drop.
 
 ## Message Routing Model
 

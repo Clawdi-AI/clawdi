@@ -50,10 +50,12 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import (
     ChannelAgentContext,
+    encrypt_optional_token,
     extract_discord_routing_key,
     hash_token,
     parse_pair_command,
     record_discord_dispatch,
+    send_provider_outbound_payload,
     wait_for_telegram_updates,
 )
 from app.services.discord_gateway_worker import (
@@ -1666,6 +1668,106 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
 
 
 @pytest.mark.asyncio
+async def test_user_channel_config_rejects_private_provider_urls(client: httpx.AsyncClient):
+    response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "imessage",
+            "name": "imessage-private-server-url",
+            "provider_token": "bb-password",
+            "config": {"server_url": "https://127.0.0.1:1234"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "private host" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_user_channel_config_rejects_malformed_provider_urls(client: httpx.AsyncClient):
+    response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "imessage",
+            "name": "imessage-malformed-server-url",
+            "provider_token": "bb-password",
+            "config": {"server_url": "https://[::1"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "imessage server_url must use https"
+
+
+@pytest.mark.asyncio
+async def test_user_channel_config_rejects_insecure_discord_gateway_url(
+    client: httpx.AsyncClient,
+):
+    response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-insecure-gateway-url",
+            "provider_token": "discord-token",
+            "config": {"gateway_url": "ws://gateway.discord.gg"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "discord gateway_url must use wss"
+
+
+@pytest.mark.asyncio
+async def test_provider_send_rejects_existing_private_config_url(monkeypatch):
+    _reset_fake_provider_client()
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    ciphertext, nonce = encrypt_optional_token("discord-token")
+    account = ChannelAccount(
+        provider="discord",
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
+        config={"api_base_url": "https://127.0.0.1/api/v10"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await send_provider_outbound_payload(
+            account=account,
+            external_chat_id="123",
+            text="blocked",
+        )
+
+    assert exc.value.status_code == 400
+    assert "private host" in str(exc.value.detail)
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+async def test_telegram_command_sync_rejects_private_provider_base_url(monkeypatch):
+    _reset_fake_provider_client()
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    monkeypatch.setattr(settings, "channel_telegram_api_base_url", "https://127.0.0.1")
+    ciphertext, nonce = encrypt_optional_token("telegram-token")
+    account = ChannelAccount(
+        provider="telegram",
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await channel_service.sync_telegram_commands(account=account, commands=[])
+
+    assert exc.value.status_code == 400
+    assert "private host" in str(exc.value.detail)
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
     account_a = (
         await client.post(
@@ -2146,11 +2248,10 @@ async def test_telegram_agent_webhook_success_acks_inbox(
         client,
         name="telegram-agent-webhook-ack",
         provider_token=None,
-        config={"allow_private_webhook": True},
     )
     set_webhook = await client.post(
         f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
-        json={"url": "http://127.0.0.1/agent-hook", "secret_token": "agent-secret"},
+        json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
 
     inbound = await client.post(
@@ -2181,6 +2282,117 @@ async def test_telegram_agent_webhook_success_acks_inbox(
 
 
 @pytest.mark.asyncio
+async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([403, 200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-agent-webhook-4xx",
+        provider_token=None,
+    )
+    set_webhook = await client.post(
+        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
+    )
+
+    inbound = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 904,
+            "message": {
+                "message_id": 904,
+                "text": "do not ack 4xx",
+                "chat": {"id": 42, "type": "private"},
+            },
+        },
+    )
+
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "904")
+        )
+    ).scalar_one()
+    assert set_webhook.status_code == 200
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    await db_session.refresh(message)
+
+    assert result is not None
+    assert result.message_id == message.id
+    assert result.delivered is True
+    assert message.delivered_at is not None
+    assert len(_SequencedProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_telegram_agent_webhook_revalidates_dns_at_delivery(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    resolutions = [
+        ("8.8.8.8", 0),
+        ("10.0.0.5", 0),
+    ]
+
+    def fake_getaddrinfo(host, port):
+        assert host == "agent-hook.example"
+        assert port is None
+        address = resolutions.pop(0)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", address)]
+
+    _reset_fake_provider_client()
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-agent-webhook-dns-revalidate",
+        provider_token=None,
+    )
+    set_webhook = await client.post(
+        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        json={"url": "https://agent-hook.example/agent-hook"},
+    )
+
+    inbound = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 905,
+            "message": {
+                "message_id": 905,
+                "text": "dns rebind",
+                "chat": {"id": 42, "type": "private"},
+            },
+        },
+    )
+
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "905")
+        )
+    ).scalar_one()
+    assert set_webhook.status_code == 200
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_worker_retries_failed_agent_delivery(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -2195,11 +2407,10 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
         client,
         name="telegram-agent-webhook-retry",
         provider_token=None,
-        config={"allow_private_webhook": True},
     )
     await client.post(
         f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
-        json={"url": "http://127.0.0.1/agent-hook", "secret_token": "agent-secret"},
+        json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
     await client.post(
         f"/api/channels/telegram/{created['id']}/webhook",
@@ -2232,6 +2443,88 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 
 
 @pytest.mark.asyncio
+async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([503, 200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    polling_channel = await _create_paired_telegram_channel(
+        client,
+        name="telegram-worker-polling-queue-head",
+        provider_token=None,
+        chat_id="4201",
+    )
+    webhook_channel = await _create_paired_telegram_channel(
+        client,
+        name="telegram-worker-webhook-behind-queue-head",
+        provider_token=None,
+        chat_id="4202",
+    )
+    await client.post(
+        f"/api/channels/telegram/bot/{webhook_channel['agent_token']}/setWebhook",
+        json={"url": "https://agent.example/agent-hook"},
+    )
+
+    polling_binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(polling_channel["id"]),
+            )
+        )
+    ).scalar_one()
+    for index in range(101):
+        db_session.add(
+            ChannelMessage(
+                account_id=polling_binding.account_id,
+                bot_agent_link_id=polling_binding.bot_agent_link_id,
+                binding_id=polling_binding.id,
+                user_id=polling_binding.user_id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=polling_binding.external_chat_id,
+                provider_message_id=f"polling-{index}",
+                text="polling mode pending",
+                payload={},
+            )
+        )
+    await db_session.flush()
+
+    inbound = await client.post(
+        f"/api/channels/telegram/{webhook_channel['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": webhook_channel["webhook_secret"]},
+        json={
+            "update_id": 906,
+            "message": {
+                "message_id": 906,
+                "text": "behind polling queue",
+                "chat": {"id": 4202, "type": "private"},
+            },
+        },
+    )
+    webhook_message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "906")
+        )
+    ).scalar_one()
+    assert inbound.status_code == 200
+    assert webhook_message.delivered_at is None
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    await db_session.refresh(webhook_message)
+
+    assert result is not None
+    assert result.message_id == webhook_message.id
+    assert result.delivered is True
+    assert webhook_message.delivered_at is not None
+    assert len(_SequencedProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_worker_drops_expired_agent_delivery(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -2246,11 +2539,10 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
         client,
         name="telegram-agent-webhook-ttl",
         provider_token=None,
-        config={"allow_private_webhook": True},
     )
     await client.post(
         f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
-        json={"url": "http://127.0.0.1/agent-hook"},
+        json={"url": "https://agent.example/agent-hook"},
     )
     await client.post(
         f"/api/channels/telegram/{created['id']}/webhook",
@@ -3333,8 +3625,18 @@ async def test_bluebubbles_webhook_registration_rejects_private_dns_targets(
     monkeypatch,
 ):
     def fake_getaddrinfo(host, port):
-        assert host == "agent-hook.example"
         assert port is None
+        if host == "bluebubbles.example":
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    6,
+                    "",
+                    ("8.8.8.8", 0),
+                )
+            ]
+        assert host == "agent-hook.example"
         return [
             (
                 socket.AF_INET,
@@ -3370,36 +3672,6 @@ async def test_bluebubbles_webhook_registration_rejects_private_dns_targets(
         "message": "webhook url resolves to a private host",
         "data": None,
     }
-
-
-@pytest.mark.asyncio
-async def test_bluebubbles_webhook_registration_allows_private_when_configured(
-    client: httpx.AsyncClient,
-):
-    created = (
-        await client.post(
-            "/api/channels",
-            json={
-                "provider": "imessage",
-                "name": "imessage-webhook-private",
-                "provider_token": "bb-password",
-                "config": {
-                    "server_url": "https://bluebubbles.example",
-                    "allow_private_webhook": True,
-                },
-            },
-        )
-    ).json()
-    params = {"password": created["agent_token"]}
-
-    registered = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
-        params=params,
-        json={"url": "http://localhost:8645/bluebubbles-webhook?password=x"},
-    )
-
-    assert registered.status_code == 200
-    assert registered.json()["data"]["url"].startswith("http://localhost:8645")
 
 
 @pytest.mark.asyncio
@@ -4170,6 +4442,9 @@ def test_parse_pair_command_matches_msg_router_shapes():
 
 def test_discord_gateway_helpers_build_protocol_payloads():
     assert discord_gateway_uri("wss://gateway.discord.gg") == (
+        "wss://gateway.discord.gg/?v=10&encoding=json"
+    )
+    assert discord_gateway_uri(" wss://gateway.discord.gg ") == (
         "wss://gateway.discord.gg/?v=10&encoding=json"
     )
     assert discord_gateway_uri("wss://example.test/gateway?compress=zlib-stream").startswith(

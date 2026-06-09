@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
-from app.services.private_ip import has_private_resolved_ip, is_private_hostname
+from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
 from app.services.vault_crypto import decrypt_field, encrypt_field
 
 
@@ -60,29 +60,18 @@ def telegram_link_webhook_url(link: ChannelBotAgentLink) -> str | None:
     return _optional_str(telegram_link_webhook_config(link).get("url"))
 
 
-async def validate_agent_webhook_url(account: ChannelAccount, url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None:
+    try:
+        await validate_outbound_url(
+            url,
+            allowed_schemes={"https"},
+            label="webhook url",
+        )
+    except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="webhook url must be http or https",
-        )
-    allow_private = _account_config(account).get("allow_private_webhook") is True
-    if parsed.scheme != "https" and not allow_private:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="webhook url must use https",
-        )
-    if is_private_hostname(parsed.hostname) and not allow_private:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="webhook url targets a private host",
-        )
-    if await has_private_resolved_ip(parsed.hostname) and not allow_private:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="webhook url resolves to a private host",
-        )
+            detail=str(exc),
+        ) from exc
 
 
 async def deliver_bluebubbles_agent_webhook(
@@ -112,9 +101,12 @@ async def deliver_bluebubbles_agent_webhook(
         except httpx.HTTPError:
             webhook_deliveries.labels(outcome="failure").inc()
             continue
-        if response.status_code < 500:
+        if response.status_code < 400:
             webhook_deliveries.labels(outcome="success").inc()
             return True
+        if response.status_code < 500:
+            webhook_deliveries.labels(outcome="failure").inc()
+            return False
         webhook_deliveries.labels(outcome="failure").inc()
     return False
 
@@ -128,6 +120,11 @@ async def deliver_telegram_agent_webhook(
     url = _optional_str(webhook.get("url"))
     if not url:
         return False
+    try:
+        await validate_agent_webhook_url(account, url)
+    except HTTPException:
+        webhook_deliveries.labels(outcome="failure").inc()
+        return False
     headers: dict[str, str] = {}
     secret_token = _optional_str(webhook.get("secret_token"))
     if secret_token:
@@ -138,7 +135,7 @@ async def deliver_telegram_agent_webhook(
     except httpx.HTTPError:
         webhook_deliveries.labels(outcome="failure").inc()
         return False
-    if response.status_code >= 500:
+    if response.status_code >= 400:
         webhook_deliveries.labels(outcome="failure").inc()
         return False
     webhook_deliveries.labels(outcome="success").inc()

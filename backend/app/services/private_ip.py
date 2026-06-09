@@ -45,8 +45,10 @@ async def has_private_resolved_ip(hostname: str | None) -> bool:
         return True
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
-    except socket.gaierror:
-        return False
+    except OSError:
+        return True
+    if not infos:
+        return True
     for info in infos:
         address = info[4][0]
         if is_private_hostname(address):
