@@ -53,17 +53,18 @@ from app.schemas.channel import (
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
-    get_accessible_channel_account,
     get_active_channel_account,
     get_channel_secret,
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
-    get_owned_channel_account,
+    get_usable_channel_account,
     list_owned_active_bot_agent_links,
+    parse_pair_command,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_channel_outbound_message,
+    send_pairing_command_reply,
     verify_hub_signature,
     verify_webhook_secret,
     whatsapp_chat_from_payload,
@@ -121,7 +122,7 @@ async def create_whatsapp_tenant_credential(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> WhatsAppTenantCredentialResponse:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     self_identity = (
@@ -160,7 +161,7 @@ async def list_whatsapp_tenant_credentials(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[WhatsAppTenantCredentialMetadata]:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     result = await db.execute(
@@ -232,7 +233,7 @@ async def delete_whatsapp_tenant_credential(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     revoked = await revoke_whatsapp_agent_credential(
@@ -252,7 +253,7 @@ async def get_whatsapp_auth_cert(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
@@ -762,6 +763,7 @@ async def whatsapp_webhook(
             external_chat_type = existing_binding.external_chat_type
             external_chat_name = existing_binding.external_chat_name
     text = whatsapp_text_from_payload(payload)
+    command = parse_pair_command(text)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -770,6 +772,7 @@ async def whatsapp_webhook(
         external_chat_name=external_chat_name,
         external_user_id=whatsapp_external_user_id_from_payload(payload),
         text=text,
+        command=command,
     )
 
     messages = await record_inbound_messages_for_bindings(
@@ -791,6 +794,15 @@ async def whatsapp_webhook(
                     alt_jid=alt_jid,
                 )
     await db.commit()
+    reply = await send_pairing_command_reply(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        command=command,
+        binding_result=binding_result,
+    )
+    if reply is not None:
+        await db.commit()
     message = messages[0][0]
     return TelegramWebhookResponse(
         ok=True,

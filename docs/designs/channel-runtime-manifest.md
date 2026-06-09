@@ -5,8 +5,9 @@ Date: 2026-06-08
 
 ## Current State
 
-The CLI does not currently have first-class runtime manifest support for the
-old `msg-router` configuration shape.
+The CLI now has baseline runtime manifest support for Clawdi-native channels.
+It reconciles user-facing channel state through ordinary authenticated APIs and
+materializes agent-facing SDK config into explicit local runtime outputs.
 
 What exists today:
 
@@ -16,21 +17,32 @@ What exists today:
   process.
 - `clawdi ai-provider apply ...` materializes AI Provider config into selected
   agent runtimes.
+- `clawdi runtime plan/status/apply` reads `clawdi.runtime.yaml`, creates or
+  reuses private channel accounts, links accessible bots to agents, emits pair
+  codes, and writes dotenv/WhatsApp Baileys runtime outputs with private file
+  permissions.
 
-What is missing:
+Still intentionally out of scope for this baseline:
 
-- A declarative file that creates or reuses channel accounts, links them to
-  agents, emits pair codes, and materializes the agent-facing SDK config that
-  replaces old `msg-router` env.
-- A safe strategy for one-time agent SDK tokens.
-- Runtime output adapters beyond the implemented dotenv and WhatsApp Baileys
-  credential baseline.
+- Admin/public bot publishing from the CLI.
+- Provider webhook ownership, pair-code claiming, bindings, command replies,
+  provider protocol state, and worker queues. Those remain backend-owned.
+- Runtime output adapters beyond dotenv and the implemented WhatsApp Baileys
+  credential output.
+- OpenClaw/Hermes target-native adapters. They should be added as explicit
+  future projections instead of overloading the dotenv baseline.
 
 ## Decision
 
 Add a `clawdi.runtime.yaml` manifest with a `channels` section. The manifest is
 the user CLI surface for channel runtime configuration. It composes existing
 user APIs; it does not add admin behavior to the CLI.
+
+The runtime manifest is not a second channel control plane. It does not own
+provider webhooks, pair-code claiming, bindings, command replies, provider
+protocol state, or worker queues. Those remain in Clawdi-native Channels. The
+manifest only reconciles user intent into channel accounts, bot-agent links,
+pair codes, and local runtime outputs.
 
 The old `msg-router` process and env shape are compatibility inputs only. The
 source of truth is Clawdi-native channel state:
@@ -50,6 +62,10 @@ source of truth is Clawdi-native channel state:
 - Private bots are created by the user through `/api/channels`.
 - One external chat session still routes to exactly one active bot-agent link.
 - A bot can link to many agents, and one agent can link to many bots.
+- Local runtime outputs must be written under explicit manifest output paths
+  with private permissions. E2E tests should run with isolated `HOME` and
+  `CLAWDI_HOME`; hosted-runtime tests should prefer an isolated Docker
+  container home instead of the developer's host `~/.clawdi`.
 - Each bot-agent link owns its own agent SDK token.
 - Provider secrets are read from env or a future secret reference, never stored
   inline in the manifest.
@@ -126,17 +142,22 @@ outputs:
 
 1. Parse and validate the manifest.
 2. Resolve all provider token and secret env refs.
-3. List accessible channels through `GET /api/channels`.
-4. For `account.id`, fetch and validate the channel account.
-5. For `account.private`, reuse an existing private channel by
+3. List caller-owned private channels through `GET /api/channels` when the
+   manifest needs to create or reuse a private bot.
+4. For provider selection UX, optionally read `GET /api/channels/bot-pool` so
+   the user or hosted runtime can choose among owned private and public bots
+   without hardcoding ids. Selection should use `capabilities` instead of
+   inferring permissions from `visibility`.
+5. For `account.id`, fetch and validate the channel account.
+6. For `account.private`, reuse an existing private channel by
    `(provider, name)` or create it through `POST /api/channels`.
-6. List the caller's links for the account.
-7. Reuse an existing link by `(account, agent_id)` or create one through
+7. List the caller's links for the account.
+8. Reuse an existing link by `(account, agent_id)` or create one through
    `POST /api/channels/{account_id}/agent-links`.
-8. Rotate only when requested by the manifest or CLI flag.
-9. Create pair codes when requested.
-10. Sync provider commands when requested.
-11. Materialize runtime outputs.
+9. Rotate only when requested by the manifest or CLI flag.
+10. Create pair codes when requested.
+11. Sync provider commands when requested.
+12. Materialize runtime outputs.
 
 Apply is idempotent except for explicitly requested one-time values:
 
@@ -309,7 +330,7 @@ Apply should call:
 - `POST /api/channels/whatsapp/{account_id}/tenant-creds` to mint or reuse a
   link-scoped credential.
 - `GET /api/channels/whatsapp/{account_id}/auth-cert` when the runtime needs
-  server auth material.
+  shared account public auth material.
 
 It should write the Baileys auth state into the requested credential directory
 with private permissions and emit:
@@ -331,7 +352,7 @@ clawdi runtime apply -f clawdi.runtime.yaml --dry-run --json
 clawdi runtime status -f clawdi.runtime.yaml --json
 ```
 
-Recommended command boundaries:
+Command boundaries:
 
 | Command | Side effects |
 | --- | --- |
@@ -347,6 +368,7 @@ Do not add admin subcommands under `runtime`.
 The CLI should use only existing user APIs:
 
 - `GET /api/channels`
+- `GET /api/channels/bot-pool`
 - `POST /api/channels`
 - `GET /api/channels/{account_id}`
 - `GET /api/channels/{account_id}/agent-links`
@@ -359,6 +381,11 @@ The CLI should use only existing user APIs:
 - `GET /api/channels/whatsapp/{account_id}/auth-cert`
 
 No admin endpoint is needed for user runtime setup.
+
+Hosted deployment code should follow the same boundary. It may invoke the CLI
+inside the runtime or call these user APIs directly before launch, but it should
+not store its own pair-code state, implement provider webhooks, or recreate the
+old `msg-router` tenant router.
 
 ## Compatibility Mapping
 

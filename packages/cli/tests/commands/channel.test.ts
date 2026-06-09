@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+	channelAvailableCommand,
 	channelCreateCommand,
 	channelDeleteCommand,
 	channelGetCommand,
 	channelLinkCommand,
+	channelListCommand,
 	channelPairCodeCommand,
 	channelRotateTokenCommand,
 	channelSendCommand,
@@ -40,6 +42,80 @@ afterEach(() => {
 });
 
 describe("channel commands", () => {
+	it("lists only user-owned channel bots", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/channels",
+				response: () =>
+					jsonResponse([
+						{
+							id: "channel-private",
+							provider: "telegram",
+							name: "ops-bot",
+							status: "active",
+							visibility: "private",
+							has_provider_token: true,
+							webhook_url: "https://api.test/api/channels/telegram/channel-private/webhook",
+							created_at: new Date().toISOString(),
+						},
+					]),
+			},
+		]);
+		const out = await captureStdout(() => channelListCommand({ json: true }));
+		restore();
+
+		expect(captured[0]).toMatchObject({ method: "GET", path: "/api/channels" });
+		expect(JSON.parse(out)).toMatchObject({
+			channels: [{ id: "channel-private", visibility: "private" }],
+		});
+	});
+
+	it("lists available channel bots from the bot pool", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/api/channels/bot-pool",
+				response: () =>
+					jsonResponse({
+						providers: {
+							telegram: [
+								{
+									id: "channel-public",
+									provider: "telegram",
+									name: "Clawdi Telegram",
+									status: "active",
+									visibility: "public",
+									has_provider_token: true,
+									webhook_url: "https://api.test/api/channels/telegram/channel-public/webhook",
+									created_at: new Date().toISOString(),
+									access: "public",
+									capabilities: {
+										link_agent: true,
+										pair_chat: true,
+										send_message: true,
+										manage_account: false,
+										sync_commands: false,
+									},
+								},
+							],
+						},
+					}),
+			},
+		]);
+		const out = await captureStdout(() => channelAvailableCommand({ json: true }));
+		restore();
+
+		expect(captured[0]).toMatchObject({ method: "GET", path: "/api/channels/bot-pool" });
+		expect(JSON.parse(out)).toMatchObject({
+			bot_pool: {
+				providers: {
+					telegram: [{ id: "channel-public", access: "public" }],
+				},
+			},
+		});
+	});
+
 	it("creates a private channel bot with optional initial agent link", async () => {
 		const { captured, restore } = mockFetch([
 			{

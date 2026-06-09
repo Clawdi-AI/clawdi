@@ -8,7 +8,7 @@ from fastapi import (
     HTTPException,
     status,
 )
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDERS,
     CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
     ChannelBinding,
@@ -39,6 +40,10 @@ from app.schemas.channel import (
     ChannelAgentLinkCreate,
     ChannelAgentLinkResponse,
     ChannelBindingResponse,
+    ChannelBotPoolAccess,
+    ChannelBotPoolCapabilities,
+    ChannelBotPoolItem,
+    ChannelBotPoolResponse,
     ChannelCommandSyncRequest,
     ChannelCommandSyncResponse,
     ChannelMessageResponse,
@@ -58,7 +63,8 @@ from app.services.channels import (
     get_accessible_channel_account,
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
-    get_owned_channel_account,
+    get_owned_private_channel_account,
+    get_usable_channel_account,
     hash_token,
     list_owned_active_bot_agent_links,
     rotate_bot_agent_link_token,
@@ -84,6 +90,36 @@ def _agent_link_response(
     )
 
 
+def _bot_pool_item(
+    account: ChannelAccount,
+    *,
+    user_id: UUID,
+) -> ChannelBotPoolItem:
+    access = _bot_pool_access(account, user_id=user_id)
+    return ChannelBotPoolItem(
+        **_account_response(account).model_dump(),
+        access=access,
+        capabilities=_bot_pool_capabilities(access),
+    )
+
+
+def _bot_pool_access(account: ChannelAccount, *, user_id: UUID) -> ChannelBotPoolAccess:
+    if account.user_id == user_id and account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+        return "owner"
+    return "public"
+
+
+def _bot_pool_capabilities(access: ChannelBotPoolAccess) -> ChannelBotPoolCapabilities:
+    can_manage_account = access == "owner"
+    return ChannelBotPoolCapabilities(
+        link_agent=True,
+        pair_chat=True,
+        send_message=True,
+        manage_account=can_manage_account,
+        sync_commands=can_manage_account,
+    )
+
+
 @router.get("")
 async def list_channels(
     auth: AuthContext = Depends(require_user_auth),
@@ -93,17 +129,39 @@ async def list_channels(
         select(ChannelAccount)
         .where(
             ChannelAccount.archived_at.is_(None),
-            or_(
-                ChannelAccount.user_id == auth.user_id,
-                and_(
-                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
-                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                ),
-            ),
+            ChannelAccount.user_id == auth.user_id,
+            ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
         )
         .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
     )
     return [_account_response(account) for account in result.scalars().all()]
+
+
+@router.get("/bot-pool")
+async def list_channel_bot_pool(
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelBotPoolResponse:
+    result = await db.execute(
+        select(ChannelAccount)
+        .where(
+            ChannelAccount.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            or_(
+                ChannelAccount.user_id == auth.user_id,
+                ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+            ),
+        )
+        .order_by(ChannelAccount.provider, ChannelAccount.visibility.desc(), ChannelAccount.name)
+    )
+    providers: dict[str, list[ChannelBotPoolItem]] = {
+        provider: [] for provider in CHANNEL_PROVIDERS
+    }
+    for account in result.scalars().all():
+        providers.setdefault(account.provider, []).append(
+            _bot_pool_item(account, user_id=auth.user_id)
+        )
+    return ChannelBotPoolResponse(providers=providers)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -181,7 +239,11 @@ async def delete_channel(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_owned_private_channel_account(
+        db,
+        account_id=account_id,
+        user_id=auth.user_id,
+    )
     await archive_channel_account(db, account=account)
     await db.commit()
 
@@ -193,7 +255,7 @@ async def create_channel_pair_code(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelPairCodeResponse:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     link, agent_token = await _resolve_pair_code_link(db, auth=auth, account=account, body=body)
     created = await create_pair_code(
         db,
@@ -240,7 +302,7 @@ async def create_channel_agent_link(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAgentLinkResponse:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     agent_id = await _resolve_agent_id_for_link(db, auth=auth, requested_agent_id=body.agent_id)
     link, agent_token = await get_or_create_bot_agent_link(
         db,
@@ -260,7 +322,7 @@ async def rotate_channel_agent_link_token(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAgentLinkResponse:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     link = await get_owned_bot_agent_link(
         db, account=account, link_id=link_id, user_id=auth.user_id
     )
@@ -296,7 +358,11 @@ async def sync_channel_commands_route(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelCommandSyncResponse:
-    account = await get_owned_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_owned_private_channel_account(
+        db,
+        account_id=account_id,
+        user_id=auth.user_id,
+    )
     commands = (
         [command.model_dump(exclude_none=True) for command in body.commands]
         if body.commands is not None
@@ -317,7 +383,7 @@ async def send_channel_message(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelMessageResponse:
-    account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     external_chat_id = body.external_chat_id
     bot_agent_link_id: UUID | None = None
     if body.binding_id is not None:

@@ -956,7 +956,7 @@ DOUBLE_BYTE_TOKENS: list[list[str]] = [
         "59",
         "Asia/Riyadh",
         "1177",
-        "test_recommended",
+        "test_sample",
         "057",
         "1612",
         "43",

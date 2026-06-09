@@ -39,6 +39,7 @@ from app.routes.channel_routers.shared import (
     _discord_gateway_dispatch,
     _discord_interaction_content,
     _discord_message_result,
+    _fan_out_discord_global_commands,
     _handle_discord_application_commands,
     _json_object_from_bytes,
     _optional_int_param,
@@ -67,6 +68,7 @@ from app.services.channels import (
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_channel_outbound_message,
+    send_pairing_command_reply,
     upsert_binding_alias,
     verify_discord_signature,
     verify_webhook_secret,
@@ -471,12 +473,58 @@ async def discord_webhook(
                 "flags": 64,
             },
         }
+    await _replay_discord_commands_on_pair(
+        db,
+        account=account,
+        application_id=_discord_application_id(account),
+        guild_id=guild_id,
+        paired=binding_result.paired,
+    )
+    reply = await send_pairing_command_reply(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        send_external_chat_id=channel_id,
+        command=command,
+        binding_result=binding_result,
+    )
+    if reply is not None:
+        await db.commit()
     return {
         "ok": True,
         "paired": binding_result.paired,
         "unpaired": binding_result.unpaired,
         "binding_id": str(message.binding_id) if message.binding_id else None,
     }
+
+
+async def _replay_discord_commands_on_pair(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    application_id: str,
+    guild_id: str | None,
+    paired: bool,
+) -> None:
+    if not paired or guild_id is None:
+        return
+    config = account.config if isinstance(account.config, dict) else {}
+    shadow = config.get("discord_agent_commands")
+    if not isinstance(shadow, dict):
+        return
+    commands = shadow.get("global")
+    if not isinstance(commands, list):
+        return
+    try:
+        await _fan_out_discord_global_commands(
+            db,
+            account=account,
+            application_id=application_id,
+            commands=[command for command in commands if isinstance(command, dict)],
+            guild_ids={guild_id},
+        )
+    except HTTPException:
+        return
 
 
 async def _handle_discord_interaction_callback(

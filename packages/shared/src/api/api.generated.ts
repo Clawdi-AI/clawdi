@@ -247,6 +247,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/channels/bot-pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channel Bot Pool */
+        get: operations["list_channel_bot_pool_api_channels_bot_pool_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/channels/{account_id}": {
         parameters: {
             query?: never;
@@ -2729,6 +2746,61 @@ export interface components {
              */
             created_at: string;
         };
+        /** ChannelBotPoolCapabilities */
+        ChannelBotPoolCapabilities: {
+            /** Link Agent */
+            link_agent: boolean;
+            /** Pair Chat */
+            pair_chat: boolean;
+            /** Send Message */
+            send_message: boolean;
+            /** Manage Account */
+            manage_account: boolean;
+            /** Sync Commands */
+            sync_commands: boolean;
+        };
+        /** ChannelBotPoolItem */
+        ChannelBotPoolItem: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "private" | "public";
+            /** Has Provider Token */
+            has_provider_token: boolean;
+            /** Webhook Url */
+            webhook_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Access
+             * @enum {string}
+             */
+            access: "owner" | "public";
+            capabilities: components["schemas"]["ChannelBotPoolCapabilities"];
+        };
+        /** ChannelBotPoolResponse */
+        ChannelBotPoolResponse: {
+            /** Providers */
+            providers: {
+                [key: string]: components["schemas"]["ChannelBotPoolItem"][];
+            };
+        };
         /** ChannelCommandSpec */
         ChannelCommandSpec: {
             /** Name */
@@ -5186,6 +5258,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_channel_bot_pool_api_channels_bot_pool_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelBotPoolResponse"];
                 };
             };
         };

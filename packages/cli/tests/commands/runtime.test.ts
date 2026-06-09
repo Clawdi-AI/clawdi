@@ -510,7 +510,7 @@ outputs:
 		expect(JSON.parse(status).status.accounts[0].action).toBe("reuse_account");
 	});
 
-	it("plans existing account ids as account resolution when list does not include them", async () => {
+	it("plans existing account ids by resolving the account directly", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -529,7 +529,22 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels$/,
+				path: /^\/api\/channels\/channel-public$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-public",
+						provider: "discord",
+						name: "clawdi-discord",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-public\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 		]);
@@ -537,9 +552,52 @@ outputs:
 		const plan = await captureStdout(() => runtimePlanCommand({ file: manifestPath, json: true }));
 		restore();
 
-		expect(captured).toHaveLength(1);
-		expect(JSON.parse(plan).plan.accounts[0].action).toBe("resolve_account");
-		expect(JSON.parse(plan).plan.warnings[0]).toContain("not visible");
+		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			"GET /api/channels/channel-public",
+			"GET /api/channels/channel-public/agent-links",
+		]);
+		expect(JSON.parse(plan).plan.accounts[0].action).toBe("reuse_account");
+		expect(JSON.parse(plan).plan.warnings).toEqual([]);
+	});
+
+	it("rejects existing account ids with the wrong provider during planning", async () => {
+		const manifestPath = writeManifest(`
+version: 1
+channels:
+  - ref: public-discord
+    provider: discord
+    account:
+      id: channel-telegram
+    links:
+      - ref: discord-main
+        agent_id: agent-1
+        runtime:
+          token_env: DISCORD_AGENT_TOKEN
+outputs:
+  dotenv: .env.channels
+`);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: /^\/api\/channels\/channel-telegram$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-telegram",
+						provider: "telegram",
+						name: "clawdi-telegram",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/api/channels/telegram/channel-telegram/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+		]);
+
+		await expect(runtimePlanCommand({ file: manifestPath, json: true })).rejects.toThrow(
+			"public-discord: account channel-telegram is provider telegram, expected discord.",
+		);
+		restore();
 	});
 
 	it("rejects malformed manifests before API calls", async () => {

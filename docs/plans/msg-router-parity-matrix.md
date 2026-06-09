@@ -36,16 +36,24 @@ extraction, and minimal WhatsApp text proto encoding, tenant-scoped DM Signal
 sender snapshot restore, plus outbound message ack/error-close handling and
 group sender-key snapshot restore,
 and decoded WhatsApp text/reply/Cloud-link image/audio outbound enqueue through a
-Python-native transparent shared-bot runtime seam into the Clawdi delivery
+Python-native transparent public-bot runtime seam into the Clawdi delivery
 outbox, private-chat encrypted image/audio media reupload through Graph media IDs,
 Cloud-native raw relay for WhatsApp read receipts and typing indicators,
 and a route-wired native-transport registry/status surface plus a Baileys
 sidecar client contract and workspace sidecar package for Baileys-only proto,
 Baileys 7 packed WABinary token/JID decode with a generated full token table,
 plus cross-provider chat isolation coverage.
+Pairing commands now also include user-visible provider replies for Telegram,
+Discord message commands, WhatsApp, and iMessage/BlueBubbles: successful pair,
+invalid or missing pair code, forbidden actor, and unpair outcomes are handled
+by the shared channel state machine and sent best-effort by each provider
+adapter. Provider reply failure does not roll back a successful binding claim.
+Bot command parity now includes Telegram broad-scope command replay on new
+pairing and Discord global command replay to the newly paired uncontested
+guild, matching the old msg-router post-bind behavior.
 As of this audit, the matrix has 128 Implemented, 0 Partial, 0 Pending, and
 24 Superseded rows. Backend tests pass at
-`671 passed, 7 skipped, 13 warnings in 46.66s` by default. The opt-in
+`708 passed, 7 skipped, 13 warnings in 47.59s` by default. The opt-in
 blackbox channel E2E starts a real `uvicorn app.main:app` process and exercises
 the provider-prefixed FastAPI HTTP and Discord WebSocket surfaces with
 `CLAWDI_RUN_CHANNELS_BLACKBOX_E2E=1 uv run pytest -q tests/e2e/test_channels_blackbox.py --maxfail=1`
@@ -242,7 +250,7 @@ Field-level configuration mapping:
 | `src/channels/whatsapp/tenant-creds.ts` | Implemented | Tenant creds minting is covered. |
 | `src/channels/whatsapp/tenant-registry.ts` | Implemented | Minted credential lookup by Noise static identity gates websocket sessions, carries credential id through tenant resolution, persists uploaded prekey bundles, DM Signal sender snapshots, and group sender-key snapshots into `ChannelAgentCredential.config`, restores the stored bundle, preKey count, sender snapshots, and group sender keys on reconnect, and supports real Baileys open/inbox lifecycle. |
 | `src/channels/whatsapp/ws-server.ts` | Implemented | The old file only re-exported `egress-ws.ts`; Python uses the provider-prefixed FastAPI websocket route instead of a standalone Node server. Real Baileys reaches `connection: open` and receives DB inbox messages, malformed Noise/client frames close with 1011 and sanitized debug events, disconnects cancel the inbox pump, route delivery now uses the shared `WhatsAppInboxPump` retry/ack/backoff module, and focused tests cover continuous idle polling plus IQ inflight backpressure. |
-| `src/core/admin.ts` | Superseded | Clawdi admin/user model supersedes tenant admin CRUD; debug event surfaces are Clawdi-native under `/api/channels/*`; old manual shared-bot/admin utilities are not recreated. |
+| `src/core/admin.ts` | Superseded | Clawdi admin/user model supersedes tenant admin CRUD; debug event surfaces are Clawdi-native under `/api/channels/*`; old manual shared-bot admin utilities are not recreated. |
 | `src/core/api.ts` | Superseded | Tenant `/v1` control plane is replaced by `/api/channels` with Clawdi auth, channel accounts, and agent links. |
 | `src/core/auth.ts` | Superseded | API-key tenant auth is replaced by Clawdi auth and hashed channel agent tokens. |
 | `src/core/bindings.ts` | Implemented | `channel_bindings` and aliases exist with tests. |
@@ -318,7 +326,7 @@ Field-level configuration mapping:
 | `tests/channels/whatsapp/shared-bot-runtime.test.ts` | Implemented | `test_whatsapp_baileys.py` ports pure `forwardIqOver`, `relayOutboundExtraAttrs`, WAProto-to-Cloud-payload helper contracts including image/audio fixture shapes, and encrypted image/audio reupload candidate parsing. `test_whatsapp_noise.py` now directly covers the `WhatsAppClawdiOutboxSharedBotRuntime` text/quoted reply queueing, encrypted media Graph reupload into delivery-worker media-id sends, encrypted media native-transport routing when a transport exists, Cloud-native read receipt and typing indicator relay, route-level registered native transport use for Baileys relay attrs, raw relay transport policy, IQ forwarding, and websocket-level outbound queueing. `test_whatsapp_native_transport.py` covers the native transport adapter, sidecar HTTP contract, outbound message attrs, raw nodes, IQ queries, disconnected health, and sidecar health mode. `test_whatsapp_sidecar_registry.py` covers sidecar config parsing, FastAPI registry wiring, unhealthy sidecar visibility, unregister, and client close. `test_whatsapp_baileys_smoke.py` now covers real Baileys open/inbox/fixture-shape smoke plus sidecar `connected` smoke against the FastAPI runtime. `test_channel_debug_events.py` covers native transport health visibility. `test_channels.py` covers delivery-worker use of structured WhatsApp `providerPayload` for text and audio plus invalid-payload failure handling. `packages/whatsapp-baileys-sidecar` has Bun tests for its bearer-authenticated HTTP contract, byte encoding, config parsing, disconnected mapping, proto relay, raw nodes, and IQ response encoding. Live deployment-supervised real linked-account sidecar smoke is a deployment acceptance gate. |
 | `tests/channels/whatsapp/signal-sender.test.ts` | Implemented | `SignalSender` session/snapshot/prekey/envelope parity is covered in `test_whatsapp_baileys.py`. |
 | `tests/channels/whatsapp/tenant-creds.test.ts` | Implemented | Tenant creds JSON and auth cert route tests exist. |
-| `tests/core/admin.test.ts` | Superseded | Clawdi admin supersedes tenant CRUD; msg-router import and debug surfaces have Python route/service tests, while old manual shared-bot/admin utilities are not recreated. |
+| `tests/core/admin.test.ts` | Superseded | Clawdi admin supersedes tenant CRUD; msg-router import and debug surfaces have Python route/service tests, while old manual shared-bot admin utilities are not recreated. |
 | `tests/core/api.test.ts` | Superseded | Old tenant `/v1` API replaced by `/api/channels`; control-plane tests exist in `test_channels.py`. |
 | `tests/core/auth.test.ts` | Superseded | Old tenant API-key auth replaced by Clawdi auth and hashed channel tokens. |
 | `tests/core/bindings.test.ts` | Implemented | Binding behavior covered through SQLAlchemy model/service tests. |

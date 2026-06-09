@@ -544,11 +544,20 @@ const channelCmd = program
 
 channelCmd
 	.command("list")
-	.description("List private bots and accessible public bots")
+	.description("List your private channel bots")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { channelListCommand } = await import("./commands/channel.js");
 		await channelListCommand(opts);
+	});
+
+channelCmd
+	.command("available")
+	.description("List available channel bots")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { channelAvailableCommand } = await import("./commands/channel.js");
+		await channelAvailableCommand(opts);
 	});
 
 channelCmd

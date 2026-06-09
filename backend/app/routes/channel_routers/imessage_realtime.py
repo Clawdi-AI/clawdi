@@ -38,9 +38,11 @@ from app.services.channels import (
     imessage_external_user_id_from_payload,
     imessage_message_id_from_payload,
     imessage_text_from_payload,
+    parse_pair_command,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
+    send_pairing_command_reply,
     verify_webhook_secret,
 )
 
@@ -133,6 +135,7 @@ async def imessage_webhook(
         return TelegramWebhookResponse(ok=True)
     external_chat_id, external_chat_type, external_chat_name = chat
     text = imessage_text_from_payload(payload)
+    command = parse_pair_command(text)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -141,6 +144,7 @@ async def imessage_webhook(
         external_chat_name=external_chat_name,
         external_user_id=imessage_external_user_id_from_payload(payload),
         text=text,
+        command=command,
     )
 
     messages = await record_inbound_messages_for_bindings(
@@ -153,6 +157,15 @@ async def imessage_webhook(
         payload=payload,
     )
     await db.commit()
+    reply = await send_pairing_command_reply(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        command=command,
+        binding_result=binding_result,
+    )
+    if reply is not None:
+        await db.commit()
     message = messages[0][0]
     if not binding_result.command_handled:
         for routed_message, _binding in messages:

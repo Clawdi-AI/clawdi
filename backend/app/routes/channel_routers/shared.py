@@ -859,12 +859,16 @@ async def _fan_out_discord_global_commands(
     account: ChannelAccount,
     application_id: str,
     commands: list[dict[str, Any]],
+    guild_ids: set[str] | None = None,
 ) -> None:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return
     token = decrypt_provider_token(account)
-    guild_ids = await _discord_uncontested_guilds_for_account(db, account=account)
-    if not guild_ids:
+    uncontested_guild_ids = await _discord_uncontested_guilds_for_account(db, account=account)
+    target_guild_ids = [
+        guild_id for guild_id in uncontested_guild_ids if guild_ids is None or guild_id in guild_ids
+    ]
+    if not target_guild_ids:
         return
     base_url = settings.channel_discord_api_base_url.strip()
     await _validate_discord_provider_base_url(base_url)
@@ -875,7 +879,7 @@ async def _fan_out_discord_global_commands(
     }
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            for guild_id in guild_ids:
+            for guild_id in target_guild_ids:
                 await client.put(
                     f"{base_url}/applications/{application_id}/guilds/{guild_id}/commands",
                     json=commands,

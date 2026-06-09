@@ -11,6 +11,7 @@ type ChannelCommandSpec = components["schemas"]["ChannelCommandSpec"];
 type ChannelCommandSync = components["schemas"]["ChannelCommandSyncResponse"];
 type ChannelMessage = components["schemas"]["ChannelMessageResponse"];
 type ChannelPairCode = components["schemas"]["ChannelPairCodeResponse"];
+type ChannelBotPoolResponse = components["schemas"]["ChannelBotPoolResponse"];
 type ChannelProvider = components["schemas"]["ChannelAccountCreate"]["provider"];
 
 interface JsonOption {
@@ -65,6 +66,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	if (channels.length === 0) {
 		console.log("No channels configured.");
 		console.log(chalk.gray("Create a private bot: clawdi channel create telegram my-bot"));
+		console.log(chalk.gray("List available channel bots: clawdi channel available"));
 		return;
 	}
 	printTable(
@@ -77,6 +79,16 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 			channel.name,
 		]),
 	);
+}
+
+export async function channelAvailableCommand(opts: JsonOption = {}): Promise<void> {
+	const api = new ApiClient();
+	const pool = unwrap(await api.GET("/api/channels/bot-pool"));
+	if (opts.json) {
+		console.log(JSON.stringify({ bot_pool: pool }, null, 2));
+		return;
+	}
+	printBotPool(pool);
 }
 
 export async function channelGetCommand(accountId: string, opts: JsonOption = {}): Promise<void> {
@@ -401,6 +413,37 @@ function printSyncedCommands(sync: ChannelCommandSync): void {
 			formatUnknown(command.description ?? "-"),
 		]),
 	);
+}
+
+function printBotPool(pool: ChannelBotPoolResponse): void {
+	const rows = Object.entries(pool.providers).flatMap(([provider, items]) =>
+		items.map((item) => [
+			shortId(item.id),
+			provider,
+			item.access,
+			item.visibility,
+			item.status,
+			capabilitySummary(item.capabilities),
+			item.name,
+		]),
+	);
+	if (rows.length === 0) {
+		console.log("No available channel bots.");
+		return;
+	}
+	printTable(["ID", "PROVIDER", "ACCESS", "VISIBILITY", "STATUS", "CAPABILITIES", "NAME"], rows);
+}
+
+function capabilitySummary(
+	capabilities: components["schemas"]["ChannelBotPoolCapabilities"],
+): string {
+	const labels: string[] = [];
+	if (capabilities.link_agent) labels.push("link");
+	if (capabilities.pair_chat) labels.push("pair");
+	if (capabilities.send_message) labels.push("send");
+	if (capabilities.manage_account) labels.push("manage");
+	if (capabilities.sync_commands) labels.push("sync");
+	return labels.join(",");
 }
 
 function parseProvider(value: string): ChannelProvider {
