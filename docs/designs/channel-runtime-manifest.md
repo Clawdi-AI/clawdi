@@ -5,8 +5,9 @@ Date: 2026-06-08
 
 ## Current State
 
-The CLI does not currently have first-class runtime manifest support for the
-old `msg-router` configuration shape.
+The CLI now has baseline runtime manifest support for Clawdi-native channels.
+It reconciles user-facing channel state through ordinary authenticated APIs and
+materializes agent-facing SDK config into explicit local runtime outputs.
 
 What exists today:
 
@@ -16,15 +17,20 @@ What exists today:
   process.
 - `clawdi ai-provider apply ...` materializes AI Provider config into selected
   agent runtimes.
+- `clawdi runtime plan/status/apply` reads `clawdi.runtime.yaml`, creates or
+  reuses private channel accounts, links accessible bots to agents, emits pair
+  codes, and writes dotenv/WhatsApp Baileys runtime outputs with private file
+  permissions.
 
-What is missing:
+Still intentionally out of scope for this baseline:
 
-- A declarative file that creates or reuses channel accounts, links them to
-  agents, emits pair codes, and materializes the agent-facing SDK config that
-  replaces old `msg-router` env.
-- A safe strategy for one-time agent SDK tokens.
-- Runtime output adapters beyond the implemented dotenv and WhatsApp Baileys
-  credential baseline.
+- Admin/public bot publishing from the CLI.
+- Provider webhook ownership, pair-code claiming, bindings, command replies,
+  provider protocol state, and worker queues. Those remain backend-owned.
+- Runtime output adapters beyond dotenv and the implemented WhatsApp Baileys
+  credential output.
+- OpenClaw/Hermes target-native adapters. They should be added as explicit
+  future projections instead of overloading the dotenv baseline.
 
 ## Decision
 
