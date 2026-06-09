@@ -15,6 +15,7 @@ import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
+import { detectRuntimeMode } from "../runtime/paths";
 import { isSingletonDaemonInstalled, listInstalledAgents, readHealth } from "../serve/installer";
 import { log } from "../serve/log";
 import { getServeStateDir } from "../serve/paths";
@@ -594,6 +595,7 @@ export function startDaemonAutoUpdate(opts: {
  * false`, non-TTY (CI), or running via npx/bunx.
  */
 export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<void> {
+	if (detectRuntimeMode() === "hosted") return;
 	if (
 		isLongLivedDaemonInvocation() ||
 		isAutoUpdateControlInvocation() ||

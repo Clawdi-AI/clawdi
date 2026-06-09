@@ -1,35 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { run } from "../../src/commands/run";
 import { setProjectFolderLink } from "../../src/lib/project-folders";
+import type {
+	RuntimeMitmBrokerFactory,
+	RuntimeMitmBrokerInput,
+} from "../../src/runtime/mitm-broker";
 import { jsonResponse, mockFetch } from "./helpers";
 
 interface SpawnCall {
 	command: string;
 	args: string[];
 	env: NodeJS.ProcessEnv;
+	cwd?: string;
+}
+
+interface BrokerCall {
+	runtime: string;
+	profileBundlePath: string;
+	proxyUrl?: string;
+	caFile?: string;
+	authToken?: string;
 }
 
 let tmpRoot: string;
 let fakeClawdiHome: string;
 let projectRoot: string;
 let projectChild: string;
-let origHome: string | undefined;
-let origClawdiHome: string | undefined;
-let origAuthToken: string | undefined;
-let origApiUrl: string | undefined;
+let origEnv: Record<string, string | undefined>;
 let origCwd: string;
 
 beforeEach(() => {
-	origHome = process.env.HOME;
-	origClawdiHome = process.env.CLAWDI_HOME;
-	origAuthToken = process.env.CLAWDI_AUTH_TOKEN;
-	origApiUrl = process.env.CLAWDI_API_URL;
+	origEnv = { ...process.env };
 	origCwd = process.cwd();
 
 	tmpRoot = join(tmpdir(), `clawdi-run-${Date.now()}-${Math.random().toString(36)}`);
@@ -49,32 +56,69 @@ beforeEach(() => {
 
 afterEach(() => {
 	process.chdir(origCwd);
-	if (origHome) process.env.HOME = origHome;
-	else delete process.env.HOME;
-	if (origClawdiHome) process.env.CLAWDI_HOME = origClawdiHome;
-	else delete process.env.CLAWDI_HOME;
-	if (origAuthToken) process.env.CLAWDI_AUTH_TOKEN = origAuthToken;
-	else delete process.env.CLAWDI_AUTH_TOKEN;
-	if (origApiUrl) process.env.CLAWDI_API_URL = origApiUrl;
-	else delete process.env.CLAWDI_API_URL;
+	restoreEnv(origEnv);
 	rmSync(tmpRoot, { recursive: true, force: true });
 	process.exitCode = undefined;
 });
 
-function recordSpawn(): {
+function restoreEnv(snapshot: Record<string, string | undefined>): void {
+	for (const key of Object.keys(process.env)) {
+		if (!(key in snapshot)) delete process.env[key];
+	}
+	for (const [key, value] of Object.entries(snapshot)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+}
+
+function recordSpawn(opts: { autoExit?: boolean } = {}): {
 	calls: SpawnCall[];
+	children: ChildProcess[];
 	spawnImpl: NonNullable<Parameters<typeof run>[2]>;
 } {
 	const calls: SpawnCall[] = [];
+	const children: ChildProcess[] = [];
 	const spawnImpl = ((command: string, args: string[], options: SpawnOptions) => {
 		calls.push({
 			command,
 			args,
 			env: (options.env ?? {}) as NodeJS.ProcessEnv,
+			cwd: typeof options.cwd === "string" ? options.cwd : undefined,
 		});
-		return new EventEmitter() as ChildProcess;
+		const child = new EventEmitter() as ChildProcess;
+		children.push(child);
+		if (opts.autoExit !== false) {
+			queueMicrotask(() => child.emit("exit", 0));
+		}
+		return child;
 	}) as NonNullable<Parameters<typeof run>[2]>;
-	return { calls, spawnImpl };
+	return { calls, children, spawnImpl };
+}
+
+function recordBroker(output?: { proxyUrl?: string; caFile?: string }): {
+	calls: BrokerCall[];
+	brokerFactory: RuntimeMitmBrokerFactory;
+	stopCount: () => number;
+} {
+	const calls: BrokerCall[] = [];
+	let stops = 0;
+	const brokerFactory: RuntimeMitmBrokerFactory = async (input: RuntimeMitmBrokerInput) => {
+		calls.push({
+			runtime: input.runtime,
+			profileBundlePath: input.profileBundlePath,
+			proxyUrl: input.env.CLAWDI_MITM_PROXY_URL,
+			caFile: input.env.CLAWDI_MITM_CA_FILE,
+			authToken: input.env.CLAWDI_AUTH_TOKEN,
+		});
+		return {
+			proxyUrl: output?.proxyUrl ?? input.env.CLAWDI_MITM_PROXY_URL ?? "http://127.0.0.1:18080",
+			caFile: output?.caFile ?? input.env.CLAWDI_MITM_CA_FILE ?? "/run/clawdi/mitm/ca.pem",
+			stop: async () => {
+				stops += 1;
+			},
+		};
+	};
+	return { calls, brokerFactory, stopCount: () => stops };
 }
 
 function linkCurrentProjectFolder(): void {
@@ -89,6 +133,390 @@ function linkCurrentProjectFolder(): void {
 }
 
 describe("run command project folder selection", () => {
+	it("runs hosted runtime commands from managed run config without login", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-04T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: ["--no-browser"],
+				env: {
+					DISCORD_API_BASE_URL: "http://127.0.0.1:4500/discord",
+				},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		await run(["hermes", "--version"], {}, spawnImpl);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].command).toBe(hermesPath);
+		expect(calls[0].args).toEqual(["--no-browser", "--version"]);
+		expect(calls[0].cwd).toBe(projectRoot);
+		expect(calls[0].env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
+		expect(calls[0].env.PATH?.startsWith(join(tmpRoot, "home", "clawdi", ".local", "bin"))).toBe(
+			true,
+		);
+	});
+
+	it("keeps hosted runtime wrapper alive until the child exits", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-08T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: [],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, children, spawnImpl } = recordSpawn({ autoExit: false });
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		let resolved = false;
+		const running = run(["hermes"], {}, spawnImpl).then(() => {
+			resolved = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(calls).toHaveLength(1);
+		expect(resolved).toBe(false);
+
+		children[0].emit("exit", 0);
+		await running;
+		expect(resolved).toBe(true);
+		expect(process.exitCode).toBe(0);
+	});
+
+	it("reports signal-terminated hosted runtime children as failures", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-08T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: [],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { children, spawnImpl } = recordSpawn({ autoExit: false });
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		const running = run(["hermes"], {}, spawnImpl);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		children[0].emit("exit", null, "SIGTERM");
+		await running;
+
+		expect(process.exitCode).toBe(143);
+	});
+
+	it("injects MITM broker env for hosted runtime commands with profile bundles", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(mitmProfileBundle, "{}\n");
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-04T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: ["--no-browser"],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+				mitmProfileBundlePath: mitmProfileBundle,
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
+		const broker = recordBroker();
+
+		await run(["hermes", "serve"], {}, spawnImpl, broker.brokerFactory);
+
+		expect(broker.calls).toHaveLength(1);
+		expect(broker.calls[0]).toMatchObject({
+			runtime: "hermes",
+			profileBundlePath: mitmProfileBundle,
+			proxyUrl: "http://127.0.0.1:0",
+			caFile: join(runRoot, "mitm", "ca.pem"),
+		});
+		expect(broker.calls[0].authToken).toBeUndefined();
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
+		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:0");
+		expect(calls[0].env.HTTP_PROXY).toBe("http://127.0.0.1:0");
+		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:0");
+		expect(calls[0].env.http_proxy).toBe("http://127.0.0.1:0");
+		expect(calls[0].env.NO_PROXY).toContain("127.0.0.1");
+		expect(calls[0].env.no_proxy).toBe(calls[0].env.NO_PROXY);
+		expect(calls[0].env.NODE_USE_ENV_PROXY).toBe("1");
+		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:0");
+		expect(calls[0].env.SSL_CERT_FILE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.CURL_CA_BUNDLE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.GIT_SSL_CAINFO).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.DENO_CERT).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.CLAWDI_MITM_BROKER_PATH).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_BROKER_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_ALLOW_REMOTE_PROXY).toBeUndefined();
+		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
+	});
+
+	it("fails closed when a hosted runtime MITM broker fails to start", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(mitmProfileBundle, "{}\n");
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-04T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: [],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+				mitmProfileBundlePath: mitmProfileBundle,
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+
+		const originalExit = process.exit;
+		const originalLog = console.log;
+		process.exit = ((code?: string | number | null) => {
+			throw new Error(`process.exit:${code ?? 0}`);
+		}) as typeof process.exit;
+		console.log = () => {};
+		try {
+			await expect(
+				run(["hermes", "serve"], {}, spawnImpl, async () => {
+					throw new Error("MITM broker did not become ready");
+				}),
+			).rejects.toThrow("process.exit:1");
+		} finally {
+			console.log = originalLog;
+			process.exit = originalExit;
+		}
+
+		expect(calls).toHaveLength(0);
+	});
+
+	it("uses the broker's actual proxy and CA paths for hosted runtime commands", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			mitmProfileBundle,
+			JSON.stringify({
+				schemaVersion: "clawdi.mitmProfiles.v1",
+				generatedAt: "2026-06-04T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				profiles: [],
+			}),
+		);
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: true,
+				generatedAt: "2026-06-04T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: [],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+				mitmProfileBundlePath: mitmProfileBundle,
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		const broker = recordBroker({
+			proxyUrl: "http://127.0.0.1:19090",
+			caFile: join(runRoot, "actual-ca.pem"),
+		});
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		process.env.CLAWDI_MITM_PROXY_PORT = "0";
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		try {
+			await run(["hermes", "serve"], {}, spawnImpl, broker.brokerFactory);
+		} finally {
+			delete process.env.CLAWDI_MITM_PROXY_PORT;
+		}
+
+		expect(broker.calls).toHaveLength(1);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
+		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.HTTP_PROXY).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.http_proxy).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.CLAWDI_MITM_CA_FILE).toBeUndefined();
+		expect(calls[0].env.SSL_CERT_FILE).toBe(join(runRoot, "actual-ca.pem"));
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "actual-ca.pem"));
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "actual-ca.pem"));
+	});
+
+	it("runs generic hosted commands with the managed MITM profile bundle without login", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		writeFileSync(
+			mitmProfileBundle,
+			JSON.stringify({
+				schemaVersion: "clawdi.mitmProfiles.v1",
+				generatedAt: "2026-06-05T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				profiles: [],
+			}),
+		);
+		const { calls, spawnImpl } = recordSpawn();
+		const broker = recordBroker({
+			proxyUrl: "http://127.0.0.1:19191",
+			caFile: join(runRoot, "mitm", "ca.pem"),
+		});
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		await run(["codex", "exec", "hello"], {}, spawnImpl, broker.brokerFactory);
+
+		expect(broker.calls).toHaveLength(1);
+		expect(broker.calls[0]).toMatchObject({
+			runtime: "generic",
+			profileBundlePath: mitmProfileBundle,
+			proxyUrl: "http://127.0.0.1:0",
+			caFile: join(runRoot, "mitm", "ca.pem"),
+		});
+		expect(calls).toHaveLength(1);
+		expect(calls[0].command).toBe("codex");
+		expect(calls[0].args).toEqual(["exec", "hello"]);
+		expect(calls[0].cwd).toBe(projectChild);
+		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19191");
+		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19191");
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "mitm", "ca.pem"));
+	});
+
 	it("uses the linked Project folder when resolving vault env", async () => {
 		linkCurrentProjectFolder();
 		const { calls, spawnImpl } = recordSpawn();

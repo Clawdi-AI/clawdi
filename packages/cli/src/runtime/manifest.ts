@@ -1,0 +1,898 @@
+import { spawnSync } from "node:child_process";
+import {
+	accessSync,
+	chmodSync,
+	chownSync,
+	constants,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { writePrivateFileAtomic } from "../lib/private-file";
+import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+
+export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+export {
+	loadRuntimeManifest,
+	type RuntimeManifestFailure,
+	type RuntimeManifestLoad,
+	runtimeManifestFixturePath,
+} from "./manifest-source";
+
+import type { RuntimeManifestLoad } from "./manifest-source";
+import {
+	buildMitmProfileBundle,
+	hasEnabledMitmProfiles,
+	writeMitmProfileBundle,
+} from "./mitm-profiles";
+import type { RuntimePaths } from "./paths";
+import {
+	buildRuntimeRunConfig,
+	runtimeRunConfigPath,
+	type SupportedRuntimeName,
+	writeRuntimeRunConfig,
+} from "./run-config";
+
+export interface RuntimeConvergenceResult {
+	manifest: RuntimeManifest;
+	source: RuntimeManifestLoad["source"];
+	sourcePath: string;
+	offline: boolean;
+	mode: "normal" | "degraded-offline";
+	enabledRuntimes: string[];
+	installErrors: string[];
+	outputs: {
+		workspaceRoot: string;
+		managedConfig: string;
+		syncState: string;
+		instanceData: string;
+		sensitiveInstanceData: string;
+		manifestLastGood: string | null;
+		installInventory: string[];
+		projections: string[];
+		runConfigs: string[];
+		supervisorConfig: string;
+		mitmProfileBundle: string | null;
+		mitmSecretFile: string | null;
+		liveSyncEnvironments: string[];
+		daemonAuthTokenFile: string | null;
+		instanceSemaphores: string[];
+		bootFinished: string;
+	};
+}
+
+interface RuntimeInstallObservation {
+	runtime: string;
+	enabled: boolean;
+	status: "disabled" | "present" | "installed" | "install_failed";
+	executionUser: string | null;
+	commandPath: string | null;
+	appRoot: string | null;
+	install: RuntimeInstall | null;
+	installerUrl: string | null;
+	executedInstallerUrl: string | null;
+	exitCode: number | null;
+	installStartedAt?: string;
+	installFinishedAt?: string;
+	installDurationMs?: number;
+	stdoutTail: string | null;
+	stderrTail: string | null;
+	error: string | null;
+}
+
+function writeJsonFile(path: string, payload: unknown): void {
+	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function writeLastGoodManifest(manifest: RuntimeManifest, paths: RuntimePaths): string | null {
+	if (manifest.recovery.cacheManifest === false) {
+		rmSync(paths.manifestLastGood, { force: true });
+		return null;
+	}
+	writeJsonFile(paths.manifestLastGood, manifest);
+	return paths.manifestLastGood;
+}
+
+function writeSecretValues(
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): string | null {
+	const path = join(paths.runRoot, "mitm", "secrets.json");
+	if (!secretValues || Object.keys(secretValues).length === 0) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(path, `${JSON.stringify(secretValues, null, 2)}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
+	makeRuntimeUserOwned(dirname(path));
+	makeRuntimeUserOwned(path);
+	return path;
+}
+
+function makeRuntimeUserOwned(path: string): void {
+	if (!runningAsRoot()) return;
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (!runtimeUser || runtimeUser === "root") return;
+	const result = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
+	const group = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (result.status !== 0 || group.status !== 0) return;
+	const uid = Number.parseInt(result.stdout.trim(), 10);
+	const gid = Number.parseInt(group.stdout.trim(), 10);
+	if (!Number.isFinite(uid) || !Number.isFinite(gid)) return;
+	try {
+		chownSync(path, uid, gid);
+	} catch {
+		// Best effort: hosted demos without a system user still exercise the
+		// manifest path, but production images provide CLAWDI_RUNTIME_USER.
+	}
+}
+
+function runtimeInstallerCommand(name: string, install: RuntimeInstall | undefined): string[] {
+	if (!install) return [];
+	if (name === "openclaw") {
+		return ["bash", "<downloaded-official-openclaw-installer>", ...install.args];
+	}
+	if (name === "hermes") {
+		return ["bash", "<downloaded-official-hermes-installer>", ...install.args];
+	}
+	return [];
+}
+
+function runtimeCommandPath(name: string, home: string): string | null {
+	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
+	if (name === "hermes") return join(home, ".local", "bin", "hermes");
+	return null;
+}
+
+function runtimeAppRoot(name: string, home: string): string | null {
+	if (name === "openclaw") return join(home, ".openclaw");
+	if (name === "hermes") return join(home, ".hermes", "hermes-agent");
+	return null;
+}
+
+const SUPPORTED_RUNTIME_NAMES = [
+	"hermes",
+	"openclaw",
+] as const satisfies readonly SupportedRuntimeName[];
+
+function isSupportedRuntimeName(name: string): name is SupportedRuntimeName {
+	return (SUPPORTED_RUNTIME_NAMES as readonly string[]).includes(name);
+}
+
+function executableExists(path: string): boolean {
+	try {
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function commandExists(name: string): boolean {
+	const path = process.env.PATH ?? "";
+	for (const dir of path.split(":")) {
+		if (!dir) continue;
+		if (executableExists(join(dir, name))) return true;
+	}
+	return false;
+}
+
+function runningAsRoot(): boolean {
+	return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function runtimeInstallerExecution(
+	install: RuntimeInstall,
+	installerPath: string,
+): {
+	command: string;
+	args: string[];
+	env: NodeJS.ProcessEnv;
+	executionUser: string | null;
+} {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const env = runtimeInstallerEnv(install);
+	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") {
+		return {
+			command: "bash",
+			args: [installerPath, ...install.args],
+			env,
+			executionUser: null,
+		};
+	}
+
+	const userEnv = {
+		...env,
+		USER: runtimeUser,
+		LOGNAME: runtimeUser,
+	};
+	if (commandExists("gosu")) {
+		return {
+			command: "gosu",
+			args: [runtimeUser, "bash", installerPath, ...install.args],
+			env: userEnv,
+			executionUser: runtimeUser,
+		};
+	}
+	if (commandExists("runuser")) {
+		return {
+			command: "runuser",
+			args: [
+				"-u",
+				runtimeUser,
+				"--",
+				"env",
+				`HOME=${install.home}`,
+				`USER=${runtimeUser}`,
+				`LOGNAME=${runtimeUser}`,
+				"bash",
+				installerPath,
+				...install.args,
+			],
+			env,
+			executionUser: runtimeUser,
+		};
+	}
+
+	throw new Error(
+		`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
+	);
+}
+
+function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env, HOME: install.home };
+	delete env.NPM_CONFIG_PREFIX;
+	delete env.npm_config_prefix;
+	delete env.NPM_CONFIG_CACHE;
+	delete env.npm_config_cache;
+	return env;
+}
+
+function tail(value: string | null | undefined): string | null {
+	if (!value) return null;
+	return value.slice(-4000);
+}
+
+function testInstallerEnvName(name: string): string | null {
+	if (name === "openclaw") return "CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER";
+	if (name === "hermes") return "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER";
+	return null;
+}
+
+function executionInstallerUrl(name: string, officialUrl: string): string {
+	const envName = testInstallerEnvName(name);
+	const override = envName ? process.env[envName]?.trim() : undefined;
+	if (override) {
+		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
+			throw new Error(`${envName} requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`);
+		}
+		return override;
+	}
+	return officialUrl;
+}
+
+function materializeInstaller(
+	name: string,
+	installerUrl: string,
+): { path: string; cleanup?: string } {
+	if (installerUrl.startsWith("file://")) {
+		return { path: fileURLToPath(installerUrl) };
+	}
+	if (installerUrl.startsWith("/")) {
+		return { path: installerUrl };
+	}
+	if (!installerUrl.startsWith("https://")) {
+		throw new Error(`runtime ${name} installer must use https:// or a test file URL`);
+	}
+	const dir = mkdtempSync(join(tmpdir(), `clawdi-${name}-installer-`));
+	chmodSync(dir, 0o755);
+	const path = join(dir, "install.sh");
+	const curl = spawnSync(
+		"curl",
+		["-fsSL", "--proto", "=https", "--tlsv1.2", "--retry", "3", "-o", path, installerUrl],
+		{ encoding: "utf8" },
+	);
+	if (curl.status !== 0) {
+		rmSync(dir, { recursive: true, force: true });
+		throw new Error(
+			`could not download ${name} official installer: ${tail(curl.stderr) ?? "curl failed"}`,
+		);
+	}
+	chmodSync(path, 0o755);
+	return { path, cleanup: dir };
+}
+
+function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
+	const installStartedAt = new Date().toISOString();
+	const installStartedMs = Date.now();
+	const finish = (
+		observation: Omit<
+			RuntimeInstallObservation,
+			"installStartedAt" | "installFinishedAt" | "installDurationMs"
+		>,
+	): RuntimeInstallObservation => ({
+		...observation,
+		installStartedAt,
+		installFinishedAt: new Date().toISOString(),
+		installDurationMs: Math.max(0, Date.now() - installStartedMs),
+	});
+	const commandPath = runtimeCommandPath(name, install.home);
+	const appRoot = runtimeAppRoot(name, install.home);
+	if (!commandPath || !appRoot) {
+		return finish({
+			runtime: name,
+			enabled: true,
+			status: "install_failed",
+			executionUser: null,
+			commandPath,
+			appRoot,
+			install,
+			installerUrl: install.url,
+			executedInstallerUrl: null,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: `unsupported runtime ${name}`,
+		});
+	}
+	if (executableExists(commandPath)) {
+		return finish({
+			runtime: name,
+			enabled: true,
+			status: "present",
+			executionUser: null,
+			commandPath,
+			appRoot,
+			install,
+			installerUrl: install.url,
+			executedInstallerUrl: null,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: null,
+		});
+	}
+
+	mkdirSync(install.home, { recursive: true });
+	makeRuntimeUserOwned(install.home);
+	const url = executionInstallerUrl(name, install.url);
+	const materialized = materializeInstaller(name, url);
+	try {
+		const execution = runtimeInstallerExecution(install, materialized.path);
+		const result = spawnSync(execution.command, execution.args, {
+			cwd: install.home,
+			env: execution.env,
+			encoding: "utf8",
+			timeout: Number.parseInt(process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT ?? "1800000", 10),
+		});
+		const exitCode = result.status ?? 1;
+		const installed = exitCode === 0 && executableExists(commandPath);
+		return finish({
+			runtime: name,
+			enabled: true,
+			status: installed ? "installed" : "install_failed",
+			executionUser: execution.executionUser,
+			commandPath,
+			appRoot,
+			install,
+			installerUrl: install.url,
+			executedInstallerUrl: url === install.url ? install.url : url,
+			exitCode,
+			stdoutTail: tail(result.stdout),
+			stderrTail: tail(result.stderr),
+			error: installed
+				? null
+				: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+		});
+	} catch (error) {
+		return finish({
+			runtime: name,
+			enabled: true,
+			status: "install_failed",
+			executionUser: null,
+			commandPath,
+			appRoot,
+			install,
+			installerUrl: install.url,
+			executedInstallerUrl: url,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	} finally {
+		if (materialized.cleanup) rmSync(materialized.cleanup, { recursive: true, force: true });
+	}
+}
+
+function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"][string]) {
+	if (!runtime.enabled) {
+		return {
+			runtime: name,
+			enabled: false,
+			status: "disabled",
+			executionUser: null,
+			commandPath: null,
+			appRoot: null,
+			install: runtime.install ?? null,
+			installerUrl: runtime.install?.url ?? null,
+			executedInstallerUrl: null,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: null,
+		} satisfies RuntimeInstallObservation;
+	}
+	if (!runtime.install) {
+		return {
+			runtime: name,
+			enabled: true,
+			status: "install_failed",
+			executionUser: null,
+			commandPath: null,
+			appRoot: null,
+			install: null,
+			installerUrl: null,
+			executedInstallerUrl: null,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: `runtime ${name} is enabled but missing install metadata`,
+		} satisfies RuntimeInstallObservation;
+	}
+	return runOfficialInstaller(name, runtime.install);
+}
+
+function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
+	const projection =
+		typeof manifest.projection === "object" && manifest.projection !== null
+			? manifest.projection
+			: undefined;
+	return {
+		schemaVersion: "clawdi.runtimeProjection.v1",
+		runtime: name,
+		generation: manifest.generation,
+		instanceId: manifest.instanceId,
+		managedBy: "clawdi runtime init",
+		target:
+			name === "openclaw"
+				? "openclaw config patch --stdin"
+				: name === "hermes"
+					? "official Hermes user config"
+					: "clawdi mcp",
+		projection: projection ?? null,
+	};
+}
+
+function runtimeSettingsWithSecretFile(
+	settings: RuntimeManifest["runtimes"][string]["run"],
+	secretFile: string | null,
+	enabled: boolean,
+): RuntimeManifest["runtimes"][string]["run"] {
+	if (!secretFile || !enabled) return settings;
+	return {
+		command: settings?.command,
+		args: settings?.args ?? [],
+		env: {
+			...(settings?.env ?? {}),
+			CLAWDI_MITM_SECRET_FILE: secretFile,
+		},
+		cwd: settings?.cwd,
+		prependPath: settings?.prependPath ?? [],
+	};
+}
+
+function clearMitmProfileBundle(paths: RuntimePaths): null {
+	rmSync(paths.mitmProfileBundle, { force: true });
+	return null;
+}
+
+function removeStaleRuntimeRunConfigs(
+	writtenRuntimes: Set<SupportedRuntimeName>,
+	paths: RuntimePaths,
+): void {
+	for (const runtime of SUPPORTED_RUNTIME_NAMES) {
+		if (!writtenRuntimes.has(runtime)) {
+			rmSync(runtimeRunConfigPath(runtime, paths), { force: true });
+		}
+	}
+}
+
+const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
+
+function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
+	if (manifest.liveSync?.enabled === false) return [];
+	const agents = manifest.liveSync?.agents ?? [];
+	const byAgent = new Map<LiveSyncAgent["agentType"], LiveSyncAgent>();
+	for (const agent of agents) byAgent.set(agent.agentType, agent);
+	return [...byAgent.values()].sort((a, b) => a.agentType.localeCompare(b.agentType));
+}
+
+function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
+	const envDir = paths.localEnvironments;
+	mkdirSync(envDir, { recursive: true });
+	makeRuntimeUserOwned(envDir);
+	const agents = desiredLiveSyncAgents(manifest);
+	const desiredTypes = new Set(agents.map((agent) => agent.agentType));
+	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
+		if (!desiredTypes.has(agentType)) {
+			rmSync(join(envDir, `${agentType}.json`), { force: true });
+		}
+	}
+	const written: string[] = [];
+	for (const agent of agents) {
+		const path = join(envDir, `${agent.agentType}.json`);
+		writePrivateFileAtomic(
+			path,
+			`${JSON.stringify(
+				{
+					id: agent.environmentId,
+					agentType: agent.agentType,
+					managedBy: "clawdi runtime init",
+					deploymentId: manifest.deploymentId,
+					instanceId: manifest.instanceId,
+				},
+				null,
+				2,
+			)}\n`,
+			{ mode: 0o600, dirMode: 0o700 },
+		);
+		makeRuntimeUserOwned(path);
+		written.push(path);
+	}
+	return written;
+}
+
+function writeDaemonAuthToken(manifest: RuntimeManifest, paths: RuntimePaths): string | null {
+	const path = join(paths.runRoot, "sync", "auth-token");
+	const hasLiveSyncAgents = desiredLiveSyncAgents(manifest).length > 0;
+	const token = process.env.CLAWDI_AUTH_TOKEN?.trim();
+	if (!hasLiveSyncAgents || !token) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
+	makeRuntimeUserOwned(dirname(path));
+	makeRuntimeUserOwned(path);
+	return path;
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function writeSupervisorConfig(
+	enabledRuntimes: string[],
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	workspaceRoot: string,
+	daemonAuthTokenFile: string | null,
+): string {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const commonEnvironment = {
+		HOME: paths.userHome,
+		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_USER: runtimeUser,
+		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
+		CLAWDI_RUN_DIR: paths.runRoot,
+		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
+		PATH: supervisorPath(paths),
+	};
+	const runtimeEnvironment = supervisorEnvironment({
+		...commonEnvironment,
+		CLAWDI_AUTH_TOKEN: "",
+	});
+	const daemonEnvironment = supervisorEnvironment({
+		...commonEnvironment,
+		CLAWDI_SERVE_MODE: "container",
+		CLAWDI_API_URL: manifest.controlPlane.apiUrl,
+		CLAWDI_NO_AUTO_UPDATE: "1",
+		CLAWDI_NO_UPDATE_CHECK: "1",
+	});
+	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
+	const shouldRunDaemon =
+		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
+	const lines = [
+		"; Generated by clawdi runtime init. Do not edit inside hosted runtime.",
+		`; Desired-state generation: ${manifest.generation}`,
+		"[supervisord]",
+		"nodaemon=true",
+		"logfile=/dev/null",
+		"logfile_maxbytes=0",
+		`pidfile=${paths.runRoot}/supervisord.pid`,
+		"childlogdir=/tmp",
+		"",
+		"[unix_http_server]",
+		`file=${paths.runRoot}/supervisor.sock`,
+		"chmod=0700",
+		"",
+		"[supervisorctl]",
+		`serverurl=unix://${paths.runRoot}/supervisor.sock`,
+		"",
+		"[rpcinterface:supervisor]",
+		"supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface",
+		"",
+	];
+
+	if (supportedEnabled.length === 0 && !shouldRunDaemon) {
+		lines.push("; No enabled agent runtimes in the current manifest.", "");
+	}
+
+	if (shouldRunDaemon && daemonAuthTokenFile) {
+		const script = `export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(
+			daemonAuthTokenFile,
+		)})"; exec /usr/bin/env clawdi daemon run`;
+		lines.push(
+			"[program:clawdi-daemon]",
+			`command=/bin/sh -lc ${shellQuote(script)}`,
+			`directory=${workspaceRoot}`,
+			`user=${runtimeUser}`,
+			"autostart=true",
+			"autorestart=true",
+			"startsecs=2",
+			"startretries=5",
+			"stopasgroup=true",
+			"killasgroup=true",
+			"stdout_logfile=/dev/fd/1",
+			"stdout_logfile_maxbytes=0",
+			"stderr_logfile=/dev/fd/2",
+			"stderr_logfile_maxbytes=0",
+			`environment=${daemonEnvironment}`,
+			"",
+		);
+	}
+
+	for (const runtime of supportedEnabled) {
+		lines.push(
+			`[program:clawdi-${runtime}]`,
+			`command=/usr/bin/env clawdi run -- ${runtime}`,
+			`directory=${workspaceRoot}`,
+			`user=${runtimeUser}`,
+			"autostart=true",
+			"autorestart=true",
+			"startsecs=2",
+			"startretries=5",
+			"stopasgroup=true",
+			"killasgroup=true",
+			"stdout_logfile=/dev/fd/1",
+			"stdout_logfile_maxbytes=0",
+			"stderr_logfile=/dev/fd/2",
+			"stderr_logfile_maxbytes=0",
+			`environment=${runtimeEnvironment}`,
+			"",
+		);
+	}
+
+	writePrivateFileAtomic(paths.supervisorConfig, `${lines.join("\n")}\n`, { mode: 0o644 });
+	return paths.supervisorConfig;
+}
+
+function supervisorPath(paths: RuntimePaths): string {
+	return [
+		join(paths.serviceStateRoot, "bin"),
+		join(paths.userHome, ".local", "bin"),
+		join(paths.userHome, ".openclaw", "bin"),
+		process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	].join(":");
+}
+
+function supervisorEnvironment(values: Record<string, string>): string {
+	return Object.entries(values)
+		.map(([key, value]) => `${key}="${supervisorEscape(value)}"`)
+		.join(",");
+}
+
+function supervisorEscape(value: string): string {
+	return value.replace(/%/g, "%%").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): string {
+	return manifest.workspaceRoot ?? paths.workspaceRoot;
+}
+
+export function convergeRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+): RuntimeConvergenceResult {
+	const { manifest } = load;
+	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
+	const enabledRuntimes = Object.entries(manifest.runtimes)
+		.filter(([, runtime]) => runtime.enabled)
+		.map(([name]) => name)
+		.sort();
+	const generatedAt = new Date().toISOString();
+	const instanceRoot = join(paths.instanceRoot, manifest.instanceId);
+	const semRoot = join(instanceRoot, "sem");
+	const instanceSemaphores: string[] = [];
+	const installInventory: string[] = [];
+	const projections: string[] = [];
+	const runConfigs: string[] = [];
+	const installErrors: string[] = [];
+
+	mkdirSync(workspaceRoot, { recursive: true });
+	makeRuntimeUserOwned(paths.userHome);
+	makeRuntimeUserOwned(workspaceRoot);
+	makeRuntimeUserOwned(paths.runRoot);
+	mkdirSync(paths.installInventory, { recursive: true });
+	mkdirSync(paths.projectionRoot, { recursive: true });
+	mkdirSync(semRoot, { recursive: true });
+
+	const manifestLastGood = writeLastGoodManifest(manifest, paths);
+	writeJsonFile(paths.managedConfig, {
+		schemaVersion: "clawdi.hostedManagedConfig.v1",
+		generatedAt,
+		deploymentId: manifest.deploymentId,
+		environmentId: manifest.environmentId,
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		controlPlane: manifest.controlPlane,
+		auth: {
+			source: "runtime-instance-data",
+			token: "<redacted>",
+		},
+		workspaceRoot,
+	});
+	writeJsonFile(paths.syncState, {
+		schemaVersion: "clawdi.runtimeSyncState.v1",
+		generatedAt,
+		deploymentId: manifest.deploymentId,
+		environmentId: manifest.environmentId,
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		runtimes: Object.fromEntries(
+			Object.entries(manifest.runtimes).map(([name, runtime]) => [
+				name,
+				{
+					enabled: runtime.enabled,
+					updateChannel: runtime.updateChannel ?? null,
+					workspaceRoot,
+				},
+			]),
+		),
+	});
+	writeJsonFile(paths.instanceData, {
+		schemaVersion: "clawdi.runtimeInstanceData.v1",
+		generatedAt,
+		deploymentId: manifest.deploymentId,
+		environmentId: manifest.environmentId,
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		controlPlane: manifest.controlPlane,
+		workspaceRoot,
+	});
+	writeJsonFile(paths.sensitiveInstanceData, {
+		schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
+		generatedAt,
+		tokenSource: process.env.CLAWDI_AUTH_TOKEN ? "CLAWDI_AUTH_TOKEN" : load.source,
+		token: "<redacted>",
+	});
+
+	const mitmProfileBundle = buildMitmProfileBundle({
+		generatedAt,
+		generation: manifest.generation,
+		instanceId: manifest.instanceId,
+		profiles: manifest.mitmProfiles,
+	});
+	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
+		? writeMitmProfileBundle(mitmProfileBundle, paths)
+		: clearMitmProfileBundle(paths);
+	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
+	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
+	const daemonAuthTokenFile = writeDaemonAuthToken(manifest, paths);
+	const supervisorConfig = writeSupervisorConfig(
+		enabledRuntimes,
+		manifest,
+		paths,
+		workspaceRoot,
+		daemonAuthTokenFile,
+	);
+	const writtenRunConfigRuntimes = new Set<SupportedRuntimeName>();
+
+	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
+		a.localeCompare(b),
+	)) {
+		const observation = observeRuntimeInstall(name, runtime);
+		if (observation.error) installErrors.push(observation.error);
+
+		const inventoryPath = join(paths.installInventory, `${name}.json`);
+		writeJsonFile(inventoryPath, {
+			schemaVersion: "clawdi.runtimeInstallInventory.v1",
+			generatedAt,
+			runtime: name,
+			enabled: runtime.enabled,
+			updateChannel: runtime.updateChannel ?? null,
+			simulation: false,
+			status: observation.status,
+			executionUser: observation.executionUser,
+			install: observation.install,
+			command: runtimeInstallerCommand(name, runtime.install),
+			commandPath: observation.commandPath,
+			appRoot: observation.appRoot,
+			installerUrl: observation.installerUrl,
+			executedInstallerUrl: observation.executedInstallerUrl,
+			installStartedAt: observation.installStartedAt ?? null,
+			installFinishedAt: observation.installFinishedAt ?? null,
+			installDurationMs: observation.installDurationMs ?? null,
+			resultExitCode: observation.exitCode,
+			stdoutTail: observation.stdoutTail,
+			stderrTail: observation.stderrTail,
+			error: observation.error,
+		});
+		installInventory.push(inventoryPath);
+
+		const projectionPath = join(paths.projectionRoot, `${name}.json`);
+		writeJsonFile(projectionPath, projectionPayload(name, manifest));
+		projections.push(projectionPath);
+
+		if (isSupportedRuntimeName(name)) {
+			const runConfigPath = writeRuntimeRunConfig(
+				buildRuntimeRunConfig({
+					runtime: name,
+					enabled: runtime.enabled,
+					generatedAt,
+					generation: manifest.generation,
+					instanceId: manifest.instanceId,
+					commandPath: observation.commandPath,
+					appRoot: observation.appRoot,
+					workspaceRoot,
+					mitmProfileBundlePath,
+					settings: runtimeSettingsWithSecretFile(
+						runtime.run,
+						mitmProfileBundlePath ? mitmSecretFile : null,
+						runtime.enabled,
+					),
+				}),
+				paths,
+			);
+			runConfigs.push(runConfigPath);
+			writtenRunConfigRuntimes.add(name);
+		}
+
+		const semaphorePath = join(semRoot, `${name}.enabled`);
+		if (runtime.enabled) {
+			writePrivateFileAtomic(semaphorePath, `${generatedAt}\n`);
+			instanceSemaphores.push(semaphorePath);
+		}
+	}
+
+	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
+	writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
+	projections.push(mcpProjection);
+
+	const bootFinished = join(instanceRoot, "boot-finished");
+	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
+	removeStaleRuntimeRunConfigs(writtenRunConfigRuntimes, paths);
+
+	return {
+		manifest,
+		source: load.source,
+		sourcePath: load.sourcePath,
+		offline: load.offline,
+		mode: load.offline ? "degraded-offline" : "normal",
+		enabledRuntimes,
+		installErrors,
+		outputs: {
+			workspaceRoot,
+			managedConfig: paths.managedConfig,
+			syncState: paths.syncState,
+			instanceData: paths.instanceData,
+			sensitiveInstanceData: paths.sensitiveInstanceData,
+			manifestLastGood,
+			installInventory,
+			projections,
+			runConfigs,
+			supervisorConfig,
+			mitmProfileBundle: mitmProfileBundlePath,
+			mitmSecretFile,
+			liveSyncEnvironments,
+			daemonAuthTokenFile,
+			instanceSemaphores,
+			bootFinished,
+		},
+	};
+}

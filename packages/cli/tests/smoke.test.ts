@@ -12,10 +12,23 @@ const srcEntry = join(cliRoot, "src", "index.ts");
  * Uses the src entry (fast; no build step needed). The bin wrapper smoke
  * tests verify the dist path separately (run post-build).
  */
-async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+async function runCli(
+	args: string[],
+	envOverrides: Record<string, string | undefined> = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+	const env: Record<string, string> = {
+		...process.env,
+		CLAWDI_NO_AUTO_UPDATE: "1",
+		CLAWDI_NO_UPDATE_CHECK: "1",
+	};
+	for (const [key, value] of Object.entries(envOverrides)) {
+		if (value === undefined) delete env[key];
+		else env[key] = value;
+	}
 	const proc = Bun.spawn(["bun", srcEntry, ...args], {
 		stdout: "pipe",
 		stderr: "pipe",
+		env,
 	});
 	const [stdout, stderr, code] = await Promise.all([
 		new Response(proc.stdout).text(),
@@ -47,19 +60,631 @@ describe("CLI smoke — src entry", () => {
 			"skill",
 			"memory",
 			"doctor",
+			"capabilities",
 			"update",
 			"mcp",
 			"read",
 			"inject",
 			"run",
+			"runtime",
 		]) {
 			expect(stdout).toContain(cmd);
 		}
 	});
 
-	it("runtime namespace is not a top-level command", async () => {
-		const { code } = await runCli(["runtime", "apply", "--target", "hermes"]);
-		expect(code).not.toBe(0);
+	it("capabilities prints JSON without requiring auth", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-cap-${Date.now()}`);
+		mkdirSync(fakeHome, { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["capabilities", "--json"], { HOME: fakeHome });
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.schemaVersion).toBe("clawdi.capabilities.v1");
+			expect(parsed.commands).toContain("runtime");
+			expect(parsed.updateMode).toBe("local-self-update");
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("auth status reports no auth in an isolated HOME", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-auth-${Date.now()}`);
+		mkdirSync(fakeHome, { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["auth", "status", "--json"], {
+				HOME: fakeHome,
+				CLAWDI_AUTH_TOKEN: undefined,
+			});
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.authenticated).toBe(false);
+			expect(parsed.source).toBe("none");
+			expect(stdout).not.toContain("secret");
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("config paths reports local ~/.clawdi paths", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-paths-${Date.now()}`);
+		mkdirSync(fakeHome, { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["config", "paths", "--json"], { HOME: fakeHome });
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.runtimeMode).toBe("local");
+			expect(parsed.local.config).toBe(join(fakeHome, ".clawdi", "config.json"));
+			expect(parsed.hosted.serviceStateRoot).toBe("/var/lib/clawdi");
+			expect(parsed.hosted.workspaceRoot).toBe(join(fakeHome, "clawdi"));
+			expect(stdout).not.toContain("CLAWDI_AUTH_TOKEN");
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime status exits cleanly before runtime init", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-runtime-status-${Date.now()}`);
+		mkdirSync(fakeHome, { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["runtime", "status", "--json"], {
+				HOME: fakeHome,
+				CLAWDI_SERVICE_STATE_DIR: join(fakeHome, "var", "lib", "clawdi"),
+				CLAWDI_RUN_DIR: join(fakeHome, "run", "clawdi"),
+			});
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.schemaVersion).toBe("clawdi.runtimeStatus.v1");
+			expect(parsed.exists).toBe(false);
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init enters repair and writes boot status without datasource", async () => {
+		const { tmpdir } = await import("node:os");
+		const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-init-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
+		mkdirSync(dirname(policyPath), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				cliUpdateMode: "system-managed-npm",
+				deniedCommands: ["setup", "teardown", "update"],
+			}),
+		);
+
+		const env = {
+			HOME: home,
+			CLAWDI_RUNTIME_MODE: "hosted",
+			CLAWDI_HOST_POLICY_PATH: policyPath,
+			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
+			CLAWDI_RUN_DIR: runRoot,
+			CLAWDI_AUTH_TOKEN: undefined,
+		};
+
+		try {
+			const { stdout, code } = await runCli(
+				["runtime", "init", "--non-interactive", "--json"],
+				env,
+			);
+			expect(code).toBe(20);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.mode).toBe("repair");
+			expect(parsed.status).toBe("error");
+			expect(parsed.stage).toBe("detect");
+			expect(parsed.errors).toContain(
+				"missing CLAWDI_AUTH_TOKEN and no last-good runtime manifest cache",
+			);
+			expect(parsed.datasource).toBe("RuntimeSource");
+			expect(parsed.hostPolicy.valid).toBe(true);
+			expect(parsed.paths.serviceStateRoot).toBe(serviceStateRoot);
+			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
+			const cloudResult = JSON.parse(
+				readFileSync(join(serviceStateRoot, "boot", "result.json"), "utf-8"),
+			);
+			expect(cloudResult.v1.stage).toBe("detect");
+			expect(cloudResult.v1.errors).toEqual(parsed.errors);
+
+			const status = await runCli(["runtime", "status", "--json"], env);
+			expect(status.code).toBe(0);
+			const statusParsed = JSON.parse(status.stdout);
+			expect(statusParsed.exists).toBe(true);
+			expect(statusParsed.status.mode).toBe("repair");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init performs first-install convergence from a fixture manifest", async () => {
+		const { tmpdir } = await import("node:os");
+		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } =
+			await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-full-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		const manifestPath = join(root, "runtime-manifest.json");
+		const staleManifestPath = join(root, "runtime-manifest-stale.json");
+		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
+		const openclawInstaller = join(root, "fixtures", "openclaw-install.sh");
+		const hermesInstaller = join(root, "fixtures", "hermes-install.sh");
+		mkdirSync(dirname(policyPath), { recursive: true });
+		mkdirSync(dirname(openclawInstaller), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				cliUpdateMode: "system-managed-npm",
+				deniedCommands: ["setup", "teardown", "update"],
+			}),
+		);
+		writeFileSync(
+			openclawInstaller,
+			`#!/usr/bin/env bash
+set -euo pipefail
+install -d "$HOME/.openclaw/bin" "$HOME/.openclaw/install-proof"
+printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-config-prefix"
+printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
+cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
+#!/usr/bin/env bash
+echo "openclaw fixture"
+SH
+chmod +x "$HOME/.openclaw/bin/openclaw"
+`,
+		);
+		chmodSync(openclawInstaller, 0o700);
+		writeFileSync(
+			hermesInstaller,
+			`#!/usr/bin/env bash
+set -euo pipefail
+install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent" "$HOME/.hermes/install-proof"
+printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.hermes/install-proof/npm-config-prefix"
+printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.hermes/install-proof/npm-config-cache"
+cat > "$HOME/.local/bin/hermes" <<'SH'
+#!/usr/bin/env bash
+echo "hermes fixture"
+SH
+chmod +x "$HOME/.local/bin/hermes"
+`,
+		);
+		chmodSync(hermesInstaller, 0o700);
+
+		const manifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_test",
+			environmentId: "env_test",
+			instanceId: "iid_test",
+			generation: 7,
+			issuedAt: "2026-06-03T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					updateChannel: "stable",
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://openclaw.ai/install-cli.sh",
+						home,
+						args: ["--json", "--version", "stable", "--no-onboard"],
+					},
+				},
+				hermes: {
+					enabled: true,
+					updateChannel: "main",
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://hermes-agent.nousresearch.com/install.sh",
+						home,
+						args: ["--branch", "main", "--skip-setup", "--non-interactive"],
+					},
+					run: {
+						env: {
+							DISCORD_API_BASE_URL: "http://127.0.0.1:4500/discord",
+						},
+						args: ["gateway", "run"],
+					},
+				},
+			},
+			mitmProfiles: {
+				profiles: [
+					{
+						id: "discord-rest-channel",
+						kind: "http",
+						match: {
+							scheme: "https",
+							host: "discord.com",
+							pathPrefix: "/api/",
+							headers: {
+								authorization: {
+									type: "secretRefEquals",
+									secretRef: "secret://channels/discord/bot-token",
+									prefix: "Bot ",
+								},
+							},
+						},
+						rewrite: {
+							upstreamBaseUrl: "http://127.0.0.1:18890/discord",
+							preservePath: true,
+							setHeaders: { "x-clawdi-original-host": "discord.com" },
+						},
+						logging: { redactHeaders: ["authorization"] },
+						owner: "clawdi-channels",
+					},
+				],
+			},
+			projection: {
+				aiProviders: {
+					default: "openai-main/gpt-5.2",
+				},
+				mcp: { command: "clawdi mcp" },
+			},
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(manifestPath, JSON.stringify(manifest));
+
+		const env = {
+			HOME: home,
+			CLAWDI_RUNTIME_MODE: "hosted",
+			CLAWDI_HOST_POLICY_PATH: policyPath,
+			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
+			CLAWDI_RUN_DIR: runRoot,
+			CLAWDI_AUTH_TOKEN: undefined,
+			CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+			CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: openclawInstaller,
+			CLAWDI_RUNTIME_TEST_HERMES_INSTALLER: hermesInstaller,
+			CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
+			NPM_CONFIG_PREFIX: "/var/lib/clawdi/npm",
+			NPM_CONFIG_CACHE: "/var/lib/clawdi/npm-cache",
+			HERMES_HOME: undefined,
+			OPENCLAW_STATE_DIR: undefined,
+		};
+
+		try {
+			const first = await runCli(
+				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
+				env,
+			);
+			expect(first.code).toBe(0);
+			const parsed = JSON.parse(first.stdout);
+			expect(parsed.mode).toBe("normal");
+			expect(parsed.status).toBe("ok");
+			expect(parsed.stage).toBe("final");
+			expect(parsed.activeGeneration).toBe(7);
+			expect(parsed.enabledRuntimes).toEqual(["hermes", "openclaw"]);
+			expect(parsed.manifestSource.type).toBe("fixture-file");
+			expect(parsed.paths.workspaceRoot).toBe(join(home, "clawdi"));
+			expect(parsed.convergence.mitmProfileBundle).toBe(
+				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+			);
+
+			for (const outputPath of [
+				join(serviceStateRoot, "config", "clawdi.json"),
+				join(serviceStateRoot, "sync", "runtimes.json"),
+				join(serviceStateRoot, "cache", "manifest.last-good.json"),
+				join(runRoot, "instance-data.json"),
+				join(runRoot, "instance-data-sensitive.json"),
+				join(serviceStateRoot, "install-inventory", "openclaw.json"),
+				join(serviceStateRoot, "install-inventory", "hermes.json"),
+				join(serviceStateRoot, "config", "projections", "openclaw.json"),
+				join(serviceStateRoot, "config", "projections", "hermes.json"),
+				join(serviceStateRoot, "config", "run", "openclaw.json"),
+				join(serviceStateRoot, "config", "run", "hermes.json"),
+				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
+				join(home, "clawdi"),
+				join(home, ".openclaw", "bin", "openclaw"),
+				join(home, ".local", "bin", "hermes"),
+			]) {
+				expect(existsSync(outputPath)).toBe(true);
+			}
+			expect(statSync(join(serviceStateRoot, "cache", "boot-status.json")).mode & 0o777).toBe(
+				0o644,
+			);
+			expect(statSync(join(serviceStateRoot, "boot", "status.json")).mode & 0o777).toBe(0o644);
+			expect(statSync(join(serviceStateRoot, "boot", "result.json")).mode & 0o777).toBe(0o644);
+			expect(statSync(join(runRoot, "instance-data-sensitive.json")).mode & 0o777).toBe(0o600);
+			expect(
+				JSON.parse(readFileSync(join(runRoot, "instance-data-sensitive.json"), "utf-8"))
+					.tokenSource,
+			).toBe("fixture-file");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-prefix"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cache"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "npm-config-prefix"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cache"), "utf-8"),
+			).toBe("\n");
+
+			const managed = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "clawdi.json"), "utf-8"),
+			);
+			expect(managed.generation).toBe(7);
+			expect(JSON.stringify(managed)).not.toContain("auth-test-token");
+			const supervisorConfig = readFileSync(
+				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				"utf-8",
+			);
+			expect(supervisorConfig).toContain("[program:clawdi-hermes]");
+			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
+			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- hermes");
+			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- openclaw");
+			expect(supervisorConfig).toContain("user=clawdi");
+			expect(supervisorConfig).not.toContain("auth-test-token");
+			const inventory = JSON.parse(
+				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
+			);
+			expect(inventory.install.url).toBe("https://openclaw.ai/install-cli.sh");
+			expect(inventory.install.args).not.toContain("--dir");
+			expect(inventory.install.args).not.toContain("--prefix");
+			expect(inventory.status).toBe("installed");
+			expect(inventory.commandPath).toBe(join(home, ".openclaw", "bin", "openclaw"));
+			expect(typeof inventory.installStartedAt).toBe("string");
+			expect(typeof inventory.installFinishedAt).toBe("string");
+			expect(typeof inventory.installDurationMs).toBe("number");
+			expect(inventory.installDurationMs).toBeGreaterThanOrEqual(0);
+			const openclawRunConfig = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "run", "openclaw.json"), "utf-8"),
+			);
+			expect(openclawRunConfig.schemaVersion).toBe("clawdi.runtimeRunConfig.v1");
+			expect(openclawRunConfig.commandPath).toBe(join(home, ".openclaw", "bin", "openclaw"));
+			expect(openclawRunConfig.defaultArgs).toEqual([
+				"gateway",
+				"run",
+				"--allow-unconfigured",
+				"--auth",
+				"none",
+				"--bind",
+				"loopback",
+				"--force",
+			]);
+			const hermesRunConfig = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
+			);
+			expect(hermesRunConfig.schemaVersion).toBe("clawdi.runtimeRunConfig.v1");
+			expect(hermesRunConfig.commandPath).toBe(join(home, ".local", "bin", "hermes"));
+			expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
+			expect(hermesRunConfig.env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
+			expect(hermesRunConfig.mitmProfileBundlePath).toBe(
+				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+			);
+			const mitmProfiles = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "mitm", "profiles.json"), "utf-8"),
+			);
+			expect(mitmProfiles.schemaVersion).toBe("clawdi.mitmProfiles.v1");
+			expect(mitmProfiles.profiles[0].id).toBe("discord-rest-channel");
+			expect(JSON.stringify(mitmProfiles)).toContain("secret://channels/discord/bot-token");
+			expect(JSON.stringify(mitmProfiles)).not.toContain("auth-test-token");
+
+			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
+			expect(offline.code).toBe(0);
+			const offlineParsed = JSON.parse(offline.stdout);
+			expect(offlineParsed.mode).toBe("degraded-offline");
+			expect(offlineParsed.manifestSource.type).toBe("last-good-cache");
+			expect(offlineParsed.activeGeneration).toBe(7);
+			const offlineInventory = JSON.parse(
+				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
+			);
+			expect(offlineInventory.status).toBe("present");
+
+			writeFileSync(staleManifestPath, JSON.stringify({ ...manifest, generation: 6 }));
+			const stale = await runCli(
+				["runtime", "init", "--non-interactive", "--json", "--manifest-file", staleManifestPath],
+				env,
+			);
+			expect(stale.code).toBe(22);
+			const staleParsed = JSON.parse(stale.stdout);
+			expect(staleParsed.mode).toBe("manifest-rejected");
+			expect(staleParsed.activeGeneration).toBe(7);
+			expect(staleParsed.rejectedGeneration).toBe(6);
+			const lastGood = JSON.parse(
+				readFileSync(join(serviceStateRoot, "cache", "manifest.last-good.json"), "utf-8"),
+			);
+			expect(lastGood.generation).toBe(7);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init installs only selected runtimes", async () => {
+		const { tmpdir } = await import("node:os");
+		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import(
+			"node:fs"
+		);
+		const root = join(tmpdir(), `clawdi-smoke-runtime-selection-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		const manifestPath = join(root, "runtime-manifest.json");
+		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
+		const openclawInstaller = join(root, "fixtures", "openclaw-install.sh");
+		mkdirSync(dirname(policyPath), { recursive: true });
+		mkdirSync(dirname(openclawInstaller), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				cliUpdateMode: "system-managed-npm",
+				deniedCommands: ["setup", "teardown", "update"],
+			}),
+		);
+		writeFileSync(
+			openclawInstaller,
+			`#!/usr/bin/env bash
+set -euo pipefail
+install -d "$HOME/.openclaw/bin"
+cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
+#!/usr/bin/env bash
+echo "openclaw fixture"
+SH
+chmod +x "$HOME/.openclaw/bin/openclaw"
+`,
+		);
+		chmodSync(openclawInstaller, 0o700);
+
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_selection",
+				environmentId: "env_selection",
+				instanceId: "iid_selection",
+				generation: 1,
+				issuedAt: "2026-06-04T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.example.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						updateChannel: "stable",
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: ["--json", "--no-onboard"],
+						},
+					},
+					hermes: {
+						enabled: false,
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+
+		try {
+			const result = await runCli(
+				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
+				{
+					HOME: home,
+					CLAWDI_RUNTIME_MODE: "hosted",
+					CLAWDI_HOST_POLICY_PATH: policyPath,
+					CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
+					CLAWDI_RUN_DIR: runRoot,
+					CLAWDI_AUTH_TOKEN: "auth-selection-token",
+					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: openclawInstaller,
+					CLAWDI_RUNTIME_TEST_HERMES_INSTALLER: undefined,
+					CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
+					HERMES_HOME: undefined,
+					OPENCLAW_STATE_DIR: undefined,
+				},
+			);
+			expect(result.code).toBe(0);
+			const parsed = JSON.parse(result.stdout);
+			expect(parsed.enabledRuntimes).toEqual(["openclaw"]);
+			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
+			expect(existsSync(join(home, ".local", "bin", "hermes"))).toBe(false);
+
+			const openclawInventory = JSON.parse(
+				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
+			);
+			const hermesInventory = JSON.parse(
+				readFileSync(join(serviceStateRoot, "install-inventory", "hermes.json"), "utf-8"),
+			);
+			expect(openclawInventory.status).toBe("installed");
+			expect(hermesInventory.status).toBe("disabled");
+			const hermesRunConfig = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
+			);
+			expect(hermesRunConfig.enabled).toBe(false);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init writes repair status when host policy is missing", async () => {
+		const { tmpdir } = await import("node:os");
+		const { existsSync, mkdirSync, rmSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-no-policy-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
+		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		mkdirSync(home, { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["runtime", "init", "--non-interactive", "--json"], {
+				HOME: home,
+				CLAWDI_RUNTIME_MODE: "hosted",
+				CLAWDI_HOST_POLICY_PATH: policyPath,
+				CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
+				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
+				CLAWDI_AUTH_TOKEN: "auth-test-token",
+			});
+			expect(code).toBe(20);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.mode).toBe("repair");
+			expect(parsed.stage).toBe("detect");
+			expect(parsed.hostPolicy.exists).toBe(false);
+			expect(parsed.errors[0]).toContain("missing hosted runtime policy");
+			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("hosted policy denies local-user mutation commands", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-policy-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		mkdirSync(dirname(policyPath), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				deniedCommands: [{ command: "config set", reason: "managed config is runtime-owned" }],
+			}),
+		);
+
+		try {
+			const result = await runCli(["config", "set", "apiUrl", "http://example.test"], {
+				HOME: home,
+				CLAWDI_RUNTIME_MODE: "hosted",
+				CLAWDI_HOST_POLICY_PATH: policyPath,
+				CLAWDI_SERVICE_STATE_DIR: join(root, "var", "lib", "clawdi"),
+				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
+			});
+			expect(result.code).not.toBe(0);
+			expect(result.stderr).toContain("disabled in hosted runtime mode");
+			expect(result.stderr).toContain("managed config is runtime-owned");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("status exits cleanly when not logged in (via isolated HOME)", async () => {

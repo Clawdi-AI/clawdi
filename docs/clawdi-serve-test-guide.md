@@ -301,8 +301,8 @@ only conduit.
 
 | Agent | What you need to set |
 |---|---|
-| Hermes | `HERMES_HOME=/data/hermes` (or wherever the pod stores `state.db`). The adapter reads SQLite via `node:sqlite` (Node 22.5+) or `bun:sqlite` — both are built-in, no native bindings to ship. |
-| OpenClaw | `OPENCLAW_STATE_DIR=/data/openclaw` (state lives outside `$HOME` in production). `OPENCLAW_AGENT_ID=<id>` if the pod runs a single agent personality; omit to sync every agent under `agents/`. |
+| Hermes | `HERMES_HOME=<hermes-state-dir>` when the pod does not use Hermes' default HOME path. The adapter reads SQLite via `node:sqlite` (Node 22.5+) or `bun:sqlite` — both are built-in, no native bindings to ship. |
+| OpenClaw | `OPENCLAW_STATE_DIR=<openclaw-state-dir>` when the pod does not use OpenClaw's default HOME path. `OPENCLAW_AGENT_ID=<id>` if the pod runs a single agent personality; omit to sync every agent under `agents/`. |
 
 ### What NOT to do
 

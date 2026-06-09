@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
 import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import { inspectAiProviderAuth } from "../lib/ai-provider-test";
@@ -25,6 +25,24 @@ import {
 	VAULT_PROJECT_ACCESS_ERROR,
 	VAULT_PROJECT_ACCESS_HINT,
 } from "../lib/vault-errors";
+import {
+	type RuntimeMitmBroker,
+	type RuntimeMitmBrokerFactory,
+	shouldStartRuntimeMitmBroker,
+	startRuntimeMitmBroker,
+} from "../runtime/mitm-broker";
+import {
+	applyMitmBrokerRuntimeEnv,
+	buildMitmBrokerEnv,
+	stripMitmBrokerControlEnv,
+} from "../runtime/mitm-env";
+import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
+import {
+	buildRuntimeRunInvocation,
+	type RuntimeRunConfigRead,
+	type RuntimeRunInvocation,
+	readRuntimeRunConfigForCommand,
+} from "../runtime/run-config";
 
 interface RunOpts {
 	project?: string;
@@ -44,14 +62,46 @@ interface SelectedProject {
 
 type SpawnFn = typeof spawn;
 
-export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn = spawn) {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+export async function run(
+	args: string[],
+	opts: RunOpts = {},
+	spawnImpl: SpawnFn = spawn,
+	brokerFactory: RuntimeMitmBrokerFactory = startRuntimeMitmBroker,
+) {
+	if (args.length === 0) {
+		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
 		process.exit(1);
 	}
 
-	if (args.length === 0) {
-		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
+	const hostedRuntimeRun = hostedRuntimeRunConfig(args[0]);
+	const baseProcessEnv = { ...process.env };
+	const hostedGenericRun = hostedGenericRunInvocation(args, baseProcessEnv);
+	if (hostedRuntimeRun.status === "ok" && !requiresCloudResolution(opts)) {
+		await spawnRuntimeInvocation(
+			buildRuntimeRunInvocation(hostedRuntimeRun, args, baseProcessEnv),
+			spawnImpl,
+			brokerFactory,
+		);
+		return;
+	}
+	if (
+		hostedRuntimeRun.status !== "not-runtime" &&
+		hostedRuntimeRun.status !== "ok" &&
+		!requiresCloudResolution(opts)
+	) {
+		console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
+		process.exit(1);
+	}
+	if (hostedGenericRun && !requiresCloudResolution(opts)) {
+		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl, brokerFactory);
+		return;
+	}
+	if (!isLoggedIn()) {
+		if (hostedRuntimeRun.status !== "not-runtime" && hostedRuntimeRun.status !== "ok") {
+			console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
+			process.exit(1);
+		}
+		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 
@@ -119,23 +169,36 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		process.exit(1);
 	}
 	const spawnEnv = { ...envWithReferences, ...vaultEnv, ...referenceEnv };
-	const managedAiProviderEnv = await resolveManagedAiProviderEnv(spawnEnv);
+	if (hostedRuntimeRun.status !== "not-runtime" && hostedRuntimeRun.status !== "ok") {
+		console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
+		process.exit(1);
+	}
 
-	// Spawn child process with injected env
+	const managedAiProviderEnv = await resolveManagedAiProviderEnv(spawnEnv);
+	const childEnv = { ...spawnEnv, ...managedAiProviderEnv };
+	if (hostedRuntimeRun.status === "ok") {
+		await spawnRuntimeInvocation(
+			buildRuntimeRunInvocation(hostedRuntimeRun, args, childEnv),
+			spawnImpl,
+			brokerFactory,
+		);
+		return;
+	}
+
+	const hostedGenericLoggedInRun = hostedGenericRunInvocation(args, childEnv);
+	if (hostedGenericLoggedInRun) {
+		await spawnRuntimeInvocation(hostedGenericLoggedInRun, spawnImpl, brokerFactory);
+		return;
+	}
+
 	const [cmd, ...cmdArgs] = args;
 	const child = spawnImpl(cmd, cmdArgs, {
-		env: { ...spawnEnv, ...managedAiProviderEnv },
+		env: childEnv,
 		stdio: "inherit",
 	});
 
-	child.on("error", (err) => {
-		console.log(chalk.red(`Failed to start: ${err.message}`));
-		process.exit(1);
-	});
-
-	child.on("exit", (code) => {
-		process.exit(code ?? 0);
-	});
+	const code = await waitForChildExit(child, "command");
+	process.exitCode = code;
 }
 
 async function resolveManagedAiProviderEnv(
@@ -172,6 +235,136 @@ async function resolveManagedAiProviderEnv(
 		console.log(chalk.green(`✓ Resolved ${count} AI provider key${count === 1 ? "" : "s"}`));
 	}
 	return injected;
+}
+
+function requiresCloudResolution(opts: RunOpts): boolean {
+	return Boolean(
+		opts.project ||
+			opts.agent ||
+			opts.allVaultEnv ||
+			opts.dryRun ||
+			(opts.envFile && opts.envFile.length > 0),
+	);
+}
+
+function hostedRuntimeRunConfig(command: string): RuntimeRunConfigRead {
+	if (detectRuntimeMode() !== "hosted") return { status: "not-runtime", runtime: null };
+	return readRuntimeRunConfigForCommand(command, getRuntimePaths({ mode: "hosted" }));
+}
+
+function hostedGenericRunInvocation(
+	args: string[],
+	baseEnv: NodeJS.ProcessEnv,
+): RuntimeRunInvocation | null {
+	if (detectRuntimeMode() !== "hosted") return null;
+	const [command, ...commandArgs] = args;
+	if (!command) return null;
+	const paths = getRuntimePaths({ mode: "hosted" });
+	if (!existsSync(paths.mitmProfileBundle)) return null;
+	return {
+		runtime: "generic",
+		command,
+		args: commandArgs,
+		cwd: process.cwd(),
+		env: buildMitmBrokerEnv({
+			env: baseEnv,
+			profileBundlePath: paths.mitmProfileBundle,
+		}),
+		configPath: paths.mitmProfileBundle,
+	};
+}
+
+function hostedRuntimeRunError(
+	read: Exclude<RuntimeRunConfigRead, { status: "ok" | "not-runtime" }>,
+): string {
+	if (read.status === "missing") {
+		return `No hosted run config for ${read.runtime}. Run \`clawdi runtime init --non-interactive\` first.`;
+	}
+	if (read.status === "disabled") {
+		return `Runtime ${read.runtime} is disabled by the current hosted runtime manifest.`;
+	}
+	return `Invalid hosted run config for ${read.runtime} at ${read.path}: ${read.error}`;
+}
+
+async function spawnRuntimeInvocation(
+	invocation: RuntimeRunInvocation,
+	spawnImpl: SpawnFn,
+	brokerFactory: RuntimeMitmBrokerFactory,
+): Promise<void> {
+	delete invocation.env.CLAWDI_AUTH_TOKEN;
+	let broker: RuntimeMitmBroker | null = null;
+	if (shouldStartRuntimeMitmBroker(invocation.env)) {
+		try {
+			broker = await brokerFactory({
+				runtime: invocation.runtime,
+				env: invocation.env,
+				profileBundlePath: invocation.env.CLAWDI_MITM_PROFILE_BUNDLE ?? invocation.configPath,
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.log(chalk.red(`Failed to start MITM broker for ${invocation.runtime}: ${message}`));
+			process.exit(1);
+		}
+	}
+	if (broker) {
+		applyMitmBrokerRuntimeEnv(invocation.env, broker);
+		stripMitmBrokerControlEnv(invocation.env);
+	}
+	const child = spawnImpl(invocation.command, invocation.args, {
+		cwd: invocation.cwd,
+		env: invocation.env,
+		stdio: "inherit",
+	});
+
+	const code = await waitForChildExit(child, invocation.runtime);
+	try {
+		await broker?.stop();
+	} finally {
+		process.exitCode = code;
+	}
+}
+
+const SIGNAL_EXIT_CODES: Record<string, number> = {
+	SIGHUP: 129,
+	SIGINT: 130,
+	SIGQUIT: 131,
+	SIGILL: 132,
+	SIGTRAP: 133,
+	SIGABRT: 134,
+	SIGBUS: 135,
+	SIGFPE: 136,
+	SIGKILL: 137,
+	SIGUSR1: 138,
+	SIGSEGV: 139,
+	SIGUSR2: 140,
+	SIGPIPE: 141,
+	SIGALRM: 142,
+	SIGTERM: 143,
+};
+
+function exitCodeForSignal(signal: NodeJS.Signals | null): number {
+	if (!signal) return 1;
+	return SIGNAL_EXIT_CODES[signal] ?? 1;
+}
+
+function waitForChildExit(child: ReturnType<SpawnFn>, label: string): Promise<number> {
+	return new Promise((resolve) => {
+		let settled = false;
+		const settle = (code: number) => {
+			if (settled) return;
+			settled = true;
+			resolve(code);
+		};
+
+		child.once("error", (err) => {
+			console.log(chalk.red(`Failed to start ${label}: ${err.message}`));
+			settle(1);
+		});
+
+		child.once("exit", (code, signal) => {
+			settle(code ?? exitCodeForSignal(signal));
+		});
+	});
 }
 
 async function previewRun(

@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -7,6 +8,18 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { readHostPolicy } from "../runtime/host-policy";
+import { convergeRuntimeManifest, loadRuntimeManifest } from "../runtime/manifest";
+import { runtimeSourceAuthEnv } from "../runtime/manifest-source";
+import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
+import {
+	buildRuntimeBootStatus,
+	ensureRuntimeStateDirs,
+	hostPolicySummary,
+	type RuntimeBootStage,
+	readRuntimeBootStatus,
+	writeRuntimeBootStatus,
+} from "../runtime/state";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -1075,4 +1088,379 @@ function collectWarnings(value: unknown): string[] {
 		applied?: { warnings?: string[] };
 	};
 	return root.plan?.warnings ?? root.status?.warnings ?? root.applied?.warnings ?? [];
+}
+
+interface RuntimeInitOptions {
+	nonInteractive?: boolean;
+	json?: boolean;
+	manifestFile?: string;
+}
+
+interface RuntimeDoctorCheck {
+	name: string;
+	ok: boolean;
+	detail?: string;
+	hint?: string;
+}
+
+function hasRuntimeCredential(input: {
+	manifestPath?: string;
+	paths?: ReturnType<typeof getRuntimePaths>;
+}): boolean {
+	if (input.manifestPath) return true;
+	const paths = input.paths ?? getRuntimePaths();
+	if (existsSync(paths.manifestLastGood)) return true;
+	try {
+		return Boolean(process.env[runtimeSourceAuthEnv(paths)]?.trim());
+	} catch {
+		return Boolean(process.env.CLAWDI_AUTH_TOKEN?.trim());
+	}
+}
+
+function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
+	try {
+		return runtimeSourceAuthEnv(paths);
+	} catch {
+		return "CLAWDI_AUTH_TOKEN";
+	}
+}
+
+function writable(path: string): boolean {
+	try {
+		accessSync(path, constants.W_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function readable(path: string): boolean {
+	try {
+		accessSync(path, constants.R_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function repairStatus(
+	input: {
+		bootId: string;
+		stage: RuntimeBootStage;
+		runtimeMode: "local" | "hosted";
+		errors: string[];
+		exitCode: number;
+	},
+	paths = getRuntimePaths(),
+) {
+	const policy = readHostPolicy(paths.hostPolicy);
+	return buildRuntimeBootStatus(
+		{
+			mode: "repair",
+			status: "error",
+			stage: input.stage,
+			bootId: input.bootId,
+			runtimeMode: input.runtimeMode,
+			activeGeneration: null,
+			enabledRuntimes: [],
+			error: input.errors[0],
+			errors: input.errors,
+			exitCode: input.exitCode,
+			datasource: "RuntimeSource",
+			hostPolicy: hostPolicySummary(policy),
+		},
+		paths,
+	);
+}
+
+export async function runtimeInit(opts: RuntimeInitOptions = {}) {
+	const paths = getRuntimePaths();
+	const mode = detectRuntimeMode();
+	const bootId = randomUUID();
+
+	if (mode !== "hosted") {
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "detect",
+				exitCode: 2,
+				errors: [
+					"runtime init requires hosted runtime mode (host policy or CLAWDI_RUNTIME_MODE=hosted)",
+				],
+			},
+			paths,
+		);
+		if (opts.json || !process.stdout.isTTY) {
+			console.log(JSON.stringify(status, null, 2));
+		} else {
+			console.log(chalk.red("runtime init is only available in hosted runtime mode."));
+		}
+		process.exitCode = 2;
+		return;
+	}
+
+	const hostPolicy = readHostPolicy(paths.hostPolicy);
+	try {
+		ensureRuntimeStateDirs(paths);
+	} catch (e) {
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "detect",
+				exitCode: 20,
+				errors: [
+					`could not create runtime state directories: ${
+						e instanceof Error ? e.message : String(e)
+					}`,
+				],
+			},
+			paths,
+		);
+		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+		else console.log(chalk.red(status.error));
+		process.exitCode = 20;
+		return;
+	}
+
+	const credentialAvailable = hasRuntimeCredential({ manifestPath: opts.manifestFile, paths });
+	const nonInteractiveOk = opts.nonInteractive === true;
+	const errors: string[] = [];
+	let stage: RuntimeBootStage = "detect";
+	let exitCode = 20;
+	if (!nonInteractiveOk) {
+		errors.push("runtime init requires --non-interactive in hosted mode");
+	}
+	if (!hostPolicy.exists) {
+		errors.push(`missing hosted runtime policy at ${hostPolicy.path}`);
+	} else if (!hostPolicy.valid) {
+		errors.push(
+			`invalid hosted runtime policy at ${hostPolicy.path}: ${hostPolicy.error ?? "parse failed"}`,
+		);
+	}
+	if (!credentialAvailable) {
+		errors.push(`missing ${runtimeCredentialName(paths)} and no last-good runtime manifest cache`);
+	}
+	if (errors.length === 0) {
+		stage = "local";
+		const loaded = await loadRuntimeManifest(paths, { manifestPath: opts.manifestFile });
+		if ("errors" in loaded) {
+			stage = loaded.stage;
+			exitCode = loaded.mode === "manifest-rejected" ? 22 : 21;
+			errors.push(...loaded.errors);
+			const status = buildRuntimeBootStatus(
+				{
+					mode: loaded.mode,
+					status: "error",
+					stage,
+					bootId,
+					runtimeMode: mode,
+					activeGeneration: loaded.activeGeneration ?? null,
+					rejectedGeneration: loaded.rejectedGeneration ?? null,
+					enabledRuntimes: [],
+					error: errors[0],
+					errors,
+					exitCode,
+					datasource: "RuntimeSource",
+					hostPolicy: hostPolicySummary(hostPolicy),
+				},
+				paths,
+			);
+			writeRuntimeBootStatus(status, paths);
+
+			if (opts.json || !process.stdout.isTTY) {
+				console.log(JSON.stringify(status, null, 2));
+			} else {
+				console.log(chalk.bold("clawdi runtime init"));
+				console.log(chalk.yellow(`  ${loaded.mode}: ${errors[0]}`));
+				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+			}
+			process.exitCode = exitCode;
+			return;
+		}
+
+		const convergence = convergeRuntimeManifest(loaded, paths);
+		const installOk = convergence.installErrors.length === 0;
+		const status = buildRuntimeBootStatus(
+			{
+				mode: convergence.mode,
+				status: installOk ? "ok" : "error",
+				stage: "final",
+				bootId,
+				runtimeMode: mode,
+				activeGeneration: convergence.manifest.generation,
+				instanceId: convergence.manifest.instanceId,
+				enabledRuntimes: convergence.enabledRuntimes,
+				error: convergence.installErrors[0],
+				errors: convergence.installErrors,
+				exitCode: installOk ? 0 : 23,
+				datasource: "RuntimeSource",
+				hostPolicy: hostPolicySummary(hostPolicy),
+				manifestSource: {
+					type: convergence.source,
+					path: convergence.sourcePath,
+					offline: convergence.offline,
+				},
+				convergence: convergence.outputs,
+			},
+			paths,
+		);
+		writeRuntimeBootStatus(status, paths);
+
+		if (opts.json || !process.stdout.isTTY) {
+			console.log(JSON.stringify(status, null, 2));
+		} else {
+			console.log(chalk.bold("clawdi runtime init"));
+			console.log(
+				chalk.green(`  ${convergence.mode}: generation ${convergence.manifest.generation}`),
+			);
+			console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+		}
+		process.exitCode = installOk ? 0 : 23;
+		return;
+	}
+
+	const status = buildRuntimeBootStatus(
+		{
+			mode: "repair",
+			status: "error",
+			stage,
+			bootId,
+			runtimeMode: mode,
+			activeGeneration: null,
+			enabledRuntimes: [],
+			error: errors[0],
+			errors,
+			exitCode,
+			datasource: "RuntimeSource",
+			hostPolicy: hostPolicySummary(hostPolicy),
+		},
+		paths,
+	);
+	writeRuntimeBootStatus(status, paths);
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(status, null, 2));
+	} else {
+		console.log(chalk.bold("clawdi runtime init"));
+		console.log(chalk.yellow(`  repair: ${errors[0]}`));
+		console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+	}
+	process.exitCode = exitCode;
+}
+
+export async function runtimeStatus(opts: { json?: boolean } = {}) {
+	const paths = getRuntimePaths();
+	const read = readRuntimeBootStatus(paths);
+	const payload = {
+		schemaVersion: "clawdi.runtimeStatus.v1",
+		runtimeMode: paths.mode,
+		paths: {
+			bootStatus: paths.bootStatus,
+			cloudStatus: paths.cloudStatus,
+			cloudResult: paths.cloudResult,
+			installInventory: paths.installInventory,
+			syncState: paths.syncState,
+			instanceData: paths.instanceData,
+		},
+		...read,
+	};
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(payload, null, 2));
+		return;
+	}
+
+	console.log(chalk.bold("clawdi runtime status"));
+	console.log();
+	if (!read.exists) {
+		console.log(chalk.gray("  No runtime boot status has been written yet."));
+		return;
+	}
+	if (read.error) {
+		console.log(chalk.red(`  Could not read ${read.source}: ${read.error}`));
+		process.exitCode = 1;
+		return;
+	}
+	if (!read.status) {
+		console.log(chalk.yellow("  Runtime status files exist, but boot-status.json is missing."));
+		return;
+	}
+	console.log(`  Mode: ${read.status?.mode ?? "unknown"}`);
+	console.log(`  Status: ${read.status?.status ?? "unknown"}`);
+	console.log(`  Stage: ${read.status?.stage ?? "unknown"}`);
+	console.log(chalk.gray(`  Source: ${read.source}`));
+	if (read.status?.error) console.log(chalk.yellow(`  Error: ${read.status.error}`));
+}
+
+export async function runtimeDoctor(opts: { json?: boolean } = {}) {
+	const paths = getRuntimePaths();
+	const policy = readHostPolicy(paths.hostPolicy);
+	const lastStatus = readRuntimeBootStatus(paths);
+	const checks: RuntimeDoctorCheck[] = [
+		{
+			name: "Runtime mode",
+			ok: paths.mode === "hosted",
+			detail: paths.mode,
+			hint: "Hosted mode requires a host policy or CLAWDI_RUNTIME_MODE=hosted.",
+		},
+		{
+			name: "Host policy",
+			ok: policy.exists && policy.valid,
+			detail: policy.exists ? (policy.valid ? policy.path : policy.error) : "missing",
+			hint: "Expected a readable JSON policy at the configured host policy path.",
+		},
+		{
+			name: "Service state",
+			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
+			detail: paths.serviceStateRoot,
+			hint: "The hosted service-state volume must be writable by the runtime user.",
+		},
+		{
+			name: "Runtime HOME",
+			ok: existsSync(paths.userHome) && writable(paths.userHome),
+			detail: paths.userHome,
+			hint: "HOME should be the persistent runtime/user volume.",
+		},
+		{
+			name: "Ephemeral runtime state",
+			ok: existsSync(paths.runRoot) && writable(paths.runRoot),
+			detail: paths.runRoot,
+			hint: "The runtime tmpfs path should be recreated on each boot.",
+		},
+		{
+			name: "Sensitive instance data",
+			ok: !existsSync(paths.sensitiveInstanceData) || readable(paths.sensitiveInstanceData),
+			detail: existsSync(paths.sensitiveInstanceData) ? "present" : "absent",
+		},
+		{
+			name: "Last boot status",
+			ok:
+				!lastStatus.exists ||
+				(lastStatus.status?.status === "ok" && lastStatus.status.errors.length === 0),
+			detail: !lastStatus.exists
+				? "none"
+				: (lastStatus.error ??
+					`${lastStatus.status?.status ?? "unknown"} / ${lastStatus.status?.mode ?? "unknown"}`),
+			hint: "Run `clawdi runtime status` for the last boot result.",
+		},
+	];
+	const failed = checks.filter((check) => !check.ok).length;
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(checks, null, 2));
+		if (failed > 0) process.exitCode = 1;
+		return;
+	}
+
+	console.log(chalk.bold("clawdi runtime doctor"));
+	console.log();
+	for (const check of checks) {
+		const icon = check.ok ? chalk.green("✓") : chalk.red("✗");
+		const detail = check.detail ? chalk.gray(` — ${check.detail}`) : "";
+		console.log(`  ${icon} ${check.name}${detail}`);
+		if (!check.ok && check.hint) console.log(chalk.gray(`     ${check.hint}`));
+	}
+	if (failed > 0) process.exitCode = 1;
 }

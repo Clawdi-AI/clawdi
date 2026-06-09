@@ -1,6 +1,9 @@
 node_modules/
 .next/
 dist/
+dist-bin/
+packages/cli/dist-release/
+packages/cli/clawdi-mitm-broker/
 .turbo/
 *.tsbuildinfo
 

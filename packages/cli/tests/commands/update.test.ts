@@ -15,6 +15,8 @@ let tmpHome: string;
 let origHome: string | undefined;
 let origNoCheck: string | undefined;
 let origNoAuto: string | undefined;
+let origRuntimeMode: string | undefined;
+let origHostPolicyPath: string | undefined;
 let origArgv: string[];
 
 async function withStdoutTty<T>(fn: () => Promise<T>): Promise<T> {
@@ -32,9 +34,13 @@ beforeEach(() => {
 	origHome = process.env.HOME;
 	origNoCheck = process.env.CLAWDI_NO_UPDATE_CHECK;
 	origNoAuto = process.env.CLAWDI_NO_AUTO_UPDATE;
+	origRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
+	origHostPolicyPath = process.env.CLAWDI_HOST_POLICY_PATH;
 	origArgv = [...process.argv];
 	delete process.env.CLAWDI_NO_UPDATE_CHECK;
 	delete process.env.CLAWDI_NO_AUTO_UPDATE;
+	delete process.env.CLAWDI_RUNTIME_MODE;
+	delete process.env.CLAWDI_HOST_POLICY_PATH;
 	tmpHome = join(tmpdir(), `clawdi-update-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	process.env.HOME = tmpHome;
@@ -48,6 +54,10 @@ afterEach(() => {
 	else delete process.env.CLAWDI_NO_UPDATE_CHECK;
 	if (origNoAuto) process.env.CLAWDI_NO_AUTO_UPDATE = origNoAuto;
 	else delete process.env.CLAWDI_NO_AUTO_UPDATE;
+	if (origRuntimeMode) process.env.CLAWDI_RUNTIME_MODE = origRuntimeMode;
+	else delete process.env.CLAWDI_RUNTIME_MODE;
+	if (origHostPolicyPath) process.env.CLAWDI_HOST_POLICY_PATH = origHostPolicyPath;
+	else delete process.env.CLAWDI_HOST_POLICY_PATH;
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
@@ -279,6 +289,24 @@ describe("daemonAutoUpdateOnce", () => {
 });
 
 describe("maybeAutoUpdate", () => {
+	it("skips local self-update path in hosted runtime mode", async () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const { captured, restore } = mockFetch([]);
+		try {
+			await withStdoutTty(() =>
+				maybeAutoUpdate({
+					detectInstaller: () => "npm",
+					spawnBackgroundInstall: () => {
+						throw new Error("should not spawn hosted local self-update");
+					},
+				}),
+			);
+		} finally {
+			restore();
+		}
+		expect(captured).toHaveLength(0);
+	});
+
 	it("writes last-version on first run; no notice", async () => {
 		const orig = console.log;
 		let captured = "";
