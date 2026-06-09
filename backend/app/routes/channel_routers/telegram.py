@@ -26,6 +26,7 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
+    ChannelAccount,
     ChannelBinding,
     ChannelBotAgentLink,
 )
@@ -52,12 +53,14 @@ from app.services.channels import (
     drop_pending_telegram_updates,
     find_binding,
     get_active_channel_account,
+    parse_pair_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
     record_inbound_messages_for_bindings,
     record_telegram_update_references,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
+    send_pairing_command_reply,
     telegram_chat_from_update,
     telegram_external_user_id_from_update,
     telegram_message_id_from_update,
@@ -371,6 +374,7 @@ async def telegram_webhook(
 
     external_chat_id, external_chat_type, external_chat_name = chat
     text = telegram_text_from_update(payload)
+    command = parse_pair_command(text)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -379,6 +383,7 @@ async def telegram_webhook(
         external_chat_name=external_chat_name,
         external_user_id=telegram_external_user_id_from_update(payload),
         text=text,
+        command=command,
     )
 
     messages = await record_inbound_messages_for_bindings(
@@ -400,6 +405,20 @@ async def telegram_webhook(
             payload=payload,
         )
     await db.commit()
+    reply = await send_pairing_command_reply(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        command=command,
+        binding_result=binding_result,
+    )
+    if reply is not None:
+        await db.commit()
+    await _replay_telegram_commands_on_pair(
+        db,
+        account=account,
+        binding=binding_result.binding if binding_result.paired else None,
+    )
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
         delivered_any = False
@@ -648,6 +667,58 @@ async def _fan_out_telegram_commands(
                 content=_telegram_response_json(response),
             )
     return None
+
+
+async def _replay_telegram_commands_on_pair(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+) -> None:
+    if binding is None or not account.encrypted_provider_token or not account.provider_token_nonce:
+        return
+    link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE:
+        return
+    config = link.config if isinstance(link.config, dict) else {}
+    shadow = config.get("telegram_agent_commands")
+    if not isinstance(shadow, dict):
+        return
+    for key, commands in shadow.items():
+        if not isinstance(key, str) or not isinstance(commands, list):
+            continue
+        scope_key, language_code = _telegram_command_shadow_parts(key)
+        if scope_key not in {
+            "default",
+            "all_private_chats",
+            "all_group_chats",
+            "all_chat_administrators",
+        }:
+            continue
+        scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
+        if scope is None:
+            continue
+        payload: dict[str, Any] = {
+            "commands": [command for command in commands if isinstance(command, dict)],
+            "scope": scope,
+        }
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            await _post_telegram_command_payload(
+                account=account,
+                method="setMyCommands",
+                payload=payload,
+            )
+        except HTTPException:
+            return
+
+
+def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:
+    scope_key, separator, language_code = key.rpartition(":")
+    if not separator:
+        return key, ""
+    return scope_key, language_code
 
 
 def _telegram_command_fanout_scope(

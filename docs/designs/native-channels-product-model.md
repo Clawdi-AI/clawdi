@@ -31,6 +31,9 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
 | External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
 | Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. | `ChannelAccount.visibility` |
+| Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/api/channels/bot-pool` response |
+| Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/api/channels/bot-pool` response |
+| Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/api/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
 | Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp Graph/Baileys, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
 | External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
@@ -126,7 +129,8 @@ Public bots:
 - Stored as `visibility = public`.
 - Visible to authenticated users for linking and pairing.
 - Provider credentials, webhook secret rotation, archive, and provider-wide
-  command sync remain admin/owner operations.
+  command sync remain admin operations. The backing `user_id` is not product
+  ownership and does not grant mutable user API access.
 - User-created child state is still owned by the requesting user:
   `channel_bot_agent_links`, `channel_pair_codes`, `channel_bindings`,
   `channel_messages`, `channel_deliveries`, attachments, scheduled messages,
@@ -134,6 +138,37 @@ Public bots:
 
 This means a public bot is shared infrastructure, but each user's route and
 agent token state is private to that user.
+
+Public and private bots have the same user-facing usage surface once the caller
+can access the account. The difference is account management, not runtime use:
+
+| Capability | Private user bot | Public Clawdi-managed bot |
+| --- | --- | --- |
+| List/read account | Owner only | Every authenticated user when active |
+| Create bot-agent link | Owner only | Any authenticated user, scoped to that user |
+| Rotate link token | Caller-owned links only | Caller-owned links only |
+| Create pair code | Caller-owned link only | Caller-owned link only |
+| Pair/unpair external chat | Actor-scoped shared state machine | Actor-scoped shared state machine |
+| List bindings/messages/send | Caller-owned child state only | Caller-owned child state only |
+| WhatsApp tenant credentials/auth cert | Caller-owned child state plus shared account cert | Caller-owned child state plus shared account cert |
+| Delete account | Owner through user API | Admin API only |
+| Provider token/config/webhook secret | Owner/admin for private managed accounts | Admin API only |
+| Provider-wide command sync | Owner through user API | Admin API only |
+
+Bot pool:
+
+- `GET /api/channels/bot-pool` returns the user's selectable bot candidates
+  grouped by provider.
+- Owned private bots appear only for their owner.
+- Only active bots appear in the selectable pool. Disabled private bots remain
+  readable/manageable by their owner, but they are not runtime candidates and
+  cannot create new links, pair codes, tokens, sends, or runtime credentials.
+- Active public bots appear for every authenticated user.
+- Each item includes `access` and `capabilities`. The current access values are
+  `owner` and `public`. UI and hosted runtime code should prefer capabilities
+  over inferring behavior from `visibility`.
+- The pool does not grant ownership. Public bot provider credentials, webhook
+  secrets, account config, archive, and command sync remain admin-managed.
 
 ## Session And Pairing Model
 
@@ -158,6 +193,19 @@ Pair flow:
 6. The backend claims the pair code and creates or updates the active binding.
 7. The binding stores the target link, Clawdi user owner, external chat id, and
    external actor id.
+8. The provider adapter sends a best-effort visible reply to the same external
+   chat, such as `Paired! This chat is now connected to your agent.`.
+9. If the provider has persistent bot command menus, the adapter replays the
+   link's stored broad-scope command state onto the newly paired chat. Telegram
+   replays broad `setMyCommands` scopes to a per-chat scope. Discord replays
+   stored global application commands to the newly paired guild when the guild
+   is uncontested.
+
+The visible reply is not part of the database transaction that claims the pair
+code. If the provider send fails, the claimed binding remains valid and the
+webhook still succeeds. This prevents a transient provider outage from rolling
+back a pairing operation that was already accepted by Clawdi. Command replay is
+also best-effort and must not roll back the binding.
 
 Unpair flow:
 
@@ -166,6 +214,7 @@ Unpair flow:
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
 4. The active binding is archived.
+5. The provider adapter sends a best-effort visible unpair or failure reply.
 
 Pair codes are not consumed when actor authorization fails.
 
@@ -175,7 +224,7 @@ Pairing control is actor-scoped, not just chat-scoped.
 
 The backend must prevent this attack:
 
-1. Alice pairs a shared public bot in a group chat to Alice's agent.
+1. Alice pairs a public bot in a group chat to Alice's agent.
 2. Bob is another group participant.
 3. Bob sends `/bot_unpair`.
 4. Bob sends `/bot_pair <bob-code>`.
@@ -293,25 +342,46 @@ Outbound sends:
 
 ## API Boundary
 
+Repository and service ownership:
+
+| Owner | Responsibility |
+| --- | --- |
+| `clawdi` repo | Native channel tables, user/admin channel APIs, provider webhooks, pair/unpair state machine, visible command replies, provider protocol adapters, workers, agent SDK emulation, and CLI/runtime channel materialization. |
+| Hosted service / monorepo | Deployment profile selection, feature flags, hosted runtime orchestration, and calls into `clawdi` native channel APIs to create or reuse accounts, links, pair codes, and runtime manifests. |
+
+The hosted service must not duplicate channel bindings, pair-code claiming,
+provider webhook handlers, provider protocol state, or `/bot_pair` behavior.
+Those are product-state concerns owned by `clawdi` native Channels. Hosted
+deployment code may pass a Clawdi auth token and selected channel intent into a
+runtime, or call user-facing channel APIs before launch, but the canonical
+channel state remains in the native channel backend.
+
 User-facing control plane:
 
 | API | Scope |
 | --- | --- |
-| `GET /api/channels` | Lists owned private bots and accessible public bots. |
+| `GET /api/channels` | Lists caller-owned private bots only. Use bot-pool for selectable public bots. |
+| `GET /api/channels/bot-pool` | Lists selectable bot candidates grouped by provider, including caller access and capabilities. |
 | `POST /api/channels` | Creates private bots only. |
 | `GET /api/channels/{id}` | Reads an owned private bot or accessible public bot. |
-| `POST /api/channels/{id}/agent-links` | Creates a user-owned link from an accessible bot to one of the user's agents. |
+| `POST /api/channels/{id}/agent-links` | Creates a user-owned link from an active accessible bot to one of the user's agents. |
 | `GET /api/channels/{id}/agent-links` | Lists only the caller's links. |
 | `POST /api/channels/{id}/agent-links/{link_id}/token` | Rotates only the caller's link token. |
-| `POST /api/channels/{id}/pair-codes` | Creates a one-time code for one caller-owned link. |
+| `POST /api/channels/{id}/pair-codes` | Creates a one-time code for one caller-owned link on an active accessible bot. |
 | `GET /api/channels/{id}/bindings` | Lists only the caller's active bindings. |
-| `POST /api/channels/{id}/messages` | Sends only through the caller's active binding. |
+| `POST /api/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
+| `DELETE /api/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
+| `POST /api/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
+| `POST /api/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
+| `GET /api/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
+| `GET /api/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
 
 CLI control plane:
 
 | CLI | Scope |
 | --- | --- |
-| `clawdi channel list` | Lists owned private bots and accessible public bots. |
+| `clawdi channel list` | Lists caller-owned private bots only. |
+| `clawdi channel available` | Lists selectable owned private and public bots from `/api/channels/bot-pool`. |
 | `clawdi channel create <provider> <name>` | Creates a private bot, optionally with an initial `--agent` link. |
 | `clawdi channel links <channel-id>` | Lists only the caller's bot-agent links for that bot. |
 | `clawdi channel link <channel-id> --agent <agent-id>` | Creates a caller-owned link from an accessible bot to one of the caller's agents. |
@@ -375,7 +445,9 @@ Every channel adapter must implement the same product contract:
 9. Persist inbound messages through the shared message recorder.
 10. Persist provider references and aliases after the binding is known.
 11. Mark handled system commands as delivered so they do not reach agents.
-12. Deliver only non-system, bound messages to link-scoped agent surfaces.
+12. Send a best-effort visible reply for handled pair/unpair/unknown command
+    outcomes.
+13. Deliver only non-system, bound messages to link-scoped agent surfaces.
 
 Adapters should not implement their own ownership rules. Ownership,
 actor-scoped control, pair code claim semantics, and command handling belong in

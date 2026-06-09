@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 ChannelVisibility = Literal["private", "public"]
+ChannelBotPoolAccess = Literal["owner", "public"]
 
 
 class ChannelAccountCreate(BaseModel):
@@ -51,6 +52,23 @@ class ChannelAccountResponse(BaseModel):
     has_provider_token: bool
     webhook_url: str
     created_at: datetime
+
+
+class ChannelBotPoolCapabilities(BaseModel):
+    link_agent: bool
+    pair_chat: bool
+    send_message: bool
+    manage_account: bool
+    sync_commands: bool
+
+
+class ChannelBotPoolItem(ChannelAccountResponse):
+    access: ChannelBotPoolAccess
+    capabilities: ChannelBotPoolCapabilities
+
+
+class ChannelBotPoolResponse(BaseModel):
+    providers: dict[str, list[ChannelBotPoolItem]]
 
 
 class ChannelAccountCreatedResponse(ChannelAccountResponse):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_STATUS_DISABLED,
+    CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_IN_PROGRESS,
@@ -66,6 +68,8 @@ from app.services.metrics import (
 )
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 from app.services.vault_crypto import decrypt, encrypt
+
+log = logging.getLogger(__name__)
 
 PAIR_COMMAND = "/bot_pair"
 UNPAIR_COMMAND = "/bot_unpair"
@@ -387,16 +391,23 @@ async def rotate_bot_agent_link_token(
     return raw_token
 
 
-async def get_owned_channel_account(
+async def get_owned_private_channel_account(
     db: AsyncSession,
     *,
     account_id: UUID,
     user_id: UUID,
 ) -> ChannelAccount:
+    """Resolve a user-owned mutable channel account.
+
+    Public channel accounts are Clawdi-managed infrastructure even when their
+    database owner is a target user row. User-facing mutable operations must
+    only apply to private accounts created by that user.
+    """
     result = await db.execute(
         select(ChannelAccount).where(
             ChannelAccount.id == account_id,
             ChannelAccount.user_id == user_id,
+            ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
             ChannelAccount.archived_at.is_(None),
         )
     )
@@ -404,10 +415,6 @@ async def get_owned_channel_account(
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     return account
-
-
-def is_public_channel_account(account: ChannelAccount) -> bool:
-    return account.visibility == CHANNEL_VISIBILITY_PUBLIC
 
 
 async def get_accessible_channel_account(
@@ -435,11 +442,34 @@ async def get_accessible_channel_account(
     return account
 
 
+async def get_usable_channel_account(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    user_id: UUID,
+) -> ChannelAccount:
+    result = await db.execute(
+        select(ChannelAccount).where(
+            ChannelAccount.id == account_id,
+            ChannelAccount.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            or_(
+                ChannelAccount.user_id == user_id,
+                ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+            ),
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
+    return account
+
+
 async def get_active_channel_account(db: AsyncSession, *, account_id: UUID) -> ChannelAccount:
     """Resolve an account for provider ingress or agent-facing SDK routes.
 
-    This is intentionally visibility-neutral: private user bots and public
-    Clawdi-managed bots both receive provider webhooks under account-scoped URLs.
+    This is intentionally visibility-neutral: private user bots and public bots
+    both receive provider webhooks under account-scoped URLs.
     User-facing access checks belong in get_accessible_channel_account.
     """
     result = await db.execute(
@@ -916,6 +946,53 @@ def pairing_reply_for_command(
 def extract_pair_code(text: str | None) -> str | None:
     command = parse_pair_command(text)
     return command.code if command is not None and command.kind == "pair" else None
+
+
+async def send_pairing_command_reply(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    send_external_chat_id: str | None = None,
+    command: ChannelPairCommand | None,
+    binding_result: InboundBindingResult,
+) -> ChannelMessage | None:
+    if not binding_result.command_handled:
+        return None
+    reply = pairing_reply_for_command(command, binding_result)
+    reply_link_id = (
+        binding_result.binding.bot_agent_link_id
+        if binding_result.binding is not None
+        and (binding_result.paired or binding_result.unpaired)
+        else None
+    )
+    bind_reply_to_existing = reply_link_id is not None
+    try:
+        return await send_channel_outbound_message(
+            db,
+            account=account,
+            external_chat_id=send_external_chat_id or external_chat_id,
+            text=reply,
+            bot_agent_link_id=reply_link_id,
+            bind_to_existing=bind_reply_to_existing,
+        )
+    except HTTPException as exc:
+        log.warning(
+            "channel_pairing_reply_failed provider=%s account_id=%s chat_id=%s status=%s detail=%s",
+            account.provider,
+            account.id,
+            external_chat_id,
+            exc.status_code,
+            exc.detail,
+        )
+    except Exception:
+        log.exception(
+            "channel_pairing_reply_failed provider=%s account_id=%s chat_id=%s",
+            account.provider,
+            account.id,
+            external_chat_id,
+        )
+    return None
 
 
 def telegram_chat_from_update(payload: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
@@ -1731,6 +1808,7 @@ async def send_channel_outbound_message(
     external_chat_id: str,
     text: str,
     bot_agent_link_id: UUID | None = None,
+    bind_to_existing: bool = True,
 ) -> ChannelMessage:
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await send_telegram_message(
@@ -1739,6 +1817,7 @@ async def send_channel_outbound_message(
             external_chat_id=external_chat_id,
             text=text,
             bot_agent_link_id=bot_agent_link_id,
+            bind_to_existing=bind_to_existing,
         )
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         return await send_discord_message(
@@ -1747,6 +1826,7 @@ async def send_channel_outbound_message(
             external_chat_id=external_chat_id,
             text=text,
             bot_agent_link_id=bot_agent_link_id,
+            bind_to_existing=bind_to_existing,
         )
     if account.provider == CHANNEL_PROVIDER_WHATSAPP:
         return await send_whatsapp_message(
@@ -1755,6 +1835,7 @@ async def send_channel_outbound_message(
             external_chat_id=external_chat_id,
             text=text,
             bot_agent_link_id=bot_agent_link_id,
+            bind_to_existing=bind_to_existing,
         )
     if account.provider == CHANNEL_PROVIDER_IMESSAGE:
         return await send_imessage_message(
@@ -1763,6 +1844,7 @@ async def send_channel_outbound_message(
             external_chat_id=external_chat_id,
             text=text,
             bot_agent_link_id=bot_agent_link_id,
+            bind_to_existing=bind_to_existing,
         )
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -1798,6 +1880,7 @@ async def send_telegram_message(
     external_chat_id: str,
     text: str,
     bot_agent_link_id: UUID | None = None,
+    bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_TELEGRAM)
     provider_message_id, payload = await _send_telegram_provider_payload(
@@ -1805,11 +1888,15 @@ async def send_telegram_message(
         external_chat_id=external_chat_id,
         text=text,
     )
-    binding = await find_binding(
-        db,
-        account=account,
-        external_chat_id=external_chat_id,
-        bot_agent_link_id=bot_agent_link_id,
+    binding = (
+        await find_binding(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if bind_to_existing
+        else None
     )
     return await _record_outbound_channel_message(
         db,
@@ -1895,6 +1982,7 @@ async def send_discord_message(
     external_chat_id: str,
     text: str,
     bot_agent_link_id: UUID | None = None,
+    bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_DISCORD)
     provider_message_id, response_payload = await _send_discord_provider_payload(
@@ -1902,11 +1990,15 @@ async def send_discord_message(
         external_chat_id=external_chat_id,
         text=text,
     )
-    binding = await find_binding(
-        db,
-        account=account,
-        external_chat_id=external_chat_id,
-        bot_agent_link_id=bot_agent_link_id,
+    binding = (
+        await find_binding(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if bind_to_existing
+        else None
     )
     return await _record_outbound_channel_message(
         db,
@@ -2050,6 +2142,7 @@ async def send_whatsapp_message(
     external_chat_id: str,
     text: str,
     bot_agent_link_id: UUID | None = None,
+    bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_WHATSAPP)
     provider_message_id, response_payload = await _send_whatsapp_provider_payload(
@@ -2057,11 +2150,15 @@ async def send_whatsapp_message(
         external_chat_id=external_chat_id,
         text=text,
     )
-    binding = await find_binding(
-        db,
-        account=account,
-        external_chat_id=external_chat_id,
-        bot_agent_link_id=bot_agent_link_id,
+    binding = (
+        await find_binding(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if bind_to_existing
+        else None
     )
     return await _record_outbound_channel_message(
         db,
@@ -2244,13 +2341,18 @@ async def send_imessage_message(
     external_chat_id: str,
     text: str,
     bot_agent_link_id: UUID | None = None,
+    bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_IMESSAGE)
-    binding = await find_imessage_binding_for_send(
-        db,
-        account=account,
-        requested_chat_guid=external_chat_id,
-        bot_agent_link_id=bot_agent_link_id,
+    binding = (
+        await find_imessage_binding_for_send(
+            db,
+            account=account,
+            requested_chat_guid=external_chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if bind_to_existing
+        else None
     )
     bound_chat_guid = binding.external_chat_id if binding is not None else external_chat_id
     provider_chat_guid = resolve_imessage_send_chat_guid(

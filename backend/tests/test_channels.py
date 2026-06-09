@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.channel import (
+    CHANNEL_STATUS_DISABLED,
     DELIVERY_STATUS_FAILED,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
@@ -149,6 +150,39 @@ async def _create_user_with_channel_agent(
     return user, agent
 
 
+async def _create_admin_channel(
+    client: httpx.AsyncClient,
+    *,
+    target_clerk_id: str,
+    provider: str,
+    name: str,
+    visibility: str = "public",
+    provider_token: str | None = None,
+    config: dict[str, Any] | None = None,
+) -> httpx.Response:
+    admin_key = f"admin-{uuid4().hex}"
+    original_admin_key = settings.admin_api_key
+    settings.admin_api_key = admin_key
+    try:
+        payload: dict[str, Any] = {
+            "target_clerk_id": target_clerk_id,
+            "provider": provider,
+            "name": name,
+            "visibility": visibility,
+        }
+        if provider_token is not None:
+            payload["provider_token"] = provider_token
+        if config is not None:
+            payload["config"] = config
+        return await client.post(
+            "/api/admin/channels",
+            headers={"X-Admin-Key": admin_key},
+            json=payload,
+        )
+    finally:
+        settings.admin_api_key = original_admin_key
+
+
 class _FakeProviderResponse:
     def __init__(
         self,
@@ -255,6 +289,12 @@ def _reset_sequenced_provider_client(status_codes: list[int]) -> None:
     _SequencedProviderClient.status_codes = list(status_codes)
 
 
+def _clear_fake_provider_calls() -> None:
+    _FakeProviderClient.calls = []
+    _FailingProviderClient.calls = []
+    _SequencedProviderClient.calls = []
+
+
 class _MemoryFileStore:
     def __init__(self):
         self.data: dict[str, bytes] = {}
@@ -287,6 +327,7 @@ async def _create_paired_imessage_channel(
     chat_guid: str,
     webhook_message_guid: str = "imsg-test-message",
 ) -> dict[str, Any]:
+    sequenced_status_codes = list(_SequencedProviderClient.status_codes)
     created = (
         await client.post(
             "/api/channels",
@@ -326,6 +367,8 @@ async def _create_paired_imessage_channel(
             }
         },
     )
+    _SequencedProviderClient.status_codes = sequenced_status_codes
+    _clear_fake_provider_calls()
     return created
 
 
@@ -386,6 +429,7 @@ async def _pair_telegram_chat(
             },
         },
     )
+    _clear_fake_provider_calls()
 
 
 async def _create_paired_discord_channel(
@@ -562,27 +606,180 @@ async def test_user_created_channel_is_private_to_owner(
 
 
 @pytest.mark.asyncio
+async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    private = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "telegram", "name": f"pool-private-{uuid4().hex}"},
+        )
+    ).json()
+    public = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"pool-public-{uuid4().hex}",
+    )
+    assert public.status_code == 201, public.text
+    public_body = public.json()
+    disabled_private = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "telegram", "name": f"pool-disabled-{uuid4().hex}"},
+        )
+    ).json()
+    disabled_account = (
+        await db_session.execute(
+            select(ChannelAccount).where(ChannelAccount.id == UUID(disabled_private["id"]))
+        )
+    ).scalar_one()
+    disabled_account.status = CHANNEL_STATUS_DISABLED
+    await db_session.flush()
+    disabled_whatsapp = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "whatsapp", "name": f"pool-disabled-wa-{uuid4().hex}"},
+        )
+    ).json()
+    disabled_whatsapp_account = (
+        await db_session.execute(
+            select(ChannelAccount).where(ChannelAccount.id == UUID(disabled_whatsapp["id"]))
+        )
+    ).scalar_one()
+    disabled_whatsapp_account.status = CHANNEL_STATUS_DISABLED
+    await db_session.flush()
+
+    pool = await client.get("/api/channels/bot-pool")
+    assert pool.status_code == 200
+    telegram = pool.json()["providers"]["telegram"]
+    pool_by_id = {item["id"]: item for item in telegram}
+    assert pool_by_id[private["id"]]["visibility"] == "private"
+    assert pool_by_id[private["id"]]["access"] == "owner"
+    assert pool_by_id[private["id"]]["capabilities"] == {
+        "link_agent": True,
+        "pair_chat": True,
+        "send_message": True,
+        "manage_account": True,
+        "sync_commands": True,
+    }
+    assert pool_by_id[public_body["id"]]["visibility"] == "public"
+    assert pool_by_id[public_body["id"]]["access"] == "public"
+    assert pool_by_id[public_body["id"]]["capabilities"] == {
+        "link_agent": True,
+        "pair_chat": True,
+        "send_message": True,
+        "manage_account": False,
+        "sync_commands": False,
+    }
+
+    other_user, _other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="pool-other",
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_pool = await other_client.get("/api/channels/bot-pool")
+    assert other_pool.status_code == 200
+    other_telegram = other_pool.json()["providers"]["telegram"]
+    other_ids = {item["id"] for item in other_telegram}
+    assert public_body["id"] in other_ids
+    assert private["id"] not in other_ids
+    assert disabled_private["id"] not in pool_by_id
+    other_public = next(item for item in other_telegram if item["id"] == public_body["id"])
+    assert other_public["access"] == "public"
+
+    disabled_detail = await client.get(f"/api/channels/{disabled_private['id']}")
+    disabled_links = await client.get(f"/api/channels/{disabled_private['id']}/agent-links")
+    disabled_link_create = await client.post(
+        f"/api/channels/{disabled_private['id']}/agent-links",
+        json={},
+    )
+    disabled_pair = await client.post(
+        f"/api/channels/{disabled_private['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+    disabled_send = await client.post(
+        f"/api/channels/{disabled_private['id']}/messages",
+        json={"external_chat_id": "12345", "text": "hello"},
+    )
+    disabled_whatsapp_credential = await client.post(
+        f"/api/channels/whatsapp/{disabled_whatsapp['id']}/tenant-creds",
+        json={},
+    )
+    disabled_whatsapp_auth_cert = await client.get(
+        f"/api/channels/whatsapp/{disabled_whatsapp['id']}/auth-cert"
+    )
+    assert disabled_detail.status_code == 200
+    assert disabled_links.status_code == 200
+    assert disabled_link_create.status_code == 404
+    assert disabled_pair.status_code == 404
+    assert disabled_send.status_code == 404
+    assert disabled_whatsapp_credential.status_code == 404
+    assert disabled_whatsapp_auth_cert.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    monkeypatch,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-owned-boundary-{uuid4().hex}",
+        provider_token="123456:telegram-secret",
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+
+    sync = await client.post(f"/api/channels/{account_id}/commands/sync", json={})
+    delete = await client.delete(f"/api/channels/{account_id}")
+    link = await client.post(
+        f"/api/channels/{account_id}/agent-links",
+        json={"agent_id": str(channel_agent.id)},
+    )
+    pair = await client.post(
+        f"/api/channels/{account_id}/pair-codes",
+        json={"agent_id": str(channel_agent.id), "ttl_seconds": 900},
+    )
+
+    assert sync.status_code == 404
+    assert delete.status_code == 404
+    assert link.status_code == 201
+    assert link.json()["agent_id"] == str(channel_agent.id)
+    assert pair.status_code == 201
+    assert pair.json()["agent_id"] == str(channel_agent.id)
+    assert _FakeProviderClient.calls == []
+    account = (
+        await db_session.execute(
+            select(ChannelAccount).where(ChannelAccount.id == UUID(account_id))
+        )
+    ).scalar_one()
+    assert account.archived_at is None
+    assert account.visibility == "public"
+
+
+@pytest.mark.asyncio
 async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
 ):
-    admin_key = f"admin-{uuid4().hex}"
-    original_admin_key = settings.admin_api_key
-    settings.admin_api_key = admin_key
-    try:
-        created = await client.post(
-            "/api/admin/channels",
-            headers={"X-Admin-Key": admin_key},
-            json={
-                "target_clerk_id": seed_user.clerk_id,
-                "provider": "telegram",
-                "name": f"public-telegram-{uuid4().hex}",
-                "visibility": "public",
-            },
-        )
-    finally:
-        settings.admin_api_key = original_admin_key
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-telegram-{uuid4().hex}",
+    )
     assert created.status_code == 201, created.text
     admin_body = created.json()
     account_id = UUID(admin_body["id"])
@@ -594,8 +791,17 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     async with _client_for_user(db_session, user_a) as client_a:
         listed = await client_a.get("/api/channels")
         assert listed.status_code == 200
-        public_item = next(item for item in listed.json() if item["id"] == str(account_id))
+        assert all(item["id"] != str(account_id) for item in listed.json())
+
+        pool = await client_a.get("/api/channels/bot-pool")
+        assert pool.status_code == 200
+        public_item = next(
+            item
+            for item in pool.json()["providers"]["telegram"]
+            if item["id"] == str(account_id)
+        )
         assert public_item["visibility"] == "public"
+        assert public_item["access"] == "public"
 
         pair = await client_a.post(
             f"/api/channels/{account_id}/pair-codes",
@@ -689,27 +895,64 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
 
 
 @pytest.mark.asyncio
-async def test_group_pairing_can_only_be_changed_by_pairing_actor(
+async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
 ):
-    admin_key = f"admin-{uuid4().hex}"
-    original_admin_key = settings.admin_api_key
-    settings.admin_api_key = admin_key
-    try:
-        created = await client.post(
-            "/api/admin/channels",
-            headers={"X-Admin-Key": admin_key},
-            json={
-                "target_clerk_id": seed_user.clerk_id,
-                "provider": "telegram",
-                "name": f"public-group-telegram-{uuid4().hex}",
-                "visibility": "public",
-            },
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="whatsapp",
+        name=f"public-whatsapp-{uuid4().hex}",
+        provider_token="wa-access-token",
+        config={"phone_number_id": "phone-public"},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="public-wa-a")
+    user_b, _agent_b = await _create_user_with_channel_agent(db_session, label="public-wa-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        auth_cert = await client_a.get(f"/api/channels/whatsapp/{account_id}/auth-cert")
+        credential = await client_a.post(
+            f"/api/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_id": str(agent_a.id), "phone_user": "15551234567"},
         )
-    finally:
-        settings.admin_api_key = original_admin_key
+        listed_a = await client_a.get(f"/api/channels/whatsapp/{account_id}/tenant-creds")
+
+    assert auth_cert.status_code == 200
+    assert auth_cert.json()["ISSUER"] == "clawdi"
+    assert credential.status_code == 201, credential.text
+    assert credential.json()["agent_id"] == str(agent_a.id)
+    assert credential.json()["auth_cert"]["ISSUER"] == "clawdi"
+    assert len(listed_a.json()) == 1
+
+    async with _client_for_user(db_session, user_b) as client_b:
+        listed_b = await client_b.get(f"/api/channels/whatsapp/{account_id}/tenant-creds")
+        auth_cert_b = await client_b.get(f"/api/channels/whatsapp/{account_id}/auth-cert")
+
+    assert listed_b.status_code == 200
+    assert listed_b.json() == []
+    assert auth_cert_b.status_code == 200
+    assert auth_cert_b.json()["PUBLIC_KEY"] == auth_cert.json()["PUBLIC_KEY"]
+
+
+@pytest.mark.asyncio
+async def test_group_pairing_can_only_be_changed_by_pairing_actor(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-group-telegram-{uuid4().hex}",
+        provider_token="123456:telegram-secret",
+    )
     assert created.status_code == 201, created.text
     channel = created.json()
     account_id = UUID(channel["id"])
@@ -729,8 +972,11 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
         pair_b = await client_b.post(
             f"/api/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
-        )
+    )
     assert pair_b.status_code == 201
+
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 8100}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
 
     def group_command(message_id: int, text: str, actor_id: int) -> dict[str, Any]:
         return {
@@ -773,6 +1019,21 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     await db_session.refresh(binding)
     assert binding.status == "active"
     assert binding.user_id == user_a.id
+    bob_unpair_reply = (
+        await db_session.execute(
+            select(ChannelMessage)
+                .where(
+                    ChannelMessage.account_id == account_id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                    ChannelMessage.text
+                    == "Only the user who paired this chat can change its pairing.",
+            )
+            .order_by(ChannelMessage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert bob_unpair_reply.binding_id is None
+    assert bob_unpair_reply.bot_agent_link_id is None
 
     bob_takeover = await client.post(
         f"/api/channels/telegram/{account_id}/webhook",
@@ -784,6 +1045,21 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     await db_session.refresh(binding)
     assert binding.status == "active"
     assert binding.user_id == user_a.id
+    bob_takeover_reply = (
+        await db_session.execute(
+            select(ChannelMessage)
+                .where(
+                    ChannelMessage.account_id == account_id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                    ChannelMessage.text
+                    == "Only the user who paired this chat can change its pairing.",
+            )
+            .order_by(ChannelMessage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert bob_takeover_reply.binding_id is None
+    assert bob_takeover_reply.bot_agent_link_id is None
 
     pair_code_b = (
         await db_session.execute(
@@ -996,7 +1272,7 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
             "/api/channels",
             json={
                 "provider": "telegram",
-                "name": "telegram-shared-bot",
+                "name": "telegram-public-bot",
                 "agent_id": str(channel_agent.id),
             },
         )
@@ -1994,6 +2270,67 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
 
 @pytest.mark.asyncio
+async def test_telegram_pairing_replays_stored_broad_scope_commands(
+    client: httpx.AsyncClient,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-command-replay-on-pair",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    commands = [{"command": "welcome", "description": "Say hi"}]
+    stored = await client.post(
+        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        json={"commands": commands},
+    )
+    assert stored.status_code == 200
+    _reset_fake_provider_client({"ok": True, "result": True})
+
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 51,
+            "message": {
+                "message_id": 51,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": 777, "type": "private"},
+                "from": {"id": 777, "is_bot": False},
+            },
+        },
+    )
+
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is True
+    command_calls = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/setMyCommands")
+    ]
+    assert len(command_calls) == 1
+    assert command_calls[0]["json"] == {
+        "commands": commands,
+        "scope": {"type": "chat", "chat_id": "777"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_telegram_generic_bot_api_proxies_only_bound_chats(
     client: httpx.AsyncClient,
     monkeypatch,
@@ -2945,6 +3282,70 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
 
 
 @pytest.mark.asyncio
+async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
+    client: httpx.AsyncClient,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"id": "provider-ok"})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-replay-on-pair",
+                "provider_token": "discord-provider-token",
+                "config": {"application_id": "app-replay"},
+            },
+        )
+    ).json()
+    commands = [{"name": "deploy", "description": "Deploy"}]
+    stored = await client.put(
+        "/api/channels/discord/v10/applications/app-replay/commands",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+        json=commands,
+    )
+    assert stored.status_code == 200
+    _reset_fake_provider_client({"id": "provider-ok"})
+
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/api/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "msg-pair-replay",
+                "channel_id": "chan-replay",
+                "guild_id": "guild-replay",
+                "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "discord-replay-user"},
+            },
+        },
+    )
+
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is True
+    command_calls = [
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "PUT"
+        and call["url"].endswith("/applications/app-replay/guilds/guild-replay/commands")
+    ]
+    assert len(command_calls) == 1
+    assert command_calls[0]["json"][0]["name"] == "deploy"
+
+
+@pytest.mark.asyncio
 async def test_discord_interaction_callback_and_followup_require_recorded_token(
     client: httpx.AsyncClient,
     monkeypatch,
@@ -3212,7 +3613,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
     monkeypatch,
 ):
     _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.agent.sent"}]}
+    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.agent.pair-reply"}]}
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
@@ -3254,6 +3655,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
             ]
         },
     )
+    _reset_fake_provider_client({"messages": [{"id": "wamid.agent.sent"}]})
 
     sent = await client.post(
         "/api/channels/whatsapp/graph/v20.0/phone-agent/messages",
@@ -3283,7 +3685,7 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
     monkeypatch,
 ):
     _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"data": {"guid": "imsg-agent-sent"}}
+    _FakeProviderClient.response_payload = {"data": {"guid": "imsg-pair-reply"}}
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
@@ -3313,6 +3715,7 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
             }
         },
     )
+    _reset_fake_provider_client({"data": {"guid": "imsg-agent-sent"}})
 
     sent = await client.post(
         "/api/channels/imessage/bluebubbles/v1/message/text",
@@ -3338,7 +3741,7 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
     monkeypatch,
 ):
     _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"data": {"guid": "imsg-any-service-sent"}}
+    _FakeProviderClient.response_payload = {"data": {"guid": "imsg-any-pair-reply"}}
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
@@ -3368,6 +3771,7 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
             }
         },
     )
+    _reset_fake_provider_client({"data": {"guid": "imsg-any-service-sent"}})
 
     sent = await client.post(
         "/api/channels/imessage/bluebubbles/v1/message/text",
@@ -4348,6 +4752,213 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_telegram_webhook_pair_code_sends_user_reply(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 100}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-pair-reply",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    webhook = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 1,
+            "message": {
+                "message_id": 42,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": 987654321, "type": "private", "username": "paco"},
+                "from": {"id": 987654321, "is_bot": False, "username": "paco"},
+            },
+        },
+    )
+
+    assert webhook.status_code == 200
+    assert webhook.json()["paired"] is True
+    assert _FakeProviderClient.calls[0]["url"].endswith(
+        "/bot123456:telegram-secret/sendMessage"
+    )
+    assert _FakeProviderClient.calls[0]["json"] == {
+        "chat_id": "987654321",
+        "text": "Paired! This chat is now connected to your agent.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_pair_command_sends_failure_replies(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 101}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-pair-failure-replies",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+
+    missing = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 1,
+            "message": {
+                "message_id": 43,
+                "text": "/bot_pair",
+                "chat": {"id": 987654322, "type": "private"},
+                "from": {"id": 987654322, "is_bot": False},
+            },
+        },
+    )
+    invalid = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 44,
+                "text": "/bot_pair PAIRDOESNOTEXIST",
+                "chat": {"id": 987654322, "type": "private"},
+                "from": {"id": 987654322, "is_bot": False},
+            },
+        },
+    )
+
+    assert missing.status_code == 200
+    assert invalid.status_code == 200
+    assert [call["json"]["text"] for call in _FakeProviderClient.calls] == [
+        "Usage: /bot_pair <code>",
+        "Pairing failed: invalid.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_unpair_sends_user_reply(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 102}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-unpair-reply",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 1,
+            "message": {
+                "message_id": 45,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": 987654323, "type": "private"},
+                "from": {"id": 987654323, "is_bot": False},
+            },
+        },
+    )
+    unpaired = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 46,
+                "text": "/bot_unpair",
+                "chat": {"id": 987654323, "type": "private"},
+                "from": {"id": 987654323, "is_bot": False},
+            },
+        },
+    )
+
+    assert unpaired.status_code == 200
+    assert unpaired.json()["unpaired"] is True
+    assert [call["json"]["text"] for call in _FakeProviderClient.calls] == [
+        "Paired! This chat is now connected to your agent.",
+        "Unpaired. This chat is no longer connected to an agent.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-pair-reply-fails",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    webhook = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 1,
+            "message": {
+                "message_id": 47,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": {"id": 987654324, "type": "private"},
+                "from": {"id": 987654324, "is_bot": False},
+            },
+        },
+    )
+
+    assert webhook.status_code == 200
+    assert webhook.json()["paired"] is True
+    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    assert bindings.status_code == 200
+    assert bindings.json()[0]["external_chat_id"] == "987654324"
+    assert len(_FailingProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
     client: httpx.AsyncClient,
 ):
@@ -4958,6 +5569,62 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
+async def test_discord_message_pair_code_sends_user_reply(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"id": "discord-pair-reply"})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-message-pair-reply",
+                "provider_token": "discord-provider-token",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    webhook = await client.post(
+        f"/api/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "msg-1",
+                "channel_id": "chan-1",
+                "guild_id": "guild-1",
+                "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "discord-msg-pair-user"},
+                "channel": {"id": "chan-1", "name": "ops"},
+            },
+        },
+    )
+
+    assert webhook.status_code == 200
+    assert webhook.json()["paired"] is True
+    reply_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/channels/chan-1/messages")
+    )
+    assert reply_call["headers"]["Authorization"] == (
+        "Bot discord-provider-token"
+    )
+    assert reply_call["json"] == {
+        "content": "Paired! This chat is now connected to your agent.",
+        "allowed_mentions": {"parse": []},
+    }
+
+
+@pytest.mark.asyncio
 async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
@@ -5213,6 +5880,58 @@ async def test_imessage_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_imessage_webhook_pair_code_sends_user_reply(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"data": {"guid": "imsg-pair-reply"}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "imessage",
+                "name": "imessage-pair-reply",
+                "provider_token": "bb-password",
+                "config": {"server_url": "https://bluebubbles.example"},
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    webhook = await client.post(
+        f"/api/channels/imessage/{created['id']}/webhook",
+        params={"secret": created["webhook_secret"]},
+        json={
+            "type": "new-message",
+            "data": {
+                "guid": "imsg-1",
+                "text": f"/bot_pair {pair['code']}",
+                "chats": [{"guid": "iMessage;-;+15551234567", "displayName": "Ops"}],
+            },
+        },
+    )
+
+    assert webhook.status_code == 200
+    assert webhook.json()["paired"] is True
+    assert _FakeProviderClient.calls[0]["url"] == (
+        "https://bluebubbles.example/api/v1/message/text"
+    )
+    assert _FakeProviderClient.calls[0]["params"] == {"password": "bb-password"}
+    assert _FakeProviderClient.calls[0]["json"] == {
+        "chatGuid": "iMessage;-;+15551234567",
+        "message": "Paired! This chat is now connected to your agent.",
+        "text": "Paired! This chat is now connected to your agent.",
+        "method": "private-api",
+    }
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
@@ -5273,6 +5992,66 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     bindings = await client.get(f"/api/channels/{created['id']}/bindings")
     assert bindings.json()[0]["external_chat_id"] == "15551234567"
     assert bindings.json()[0]["external_chat_name"] == "Ops Phone"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_webhook_pair_code_sends_user_reply(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"messages": [{"id": "wamid.pair-reply"}]})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "whatsapp",
+                "name": "wa-pair-reply",
+                "provider_token": "wa-access-token",
+                "config": {"phone_number_id": "phone-1"},
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/api/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    webhook = await client.post(
+        f"/api/channels/whatsapp/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "wamid.1",
+                                        "from": "15551234567",
+                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+
+    assert webhook.status_code == 200
+    assert webhook.json()["paired"] is True
+    assert _FakeProviderClient.calls[0]["url"].endswith("/phone-1/messages")
+    assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bearer wa-access-token"
+    assert _FakeProviderClient.calls[0]["json"]["to"] == "15551234567"
+    assert (
+        _FakeProviderClient.calls[0]["json"]["text"]["body"]
+        == "Paired! This chat is now connected to your agent."
+    )
 
 
 @pytest.mark.asyncio

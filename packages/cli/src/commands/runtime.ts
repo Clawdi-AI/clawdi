@@ -321,30 +321,35 @@ export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promi
 }
 
 async function buildPlan(api: ApiClient, manifest: RuntimeManifest, manifestDir: string) {
-	const channels = unwrap(await api.GET("/api/channels"));
+	let channels: ChannelAccount[] | null = null;
 	const accountPlans = [];
 	const linkPlans = [];
 	const warnings: string[] = [];
 	for (const channel of manifest.channels) {
-		const existingAccount = findManifestAccount(channels, channel);
 		const existingAccountId = isExistingAccountSpec(channel.account) ? channel.account.id : null;
-		const missingExistingAccount = !existingAccount && existingAccountId !== null;
+		let existingAccount: ChannelAccount | null;
+		if (existingAccountId !== null) {
+			existingAccount = unwrap(
+				await api.GET("/api/channels/{account_id}", {
+					params: { path: { account_id: existingAccountId } },
+				}),
+			);
+		} else {
+			if (channels === null) {
+				channels = unwrap(await api.GET("/api/channels"));
+			}
+			existingAccount = findManifestAccount(channels, channel) ?? null;
+		}
+		if (existingAccount) {
+			assertManifestAccountCompatible(channel, existingAccount);
+		}
 		accountPlans.push({
 			ref: channel.ref,
 			provider: channel.provider,
 			account_id: existingAccount?.id ?? null,
-			action: existingAccount
-				? "reuse_account"
-				: missingExistingAccount
-					? "resolve_account"
-					: "create_private_account",
+			action: existingAccount ? "reuse_account" : "create_private_account",
 		});
 		if (!existingAccount) {
-			if (missingExistingAccount) {
-				warnings.push(
-					`${channel.ref}: account ${existingAccountId} is not visible from GET /api/channels; apply will validate it with GET /api/channels/${existingAccountId}.`,
-				);
-			}
 			for (const link of channel.links) {
 				linkPlans.push({
 					ref: link.ref,
@@ -425,16 +430,7 @@ async function ensureAccount(
 				params: { path: { account_id: accountSpec.id } },
 			}),
 		);
-		if (account.provider !== channel.provider) {
-			throw new Error(
-				`${channel.ref}: account ${account.id} is provider ${account.provider}, expected ${channel.provider}.`,
-			);
-		}
-		if (accountSpec.visibility && account.visibility !== accountSpec.visibility) {
-			throw new Error(
-				`${channel.ref}: account ${account.id} visibility is ${account.visibility}, expected ${accountSpec.visibility}.`,
-			);
-		}
+		assertManifestAccountCompatible(channel, account);
 		ctx.actions.push({ action: "reuse_account", channel_ref: channel.ref, account_id: account.id });
 		return account;
 	}
@@ -848,6 +844,23 @@ function runtimeAccountKey(channel: RuntimeChannel): string {
 	if (isExistingAccountSpec(channel.account)) return `account:${channel.account.id}`;
 	const account = createPrivateAccountSpec(channel.account);
 	return `private:${channel.provider}:${account.name}`;
+}
+
+function assertManifestAccountCompatible(channel: RuntimeChannel, account: ChannelAccount): void {
+	if (account.provider !== channel.provider) {
+		throw new Error(
+			`${channel.ref}: account ${account.id} is provider ${account.provider}, expected ${channel.provider}.`,
+		);
+	}
+	if (
+		isExistingAccountSpec(channel.account) &&
+		channel.account.visibility &&
+		account.visibility !== channel.account.visibility
+	) {
+		throw new Error(
+			`${channel.ref}: account ${account.id} visibility is ${account.visibility}, expected ${channel.account.visibility}.`,
+		);
+	}
 }
 
 function findManifestAccount(

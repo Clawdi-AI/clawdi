@@ -71,7 +71,7 @@ does not run or proxy the old TypeScript `msg-router` service.
   Baileys sidecar HTTP client contract, preserving Baileys additional attrs for
   native-only relay paths without reintroducing the old TypeScript `msg-router`
   process.
-- `whatsapp_sidecar_registry.py` wires configured sidecars into the shared-bot
+- `whatsapp_sidecar_registry.py` wires configured sidecars into the public-bot
   transport registry at FastAPI lifespan startup and closes/unregisters them on
   shutdown, while keeping unavailable configured sidecars observable in debug
   health.
@@ -128,15 +128,16 @@ cannot be handled by multiple agents at the same time.
 Channel accounts have `visibility = private | public`. User-created channel
 accounts are always `private`: only the account owner can see them, link them,
 delete them, or pair them, and they can only be linked to that user's agents.
-Clawdi-preconfigured shared bots are stored as `public`: any authenticated user
+Clawdi-preconfigured public bots are stored as `public`: any authenticated user
 can list the account and create their own bot-agent links and pair codes for
 their own agents, but provider-token management, deletion, and provider-wide
-command sync remain owner/admin operations. Public bot links, pair codes,
-bindings, messages, deliveries, attachments, scheduled messages, and
-WhatsApp tenant credentials are owned by the requesting/link user, not by the
-bot account owner. Operationally, create and manage public bots through the
-server-to-server `/api/admin/channels` endpoints; do not expose visibility or
-provider credential management on the ordinary user create-channel API.
+command sync remain admin operations. The backing account `user_id` is not
+product ownership and must not grant mutable user API access. Public bot links,
+pair codes, bindings, messages, deliveries, attachments, scheduled messages,
+and WhatsApp tenant credentials are owned by the requesting/link user, not by
+the bot account row owner. Operationally, create and manage public bots through
+the server-to-server `/api/admin/channels` endpoints; do not expose visibility
+or provider credential management on the ordinary user create-channel API.
 
 Agent-facing SDK credentials are link-scoped, not agent-scoped. If two external
 bots are both linked to the same Clawdi agent, each `(bot, agent)` link still
@@ -168,7 +169,7 @@ current agent as ordinary messages.
 Provider-wide state, such as real upstream bot credentials, remains on
 `channel_accounts`. Agent-facing SDK state that can differ per agent token must
 live on `channel_bot_agent_links`; otherwise one agent can accidentally block or
-change another agent on the same shared bot. Telegram `setWebhook`,
+change another agent on the same public bot. Telegram `setWebhook`,
 `deleteWebhook`, `getWebhookInfo`, `getUpdates`, and command shadows follow
 this rule, while provider-side command synchronization is restricted to chats
 owned by the current link.
@@ -200,7 +201,7 @@ contract and ownership split.
 | Batch | Status | Port | Acceptance |
 | --- | --- | --- | --- |
 | W4 | Done | WhatsApp encrypted media reupload through Cloud API | Private-chat Baileys image/audio media with `mediaKey`/`directPath` is decrypted/verified in memory, uploaded to Graph media, and sent by media id through the delivery outbox; invalid media records a safe debug failure. |
-| W5 | Done | Baileys sidecar live upstream shared-bot transport | Backend adapter/health semantics are implemented for outbound-message, raw-node, and IQ relay; `WhatsAppBaileysSidecarClient` defines the internal HTTP contract; `ConfiguredWhatsAppSidecarRegistry` registers configured sidecars per account during FastAPI lifespan; `packages/whatsapp-baileys-sidecar` implements the minimal Baileys runtime package; opt-in smoke proves the sidecar reaches `connected` against the FastAPI Baileys runtime. Real linked-account smoke is a deployment acceptance gate. |
+| W5 | Done | Baileys sidecar live upstream public-bot transport | Backend adapter/health semantics are implemented for outbound-message, raw-node, and IQ relay; `WhatsAppBaileysSidecarClient` defines the internal HTTP contract; `ConfiguredWhatsAppSidecarRegistry` registers configured sidecars per account during FastAPI lifespan; `packages/whatsapp-baileys-sidecar` implements the minimal Baileys runtime package; opt-in smoke proves the sidecar reaches `connected` against the FastAPI Baileys runtime. Real linked-account smoke is a deployment acceptance gate. |
 | W6 | Done | Final product/ops closure | Route audit, stale marker search, matrix counters, full backend tests, opt-in Baileys smoke, and docs all agree. Backend APIs cover provider tokens, webhooks, pair codes, bindings, debug health, and metrics. |
 
 The Python backend already owns creds, auth certs, Noise handshake/frame

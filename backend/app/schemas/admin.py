@@ -60,9 +60,11 @@ class AdminApiKeyCreate(BaseModel):
 class AdminChannelCreate(BaseModel):
     """Create a provider bot account through the admin control plane.
 
-    `target_clerk_id` owns provider credentials and destructive bot-level
-    operations. Public visibility only lets other authenticated users create
-    their own bot-agent links and pair codes.
+    `target_clerk_id` supplies the backing user row for bookkeeping and
+    private managed bots. Public bots remain admin-managed shared
+    infrastructure: authenticated users can create their own links and pair
+    codes, but cannot mutate provider credentials or destructive bot-level
+    state through user APIs.
     """
 
     target_clerk_id: str
