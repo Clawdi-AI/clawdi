@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 import uuid
 from collections.abc import AsyncIterator
 
@@ -31,37 +32,72 @@ from app.main import app
 from app.models.user import User
 
 TEST_DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
+_TEST_PUBLIC_DNS_HOSTS = {
+    "api.telegram.org",
+    "discord.com",
+    "gateway.discord.gg",
+    "graph.facebook.com",
+}
+_TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
 
 
 @pytest.fixture(autouse=True)
-def _ensure_crypto_keys():
-    """Make sure vault/JWT keys are valid for the test run.
+def _test_runtime_settings():
+    """Keep expensive or unsafe runtime defaults out of tests.
 
     The dev ``.env`` ships with placeholder values (comment-only); leaving
     them in place makes vault_crypto / MCP bridge tests blow up at decrypt
     time with cryptic errors. Override with per-run random keys so tests
     never accidentally use prod keys either.
+
+    The production default memory embedder is a local fastembed model. It is
+    intentionally warmed during ASGI lifespan, but most tests do not exercise
+    semantic memory and should not pay that startup cost.
     """
     prev_vault = settings.vault_encryption_key
     prev_jwt = settings.encryption_key
+    prev_embedding_mode = settings.memory_embedding_mode
+    prev_channel_long_poll_max = settings.channel_long_poll_max_seconds
+    prev_channel_long_poll_interval = settings.channel_long_poll_interval_seconds
+    prev_discord_gateway_poll_interval = settings.discord_gateway_poll_interval_seconds
     settings.vault_encryption_key = secrets.token_hex(32)
     settings.encryption_key = secrets.token_hex(32)
+    settings.memory_embedding_mode = "disabled"
+    settings.channel_long_poll_max_seconds = 0.05
+    settings.channel_long_poll_interval_seconds = 0.005
+    settings.discord_gateway_poll_interval_seconds = 0.01
     try:
         yield
     finally:
         settings.vault_encryption_key = prev_vault
         settings.encryption_key = prev_jwt
+        settings.memory_embedding_mode = prev_embedding_mode
+        settings.channel_long_poll_max_seconds = prev_channel_long_poll_max
+        settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
+        settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
 
 
-@pytest_asyncio.fixture
+@pytest.fixture(autouse=True)
+def _test_reserved_domain_dns(monkeypatch):
+    real_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        hostname = host.decode() if isinstance(host, bytes) else str(host)
+        normalized = hostname.strip().lower().rstrip(".")
+        if normalized in _TEST_PUBLIC_DNS_HOSTS or normalized.endswith(_TEST_PUBLIC_DNS_SUFFIXES):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 0))]
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+
+@pytest_asyncio.fixture(scope="session")
 async def engine():
-    """Per-test engine bound to the test's event loop.
+    """Session engine bound to pytest's session-scoped event loop.
 
-    A session-scoped engine would be cheaper, but asyncpg's connection pool
-    binds futures to the loop that created them and blows up when a later
-    test tries to reuse the connection from a different loop. Per-test is
-    the least-surprising option for small test suites; revisit if test
-    startup time becomes a real bottleneck.
+    asyncpg's pool binds futures to the event loop that created them, so this
+    depends on ``asyncio_default_*_loop_scope = "session"`` in pyproject.toml.
+    Individual tests still get isolated sessions and throwaway users.
     """
     eng = create_async_engine(TEST_DATABASE_URL, echo=False, future=True)
     try:
@@ -234,6 +270,26 @@ async def environment_project(db_session: AsyncSession, seed_user: User):
     )
     result = await db_session.execute(select(Project).where(Project.id == env.default_project_id))
     return result.scalar_one()
+
+
+@pytest_asyncio.fixture
+async def channel_agent(db_session: AsyncSession, seed_user: User):
+    return await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"channel-agent-{uuid.uuid4().hex[:8]}",
+        machine_name="Channel Test Agent",
+    )
+
+
+@pytest_asyncio.fixture
+async def second_channel_agent(db_session: AsyncSession, seed_user: User):
+    return await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"channel-agent-2-{uuid.uuid4().hex[:8]}",
+        machine_name="Second Channel Test Agent",
+    )
 
 
 @pytest_asyncio.fixture

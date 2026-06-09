@@ -7,7 +7,7 @@
  *
  * Three deploy contexts share this same code:
  *   - laptop: started by the user via `clawdi daemon install`
- *     (launchd / systemd unit) or `clawdi daemon run` in a tmux pane
+ *     (launchd / systemd unit) or `clawdi daemon run` in a terminal pane
  *   - VPS: same as laptop (systemd unit)
  *   - hosted pod: pid-1 in a sidecar container; auth via
  *     CLAWDI_AUTH_TOKEN env, env id passed via flag or env var

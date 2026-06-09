@@ -8,6 +8,7 @@ from app.models import (  # noqa: F401 - register models
     agent_project_binding,
     ai_provider,
     api_key,
+    channel,
     device_authorization,
     memory,
     project,

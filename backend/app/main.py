@@ -2,16 +2,19 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Literal
+from http import HTTPStatus
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.core.database import get_session
@@ -24,12 +27,14 @@ from app.routes.agent_project_bindings import router as agent_project_bindings_r
 from app.routes.ai_providers import router as ai_providers_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
+from app.routes.channels import router as channels_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_bridge import router as mcp_bridge_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
+from app.routes.metrics import router as metrics_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
 from app.routes.search import router as search_router
@@ -43,6 +48,7 @@ from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
+from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -79,6 +85,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finishes before the first embedding call, that call is fast.
     """
     background: set[asyncio.Task[None]] = set()
+    whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
+        settings.channel_whatsapp_baileys_sidecars_json
+    )
+    await whatsapp_sidecars.start()
 
     if settings.memory_embedding_mode.lower() == "local":
 
@@ -105,6 +115,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
         if background:
             await asyncio.gather(*background, return_exceptions=True)
+        await whatsapp_sidecars.stop()
         await close_composio_client()
 
 
@@ -213,6 +224,7 @@ async def request_validation_exception_handler(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(ai_providers_router)
+app.include_router(channels_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
 # Public share routes — mounted under /api/public/sessions/{id}/...,
@@ -236,6 +248,65 @@ app.include_router(share_redeem_router)
 app.include_router(sharing_router)
 app.include_router(me_router)
 app.include_router(agent_project_bindings_router)
+app.include_router(metrics_router)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def clawdi_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+):
+    if _is_bluebubbles_request(request):
+        return _bluebubbles_error_response(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers,
+        )
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def clawdi_request_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    if _is_bluebubbles_request(request):
+        return _bluebubbles_error_response(
+            status_code=422,
+            detail="validation error",
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
+def _is_bluebubbles_request(request: Request) -> bool:
+    return request.url.path.startswith("/api/channels/imessage/bluebubbles/")
+
+
+def _bluebubbles_error_response(
+    *,
+    status_code: int,
+    detail: Any,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    message = _bluebubbles_error_message(status_code=status_code, detail=detail)
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": status_code, "message": message, "data": None},
+        headers=headers,
+    )
+
+
+def _bluebubbles_error_message(*, status_code: int, detail: Any) -> str:
+    if isinstance(detail, str) and detail:
+        return detail
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+        if isinstance(message, str) and message:
+            return message
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return "Error"
 
 
 @app.get("/health", response_model=HealthResponse)

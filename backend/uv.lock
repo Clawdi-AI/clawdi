@@ -275,6 +275,7 @@ dependencies = [
     { name = "httpx" },
     { name = "openai" },
     { name = "pgvector" },
+    { name = "prometheus-client" },
     { name = "psycopg2-binary" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -283,6 +284,7 @@ dependencies = [
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -313,6 +315,7 @@ requires-dist = [
     { name = "mem0ai", marker = "extra == 'mem0'", specifier = ">=0.1" },
     { name = "openai", specifier = ">=1.40" },
     { name = "pgvector", specifier = ">=0.2.5" },
+    { name = "prometheus-client", specifier = ">=0.25.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
@@ -321,6 +324,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.23" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 provides-extras = ["mem0"]
 
@@ -1302,6 +1306,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/77/54/9c117beaa96519077cae355263712d705e560e8ee7ca4a35373438d1f4d2/posthog-7.13.2.tar.gz", hash = "sha256:a9fc322518bc7f42e24501a0df1072aa60bad6fba759cbe388d167b7e054b052", size = 195555, upload-time = "2026-04-30T09:01:26.08Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/8b/ec789af64ef3d85816a5c4ac8fe1e3c74d6e3bb9675c1325e3b1de4ddb14/posthog-7.13.2-py3-none-any.whl", hash = "sha256:e8ea9a7fa740b453533a76c0f3300b16120a3c27c19ab417cf0e69bb8c210fb6", size = 229762, upload-time = "2026-04-30T09:01:24.144Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/fb/d9aa83ffe43ce1f19e557c0971d04b90561b0cfd50762aafb01968285553/prometheus_client-0.25.0.tar.gz", hash = "sha256:5e373b75c31afb3c86f1a52fa1ad470c9aace18082d39ec0d2f918d11cc9ba28", size = 86035, upload-time = "2026-04-09T19:53:42.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/9b/d4b1e644385499c8346fa9b622a3f030dce14cd6ef8a1871c221a17a67e7/prometheus_client-0.25.0-py3-none-any.whl", hash = "sha256:d5aec89e349a6ec230805d0df882f3807f74fd6c1a2fa86864e3c2279059fed1", size = 64154, upload-time = "2026-04-09T19:53:41.324Z" },
 ]
 
 [[package]]

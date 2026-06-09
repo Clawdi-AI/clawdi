@@ -1,0 +1,16 @@
+{
+  "scenario": "24-user-send-multiple-images",
+  "description": "User uploads red.png + blue.png in one message; bot observes MESSAGE_CREATE with attachments[] having 2 entries.",
+  "captured_at": "2026-04-17T23:24:05.280Z",
+  "env": {
+    "application_id": "1469647169291026595",
+    "guild_id": "1469655705752441026",
+    "channel_id": "1494815997981491361",
+    "intents": 46593
+  },
+  "duration_ms": 125579,
+  "frame_count": {
+    "rest_pairs": 0,
+    "ws_frames": 11
+  }
+}
