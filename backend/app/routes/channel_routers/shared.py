@@ -866,9 +866,7 @@ async def _fan_out_discord_global_commands(
     token = decrypt_provider_token(account)
     uncontested_guild_ids = await _discord_uncontested_guilds_for_account(db, account=account)
     target_guild_ids = [
-        guild_id
-        for guild_id in uncontested_guild_ids
-        if guild_ids is None or guild_id in guild_ids
+        guild_id for guild_id in uncontested_guild_ids if guild_ids is None or guild_id in guild_ids
     ]
     if not target_guild_ids:
         return

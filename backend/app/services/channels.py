@@ -962,8 +962,7 @@ async def send_pairing_command_reply(
     reply = pairing_reply_for_command(command, binding_result)
     reply_link_id = (
         binding_result.binding.bot_agent_link_id
-        if binding_result.binding is not None
-        and (binding_result.paired or binding_result.unpaired)
+        if binding_result.binding is not None and (binding_result.paired or binding_result.unpaired)
         else None
     )
     bind_reply_to_existing = reply_link_id is not None
