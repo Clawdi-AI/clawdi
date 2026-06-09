@@ -2,10 +2,13 @@ import chalk from "chalk";
 import {
 	CONFIG_KEYS,
 	type ConfigKey,
+	getClawdiDir,
+	getConfig,
 	getStoredConfig,
 	setConfigKey,
 	unsetConfigKey,
 } from "../lib/config";
+import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
 function isKnownKey(k: string): k is ConfigKey {
 	return (CONFIG_KEYS as readonly string[]).includes(k);
@@ -65,4 +68,65 @@ export function configUnset(key: string) {
 	}
 	unsetConfigKey(key);
 	console.log(chalk.green(`✓ Unset ${key}`));
+}
+
+function apiUrlSource(): "CLAWDI_API_URL" | "config.json" | "default" {
+	if (process.env.CLAWDI_API_URL) return "CLAWDI_API_URL";
+	if (getStoredConfig().apiUrl) return "config.json";
+	return "default";
+}
+
+export function configPaths(opts: { json?: boolean } = {}) {
+	const mode = detectRuntimeMode();
+	const paths = getRuntimePaths({ mode });
+	const payload = {
+		schemaVersion: "clawdi.configPaths.v1",
+		runtimeMode: mode,
+		apiUrl: getConfig().apiUrl,
+		apiUrlSource: apiUrlSource(),
+		local: {
+			clawdiHome: getClawdiDir(),
+			config: paths.localConfig,
+			auth: paths.localAuth,
+			pendingAuth: paths.localPendingAuth,
+			environments: paths.localEnvironments,
+			serveState: paths.serveState,
+		},
+		hosted: {
+			imageShim: paths.imageShim,
+			hostPolicy: paths.hostPolicy,
+			shareRoot: paths.shareRoot,
+			serviceStateRoot: paths.serviceStateRoot,
+			managedConfig: paths.managedConfig,
+			syncState: paths.syncState,
+			managedCliBin: paths.cliManagedBin,
+			cliNpmPrefix: paths.cliNpmPrefix,
+			cliBootstrapStatus: paths.cliBootstrapStatus,
+			runRoot: paths.runRoot,
+			persistentHome: paths.userHome,
+			workspaceRoot: paths.workspaceRoot,
+		},
+	};
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(payload, null, 2));
+		return;
+	}
+
+	console.log(chalk.bold("clawdi config paths"));
+	console.log();
+	console.log(chalk.bold("  Local"));
+	console.log(chalk.gray(`    clawdiHome: ${payload.local.clawdiHome}`));
+	console.log(chalk.gray(`    config:     ${payload.local.config}`));
+	console.log(chalk.gray(`    auth:       ${payload.local.auth}`));
+	console.log(chalk.gray(`    envs:       ${payload.local.environments}`));
+	console.log();
+	console.log(chalk.bold("  Hosted"));
+	console.log(chalk.gray(`    policy:     ${payload.hosted.hostPolicy}`));
+	console.log(chalk.gray(`    state:      ${payload.hosted.serviceStateRoot}`));
+	console.log(chalk.gray(`    config:     ${payload.hosted.managedConfig}`));
+	console.log(chalk.gray(`    run:        ${payload.hosted.runRoot}`));
+	console.log(chalk.gray(`    home:       ${payload.hosted.persistentHome}`));
+	console.log();
+	console.log(chalk.gray(`  API URL: ${payload.apiUrl} (${payload.apiUrlSource})`));
 }

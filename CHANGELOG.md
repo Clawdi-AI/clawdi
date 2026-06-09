@@ -10,6 +10,22 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.0
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.0
+
+Package: `clawdi@0.12.10-beta.0`
+
+### Changed
+
+- Added a hosted runtime CLI prerelease for controlled validation. This release
+  keeps the hosted runtime flow behind explicit runtime commands and hosted
+  controller manifests, so existing `clawdi` CLI users and the Clawdi
+  app/backend/web release line are not changed by default.
+- Cleaned up the runtime manifest contract so the CLI accepts one controller
+  response shape and one local desired-state shape, with stricter validation for
+  runtime paths, secrets, MITM profiles, and manifest expiry.
+
 ## Clawdi CLI v0.12.9
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.9

@@ -6,7 +6,7 @@ High-level map of what's actually in Clawdi Cloud today — updated as the code 
 
 ## One-paragraph overview
 
-Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a read-mostly dashboard on the same backend. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
+Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a read-mostly dashboard on the same backend. The same CLI also owns the hosted runtime convergence path for controlled agent containers. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
 
 ---
 
@@ -138,6 +138,94 @@ The MCP server registration path also differs per agent — see `commands/setup.
 
 ---
 
+## Hosted runtime
+
+Hosted runtime mode is a controlled container/runtime envelope that reuses the
+same open-source `clawdi` CLI. It is not a separate private init binary and it
+does not add a private runtime-control RPC surface for ordinary agent actions.
+
+Canonical detailed design: [`hosted-runtime.md`](hosted-runtime.md).
+
+### Runtime Flow
+
+```
+┌────────────────────────────┐
+│ Hosted image / supervisor  │
+│  calls: clawdi runtime init│
+└──────────────┬─────────────┘
+               │ configured runtime source
+               ▼
+┌────────────────────────────┐
+│ Runtime source response     │
+│ { manifest, secretValues } │
+└──────────────┬─────────────┘
+               │ normalize
+               ▼
+┌────────────────────────────┐
+│ clawdi.runtimeDesiredState │
+│ non-secret desired state   │
+└──────────────┬─────────────┘
+               │ converge
+               ▼
+┌────────────────────────────┐
+│ /var/lib/clawdi + /run     │
+│ config, cache, run files   │
+└──────────────┬─────────────┘
+               │ launch
+               ▼
+┌────────────────────────────┐
+│ clawdi run -- <runtime>    │
+│ starts broker when needed  │
+└────────────────────────────┘
+```
+
+### Contracts
+
+| Contract | Schema / path | Owner |
+|---|---|---|
+| Runtime source response | `{ manifest, secretValues }` | External runtime source |
+| Runtime source manifest | `clawdi.hosted-runtime.manifest.v1` | External runtime source |
+| Normalized desired state | `clawdi.runtimeDesiredState.v1` | CLI normalization layer |
+| Last-good cache | `/var/lib/clawdi/cache/manifest.last-good.json` | CLI, non-secret only |
+| Short-lived secrets | `/run/clawdi/mitm/secrets.json` | CLI, recreated per boot |
+| Runtime run config | `/var/lib/clawdi/config/run/{runtime}.json` | CLI convergence |
+| MITM profile bundle | `/var/lib/clawdi/config/mitm/profiles.json` | CLI convergence |
+| Supervisor config | `/var/lib/clawdi/supervisor/supervisord.conf` | CLI convergence |
+
+The runtime source response is the only hosted wire input. The CLI may also
+read a local `clawdi.runtimeDesiredState.v1` fixture for simulation, but it no
+longer accepts earlier development manifest shapes.
+
+### Module Map
+
+| Area | Files |
+|---|---|
+| Contract schemas | `packages/cli/src/runtime/manifest-contract.ts` |
+| Datasource fetch, normalization, validation | `packages/cli/src/runtime/manifest-source.ts` |
+| Local convergence, install inventory, supervisor output | `packages/cli/src/runtime/manifest.ts` |
+| Hosted path contract | `packages/cli/src/runtime/paths.ts` |
+| Runtime boot status | `packages/cli/src/runtime/state.ts` |
+| Run config and invocation | `packages/cli/src/runtime/run-config.ts`, `packages/cli/src/commands/run.ts` |
+| MITM profile schema and hosted profile generation | `packages/cli/src/runtime/mitm-profiles.ts`, `packages/cli/src/runtime/hosted-mitm-profiles.ts` |
+| Native broker launcher and env projection | `packages/cli/src/runtime/mitm-broker.ts`, `packages/cli/src/runtime/mitm-env.ts` |
+| Native broker implementation | `packages/cli/native/mitm-broker/` |
+
+### Ownership Boundaries
+
+- The external runtime source owns identity, manifest generation, and secret
+  resolution. Deployment selection, rollout, and UI policy stay outside this
+  CLI repository.
+- The CLI owns manifest validation, non-secret convergence, official
+  OpenClaw/Hermes install orchestration, run config, supervisor config,
+  short-lived secret files, and broker lifecycle.
+- OpenClaw and Hermes keep their official installer/updater authority.
+- Clawdi native Channels own shared channel protocol state. Hosted runtime
+  profiles only route official-looking egress to managed channel/provider
+  surfaces.
+- User BYOK provider traffic must not be silently proxied.
+
+---
+
 ## Sync engine
 
 `clawdi push` and `clawdi pull` share a selector that picks the target agent:
@@ -202,7 +290,7 @@ Several items were considered but not built. Named for discoverability if someon
 - **Celery / background tasks** — no async task queue. Memory is embedded synchronously on `memory_add`.
 - **Session → Memory LLM pipeline** — sessions are just stored; nothing auto-extracts memories from transcripts. Users / agents add memories explicitly.
 - **CronJobs** — no `cron_job` table, no scheduler. `scripts/embed_memories.py` exists as a manual operator-level tool.
-- **Channels provider coverage** — the Clawdi-native control plane plus Python-native Telegram Bot API, Discord REST/Gateway/rate-limit handling, WhatsApp Cloud API/Graph plus Baileys credential/Noise/IQ/relay/media boundary handling, and iMessage/BlueBubbles HTTP/query/webhook/attachment/Socket.IO slices exist. Outbound delivery, agent webhook redelivery, and Discord Gateway inbound dispatch run through the DB-backed `pdm run channels-worker` stack; WhatsApp Baileys outbound relay reaches that outbox through a transparent shared-bot runtime adapter that converts sendable WAProto into validated Cloud API `providerPayload` for text/reply/public-link image/audio, relays Cloud-native raw status nodes for read receipts and typing indicators, and routes remaining Baileys-only media, voice-note/audio, group proto, and relay-attr messages to a registered native transport instead of route-local persistence. The FastAPI websocket reaches real Baileys `connection: open` plus DB-inbox `messages.upsert` delivery in the opt-in smoke, including quoted reply, image envelope, and group participant/sender-key fixture shapes. Discord Gateway capture uses per-account Postgres advisory locks inside that worker stack. WhatsApp debug health reports whether the native transport is unavailable, disconnected, `in_process`, or `sidecar` and which native relay capabilities it exposes. A minimal Clawdi-owned Baileys sidecar runtime package and FastAPI registration path exist for the remaining WhatsApp Web live protocol adapter; the old TypeScript `msg-router` remains excluded. Opt-in smoke starts the sidecar against the FastAPI Baileys runtime; remaining work is deployment-level sidecar supervision and real linked-account upstream smoke.
+- **Channels provider coverage** — the Clawdi-native control plane plus Python-native Telegram Bot API, Discord REST/Gateway/rate-limit handling, WhatsApp Cloud API/Graph plus Baileys credential/Noise/IQ/relay/media boundary handling, and iMessage/BlueBubbles HTTP/query/webhook/attachment/Socket.IO slices exist. Outbound delivery, agent webhook redelivery, and Discord Gateway inbound dispatch run through the DB-backed `pdm run channels-worker` stack; WhatsApp Baileys outbound relay reaches that outbox through a transparent channel runtime adapter that converts sendable WAProto into validated Cloud API `providerPayload` for text/reply/public-link image/audio, relays Cloud-native raw status nodes for read receipts and typing indicators, and routes remaining Baileys-only media, voice-note/audio, group proto, and relay-attr messages to a registered native transport instead of route-local persistence. The FastAPI websocket reaches real Baileys `connection: open` plus DB-inbox `messages.upsert` delivery in the opt-in smoke, including quoted reply, image envelope, and group participant/sender-key fixture shapes. Discord Gateway capture uses per-account Postgres advisory locks inside that worker stack. WhatsApp debug health reports whether the native transport is unavailable, disconnected, `in_process`, or `sidecar` and which native relay capabilities it exposes. A minimal Clawdi-owned Baileys sidecar runtime package and FastAPI registration path exist for the remaining WhatsApp Web live protocol adapter; the legacy TypeScript router remains excluded. Opt-in smoke starts the sidecar against the FastAPI Baileys runtime; remaining work is deployment-level sidecar supervision and real linked-account upstream smoke.
 - **Cognee memory provider** — only `Builtin` and `Mem0`.
 - **Browser-based `clawdi auth login`** — the implemented flow is "paste your API key", same UX but no OAuth dance.
 - **`bun build --compile` single-binary distribution** — currently `bun link` over the workspace.

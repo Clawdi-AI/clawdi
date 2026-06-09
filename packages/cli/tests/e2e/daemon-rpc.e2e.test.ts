@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { type AddressInfo, createServer } from "node:net";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,12 +98,16 @@ if (process.platform !== "win32") {
 	describe("daemon RPC process e2e", () => {
 		it("serves daemon RPC over the configured HTTP port", async () => {
 			const fixture = createFixture();
-			const rpcPort = await getFreePort();
-			const daemon = startDaemon(fixture, rpcPort);
+			const daemon = startDaemon(fixture);
 			const daemonStdout = new Response(daemon.stdout).text();
-			const daemonStderr = new Response(daemon.stderr).text();
+			const [stderrReady, stderrText] = daemon.stderr.tee();
+			const daemonStderr = new Response(stderrText).text();
+			let failure: unknown;
+			let daemonStdoutText = "";
+			let daemonStderrText = "";
 
 			try {
+				const rpcPort = await waitForRpcListening(stderrReady);
 				await waitFor(() => existsSync(join(fixture.stateDir, "control", "control-token")));
 				await waitForHttpUnauthorized(rpcPort);
 
@@ -150,12 +154,27 @@ if (process.platform !== "win32") {
 					true,
 				);
 				expect(apiCalls.every((call) => call.auth === `Bearer ${API_KEY}`)).toBe(true);
+			} catch (error) {
+				failure = error;
 			} finally {
 				await stopDaemon(daemon);
-				await Promise.all([daemonStdout, daemonStderr]);
+				const [stdout, stderr] = await Promise.all([daemonStdout, daemonStderr]);
+				daemonStdoutText = stdout;
+				daemonStderrText = stderr;
 				rmSync(fixture.root, { recursive: true, force: true });
 			}
-		});
+			if (failure) {
+				throw new Error(
+					[
+						failure instanceof Error ? failure.message : String(failure),
+						"daemon stdout:",
+						daemonStdoutText.trim() || "(empty)",
+						"daemon stderr:",
+						daemonStderrText.trim() || "(empty)",
+					].join("\n"),
+				);
+			}
+		}, 20_000);
 	});
 }
 
@@ -175,9 +194,9 @@ function createFixture(): Fixture {
 	return { root, home, clawdiHome, stateDir, codexHome };
 }
 
-function startDaemon(fixture: Fixture, rpcPort: number): ReturnType<typeof Bun.spawn> {
+function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
 	return Bun.spawn(
-		[process.execPath, srcEntry, "daemon", "run", "--host", "127.0.0.1", "--port", String(rpcPort)],
+		[process.execPath, srcEntry, "daemon", "run", "--host", "127.0.0.1", "--port", "0"],
 		{
 			cwd: fixture.root,
 			stdout: "pipe",
@@ -233,7 +252,7 @@ async function stopDaemon(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
 
 async function waitFor(
 	predicate: () => boolean | Promise<boolean>,
-	timeoutMs = 5_000,
+	timeoutMs = 10_000,
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -254,35 +273,98 @@ async function waitForHttpUnauthorized(port: number): Promise<void> {
 	});
 }
 
-async function postRpcWithoutToken(port: number): Promise<Response> {
-	return await fetch(`http://127.0.0.1:${port}/rpc`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
-	});
+async function waitForRpcListening(
+	stream: ReadableStream<Uint8Array>,
+	timeoutMs = 10_000,
+): Promise<number> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			const remainingMs = Math.max(1, deadline - Date.now());
+			const read = await Promise.race([
+				reader.read(),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => reject(new Error("timeout")), remainingMs);
+				}),
+			]);
+			if (timer) {
+				clearTimeout(timer);
+				timer = undefined;
+			}
+			if (read.done) break;
+			buffer += decoder.decode(read.value, { stream: true });
+			const lines = buffer.split(/\r?\n/);
+			buffer = lines.pop() ?? "";
+			for (const line of lines) {
+				const port = rpcListeningPort(line);
+				if (port !== null) return port;
+			}
+		}
+		throw new Error("Timed out waiting for daemon RPC listening log");
+	} finally {
+		if (timer) clearTimeout(timer);
+		reader.releaseLock();
+	}
 }
 
-async function postRpcWithToken(port: number, token: string): Promise<Response> {
-	return await fetch(`http://127.0.0.1:${port}/rpc`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${token}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
-	});
+function rpcListeningPort(line: string): number | null {
+	if (!line.trim()) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		return null;
+	}
+	if (!isRecord(parsed) || parsed.event !== "serve.rpc_listening") return null;
+	const http = parsed.http;
+	if (!isRecord(http) || typeof http.port !== "number") return null;
+	return http.port;
 }
 
-async function getFreePort(): Promise<number> {
-	return await new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address() as AddressInfo;
-			server.close(() => {
-				resolve(address.port);
-			});
-		});
+async function postRpcWithoutToken(port: number): Promise<{ status: number; body: string }> {
+	return await postRpc(port);
+}
+
+async function postRpcWithToken(
+	port: number,
+	token: string,
+): Promise<{ status: number; body: string }> {
+	return await postRpc(port, token);
+}
+
+function postRpc(port: number, token?: string): Promise<{ status: number; body: string }> {
+	const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} });
+	return new Promise((resolve, reject) => {
+		const req = request(
+			{
+				hostname: "127.0.0.1",
+				port,
+				path: "/rpc",
+				method: "POST",
+				headers: {
+					...(token ? { Authorization: `Bearer ${token}` } : {}),
+					"Content-Type": "application/json",
+					"Content-Length": Buffer.byteLength(body),
+				},
+			},
+			(res) => {
+				let responseBody = "";
+				res.setEncoding("utf-8");
+				res.on("data", (chunk) => {
+					responseBody += chunk;
+				});
+				res.on("end", () => {
+					resolve({ status: res.statusCode ?? 0, body: responseBody });
+				});
+			},
+		);
+		req.on("error", reject);
+		req.write(body);
+		req.end();
 	});
 }
 
@@ -323,6 +405,10 @@ function json(data: unknown, status = 200, headers: Record<string, string> = {})
 			...headers,
 		},
 	});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 async function readJsonBody(req: Request): Promise<unknown> {

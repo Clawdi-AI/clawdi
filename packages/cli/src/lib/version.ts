@@ -2,8 +2,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Read CLI version from package.json at runtime. Falls back to "0.0.0" if the file can't be read. */
+declare const CLAWDI_CLI_VERSION: string | undefined;
+
+/**
+ * Resolve the CLI version.
+ *
+ * Packaged Node/Bun installs can read package.json from disk. Single-file
+ * binaries cannot, so release builds inject CLAWDI_CLI_VERSION at build time.
+ */
 export function getCliVersion(): string {
+	const compiledVersion = typeof CLAWDI_CLI_VERSION === "string" ? CLAWDI_CLI_VERSION.trim() : "";
+	if (compiledVersion) return compiledVersion;
+
 	try {
 		// import.meta.url → .../src/lib/version.ts at dev time, .../dist/index.js at build time
 		const here = dirname(fileURLToPath(import.meta.url));

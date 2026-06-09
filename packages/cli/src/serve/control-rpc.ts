@@ -8,6 +8,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import { isIP } from "node:net";
+import { dirname, join } from "node:path";
 import { getDaemonControlDir, getDaemonControlTokenPath } from "./paths";
 
 const MAX_RPC_BODY_BYTES = 1024 * 1024;
@@ -21,6 +22,8 @@ export interface ControlRpcListenConfig {
 	host?: string;
 	port?: number;
 	allowRemote?: boolean;
+	controlDir?: string;
+	tokenPath?: string;
 }
 
 export interface ControlRpcClientConfig {
@@ -39,7 +42,13 @@ interface JsonRpcRequest {
 interface ControlRpcServer {
 	tokenPath: string;
 	http: { host: string; port: number };
+	rotateToken: () => string;
 	close: () => Promise<void>;
+}
+
+interface ControlRpcTokenPaths {
+	controlDir: string;
+	tokenPath: string;
 }
 
 export async function startControlRpcServer(
@@ -55,16 +64,10 @@ export async function startControlRpcServer(
 				"Use --allow-remote only behind SSH tunneling or a TLS-terminating proxy.",
 		);
 	}
-	const controlDir = getDaemonControlDir();
-	mkdirSync(controlDir, { recursive: true, mode: 0o700 });
-	try {
-		chmodSync(controlDir, 0o700);
-	} catch {
-		/* best effort */
-	}
-	ensureControlToken();
+	const tokenPaths = resolveControlTokenPaths(config);
+	ensureControlToken(tokenPaths);
 	const httpServer = createServer(async (req, res) => {
-		await handleHttpRequest(req, res, handlers);
+		await handleHttpRequest(req, res, handlers, tokenPaths);
 	});
 	try {
 		await listenOnHttpEndpoint(httpServer, host, port);
@@ -77,7 +80,12 @@ export async function startControlRpcServer(
 		host,
 		port: typeof address === "object" && address ? address.port : port,
 	};
-	const close = () => closeServer(httpServer);
+	let closed = false;
+	const close = () => {
+		if (closed) return Promise.resolve();
+		closed = true;
+		return closeServer(httpServer);
+	};
 	abort.addEventListener(
 		"abort",
 		() => {
@@ -85,7 +93,12 @@ export async function startControlRpcServer(
 		},
 		{ once: true },
 	);
-	return { tokenPath: getDaemonControlTokenPath(), http, close };
+	return {
+		tokenPath: tokenPaths.tokenPath,
+		http,
+		rotateToken: () => rotateControlToken(tokenPaths),
+		close,
+	};
 }
 
 export async function callControlRpc(
@@ -153,47 +166,67 @@ function createServerlessRequest(
 	return req;
 }
 
-function ensureControlToken(): string {
-	const tokenPath = getDaemonControlTokenPath();
-	if (existsSync(tokenPath)) {
-		return readControlToken();
+function resolveControlTokenPaths(config: ControlRpcListenConfig): ControlRpcTokenPaths {
+	if (config.tokenPath) {
+		return {
+			controlDir: config.controlDir ?? dirname(config.tokenPath),
+			tokenPath: config.tokenPath,
+		};
 	}
-	return rotateControlToken();
+	if (config.controlDir) {
+		return {
+			controlDir: config.controlDir,
+			tokenPath: join(config.controlDir, "control-token"),
+		};
+	}
+	return {
+		controlDir: getDaemonControlDir(),
+		tokenPath: getDaemonControlTokenPath(),
+	};
 }
 
-export function rotateControlToken(): string {
-	const controlDir = getDaemonControlDir();
+function ensureControlDir(controlDir: string): void {
 	mkdirSync(controlDir, { recursive: true, mode: 0o700 });
 	try {
 		chmodSync(controlDir, 0o700);
 	} catch {
 		/* best effort */
 	}
-	const tokenPath = getDaemonControlTokenPath();
+}
+
+function ensureControlToken(paths = resolveControlTokenPaths({})): string {
+	ensureControlDir(paths.controlDir);
+	if (existsSync(paths.tokenPath)) {
+		return readControlToken(paths);
+	}
+	return rotateControlToken(paths);
+}
+
+export function rotateControlToken(paths = resolveControlTokenPaths({})): string {
+	ensureControlDir(paths.controlDir);
 	const token = randomBytes(32).toString("hex");
-	writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
+	writeFileSync(paths.tokenPath, `${token}\n`, { mode: 0o600 });
 	try {
-		chmodSync(tokenPath, 0o600);
+		chmodSync(paths.tokenPath, 0o600);
 	} catch {
 		/* best effort */
 	}
 	return token;
 }
 
-function readControlToken(): string {
-	const tokenPath = getDaemonControlTokenPath();
-	if (!existsSync(tokenPath)) {
+function readControlToken(paths = resolveControlTokenPaths({})): string {
+	if (!existsSync(paths.tokenPath)) {
 		throw new Error(
-			`daemon control token not found at ${tokenPath}. Start \`clawdi daemon run\` first.`,
+			`daemon control token not found at ${paths.tokenPath}. Start \`clawdi daemon run\` first.`,
 		);
 	}
 	try {
-		chmodSync(tokenPath, 0o600);
+		chmodSync(paths.tokenPath, 0o600);
 	} catch {
 		/* best effort */
 	}
-	const token = readFileSync(tokenPath, "utf-8").trim();
-	if (!token) throw new Error(`daemon control token at ${tokenPath} is empty`);
+	const token = readFileSync(paths.tokenPath, "utf-8").trim();
+	if (!token) throw new Error(`daemon control token at ${paths.tokenPath} is empty`);
 	return token;
 }
 
@@ -201,6 +234,7 @@ async function handleHttpRequest(
 	req: IncomingMessage,
 	res: ServerResponse,
 	handlers: ControlRpcHandlers,
+	tokenPaths: ControlRpcTokenPaths,
 ): Promise<void> {
 	if (req.method !== "POST" || req.url !== "/rpc") {
 		sendHttp(res, 404, { error: "not_found" });
@@ -208,7 +242,7 @@ async function handleHttpRequest(
 	}
 	let token: string;
 	try {
-		token = readControlToken();
+		token = readControlToken(tokenPaths);
 	} catch (error) {
 		sendHttp(res, 500, { error: error instanceof Error ? error.message : "token_unavailable" });
 		return;

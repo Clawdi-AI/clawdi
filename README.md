@@ -302,8 +302,9 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | Command | What it does |
 | --- | --- |
 | `clawdi auth login` / `logout` | Authenticate this machine |
+| `clawdi auth status [--json]` | Show credential source without printing secrets |
 | `clawdi status [--json]` | Show auth and sync state |
-| `clawdi config list/get/set/unset` | Read or write CLI configuration |
+| `clawdi config list/get/set/unset/paths` | Read/write CLI configuration and inspect local/runtime paths |
 | `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start the singleton daemon by default |
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
 | `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rotate-token` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
@@ -329,6 +330,28 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 Auto-update is enabled by default for all newer releases, including majors. Human CLI invocations update the global CLI in the background; installed daemons check on their own cadence, install silently, then let launchd/systemd restart them onto the new code. Disable both with `CLAWDI_NO_AUTO_UPDATE=1` or `clawdi config set autoUpdate false`.
 
 Every command supports `--help`.
+
+### Advanced Runtime Operators
+
+These commands are for controlled hosted or self-hosted runtime envelopes. They
+are not part of normal laptop onboarding.
+
+| Command | What it does |
+| --- | --- |
+| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and hosted policy restrictions |
+| `clawdi runtime init --non-interactive [--json]` | Run one cloud-init-style hosted runtime convergence pass |
+| `clawdi runtime status [--json]` | Read the last runtime boot result from service-state files |
+| `clawdi runtime doctor [--json]` | Diagnose hosted policy, service state, HOME, tmpfs runtime state, and last boot status |
+
+Hosted runtime mode is detected from host policy or runtime credentials. In
+hosted mode, `/etc/clawdi/host-policy.json` can deny local-user commands such
+as `setup`, `teardown`, `update`, `config set`, and `auth login`, while keeping
+agent-facing commands such as `mcp`, `daemon run`, `read`, `inject`, and `run`
+available. Local self-update is skipped in hosted mode; hosted CLI updates are
+expected to be system-managed through the standard npm package installation.
+
+For the hosted runtime design, profile matrix, and runtime image contract, see
+[`docs/hosted-runtime.md`](docs/hosted-runtime.md).
 
 App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai) and surface inside agents automatically over MCP — there is no CLI command to manage them.
 

@@ -1488,7 +1488,8 @@ function resolveRpcListenConfig(opts: RpcListenOpts): ResolvedRpcListenConfig {
 		process.env.CLAWDI_DAEMON_RPC_HOST ??
 		DEFAULT_CONTROL_RPC_HOST;
 	const portValue = opts.port ?? process.env.CLAWDI_DAEMON_RPC_PORT;
-	const port = optionalPortParam(portValue, "--port") ?? DEFAULT_CONTROL_RPC_PORT;
+	const port =
+		optionalPortParam(portValue, "--port", { allowZero: true }) ?? DEFAULT_CONTROL_RPC_PORT;
 	const allowRemote =
 		optionalBooleanParam(opts.allowRemote, "--allow-remote") ??
 		optionalBooleanParam(
@@ -1588,18 +1589,24 @@ function requireBooleanConfirmation(
 	}
 }
 
-function optionalPortParam(value: unknown, label: string): number | undefined {
+function optionalPortParam(
+	value: unknown,
+	label: string,
+	opts: { allowZero?: boolean } = {},
+): number | undefined {
 	if (value === undefined || value === null) return undefined;
 	let port: number;
+	const min = opts.allowZero === true ? 0 : 1;
+	const message = `${label} must be an integer from ${min} to 65535`;
 	if (typeof value === "number") {
 		port = value;
 	} else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
 		port = Number(value);
 	} else {
-		throw new Error(`${label} must be an integer from 1 to 65535`);
+		throw new Error(message);
 	}
-	if (!Number.isInteger(port) || port < 1 || port > 65535) {
-		throw new Error(`${label} must be an integer from 1 to 65535`);
+	if (!Number.isInteger(port) || port < min || port > 65535) {
+		throw new Error(message);
 	}
 	return port;
 }

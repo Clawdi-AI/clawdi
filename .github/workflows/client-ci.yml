@@ -158,11 +158,29 @@ jobs:
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/cli/native/mitm-broker/go.mod
+          cache-dependency-path: packages/cli/native/mitm-broker/go.mod
       # Smoke tests exercise the compiled bin wrapper, so build before testing.
       - name: Build CLI
         run: bun run --cwd packages/cli build
+      - name: Test native MITM broker
+        working-directory: packages/cli/native/mitm-broker
+        run: go test ./...
+      - name: Build standalone CLI binary
+        run: bun run --cwd packages/cli build:binary
+      - name: Smoke standalone CLI binary
+        run: |
+          packages/cli/dist-bin/clawdi --version
+          test -x packages/cli/dist-bin/clawdi-mitm-broker/bin/clawdi-mitm-broker
+      - name: Validate CLI publish payload
+        run: |
+          CLAWDI_MITM_BROKER_BUNDLE_OUTDIR=clawdi-mitm-broker bun run --cwd packages/cli build:mitm-broker
+          bun run --cwd packages/cli check:publish-manifest
+          test -x packages/cli/clawdi-mitm-broker/bin/clawdi-mitm-broker
       - name: Test CLI
-        run: bun test packages/cli
+        run: bun test --isolate --max-concurrency=1 packages/cli
 
   build:
     needs: [changes, typecheck]

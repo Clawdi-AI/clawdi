@@ -40,6 +40,11 @@ jobs:
         with:
           bun-version: "1.3.13"
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/cli/native/mitm-broker/go.mod
+          cache-dependency-path: packages/cli/native/mitm-broker/go.mod
+
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -48,21 +53,30 @@ jobs:
       - name: Skip if no publish needed
         id: check
         # Three skip cases:
-        #   1. Local version matches what's already on npm (no bump → no publish).
+        #   1. Local exact version already exists on npm (no bump → no publish).
         #   2. Package has never been published (`npm view` fails, fallback "0.0.0").
         #      The first publish must be manual — `npm publish --access public`
         #      from a maintainer's machine — because npm trusted-publisher OIDC
         #      requires the package to already exist on the registry to accept
         #      a workflow as the publisher. Until that bootstrap happens, the
         #      workflow stays inert.
+        #   3. Pre-release versions publish under the `beta` dist-tag so they
+        #      cannot accidentally replace `latest`.
         run: |
           LOCAL=$(node -p "require('./package.json').version")
-          REMOTE=$(npm view clawdi version 2>/dev/null || echo "0.0.0")
-          echo "local=$LOCAL remote=$REMOTE"
-          if [ "$REMOTE" = "0.0.0" ]; then
+          REMOTE_LATEST=$(npm view clawdi version 2>/dev/null || echo "0.0.0")
+          if [[ "$LOCAL" == *-* ]]; then
+            NPM_TAG=beta
+          else
+            NPM_TAG=latest
+          fi
+          echo "local=$LOCAL remote_latest=$REMOTE_LATEST npm_tag=$NPM_TAG"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+          if [ "$REMOTE_LATEST" = "0.0.0" ]; then
             echo "Package not on npm yet — bootstrap with manual publish first."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif [ "$LOCAL" = "$REMOTE" ]; then
+          elif npm view "clawdi@$LOCAL" version >/dev/null 2>&1; then
+            echo "Package version clawdi@$LOCAL already exists on npm."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -83,9 +97,26 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: bun run build
 
+      - name: Test native MITM broker
+        if: steps.check.outputs.skip != 'true'
+        working-directory: packages/cli/native/mitm-broker
+        run: go test ./...
+
+      - name: Build standalone CLI binary
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          bun run build:binary
+          ./dist-bin/clawdi --version
+          test -x dist-bin/clawdi-mitm-broker/bin/clawdi-mitm-broker
+          bun run package:binary-release
+          test -f dist-release/clawdi-cli-linux-x64.tar.gz
+          test -f dist-release/clawdi-cli-linux-x64.tar.gz.sha256
+          CLAWDI_MITM_BROKER_BUNDLE_OUTDIR=clawdi-mitm-broker bun run build:mitm-broker
+          test -x clawdi-mitm-broker/bin/clawdi-mitm-broker
+
       - name: Test
         if: steps.check.outputs.skip != 'true'
-        run: bun test
+        run: bun test --isolate --max-concurrency=1
 
       - name: Validate npm tarball install
         if: steps.check.outputs.skip != 'true'
@@ -119,7 +150,7 @@ jobs:
       # badge linking back to this exact workflow run.
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
-        run: npm publish --access public --provenance --ignore-scripts
+        run: npm publish --access public --provenance --ignore-scripts --tag "${{ steps.check.outputs.npm_tag }}"
 
       - name: Create GitHub release
         if: steps.check.outputs.skip != 'true'
@@ -127,10 +158,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          NPM_TAG="${{ steps.check.outputs.npm_tag }}"
           TAG="clawdi-cli-v${VERSION}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub release $TAG already exists; skipping."
+            echo "GitHub release $TAG already exists; uploading standalone CLI assets."
+            gh release upload "$TAG" \
+              dist-release/clawdi-cli-linux-x64.tar.gz \
+              dist-release/clawdi-cli-linux-x64.tar.gz.sha256 \
+              --clobber
             exit 0
           fi
 
@@ -143,7 +179,9 @@ jobs:
           NOTES=$(cat <<EOF
           ## npm
           - Package: \`clawdi@${VERSION}\`
+          - Dist tag: \`${NPM_TAG}\`
           - Install: \`npm i -g clawdi@${VERSION}\`
+          - Dist-tag install: \`npm i -g clawdi@${NPM_TAG}\`
 
           ## Scope
           This is the release for the published \`packages/cli\` package.
@@ -154,12 +192,17 @@ jobs:
 
           args=(
             release create "$TAG"
+            dist-release/clawdi-cli-linux-x64.tar.gz
+            dist-release/clawdi-cli-linux-x64.tar.gz.sha256
             --target "$GITHUB_SHA"
             --title "Clawdi CLI v${VERSION}"
             --notes "$NOTES"
             --generate-notes
             --latest=false
           )
+          if [ "$NPM_TAG" != "latest" ]; then
+            args+=(--prerelease)
+          fi
           if [ -n "$PREVIOUS" ]; then
             args+=(--notes-start-tag "$PREVIOUS")
           fi

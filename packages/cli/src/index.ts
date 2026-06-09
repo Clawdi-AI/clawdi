@@ -3,8 +3,20 @@ import { Command } from "commander";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
+import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
 
 const program = new Command();
+
+function commandPath(command: Command): string {
+	const names: string[] = [];
+	let current: Command | null = command;
+	while (current) {
+		const name = current.name();
+		if (name && name !== "clawdi") names.push(name);
+		current = current.parent ?? null;
+	}
+	return names.reverse().join(" ");
+}
 
 function collectCsvValues(value: string, prev: string[] = []): string[] {
 	const values = value
@@ -27,6 +39,7 @@ program
 		`
 Examples:
   $ clawdi auth login               Authenticate with Clawdi Cloud
+  $ clawdi auth status --json       Inspect credential source without printing secrets
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
   $ clawdi push --all               Upload everything (every agent, project, module)
@@ -36,12 +49,15 @@ Examples:
   $ clawdi vault set OPENAI_API_KEY Store a secret
   $ clawdi project folder link --project engineering  Use this folder with a Project
   $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
+  $ clawdi runtime status --json    Inspect hosted runtime boot state
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
+  CLAWDI_RUNTIME_MODE      Explicit runtime mode override for hosted tests/operators
+  CLAWDI_AUTH_TOKEN        Clawdi Cloud auth token; the only hosted container credential
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -51,6 +67,14 @@ Environment:
 
 Docs: https://github.com/Clawdi-AI/clawdi`,
 	);
+
+program.hook("preAction", (_thisCommand, actionCommand) => {
+	const command = commandPath(actionCommand);
+	const decision = evaluateHostPolicyForCommand(command);
+	if (decision.allowed) return;
+	const reason = decision.reason ?? "disabled by hosted runtime policy";
+	throw new Error(`Command \`clawdi ${command}\` is disabled in hosted runtime mode: ${reason}`);
+});
 
 // ─────────────────────────────────────────────────────────────
 // auth
@@ -83,6 +107,15 @@ authCmd
 		await authLogout();
 	});
 
+authCmd
+	.command("status")
+	.description("Show credential source without printing secrets")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { authStatus } = await import("./commands/auth.js");
+		await authStatus(opts);
+	});
+
 // ─────────────────────────────────────────────────────────────
 // status
 // ─────────────────────────────────────────────────────────────
@@ -109,6 +142,15 @@ configCmd
 	.action(async () => {
 		const { configList } = await import("./commands/config.js");
 		configList();
+	});
+
+configCmd
+	.command("paths")
+	.description("Show local and hosted runtime paths used by the CLI")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { configPaths } = await import("./commands/config.js");
+		configPaths(opts);
 	});
 
 configCmd
@@ -644,7 +686,18 @@ channelCmd
 // ─────────────────────────────────────────────────────────────
 const runtimeCmd = program
 	.command("runtime")
-	.description("Apply channel runtime manifest projections for agents");
+	.description("Hosted runtime boot and channel runtime projections");
+
+runtimeCmd
+	.command("init")
+	.description("Converge a hosted runtime from controller desired state")
+	.option("--non-interactive", "Required for hosted boot; never prompt")
+	.option("--json", "Output as JSON")
+	.option("--manifest-file <path>", "Use a local runtime manifest fixture for simulation")
+	.action(async (opts: { nonInteractive?: boolean; json?: boolean; manifestFile?: string }) => {
+		const { runtimeInit } = await import("./commands/runtime.js");
+		await runtimeInit(opts);
+	});
 
 runtimeCmd
 	.command("plan")
@@ -684,12 +737,25 @@ runtimeCmd
 
 runtimeCmd
 	.command("status")
-	.description("Show current backend status for a runtime manifest")
-	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
+	.description("Show hosted runtime boot status, or channel manifest status with --file")
+	.option("-f, --file <path>", "Channel runtime manifest path")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { file?: string; json?: boolean }) => {
-		const { runtimeStatusCommand } = await import("./commands/runtime.js");
-		await runtimeStatusCommand(opts);
+		const { runtimeStatus, runtimeStatusCommand } = await import("./commands/runtime.js");
+		if (opts.file) {
+			await runtimeStatusCommand(opts);
+			return;
+		}
+		await runtimeStatus(opts);
+	});
+
+runtimeCmd
+	.command("doctor")
+	.description("Diagnose hosted runtime policy, paths, and last boot state")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { runtimeDoctor } = await import("./commands/runtime.js");
+		await runtimeDoctor(opts);
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -1095,6 +1161,15 @@ program
 		}
 		const { doctor } = await import("./commands/doctor.js");
 		await doctor(opts);
+	});
+
+program
+	.command("capabilities")
+	.description("Show CLI feature surface and hosted policy restrictions")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { capabilitiesCommand } = await import("./commands/capabilities.js");
+		await capabilitiesCommand(opts);
 	});
 
 program

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
@@ -15,6 +16,7 @@ import {
 	setAuth,
 	setPendingAuth,
 } from "../lib/config";
+import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import type { ShareToken } from "../share/tokens";
 
 function upgradeIdempotencyKey(token: string): string {
@@ -567,4 +569,52 @@ export async function authLogout() {
 
 	clearAuth();
 	p.log.success("Logged out. Credentials and cached environments removed.");
+}
+
+type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-instance-data" | "none";
+
+function detectAuthSource(): AuthStatusSource {
+	const paths = getRuntimePaths();
+	if (process.env.CLAWDI_AUTH_TOKEN) return "CLAWDI_AUTH_TOKEN";
+	if (existsSync(paths.localAuth)) return "auth.json";
+	if (existsSync(paths.sensitiveInstanceData)) return "runtime-instance-data";
+	return "none";
+}
+
+export async function authStatus(opts: { json?: boolean } = {}) {
+	const auth = getAuth();
+	const config = getConfig();
+	const mode = detectRuntimeMode();
+	const paths = getRuntimePaths({ mode });
+	const source = detectAuthSource();
+	const authenticated = Boolean(auth) || source === "runtime-instance-data";
+	const payload = {
+		schemaVersion: "clawdi.authStatus.v1",
+		authenticated,
+		source,
+		apiUrl: config.apiUrl,
+		runtimeMode: mode,
+		user: auth ? { email: auth.email, id: auth.userId } : undefined,
+		paths: {
+			clawdiHome: paths.clawdiHome,
+			auth: source === "auth.json" ? paths.localAuth : undefined,
+			managedConfig: mode === "hosted" ? paths.managedConfig : undefined,
+			sensitiveInstanceDataPresent: existsSync(paths.sensitiveInstanceData),
+			sensitiveInstanceData: "<redacted>",
+		},
+	};
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(payload, null, 2));
+		return;
+	}
+
+	console.log(chalk.bold("clawdi auth status"));
+	console.log();
+	console.log(`  Authenticated: ${authenticated ? chalk.green("yes") : chalk.red("no")}`);
+	console.log(`  Source: ${source}`);
+	console.log(chalk.gray(`  API: ${config.apiUrl}`));
+	if (auth?.email || auth?.userId) {
+		console.log(chalk.gray(`  User: ${auth.email || auth.userId}`));
+	}
 }
