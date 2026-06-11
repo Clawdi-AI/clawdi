@@ -711,11 +711,28 @@ function runPluginInstallWithFallback(
 			runRuntimeUserCommand(commandPath, ["plugins", "install", spec], "", home, workspaceRoot);
 			return;
 		} catch (error) {
+			if (isOpenClawPluginAlreadyInstalledError(error)) return;
 			lastError = error;
 		}
 	}
 	if (lastError instanceof Error) throw lastError;
 	throw new Error(`OpenClaw plugin install failed for ${specs.join(" or ")}`);
+}
+
+function isOpenClawPluginAlreadyInstalledError(error: unknown): boolean {
+	const text = commandErrorText(error).toLowerCase();
+	return text.includes("plugin already exists:");
+}
+
+function commandErrorText(error: unknown): string {
+	if (typeof error !== "object" || error === null) return String(error);
+	const parts: string[] = [];
+	const output = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+	for (const value of [output.message, output.stdout, output.stderr]) {
+		if (typeof value === "string") parts.push(value);
+		else if (Buffer.isBuffer(value)) parts.push(value.toString("utf8"));
+	}
+	return parts.join("\n");
 }
 
 function channelPluginEntries(

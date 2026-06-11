@@ -21,6 +21,7 @@ import { convergeRuntimeManifest, loadRuntimeManifest } from "../src/runtime/man
 import {
 	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
+	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths } from "../src/runtime/paths";
@@ -1386,6 +1387,86 @@ exit 64
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
 		}
+	});
+
+	it("treats already-installed OpenClaw channel plugins as converged", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-channel-patch.json");
+		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat > '${openclawPatch}'
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  printf 'plugin already exists: %s\\n' "$HOME/.openclaw/npm/projects/openclaw-discord/node_modules/\${3:-}" >&2
+  printf 'Use openclaw plugins update to upgrade the tracked plugin.\\n' >&2
+  exit 1
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_installed_plugin",
+				environmentId: "env_installed_plugin",
+				instanceId: "iid_installed_plugin",
+				generation: 2,
+				issuedAt: "2026-06-11T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: { enabled: false },
+				},
+				projection: {
+					system: { home, workspace },
+					channels: {
+						discord: {
+							token: "secret://channels/discord/acct-discord-1",
+						},
+					},
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://already-installed-plugin",
+			offline: false,
+			secretValues: {},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+		const patchText = readFileSync(openclawPatch, "utf-8");
+		expect(patchText).toContain('"discord"');
+		expect(patchText).toContain('"plugins"');
 	});
 
 	it("uses hosted system workspace when converging run and supervisor config", async () => {
