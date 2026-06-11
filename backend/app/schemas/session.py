@@ -203,11 +203,40 @@ class RuntimeObservedHealthResponse(BaseModel):
     reported_at: datetime | None = None
 
 
+class RuntimeObservedProviderHealthResponse(BaseModel):
+    provider_id: str
+    status: Literal["ok", "error", "unknown", "not_configured"]
+    reasons: list[str] = []
+    desired: dict[str, Any] | None = None
+    observed: dict[str, Any] | None = None
+
+
 class RuntimeObservedResponse(BaseModel):
     environment: EnvironmentResponse
     desired: RuntimeObservedDesiredResponse | None = None
     observed: dict[str, Any] | None = None
     health: RuntimeObservedHealthResponse
+    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
+class RuntimeObservedSummaryCountsResponse(BaseModel):
+    ok: int = 0
+    error: int = 0
+    stale: int = 0
+    unknown: int = 0
+    not_configured: int = 0
+
+
+class RuntimeObservedSummaryItemResponse(BaseModel):
+    environment: EnvironmentResponse
+    desired: RuntimeObservedDesiredResponse | None = None
+    health: RuntimeObservedHealthResponse
+    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
+class RuntimeObservedSummaryResponse(BaseModel):
+    counts: RuntimeObservedSummaryCountsResponse
+    items: list[RuntimeObservedSummaryItemResponse]
 
 
 class SessionBatchResponse(BaseModel):

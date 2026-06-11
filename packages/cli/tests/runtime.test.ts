@@ -242,6 +242,48 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors[0]).toContain("runtime source config does not exist");
 	});
 
+	it("refuses last-good offline boot when cached manifest references secretValues", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			join(state, "cache", "manifest.last-good.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_cached_secret",
+				environmentId: "env_cached_secret",
+				instanceId: "iid_cached_secret",
+				generation: 3,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: false } },
+				projection: {
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://sub2api.test/v1",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths());
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+		expect(loaded.mode).toBe("repair");
+		expect(loaded.errors).toContain(
+			"cached manifest references secretValues (provider.default.apiKey); refusing offline boot without a fresh runtime manifest",
+		);
+	});
+
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -607,6 +649,13 @@ describe("runtime manifest datasource", () => {
 			join(bin, "supervisorctl"),
 			`#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${supervisorCalls}'
+if [ "\${3:-}" = "status" ]; then
+  cat <<'STATUS'
+clawdi-daemon                    RUNNING   pid 10, uptime 0:00:12
+clawdi-openclaw                  RUNNING   pid 11, uptime 0:00:12
+clawdi-runtime-watch             RUNNING   pid 12, uptime 0:00:12
+STATUS
+fi
 `,
 		);
 		chmodSync(join(bin, "supervisorctl"), 0o700);
@@ -694,11 +743,19 @@ printf '%s\\n' "$*" >> '${supervisorCalls}'
 				'"channels-etag-watch-1"\n',
 			);
 			expect(readFileSync(supervisorCalls, "utf-8")).toBe(
-				`-c ${join(state, "supervisor", "supervisord.conf")} reread\n-c ${join(
+				`-c ${join(state, "supervisor", "supervisord.conf")} status\n-c ${join(
 					state,
 					"supervisor",
 					"supervisord.conf",
-				)} update\n`,
+				)} reread\n-c ${join(
+					state,
+					"supervisor",
+					"supervisord.conf",
+				)} update clawdi-daemon\n-c ${join(
+					state,
+					"supervisor",
+					"supervisord.conf",
+				)} update clawdi-openclaw\n`,
 			);
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
@@ -814,6 +871,166 @@ EOF
 		});
 	});
 
+	it("runtime observed reports provider secret health without leaking secret values", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		mkdirSync(join(run, "mitm"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		writeFileSync(
+			paths.manifestLastGood,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep-provider-observed",
+				environmentId: "env-provider-observed",
+				instanceId: "iid-provider-observed",
+				generation: 9,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true } },
+				projection: {
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://sub2api.test/v1",
+							model: "gpt-5.5",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+		writeFileSync(
+			join(run, "mitm", "secrets.json"),
+			JSON.stringify({ "secret://provider.default.apiKey": "sk-observed-provider" }),
+		);
+		writeRuntimeBootStatus(
+			buildRuntimeBootStatus(
+				{
+					mode: "normal",
+					status: "ok",
+					stage: "final",
+					bootId: "boot-provider",
+					runtimeMode: "hosted",
+					activeGeneration: 9,
+					instanceId: "iid-provider-observed",
+					enabledRuntimes: ["openclaw"],
+					errors: [],
+					exitCode: 0,
+					datasource: "RuntimeSource",
+					hostPolicy: {
+						path: paths.hostPolicy,
+						exists: true,
+						valid: true,
+						mode: "hosted",
+					},
+				},
+				paths,
+			),
+			paths,
+		);
+
+		const observed = readHostedRuntimeObserved(paths);
+
+		expect(observed?.status).toBe("ok");
+		expect(observed?.providers).toEqual({
+			default: {
+				status: "ok",
+				configured: true,
+				kind: "openai-compatible",
+				baseUrl: "https://sub2api.test/v1",
+				model: "gpt-5.5",
+				apiKeySecretRef: "provider.default.apiKey",
+				secretAvailable: true,
+				reasons: [],
+			},
+		});
+		expect(JSON.stringify(observed)).not.toContain("sk-observed-provider");
+	});
+
+	it("runtime observed marks provider health error when its secret ref is unavailable", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		mkdirSync(run, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		writeFileSync(
+			paths.manifestLastGood,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep-provider-missing-secret",
+				environmentId: "env-provider-missing-secret",
+				instanceId: "iid-provider-missing-secret",
+				generation: 10,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true } },
+				projection: {
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://sub2api.test/v1",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+		writeRuntimeBootStatus(
+			buildRuntimeBootStatus(
+				{
+					mode: "normal",
+					status: "ok",
+					stage: "final",
+					bootId: "boot-provider-missing-secret",
+					runtimeMode: "hosted",
+					activeGeneration: 10,
+					instanceId: "iid-provider-missing-secret",
+					enabledRuntimes: ["openclaw"],
+					errors: [],
+					exitCode: 0,
+					datasource: "RuntimeSource",
+					hostPolicy: {
+						path: paths.hostPolicy,
+						exists: true,
+						valid: true,
+						mode: "hosted",
+					},
+				},
+				paths,
+			),
+			paths,
+		);
+
+		const observed = readHostedRuntimeObserved(paths);
+
+		expect(observed?.status).toBe("error");
+		expect(observed?.providers).toEqual({
+			default: {
+				status: "error",
+				configured: true,
+				kind: "openai-compatible",
+				baseUrl: "https://sub2api.test/v1",
+				model: null,
+				apiKeySecretRef: "provider.default.apiKey",
+				secretAvailable: false,
+				reasons: ["secret_missing"],
+			},
+		});
+	});
+
 	it("runtime watch installs changed CLI package specs and marks itself for re-exec", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -864,6 +1081,13 @@ chmod +x "$prefix/bin/clawdi"
 			join(bin, "supervisorctl"),
 			`#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${supervisorCalls}'
+if [ "\${3:-}" = "status" ]; then
+  cat <<'STATUS'
+clawdi-daemon                    RUNNING   pid 10, uptime 0:00:12
+clawdi-openclaw                  RUNNING   pid 11, uptime 0:00:12
+clawdi-runtime-watch             RUNNING   pid 12, uptime 0:00:12
+STATUS
+fi
 `,
 		);
 		chmodSync(join(bin, "supervisorctl"), 0o700);
@@ -952,11 +1176,19 @@ printf '%s\\n' "$*" >> '${supervisorCalls}'
 			expect(status.activeTarget).toBe(activeTarget);
 			expect(status.version).toBe("0.13.1-beta.0");
 			expect(readFileSync(supervisorCalls, "utf-8")).toBe(
-				`-c ${join(state, "supervisor", "supervisord.conf")} reread\n-c ${join(
+				`-c ${join(state, "supervisor", "supervisord.conf")} status\n-c ${join(
 					state,
 					"supervisor",
 					"supervisord.conf",
-				)} update\n`,
+				)} reread\n-c ${join(
+					state,
+					"supervisor",
+					"supervisord.conf",
+				)} update clawdi-daemon\n-c ${join(
+					state,
+					"supervisor",
+					"supervisord.conf",
+				)} update clawdi-openclaw\n`,
 			);
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
@@ -1512,6 +1744,20 @@ exit 64
 				"sk-runtime",
 			);
 			expect(readFileSync(join(run, "mitm", "secrets.json"), "utf-8")).toContain("sk-runtime");
+			const providerHealth = JSON.parse(
+				readFileSync(join(state, "status", "provider-health.json"), "utf-8"),
+			);
+			expect(providerHealth.providers.default).toEqual({
+				status: "ok",
+				configured: true,
+				kind: "openai-compatible",
+				baseUrl: "https://sub2api.test/v1",
+				model: null,
+				apiKeySecretRef: "provider.default.apiKey",
+				secretAvailable: true,
+				reasons: [],
+			});
+			expect(JSON.stringify(providerHealth)).not.toContain("sk-runtime");
 		} finally {
 			restore();
 		}

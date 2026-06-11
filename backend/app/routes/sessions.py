@@ -40,7 +40,11 @@ from app.schemas.session import (
     EnvironmentResponse,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
+    RuntimeObservedProviderHealthResponse,
     RuntimeObservedResponse,
+    RuntimeObservedSummaryCountsResponse,
+    RuntimeObservedSummaryItemResponse,
+    RuntimeObservedSummaryResponse,
     SessionBatchRequest,
     SessionBatchResponse,
     SessionDetailResponse,
@@ -330,6 +334,52 @@ async def list_environments(
     return [_env_to_response(e) for e in envs]
 
 
+@router.get("/api/environments/runtime-observed")
+async def list_environment_runtime_observed(
+    limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedSummaryResponse:
+    bound_env = _bound_env_id(auth)
+    filters = [AgentEnvironment.user_id == auth.user_id]
+    if bound_env is not None:
+        filters.append(AgentEnvironment.id == bound_env)
+
+    envs = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(*filters)
+            .order_by(AgentEnvironment.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    env_ids = [env.id for env in envs]
+    states_by_env: dict[UUID, HostedRuntimeState] = {}
+    if env_ids:
+        states = (
+            await db.execute(
+                select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+            )
+        ).scalars().all()
+        states_by_env = {state.environment_id: state for state in states}
+
+    counts = RuntimeObservedSummaryCountsResponse()
+    items: list[RuntimeObservedSummaryItemResponse] = []
+    for env in envs:
+        state = states_by_env.get(env.id)
+        health = _runtime_observed_health(env, state)
+        setattr(counts, health.status, getattr(counts, health.status) + 1)
+        items.append(
+            RuntimeObservedSummaryItemResponse(
+                environment=_env_to_response(env),
+                desired=_runtime_observed_desired(state) if state is not None else None,
+                health=health,
+                provider_health=_runtime_observed_provider_health(state),
+            )
+        )
+    return RuntimeObservedSummaryResponse(counts=counts, items=items)
+
+
 @router.get("/api/environments/{environment_id}")
 async def get_environment(
     environment_id: UUID,
@@ -386,6 +436,7 @@ async def get_environment_runtime_observed(
         desired=_runtime_observed_desired(state) if state is not None else None,
         observed=state.observed if state is not None else None,
         health=_runtime_observed_health(env, state),
+        provider_health=_runtime_observed_provider_health(state),
     )
 
 
@@ -469,7 +520,15 @@ def _runtime_observed_health(
     elif reported_at is not None and now - reported_at > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("runtime_observed_stale")
 
+    provider_health = _runtime_observed_provider_health(state)
+    if any(provider.status == "error" for provider in provider_health):
+        reasons.append("provider_error")
+    elif any(provider.status == "unknown" for provider in provider_health):
+        reasons.append("provider_status_unknown")
+
     if "daemon_error" in reasons or "runtime_error" in reasons or "supervisor_error" in reasons:
+        status_value = "error"
+    elif "provider_error" in reasons:
         status_value = "error"
     elif "daemon_stale" in reasons or "runtime_observed_stale" in reasons:
         status_value = "stale"
@@ -483,6 +542,75 @@ def _runtime_observed_health(
         reasons=reasons,
         reported_at=reported_at,
     )
+
+
+def _runtime_observed_provider_health(
+    state: HostedRuntimeState | None,
+) -> list[RuntimeObservedProviderHealthResponse]:
+    if state is None or not isinstance(state.observed, dict):
+        return []
+    raw_providers = state.observed.get("providers")
+    if not isinstance(raw_providers, dict):
+        return []
+
+    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+    for provider_key in sorted(str(key) for key in raw_providers):
+        observed = raw_providers.get(provider_key)
+        observed_payload = observed if isinstance(observed, dict) else None
+        provider_health.append(
+            RuntimeObservedProviderHealthResponse(
+                provider_id=provider_key,
+                status=_runtime_observed_provider_status(observed_payload),
+                reasons=_runtime_observed_provider_reasons(observed_payload),
+                desired={
+                    "state_provider_id": state.provider_id,
+                    "default_binding": provider_key == "default",
+                },
+                observed=observed_payload,
+            )
+        )
+    return provider_health
+
+
+def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
+    if observed is None:
+        return "unknown"
+    if observed.get("status") == "not_configured" or observed.get("configured") is False:
+        return "not_configured"
+    reasons = _runtime_observed_provider_reasons(observed)
+    if reasons:
+        return "error"
+    raw_status = observed.get("status")
+    if raw_status == "ok":
+        return "ok"
+    if raw_status == "unknown":
+        return "unknown"
+    if raw_status == "not_configured":
+        return "not_configured"
+    return "unknown"
+
+
+def _runtime_observed_provider_reasons(observed: dict[str, Any] | None) -> list[str]:
+    if observed is None:
+        return ["provider_observed_missing"]
+
+    reasons: list[str] = []
+    raw_status = observed.get("status")
+    if raw_status == "error":
+        raw_reasons = observed.get("reasons")
+        if isinstance(raw_reasons, list):
+            reasons.extend(str(reason) for reason in raw_reasons if isinstance(reason, str))
+        if not reasons:
+            reasons.append("provider_error")
+    elif raw_status not in {"ok", "unknown", "not_configured"}:
+        reasons.append("provider_status_invalid")
+
+    if observed.get("configured") is False:
+        reasons.append("provider_not_configured")
+    if observed.get("secretAvailable") is False:
+        reasons.append("provider_secret_missing")
+
+    return sorted(set(reasons))
 
 
 def _enabled_runtime_names(runtimes: dict) -> list[str]:

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { readRuntimeBootStatus } from "./state";
 
@@ -21,12 +22,13 @@ export function readHostedRuntimeObserved(
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
 	const supervisor = readSupervisorObserved(paths);
+	const providers = readProviderObserved(paths);
 
 	const observed: JsonRecord = {
 		schemaVersion: "clawdi.hostedRuntimeObserved.v1",
 		reportedAt: new Date().toISOString(),
 		runtimeMode: paths.mode,
-		status: observedStatus(boot.status, watchStatus, supervisor),
+		status: observedStatus(boot.status, watchStatus, supervisor, providers),
 		manifest: {
 			etag: manifestEtag,
 			lastGoodExists: existsSync(paths.manifestLastGood),
@@ -39,6 +41,7 @@ export function readHostedRuntimeObserved(
 		cli: summarizeCliBootstrap(cliBootstrap),
 	};
 	if (supervisor) observed.supervisor = supervisor;
+	if (providers) observed.providers = providers;
 	if (boot.error) observed.error = boot.error;
 	return observed;
 }
@@ -66,11 +69,18 @@ function observedStatus(
 	bootStatus: { status: string; errors?: string[] } | undefined,
 	watchStatus: JsonRecord | null,
 	supervisor: JsonRecord | null,
+	providers: JsonRecord | null,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (watchEvent?.status === "error") return "error";
 	if (bootStatus?.status === "error") return "error";
 	if (supervisor?.status === "error") return "error";
+	if (
+		providers &&
+		Object.values(providers).some((provider) => recordValue(provider)?.status === "error")
+	) {
+		return "error";
+	}
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
@@ -138,6 +148,64 @@ function summarizeCliBootstrap(value: JsonRecord | null): JsonRecord | null {
 		activeTarget: stringValue(value.activeTarget),
 		version: stringValue(value.version),
 	};
+}
+
+function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
+	const providerStatus = readJsonRecord(paths.providerHealthStatus);
+	const statusProviders = recordValue(providerStatus?.providers);
+	if (statusProviders && Object.keys(statusProviders).length > 0) {
+		return statusProviders;
+	}
+
+	const manifest = readJsonRecord(paths.manifestLastGood);
+	const projection = recordValue(manifest?.projection);
+	const providers = recordValue(projection?.providers);
+	if (!providers || Object.keys(providers).length === 0) return null;
+
+	const secrets = readJsonRecord(join(paths.runRoot, "mitm", "secrets.json")) ?? {};
+	const observed: JsonRecord = {};
+	for (const providerId of Object.keys(providers).sort()) {
+		const provider = recordValue(providers[providerId]);
+		if (!provider) continue;
+		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
+		const secretAvailable =
+			apiKeySecretRef === null ? null : providerSecretAvailable(secrets, apiKeySecretRef);
+		const reasons = providerReasons(provider, secretAvailable);
+		observed[providerId] = {
+			status: reasons.length > 0 ? "error" : "ok",
+			configured: true,
+			kind: stringValue(provider.kind),
+			baseUrl: stringValue(provider.baseUrl),
+			model: stringValue(provider.model),
+			apiKeySecretRef,
+			secretAvailable,
+			reasons,
+		};
+	}
+	return Object.keys(observed).length > 0 ? observed : null;
+}
+
+function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
+	const normalized = normalizeSecretRef(ref);
+	return Boolean(secrets[ref] || (normalized ? secrets[normalized] : undefined));
+}
+
+function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {
+	const reasons: string[] = [];
+	const baseUrl = stringValue(provider.baseUrl);
+	if (!baseUrl) {
+		reasons.push("base_url_missing");
+	} else {
+		try {
+			new URL(baseUrl);
+		} catch {
+			reasons.push("base_url_invalid");
+		}
+	}
+	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
+		reasons.push("secret_missing");
+	}
+	return reasons;
 }
 
 function readSupervisorObserved(paths: RuntimePaths): JsonRecord | null {

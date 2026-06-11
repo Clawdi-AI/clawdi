@@ -728,6 +728,16 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				errors: [`cached ${expiryError}`],
 			};
 		}
+		const secretRefs = manifestSecretRefs(manifest);
+		if (secretRefs.length > 0) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					`cached manifest references secretValues (${secretRefs.join(", ")}); refusing offline boot without a fresh runtime manifest`,
+				],
+			};
+		}
 		return {
 			manifest,
 			source: "last-good-cache",
@@ -744,6 +754,26 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				}`,
 			],
 		};
+	}
+}
+
+function manifestSecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	collectSecretRefs(manifest, refs);
+	return [...refs].sort();
+}
+
+function collectSecretRefs(value: unknown, refs: Set<string>): void {
+	if (!value || typeof value !== "object") return;
+	if (Array.isArray(value)) {
+		for (const item of value) collectSecretRefs(item, refs);
+		return;
+	}
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
+			refs.add(entry);
+		}
+		collectSecretRefs(entry, refs);
 	}
 }
 

@@ -17,6 +17,7 @@ import type { AiProviderCatalog } from "@clawdi/shared";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { mergeHermesConfig, mergeHermesMcpServer } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
@@ -117,6 +118,94 @@ function writeSecretValues(
 	makeSystemOwned(dirname(path));
 	makeSystemOwned(path);
 	return path;
+}
+
+function writeProviderHealthStatus(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): string | null {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers || Object.keys(providers).length === 0) {
+		rmSync(paths.providerHealthStatus, { force: true });
+		return null;
+	}
+
+	const observed: Record<string, unknown> = {};
+	for (const providerId of Object.keys(providers).sort()) {
+		const provider = recordValue(providers[providerId]);
+		if (!provider) continue;
+		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
+		const secretAvailable =
+			apiKeySecretRef === null
+				? null
+				: providerSecretAvailable(secretValues ?? {}, apiKeySecretRef);
+		const reasons = providerHealthReasons(provider, secretAvailable);
+		observed[providerId] = {
+			status: reasons.length > 0 ? "error" : "ok",
+			configured: true,
+			kind: stringValue(provider.kind),
+			baseUrl: stringValue(provider.baseUrl),
+			model: stringValue(provider.model),
+			apiKeySecretRef,
+			secretAvailable,
+			reasons,
+		};
+	}
+
+	if (Object.keys(observed).length === 0) {
+		rmSync(paths.providerHealthStatus, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(
+		paths.providerHealthStatus,
+		`${JSON.stringify(
+			{
+				schemaVersion: "clawdi.hostedRuntimeProviderHealth.v1",
+				generatedAt: new Date().toISOString(),
+				providers: observed,
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o644, dirMode: 0o755 },
+	);
+	return paths.providerHealthStatus;
+}
+
+function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
+	const normalized = normalizeSecretRef(ref);
+	return Boolean(secretValues[ref] || (normalized ? secretValues[normalized] : undefined));
+}
+
+function providerHealthReasons(
+	provider: Record<string, unknown>,
+	secretAvailable: boolean | null,
+): string[] {
+	const reasons: string[] = [];
+	const baseUrl = stringValue(provider.baseUrl);
+	if (!baseUrl) {
+		reasons.push("base_url_missing");
+	} else {
+		try {
+			new URL(baseUrl);
+		} catch {
+			reasons.push("base_url_invalid");
+		}
+	}
+	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
+		reasons.push("secret_missing");
+	}
+	return reasons;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string | null {
+	return typeof value === "string" ? value : null;
 }
 
 function makeSystemOwned(path: string): void {
@@ -1165,6 +1254,7 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
+	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	const supervisorConfig = writeSupervisorConfig(

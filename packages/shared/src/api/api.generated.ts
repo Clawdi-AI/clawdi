@@ -594,6 +594,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/environments/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Environment Runtime Observed */
+        get: operations["list_environment_runtime_observed_api_environments_runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -4011,6 +4028,29 @@ export interface components {
             /** Reported At */
             reported_at?: string | null;
         };
+        /** RuntimeObservedProviderHealthResponse */
+        RuntimeObservedProviderHealthResponse: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown" | "not_configured";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Desired */
+            desired?: {
+                [key: string]: unknown;
+            } | null;
+            /** Observed */
+            observed?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** RuntimeObservedResponse */
         RuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
@@ -4020,6 +4060,56 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** RuntimeObservedSummaryCountsResponse */
+        RuntimeObservedSummaryCountsResponse: {
+            /**
+             * Ok
+             * @default 0
+             */
+            ok: number;
+            /**
+             * Error
+             * @default 0
+             */
+            error: number;
+            /**
+             * Stale
+             * @default 0
+             */
+            stale: number;
+            /**
+             * Unknown
+             * @default 0
+             */
+            unknown: number;
+            /**
+             * Not Configured
+             * @default 0
+             */
+            not_configured: number;
+        };
+        /** RuntimeObservedSummaryItemResponse */
+        RuntimeObservedSummaryItemResponse: {
+            environment: components["schemas"]["EnvironmentResponse"];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** RuntimeObservedSummaryResponse */
+        RuntimeObservedSummaryResponse: {
+            counts: components["schemas"]["RuntimeObservedSummaryCountsResponse"];
+            /** Items */
+            items: components["schemas"]["RuntimeObservedSummaryItemResponse"][];
         };
         /** SearchHit */
         SearchHit: {
@@ -6371,6 +6461,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_environment_runtime_observed_api_environments_runtime_observed_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservedSummaryResponse"];
                 };
             };
             /** @description Validation Error */

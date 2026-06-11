@@ -1240,13 +1240,20 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
-function supervisorctl(paths: ReturnType<typeof getRuntimePaths>, action: "reread" | "update") {
+const RUNTIME_WATCH_PROGRAM = "clawdi-runtime-watch";
+
+function supervisorctl(
+	paths: ReturnType<typeof getRuntimePaths>,
+	args: string[],
+	opts: { allowNonZero?: boolean } = {},
+): string {
 	const command = process.env.CLAWDI_SUPERVISORCTL_PATH?.trim() || "supervisorctl";
-	const result = spawnSync(command, ["-c", paths.supervisorConfig, action], {
+	const result = spawnSync(command, ["-c", paths.supervisorConfig, ...args], {
 		encoding: "utf8",
 	});
-	if (result.status === 0) return;
 	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+	if (result.status === 0 || opts.allowNonZero) return output;
+	const action = args.join(" ");
 	throw new Error(
 		`supervisorctl ${action} failed${result.status === null ? "" : ` (${result.status})`}${
 			result.error ? `: ${result.error.message}` : ""
@@ -1255,8 +1262,40 @@ function supervisorctl(paths: ReturnType<typeof getRuntimePaths>, action: "rerea
 }
 
 function applySupervisorRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): void {
-	supervisorctl(paths, "reread");
-	supervisorctl(paths, "update");
+	const targets = supervisorRuntimeUpdateTargets(paths);
+	supervisorctl(paths, ["reread"]);
+	for (const target of targets) {
+		supervisorctl(paths, ["update", target]);
+	}
+}
+
+function supervisorRuntimeUpdateTargets(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	const targets = new Set<string>();
+	for (const program of supervisorStatusPrograms(paths)) {
+		targets.add(program);
+	}
+	for (const program of supervisorConfigPrograms(paths)) {
+		targets.add(program);
+	}
+	targets.delete(RUNTIME_WATCH_PROGRAM);
+	return [...targets].sort();
+}
+
+function supervisorStatusPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	const output = supervisorctl(paths, ["status"], { allowNonZero: true });
+	return output
+		.split(/\r?\n/)
+		.map((line) => line.trim().match(/^([A-Za-z0-9_.-]+)\s+/)?.[1])
+		.filter((program): program is string => Boolean(program));
+}
+
+function supervisorConfigPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	try {
+		const config = readFileSync(paths.supervisorConfig, "utf-8");
+		return [...config.matchAll(/^\[program:([^\]]+)\]$/gm)].map((match) => match[1]);
+	} catch {
+		return [];
+	}
 }
 
 function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void {

@@ -500,15 +500,12 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(JSON.stringify(mitmProfiles)).not.toContain("auth-test-token");
 
 			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
-			expect(offline.code).toBe(0);
+			expect(offline.code).toBe(21);
 			const offlineParsed = JSON.parse(offline.stdout);
-			expect(offlineParsed.mode).toBe("degraded-offline");
-			expect(offlineParsed.manifestSource.type).toBe("last-good-cache");
-			expect(offlineParsed.activeGeneration).toBe(7);
-			const offlineInventory = JSON.parse(
-				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
+			expect(offlineParsed.mode).toBe("repair");
+			expect(offlineParsed.errors).toContain(
+				"cached manifest references secretValues (secret://provider.default.apiKey); refusing offline boot without a fresh runtime manifest",
 			);
-			expect(offlineInventory.status).toBe("present");
 
 			writeFileSync(staleManifestPath, JSON.stringify({ ...manifest, generation: 6 }));
 			const stale = await runCli(
