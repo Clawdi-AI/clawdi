@@ -709,6 +709,20 @@ runtimeCmd
 	});
 
 runtimeCmd
+	.command("watch")
+	.description("Watch hosted runtime desired state and apply live changes")
+	.option("--interval-ms <ms>", "Polling interval in milliseconds")
+	.option("--self-heal-ms <ms>", "Maximum interval before forcing a full manifest fetch")
+	.option("--once", "Run one watch iteration and exit")
+	.option("--json", "Emit machine-readable JSON events")
+	.action(
+		async (opts: { intervalMs?: string; selfHealMs?: string; once?: boolean; json?: boolean }) => {
+			const { runtimeWatch } = await import("./commands/runtime.js");
+			await runtimeWatch(opts);
+		},
+	);
+
+runtimeCmd
 	.command("plan")
 	.description("Preview channel account, link, and runtime projection changes")
 	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")

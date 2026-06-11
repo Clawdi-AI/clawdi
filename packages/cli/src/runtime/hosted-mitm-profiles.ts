@@ -1,6 +1,7 @@
 import { type MitmProfileInputBundle, mitmProfileInputBundleSchema } from "./mitm-profiles";
 
 type HostedMitmProfile = MitmProfileInputBundle["profiles"][number];
+const MANAGED_PROVIDER_PLACEHOLDER_TOKEN = "clawdi-mitm-placeholder";
 
 interface HostedRuntimeManifestProjection {
 	mitmProfiles?: unknown;
@@ -37,12 +38,11 @@ export function hostedManifestMitmProfiles(
 function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): HostedMitmProfile[] {
 	const cloudApiUrl = hostedCloudApiUrl(hosted);
 	if (!cloudApiUrl) return [];
-	const cloudWsUrl = toWebSocketUrl(cloudApiUrl);
 	return [
 		{
-			id: "native-telegram-bot-api",
+			id: "native-telegram-bot-api-passthrough",
 			enabled: true,
-			kind: "http",
+			kind: "passthrough",
 			match: {
 				scheme: "https",
 				host: "api.telegram.org",
@@ -50,19 +50,14 @@ function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): Hos
 				headers: {},
 				query: {},
 			},
-			rewrite: {
-				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/telegram"),
-				preservePath: true,
-				setHeaders: {},
-			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: ["/bot[^/]+"] },
-			priority: 100,
+			priority: 200,
 			owner: "clawdi-native-channels",
 		},
 		{
-			id: "native-discord-rest",
+			id: "native-discord-rest-passthrough",
 			enabled: true,
-			kind: "http",
+			kind: "passthrough",
 			match: {
 				scheme: "https",
 				host: "discord.com",
@@ -70,19 +65,14 @@ function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): Hos
 				headers: {},
 				query: {},
 			},
-			rewrite: {
-				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/discord"),
-				preservePath: true,
-				setHeaders: {},
-			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-			priority: 101,
+			priority: 201,
 			owner: "clawdi-native-channels",
 		},
 		{
-			id: "native-discord-gateway",
+			id: "native-discord-gateway-passthrough",
 			enabled: true,
-			kind: "websocket",
+			kind: "passthrough",
 			match: {
 				scheme: "wss",
 				host: "gateway.discord.gg",
@@ -90,19 +80,14 @@ function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): Hos
 				headers: {},
 				query: {},
 			},
-			rewrite: {
-				upstreamBaseUrl: appendCleanPath(cloudWsUrl, "/api/channels/discord/gateway"),
-				preservePath: true,
-				setHeaders: {},
-			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-			priority: 102,
+			priority: 202,
 			owner: "clawdi-native-channels",
 		},
 		{
-			id: "native-whatsapp-graph",
+			id: "native-whatsapp-graph-passthrough",
 			enabled: true,
-			kind: "http",
+			kind: "passthrough",
 			match: {
 				scheme: "https",
 				host: "graph.facebook.com",
@@ -110,13 +95,8 @@ function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): Hos
 				headers: {},
 				query: {},
 			},
-			rewrite: {
-				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/whatsapp/graph"),
-				preservePath: true,
-				setHeaders: {},
-			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-			priority: 103,
+			priority: 203,
 			owner: "clawdi-native-channels",
 		},
 	];
@@ -128,8 +108,8 @@ function providerMitmProfiles(
 ): HostedMitmProfile[] {
 	const apiKeyHeader: HostedMitmProfile["match"]["headers"] = {
 		authorization: {
-			type: "secretRefEquals" as const,
-			secretRef: apiKeySecretRef,
+			type: "equals" as const,
+			value: MANAGED_PROVIDER_PLACEHOLDER_TOKEN,
 			prefix: "Bearer ",
 		},
 	};
@@ -148,10 +128,31 @@ function providerMitmProfiles(
 			rewrite: {
 				upstreamBaseUrl: openAiResponsesUrl(providerBaseUrl),
 				preservePath: false,
-				setHeaders: {},
+				setHeaders: {
+					authorization: {
+						type: "secretRef",
+						secretRef: apiKeySecretRef,
+						prefix: "Bearer ",
+					},
+				},
 			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 			priority: 150,
+			owner: "provider-projection",
+		},
+		{
+			id: "codex-openai-responses-passthrough",
+			enabled: true,
+			kind: "passthrough",
+			match: {
+				scheme: "https",
+				host: "api.openai.com",
+				pathPrefix: "/",
+				headers: {},
+				query: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 250,
 			owner: "provider-projection",
 		},
 		{
@@ -162,9 +163,7 @@ function providerMitmProfiles(
 				scheme: "https",
 				host: "chatgpt.com",
 				path: { type: "equals", value: "/backend-api/codex/responses" },
-				headers: {
-					authorization: { type: "exists" },
-				},
+				headers: apiKeyHeader,
 				query: {},
 			},
 			rewrite: {
@@ -180,6 +179,21 @@ function providerMitmProfiles(
 			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 			priority: 151,
+			owner: "provider-projection",
+		},
+		{
+			id: "codex-chatgpt-backend-responses-passthrough",
+			enabled: true,
+			kind: "passthrough",
+			match: {
+				scheme: "https",
+				host: "chatgpt.com",
+				pathPrefix: "/",
+				headers: {},
+				query: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 251,
 			owner: "provider-projection",
 		},
 	];
@@ -203,13 +217,6 @@ function hostedCloudApiUrl(hosted: HostedRuntimeManifestProjection): string | nu
 	} catch {
 		return null;
 	}
-}
-
-function toWebSocketUrl(baseUrl: string): string {
-	const parsed = new URL(baseUrl);
-	if (parsed.protocol === "https:") parsed.protocol = "wss:";
-	else if (parsed.protocol === "http:") parsed.protocol = "ws:";
-	return parsed.toString().replace(/\/+$/, "");
 }
 
 export function normalizeSecretRef(value: string | null | undefined): string | null {

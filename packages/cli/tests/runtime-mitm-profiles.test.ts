@@ -73,13 +73,22 @@ describe("runtime MITM profile schema", () => {
 		}
 	});
 
-	it("rejects passthrough profiles", () => {
+	it("accepts passthrough profiles without rewrite rules", () => {
 		expect(
 			mitmProfileSchema.safeParse({
 				id: "direct-egress",
 				enabled: true,
 				kind: "passthrough",
 				match: { scheme: "https", host: "example.com", pathPrefix: "/" },
+			}).success,
+		).toBe(true);
+		expect(
+			mitmProfileSchema.safeParse({
+				id: "direct-egress",
+				enabled: true,
+				kind: "passthrough",
+				match: { scheme: "https", host: "example.com", pathPrefix: "/" },
+				rewrite: { upstreamBaseUrl: "https://router.test" },
 			}).success,
 		).toBe(false);
 	});
@@ -114,7 +123,32 @@ describe("runtime MITM profile schema", () => {
 
 		expect(openai?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
 		expect(openai?.rewrite.preservePath).toBe(false);
+		expect(openai?.match.headers.authorization).toEqual({
+			type: "equals",
+			value: "clawdi-mitm-placeholder",
+			prefix: "Bearer ",
+		});
+		expect(openai?.rewrite.setHeaders).toEqual({
+			authorization: {
+				type: "secretRef",
+				secretRef: "secret://provider.default.apiKey",
+				prefix: "Bearer ",
+			},
+		});
 		expect(chatgpt?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
 		expect(chatgpt?.rewrite.preservePath).toBe(false);
+		expect(chatgpt?.match.headers.authorization).toEqual({
+			type: "equals",
+			value: "clawdi-mitm-placeholder",
+			prefix: "Bearer ",
+		});
+		expect(
+			bundle.profiles.find((profile) => profile.id === "codex-openai-responses-passthrough")?.kind,
+		).toBe("passthrough");
+		expect(
+			bundle.profiles.find(
+				(profile) => profile.id === "codex-chatgpt-backend-responses-passthrough",
+			)?.kind,
+		).toBe("passthrough");
 	});
 });

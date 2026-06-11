@@ -248,7 +248,7 @@ func validateProfile(p profile) error {
 		return fmt.Errorf("profile id %q must match ^[a-z0-9][a-z0-9-_.]*$", p.ID)
 	}
 	switch p.Kind {
-	case "http", "websocket", "provider", "deny":
+	case "http", "websocket", "provider", "passthrough", "deny":
 	default:
 		return fmt.Errorf("profile %s has unsupported kind %q", p.ID, p.Kind)
 	}
@@ -290,6 +290,15 @@ func validateProfile(p profile) error {
 		}
 		if p.Rewrite.PreservePath != nil || len(p.Rewrite.SetHeaders) > 0 {
 			return fmt.Errorf("profile %s deny profiles must not set rewrite rules", p.ID)
+		}
+		return nil
+	}
+	if p.Kind == "passthrough" {
+		if p.Rewrite.UpstreamBaseURL != "" {
+			return fmt.Errorf("profile %s passthrough profiles must not set rewrite.upstreamBaseUrl", p.ID)
+		}
+		if p.Rewrite.PreservePath != nil || len(p.Rewrite.SetHeaders) > 0 {
+			return fmt.Errorf("profile %s passthrough profiles must not set rewrite rules", p.ID)
 		}
 		return nil
 	}
@@ -688,7 +697,7 @@ func (p *proxyServer) forwardRequest(w http.ResponseWriter, r *http.Request, ori
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "blocked by Clawdi MITM profile"})
 		return
 	}
-	upstream, err := routeUpstream(route.profile)
+	upstream, err := routeUpstream(route.profile, originalTarget, scheme)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Clawdi MITM profile has invalid upstream"})
 		return
@@ -696,7 +705,11 @@ func (p *proxyServer) forwardRequest(w http.ResponseWriter, r *http.Request, ori
 
 	outURL := *upstream
 	outURL.Scheme = normalizeUpstreamScheme(outURL.Scheme)
-	outURL.Path, outURL.RawQuery = rewritePath(upstream, requestPath, route.profile.Rewrite.preservePath())
+	outURL.Path, outURL.RawQuery = rewritePath(
+		upstream,
+		requestPath,
+		route.profile.Kind == "passthrough" || route.profile.Rewrite.preservePath(),
+	)
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, outURL.String(), r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "bad gateway"})
@@ -706,7 +719,9 @@ func (p *proxyServer) forwardRequest(w http.ResponseWriter, r *http.Request, ori
 	copyForwardHeaders(r.Header, outReq.Header)
 	outReq.Host = upstream.Host
 	outReq.Header.Set("Host", upstream.Host)
-	outReq.Header.Set("X-Clawdi-Original-Host", route.originalHost)
+	if route.profile.Kind != "passthrough" {
+		outReq.Header.Set("X-Clawdi-Original-Host", route.originalHost)
+	}
 	for key, value := range route.profile.Rewrite.SetHeaders {
 		resolved, ok := value.resolve(p.secrets)
 		if !ok {
@@ -744,7 +759,10 @@ func (p *proxyServer) forwardRequest(w http.ResponseWriter, r *http.Request, ori
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func routeUpstream(p profile) (*url.URL, error) {
+func routeUpstream(p profile, originalTarget string, scheme string) (*url.URL, error) {
+	if p.Kind == "passthrough" {
+		return &url.URL{Scheme: scheme, Host: originalTarget}, nil
+	}
 	return url.Parse(p.Rewrite.UpstreamBaseURL)
 }
 

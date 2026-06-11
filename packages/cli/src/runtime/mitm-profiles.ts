@@ -170,7 +170,7 @@ export const mitmProfileSchema = z
 	.object({
 		id: profileIdSchema,
 		enabled: z.boolean().default(true),
-		kind: z.enum(["http", "websocket", "provider", "deny"]),
+		kind: z.enum(["http", "websocket", "provider", "passthrough", "deny"]),
 		match: mitmProfileMatchSchema,
 		rewrite: mitmProfileRewriteSchema.optional(),
 		logging: mitmProfileLoggingSchema.default({ redactHeaders: [], redactUrlPatterns: [] }),
@@ -195,6 +195,13 @@ export const mitmProfileSchema = z
 				code: "custom",
 				path: ["rewrite"],
 				message: "deny profiles must not include rewrite rules",
+			});
+		}
+		if (profile.kind === "passthrough" && profile.rewrite) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["rewrite"],
+				message: "passthrough profiles must not include rewrite rules",
 			});
 		}
 	});

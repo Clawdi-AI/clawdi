@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	accessSync,
 	chmodSync,
 	chownSync,
 	constants,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	rmSync,
@@ -13,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AiProviderCatalog } from "@clawdi/shared";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
-import { mergeHermesConfig } from "../lib/hermes-config-merge";
+import { mergeHermesConfig, mergeHermesMcpServer } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 
@@ -561,11 +563,147 @@ function applyHostedAiProviderProjection(
 	return null;
 }
 
+function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unknown> | null {
+	const channels = manifest.projection?.channels;
+	if (!channels || Object.keys(channels).length === 0) return null;
+	return channels;
+}
+
+function applyHostedChannelProjection(
+	name: string,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+): string | null {
+	if (name !== "openclaw") return null;
+	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+		return null;
+	}
+	const channels = hostedChannelProjection(manifest);
+	if (!channels) return null;
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
+	const patch = {
+		channels,
+		plugins: { entries: channelPluginEntries(channels) },
+	};
+	runRuntimeUserCommand(
+		observation.commandPath,
+		["config", "patch", "--stdin"],
+		`${JSON.stringify(patch, null, 2)}\n`,
+		home,
+		workspaceRoot,
+	);
+	return observation.commandPath;
+}
+
+function installOpenClawChannelPlugins(
+	commandPath: string,
+	channels: Record<string, unknown>,
+	home: string,
+	workspaceRoot: string,
+): void {
+	for (const channel of Object.keys(channels).sort()) {
+		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
+		if (!specs) continue;
+		runPluginInstallWithFallback(commandPath, specs, home, workspaceRoot);
+	}
+}
+
+function runPluginInstallWithFallback(
+	commandPath: string,
+	specs: readonly string[],
+	home: string,
+	workspaceRoot: string,
+): void {
+	let lastError: unknown = null;
+	for (const spec of specs) {
+		try {
+			runRuntimeUserCommand(commandPath, ["plugins", "install", spec], "", home, workspaceRoot);
+			return;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError instanceof Error) throw lastError;
+	throw new Error(`OpenClaw plugin install failed for ${specs.join(" or ")}`);
+}
+
+function channelPluginEntries(
+	channels: Record<string, unknown>,
+): Record<string, { enabled: boolean }> {
+	const entries: Record<string, { enabled: boolean }> = {};
+	for (const channel of Object.keys(channels).sort()) {
+		if (channel === "bluebubbles") entries.bluebubbles = { enabled: true };
+		else entries[channel] = { enabled: true };
+	}
+	return entries;
+}
+
+function hostedMcpProjectionEnabled(manifest: RuntimeManifest): boolean {
+	const projection = manifest.projection;
+	if (!projection) return false;
+	if (isPlainRecord(projection.mcp) && projection.mcp.enabled === false) return false;
+	return projection.mcp !== undefined || projection.tools !== undefined;
+}
+
+function hostedMcpServerConfig(
+	manifest: RuntimeManifest,
+	authTokenFile: string,
+): { command: string; args: string[] } {
+	const script = [
+		`export CLAWDI_API_URL=${shellQuote(manifest.controlPlane.apiUrl)}`,
+		`export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(authTokenFile)})"`,
+		"exec clawdi mcp",
+	].join("; ");
+	return {
+		command: "/bin/sh",
+		args: ["-lc", script],
+	};
+}
+
+function applyHostedMcpProjection(
+	name: string,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+	daemonAuthTokenFile: string | null,
+): string | null {
+	if (!hostedMcpProjectionEnabled(manifest)) return null;
+	if (!daemonAuthTokenFile) return null;
+	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+		return null;
+	}
+	const server = hostedMcpServerConfig(manifest, daemonAuthTokenFile);
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	if (name === "openclaw") {
+		runRuntimeUserCommand(
+			observation.commandPath,
+			["mcp", "set", "clawdi", JSON.stringify(server)],
+			"",
+			home,
+			workspaceRoot,
+		);
+		return observation.commandPath;
+	}
+	if (name === "hermes") {
+		const configPath = join(home, ".hermes", "config.yaml");
+		mergeHermesMcpServer(configPath, "clawdi", server);
+		makeRuntimeUserOwned(configPath);
+		return configPath;
+	}
+	return null;
+}
+
 function projectionSystemHome(manifest: RuntimeManifest): string | null {
 	const system = manifest.projection?.system;
 	if (typeof system !== "object" || system === null || Array.isArray(system)) return null;
 	const home = (system as Record<string, unknown>).home;
 	return typeof home === "string" && home.trim() ? home.trim() : null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function runRuntimeUserCommand(
@@ -625,6 +763,11 @@ function removeStaleRuntimeRunConfigs(
 }
 
 const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
+const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
+	discord: ["@openclaw/discord"],
+	whatsapp: ["clawhub:@openclaw/whatsapp", "@openclaw/whatsapp"],
+	bluebubbles: ["@openclaw/bluebubbles@2026.5.7"],
+};
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
 	if (manifest.liveSync?.enabled === false) return [];
@@ -669,11 +812,11 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	return written;
 }
 
-function writeDaemonAuthToken(manifest: RuntimeManifest, paths: RuntimePaths): string | null {
+function writeDaemonAuthToken(paths: RuntimePaths): string | null {
 	const path = join(paths.runRoot, "sync", "auth-token");
-	const hasLiveSyncAgents = desiredLiveSyncAgents(manifest).length > 0;
 	const token = process.env.CLAWDI_AUTH_TOKEN?.trim();
-	if (!hasLiveSyncAgents || !token) {
+	if (!token) {
+		if (existsSync(path)) return path;
 		rmSync(path, { force: true });
 		return null;
 	}
@@ -681,6 +824,88 @@ function writeDaemonAuthToken(manifest: RuntimeManifest, paths: RuntimePaths): s
 	makeRuntimeUserOwned(dirname(path));
 	makeRuntimeUserOwned(path);
 	return path;
+}
+
+function canonicalize(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(canonicalize);
+	if (value && typeof value === "object") {
+		const input = value as Record<string, unknown>;
+		return Object.fromEntries(
+			Object.keys(input)
+				.sort()
+				.map((key) => [key, canonicalize(input[key])]),
+		);
+	}
+	return value;
+}
+
+function revisionHash(value: unknown): string {
+	return createHash("sha256")
+		.update(JSON.stringify(canonicalize(value)))
+		.digest("hex")
+		.slice(0, 32);
+}
+
+function sleepSync(ms: number): void {
+	const signal = new Int32Array(new SharedArrayBuffer(4));
+	Atomics.wait(signal, 0, 0, ms);
+}
+
+export function withRuntimeConvergeLock<T>(
+	paths: RuntimePaths,
+	fn: () => T,
+	opts: { timeoutMs?: number } = {},
+): T {
+	const timeoutMs = opts.timeoutMs ?? 300_000;
+	const lockRoot = join(paths.runRoot, "locks");
+	const lockDir = join(lockRoot, "converge.lock");
+	const startedAt = Date.now();
+	mkdirSync(lockRoot, { recursive: true });
+	for (;;) {
+		try {
+			mkdirSync(lockDir);
+			break;
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				!("code" in error) ||
+				(error as NodeJS.ErrnoException).code !== "EEXIST"
+			) {
+				throw error;
+			}
+			if (Date.now() - startedAt > timeoutMs) {
+				throw new Error(`timed out waiting for runtime converge lock at ${lockDir}`);
+			}
+			sleepSync(100);
+		}
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lockDir, { recursive: true, force: true });
+	}
+}
+
+function runtimeProgramRevision(
+	manifest: RuntimeManifest,
+	runtime: string,
+	secretValues: Record<string, string> | undefined,
+): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		mitmProfiles: manifest.mitmProfiles ?? null,
+		projection: manifest.projection ?? null,
+		runtime: manifest.runtimes[runtime] ?? null,
+		secretValues: secretValues ?? {},
+	});
+}
+
+function daemonProgramRevision(manifest: RuntimeManifest): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		controlPlane: manifest.controlPlane,
+		liveSync: manifest.liveSync ?? null,
+	});
 }
 
 function shellQuote(value: string): string {
@@ -693,6 +918,7 @@ function writeSupervisorConfig(
 	paths: RuntimePaths,
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
+	secretValues: Record<string, string> | undefined,
 ): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const commonEnvironment = {
@@ -704,7 +930,7 @@ function writeSupervisorConfig(
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
 		PATH: supervisorPath(paths),
 	};
-	const runtimeEnvironment = supervisorEnvironment({
+	const watcherEnvironment = supervisorEnvironment({
 		...commonEnvironment,
 		CLAWDI_AUTH_TOKEN: "",
 	});
@@ -714,6 +940,7 @@ function writeSupervisorConfig(
 		CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
+		CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
 	});
 	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
 	const shouldRunDaemon =
@@ -752,6 +979,26 @@ function writeSupervisorConfig(
 		lines.push("; No enabled agent runtimes in the current manifest.", "");
 	}
 
+	if (daemonAuthTokenFile) {
+		lines.push(
+			"[program:clawdi-runtime-watch]",
+			"command=/usr/bin/env clawdi runtime watch",
+			`directory=${workspaceRoot}`,
+			"autostart=true",
+			"autorestart=true",
+			"startsecs=2",
+			"startretries=5",
+			"stopasgroup=true",
+			"killasgroup=true",
+			"stdout_logfile=/dev/fd/1",
+			"stdout_logfile_maxbytes=0",
+			"stderr_logfile=/dev/fd/2",
+			"stderr_logfile_maxbytes=0",
+			`environment=${watcherEnvironment}`,
+			"",
+		);
+	}
+
 	if (shouldRunDaemon && daemonAuthTokenFile) {
 		const script = `export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(
 			daemonAuthTokenFile,
@@ -777,6 +1024,11 @@ function writeSupervisorConfig(
 	}
 
 	for (const runtime of supportedEnabled) {
+		const runtimeEnvironment = supervisorEnvironment({
+			...commonEnvironment,
+			CLAWDI_AUTH_TOKEN: "",
+			CLAWDI_RUNTIME_REV: runtimeProgramRevision(manifest, runtime, secretValues),
+		});
 		lines.push(
 			`[program:clawdi-${runtime}]`,
 			`command=/usr/bin/env clawdi run -- ${runtime}`,
@@ -913,13 +1165,14 @@ export function convergeRuntimeManifest(
 		: clearMitmProfileBundle(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
-	const daemonAuthTokenFile = writeDaemonAuthToken(manifest, paths);
+	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	const supervisorConfig = writeSupervisorConfig(
 		enabledRuntimes,
 		manifest,
 		paths,
 		workspaceRoot,
 		daemonAuthTokenFile,
+		load.secretValues,
 	);
 	const writtenRunConfigRuntimes = new Set<SupportedRuntimeName>();
 
@@ -963,6 +1216,24 @@ export function convergeRuntimeManifest(
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} provider projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+		try {
+			applyHostedChannelProjection(name, observation, manifest, workspaceRoot);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} channel projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+		try {
+			applyHostedMcpProjection(name, observation, manifest, workspaceRoot, daemonAuthTokenFile);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} mcp projection failed: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
 			);

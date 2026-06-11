@@ -66,8 +66,10 @@ const runtimeProjectionSchema = z
 		sourceSchemaVersion: z.string().min(1).optional(),
 		system: z.unknown().nullable().optional(),
 		providers: z.record(z.string().min(1), z.unknown()).optional(),
+		channels: z.record(z.string().min(1), z.unknown()).optional(),
 		aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 		mcp: z.unknown().optional(),
+		tools: z.unknown().optional(),
 	})
 	.strict();
 
@@ -174,6 +176,8 @@ export const hostedRuntimeManifestSchema = z
 			.optional(),
 		liveSync: liveSyncSchema.optional(),
 		mitmProfiles: z.unknown().optional(),
+		mcp: z.unknown().optional(),
+		tools: z.unknown().optional(),
 		recovery: z
 			.object({
 				cacheManifest: z.boolean().optional(),

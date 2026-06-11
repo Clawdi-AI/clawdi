@@ -28,6 +28,8 @@ export interface RuntimePaths {
 	cliBootstrapStatus: string;
 	cacheRoot: string;
 	manifestLastGood: string;
+	manifestEtag: string;
+	channelsEtag: string;
 	runConfigRoot: string;
 	mitmProfileRoot: string;
 	mitmProfileBundle: string;
@@ -35,6 +37,7 @@ export interface RuntimePaths {
 	supervisorConfig: string;
 	bootRoot: string;
 	bootStatus: string;
+	runtimeWatchStatus: string;
 	cloudStatus: string;
 	cloudResult: string;
 	instanceRoot: string;
@@ -111,6 +114,8 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliBootstrapStatus: join(serviceStateRoot, "status", "cli-bootstrap.json"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
+		manifestEtag: join(cacheRoot, "manifest.etag"),
+		channelsEtag: join(cacheRoot, "channels.etag"),
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
 		mitmProfileRoot: join(serviceStateRoot, "config", "mitm"),
 		mitmProfileBundle: join(serviceStateRoot, "config", "mitm", "profiles.json"),
@@ -118,6 +123,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		supervisorConfig: join(serviceStateRoot, "supervisor", "supervisord.conf"),
 		bootRoot,
 		bootStatus: join(cacheRoot, "boot-status.json"),
+		runtimeWatchStatus: join(serviceStateRoot, "status", "runtime-watch.json"),
 		cloudStatus: join(bootRoot, "status.json"),
 		cloudResult: join(bootRoot, "result.json"),
 		instanceRoot,

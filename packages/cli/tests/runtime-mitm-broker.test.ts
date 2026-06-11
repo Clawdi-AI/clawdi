@@ -399,8 +399,8 @@ describe("runtime MITM broker launcher", () => {
 							pathPrefix: "/v1/",
 							headers: {
 								authorization: {
-									type: "secretRefEquals",
-									secretRef: "secret://providers/openai/api-key",
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
 									prefix: "Bearer ",
 								},
 							},
@@ -408,7 +408,13 @@ describe("runtime MITM broker launcher", () => {
 						rewrite: {
 							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/sub2api/v1/responses`,
 							preservePath: false,
-							setHeaders: {},
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://providers/openai/api-key",
+									prefix: "Bearer ",
+								},
+							},
 						},
 						logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 						priority: 124,
@@ -421,7 +427,13 @@ describe("runtime MITM broker launcher", () => {
 							scheme: "https",
 							host: "chatgpt.com",
 							path: { type: "equals", value: "/backend-api/codex/responses" },
-							headers: { authorization: { type: "exists" } },
+							headers: {
+								authorization: {
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
+									prefix: "Bearer ",
+								},
+							},
 						},
 						rewrite: {
 							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/sub2api/backend-api/codex/responses`,
@@ -508,7 +520,7 @@ describe("runtime MITM broker launcher", () => {
 				caFile: broker.caFile,
 				host: "chatgpt.com",
 				path: "/backend-api/codex/responses",
-				headers: { authorization: "Bearer user-chatgpt-token" },
+				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
 			});
 			expect(chatgptCodex.status).toBe(200);
 			expect(providerHits).toEqual([
@@ -526,7 +538,7 @@ describe("runtime MITM broker launcher", () => {
 				caFile: broker.caFile,
 				host: "api.openai.com",
 				path: "/v1/responses",
-				headers: { authorization: "Bearer sk-managed-provider" },
+				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
 			});
 			expect(openaiCodex.status).toBe(200);
 			expect(providerHits).toEqual([

@@ -65,6 +65,7 @@ import {
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
+import { readHostedRuntimeObserved } from "../runtime/observed";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { type QueueItem, RetryQueue } from "./queue";
@@ -2185,6 +2186,7 @@ async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
+		const runtimeObserved = readHostedRuntimeObserved();
 		try {
 			await api.POST("/api/agents/{environment_id}/sync-heartbeat", {
 				params: { path: { environment_id: opts.environmentId } },
@@ -2200,6 +2202,7 @@ async function heartbeatLoop(
 					dropped_count_delta: dropped,
 					last_revision_seen: fields.last_revision_seen,
 					last_sync_error: fields.last_sync_error,
+					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 				},
 			});
 			heartbeatFailureStreak = 0;

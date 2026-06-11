@@ -320,8 +320,8 @@ chmod +x "$HOME/.local/bin/hermes"
 							pathPrefix: "/v1/",
 							headers: {
 								authorization: {
-									type: "secretRefEquals",
-									secretRef: "secret://provider.default.apiKey",
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
 									prefix: "Bearer ",
 								},
 							},
@@ -329,7 +329,13 @@ chmod +x "$HOME/.local/bin/hermes"
 						rewrite: {
 							upstreamBaseUrl: "http://127.0.0.1:18890/provider/openai/responses",
 							preservePath: false,
-							setHeaders: {},
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://provider.default.apiKey",
+									prefix: "Bearer ",
+								},
+							},
 						},
 						logging: { redactHeaders: ["authorization"] },
 						owner: "provider-projection",
@@ -438,6 +444,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- hermes");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- openclaw");
+			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
 			const openclawStart = supervisorConfig.indexOf("[program:clawdi-openclaw]");
 			const openclawSection = supervisorConfig.slice(
 				openclawStart,
